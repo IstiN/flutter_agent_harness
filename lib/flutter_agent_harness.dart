@@ -12,6 +12,8 @@ export 'src/agent/agent_tool.dart';
 export 'src/agent/param_validator.dart';
 export 'src/agent/tool_registry.dart';
 export 'src/cancel_token.dart';
+export 'src/compaction/compaction.dart';
+export 'src/compaction/token_estimation.dart';
 export 'src/context.dart';
 export 'src/env/execution_env.dart';
 export 'src/env/memory_execution_env.dart';
