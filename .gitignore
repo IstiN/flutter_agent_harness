@@ -1,0 +1,13 @@
+# Dart / Flutter
+.dart_tool/
+build/
+coverage/
+pubspec.lock  # library package: lockfile is not committed
+*.iml
+.idea/
+.vscode/
+.DS_Store
+
+# Test output
+test_output/
+report/
