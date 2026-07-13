@@ -1,11 +1,11 @@
-name: flutter_agent
+name: flutter_agent_harness
 description: >-
   Cross-platform AI agent harness for Dart and Flutter: streaming provider
   adapters, agent loop with tools, session persistence, and context
   compaction. Ported architecture of pi-mono (packages/ai + packages/agent).
 version: 0.1.0
-repository: https://github.com/IstiN/flutter_agent
-issue_tracker: https://github.com/IstiN/flutter_agent/issues
+repository: https://github.com/IstiN/flutter_agent_harness
+issue_tracker: https://github.com/IstiN/flutter_agent_harness/issues
 topics:
   - agent
   - llm

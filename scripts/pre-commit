@@ -5,7 +5,7 @@
 # ║  duplication < 1%.                                                        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
-# Pre-commit hook for flutter_agent (pure Dart package).
+# Pre-commit hook for flutter_agent_harness (pure Dart package).
 # Canonical copy: scripts/pre-commit — install with:
 #   cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 # To skip (emergency only): git commit --no-verify
