@@ -10,6 +10,7 @@ export 'src/cancel_token.dart';
 export 'src/context.dart';
 export 'src/event_stream.dart';
 export 'src/model.dart';
+export 'src/providers/anthropic.dart';
 export 'src/providers/openai_completions.dart';
 export 'src/sse_decoder.dart';
 export 'src/types.dart';

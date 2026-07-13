@@ -11,10 +11,10 @@
 ///   immutable, so every pushed event carries a freshly built snapshot of the
 ///   live partial message instead (same partial-first contract).
 /// - pi's `parseStreamingJson` falls back to the `partial-json` package;
-///   [_parseStreamingJson] falls back to an empty map (after a repair pass),
+///   [parseStreamingJson] falls back to an empty map (after a repair pass),
 ///   which only matters for truncated final arguments.
 /// - pi's `normalizeProviderError` probes SDK-specific error shapes; there is
-///   no SDK here, so [_formatProviderError] handles the Dart error types this
+///   no SDK here, so [formatProviderError] handles the Dart error types this
 ///   adapter can actually produce.
 /// - Not yet ported (later phases): the full compat matrix (zai/qwen/
 ///   together/...), prompt-cache retention and session-affinity headers,
@@ -32,8 +32,8 @@ import '../cancel_token.dart';
 import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
-import '../sse_decoder.dart';
 import '../types.dart';
+import 'provider_common.dart';
 
 /// Options for [streamOpenAICompletions].
 ///
@@ -101,24 +101,6 @@ final class OpenAICompletionsOptions {
   onResponse;
 }
 
-/// Thrown internally when the [CancelToken] fires; caught and converted into
-/// an aborted [ErrorEvent]. Never escapes the adapter.
-final class _AbortedError implements Exception {
-  const _AbortedError();
-}
-
-/// A non-200 HTTP response, carrying the status and raw body for error
-/// reporting (the Dart counterpart of the SDK error objects pi normalizes).
-final class _ProviderHttpError implements Exception {
-  const _ProviderHttpError(this.statusCode, this.body);
-
-  /// The HTTP status code.
-  final int statusCode;
-
-  /// The raw response body.
-  final String body;
-}
-
 /// Streams an assistant message from an OpenAI-compatible chat-completions
 /// endpoint.
 ///
@@ -145,424 +127,321 @@ AssistantMessageEventStream streamOpenAICompletions(
   final httpClient = client ?? http.Client();
 
   // Mutable accumulation state. pi mutates a single `output` object; we keep
-  // the pieces and build an immutable snapshot per event instead.
-  final blocks = <_StreamingBlock>[];
-  final toolCallBlocksByIndex = <int, _ToolCallBlock>{};
-  final toolCallBlocksById = <String, _ToolCallBlock>{};
+  // the pieces in a shared state holder and build an immutable snapshot per
+  // event instead.
+  final state = ProviderStreamState(model);
+  final blocks = state.blocks;
+  final toolCallBlocksByIndex = <int, ToolCallStreamingBlock>{};
+  final toolCallBlocksById = <String, ToolCallStreamingBlock>{};
   final pendingReasoningDetailsByToolCallId = <String, String>{};
-  final timestamp = DateTime.now();
-  var usage = Usage.zero;
-  var stopReason = StopReason.stop;
-  String? errorMessage;
-  String? responseId;
-  String? responseModel;
   var hasFinishReason = false;
 
-  AssistantMessage snapshot({bool finalize = false}) => AssistantMessage(
-    content: [
-      for (final block in blocks) block.toContentBlock(finalize: finalize),
-    ],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    responseModel: responseModel,
-    responseId: responseId,
-    usage: usage,
-    stopReason: stopReason,
-    errorMessage: errorMessage,
-    timestamp: timestamp,
-  );
+  unawaited(
+    runProviderStream(
+      eventStream,
+      state,
+      cancelToken,
+      httpClient,
+      ownsClient: client == null,
+      body: () async {
+        final apiKey = _getClientApiKey(
+          model.provider,
+          options?.apiKey,
+          options?.headers,
+        );
+        final compat = _getCompat(model);
+        final params = await applyPayloadHook(
+          _buildParams(model, context, options, compat),
+          model,
+          options?.onPayload,
+        );
 
-  () async {
-    try {
-      final apiKey = _getClientApiKey(
-        model.provider,
-        options?.apiKey,
-        options?.headers,
-      );
-      final compat = _getCompat(model);
-      var params = _buildParams(model, context, options, compat);
-      final nextParams = await options?.onPayload?.call(params, model);
-      if (nextParams != null) {
-        params = nextParams;
-      }
+        cancelToken?.throwIfCancelled();
 
-      cancelToken?.throwIfCancelled();
+        final request =
+            http.Request('POST', Uri.parse('${model.baseUrl}/chat/completions'))
+              ..headers.addAll(_buildHeaders(model, options, apiKey))
+              ..body = jsonEncode(params);
 
-      final request = http.Request(
-        'POST',
-        Uri.parse('${model.baseUrl}/chat/completions'),
-      )
-        ..headers.addAll(_buildHeaders(model, options, apiKey))
-        ..body = jsonEncode(params);
+        final response = await startProviderResponse(
+          eventStream,
+          state,
+          httpClient,
+          request,
+          cancelToken,
+          options?.onResponse,
+        );
 
-      final responseFuture = httpClient.send(request);
-      final http.StreamedResponse response;
-      if (cancelToken == null) {
-        response = await responseFuture;
-      } else {
-        response = await Future.any([
-          responseFuture,
-          cancelToken.onCancel.then<http.StreamedResponse>(
-            (_) => throw const _AbortedError(),
-          ),
-        ]);
-      }
+        TextStreamingBlock? textBlock;
+        ThinkingStreamingBlock? thinkingBlock;
 
-      if (response.statusCode != 200) {
-        final body = await response.stream.bytesToString();
-        throw _ProviderHttpError(response.statusCode, body);
-      }
+        int contentIndex(StreamingBlock block) => blocks.indexOf(block);
 
-      await options?.onResponse?.call(
-        response.statusCode,
-        response.headers,
-        model,
-      );
+        AssistantMessage snapshot() => state.snapshot();
 
-      eventStream.push(StartEvent(partial: snapshot()));
-
-      _TextBlock? textBlock;
-      _ThinkingBlock? thinkingBlock;
-
-      int contentIndex(_StreamingBlock block) => blocks.indexOf(block);
-
-      void finishBlock(_StreamingBlock block) {
-        final index = contentIndex(block);
-        if (index == -1) {
-          return;
-        }
-        switch (block) {
-          case _TextBlock():
+        TextStreamingBlock ensureTextBlock() {
+          var block = textBlock;
+          if (block == null) {
+            block = TextStreamingBlock();
+            textBlock = block;
+            blocks.add(block);
             eventStream.push(
-              TextEndEvent(
-                contentIndex: index,
-                content: block.text.toString(),
+              TextStartEvent(
+                contentIndex: contentIndex(block),
                 partial: snapshot(),
               ),
             );
-          case _ThinkingBlock():
+          }
+          return block;
+        }
+
+        ThinkingStreamingBlock ensureThinkingBlock(String thinkingSignature) {
+          var block = thinkingBlock;
+          if (block == null) {
+            block = ThinkingStreamingBlock(signature: thinkingSignature);
+            thinkingBlock = block;
+            blocks.add(block);
             eventStream.push(
-              ThinkingEndEvent(
-                contentIndex: index,
-                content: block.thinking.toString(),
+              ThinkingStartEvent(
+                contentIndex: contentIndex(block),
                 partial: snapshot(),
               ),
             );
-          case _ToolCallBlock():
-            block.arguments = _parseStreamingJson(block.partialArgs.toString());
-            block.finished = true;
-            final partial = snapshot();
+          }
+          return block;
+        }
+
+        void applyPendingReasoningDetail(ToolCallStreamingBlock block) {
+          if (block.id.isEmpty) {
+            return;
+          }
+          final pending = pendingReasoningDetailsByToolCallId.remove(block.id);
+          if (pending != null) {
+            block.thoughtSignature = pending;
+          }
+        }
+
+        ToolCallStreamingBlock ensureToolCallBlock(
+          Map<String, dynamic> toolCall,
+        ) {
+          final streamIndex = toolCall['index'] is int
+              ? toolCall['index'] as int
+              : null;
+          final id = toolCall['id'] as String?;
+          var block = streamIndex != null
+              ? toolCallBlocksByIndex[streamIndex]
+              : null;
+          block ??= id != null ? toolCallBlocksById[id] : null;
+          if (block == null) {
+            final function = toolCall['function'];
+            block = ToolCallStreamingBlock(
+              id: id ?? '',
+              name: function is Map ? function['name'] as String? ?? '' : '',
+              streamIndex: streamIndex,
+            );
+            if (streamIndex != null) {
+              toolCallBlocksByIndex[streamIndex] = block;
+            }
+            if (id != null) {
+              toolCallBlocksById[id] = block;
+            }
+            blocks.add(block);
             eventStream.push(
-              ToolCallEndEvent(
-                contentIndex: index,
-                toolCall: partial.content[index] as ToolCall,
-                partial: partial,
+              ToolCallStartEvent(
+                contentIndex: contentIndex(block),
+                partial: snapshot(),
               ),
             );
-        }
-      }
-
-      _TextBlock ensureTextBlock() {
-        var block = textBlock;
-        if (block == null) {
-          block = _TextBlock();
-          textBlock = block;
-          blocks.add(block);
-          eventStream.push(
-            TextStartEvent(
-              contentIndex: contentIndex(block),
-              partial: snapshot(),
-            ),
-          );
-        }
-        return block;
-      }
-
-      _ThinkingBlock ensureThinkingBlock(String thinkingSignature) {
-        var block = thinkingBlock;
-        if (block == null) {
-          block = _ThinkingBlock(thinkingSignature);
-          thinkingBlock = block;
-          blocks.add(block);
-          eventStream.push(
-            ThinkingStartEvent(
-              contentIndex: contentIndex(block),
-              partial: snapshot(),
-            ),
-          );
-        }
-        return block;
-      }
-
-      void applyPendingReasoningDetail(_ToolCallBlock block) {
-        if (block.id.isEmpty) {
-          return;
-        }
-        final pending = pendingReasoningDetailsByToolCallId.remove(block.id);
-        if (pending != null) {
-          block.thoughtSignature = pending;
-        }
-      }
-
-      _ToolCallBlock ensureToolCallBlock(Map<String, dynamic> toolCall) {
-        final streamIndex = toolCall['index'] is int
-            ? toolCall['index'] as int
-            : null;
-        final id = toolCall['id'] as String?;
-        var block = streamIndex != null
-            ? toolCallBlocksByIndex[streamIndex]
-            : null;
-        block ??= id != null ? toolCallBlocksById[id] : null;
-        if (block == null) {
-          final function = toolCall['function'];
-          block = _ToolCallBlock(
-            id: id ?? '',
-            name: function is Map ? function['name'] as String? ?? '' : '',
-            streamIndex: streamIndex,
-          );
-          if (streamIndex != null) {
+          }
+          if (streamIndex != null && block.streamIndex == null) {
+            block.streamIndex = streamIndex;
             toolCallBlocksByIndex[streamIndex] = block;
           }
           if (id != null) {
             toolCallBlocksById[id] = block;
           }
-          blocks.add(block);
-          eventStream.push(
-            ToolCallStartEvent(
-              contentIndex: contentIndex(block),
-              partial: snapshot(),
-            ),
-          );
-        }
-        if (streamIndex != null && block.streamIndex == null) {
-          block.streamIndex = streamIndex;
-          toolCallBlocksByIndex[streamIndex] = block;
-        }
-        if (id != null) {
-          toolCallBlocksById[id] = block;
-        }
-        applyPendingReasoningDetail(block);
-        return block;
-      }
-
-      final sseEvents = response.stream
-          .transform(utf8.decoder)
-          .transform(const SseDecoder());
-      final iterator = StreamIterator(sseEvents);
-      if (cancelToken != null) {
-        unawaited(
-          cancelToken.onCancel.then((_) => unawaited(iterator.cancel())),
-        );
-      }
-
-      while (await iterator.moveNext()) {
-        final data = iterator.current.data.trim();
-        if (data.isEmpty || data == '[DONE]') {
-          continue;
-        }
-        final chunk = jsonDecode(data);
-        if (chunk is! Map<String, dynamic>) {
-          continue;
+          applyPendingReasoningDetail(block);
+          return block;
         }
 
-        // Each chunk in a streamed completion carries the same id.
-        responseId ??= chunk['id'] as String?;
-        final chunkModel = chunk['model'];
-        if (chunkModel is String &&
-            chunkModel.isNotEmpty &&
-            chunkModel != model.id) {
-          responseModel ??= chunkModel;
-        }
-        final rawUsage = chunk['usage'];
-        if (rawUsage is Map<String, dynamic>) {
-          usage = _parseChunkUsage(rawUsage, model);
-        }
+        final iterator = createSseIterator(response, cancelToken);
 
-        final choices = chunk['choices'];
-        final choice = choices is List && choices.isNotEmpty
-            ? choices.first
-            : null;
-        if (choice is! Map<String, dynamic>) {
-          continue;
-        }
-
-        // Fallback: some providers (e.g., Moonshot) return usage in
-        // choice.usage instead of the standard chunk.usage.
-        if (rawUsage == null) {
-          final choiceUsage = choice['usage'];
-          if (choiceUsage is Map<String, dynamic>) {
-            usage = _parseChunkUsage(choiceUsage, model);
+        while (await iterator.moveNext()) {
+          final data = iterator.current.data.trim();
+          if (data.isEmpty || data == '[DONE]') {
+            continue;
           }
-        }
-
-        final finishReason = choice['finish_reason'];
-        if (finishReason != null) {
-          final result = _mapStopReason(finishReason as String);
-          stopReason = result.reason;
-          errorMessage = result.errorMessage;
-          hasFinishReason = true;
-        }
-
-        final delta = choice['delta'];
-        if (delta is! Map<String, dynamic>) {
-          continue;
-        }
-
-        final content = delta['content'];
-        if (content is String && content.isNotEmpty) {
-          final block = ensureTextBlock();
-          block.text.write(content);
-          eventStream.push(
-            TextDeltaEvent(
-              contentIndex: contentIndex(block),
-              delta: content,
-              partial: snapshot(),
-            ),
-          );
-        }
-
-        // Some endpoints return reasoning in reasoning_content (llama.cpp),
-        // or reasoning (other openai compatible endpoints). Use the first
-        // non-empty reasoning field to avoid duplication (e.g., chutes.ai
-        // returns both reasoning_content and reasoning with same content).
-        const reasoningFields = [
-          'reasoning_content',
-          'reasoning',
-          'reasoning_text',
-        ];
-        String? foundReasoningField;
-        for (final field in reasoningFields) {
-          final value = delta[field];
-          if (value is String && value.isNotEmpty) {
-            foundReasoningField = field;
-            break;
+          final chunk = jsonDecode(data);
+          if (chunk is! Map<String, dynamic>) {
+            continue;
           }
-        }
-        if (foundReasoningField != null) {
-          final reasoningDelta = delta[foundReasoningField] as String;
-          final block = ensureThinkingBlock(foundReasoningField);
-          block.thinking.write(reasoningDelta);
-          eventStream.push(
-            ThinkingDeltaEvent(
-              contentIndex: contentIndex(block),
-              delta: reasoningDelta,
-              partial: snapshot(),
-            ),
-          );
-        }
 
-        final toolCalls = delta['tool_calls'];
-        if (toolCalls is List) {
-          for (final rawToolCall in toolCalls) {
-            if (rawToolCall is! Map<String, dynamic>) {
-              continue;
+          // Each chunk in a streamed completion carries the same id.
+          state.responseId ??= chunk['id'] as String?;
+          final chunkModel = chunk['model'];
+          if (chunkModel is String &&
+              chunkModel.isNotEmpty &&
+              chunkModel != model.id) {
+            state.responseModel ??= chunkModel;
+          }
+          final rawUsage = chunk['usage'];
+          if (rawUsage is Map<String, dynamic>) {
+            state.usage = _parseChunkUsage(rawUsage, model);
+          }
+
+          final choices = chunk['choices'];
+          final choice = choices is List && choices.isNotEmpty
+              ? choices.first
+              : null;
+          if (choice is! Map<String, dynamic>) {
+            continue;
+          }
+
+          // Fallback: some providers (e.g., Moonshot) return usage in
+          // choice.usage instead of the standard chunk.usage.
+          if (rawUsage == null) {
+            final choiceUsage = choice['usage'];
+            if (choiceUsage is Map<String, dynamic>) {
+              state.usage = _parseChunkUsage(choiceUsage, model);
             }
-            final block = ensureToolCallBlock(rawToolCall);
-            final id = rawToolCall['id'] as String?;
-            if (block.id.isEmpty && id != null) {
-              block.id = id;
-              toolCallBlocksById[id] = block;
-            }
-            final function = rawToolCall['function'];
-            if (function is Map) {
-              final name = function['name'] as String?;
-              if (block.name.isEmpty && name != null) {
-                block.name = name;
-              }
-            }
-            var toolDelta = '';
-            if (function is Map && function['arguments'] is String) {
-              toolDelta = function['arguments'] as String;
-              block.partialArgs.write(toolDelta);
-            }
+          }
+
+          final finishReason = choice['finish_reason'];
+          if (finishReason != null) {
+            final result = _mapStopReason(finishReason as String);
+            state.stopReason = result.reason;
+            state.errorMessage = result.errorMessage;
+            hasFinishReason = true;
+          }
+
+          final delta = choice['delta'];
+          if (delta is! Map<String, dynamic>) {
+            continue;
+          }
+
+          final content = delta['content'];
+          if (content is String && content.isNotEmpty) {
+            final block = ensureTextBlock();
+            block.text.write(content);
             eventStream.push(
-              ToolCallDeltaEvent(
+              TextDeltaEvent(
                 contentIndex: contentIndex(block),
-                delta: toolDelta,
+                delta: content,
                 partial: snapshot(),
               ),
             );
           }
-        }
 
-        final reasoningDetails = delta['reasoning_details'];
-        if (reasoningDetails is List) {
-          for (final detail in reasoningDetails) {
-            if (_isEncryptedReasoningDetail(detail)) {
-              final map = detail as Map<String, dynamic>;
-              final serialized = jsonEncode(map);
-              final matching = toolCallBlocksById[map['id']];
-              if (matching != null) {
-                matching.thoughtSignature = serialized;
-              } else {
-                pendingReasoningDetailsByToolCallId[map['id'] as String] =
-                    serialized;
+          // Some endpoints return reasoning in reasoning_content (llama.cpp),
+          // or reasoning (other openai compatible endpoints). Use the first
+          // non-empty reasoning field to avoid duplication (e.g., chutes.ai
+          // returns both reasoning_content and reasoning with same content).
+          const reasoningFields = [
+            'reasoning_content',
+            'reasoning',
+            'reasoning_text',
+          ];
+          String? foundReasoningField;
+          for (final field in reasoningFields) {
+            final value = delta[field];
+            if (value is String && value.isNotEmpty) {
+              foundReasoningField = field;
+              break;
+            }
+          }
+          if (foundReasoningField != null) {
+            final reasoningDelta = delta[foundReasoningField] as String;
+            final block = ensureThinkingBlock(foundReasoningField);
+            block.thinking.write(reasoningDelta);
+            eventStream.push(
+              ThinkingDeltaEvent(
+                contentIndex: contentIndex(block),
+                delta: reasoningDelta,
+                partial: snapshot(),
+              ),
+            );
+          }
+
+          final toolCalls = delta['tool_calls'];
+          if (toolCalls is List) {
+            for (final rawToolCall in toolCalls) {
+              if (rawToolCall is! Map<String, dynamic>) {
+                continue;
+              }
+              final block = ensureToolCallBlock(rawToolCall);
+              final id = rawToolCall['id'] as String?;
+              if (block.id.isEmpty && id != null) {
+                block.id = id;
+                toolCallBlocksById[id] = block;
+              }
+              final function = rawToolCall['function'];
+              if (function is Map) {
+                final name = function['name'] as String?;
+                if (block.name.isEmpty && name != null) {
+                  block.name = name;
+                }
+              }
+              var toolDelta = '';
+              if (function is Map && function['arguments'] is String) {
+                toolDelta = function['arguments'] as String;
+                block.partialArgs.write(toolDelta);
+              }
+              eventStream.push(
+                ToolCallDeltaEvent(
+                  contentIndex: contentIndex(block),
+                  delta: toolDelta,
+                  partial: snapshot(),
+                ),
+              );
+            }
+          }
+
+          final reasoningDetails = delta['reasoning_details'];
+          if (reasoningDetails is List) {
+            for (final detail in reasoningDetails) {
+              if (_isEncryptedReasoningDetail(detail)) {
+                final map = detail as Map<String, dynamic>;
+                final serialized = jsonEncode(map);
+                final matching = toolCallBlocksById[map['id']];
+                if (matching != null) {
+                  matching.thoughtSignature = serialized;
+                } else {
+                  pendingReasoningDetailsByToolCallId[map['id'] as String] =
+                      serialized;
+                }
               }
             }
           }
         }
-      }
 
-      for (final block in List.of(blocks)) {
-        finishBlock(block);
-      }
+        for (final block in List.of(blocks)) {
+          pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
+        }
 
-      if (cancelToken?.isCancelled ?? false) {
-        throw const _AbortedError();
-      }
-      if (stopReason == StopReason.error) {
-        throw StateError(
-          errorMessage ?? 'Provider returned an error stop reason',
+        if (cancelToken?.isCancelled ?? false) {
+          throw const AbortedError();
+        }
+        if (state.stopReason == StopReason.error) {
+          throw StateError(
+            state.errorMessage ?? 'Provider returned an error stop reason',
+          );
+        }
+        if (!hasFinishReason) {
+          throw StateError('Stream ended without finish_reason');
+        }
+
+        eventStream.push(
+          DoneEvent(reason: state.stopReason, message: state.snapshot()),
         );
-      }
-      if (!hasFinishReason) {
-        throw StateError('Stream ended without finish_reason');
-      }
-
-      eventStream.push(DoneEvent(reason: stopReason, message: snapshot()));
-    } catch (error) {
-      final aborted =
-          error is _AbortedError ||
-          error is CancelledException ||
-          (cancelToken?.isCancelled ?? false);
-      final reason = aborted ? StopReason.aborted : StopReason.error;
-      stopReason = reason;
-      errorMessage = aborted
-          ? 'Request was aborted'
-          : _formatProviderError(error);
-      eventStream.push(
-        ErrorEvent(reason: reason, error: snapshot(finalize: true)),
-      );
-    } finally {
-      eventStream.end();
-      if (client == null) {
-        httpClient.close();
-      }
-    }
-  }();
+      },
+    ),
+  );
 
   return eventStream;
 }
 
 String _truncate40(String value) {
   return value.length > 40 ? value.substring(0, 40) : value;
-}
-
-bool _hasHeader(Map<String, String?>? headers, String name) {
-  if (headers == null) {
-    return false;
-  }
-  final expected = name.toLowerCase();
-  for (final entry in headers.entries) {
-    final value = entry.value;
-    if (entry.key.toLowerCase() == expected &&
-        value != null &&
-        value.trim().isNotEmpty) {
-      return true;
-    }
-  }
-  return false;
 }
 
 String _getClientApiKey(
@@ -573,7 +452,7 @@ String _getClientApiKey(
   if (apiKey != null) {
     return apiKey;
   }
-  if (_hasHeader(headers, 'authorization')) {
+  if (hasHeader(headers, 'authorization')) {
     return 'unused';
   }
   throw StateError('No API key for provider: $provider');
@@ -597,24 +476,11 @@ Map<String, String> _buildHeaders(
   OpenAICompletionsOptions? options,
   String apiKey,
 ) {
-  final headers = <String, String>{
-    'content-type': 'application/json',
-    'authorization': 'Bearer $apiKey',
-    ...?model.headers,
-  };
-  // Merge options headers last so they can override defaults; a null value
-  // suppresses the header with the same name.
-  if (options?.headers != null) {
-    for (final entry in options!.headers!.entries) {
-      final value = entry.value;
-      if (value == null) {
-        headers.remove(entry.key);
-      } else {
-        headers[entry.key] = value;
-      }
-    }
-  }
-  return headers;
+  return mergeProviderHeaders(
+    {'content-type': 'application/json', 'authorization': 'Bearer $apiKey'},
+    model.headers,
+    options?.headers,
+  );
 }
 
 /// Auto-detected plus overridden compatibility settings for [model].
@@ -638,8 +504,7 @@ final class _ResolvedCompat {
 
 _ResolvedCompat _getCompat(Model model) {
   final isOpenRouter =
-      model.provider == 'openrouter' ||
-      model.baseUrl.contains('openrouter.ai');
+      model.provider == 'openrouter' || model.baseUrl.contains('openrouter.ai');
   final compat = model.compat;
   return _ResolvedCompat(
     maxTokensField: compat?.maxTokensField ?? 'max_completion_tokens',
@@ -762,8 +627,7 @@ List<Map<String, dynamic>> _convertMessages(
 
       final assistantText = [
         for (final block in message.content)
-          if (block is TextContent && block.text.trim().isNotEmpty)
-            block.text,
+          if (block is TextContent && block.text.trim().isNotEmpty) block.text,
       ].join();
 
       final thinkingBlocks = [
@@ -828,9 +692,7 @@ List<Map<String, dynamic>> _convertMessages(
       final imageBlocks = <Map<String, dynamic>>[];
       var j = i;
 
-      for (;
-          j < messages.length && messages[j] is ToolResultMessage;
-          j++) {
+      for (; j < messages.length && messages[j] is ToolResultMessage; j++) {
         final toolMessage = messages[j] as ToolResultMessage;
 
         // Extract text and image content.
@@ -954,10 +816,8 @@ Usage _parseChunkUsage(Map<String, dynamic> rawUsage, Model model) {
   return switch (reason) {
     'stop' || 'end' => (reason: StopReason.stop, errorMessage: null),
     'length' => (reason: StopReason.length, errorMessage: null),
-    'function_call' || 'tool_calls' => (
-      reason: StopReason.toolUse,
-      errorMessage: null,
-    ),
+    'function_call' ||
+    'tool_calls' => (reason: StopReason.toolUse, errorMessage: null),
     'content_filter' => (
       reason: StopReason.error,
       errorMessage: 'Provider finish_reason: content_filter',
@@ -991,202 +851,5 @@ Object? _tryJsonDecode(String text) {
     return jsonDecode(text);
   } on FormatException {
     return null;
-  }
-}
-
-/// Attempts to parse potentially incomplete tool-call argument JSON.
-///
-/// Ported from pi's `parseStreamingJson`, minus the `partial-json` fallback:
-/// incomplete or unrepairable JSON yields an empty map.
-Map<String, dynamic> _parseStreamingJson(String partialJson) {
-  if (partialJson.trim().isEmpty) {
-    return const <String, dynamic>{};
-  }
-  try {
-    final decoded = jsonDecode(partialJson);
-    return decoded is Map<String, dynamic>
-        ? decoded
-        : const <String, dynamic>{};
-  } on FormatException {
-    try {
-      final decoded = jsonDecode(_repairJson(partialJson));
-      return decoded is Map<String, dynamic>
-          ? decoded
-          : const <String, dynamic>{};
-    } on FormatException {
-      return const <String, dynamic>{};
-    }
-  }
-}
-
-const _validJsonEscapes = {'"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u'};
-
-bool _isControlCharacter(String char) {
-  final codeUnit = char.codeUnitAt(0);
-  return codeUnit <= 0x1f;
-}
-
-String _escapeControlCharacter(String char) {
-  return switch (char) {
-    '\b' => r'\b',
-    '\f' => r'\f',
-    '\n' => r'\n',
-    '\r' => r'\r',
-    '\t' => r'\t',
-    _ => '\\u${char.codeUnitAt(0).toRadixString(16).padLeft(4, '0')}',
-  };
-}
-
-/// Repairs malformed JSON string literals by escaping raw control characters
-/// inside strings and doubling backslashes before invalid escape characters.
-///
-/// Ported from pi's `repairJson`.
-String _repairJson(String json) {
-  final repaired = StringBuffer();
-  var inString = false;
-
-  for (var index = 0; index < json.length; index++) {
-    final char = json[index];
-
-    if (!inString) {
-      repaired.write(char);
-      if (char == '"') {
-        inString = true;
-      }
-      continue;
-    }
-
-    if (char == '"') {
-      repaired.write(char);
-      inString = false;
-      continue;
-    }
-
-    if (char == '\\') {
-      final nextChar = index + 1 < json.length ? json[index + 1] : null;
-      if (nextChar == null) {
-        repaired.write(r'\\');
-        continue;
-      }
-
-      if (nextChar == 'u') {
-        final unicodeDigits = json.substring(
-          index + 2,
-          min(index + 6, json.length),
-        );
-        if (RegExp('^[0-9a-fA-F]{4}\$').hasMatch(unicodeDigits)) {
-          repaired.write('\\u$unicodeDigits');
-          index += 5;
-          continue;
-        }
-      }
-
-      if (_validJsonEscapes.contains(nextChar)) {
-        repaired.write('\\$nextChar');
-        index += 1;
-        continue;
-      }
-
-      repaired.write(r'\\');
-      continue;
-    }
-
-    repaired.write(
-      _isControlCharacter(char) ? _escapeControlCharacter(char) : char,
-    );
-  }
-
-  return repaired.toString();
-}
-
-/// Composes the display string for [ErrorEvent.errorMessage].
-///
-/// Simplified port of pi's `formatProviderError(normalizeProviderError(e))`:
-/// there is no SDK whose error shapes need probing here.
-String _formatProviderError(Object error) {
-  if (error is _ProviderHttpError) {
-    final body = error.body.trim();
-    if (body.isEmpty) {
-      return 'Request failed with status ${error.statusCode}';
-    }
-    return '${error.statusCode}: $body';
-  }
-  if (error is http.ClientException) {
-    return error.message;
-  }
-  if (error is FormatException) {
-    return error.message;
-  }
-  return error.toString();
-}
-
-/// Mutable streaming accumulation for one content block. Converted into an
-/// immutable [ContentBlock] for every event snapshot.
-sealed class _StreamingBlock {
-  ContentBlock toContentBlock({bool finalize = false});
-}
-
-final class _TextBlock extends _StreamingBlock {
-  final text = StringBuffer();
-
-  @override
-  ContentBlock toContentBlock({bool finalize = false}) {
-    return TextContent(text: text.toString());
-  }
-}
-
-final class _ThinkingBlock extends _StreamingBlock {
-  _ThinkingBlock(this.signature);
-
-  final String? signature;
-  final thinking = StringBuffer();
-
-  @override
-  ContentBlock toContentBlock({bool finalize = false}) {
-    return ThinkingContent(
-      thinking: thinking.toString(),
-      thinkingSignature: signature,
-    );
-  }
-}
-
-final class _ToolCallBlock extends _StreamingBlock {
-  _ToolCallBlock({required this.id, required this.name, this.streamIndex});
-
-  String id;
-  String name;
-  int? streamIndex;
-  String? thoughtSignature;
-  final partialArgs = StringBuffer();
-  Map<String, dynamic> arguments = const <String, dynamic>{};
-  var finished = false;
-
-  @override
-  ContentBlock toContentBlock({bool finalize = false}) {
-    if (finalize && !finished) {
-      // Stream ended before toolcall_end (error/abort): best-effort parse
-      // and strip the scratch buffer, mirroring pi's catch block.
-      return ToolCall(
-        id: id,
-        name: name,
-        arguments: _parseStreamingJson(partialArgs.toString()),
-        thoughtSignature: thoughtSignature,
-      );
-    }
-    if (finished) {
-      return ToolCall(
-        id: id,
-        name: name,
-        arguments: arguments,
-        thoughtSignature: thoughtSignature,
-      );
-    }
-    return ToolCall(
-      id: id,
-      name: name,
-      arguments: const <String, dynamic>{},
-      thoughtSignature: thoughtSignature,
-      partialArguments: partialArgs.toString(),
-    );
   }
 }
