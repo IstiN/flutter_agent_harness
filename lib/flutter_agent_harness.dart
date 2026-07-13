@@ -6,6 +6,7 @@
 /// compaction. See GOAL.md for the full roadmap.
 library;
 
+export 'src/agent/agent_loop.dart';
 export 'src/cancel_token.dart';
 export 'src/context.dart';
 export 'src/event_stream.dart';
