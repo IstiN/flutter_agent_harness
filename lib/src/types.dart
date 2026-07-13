@@ -73,6 +73,24 @@ final class UsageCost {
       total: total ?? this.total,
     );
   }
+
+  /// Serializes to a JSON map.
+  Map<String, dynamic> toJson() => {
+    'input': input,
+    'output': output,
+    'cacheRead': cacheRead,
+    'cacheWrite': cacheWrite,
+    'total': total,
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory UsageCost.fromJson(Map<String, dynamic> json) => UsageCost(
+    input: (json['input'] as num? ?? 0).toDouble(),
+    output: (json['output'] as num? ?? 0).toDouble(),
+    cacheRead: (json['cacheRead'] as num? ?? 0).toDouble(),
+    cacheWrite: (json['cacheWrite'] as num? ?? 0).toDouble(),
+    total: (json['total'] as num? ?? 0).toDouble(),
+  );
 }
 
 /// Token accounting for one assistant response, reported inline by providers.
@@ -149,15 +167,56 @@ final class Usage {
       cost: cost ?? this.cost,
     );
   }
+
+  /// Serializes to a JSON map.
+  Map<String, dynamic> toJson() => {
+    'input': input,
+    'output': output,
+    'cacheRead': cacheRead,
+    'cacheWrite': cacheWrite,
+    if (cacheWrite1h != null) 'cacheWrite1h': cacheWrite1h,
+    if (reasoning != null) 'reasoning': reasoning,
+    'totalTokens': totalTokens,
+    'cost': cost.toJson(),
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory Usage.fromJson(Map<String, dynamic> json) => Usage(
+    input: json['input'] as int? ?? 0,
+    output: json['output'] as int? ?? 0,
+    cacheRead: json['cacheRead'] as int? ?? 0,
+    cacheWrite: json['cacheWrite'] as int? ?? 0,
+    cacheWrite1h: json['cacheWrite1h'] as int?,
+    reasoning: json['reasoning'] as int?,
+    totalTokens: json['totalTokens'] as int? ?? 0,
+    cost: json['cost'] is Map<String, dynamic>
+        ? UsageCost.fromJson(json['cost'] as Map<String, dynamic>)
+        : const UsageCost(),
+  );
 }
 
-/// A content block of an [AssistantMessage].
+/// A content block of a [Message].
 ///
-/// Sealed counterpart of pi's `TextContent | ThinkingContent | ToolCall`
-/// union (image content arrives with the user/tool-result message types in a
-/// later card).
+/// Sealed counterpart of pi's `TextContent | ThinkingContent | ToolCall |
+/// ImageContent` unions.
 sealed class ContentBlock {
   const ContentBlock();
+
+  /// Serializes to a JSON map with a `type` discriminator (pi shape).
+  Map<String, dynamic> toJson();
+
+  /// Deserializes a JSON map produced by [toJson], dispatching on `type`.
+  factory ContentBlock.fromJson(Map<String, dynamic> json) {
+    return switch (json['type']) {
+      'text' => TextContent.fromJson(json),
+      'thinking' => ThinkingContent.fromJson(json),
+      'toolCall' => ToolCall.fromJson(json),
+      'image' => ImageContent.fromJson(json),
+      _ => throw FormatException(
+        'Unknown content block type: ${json['type']}',
+      ),
+    };
+  }
 }
 
 /// Plain text produced by the model.
@@ -179,6 +238,19 @@ final class TextContent extends ContentBlock {
       textSignature: textSignature ?? this.textSignature,
     );
   }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'text',
+    'text': text,
+    if (textSignature != null) 'textSignature': textSignature,
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory TextContent.fromJson(Map<String, dynamic> json) => TextContent(
+    text: json['text'] as String? ?? '',
+    textSignature: json['textSignature'] as String?,
+  );
 }
 
 /// Model reasoning ("thinking") produced before or alongside the answer.
@@ -214,6 +286,22 @@ final class ThinkingContent extends ContentBlock {
       redacted: redacted ?? this.redacted,
     );
   }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'thinking',
+    'thinking': thinking,
+    if (thinkingSignature != null) 'thinkingSignature': thinkingSignature,
+    'redacted': redacted,
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory ThinkingContent.fromJson(Map<String, dynamic> json) =>
+      ThinkingContent(
+        thinking: json['thinking'] as String? ?? '',
+        thinkingSignature: json['thinkingSignature'] as String?,
+        redacted: json['redacted'] as bool? ?? false,
+      );
 }
 
 /// A request by the model to invoke a tool.
@@ -262,6 +350,70 @@ final class ToolCall extends ContentBlock {
       partialArguments: partialArguments ?? this.partialArguments,
     );
   }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'toolCall',
+    'id': id,
+    'name': name,
+    'arguments': arguments,
+    if (thoughtSignature != null) 'thoughtSignature': thoughtSignature,
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  ///
+  /// Note that [partialArguments] is streaming scratch state and is never
+  /// serialized, mirroring pi which strips the buffer before persisting.
+  factory ToolCall.fromJson(Map<String, dynamic> json) => ToolCall(
+    id: json['id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    arguments:
+        (json['arguments'] as Map<String, dynamic>?) ?? const <String, dynamic>{},
+    thoughtSignature: json['thoughtSignature'] as String?,
+  );
+}
+
+/// An image supplied by the user or a tool result.
+///
+/// Ported from pi's `ImageContent`.
+final class ImageContent extends ContentBlock {
+  const ImageContent({required this.data, required this.mimeType});
+
+  /// Base64-encoded image data.
+  final String data;
+
+  /// MIME type of the image, e.g. `image/jpeg` or `image/png`.
+  final String mimeType;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'image',
+    'data': data,
+    'mimeType': mimeType,
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory ImageContent.fromJson(Map<String, dynamic> json) => ImageContent(
+    data: json['data'] as String? ?? '',
+    mimeType: json['mimeType'] as String? ?? '',
+  );
+}
+
+/// A message in a conversation context.
+///
+/// Ported from pi's `Message` union (`UserMessage | AssistantMessage |
+/// ToolResultMessage`). An `abstract interface` rather than a `sealed` class
+/// because [AssistantMessage] predates this interface in this library and
+/// sealed subtypes must share a library.
+abstract interface class Message {
+  /// The role discriminator: `user`, `assistant`, or `toolResult`.
+  String get role;
+
+  /// When this message was created.
+  DateTime get timestamp;
+
+  /// Serializes to a JSON map with a `role` discriminator (pi shape).
+  Map<String, dynamic> toJson();
 }
 
 /// A message produced by the assistant (the model), final or partial.
@@ -270,7 +422,7 @@ final class ToolCall extends ContentBlock {
 /// Partial instances are the live snapshots carried by every
 /// [AssistantMessageEvent] (partial-first design): consumers can render them
 /// directly without accumulating deltas themselves.
-final class AssistantMessage {
+final class AssistantMessage implements Message {
   const AssistantMessage({
     required this.content,
     required this.api,
@@ -317,6 +469,7 @@ final class AssistantMessage {
 
   /// When this message was created (pi stores Unix milliseconds; Dart uses
   /// [DateTime]).
+  @override
   final DateTime timestamp;
 
   AssistantMessage copyWith({
@@ -344,6 +497,49 @@ final class AssistantMessage {
       timestamp: timestamp ?? this.timestamp,
     );
   }
+
+  @override
+  String get role => 'assistant';
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'role': role,
+    'content': content.map((block) => block.toJson()).toList(),
+    'api': api,
+    'provider': provider,
+    'model': model,
+    if (responseModel != null) 'responseModel': responseModel,
+    if (responseId != null) 'responseId': responseId,
+    'usage': usage.toJson(),
+    'stopReason': stopReason.name,
+    if (errorMessage != null) 'errorMessage': errorMessage,
+    'timestamp': timestamp.millisecondsSinceEpoch,
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory AssistantMessage.fromJson(Map<String, dynamic> json) =>
+      AssistantMessage(
+        content: [
+          for (final block in (json['content'] as List?) ?? const [])
+            ContentBlock.fromJson(block as Map<String, dynamic>),
+        ],
+        api: json['api'] as String? ?? '',
+        provider: json['provider'] as String? ?? '',
+        model: json['model'] as String? ?? '',
+        responseModel: json['responseModel'] as String?,
+        responseId: json['responseId'] as String?,
+        usage: json['usage'] is Map<String, dynamic>
+            ? Usage.fromJson(json['usage'] as Map<String, dynamic>)
+            : Usage.zero,
+        stopReason: StopReason.values.firstWhere(
+          (value) => value.name == json['stopReason'],
+          orElse: () => StopReason.stop,
+        ),
+        errorMessage: json['errorMessage'] as String?,
+        timestamp: DateTime.fromMillisecondsSinceEpoch(
+          json['timestamp'] as int? ?? 0,
+        ),
+      );
 }
 
 /// Event protocol for `AssistantMessageEventStream`.
