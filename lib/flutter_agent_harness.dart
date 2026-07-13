@@ -7,3 +7,6 @@
 library;
 
 export 'src/cancel_token.dart';
+export 'src/event_stream.dart';
+export 'src/sse_decoder.dart';
+export 'src/types.dart';
