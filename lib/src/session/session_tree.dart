@@ -112,7 +112,9 @@ final class Session {
     return name != null && name.isNotEmpty ? name : null;
   }
 
-  Future<String> _append(SessionRecord Function(String id, String? parentId) build) async {
+  Future<String> _append(
+    SessionRecord Function(String id, String? parentId) build,
+  ) async {
     final record = build(
       await _storage.createEntryId(),
       await _storage.getLeafId(),
@@ -200,10 +202,7 @@ final class Session {
 
   /// Appends an application-defined record that stays out of model context.
   /// Returns the new record id.
-  Future<String> appendCustomEntry({
-    required String customType,
-    Object? data,
-  }) {
+  Future<String> appendCustomEntry({required String customType, Object? data}) {
     return _append(
       (id, parentId) => CustomRecord(
         id: id,
@@ -329,7 +328,11 @@ final class Session {
     );
   }
 
-  ({String thinkingLevel, ({String provider, String modelId})? model, List<String>? activeToolNames})
+  ({
+    String thinkingLevel,
+    ({String provider, String modelId})? model,
+    List<String>? activeToolNames,
+  })
   _deriveState(List<SessionRecord> path) {
     var thinkingLevel = 'off';
     ({String provider, String modelId})? model;
@@ -386,14 +389,15 @@ final class Session {
           timestamp: timestamp,
         ),
       ],
-      BranchSummaryRecord(:final summary, :final timestamp) => summary.isEmpty
-          ? const []
-          : [
-              UserMessage.text(
-                '$branchSummaryPrefix$summary$branchSummarySuffix',
-                timestamp: timestamp,
-              ),
-            ],
+      BranchSummaryRecord(:final summary, :final timestamp) =>
+        summary.isEmpty
+            ? const []
+            : [
+                UserMessage.text(
+                  '$branchSummaryPrefix$summary$branchSummarySuffix',
+                  timestamp: timestamp,
+                ),
+              ],
       _ => const [],
     };
   }

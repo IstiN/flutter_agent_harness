@@ -118,14 +118,18 @@ void main() {
       expect(copy.responseId, 'resp_1');
       expect(copy.usage, same(Usage.zero));
       expect(copy.timestamp, now.add(const Duration(seconds: 1)));
-      expect(message.copyWith(api: 'anthropic-messages').api,
-          'anthropic-messages');
+      expect(
+        message.copyWith(api: 'anthropic-messages').api,
+        'anthropic-messages',
+      );
       expect(message.copyWith(provider: 'anthropic').provider, 'anthropic');
       expect(message.copyWith(model: 'gpt-x').model, 'gpt-x');
       expect(message.copyWith(responseModel: 'm').responseModel, 'm');
       expect(message.copyWith(responseId: 'r').responseId, 'r');
-      expect(message.copyWith(usage: Usage.zero.copyWith(input: 1)).usage.input,
-          1);
+      expect(
+        message.copyWith(usage: Usage.zero.copyWith(input: 1)).usage.input,
+        1,
+      );
       expect(message.errorMessage, isNull);
     });
   });

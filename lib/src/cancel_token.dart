@@ -73,6 +73,5 @@ class CancelledException implements Exception {
   final Object? reason;
 
   @override
-  String toString() =>
-      'CancelledException${reason == null ? '' : ': $reason'}';
+  String toString() => 'CancelledException${reason == null ? '' : ': $reason'}';
 }

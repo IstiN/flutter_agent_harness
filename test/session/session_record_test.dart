@@ -261,13 +261,7 @@ void main() {
       expect(restored.targetId, 'e7');
 
       final toRoot =
-          roundTrip(
-                LeafRecord(
-                  id: 'e14',
-                  parentId: 'e13',
-                  timestamp: ts,
-                ),
-              )
+          roundTrip(LeafRecord(id: 'e14', parentId: 'e13', timestamp: ts))
               as LeafRecord;
       expect(toRoot.targetId, isNull);
     });
@@ -343,7 +337,10 @@ void main() {
     });
 
     test('rejects wrong type and missing fields', () {
-      expect(() => SessionHeader.fromJson({'type': 'nope'}), throwsFormatException);
+      expect(
+        () => SessionHeader.fromJson({'type': 'nope'}),
+        throwsFormatException,
+      );
       expect(
         () => SessionHeader.fromJson({
           'type': 'session',

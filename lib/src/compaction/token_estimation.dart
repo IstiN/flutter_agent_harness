@@ -111,10 +111,7 @@ final class ContextUsageEstimate {
 }
 
 Usage? _assistantUsage(Message message) {
-  if (message case AssistantMessage(
-    :final stopReason,
-    :final usage,
-  )) {
+  if (message case AssistantMessage(:final stopReason, :final usage)) {
     if (stopReason != StopReason.aborted &&
         stopReason != StopReason.error &&
         calculateContextTokens(usage) > 0) {

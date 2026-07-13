@@ -108,7 +108,9 @@ void main() {
     test('Agent(toolRegistry:) wires tools and executor', () async {
       final registry = ToolRegistry([_echoTool()]);
       final fake = _FakeStreamFunction([
-        _toolTurn([_call('c1', 'echo', {'text': 'hi'})]),
+        _toolTurn([
+          _call('c1', 'echo', {'text': 'hi'}),
+        ]),
         _textTurn('done'),
       ]);
       final agent = Agent(
@@ -153,62 +155,72 @@ void main() {
       expect((toolResult.content.single as TextContent).text, 'custom');
     });
 
-    test('unknown tool call yields error tool result, not an exception', () async {
-      final registry = ToolRegistry([_echoTool()]);
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('c1', 'ghost', {'a': 1})]),
-        _textTurn('recovered'),
-      ]);
-      final agent = Agent(
-        model: _model,
-        toolRegistry: registry,
-        streamFunction: fake.call,
-      );
-      await agent.prompt('go');
+    test(
+      'unknown tool call yields error tool result, not an exception',
+      () async {
+        final registry = ToolRegistry([_echoTool()]);
+        final fake = _FakeStreamFunction([
+          _toolTurn([
+            _call('c1', 'ghost', {'a': 1}),
+          ]),
+          _textTurn('recovered'),
+        ]);
+        final agent = Agent(
+          model: _model,
+          toolRegistry: registry,
+          streamFunction: fake.call,
+        );
+        await agent.prompt('go');
 
-      final toolResult = agent.state.messages[2] as ToolResultMessage;
-      expect(toolResult.isError, isTrue);
-      expect(toolResult.toolName, 'ghost');
-      expect(agent.state.errorMessage, isNull);
-      // The loop continued and produced the final text turn.
-      expect(agent.state.messages.last, isA<AssistantMessage>());
-    });
+        final toolResult = agent.state.messages[2] as ToolResultMessage;
+        expect(toolResult.isError, isTrue);
+        expect(toolResult.toolName, 'ghost');
+        expect(agent.state.errorMessage, isNull);
+        // The loop continued and produced the final text turn.
+        expect(agent.state.messages.last, isA<AssistantMessage>());
+      },
+    );
 
-    test('invalid arguments yield error tool result; tool not executed', () async {
-      var executed = false;
-      final registry = ToolRegistry([
-        _echoTool(
-          parameters: const {
-            'type': 'object',
-            'properties': {
-              'path': {'type': 'string'},
+    test(
+      'invalid arguments yield error tool result; tool not executed',
+      () async {
+        var executed = false;
+        final registry = ToolRegistry([
+          _echoTool(
+            parameters: const {
+              'type': 'object',
+              'properties': {
+                'path': {'type': 'string'},
+              },
+              'required': ['path'],
             },
-            'required': ['path'],
-          },
-          execute: (args, cancelToken, onUpdate) async {
-            executed = true;
-            return ToolExecutionResult.text('ok');
-          },
-        ),
-      ]);
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('c1', 'echo', {'wrong': 1})]),
-        _textTurn('recovered'),
-      ]);
-      final agent = Agent(
-        model: _model,
-        toolRegistry: registry,
-        streamFunction: fake.call,
-      );
-      await agent.prompt('go');
+            execute: (args, cancelToken, onUpdate) async {
+              executed = true;
+              return ToolExecutionResult.text('ok');
+            },
+          ),
+        ]);
+        final fake = _FakeStreamFunction([
+          _toolTurn([
+            _call('c1', 'echo', {'wrong': 1}),
+          ]),
+          _textTurn('recovered'),
+        ]);
+        final agent = Agent(
+          model: _model,
+          toolRegistry: registry,
+          streamFunction: fake.call,
+        );
+        await agent.prompt('go');
 
-      expect(executed, isFalse);
-      final toolResult = agent.state.messages[2] as ToolResultMessage;
-      expect(toolResult.isError, isTrue);
-      final text = (toolResult.content.single as TextContent).text;
-      expect(text, contains('path'));
-      expect(text, contains('echo'));
-    });
+        expect(executed, isFalse);
+        final toolResult = agent.state.messages[2] as ToolResultMessage;
+        expect(toolResult.isError, isTrue);
+        final text = (toolResult.content.single as TextContent).text;
+        expect(text, contains('path'));
+        expect(text, contains('echo'));
+      },
+    );
 
     test('stringly-typed arguments are coerced before execute', () async {
       Map<String, dynamic>? received;
@@ -228,7 +240,9 @@ void main() {
         ),
       ]);
       final fake = _FakeStreamFunction([
-        _toolTurn([_call('c1', 'echo', {'count': '7'})]),
+        _toolTurn([
+          _call('c1', 'echo', {'count': '7'}),
+        ]),
         _textTurn('done'),
       ]);
       final agent = Agent(
@@ -291,51 +305,44 @@ void main() {
       await agent.prompt('go');
       expect(updates, hasLength(1));
       expect(updates.single.partialResult.content, [
-        isA<TextContent>().having(
-          (c) => c.text,
-          'text',
-          'half',
-        ),
+        isA<TextContent>().having((c) => c.text, 'text', 'half'),
       ]);
     });
 
-    test(
-      'per-tool sequential executionMode forces sequential batch',
-      () async {
-        final log = <String>[];
-        AgentTool tool(String name, {ToolExecutionMode? mode}) {
-          return AgentTool(
-            name: name,
-            description: '$name tool',
-            executionMode: mode,
-            execute: (args, cancelToken, onUpdate) async {
-              log.add('start $name');
-              await Future<void>.delayed(const Duration(milliseconds: 10));
-              log.add('end $name');
-              return ToolExecutionResult.text(name);
-            },
-          );
-        }
-
-        final registry = ToolRegistry([
-          tool('slow', mode: ToolExecutionMode.sequential),
-          tool('fast'),
-        ]);
-        final fake = _FakeStreamFunction([
-          _toolTurn([_call('c1', 'slow'), _call('c2', 'fast')]),
-          _textTurn('done'),
-        ]);
-        final agent = Agent(
-          model: _model,
-          toolRegistry: registry,
-          streamFunction: fake.call,
-          toolExecution: ToolExecutionMode.parallel,
+    test('per-tool sequential executionMode forces sequential batch', () async {
+      final log = <String>[];
+      AgentTool tool(String name, {ToolExecutionMode? mode}) {
+        return AgentTool(
+          name: name,
+          description: '$name tool',
+          executionMode: mode,
+          execute: (args, cancelToken, onUpdate) async {
+            log.add('start $name');
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+            log.add('end $name');
+            return ToolExecutionResult.text(name);
+          },
         );
-        await agent.prompt('go');
-        // Sequential: fast must not start before slow ends.
-        expect(log, ['start slow', 'end slow', 'start fast', 'end fast']);
-      },
-    );
+      }
+
+      final registry = ToolRegistry([
+        tool('slow', mode: ToolExecutionMode.sequential),
+        tool('fast'),
+      ]);
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('c1', 'slow'), _call('c2', 'fast')]),
+        _textTurn('done'),
+      ]);
+      final agent = Agent(
+        model: _model,
+        toolRegistry: registry,
+        streamFunction: fake.call,
+        toolExecution: ToolExecutionMode.parallel,
+      );
+      await agent.prompt('go');
+      // Sequential: fast must not start before slow ends.
+      expect(log, ['start slow', 'end slow', 'start fast', 'end fast']);
+    });
 
     test('parallel default overlaps executions', () async {
       final log = <String>[];
@@ -366,33 +373,35 @@ void main() {
       expect(log.sublist(0, 2), ['start a', 'start b']);
     });
 
-    test('tools assigned to state are picked up by the registry executor',
-        () async {
-      final registry = ToolRegistry([_echoTool()]);
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('c1', 'echo')]),
-        _textTurn('done'),
-      ]);
-      final agent = Agent(
-        model: _model,
-        streamFunction: fake.call,
-        toolExecutor: registry.executor,
-      );
-      // No tools in context: the loop rejects the call before the executor.
-      await agent.prompt('go');
-      var toolResult = agent.state.messages[2] as ToolResultMessage;
-      expect(toolResult.isError, isTrue);
+    test(
+      'tools assigned to state are picked up by the registry executor',
+      () async {
+        final registry = ToolRegistry([_echoTool()]);
+        final fake = _FakeStreamFunction([
+          _toolTurn([_call('c1', 'echo')]),
+          _textTurn('done'),
+        ]);
+        final agent = Agent(
+          model: _model,
+          streamFunction: fake.call,
+          toolExecutor: registry.executor,
+        );
+        // No tools in context: the loop rejects the call before the executor.
+        await agent.prompt('go');
+        var toolResult = agent.state.messages[2] as ToolResultMessage;
+        expect(toolResult.isError, isTrue);
 
-      // Registering the tool into the state lets the next run execute it.
-      agent.state.tools = registry.tools;
-      fake.turns.addAll([
-        _toolTurn([_call('c2', 'echo')]),
-        _textTurn('done'),
-      ]);
-      await agent.prompt('again');
-      final messages = agent.state.messages;
-      toolResult = messages[messages.length - 2] as ToolResultMessage;
-      expect(toolResult.isError, isFalse);
-    });
+        // Registering the tool into the state lets the next run execute it.
+        agent.state.tools = registry.tools;
+        fake.turns.addAll([
+          _toolTurn([_call('c2', 'echo')]),
+          _textTurn('done'),
+        ]);
+        await agent.prompt('again');
+        final messages = agent.state.messages;
+        toolResult = messages[messages.length - 2] as ToolResultMessage;
+        expect(toolResult.isError, isFalse);
+      },
+    );
   });
 }

@@ -30,10 +30,10 @@ void main() {
   group('generateSummary', () {
     test('builds pi prompt: conversation tags + structured prompt', () async {
       final fake = _FakeSummarizer([SummarizationResult.success('SUMMARY')]);
-      final text = await generateSummary(
-        [UserMessage.text('do the thing'), _assistant('working on it')],
-        summarize: fake.call,
-      );
+      final text = await generateSummary([
+        UserMessage.text('do the thing'),
+        _assistant('working on it'),
+      ], summarize: fake.call);
       expect(text, 'SUMMARY');
       final prompt = fake.requests.single.prompt;
       expect(prompt, startsWith('<conversation>\n'));
@@ -51,7 +51,10 @@ void main() {
         previousSummary: 'OLD SUMMARY',
       );
       final prompt = fake.requests.single.prompt;
-      expect(prompt, contains('<previous-summary>\nOLD SUMMARY\n</previous-summary>'));
+      expect(
+        prompt,
+        contains('<previous-summary>\nOLD SUMMARY\n</previous-summary>'),
+      );
       expect(prompt, endsWith(updateSummarizationPrompt));
     });
 
@@ -76,7 +79,11 @@ void main() {
         () => generateSummary([UserMessage.text('x')], summarize: fake.call),
         throwsA(
           isA<CompactionException>()
-              .having((e) => e.code, 'code', CompactionErrorCode.summarizationFailed)
+              .having(
+                (e) => e.code,
+                'code',
+                CompactionErrorCode.summarizationFailed,
+              )
               .having((e) => e.message, 'message', contains('provider down')),
         ),
       );
@@ -165,7 +172,11 @@ void main() {
 
     test('joins text blocks on success and sends the system prompt', () async {
       Context? captured;
-      final summarize = streamFunctionSummarizer((model, context, {cancelToken}) {
+      final summarize = streamFunctionSummarizer((
+        model,
+        context, {
+        cancelToken,
+      }) {
         captured = context;
         final message = responseOf('line1');
         return streamOf([
@@ -184,7 +195,11 @@ void main() {
     });
 
     test('error stop reason maps to failure', () async {
-      final summarize = streamFunctionSummarizer((model, context, {cancelToken}) {
+      final summarize = streamFunctionSummarizer((
+        model,
+        context, {
+        cancelToken,
+      }) {
         final message = responseOf(
           '',
           stopReason: StopReason.error,
@@ -195,35 +210,37 @@ void main() {
           ErrorEvent(reason: StopReason.error, error: message),
         ]);
       }, model);
-      final result = await summarize(
-        const SummarizationRequest(prompt: 'P'),
-      );
+      final result = await summarize(const SummarizationRequest(prompt: 'P'));
       expect(result.isSuccess, isFalse);
       expect(result.error, contains('rate limited'));
       expect(result.isAborted, isFalse);
     });
 
     test('aborted stop reason maps to aborted failure', () async {
-      final summarize = streamFunctionSummarizer((model, context, {cancelToken}) {
+      final summarize = streamFunctionSummarizer((
+        model,
+        context, {
+        cancelToken,
+      }) {
         final message = responseOf('', stopReason: StopReason.aborted);
         return streamOf([
           StartEvent(partial: message),
           ErrorEvent(reason: StopReason.aborted, error: message),
         ]);
       }, model);
-      final result = await summarize(
-        const SummarizationRequest(prompt: 'P'),
-      );
+      final result = await summarize(const SummarizationRequest(prompt: 'P'));
       expect(result.isAborted, isTrue);
     });
 
     test('a throwing StreamFunction becomes a failure result', () async {
-      final summarize = streamFunctionSummarizer((model, context, {cancelToken}) {
+      final summarize = streamFunctionSummarizer((
+        model,
+        context, {
+        cancelToken,
+      }) {
         throw StateError('adapter exploded');
       }, model);
-      final result = await summarize(
-        const SummarizationRequest(prompt: 'P'),
-      );
+      final result = await summarize(const SummarizationRequest(prompt: 'P'));
       expect(result.isSuccess, isFalse);
       expect(result.error, contains('adapter exploded'));
     });
@@ -282,7 +299,9 @@ void main() {
       );
       expect(
         result.summary,
-        startsWith('HISTORY\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX'),
+        startsWith(
+          'HISTORY\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX',
+        ),
       );
       expect(fake.requests, hasLength(2));
       expect(fake.requests[1].prompt, contains(turnPrefixSummarizationPrompt));
@@ -300,15 +319,15 @@ void main() {
       );
       expect(
         result.summary,
-        startsWith('No prior history.\n\n---\n\n**Turn Context (split turn):**'),
+        startsWith(
+          'No prior history.\n\n---\n\n**Turn Context (split turn):**',
+        ),
       );
       expect(fake.requests, hasLength(1));
     });
 
     test('failure aborts the run: no partial summary returned', () async {
-      final fake = _FakeSummarizer([
-        SummarizationResult.failure('down'),
-      ]);
+      final fake = _FakeSummarizer([SummarizationResult.failure('down')]);
       final manager = CompactionManager(summarize: fake.call);
       expect(
         () => manager.compact(preparationOf()),
@@ -482,37 +501,40 @@ void main() {
       );
     });
 
-    test('orphaned previous firstKeptEntryId falls back past the compaction', () {
-      final manager = CompactionManager(
-        summarize: (_) async => SummarizationResult.success(''),
-      );
-      final path = [
-        CompactionRecord(
-          id: 'c1',
-          parentId: null,
-          timestamp: DateTime.utc(2026),
-          summary: 'OLD',
-          firstKeptEntryId: 'ghost',
-          tokensBefore: 10,
-        ),
-        recordOf('m1', bigUser('u1')),
-        recordOf('m2', bigUser('u2')),
-      ];
-      final preparation = manager.prepareCompaction(
-        path,
-        tokensBefore: 500,
-        settings: const CompactionSettings(
-          enabled: true,
-          reserveTokens: 16384,
-          keepRecentTokens: 50,
-        ),
-      )!;
-      // Boundary starts right after the compaction record; the cut keeps m2
-      // and summarizes m1.
-      expect(preparation.firstKeptEntryId, 'm2');
-      expect(preparation.previousSummary, 'OLD');
-      expect(preparation.messagesToSummarize, hasLength(1));
-    });
+    test(
+      'orphaned previous firstKeptEntryId falls back past the compaction',
+      () {
+        final manager = CompactionManager(
+          summarize: (_) async => SummarizationResult.success(''),
+        );
+        final path = [
+          CompactionRecord(
+            id: 'c1',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            summary: 'OLD',
+            firstKeptEntryId: 'ghost',
+            tokensBefore: 10,
+          ),
+          recordOf('m1', bigUser('u1')),
+          recordOf('m2', bigUser('u2')),
+        ];
+        final preparation = manager.prepareCompaction(
+          path,
+          tokensBefore: 500,
+          settings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 16384,
+            keepRecentTokens: 50,
+          ),
+        )!;
+        // Boundary starts right after the compaction record; the cut keeps m2
+        // and summarizes m1.
+        expect(preparation.firstKeptEntryId, 'm2');
+        expect(preparation.previousSummary, 'OLD');
+        expect(preparation.messagesToSummarize, hasLength(1));
+      },
+    );
 
     test('split turn preparation collects turn prefix messages', () {
       final manager = CompactionManager(
@@ -527,11 +549,7 @@ void main() {
           AssistantMessage(
             content: [
               const TextContent(text: 'thinking'),
-              ToolCall(
-                id: 'c1',
-                name: 'read',
-                arguments: {'path': '/x.dart'},
-              ),
+              ToolCall(id: 'c1', name: 'read', arguments: {'path': '/x.dart'}),
             ],
             api: 'openai-completions',
             provider: 'openrouter',

@@ -60,8 +60,13 @@ void main() {
   group('compactSession (full pipeline through a Session)', () {
     test('appends a CompactionRecord and rebuilds context around it', () async {
       final session = await sessionWithHistory();
-      final fake = _FakeSummarizer([SummarizationResult.success('THE SUMMARY')]);
-      final manager = CompactionManager(summarize: fake.call, settings: settings);
+      final fake = _FakeSummarizer([
+        SummarizationResult.success('THE SUMMARY'),
+      ]);
+      final manager = CompactionManager(
+        summarize: fake.call,
+        settings: settings,
+      );
 
       final record = await manager.compactSession(session);
 
@@ -96,32 +101,38 @@ void main() {
       expect(branch.whereType<CompactionRecord>(), hasLength(1));
     });
 
-    test('summarization failure is failure-safe: history fully preserved', () async {
-      final session = await sessionWithHistory();
-      final before = await session.getBranch();
-      final fake = _FakeSummarizer([
-        SummarizationResult.failure('provider exploded'),
-      ]);
-      final manager = CompactionManager(summarize: fake.call, settings: settings);
+    test(
+      'summarization failure is failure-safe: history fully preserved',
+      () async {
+        final session = await sessionWithHistory();
+        final before = await session.getBranch();
+        final fake = _FakeSummarizer([
+          SummarizationResult.failure('provider exploded'),
+        ]);
+        final manager = CompactionManager(
+          summarize: fake.call,
+          settings: settings,
+        );
 
-      expect(
-        () => manager.compactSession(session),
-        throwsA(
-          isA<CompactionException>().having(
-            (e) => e.code,
-            'code',
-            CompactionErrorCode.summarizationFailed,
+        expect(
+          () => manager.compactSession(session),
+          throwsA(
+            isA<CompactionException>().having(
+              (e) => e.code,
+              'code',
+              CompactionErrorCode.summarizationFailed,
+            ),
           ),
-        ),
-      );
+        );
 
-      // No compaction record appended; the branch is byte-identical.
-      final after = await session.getBranch();
-      expect(after.map((e) => e.id), before.map((e) => e.id));
-      expect(after.whereType<CompactionRecord>(), isEmpty);
-      final messages = await session.buildContextMessages();
-      expect(messages, hasLength(4));
-    });
+        // No compaction record appended; the branch is byte-identical.
+        final after = await session.getBranch();
+        expect(after.map((e) => e.id), before.map((e) => e.id));
+        expect(after.whereType<CompactionRecord>(), isEmpty);
+        final messages = await session.buildContextMessages();
+        expect(messages, hasLength(4));
+      },
+    );
 
     test('empty session: nothing to compact', () async {
       final session = await newSession();
@@ -138,7 +149,10 @@ void main() {
         SummarizationResult.success('FIRST'),
         SummarizationResult.success('SECOND'),
       ]);
-      final manager = CompactionManager(summarize: fake.call, settings: settings);
+      final manager = CompactionManager(
+        summarize: fake.call,
+        settings: settings,
+      );
 
       final first = await manager.compactSession(session);
       expect(first, isNotNull);
@@ -193,7 +207,10 @@ void main() {
       await session.appendMessage(UserMessage.text('u${'a' * 400}'));
       await session.appendMessage(_assistant('b' * 400));
       final fake = _FakeSummarizer([SummarizationResult.success('S')]);
-      final manager = CompactionManager(summarize: fake.call, settings: settings);
+      final manager = CompactionManager(
+        summarize: fake.call,
+        settings: settings,
+      );
 
       final record = await manager.compactSession(session);
       // tokensBefore = 42000 (usage) + trailing heuristic (101 + 100).

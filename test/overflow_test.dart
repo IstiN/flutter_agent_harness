@@ -167,41 +167,42 @@ void main() {
           'prompt is too long: 213462 tokens > 200000 maximum',
       'Anthropic HTTP 413':
           '413 {"error":{"type":"request_too_large","message":"Request '
-              'exceeds the maximum size"}}',
+          'exceeds the maximum size"}}',
       'Amazon Bedrock': 'input is too long for requested model',
       'OpenAI': 'Your input exceeds the context window of this model',
       'LiteLLM (no model prefix)':
           'Requested token count exceeds the maximum context length of '
-              '131072 tokens',
+          '131072 tokens',
       'LiteLLM (with the)':
           "exceeds the model's maximum context length of 65,536 tokens",
       'Google Gemini':
           'The input token count (1196265) exceeds the maximum number of '
-              'tokens allowed (1048575)',
+          'tokens allowed (1048575)',
       'xAI':
           "This model's maximum prompt length is 131072 but the request "
-              'contains 537812 tokens',
+          'contains 537812 tokens',
       'Groq': 'Please reduce the length of the messages or completion',
       'OpenRouter':
           "This endpoint's maximum context length is 64000 tokens. However, "
-              'you requested about 100000 tokens',
+          'you requested about 100000 tokens',
       'OpenRouter/Poolside':
           'Input length 131,393 exceeds the maximum allowed input length of '
-              '131,040 tokens.',
-      'GitHub Copilot': 'prompt token count of 200000 exceeds the limit of '
+          '131,040 tokens.',
+      'GitHub Copilot':
+          'prompt token count of 200000 exceeds the limit of '
           '128000',
       'llama.cpp':
           'the request exceeds the available context size, try increasing it',
       'LM Studio':
           'tokens to keep from the initial prompt is greater than the '
-              'context length',
+          'context length',
       'MiniMax': 'invalid params, context window exceeds limit',
       'Kimi For Coding':
           'Your request exceeded model token limit: 200000 (requested: '
-              '300000)',
+          '300000)',
       'Mistral':
           'Prompt contains 200000 tokens, too large for model with 128000 '
-              'maximum context length',
+          'maximum context length',
       'z.ai': 'model_context_window_exceeded',
       'Ollama (without max)': 'prompt too long; exceeded context length',
       'Generic context_length_exceeded': 'context_length_exceeded',
@@ -271,7 +272,10 @@ void main() {
     });
 
     test('silent overflow is not detected on non-stop reasons', () {
-      final message = stopMessage(900, 200).copyWith(stopReason: StopReason.toolUse);
+      final message = stopMessage(
+        900,
+        200,
+      ).copyWith(stopReason: StopReason.toolUse);
       expect(isContextOverflow(message, contextWindow: 1000), isFalse);
     });
 
@@ -281,9 +285,15 @@ void main() {
 
     test('length stop at 99% of the window counts as overflow', () {
       // 990 >= 1000 * 0.99
-      expect(isContextOverflow(lengthStopMessage(990, 0, 0), contextWindow: 1000), isTrue);
+      expect(
+        isContextOverflow(lengthStopMessage(990, 0, 0), contextWindow: 1000),
+        isTrue,
+      );
       // 989 < 1000 * 0.99
-      expect(isContextOverflow(lengthStopMessage(989, 0, 0), contextWindow: 1000), isFalse);
+      expect(
+        isContextOverflow(lengthStopMessage(989, 0, 0), contextWindow: 1000),
+        isFalse,
+      );
     });
   });
 }

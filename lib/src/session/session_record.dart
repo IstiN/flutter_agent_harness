@@ -500,9 +500,7 @@ final class CustomMessageRecord extends SessionRecord {
     'customType': customType,
     'content': content is String
         ? content
-        : [
-            for (final block in content as List<ContentBlock>) block.toJson(),
-          ],
+        : [for (final block in content as List<ContentBlock>) block.toJson()],
     'display': display,
     if (details != null) 'details': details,
   };

@@ -212,9 +212,7 @@ sealed class ContentBlock {
       'thinking' => ThinkingContent.fromJson(json),
       'toolCall' => ToolCall.fromJson(json),
       'image' => ImageContent.fromJson(json),
-      _ => throw FormatException(
-        'Unknown content block type: ${json['type']}',
-      ),
+      _ => throw FormatException('Unknown content block type: ${json['type']}'),
     };
   }
 }
@@ -368,7 +366,8 @@ final class ToolCall extends ContentBlock {
     id: json['id'] as String? ?? '',
     name: json['name'] as String? ?? '',
     arguments:
-        (json['arguments'] as Map<String, dynamic>?) ?? const <String, dynamic>{},
+        (json['arguments'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{},
     thoughtSignature: json['thoughtSignature'] as String?,
   );
 }
@@ -662,10 +661,7 @@ final class ThinkingEndEvent extends AssistantMessageEvent {
 
 /// A tool call started at [contentIndex].
 final class ToolCallStartEvent extends AssistantMessageEvent {
-  const ToolCallStartEvent({
-    required this.contentIndex,
-    required this.partial,
-  });
+  const ToolCallStartEvent({required this.contentIndex, required this.partial});
 
   /// Index into [AssistantMessage.content] of the block this event concerns.
   final int contentIndex;

@@ -92,7 +92,9 @@ final class MemoryFileSystem implements FileSystem {
     final result = await readTextFile(path);
     if (result.isErr) return Err(result.errorOrNull!);
     var content = result.valueOrNull!;
-    if (content.endsWith('\n')) content = content.substring(0, content.length - 1);
+    if (content.endsWith('\n')) {
+      content = content.substring(0, content.length - 1);
+    }
     final lines = content.isEmpty ? <String>[] : content.split('\n');
     if (maxLines != null && lines.length > maxLines) {
       return Ok(lines.sublist(0, maxLines));
@@ -104,12 +106,18 @@ final class MemoryFileSystem implements FileSystem {
   Future<Result<void, FileError>> writeFile(String path, String content) async {
     final resolved = _normalize(path);
     _ensureParents(resolved);
-    _files[resolved] = _MemoryFile(content, DateTime.now().millisecondsSinceEpoch);
+    _files[resolved] = _MemoryFile(
+      content,
+      DateTime.now().millisecondsSinceEpoch,
+    );
     return const Ok(null);
   }
 
   @override
-  Future<Result<void, FileError>> appendFile(String path, String content) async {
+  Future<Result<void, FileError>> appendFile(
+    String path,
+    String content,
+  ) async {
     final resolved = _normalize(path);
     _ensureParents(resolved);
     final existing = _files[resolved];
@@ -147,7 +155,11 @@ final class MemoryFileSystem implements FileSystem {
       );
     }
     return Err(
-      FileError(FileErrorCode.notFound, 'No such file or directory', path: resolved),
+      FileError(
+        FileErrorCode.notFound,
+        'No such file or directory',
+        path: resolved,
+      ),
     );
   }
 
@@ -156,7 +168,11 @@ final class MemoryFileSystem implements FileSystem {
     final resolved = _normalize(path);
     if (_files.containsKey(resolved)) {
       return Err(
-        FileError(FileErrorCode.notDirectory, 'Not a directory', path: resolved),
+        FileError(
+          FileErrorCode.notDirectory,
+          'Not a directory',
+          path: resolved,
+        ),
       );
     }
     if (!_dirs.contains(resolved)) {
@@ -202,7 +218,11 @@ final class MemoryFileSystem implements FileSystem {
       final parent = _parentOf(resolved);
       if (!_dirs.contains(parent)) {
         return Err(
-          FileError(FileErrorCode.notFound, 'Parent directory missing', path: resolved),
+          FileError(
+            FileErrorCode.notFound,
+            'Parent directory missing',
+            path: resolved,
+          ),
         );
       }
     }
@@ -223,7 +243,11 @@ final class MemoryFileSystem implements FileSystem {
     if (!isFile && !isDir) {
       if (force) return const Ok(null);
       return Err(
-        FileError(FileErrorCode.notFound, 'No such file or directory', path: resolved),
+        FileError(
+          FileErrorCode.notFound,
+          'No such file or directory',
+          path: resolved,
+        ),
       );
     }
     if (isFile) {
@@ -277,7 +301,8 @@ final class UnavailableShell implements Shell {
 ///
 /// The default shell is [UnavailableShell]; pass a custom [shell] to test
 /// shell-consuming code without spawning real processes.
-final class MemoryExecutionEnv extends MemoryFileSystem implements ExecutionEnv {
+final class MemoryExecutionEnv extends MemoryFileSystem
+    implements ExecutionEnv {
   /// Creates a [MemoryExecutionEnv] rooted at [cwd].
   MemoryExecutionEnv({super.cwd, this._shell = const UnavailableShell()});
 

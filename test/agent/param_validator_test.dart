@@ -56,17 +56,13 @@ void main() {
     });
 
     test('missing required parameter throws', () {
-      _expectInvalid(
-        const {},
-        const {
-          'type': 'object',
-          'properties': {
-            'path': {'type': 'string'},
-          },
-          'required': ['path'],
+      _expectInvalid(const {}, const {
+        'type': 'object',
+        'properties': {
+          'path': {'type': 'string'},
         },
-        expected: 'path',
-      );
+        'required': ['path'],
+      }, expected: 'path');
     });
 
     test('null value for required parameter throws', () {
@@ -99,29 +95,23 @@ void main() {
     });
 
     test('default value is injected for missing parameter', () {
-      final result = _validate(
-        const {},
-        const {
-          'type': 'object',
-          'properties': {
-            'encoding': {'type': 'string', 'default': 'utf-8'},
-          },
+      final result = _validate(const {}, const {
+        'type': 'object',
+        'properties': {
+          'encoding': {'type': 'string', 'default': 'utf-8'},
         },
-      );
+      });
       expect(result, {'encoding': 'utf-8'});
     });
 
     test('required parameter with default uses default when missing', () {
-      final result = _validate(
-        const {},
-        const {
-          'type': 'object',
-          'properties': {
-            'limit': {'type': 'integer', 'default': 10},
-          },
-          'required': ['limit'],
+      final result = _validate(const {}, const {
+        'type': 'object',
+        'properties': {
+          'limit': {'type': 'integer', 'default': 10},
         },
-      );
+        'required': ['limit'],
+      });
       expect(result, {'limit': 10});
     });
 
@@ -448,24 +438,18 @@ void main() {
       };
 
       test('valid nested object passes', () {
-        final result = _validate(
-          const {
-            'address': {'city': 'Berlin', 'zip': 10115},
-          },
-          schema,
-        );
+        final result = _validate(const {
+          'address': {'city': 'Berlin', 'zip': 10115},
+        }, schema);
         expect(result, {
           'address': {'city': 'Berlin', 'zip': 10115},
         });
       });
 
       test('nested coercion applies', () {
-        final result = _validate(
-          const {
-            'address': {'city': 'Berlin', 'zip': '10115'},
-          },
-          schema,
-        );
+        final result = _validate(const {
+          'address': {'city': 'Berlin', 'zip': '10115'},
+        }, schema);
         expect(result, {
           'address': {'city': 'Berlin', 'zip': 10115},
         });

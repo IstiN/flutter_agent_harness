@@ -3,9 +3,7 @@ import 'package:test/test.dart';
 
 /// Decodes [chunks] (each string is one arbitrarily-split chunk) into events.
 Future<List<ServerSentEvent>> decode(List<String> chunks) {
-  return Stream.fromIterable(chunks)
-      .transform(const SseDecoder())
-      .toList();
+  return Stream.fromIterable(chunks).transform(const SseDecoder()).toList();
 }
 
 void main() {

@@ -35,9 +35,7 @@ final class UserMessage implements Message {
     'role': role,
     'content': content is String
         ? content
-        : [
-            for (final block in content as List<ContentBlock>) block.toJson(),
-          ],
+        : [for (final block in content as List<ContentBlock>) block.toJson()],
     'timestamp': timestamp.millisecondsSinceEpoch,
   };
 

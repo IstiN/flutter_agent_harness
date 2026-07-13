@@ -55,6 +55,9 @@ fi
 echo "🔍 Running dart analyze..."
 dart analyze
 
+echo "🔍 Checking dart format..."
+dart format --output=none --set-exit-if-changed .
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. TESTS WITH COVERAGE
 # ═══════════════════════════════════════════════════════════════════════════

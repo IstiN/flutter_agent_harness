@@ -15,13 +15,20 @@ import 'execution_env.dart';
 FileError _toFileError(Object error, String path) {
   if (error is FileError) return error;
   if (error is PathNotFoundException) {
-    return FileError(FileErrorCode.notFound, error.message, path: path, cause: error);
+    return FileError(
+      FileErrorCode.notFound,
+      error.message,
+      path: path,
+      cause: error,
+    );
   }
   if (error is FileSystemException) {
     final osError = error.osError;
     if (osError != null) {
       // EPERM / EACCES on POSIX; ERROR_ACCESS_DENIED (5) on Windows.
-      if (osError.errorCode == 13 || osError.errorCode == 1 || osError.errorCode == 5) {
+      if (osError.errorCode == 13 ||
+          osError.errorCode == 1 ||
+          osError.errorCode == 5) {
         return FileError(
           FileErrorCode.permissionDenied,
           error.message,
@@ -31,12 +38,27 @@ FileError _toFileError(Object error, String path) {
       }
       // ENOTDIR on POSIX.
       if (osError.errorCode == 20) {
-        return FileError(FileErrorCode.notDirectory, error.message, path: path, cause: error);
+        return FileError(
+          FileErrorCode.notDirectory,
+          error.message,
+          path: path,
+          cause: error,
+        );
       }
     }
-    return FileError(FileErrorCode.unknown, error.message, path: path, cause: error);
+    return FileError(
+      FileErrorCode.unknown,
+      error.message,
+      path: path,
+      cause: error,
+    );
   }
-  return FileError(FileErrorCode.unknown, error.toString(), path: path, cause: error);
+  return FileError(
+    FileErrorCode.unknown,
+    error.toString(),
+    path: path,
+    cause: error,
+  );
 }
 
 /// Local-disk [FileSystem] backed by `dart:io`.
@@ -74,7 +96,11 @@ final class LocalFileSystem implements FileSystem {
       final stat = await FileStat.stat(resolved);
       if (stat.type == FileSystemEntityType.directory) {
         return Err(
-          FileError(FileErrorCode.isDirectory, 'Is a directory', path: resolved),
+          FileError(
+            FileErrorCode.isDirectory,
+            'Is a directory',
+            path: resolved,
+          ),
         );
       }
       return Ok(await File(resolved).readAsString());
@@ -92,10 +118,9 @@ final class LocalFileSystem implements FileSystem {
     final resolved = _resolve(path);
     try {
       final lines = <String>[];
-      final stream = File(resolved)
-          .openRead()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter());
+      final stream = File(
+        resolved,
+      ).openRead().transform(utf8.decoder).transform(const LineSplitter());
       await for (final line in stream) {
         lines.add(line);
         if (maxLines != null && lines.length >= maxLines) break;
@@ -119,7 +144,10 @@ final class LocalFileSystem implements FileSystem {
   }
 
   @override
-  Future<Result<void, FileError>> appendFile(String path, String content) async {
+  Future<Result<void, FileError>> appendFile(
+    String path,
+    String content,
+  ) async {
     final resolved = _resolve(path);
     try {
       await Directory(File(resolved).parent.path).create(recursive: true);
@@ -143,7 +171,11 @@ final class LocalFileSystem implements FileSystem {
       };
       if (kind == null) {
         return Err(
-          FileError(FileErrorCode.invalid, 'Unsupported file type', path: resolved),
+          FileError(
+            FileErrorCode.invalid,
+            'Unsupported file type',
+            path: resolved,
+          ),
         );
       }
       return Ok(
@@ -213,7 +245,11 @@ final class LocalFileSystem implements FileSystem {
       if (type == FileSystemEntityType.notFound) {
         if (force) return const Ok(null);
         return Err(
-          FileError(FileErrorCode.notFound, 'No such file or directory', path: resolved),
+          FileError(
+            FileErrorCode.notFound,
+            'No such file or directory',
+            path: resolved,
+          ),
         );
       }
       if (type == FileSystemEntityType.directory) {
@@ -225,7 +261,12 @@ final class LocalFileSystem implements FileSystem {
     } on Object catch (error) {
       if (error is FileSystemException && !recursive) {
         return Err(
-          FileError(FileErrorCode.invalid, error.message, path: resolved, cause: error),
+          FileError(
+            FileErrorCode.invalid,
+            error.message,
+            path: resolved,
+            cause: error,
+          ),
         );
       }
       return Err(_toFileError(error, resolved));
@@ -264,14 +305,22 @@ final class LocalShell implements Shell {
       );
     } on Object catch (error) {
       return Err(
-        ExecutionError(ExecutionErrorCode.spawnError, error.toString(), cause: error),
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          error.toString(),
+          cause: error,
+        ),
       );
     }
 
     final stdout = StringBuffer();
     final stderr = StringBuffer();
     ExecutionError? callbackError;
-    void collect(StringBuffer target, String chunk, void Function(String)? callback) {
+    void collect(
+      StringBuffer target,
+      String chunk,
+      void Function(String)? callback,
+    ) {
       target.write(chunk);
       if (callback == null) return;
       try {
@@ -286,12 +335,12 @@ final class LocalShell implements Shell {
       }
     }
 
-    final stdoutDone = process.stdout.transform(utf8.decoder).forEach(
-      (chunk) => collect(stdout, chunk, options?.onStdout),
-    );
-    final stderrDone = process.stderr.transform(utf8.decoder).forEach(
-      (chunk) => collect(stderr, chunk, options?.onStderr),
-    );
+    final stdoutDone = process.stdout
+        .transform(utf8.decoder)
+        .forEach((chunk) => collect(stdout, chunk, options?.onStdout));
+    final stderrDone = process.stderr
+        .transform(utf8.decoder)
+        .forEach((chunk) => collect(stderr, chunk, options?.onStderr));
 
     Timer? timer;
     var timedOut = false;
@@ -383,8 +432,10 @@ final class LocalExecutionEnv implements ExecutionEnv {
   Future<Result<bool, FileError>> exists(String path) => _fs.exists(path);
 
   @override
-  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) =>
-      _fs.createDir(path, recursive: recursive);
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _fs.createDir(path, recursive: recursive);
 
   @override
   Future<Result<void, FileError>> remove(

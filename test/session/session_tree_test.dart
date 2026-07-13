@@ -36,24 +36,27 @@ void main() {
       expect(await session.getLeafId(), id2);
     });
 
-    test('branching: two children from one parent have independent paths', () async {
-      final session = await newSession();
-      final root = await session.appendMessage(UserMessage.text('root'));
-      final branchA = await session.appendMessage(UserMessage.text('A'));
-      await session.moveTo(root);
-      final branchB = await session.appendMessage(UserMessage.text('B'));
+    test(
+      'branching: two children from one parent have independent paths',
+      () async {
+        final session = await newSession();
+        final root = await session.appendMessage(UserMessage.text('root'));
+        final branchA = await session.appendMessage(UserMessage.text('A'));
+        await session.moveTo(root);
+        final branchB = await session.appendMessage(UserMessage.text('B'));
 
-      final a = await session.getEntry(branchA);
-      final b = await session.getEntry(branchB);
-      expect(a?.parentId, root);
-      expect(b?.parentId, root);
+        final a = await session.getEntry(branchA);
+        final b = await session.getEntry(branchB);
+        expect(a?.parentId, root);
+        expect(b?.parentId, root);
 
-      final pathA = await session.getBranch(fromId: branchA);
-      final pathB = await session.getBranch(fromId: branchB);
-      expect(pathA.map((e) => e.id), [root, branchA]);
-      expect(pathB.map((e) => e.id), [root, branchB]);
-      expect(await session.getLeafId(), branchB);
-    });
+        final pathA = await session.getBranch(fromId: branchA);
+        final pathB = await session.getBranch(fromId: branchB);
+        expect(pathA.map((e) => e.id), [root, branchA]);
+        expect(pathB.map((e) => e.id), [root, branchB]);
+        expect(await session.getLeafId(), branchB);
+      },
+    );
 
     test('getChildren groups records by parentId', () async {
       final session = await newSession();
@@ -151,74 +154,90 @@ void main() {
       await session.moveTo(root);
       await session.appendMessage(UserMessage.text('B'));
       final messages = await session.buildContextMessages();
-      expect(
-        messages.map((m) => (m as UserMessage).content),
-        ['root', 'B'],
-      );
+      expect(messages.map((m) => (m as UserMessage).content), ['root', 'B']);
     });
 
-    test('compaction record replaces everything before firstKeptEntryId', () async {
-      final session = await newSession();
-      await session.appendMessage(UserMessage.text('old 1'));
-      final kept = await session.appendMessage(UserMessage.text('kept 1'));
-      await session.appendMessage(UserMessage.text('kept 2'));
-      await session.appendCompaction(
-        summary: 'summary of old',
-        firstKeptEntryId: kept,
-        tokensBefore: 9000,
-      );
-      await session.appendMessage(UserMessage.text('after'));
+    test(
+      'compaction record replaces everything before firstKeptEntryId',
+      () async {
+        final session = await newSession();
+        await session.appendMessage(UserMessage.text('old 1'));
+        final kept = await session.appendMessage(UserMessage.text('kept 1'));
+        await session.appendMessage(UserMessage.text('kept 2'));
+        await session.appendCompaction(
+          summary: 'summary of old',
+          firstKeptEntryId: kept,
+          tokensBefore: 9000,
+        );
+        await session.appendMessage(UserMessage.text('after'));
 
-      final messages = await session.buildContextMessages();
-      expect(messages, hasLength(4));
-      final first = (messages.first as UserMessage).content as String;
-      expect(first, startsWith(compactionSummaryPrefix));
-      expect(first, contains('summary of old'));
-      expect(
-        messages.skip(1).map((m) => (m as UserMessage).content),
-        ['kept 1', 'kept 2', 'after'],
-      );
-    });
+        final messages = await session.buildContextMessages();
+        expect(messages, hasLength(4));
+        final first = (messages.first as UserMessage).content as String;
+        expect(first, startsWith(compactionSummaryPrefix));
+        expect(first, contains('summary of old'));
+        expect(messages.skip(1).map((m) => (m as UserMessage).content), [
+          'kept 1',
+          'kept 2',
+          'after',
+        ]);
+      },
+    );
 
-    test('branch_summary records project into context as user messages', () async {
-      final session = await newSession();
-      final root = await session.appendMessage(UserMessage.text('root'));
-      await session.appendMessage(UserMessage.text('detour'));
-      await session.moveTo(root, summary: 'the detour did X');
-      final messages = await session.buildContextMessages();
-      final last = (messages.last as UserMessage).content as String;
-      expect(last, startsWith(branchSummaryPrefix));
-      expect(last, contains('the detour did X'));
-    });
+    test(
+      'branch_summary records project into context as user messages',
+      () async {
+        final session = await newSession();
+        final root = await session.appendMessage(UserMessage.text('root'));
+        await session.appendMessage(UserMessage.text('detour'));
+        await session.moveTo(root, summary: 'the detour did X');
+        final messages = await session.buildContextMessages();
+        final last = (messages.last as UserMessage).content as String;
+        expect(last, startsWith(branchSummaryPrefix));
+        expect(last, contains('the detour did X'));
+      },
+    );
 
-    test('custom_message projects into context; custom records do not', () async {
-      final session = await newSession();
-      await session.appendCustomMessageEntry(
-        customType: 'note',
-        content: 'a displayed note',
-        display: true,
-      );
-      await session.appendCustomEntry(customType: 'checkpoint', data: {'n': 1});
-      final messages = await session.buildContextMessages();
-      expect(messages, hasLength(1));
-      expect((messages.single as UserMessage).content, 'a displayed note');
-    });
+    test(
+      'custom_message projects into context; custom records do not',
+      () async {
+        final session = await newSession();
+        await session.appendCustomMessageEntry(
+          customType: 'note',
+          content: 'a displayed note',
+          display: true,
+        );
+        await session.appendCustomEntry(
+          customType: 'checkpoint',
+          data: {'n': 1},
+        );
+        final messages = await session.buildContextMessages();
+        expect(messages, hasLength(1));
+        expect((messages.single as UserMessage).content, 'a displayed note');
+      },
+    );
 
-    test('buildContext derives model, thinking level, and active tools', () async {
-      final session = await newSession();
-      await session.appendModelChange(provider: 'anthropic', modelId: 'claude');
-      await session.appendThinkingLevelChange('high');
-      await session.appendActiveToolsChange(const ['read', 'write']);
-      await session.appendMessage(UserMessage.text('hi'));
-      await session.appendMessage(assistant('hello'));
+    test(
+      'buildContext derives model, thinking level, and active tools',
+      () async {
+        final session = await newSession();
+        await session.appendModelChange(
+          provider: 'anthropic',
+          modelId: 'claude',
+        );
+        await session.appendThinkingLevelChange('high');
+        await session.appendActiveToolsChange(const ['read', 'write']);
+        await session.appendMessage(UserMessage.text('hi'));
+        await session.appendMessage(assistant('hello'));
 
-      final context = await session.buildContext();
-      expect(context.thinkingLevel, 'high');
-      expect(context.model?.provider, 'openrouter'); // assistant message wins
-      expect(context.model?.modelId, 'm1');
-      expect(context.activeToolNames, ['read', 'write']);
-      expect(context.messages, hasLength(2));
-    });
+        final context = await session.buildContext();
+        expect(context.thinkingLevel, 'high');
+        expect(context.model?.provider, 'openrouter'); // assistant message wins
+        expect(context.model?.modelId, 'm1');
+        expect(context.activeToolNames, ['read', 'write']);
+        expect(context.messages, hasLength(2));
+      },
+    );
 
     test('buildContext defaults when nothing was recorded', () async {
       final session = await newSession();

@@ -49,11 +49,7 @@ var _toolCallCounter = 0;
 /// Ported from pi's `GoogleOptions.thinking`.
 final class GoogleThinking {
   /// Creates a thinking configuration.
-  const GoogleThinking({
-    required this.enabled,
-    this.budgetTokens,
-    this.level,
-  });
+  const GoogleThinking({required this.enabled, this.budgetTokens, this.level});
 
   /// Whether thinking is enabled. When false on a reasoning model, the
   /// adapter sends the model-specific disable config (pi's
@@ -247,9 +243,7 @@ AssistantMessageEventStream streamGoogle(
           final error = chunk['error'];
           if (error is Map) {
             final message = error['message'];
-            throw StateError(
-              message is String ? message : jsonEncode(error),
-            );
+            throw StateError(message is String ? message : jsonEncode(error));
           }
 
           // Keep the first non-empty response id (pi: `output.responseId ||=
@@ -276,8 +270,7 @@ AssistantMessageEventStream streamGoogle(
                 if (text is String) {
                   final isThinking = rawPart['thought'] == true;
                   if (currentBlock == null ||
-                      (isThinking &&
-                          currentBlock is! ThinkingStreamingBlock) ||
+                      (isThinking && currentBlock is! ThinkingStreamingBlock) ||
                       (!isThinking && currentBlock is! TextStreamingBlock)) {
                     endCurrentBlock();
                     if (isThinking) {
@@ -351,8 +344,7 @@ AssistantMessageEventStream streamGoogle(
                             '_${_toolCallCounter += 1}'
                       : providedId;
 
-                  final arguments =
-                      functionCall['args'] is Map<String, dynamic>
+                  final arguments = functionCall['args'] is Map<String, dynamic>
                       ? functionCall['args'] as Map<String, dynamic>
                       : const <String, dynamic>{};
                   final block = ToolCallStreamingBlock(
@@ -376,12 +368,7 @@ AssistantMessageEventStream streamGoogle(
                       partial: state.snapshot(),
                     ),
                   );
-                  pushBlockEndEvent(
-                    eventStream,
-                    blocks,
-                    block,
-                    state.snapshot,
-                  );
+                  pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
                 }
               }
             }
@@ -579,9 +566,9 @@ String _normalizeToolCallId(String id) {
 }
 
 int? _getGeminiMajorVersion(String modelId) {
-  final match = RegExp(r'^gemini(?:-live)?-(\d+)').firstMatch(
-    modelId.toLowerCase(),
-  );
+  final match = RegExp(
+    r'^gemini(?:-live)?-(\d+)',
+  ).firstMatch(modelId.toLowerCase());
   if (match == null) {
     return null;
   }
