@@ -12,8 +12,10 @@
 /// - Tools are not self-executing here: pi's `AgentTool.execute` is replaced
 ///   by an injected [ToolExecutor] callback, and the provider adapter is an
 ///   injected [StreamFunction], so the loop is fully unit-testable without
-///   HTTP or a tool registry. Schema validation, argument preparation, and
-///   per-tool `executionMode` overrides arrive with the tool registry.
+///   HTTP or a tool registry. Schema validation and argument preparation
+///   live in the tool registry's executor adapter; the per-tool
+///   `executionMode` override is honored here when a [Context] tool is an
+///   [AgentTool].
 /// - Hooks (`beforeToolCall`/`afterToolCall`/`transformContext`/
 ///   `prepareNextTurn`) and steering/follow-up message queues are config
 ///   fields here, mirroring pi's `AgentLoopConfig`; the stateful `Agent`
@@ -39,6 +41,7 @@ import '../event_stream.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../types.dart';
+import 'agent_tool.dart';
 
 /// Provider adapter contract consumed by the agent loop.
 ///
@@ -958,8 +961,10 @@ Future<_ExecutedToolCallBatch> _failToolCallsFromTruncatedMessage(
 }
 
 /// Executes the tool calls of one assistant message. Port of pi's
-/// `executeToolCalls`, minus the per-tool `executionMode` override (that
-/// lives on pi's `AgentTool`, which arrives with the tool registry).
+/// `executeToolCalls`, including the per-tool `executionMode` override: if
+/// any called tool is an [AgentTool] with
+/// [AgentTool.executionMode] == [ToolExecutionMode.sequential], the whole
+/// batch runs sequentially (pi semantics).
 Future<_ExecutedToolCallBatch> _executeToolCalls(
   Context context,
   AssistantMessage assistantMessage,
@@ -969,7 +974,13 @@ Future<_ExecutedToolCallBatch> _executeToolCalls(
   CancelToken? cancelToken,
   AgentEventSink emit,
 ) {
-  return config.toolExecution == ToolExecutionMode.sequential
+  final hasSequentialToolCall = toolCalls.any((toolCall) {
+    final tool = _findTool(context, toolCall.name);
+    return tool is AgentTool &&
+        tool.executionMode == ToolExecutionMode.sequential;
+  });
+  return config.toolExecution == ToolExecutionMode.sequential ||
+          hasSequentialToolCall
       ? _executeToolCallsSequential(
           context,
           assistantMessage,

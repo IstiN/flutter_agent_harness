@@ -11,9 +11,10 @@
 ///   context (the no-context variant is a closure that ignores it).
 /// - pi's `convertToLlm` is absent: our messages are already LLM-shaped.
 /// - pi defaults `streamFn` to `streamSimple` and tools self-execute; here
-///   [Agent.streamFunction] and [Agent.toolExecutor] are required, matching
-///   the low-level loop's injection points. The tool registry (next card)
-///   will provide a real executor.
+///   [Agent.streamFunction] is required and tool execution is injected —
+///   either directly via [Agent.toolExecutor] or via a
+///   [ToolRegistry] (`Agent(toolRegistry: ...)`), which also seeds the tool
+///   list unless `tools` is passed explicitly.
 /// - pi's `sessionId`, `thinkingLevel`/`thinkingBudgets`, `transport`,
 ///   `onPayload`/`onResponse`, `getApiKey`, and `maxRetryDelayMs` arrive with
 ///   the provider-options work they belong to.
@@ -26,6 +27,15 @@ import '../context.dart';
 import '../model.dart';
 import '../types.dart';
 import 'agent_loop.dart';
+import 'tool_registry.dart';
+
+/// Thrown (as [ArgumentError]) when neither a tool executor nor a tool
+/// registry is provided to [Agent.new].
+Never _missingToolExecutor() {
+  throw ArgumentError(
+    'Agent requires either a toolExecutor or a toolRegistry.',
+  );
+}
 
 /// Controls how many queued messages are injected when the loop reaches a
 /// queue drain point. Ported from pi's `QueueMode`.
@@ -150,13 +160,19 @@ final class _ActiveRun {
 /// Port of pi's `Agent`.
 class Agent {
   /// Creates an agent. See the library doc for the pi mapping.
+  ///
+  /// [toolExecutor] is optional when a [toolRegistry] is provided: the
+  /// registry then supplies both the executor and (unless [tools] is given
+  /// explicitly) the tool list. Passing both [toolExecutor] and
+  /// [toolRegistry] is allowed; [toolExecutor] wins.
   Agent({
     Model? model,
     String? systemPrompt,
     List<Tool>? tools,
     List<Message>? messages,
     required this.streamFunction,
-    required this.toolExecutor,
+    ToolExecutor? toolExecutor,
+    ToolRegistry? toolRegistry,
     this.beforeToolCall,
     this.afterToolCall,
     this.transformContext,
@@ -164,10 +180,12 @@ class Agent {
     QueueMode steeringMode = QueueMode.oneAtATime,
     QueueMode followUpMode = QueueMode.oneAtATime,
     this.toolExecution = ToolExecutionMode.parallel,
-  }) : _state = AgentState(
+  }) : toolExecutor =
+           toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
+       _state = AgentState(
          model: model ?? _defaultModel,
          systemPrompt: systemPrompt ?? '',
-         tools: tools ?? const [],
+         tools: tools ?? toolRegistry?.tools ?? const [],
          messages: messages ?? const [],
        ),
        _steeringQueue = _PendingMessageQueue(steeringMode),
