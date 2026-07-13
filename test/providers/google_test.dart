@@ -394,7 +394,29 @@ void main() {
       expect(error.error.stopReason, StopReason.error);
       expect(error.error.errorMessage, contains('429'));
       expect(error.error.errorMessage, contains('Resource has been exhausted'));
+      expect(error.retryAfter, isNull);
       expect(await stream.result, same(error.error));
+    });
+
+    test('429 with Retry-After header surfaces the parsed duration', () async {
+      final client = http_testing.MockClient(
+        (request) async => http.Response(
+          '{"error":{"message":"Resource has been exhausted"}}',
+          429,
+          headers: {'retry-after': '60'},
+        ),
+      );
+
+      final stream = streamGoogle(
+        testModel,
+        simpleContext(),
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final error = (await stream.toList()).single as ErrorEvent;
+      expect(error.reason, StopReason.error);
+      expect(error.retryAfter, const Duration(seconds: 60));
     });
 
     test('in-stream provider error chunk becomes an error event', () async {

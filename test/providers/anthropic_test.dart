@@ -434,7 +434,29 @@ void main() {
       expect(error.error.stopReason, StopReason.error);
       expect(error.error.errorMessage, contains('429'));
       expect(error.error.errorMessage, contains('Rate limit exceeded'));
+      expect(error.retryAfter, isNull);
       expect(await stream.result, same(error.error));
+    });
+
+    test('429 with Retry-After header surfaces the parsed duration', () async {
+      final client = http_testing.MockClient(
+        (request) async => http.Response(
+          '{"error":{"message":"Rate limit exceeded"}}',
+          429,
+          headers: {'retry-after': '45'},
+        ),
+      );
+
+      final stream = streamAnthropic(
+        testModel,
+        simpleContext(),
+        const AnthropicOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final error = (await stream.toList()).single as ErrorEvent;
+      expect(error.reason, StopReason.error);
+      expect(error.retryAfter, const Duration(seconds: 45));
     });
 
     test('provider error SSE event becomes an error event', () async {

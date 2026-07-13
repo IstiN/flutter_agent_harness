@@ -86,13 +86,84 @@ final class AbortedError implements Exception {
 /// reporting (the Dart counterpart of the SDK error objects pi normalizes).
 final class ProviderHttpError implements Exception {
   /// Creates an HTTP error with [statusCode] and raw response [body].
-  const ProviderHttpError(this.statusCode, this.body);
+  ///
+  /// [retryAfter] is the provider-suggested wait parsed from the
+  /// `Retry-After` response header, when present and parseable.
+  const ProviderHttpError(this.statusCode, this.body, {this.retryAfter});
 
   /// The HTTP status code.
   final int statusCode;
 
   /// The raw response body.
   final String body;
+
+  /// The provider-suggested delay before retrying (parsed from the
+  /// `Retry-After` header), typically set on HTTP 429 responses.
+  final Duration? retryAfter;
+}
+
+/// Parses a `Retry-After` header value into a [Duration].
+///
+/// Supports both forms defined by RFC 9110 (and handled by pi's
+/// `getRetryAfterDelayMs`): delta-seconds (`"120"`) and an HTTP date
+/// (`"Wed, 21 Oct 2015 07:28:00 GMT"`, also ISO-8601 as a fallback). The
+/// result is clamped to be non-negative. Returns `null` for absent or
+/// unparseable values.
+Duration? parseRetryAfter(String? value, {DateTime? now}) {
+  if (value == null) {
+    return null;
+  }
+  final trimmed = value.trim();
+  final seconds = int.tryParse(trimmed);
+  if (seconds != null) {
+    return Duration(seconds: seconds < 0 ? 0 : seconds);
+  }
+  final date = _parseHttpDate(trimmed) ?? DateTime.tryParse(trimmed);
+  if (date == null) {
+    return null;
+  }
+  final delta = date.difference(now ?? DateTime.now());
+  return delta.isNegative ? Duration.zero : delta;
+}
+
+const _httpMonths = {
+  'jan': 1,
+  'feb': 2,
+  'mar': 3,
+  'apr': 4,
+  'may': 5,
+  'jun': 6,
+  'jul': 7,
+  'aug': 8,
+  'sep': 9,
+  'oct': 10,
+  'nov': 11,
+  'dec': 12,
+};
+
+final _httpDatePattern = RegExp(
+  r'^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$',
+);
+
+/// Parses the IMF-fixdate form of an HTTP date
+/// (`Wed, 21 Oct 2015 07:28:00 GMT`). Returns `null` for anything else.
+DateTime? _parseHttpDate(String value) {
+  final match = _httpDatePattern.firstMatch(value);
+  if (match == null) {
+    return null;
+  }
+  final month = _httpMonths[match[2]!.toLowerCase()];
+  if (month == null) {
+    return null;
+  }
+  return DateTime.utc(
+    int.parse(match[3]!),
+    month,
+    int.parse(match[1]!),
+    int.parse(match[4]!),
+    int.parse(match[5]!),
+    int.parse(match[6]!),
+  );
 }
 
 /// Composes the display string for an `ErrorEvent.errorMessage`.
@@ -145,7 +216,11 @@ Future<http.StreamedResponse> sendProviderRequest(
 
   if (response.statusCode != 200) {
     final body = await response.stream.bytesToString();
-    throw ProviderHttpError(response.statusCode, body);
+    throw ProviderHttpError(
+      response.statusCode,
+      body,
+      retryAfter: parseRetryAfter(response.headers['retry-after']),
+    );
   }
   return response;
 }
@@ -422,8 +497,15 @@ void pushStreamErrorEvent(
   state.errorMessage = aborted
       ? 'Request was aborted'
       : formatProviderError(error);
+  final retryAfter = !aborted && error is ProviderHttpError
+      ? error.retryAfter
+      : null;
   eventStream.push(
-    ErrorEvent(reason: reason, error: state.snapshot(finalize: true)),
+    ErrorEvent(
+      reason: reason,
+      error: state.snapshot(finalize: true),
+      retryAfter: retryAfter,
+    ),
   );
 }
 
