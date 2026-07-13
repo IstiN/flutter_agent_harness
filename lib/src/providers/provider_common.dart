@@ -231,12 +231,16 @@ sealed class StreamingBlock {
 
 /// Accumulating text content block.
 final class TextStreamingBlock extends StreamingBlock {
+  /// Provider-specific opaque signature for this block (Google
+  /// `thoughtSignature` on a text part), when reported.
+  String? textSignature;
+
   /// The accumulated text.
   final text = StringBuffer();
 
   @override
   ContentBlock toContentBlock({bool finalize = false}) {
-    return TextContent(text: text.toString());
+    return TextContent(text: text.toString(), textSignature: textSignature);
   }
 }
 
