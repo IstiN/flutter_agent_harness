@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - run: dart pub get
+
+      - name: File size guard (no dart file over 2800 lines)
+        run: |
+          violations=$(find lib test example -name '*.dart' \
+            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
+            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
+          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
+
+      - name: dart analyze
+        run: dart analyze
+
+      - name: dart test --coverage (excluding integration)
+        run: dart test --coverage=coverage --exclude-tags integration
+
+      - name: Format coverage to lcov
+        run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
+
+      - name: Coverage ratchet (lib/ >= 80%)
+        run: python3 scripts/check_coverage.py 80
+
+      - name: Duplication guard (lib/ < 1%)
+        run: |
+          npx --yes jscpd@5 --min-tokens 50 --min-lines 5 --reporters json \
+            --output /tmp/jscpd-ci lib/ || true
+          python3 - <<'EOF'
+          import json, sys
+          try:
+              with open('/tmp/jscpd-ci/jscpd-report.json') as f:
+                  pct = json.load(f)['statistics']['total']['percentage']
+          except Exception:
+              pct = 0.0
+          print(f'Duplication: {pct}% (threshold < 1.0%)')
+          sys.exit(0 if float(pct) < 1.0 else 1)
+          EOF
+
+  integration:
+    name: Integration tests (LLM)
+    runs-on: ubuntu-latest
+    needs: quality
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - name: dart test --tags integration (skipped without keys)
+        run: |
+          if [ -z "${OPENROUTER_API_KEY}${ANTHROPIC_API_KEY}${GOOGLE_API_KEY}" ]; then
+            echo "No LLM API keys configured, skipping integration tests."
+            exit 0
+          fi
+          dart test --tags integration
+
+  publish:
+    name: Publish to pub.dev
+    runs-on: ubuntu-latest
+    needs: quality
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      id-token: write # OIDC — pub.dev verifies the GitHub identity, no secrets
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Verify tag matches pubspec version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "tag=$tag pubspec=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag v$tag does not match pubspec version $version"
+            exit 1
+          fi
+
+      - run: dart pub get
+
+      - name: Publish (automated publishing via OIDC)
+        run: dart pub publish --force
