@@ -142,8 +142,11 @@ Before every publish:
    valid `LICENSE`, `topics`, up-to-date deps.
 4. Tag the release in git: `v<version>`.
 
-Publishing is a **human-triggered manual step** — agents never run
-`dart pub publish` themselves.
+Publishing normally happens via **Automated publishing (OIDC)** — pushing a
+`v<version>` tag triggers the GitHub Actions publish job, no secrets needed.
+Manual `dart pub publish` from an agent is allowed **only on explicit user
+instruction** (e.g. the first publish, which must exist before OIDC can be
+configured).
 
 ## Conventions
 
