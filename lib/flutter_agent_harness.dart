@@ -8,6 +8,9 @@ library;
 
 export 'src/agent/agent.dart';
 export 'src/agent/agent_loop.dart';
+export 'src/agent/agent_tool.dart';
+export 'src/agent/param_validator.dart';
+export 'src/agent/tool_registry.dart';
 export 'src/cancel_token.dart';
 export 'src/context.dart';
 export 'src/event_stream.dart';

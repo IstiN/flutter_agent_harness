@@ -128,8 +128,10 @@ Message messageFromJson(Map<String, dynamic> json) {
 /// A tool the model may invoke, with a JSON Schema for its parameters.
 ///
 /// Ported from pi's `Tool`. pi carries a TypeBox schema; here [parameters] is
-/// the equivalent plain JSON Schema map.
-final class Tool {
+/// the equivalent plain JSON Schema map. Declared `base` (rather than
+/// `final`) so the agent layer's `AgentTool` can extend it, mirroring pi's
+/// `interface AgentTool extends Tool`.
+base class Tool {
   const Tool({
     required this.name,
     required this.description,
