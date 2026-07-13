@@ -1,4 +1,4 @@
-import 'package:flutter_agent/flutter_agent.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Minimal example: cooperative cancellation with [CancelToken].
 Future<void> main() async {

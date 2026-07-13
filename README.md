@@ -1,4 +1,4 @@
-# flutter_agent
+# flutter_agent_harness
 
 Cross-platform AI agent harness for Dart and Flutter — streaming provider
 adapters, an agent loop with native tool calling, JSONL session persistence,
@@ -28,7 +28,7 @@ desktop/mobile, and web.
 ## Usage (current seed)
 
 ```dart
-import 'package:flutter_agent/flutter_agent.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 void main() async {
   final source = CancelTokenSource();

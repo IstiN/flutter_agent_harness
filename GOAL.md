@@ -1,4 +1,4 @@
-# GOAL — flutter_agent
+# GOAL — flutter_agent_harness
 
 ## Objective
 
