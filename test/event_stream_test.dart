@@ -121,15 +121,17 @@ void main() {
       expect(await stream.result, same(first));
     });
 
-    test('end without completion event completes result with StateError',
-        () async {
-      final stream = AssistantMessageEventStream()
-        ..push(StartEvent(partial: _message()))
-        ..end();
+    test(
+      'end without completion event completes result with StateError',
+      () async {
+        final stream = AssistantMessageEventStream()
+          ..push(StartEvent(partial: _message()))
+          ..end();
 
-      await expectLater(stream.toList(), completion(hasLength(1)));
-      await expectLater(stream.result, throwsStateError);
-    });
+        await expectLater(stream.toList(), completion(hasLength(1)));
+        await expectLater(stream.result, throwsStateError);
+      },
+    );
 
     test('createAssistantMessageEventStream factory works', () {
       expect(
@@ -198,9 +200,7 @@ void main() {
             partial: partials[5],
           ),
         )
-        ..push(
-          DoneEvent(reason: StopReason.toolUse, message: partials[5]),
-        )
+        ..push(DoneEvent(reason: StopReason.toolUse, message: partials[5]))
         ..end();
 
       final events = await stream.toList();

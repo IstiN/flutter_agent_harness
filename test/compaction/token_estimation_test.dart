@@ -118,7 +118,10 @@ void main() {
       );
       final messages = [
         UserMessage.text('a' * 100),
-        _assistant(content: [TextContent(text: 'b' * 100)], usage: usage),
+        _assistant(
+          content: [TextContent(text: 'b' * 100)],
+          usage: usage,
+        ),
         UserMessage.text('c' * 200),
       ];
       final estimate = estimateContextTokens(messages);

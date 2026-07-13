@@ -193,9 +193,9 @@ String serializeConversation(List<Message> messages) {
         final text = content is String
             ? content
             : (content as List<ContentBlock>)
-                .whereType<TextContent>()
-                .map((block) => block.text)
-                .join();
+                  .whereType<TextContent>()
+                  .map((block) => block.text)
+                  .join();
         if (text.isNotEmpty) parts.add('[User]: $text');
       case AssistantMessage(:final content):
         final textParts = <String>[];
@@ -209,7 +209,9 @@ String serializeConversation(List<Message> messages) {
               thinkingParts.add(thinking);
             case ToolCall(:final name, :final arguments):
               final args = arguments.entries
-                  .map((entry) => '${entry.key}=${_safeJsonEncode(entry.value)}')
+                  .map(
+                    (entry) => '${entry.key}=${_safeJsonEncode(entry.value)}',
+                  )
                   .join(', ');
               toolCalls.add('$name($args)');
             default:
@@ -299,13 +301,18 @@ void extractFileOpsFromMessage(Message message, FileOperations fileOps) {
 
 /// Format file lists as summary metadata tags. Ported from pi's
 /// `formatFileOperations`.
-String formatFileOperations(List<String> readFiles, List<String> modifiedFiles) {
+String formatFileOperations(
+  List<String> readFiles,
+  List<String> modifiedFiles,
+) {
   final sections = <String>[];
   if (readFiles.isNotEmpty) {
     sections.add('<read-files>\n${readFiles.join('\n')}\n</read-files>');
   }
   if (modifiedFiles.isNotEmpty) {
-    sections.add('<modified-files>\n${modifiedFiles.join('\n')}\n</modified-files>');
+    sections.add(
+      '<modified-files>\n${modifiedFiles.join('\n')}\n</modified-files>',
+    );
   }
   if (sections.isEmpty) return '';
   return '\n\n${sections.join('\n\n')}';
@@ -534,7 +541,10 @@ typedef SummarizeFn =
 /// user message and joins the response's text blocks. Error and aborted stop
 /// reasons map to failure results (errors-as-events contract); a throwing
 /// [StreamFunction] is defensive-converted into a failure.
-SummarizeFn streamFunctionSummarizer(StreamFunction streamFunction, Model model) {
+SummarizeFn streamFunctionSummarizer(
+  StreamFunction streamFunction,
+  Model model,
+) {
   return (SummarizationRequest request) async {
     try {
       final stream = streamFunction(
@@ -623,7 +633,9 @@ Future<String> generateSummary(
     ..write(serializeConversation(messages))
     ..write('\n</conversation>\n\n');
   if (previousSummary != null) {
-    prompt.write('<previous-summary>\n$previousSummary\n</previous-summary>\n\n');
+    prompt.write(
+      '<previous-summary>\n$previousSummary\n</previous-summary>\n\n',
+    );
   }
   prompt.write(basePrompt);
 
@@ -733,14 +745,15 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
     CustomMessageRecord(:final content, :final timestamp) => [
       UserMessage(content: content, timestamp: timestamp),
     ],
-    BranchSummaryRecord(:final summary, :final timestamp) => summary.isEmpty
-        ? const []
-        : [
-            UserMessage.text(
-              '$branchSummaryPrefix$summary$branchSummarySuffix',
-              timestamp: timestamp,
-            ),
-          ],
+    BranchSummaryRecord(:final summary, :final timestamp) =>
+      summary.isEmpty
+          ? const []
+          : [
+              UserMessage.text(
+                '$branchSummaryPrefix$summary$branchSummarySuffix',
+                timestamp: timestamp,
+              ),
+            ],
     // Compaction records themselves never enter a summary.
     _ => const [],
   };
@@ -826,24 +839,23 @@ final class CompactionManager {
       pathEntries.length,
       effectiveSettings.keepRecentTokens,
     );
-    final firstKeptEntryId =
-        pathEntries[cutPoint.firstKeptEntryIndex].id;
+    final firstKeptEntryId = pathEntries[cutPoint.firstKeptEntryIndex].id;
 
     final historyEnd = cutPoint.isSplitTurn
         ? cutPoint.turnStartIndex
         : cutPoint.firstKeptEntryIndex;
     final messagesToSummarize = <Message>[];
     for (var i = boundaryStart; i < historyEnd; i++) {
-      messagesToSummarize.addAll(
-        _entryToSummarizableMessages(pathEntries[i]),
-      );
+      messagesToSummarize.addAll(_entryToSummarizableMessages(pathEntries[i]));
     }
     final turnPrefixMessages = <Message>[];
     if (cutPoint.isSplitTurn) {
-      for (var i = cutPoint.turnStartIndex; i < cutPoint.firstKeptEntryIndex; i++) {
-        turnPrefixMessages.addAll(
-          _entryToSummarizableMessages(pathEntries[i]),
-        );
+      for (
+        var i = cutPoint.turnStartIndex;
+        i < cutPoint.firstKeptEntryIndex;
+        i++
+      ) {
+        turnPrefixMessages.addAll(_entryToSummarizableMessages(pathEntries[i]));
       }
     }
     for (final message in messagesToSummarize) {
@@ -894,7 +906,8 @@ final class CompactionManager {
         summarize: summarize,
         cancelToken: cancelToken,
       );
-      summary = '$history\n\n---\n\n**Turn Context (split turn):**\n\n$turnPrefix';
+      summary =
+          '$history\n\n---\n\n**Turn Context (split turn):**\n\n$turnPrefix';
     } else {
       summary = await generateSummary(
         preparation.messagesToSummarize,

@@ -69,7 +69,9 @@ ServerSentEvent? _decodeSseLine(String line, _SseDecoderState state) {
   }
 
   final delimiterIndex = line.indexOf(':');
-  final fieldName = delimiterIndex == -1 ? line : line.substring(0, delimiterIndex);
+  final fieldName = delimiterIndex == -1
+      ? line
+      : line.substring(0, delimiterIndex);
   var value = delimiterIndex == -1 ? '' : line.substring(delimiterIndex + 1);
   if (value.startsWith(' ')) {
     value = value.substring(1);

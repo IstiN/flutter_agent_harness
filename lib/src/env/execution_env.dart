@@ -207,7 +207,10 @@ abstract interface class FileSystem {
 
   /// Creates a directory. When [recursive] is true (the default), missing
   /// parents are created too.
-  Future<Result<void, FileError>> createDir(String path, {bool recursive = true});
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  });
 
   /// Removes a file or directory. With [force], a missing path is not an
   /// error.

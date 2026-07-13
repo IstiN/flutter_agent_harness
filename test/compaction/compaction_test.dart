@@ -10,7 +10,8 @@ MessageRecord _record(String id, Message message) {
   );
 }
 
-UserMessage _user(String id, int chars) => UserMessage.text('$id${'a' * chars}');
+UserMessage _user(String id, int chars) =>
+    UserMessage.text('$id${'a' * chars}');
 
 AssistantMessage _assistant(int chars, {List<ContentBlock>? content}) {
   return AssistantMessage(
@@ -53,10 +54,7 @@ void main() {
 
     test('compacts only when tokens exceed window minus reserve', () {
       // 100000 - 16384 = 83616; strictly greater required (pi semantics).
-      expect(
-        shouldCompact(83616, 100000, defaultCompactionSettings),
-        isFalse,
-      );
+      expect(shouldCompact(83616, 100000, defaultCompactionSettings), isFalse);
       expect(shouldCompact(83617, 100000, defaultCompactionSettings), isTrue);
     });
   });
@@ -250,26 +248,10 @@ void main() {
         _assistant(
           0,
           content: [
-            ToolCall(
-              id: '1',
-              name: 'read',
-              arguments: {'path': '/a.dart'},
-            ),
-            ToolCall(
-              id: '2',
-              name: 'write',
-              arguments: {'path': '/b.dart'},
-            ),
-            ToolCall(
-              id: '3',
-              name: 'edit',
-              arguments: {'path': '/c.dart'},
-            ),
-            ToolCall(
-              id: '4',
-              name: 'bash',
-              arguments: {'command': 'ls'},
-            ),
+            ToolCall(id: '1', name: 'read', arguments: {'path': '/a.dart'}),
+            ToolCall(id: '2', name: 'write', arguments: {'path': '/b.dart'}),
+            ToolCall(id: '3', name: 'edit', arguments: {'path': '/c.dart'}),
+            ToolCall(id: '4', name: 'bash', arguments: {'command': 'ls'}),
             ToolCall(id: '5', name: 'read', arguments: const {}),
           ],
         ),
@@ -318,7 +300,10 @@ void main() {
         summarizationSystemPrompt,
         startsWith('You are a context summarization assistant.'),
       );
-      expect(summarizationSystemPrompt, contains('Do NOT continue the conversation'));
+      expect(
+        summarizationSystemPrompt,
+        contains('Do NOT continue the conversation'),
+      );
     });
 
     test('structured prompt contains all pi sections', () {
@@ -337,13 +322,18 @@ void main() {
       }
       expect(
         summarizationPrompt,
-        contains('Preserve exact file paths, function names, and error messages.'),
+        contains(
+          'Preserve exact file paths, function names, and error messages.',
+        ),
       );
     });
 
     test('update prompt references the previous summary tags', () {
       expect(updateSummarizationPrompt, contains('<previous-summary>'));
-      expect(updateSummarizationPrompt, contains('PRESERVE all existing information'));
+      expect(
+        updateSummarizationPrompt,
+        contains('PRESERVE all existing information'),
+      );
     });
 
     test('turn prefix prompt describes the split-turn situation', () {

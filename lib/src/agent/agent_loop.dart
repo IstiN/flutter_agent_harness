@@ -562,9 +562,7 @@ AgentEventStream agentLoopContinue({
     throw const ConfigException('Cannot continue: no messages in context');
   }
   if (context.messages.last.role == 'assistant') {
-    throw const ConfigException(
-      'Cannot continue from message role: assistant',
-    );
+    throw const ConfigException('Cannot continue from message role: assistant');
   }
 
   final stream = AgentEventStream();
@@ -627,9 +625,7 @@ Future<List<Message>> runAgentLoopContinue({
     throw const ConfigException('Cannot continue: no messages in context');
   }
   if (context.messages.last.role == 'assistant') {
-    throw const ConfigException(
-      'Cannot continue from message role: assistant',
-    );
+    throw const ConfigException('Cannot continue from message role: assistant');
   }
 
   return _runAgentLoop(
@@ -864,7 +860,9 @@ Future<AssistantMessage> _streamAssistantResponse(
 
   // The provider stream closed without a terminal event (provider bug).
   const errorText = 'Provider stream ended without a terminal event';
-  final base = partialMessage ?? _terminalMessage(config.model, StopReason.error, errorText);
+  final base =
+      partialMessage ??
+      _terminalMessage(config.model, StopReason.error, errorText);
   return _finishWithoutStream(
     context,
     emit,
@@ -1038,7 +1036,12 @@ Future<_ExecutedToolCallBatch> _executeToolCallsSequential(
         context,
         assistantMessage,
         toolCall,
-        await _executePreparedToolCall(toolCall, toolExecutor, cancelToken, emit),
+        await _executePreparedToolCall(
+          toolCall,
+          toolExecutor,
+          cancelToken,
+          emit,
+        ),
         config,
         cancelToken,
       ),
@@ -1092,26 +1095,24 @@ Future<_ExecutedToolCallBatch> _executeToolCallsParallel(
       case _PreparedToolCall():
         // Executes concurrently; tool_execution_end is emitted in completion
         // order as each call settles.
-        pending.add(
-          () async {
-            final executed = await _executePreparedToolCall(
-              toolCall,
-              toolExecutor,
-              cancelToken,
-              emit,
-            );
-            final finalized = await _finalizeExecutedToolCall(
-              context,
-              assistantMessage,
-              toolCall,
-              executed,
-              config,
-              cancelToken,
-            );
-            await _emitToolExecutionEnd(finalized, emit);
-            return finalized;
-          }(),
-        );
+        pending.add(() async {
+          final executed = await _executePreparedToolCall(
+            toolCall,
+            toolExecutor,
+            cancelToken,
+            emit,
+          );
+          final finalized = await _finalizeExecutedToolCall(
+            context,
+            assistantMessage,
+            toolCall,
+            executed,
+            config,
+            cancelToken,
+          );
+          await _emitToolExecutionEnd(finalized, emit);
+          return finalized;
+        }());
     }
 
     if (cancelToken != null && cancelToken.isCancelled) break;
@@ -1163,9 +1164,7 @@ Future<_ToolCallPreparation> _prepareToolCall(
       }
       if (beforeResult != null && beforeResult.block) {
         return _ImmediateToolCall(
-          _errorToolResult(
-            beforeResult.reason ?? 'Tool execution was blocked',
-          ),
+          _errorToolResult(beforeResult.reason ?? 'Tool execution was blocked'),
           true,
         );
       }

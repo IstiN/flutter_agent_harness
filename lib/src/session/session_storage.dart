@@ -149,7 +149,11 @@ SessionHeader _parseHeaderLine(String line, String filePath) {
   try {
     parsed = jsonDecode(line);
   } on Object catch (error) {
-    _invalidSession(filePath, 'first line is not a valid session header', error);
+    _invalidSession(
+      filePath,
+      'first line is not a valid session header',
+      error,
+    );
   }
   if (parsed is! Map<String, dynamic>) {
     _invalidSession(filePath, 'first line is not a valid session header');
@@ -334,7 +338,10 @@ final class JsonlSessionStorage implements SessionStorage {
 
   @override
   Future<List<SessionRecord>> findEntries(String type) async {
-    return [for (final entry in _entries) if (entry.type == type) entry];
+    return [
+      for (final entry in _entries)
+        if (entry.type == type) entry,
+    ];
   }
 
   @override
@@ -366,6 +373,7 @@ final class JsonlSessionStorage implements SessionStorage {
     }
     return path;
   }
+
   @override
   Future<List<SessionRecord>> getEntries() async => [..._entries];
 }

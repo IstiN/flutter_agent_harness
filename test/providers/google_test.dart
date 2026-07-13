@@ -16,9 +16,8 @@ String googleChunk(Map<String, dynamic> json) {
 String sseBody(List<Object> parts) {
   return parts
       .map(
-        (part) => part is String
-            ? part
-            : googleChunk(part as Map<String, dynamic>),
+        (part) =>
+            part is String ? part : googleChunk(part as Map<String, dynamic>),
       )
       .join();
 }
@@ -73,7 +72,10 @@ void main() {
     test('streams text with live partial accumulation', () async {
       final client = sseClient(
         sseBody([
-          textChunk('Hel', usage: {'promptTokenCount': 10, 'totalTokenCount': 10}),
+          textChunk(
+            'Hel',
+            usage: {'promptTokenCount': 10, 'totalTokenCount': 10},
+          ),
           textChunk('lo'),
           textChunk(
             '',
@@ -135,79 +137,82 @@ void main() {
       expect(message.responseId, 'resp-1');
     });
 
-    test('streams thought parts as thinking with signature retention', () async {
-      final client = sseClient(
-        sseBody([
-          {
-            'candidates': [
-              {
-                'content': {
-                  'parts': [
-                    {
-                      'text': 'let me ',
-                      'thought': true,
-                      'thoughtSignature': 'c2lnMQ==',
-                    },
-                  ],
-                  'role': 'model',
+    test(
+      'streams thought parts as thinking with signature retention',
+      () async {
+        final client = sseClient(
+          sseBody([
+            {
+              'candidates': [
+                {
+                  'content': {
+                    'parts': [
+                      {
+                        'text': 'let me ',
+                        'thought': true,
+                        'thoughtSignature': 'c2lnMQ==',
+                      },
+                    ],
+                    'role': 'model',
+                  },
                 },
-              },
-            ],
-          },
-          {
-            'candidates': [
-              {
-                'content': {
-                  'parts': [
-                    {'text': 'think', 'thought': true},
-                  ],
-                  'role': 'model',
-                },
-              },
-            ],
-          },
-          textChunk('answer'),
-          textChunk(
-            '',
-            finishReason: 'STOP',
-            usage: {
-              'promptTokenCount': 10,
-              'candidatesTokenCount': 20,
-              'thoughtsTokenCount': 12,
-              'totalTokenCount': 42,
+              ],
             },
-          ),
-        ]),
-      );
+            {
+              'candidates': [
+                {
+                  'content': {
+                    'parts': [
+                      {'text': 'think', 'thought': true},
+                    ],
+                    'role': 'model',
+                  },
+                },
+              ],
+            },
+            textChunk('answer'),
+            textChunk(
+              '',
+              finishReason: 'STOP',
+              usage: {
+                'promptTokenCount': 10,
+                'candidatesTokenCount': 20,
+                'thoughtsTokenCount': 12,
+                'totalTokenCount': 42,
+              },
+            ),
+          ]),
+        );
 
-      final stream = streamGoogle(
-        testModel,
-        simpleContext(),
-        const GoogleOptions(apiKey: 'test-key'),
-        client,
-      );
+        final stream = streamGoogle(
+          testModel,
+          simpleContext(),
+          const GoogleOptions(apiKey: 'test-key'),
+          client,
+        );
 
-      final events = await stream.toList();
-      expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
-      final thinkingDeltas = events.whereType<ThinkingDeltaEvent>().toList();
-      expect(thinkingDeltas, hasLength(2));
-      final thinkingPartial =
-          thinkingDeltas[1].partial.content.first as ThinkingContent;
-      expect(thinkingPartial.thinking, 'let me think');
-      expect(
-        events.whereType<ThinkingEndEvent>().single.content,
-        'let me think',
-      );
+        final events = await stream.toList();
+        expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
+        final thinkingDeltas = events.whereType<ThinkingDeltaEvent>().toList();
+        expect(thinkingDeltas, hasLength(2));
+        final thinkingPartial =
+            thinkingDeltas[1].partial.content.first as ThinkingContent;
+        expect(thinkingPartial.thinking, 'let me think');
+        expect(
+          events.whereType<ThinkingEndEvent>().single.content,
+          'let me think',
+        );
 
-      final done = events.last as DoneEvent;
-      final thinking = done.message.content.first as ThinkingContent;
-      expect(thinking.thinking, 'let me think');
-      // Signature sent on the first delta is retained across the block.
-      expect(thinking.thinkingSignature, 'c2lnMQ==');
-      expect(done.message.content[1], isA<TextContent>());
-      expect(done.message.usage.reasoning, 12);
-      expect(done.message.usage.output, 32);
-    });
+        final done = events.last as DoneEvent;
+        final thinking = done.message.content.first as ThinkingContent;
+        expect(thinking.thinking, 'let me think');
+        // Signature sent on the first delta is retained across the block.
+        expect(thinking.thinkingSignature, 'c2lnMQ==');
+        expect(done.message.content[1], isA<TextContent>());
+        expect(done.message.usage.reasoning, 12);
+        expect(done.message.usage.output, 32);
+      },
+    );
 
     test('streams functionCall parts as tool calls', () async {
       final client = sseClient(
@@ -275,7 +280,10 @@ void main() {
                 'content': {
                   'parts': [
                     {
-                      'functionCall': {'name': 'ping', 'args': <String, dynamic>{}},
+                      'functionCall': {
+                        'name': 'ping',
+                        'args': <String, dynamic>{},
+                      },
                     },
                   ],
                   'role': 'model',
@@ -332,10 +340,7 @@ void main() {
       expect(message.usage.reasoning, 10);
       expect(message.usage.totalTokens, 200);
       // 60*0.3 + 60*2.5 + 40*0.03 per million tokens.
-      expect(
-        message.usage.cost.total,
-        closeTo((18 + 150 + 1.2) / 1e6, 1e-12),
-      );
+      expect(message.usage.cost.total, closeTo((18 + 150 + 1.2) / 1e6, 1e-12));
     });
 
     test('MAX_TOKENS finish reason maps to length', () async {
@@ -437,21 +442,24 @@ void main() {
       expect(error.error.errorMessage, contains('internal error'));
     });
 
-    test('malformed SSE data becomes an error event, not an exception', () async {
-      final client = sseClient('data: {not valid json\n\n');
+    test(
+      'malformed SSE data becomes an error event, not an exception',
+      () async {
+        final client = sseClient('data: {not valid json\n\n');
 
-      final stream = streamGoogle(
-        testModel,
-        simpleContext(),
-        const GoogleOptions(apiKey: 'test-key'),
-        client,
-      );
+        final stream = streamGoogle(
+          testModel,
+          simpleContext(),
+          const GoogleOptions(apiKey: 'test-key'),
+          client,
+        );
 
-      final events = await stream.toList();
-      final error = events.last as ErrorEvent;
-      expect(error.reason, StopReason.error);
-      expect(error.error.errorMessage, contains('Could not parse'));
-    });
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, contains('Could not parse'));
+      },
+    );
 
     test('network failure becomes an error event', () async {
       final client = http_testing.MockClient(
@@ -471,114 +479,123 @@ void main() {
       expect(error.error.errorMessage, contains('connection reset'));
     });
 
-    test('CancelToken abort mid-stream ends with aborted stop reason', () async {
-      final controller = StreamController<List<int>>();
-      var connectionClosed = false;
-      controller.onCancel = () => connectionClosed = true;
-      final client = http_testing.MockClient.streaming(
-        (request, body) async => http.StreamedResponse(
-          controller.stream,
-          200,
-          headers: {'content-type': 'text/event-stream'},
-        ),
-      );
-
-      final source = CancelTokenSource();
-      final stream = streamGoogle(
-        testModel,
-        simpleContext(),
-        GoogleOptions(apiKey: 'test-key', cancelToken: source.token),
-        client,
-      );
-
-      final events = <AssistantMessageEvent>[];
-      final consumed = stream.forEach(events.add);
-
-      controller.add(utf8.encode(sseBody([textChunk('partial')])));
-      await pumpEventQueue();
-      source.cancel();
-      await consumed;
-      unawaited(controller.close());
-      // Let the subscription-cancellation propagation settle.
-      await pumpEventQueue();
-
-      expect(connectionClosed, isTrue);
-      final error = events.last as ErrorEvent;
-      expect(error.reason, StopReason.aborted);
-      expect(error.error.stopReason, StopReason.aborted);
-      expect(error.error.errorMessage, contains('aborted'));
-      expect((error.error.content.single as TextContent).text, 'partial');
-      expect(await stream.result, same(error.error));
-    });
-
-    test('CancelToken abort before sending ends with aborted stop reason', () async {
-      var requestSent = false;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        requestSent = true;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
-          200,
+    test(
+      'CancelToken abort mid-stream ends with aborted stop reason',
+      () async {
+        final controller = StreamController<List<int>>();
+        var connectionClosed = false;
+        controller.onCancel = () => connectionClosed = true;
+        final client = http_testing.MockClient.streaming(
+          (request, body) async => http.StreamedResponse(
+            controller.stream,
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          ),
         );
-      });
 
-      final source = CancelTokenSource()..cancel();
-      final stream = streamGoogle(
-        testModel,
-        simpleContext(),
-        GoogleOptions(apiKey: 'test-key', cancelToken: source.token),
-        client,
-      );
-
-      final events = await stream.toList();
-      expect(requestSent, isFalse);
-      final error = events.last as ErrorEvent;
-      expect(error.reason, StopReason.aborted);
-    });
-
-    test('posts to {baseUrl}/models/{id}:streamGenerateContent?alt=sse', () async {
-      Uri? capturedUrl;
-      Map<String, String>? capturedHeaders;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedUrl = request.url;
-        capturedHeaders = request.headers;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
-          200,
+        final source = CancelTokenSource();
+        final stream = streamGoogle(
+          testModel,
+          simpleContext(),
+          GoogleOptions(apiKey: 'test-key', cancelToken: source.token),
+          client,
         );
-      });
 
-      final model = Model(
-        id: 'gemini-2.5-flash',
-        api: 'google-generative-ai',
-        provider: 'google',
-        baseUrl: 'https://proxy.example.com/v1beta',
-        contextWindow: 1000000,
-        maxTokens: 8192,
-        headers: const {'x-model': 'model-default', 'x-keep': 'keep'},
-      );
+        final events = <AssistantMessageEvent>[];
+        final consumed = stream.forEach(events.add);
 
-      final stream = streamGoogle(
-        model,
-        simpleContext(),
-        const GoogleOptions(
-          apiKey: 'test-key',
-          headers: {'x-custom': 'custom', 'x-model': null},
-        ),
-        client,
-      );
-      await stream.result;
+        controller.add(utf8.encode(sseBody([textChunk('partial')])));
+        await pumpEventQueue();
+        source.cancel();
+        await consumed;
+        unawaited(controller.close());
+        // Let the subscription-cancellation propagation settle.
+        await pumpEventQueue();
 
-      expect(
-        capturedUrl.toString(),
-        'https://proxy.example.com/v1beta/models/gemini-2.5-flash'
-        ':streamGenerateContent?alt=sse',
-      );
-      expect(capturedHeaders!['x-goog-api-key'], 'test-key');
-      expect(capturedHeaders!['content-type'], 'application/json');
-      expect(capturedHeaders!['x-keep'], 'keep');
-      expect(capturedHeaders!['x-custom'], 'custom');
-      expect(capturedHeaders!.containsKey('x-model'), isFalse);
-    });
+        expect(connectionClosed, isTrue);
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.aborted);
+        expect(error.error.stopReason, StopReason.aborted);
+        expect(error.error.errorMessage, contains('aborted'));
+        expect((error.error.content.single as TextContent).text, 'partial');
+        expect(await stream.result, same(error.error));
+      },
+    );
+
+    test(
+      'CancelToken abort before sending ends with aborted stop reason',
+      () async {
+        var requestSent = false;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          requestSent = true;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+            200,
+          );
+        });
+
+        final source = CancelTokenSource()..cancel();
+        final stream = streamGoogle(
+          testModel,
+          simpleContext(),
+          GoogleOptions(apiKey: 'test-key', cancelToken: source.token),
+          client,
+        );
+
+        final events = await stream.toList();
+        expect(requestSent, isFalse);
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.aborted);
+      },
+    );
+
+    test(
+      'posts to {baseUrl}/models/{id}:streamGenerateContent?alt=sse',
+      () async {
+        Uri? capturedUrl;
+        Map<String, String>? capturedHeaders;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedUrl = request.url;
+          capturedHeaders = request.headers;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+            200,
+          );
+        });
+
+        final model = Model(
+          id: 'gemini-2.5-flash',
+          api: 'google-generative-ai',
+          provider: 'google',
+          baseUrl: 'https://proxy.example.com/v1beta',
+          contextWindow: 1000000,
+          maxTokens: 8192,
+          headers: const {'x-model': 'model-default', 'x-keep': 'keep'},
+        );
+
+        final stream = streamGoogle(
+          model,
+          simpleContext(),
+          const GoogleOptions(
+            apiKey: 'test-key',
+            headers: {'x-custom': 'custom', 'x-model': null},
+          ),
+          client,
+        );
+        await stream.result;
+
+        expect(
+          capturedUrl.toString(),
+          'https://proxy.example.com/v1beta/models/gemini-2.5-flash'
+          ':streamGenerateContent?alt=sse',
+        );
+        expect(capturedHeaders!['x-goog-api-key'], 'test-key');
+        expect(capturedHeaders!['content-type'], 'application/json');
+        expect(capturedHeaders!['x-keep'], 'keep');
+        expect(capturedHeaders!['x-custom'], 'custom');
+        expect(capturedHeaders!.containsKey('x-model'), isFalse);
+      },
+    );
 
     test('missing API key becomes an error event', () async {
       final client = sseClient(sseBody([textChunk('hi')]));
@@ -595,209 +612,212 @@ void main() {
       expect(error.error.errorMessage, contains('No API key'));
     });
 
-    test('an x-goog-api-key option header satisfies auth without apiKey', () async {
-      Map<String, String>? capturedHeaders;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedHeaders = request.headers;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
-          200,
+    test(
+      'an x-goog-api-key option header satisfies auth without apiKey',
+      () async {
+        Map<String, String>? capturedHeaders;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedHeaders = request.headers;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+            200,
+          );
+        });
+
+        final stream = streamGoogle(
+          testModel,
+          simpleContext(),
+          const GoogleOptions(headers: {'x-goog-api-key': 'header-key'}),
+          client,
         );
-      });
+        await stream.result;
 
-      final stream = streamGoogle(
-        testModel,
-        simpleContext(),
-        const GoogleOptions(headers: {'x-goog-api-key': 'header-key'}),
-        client,
-      );
-      await stream.result;
+        expect(capturedHeaders!['x-goog-api-key'], 'header-key');
+      },
+    );
 
-      expect(capturedHeaders!['x-goog-api-key'], 'header-key');
-    });
+    test(
+      'builds the request payload from context, tools, and options',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        var onPayloadSeen = false;
+        var onResponseSeen = false;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+            200,
+          );
+        });
 
-    test('builds the request payload from context, tools, and options', () async {
-      Map<String, dynamic>? capturedBody;
-      var onPayloadSeen = false;
-      var onResponseSeen = false;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedBody =
-            jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
-          200,
-        );
-      });
-
-      final timestamp = DateTime.utc(2026);
-      final context = Context(
-        systemPrompt: 'You are helpful.',
-        messages: [
-          UserMessage.text('What is the weather?', timestamp: timestamp),
-          AssistantMessage(
-            content: const [
-              ThinkingContent(
-                thinking: 'hmm',
-                thinkingSignature: 'c2lnMQ==',
-              ),
-              TextContent(text: 'Let me check.'),
-              ToolCall(
-                id: 'call_1',
-                name: 'get_weather',
-                arguments: {'location': 'Paris'},
-                thoughtSignature: 'dG9vbHNpZw==',
-              ),
-            ],
-            api: 'google-generative-ai',
-            provider: 'google',
-            model: 'gemini-2.5-flash',
-            usage: Usage.zero,
-            stopReason: StopReason.toolUse,
-            timestamp: timestamp,
-          ),
-          ToolResultMessage(
-            toolCallId: 'call_1',
-            toolName: 'get_weather',
-            content: const [
-              TextContent(text: 'Sunny, 21C'),
-              ImageContent(data: 'aGk=', mimeType: 'image/png'),
-            ],
-            isError: false,
-            timestamp: timestamp,
-          ),
-          UserMessage(
-            content: const [
-              TextContent(text: 'And here is a picture:'),
-              ImageContent(data: 'aGk=', mimeType: 'image/png'),
-            ],
-            timestamp: timestamp,
-          ),
-        ],
-        tools: const [
-          Tool(
-            name: 'get_weather',
-            description: 'Get the weather',
-            parameters: {
-              'type': 'object',
-              'properties': {
-                'location': {'type': 'string'},
-              },
-              'required': ['location'],
-            },
-          ),
-        ],
-      );
-
-      final stream = streamGoogle(
-        testModel,
-        context,
-        GoogleOptions(
-          apiKey: 'test-key',
-          temperature: 0.2,
-          maxTokens: 512,
-          toolChoice: 'any',
-          thinking: const GoogleThinking(enabled: true, budgetTokens: 2048),
-          onPayload: (payload, model) {
-            onPayloadSeen = true;
-            return null;
-          },
-          onResponse: (statusCode, headers, model) {
-            onResponseSeen = true;
-            expect(statusCode, 200);
-          },
-        ),
-        client,
-      );
-      await stream.result;
-
-      expect(onPayloadSeen, isTrue);
-      expect(onResponseSeen, isTrue);
-      final body = capturedBody!;
-
-      expect(body['generationConfig'], {
-        'temperature': 0.2,
-        'maxOutputTokens': 512,
-        'thinkingConfig': {'includeThoughts': true, 'thinkingBudget': 2048},
-      });
-      expect(body['systemInstruction'], {
-        'parts': [
-          {'text': 'You are helpful.'},
-        ],
-      });
-      expect(body['toolConfig'], {
-        'functionCallingConfig': {'mode': 'ANY'},
-      });
-
-      final contents = body['contents'] as List;
-      expect(contents[0], {
-        'role': 'user',
-        'parts': [
-          {'text': 'What is the weather?'},
-        ],
-      });
-      expect(contents[1], {
-        'role': 'model',
-        'parts': [
-          {'thought': true, 'text': 'hmm', 'thoughtSignature': 'c2lnMQ=='},
-          {'text': 'Let me check.'},
-          {
-            'functionCall': {
-              'name': 'get_weather',
-              'args': {'location': 'Paris'},
-            },
-            'thoughtSignature': 'dG9vbHNpZw==',
-          },
-        ],
-      });
-      // Gemini 2.5 (< 3): images go in a separate user turn.
-      expect(contents[2], {
-        'role': 'user',
-        'parts': [
-          {
-            'functionResponse': {
-              'name': 'get_weather',
-              'response': {'output': 'Sunny, 21C'},
-            },
-          },
-        ],
-      });
-      expect(contents[3], {
-        'role': 'user',
-        'parts': [
-          {'text': 'Tool result image:'},
-          {
-            'inlineData': {'mimeType': 'image/png', 'data': 'aGk='},
-          },
-        ],
-      });
-      expect(contents[4], {
-        'role': 'user',
-        'parts': [
-          {'text': 'And here is a picture:'},
-          {
-            'inlineData': {'mimeType': 'image/png', 'data': 'aGk='},
-          },
-        ],
-      });
-
-      expect(body['tools'], [
-        {
-          'functionDeclarations': [
-            {
-              'name': 'get_weather',
-              'description': 'Get the weather',
-              'parametersJsonSchema': {
+        final timestamp = DateTime.utc(2026);
+        final context = Context(
+          systemPrompt: 'You are helpful.',
+          messages: [
+            UserMessage.text('What is the weather?', timestamp: timestamp),
+            AssistantMessage(
+              content: const [
+                ThinkingContent(thinking: 'hmm', thinkingSignature: 'c2lnMQ=='),
+                TextContent(text: 'Let me check.'),
+                ToolCall(
+                  id: 'call_1',
+                  name: 'get_weather',
+                  arguments: {'location': 'Paris'},
+                  thoughtSignature: 'dG9vbHNpZw==',
+                ),
+              ],
+              api: 'google-generative-ai',
+              provider: 'google',
+              model: 'gemini-2.5-flash',
+              usage: Usage.zero,
+              stopReason: StopReason.toolUse,
+              timestamp: timestamp,
+            ),
+            ToolResultMessage(
+              toolCallId: 'call_1',
+              toolName: 'get_weather',
+              content: const [
+                TextContent(text: 'Sunny, 21C'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              isError: false,
+              timestamp: timestamp,
+            ),
+            UserMessage(
+              content: const [
+                TextContent(text: 'And here is a picture:'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              timestamp: timestamp,
+            ),
+          ],
+          tools: const [
+            Tool(
+              name: 'get_weather',
+              description: 'Get the weather',
+              parameters: {
                 'type': 'object',
                 'properties': {
                   'location': {'type': 'string'},
                 },
                 'required': ['location'],
               },
+            ),
+          ],
+        );
+
+        final stream = streamGoogle(
+          testModel,
+          context,
+          GoogleOptions(
+            apiKey: 'test-key',
+            temperature: 0.2,
+            maxTokens: 512,
+            toolChoice: 'any',
+            thinking: const GoogleThinking(enabled: true, budgetTokens: 2048),
+            onPayload: (payload, model) {
+              onPayloadSeen = true;
+              return null;
+            },
+            onResponse: (statusCode, headers, model) {
+              onResponseSeen = true;
+              expect(statusCode, 200);
+            },
+          ),
+          client,
+        );
+        await stream.result;
+
+        expect(onPayloadSeen, isTrue);
+        expect(onResponseSeen, isTrue);
+        final body = capturedBody!;
+
+        expect(body['generationConfig'], {
+          'temperature': 0.2,
+          'maxOutputTokens': 512,
+          'thinkingConfig': {'includeThoughts': true, 'thinkingBudget': 2048},
+        });
+        expect(body['systemInstruction'], {
+          'parts': [
+            {'text': 'You are helpful.'},
+          ],
+        });
+        expect(body['toolConfig'], {
+          'functionCallingConfig': {'mode': 'ANY'},
+        });
+
+        final contents = body['contents'] as List;
+        expect(contents[0], {
+          'role': 'user',
+          'parts': [
+            {'text': 'What is the weather?'},
+          ],
+        });
+        expect(contents[1], {
+          'role': 'model',
+          'parts': [
+            {'thought': true, 'text': 'hmm', 'thoughtSignature': 'c2lnMQ=='},
+            {'text': 'Let me check.'},
+            {
+              'functionCall': {
+                'name': 'get_weather',
+                'args': {'location': 'Paris'},
+              },
+              'thoughtSignature': 'dG9vbHNpZw==',
             },
           ],
-        },
-      ]);
-    });
+        });
+        // Gemini 2.5 (< 3): images go in a separate user turn.
+        expect(contents[2], {
+          'role': 'user',
+          'parts': [
+            {
+              'functionResponse': {
+                'name': 'get_weather',
+                'response': {'output': 'Sunny, 21C'},
+              },
+            },
+          ],
+        });
+        expect(contents[3], {
+          'role': 'user',
+          'parts': [
+            {'text': 'Tool result image:'},
+            {
+              'inlineData': {'mimeType': 'image/png', 'data': 'aGk='},
+            },
+          ],
+        });
+        expect(contents[4], {
+          'role': 'user',
+          'parts': [
+            {'text': 'And here is a picture:'},
+            {
+              'inlineData': {'mimeType': 'image/png', 'data': 'aGk='},
+            },
+          ],
+        });
+
+        expect(body['tools'], [
+          {
+            'functionDeclarations': [
+              {
+                'name': 'get_weather',
+                'description': 'Get the weather',
+                'parametersJsonSchema': {
+                  'type': 'object',
+                  'properties': {
+                    'location': {'type': 'string'},
+                  },
+                  'required': ['location'],
+                },
+              },
+            ],
+          },
+        ]);
+      },
+    );
 
     test('consecutive tool results merge into one user turn', () async {
       Map<String, dynamic>? capturedBody;
@@ -858,72 +878,9 @@ void main() {
       ]);
     });
 
-    test('Gemini 3 keeps tool result images inside functionResponse.parts', () async {
-      Map<String, dynamic>? capturedBody;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedBody =
-            jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
-          200,
-        );
-      });
-
-      final model = Model(
-        id: 'gemini-3-pro',
-        api: 'google-generative-ai',
-        provider: 'google',
-        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-        reasoning: true,
-        input: const ['text', 'image'],
-        contextWindow: 1000000,
-        maxTokens: 65536,
-      );
-      final context = Context(
-        messages: [
-          ToolResultMessage(
-            toolCallId: 'call_1',
-            toolName: 'screenshot',
-            content: const [ImageContent(data: 'aGk=', mimeType: 'image/png')],
-            isError: false,
-            timestamp: DateTime.utc(2026),
-          ),
-        ],
-      );
-
-      final stream = streamGoogle(
-        model,
-        context,
-        const GoogleOptions(apiKey: 'test-key'),
-        client,
-      );
-      await stream.result;
-
-      final contents = capturedBody!['contents'] as List;
-      expect(contents, hasLength(1));
-      expect(contents[0], {
-        'role': 'user',
-        'parts': [
-          {
-            'functionResponse': {
-              'name': 'screenshot',
-              'response': {'output': '(see attached image)'},
-              'parts': [
-                {
-                  'inlineData': {'mimeType': 'image/png', 'data': 'aGk='},
-                },
-              ],
-            },
-          },
-        ],
-      });
-    });
-
-    test('thinking config variants and disable configs per model family', () async {
-      Future<Map<String, dynamic>?> captureThinkingConfig(
-        Model model,
-        GoogleThinking thinking,
-      ) async {
+    test(
+      'Gemini 3 keeps tool result images inside functionResponse.parts',
+      () async {
         Map<String, dynamic>? capturedBody;
         final client = http_testing.MockClient.streaming((request, body) async {
           capturedBody =
@@ -933,85 +890,159 @@ void main() {
             200,
           );
         });
-        await streamGoogle(
+
+        final model = Model(
+          id: 'gemini-3-pro',
+          api: 'google-generative-ai',
+          provider: 'google',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          reasoning: true,
+          input: const ['text', 'image'],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        );
+        final context = Context(
+          messages: [
+            ToolResultMessage(
+              toolCallId: 'call_1',
+              toolName: 'screenshot',
+              content: const [
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        );
+
+        final stream = streamGoogle(
           model,
-          simpleContext(),
-          GoogleOptions(apiKey: 'test-key', thinking: thinking),
+          context,
+          const GoogleOptions(apiKey: 'test-key'),
           client,
-        ).result;
-        final config =
-            capturedBody!['generationConfig'] as Map<String, dynamic>?;
-        return config?['thinkingConfig'] as Map<String, dynamic>?;
-      }
+        );
+        await stream.result;
 
-      Model modelWithId(String id) => Model(
-        id: id,
-        api: 'google-generative-ai',
-        provider: 'google',
-        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-        reasoning: true,
-        contextWindow: 1000000,
-        maxTokens: 65536,
-      );
+        final contents = capturedBody!['contents'] as List;
+        expect(contents, hasLength(1));
+        expect(contents[0], {
+          'role': 'user',
+          'parts': [
+            {
+              'functionResponse': {
+                'name': 'screenshot',
+                'response': {'output': '(see attached image)'},
+                'parts': [
+                  {
+                    'inlineData': {'mimeType': 'image/png', 'data': 'aGk='},
+                  },
+                ],
+              },
+            },
+          ],
+        });
+      },
+    );
 
-      // thinkingLevel wins over budgetTokens when both are set, per pi.
-      expect(
-        await captureThinkingConfig(
-          modelWithId('gemini-3-pro'),
-          const GoogleThinking(
-            enabled: true,
-            level: 'LOW',
-            budgetTokens: 2048,
+    test(
+      'thinking config variants and disable configs per model family',
+      () async {
+        Future<Map<String, dynamic>?> captureThinkingConfig(
+          Model model,
+          GoogleThinking thinking,
+        ) async {
+          Map<String, dynamic>? capturedBody;
+          final client = http_testing.MockClient.streaming((
+            request,
+            body,
+          ) async {
+            capturedBody =
+                jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+            return http.StreamedResponse(
+              Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+              200,
+            );
+          });
+          await streamGoogle(
+            model,
+            simpleContext(),
+            GoogleOptions(apiKey: 'test-key', thinking: thinking),
+            client,
+          ).result;
+          final config =
+              capturedBody!['generationConfig'] as Map<String, dynamic>?;
+          return config?['thinkingConfig'] as Map<String, dynamic>?;
+        }
+
+        Model modelWithId(String id) => Model(
+          id: id,
+          api: 'google-generative-ai',
+          provider: 'google',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          reasoning: true,
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        );
+
+        // thinkingLevel wins over budgetTokens when both are set, per pi.
+        expect(
+          await captureThinkingConfig(
+            modelWithId('gemini-3-pro'),
+            const GoogleThinking(
+              enabled: true,
+              level: 'LOW',
+              budgetTokens: 2048,
+            ),
           ),
-        ),
-        {'includeThoughts': true, 'thinkingLevel': 'LOW'},
-      );
-      // Gemini 3 Pro cannot disable thinking: lowest level, no includeThoughts.
-      expect(
-        await captureThinkingConfig(
-          modelWithId('gemini-3-pro'),
-          const GoogleThinking(enabled: false),
-        ),
-        {'thinkingLevel': 'LOW'},
-      );
-      expect(
-        await captureThinkingConfig(
-          modelWithId('gemini-3-flash'),
-          const GoogleThinking(enabled: false),
-        ),
-        {'thinkingLevel': 'MINIMAL'},
-      );
-      expect(
-        await captureThinkingConfig(
-          modelWithId('gemma-4'),
-          const GoogleThinking(enabled: false),
-        ),
-        {'thinkingLevel': 'MINIMAL'},
-      );
-      // Gemini 2.x disables via thinkingBudget = 0.
-      expect(
-        await captureThinkingConfig(
-          modelWithId('gemini-2.5-flash'),
-          const GoogleThinking(enabled: false),
-        ),
-        {'thinkingBudget': 0},
-      );
-      // Thinking options are ignored for non-reasoning models.
-      expect(
-        await captureThinkingConfig(
-          Model(
-            id: 'gemini-2.5-flash',
-            api: 'google-generative-ai',
-            provider: 'google',
-            baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-            contextWindow: 1000000,
-            maxTokens: 8192,
+          {'includeThoughts': true, 'thinkingLevel': 'LOW'},
+        );
+        // Gemini 3 Pro cannot disable thinking: lowest level, no includeThoughts.
+        expect(
+          await captureThinkingConfig(
+            modelWithId('gemini-3-pro'),
+            const GoogleThinking(enabled: false),
           ),
-          const GoogleThinking(enabled: true),
-        ),
-        isNull,
-      );
-    });
+          {'thinkingLevel': 'LOW'},
+        );
+        expect(
+          await captureThinkingConfig(
+            modelWithId('gemini-3-flash'),
+            const GoogleThinking(enabled: false),
+          ),
+          {'thinkingLevel': 'MINIMAL'},
+        );
+        expect(
+          await captureThinkingConfig(
+            modelWithId('gemma-4'),
+            const GoogleThinking(enabled: false),
+          ),
+          {'thinkingLevel': 'MINIMAL'},
+        );
+        // Gemini 2.x disables via thinkingBudget = 0.
+        expect(
+          await captureThinkingConfig(
+            modelWithId('gemini-2.5-flash'),
+            const GoogleThinking(enabled: false),
+          ),
+          {'thinkingBudget': 0},
+        );
+        // Thinking options are ignored for non-reasoning models.
+        expect(
+          await captureThinkingConfig(
+            Model(
+              id: 'gemini-2.5-flash',
+              api: 'google-generative-ai',
+              provider: 'google',
+              baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+              contextWindow: 1000000,
+              maxTokens: 8192,
+            ),
+            const GoogleThinking(enabled: true),
+          ),
+          isNull,
+        );
+      },
+    );
 
     test('useParameters sends sanitized legacy parameters schema', () async {
       Map<String, dynamic>? capturedBody;
@@ -1037,10 +1068,7 @@ void main() {
               },
               'type': 'object',
               'properties': {
-                'q': {
-                  r'$comment': 'the query',
-                  'type': 'string',
-                },
+                'q': {r'$comment': 'the query', 'type': 'string'},
               },
             },
           ),
@@ -1155,53 +1183,56 @@ void main() {
       });
     });
 
-    test('cross-provider thinking becomes plain text without signatures', () async {
-      Map<String, dynamic>? capturedBody;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedBody =
-            jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
-          200,
+    test(
+      'cross-provider thinking becomes plain text without signatures',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+            200,
+          );
+        });
+
+        final context = Context(
+          messages: [
+            AssistantMessage(
+              content: const [
+                ThinkingContent(
+                  thinking: 'other model thought',
+                  thinkingSignature: 'c2lnMQ==',
+                ),
+                TextContent(text: 'answer', textSignature: 'invalid sig!'),
+              ],
+              api: 'anthropic-messages',
+              provider: 'anthropic',
+              model: 'claude-sonnet-4-5',
+              usage: Usage.zero,
+              stopReason: StopReason.stop,
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
         );
-      });
 
-      final context = Context(
-        messages: [
-          AssistantMessage(
-            content: const [
-              ThinkingContent(
-                thinking: 'other model thought',
-                thinkingSignature: 'c2lnMQ==',
-              ),
-              TextContent(text: 'answer', textSignature: 'invalid sig!'),
-            ],
-            api: 'anthropic-messages',
-            provider: 'anthropic',
-            model: 'claude-sonnet-4-5',
-            usage: Usage.zero,
-            stopReason: StopReason.stop,
-            timestamp: DateTime.utc(2026),
-          ),
-        ],
-      );
+        final stream = streamGoogle(
+          testModel,
+          context,
+          const GoogleOptions(apiKey: 'test-key'),
+          client,
+        );
+        await stream.result;
 
-      final stream = streamGoogle(
-        testModel,
-        context,
-        const GoogleOptions(apiKey: 'test-key'),
-        client,
-      );
-      await stream.result;
-
-      final contents = capturedBody!['contents'] as List;
-      expect(contents[0], {
-        'role': 'model',
-        'parts': [
-          {'text': 'other model thought'},
-          {'text': 'answer'},
-        ],
-      });
-    });
+        final contents = capturedBody!['contents'] as List;
+        expect(contents[0], {
+          'role': 'model',
+          'parts': [
+            {'text': 'other model thought'},
+            {'text': 'answer'},
+          ],
+        });
+      },
+    );
   });
 }

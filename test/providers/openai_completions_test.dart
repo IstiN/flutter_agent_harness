@@ -18,7 +18,8 @@ String sseChunk(Map<String, dynamic> json) => 'data: ${jsonEncode(json)}\n\n';
 String sseBody(List<Object> parts) {
   return parts
       .map(
-        (part) => part is String ? part : sseChunk(part as Map<String, dynamic>),
+        (part) =>
+            part is String ? part : sseChunk(part as Map<String, dynamic>),
       )
       .join();
 }
@@ -54,9 +55,8 @@ final openRouterModel = Model(
   maxTokens: 64000,
 );
 
-Context simpleContext() => Context(
-  messages: [UserMessage.text('hi', timestamp: DateTime.utc(2026))],
-);
+Context simpleContext() =>
+    Context(messages: [UserMessage.text('hi', timestamp: DateTime.utc(2026))]);
 
 void main() {
   group('streamOpenAICompletions', () {
@@ -130,10 +130,7 @@ void main() {
                     {
                       'index': 0,
                       'id': 'call_1',
-                      'function': {
-                        'name': 'get_weather',
-                        'arguments': '{"loc',
-                      },
+                      'function': {'name': 'get_weather', 'arguments': '{"loc'},
                     },
                   ],
                 },
@@ -163,10 +160,7 @@ void main() {
           },
           {
             'choices': [
-              {
-                'delta': <String, dynamic>{},
-                'finish_reason': 'tool_calls',
-              },
+              {'delta': <String, dynamic>{}, 'finish_reason': 'tool_calls'},
             ],
           },
           'data: [DONE]\n\n',
@@ -186,8 +180,7 @@ void main() {
       final deltas = events.whereType<ToolCallDeltaEvent>().toList();
       expect(deltas, hasLength(2));
       expect(deltas[0].delta, '{"loc');
-      final firstPartial =
-          deltas[0].partial.content.single as ToolCall;
+      final firstPartial = deltas[0].partial.content.single as ToolCall;
       expect(firstPartial.partialArguments, '{"loc');
       expect(firstPartial.arguments, isEmpty);
 
@@ -314,10 +307,8 @@ void main() {
 
     test('429 becomes an error event, never an exception', () async {
       final client = http_testing.MockClient(
-        (request) async => http.Response(
-          '{"error":{"message":"Rate limit exceeded"}}',
-          429,
-        ),
+        (request) async =>
+            http.Response('{"error":{"message":"Rate limit exceeded"}}', 429),
       );
 
       final stream = streamOpenAICompletions(
@@ -362,8 +353,18 @@ void main() {
       final retryDate = DateTime.now().toUtc().add(const Duration(seconds: 45));
       const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       const months = [
-        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
       ];
       String two(int value) => value.toString().padLeft(2, '0');
       // IMF-fixdate (RFC 9110): "Wed, 21 Oct 2015 07:28:00 GMT".
@@ -393,21 +394,24 @@ void main() {
       expect(error.retryAfter!.inSeconds, lessThanOrEqualTo(45));
     });
 
-    test('malformed SSE data becomes an error event, not an exception', () async {
-      final client = sseClient('data: {not valid json\n\n');
+    test(
+      'malformed SSE data becomes an error event, not an exception',
+      () async {
+        final client = sseClient('data: {not valid json\n\n');
 
-      final stream = streamOpenAICompletions(
-        testModel,
-        simpleContext(),
-        const OpenAICompletionsOptions(apiKey: 'test-key'),
-        client,
-      );
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
 
-      final events = await stream.toList();
-      final error = events.last as ErrorEvent;
-      expect(error.reason, StopReason.error);
-      expect(error.error.errorMessage, isNotNull);
-    });
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, isNotNull);
+      },
+    );
 
     test('network failure becomes an error event', () async {
       final client = http_testing.MockClient(
@@ -439,10 +443,7 @@ void main() {
           },
           {
             'choices': [
-              {
-                'delta': <String, dynamic>{},
-                'finish_reason': 'content_filter',
-              },
+              {'delta': <String, dynamic>{}, 'finish_reason': 'content_filter'},
             ],
           },
           'data: [DONE]\n\n',
@@ -461,127 +462,124 @@ void main() {
       expect(error.reason, StopReason.error);
       expect(error.error.errorMessage, contains('content_filter'));
       // The partial content is still attached to the error message.
-      expect(
-        (error.error.content.single as TextContent).text,
-        'partial',
-      );
+      expect((error.error.content.single as TextContent).text, 'partial');
     });
 
-    test('stream ending without finish_reason becomes an error event', () async {
-      final client = sseClient(
-        sseChunk({
-          'choices': [
-            {
-              'delta': {'content': 'cut off'},
-            },
-          ],
-        }),
-      );
-
-      final stream = streamOpenAICompletions(
-        testModel,
-        simpleContext(),
-        const OpenAICompletionsOptions(apiKey: 'test-key'),
-        client,
-      );
-
-      final events = await stream.toList();
-      final error = events.last as ErrorEvent;
-      expect(error.reason, StopReason.error);
-      expect(error.error.errorMessage, contains('finish_reason'));
-    });
-
-    test('CancelToken abort mid-stream ends with aborted stop reason', () async {
-      final controller = StreamController<List<int>>();
-      var connectionClosed = false;
-      controller.onCancel = () => connectionClosed = true;
-      final client = http_testing.MockClient.streaming(
-        (request, body) async => http.StreamedResponse(
-          controller.stream,
-          200,
-          headers: {'content-type': 'text/event-stream'},
-        ),
-      );
-
-      final source = CancelTokenSource();
-      final stream = streamOpenAICompletions(
-        testModel,
-        simpleContext(),
-        OpenAICompletionsOptions(
-          apiKey: 'test-key',
-          cancelToken: source.token,
-        ),
-        client,
-      );
-
-      final events = <AssistantMessageEvent>[];
-      final consumed = stream.forEach(events.add);
-
-      controller.add(
-        utf8.encode(
+    test(
+      'stream ending without finish_reason becomes an error event',
+      () async {
+        final client = sseClient(
           sseChunk({
             'choices': [
               {
-                'delta': {'content': 'partial'},
+                'delta': {'content': 'cut off'},
               },
             ],
           }),
-        ),
-      );
-      await pumpEventQueue();
-      source.cancel();
-      await consumed;
-      unawaited(controller.close());
-      // Let the subscription-cancellation propagation settle.
-      await pumpEventQueue();
-
-      expect(connectionClosed, isTrue);
-      final error = events.last as ErrorEvent;
-      expect(error.reason, StopReason.aborted);
-      expect(error.error.stopReason, StopReason.aborted);
-      expect(error.error.errorMessage, contains('aborted'));
-      expect(
-        (error.error.content.single as TextContent).text,
-        'partial',
-      );
-      expect(await stream.result, same(error.error));
-    });
-
-    test('CancelToken abort before sending ends with aborted stop reason', () async {
-      var requestSent = false;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        requestSent = true;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(okSse)),
-          200,
         );
-      });
 
-      final source = CancelTokenSource()..cancel();
-      final stream = streamOpenAICompletions(
-        testModel,
-        simpleContext(),
-        OpenAICompletionsOptions(
-          apiKey: 'test-key',
-          cancelToken: source.token,
-        ),
-        client,
-      );
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
 
-      final events = await stream.toList();
-      expect(requestSent, isFalse);
-      final error = events.last as ErrorEvent;
-      expect(error.reason, StopReason.aborted);
-    });
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, contains('finish_reason'));
+      },
+    );
+
+    test(
+      'CancelToken abort mid-stream ends with aborted stop reason',
+      () async {
+        final controller = StreamController<List<int>>();
+        var connectionClosed = false;
+        controller.onCancel = () => connectionClosed = true;
+        final client = http_testing.MockClient.streaming(
+          (request, body) async => http.StreamedResponse(
+            controller.stream,
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          ),
+        );
+
+        final source = CancelTokenSource();
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          OpenAICompletionsOptions(
+            apiKey: 'test-key',
+            cancelToken: source.token,
+          ),
+          client,
+        );
+
+        final events = <AssistantMessageEvent>[];
+        final consumed = stream.forEach(events.add);
+
+        controller.add(
+          utf8.encode(
+            sseChunk({
+              'choices': [
+                {
+                  'delta': {'content': 'partial'},
+                },
+              ],
+            }),
+          ),
+        );
+        await pumpEventQueue();
+        source.cancel();
+        await consumed;
+        unawaited(controller.close());
+        // Let the subscription-cancellation propagation settle.
+        await pumpEventQueue();
+
+        expect(connectionClosed, isTrue);
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.aborted);
+        expect(error.error.stopReason, StopReason.aborted);
+        expect(error.error.errorMessage, contains('aborted'));
+        expect((error.error.content.single as TextContent).text, 'partial');
+        expect(await stream.result, same(error.error));
+      },
+    );
+
+    test(
+      'CancelToken abort before sending ends with aborted stop reason',
+      () async {
+        var requestSent = false;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          requestSent = true;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
+
+        final source = CancelTokenSource()..cancel();
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          OpenAICompletionsOptions(
+            apiKey: 'test-key',
+            cancelToken: source.token,
+          ),
+          client,
+        );
+
+        final events = await stream.toList();
+        expect(requestSent, isFalse);
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.aborted);
+      },
+    );
 
     test('baseUrl swap routes the request to the given base URL', () async {
       Uri? capturedUrl;
       final client = http_testing.MockClient.streaming((request, body) async {
         capturedUrl = request.url;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(okSse)),
-          200,
-        );
+        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
       });
 
       final stream = streamOpenAICompletions(
@@ -602,10 +600,7 @@ void main() {
       Map<String, String>? capturedHeaders;
       final client = http_testing.MockClient.streaming((request, body) async {
         capturedHeaders = request.headers;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(okSse)),
-          200,
-        );
+        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
       });
 
       final model = Model(
@@ -651,179 +646,179 @@ void main() {
       expect(error.error.errorMessage, contains('No API key'));
     });
 
-    test('builds the request payload from context, tools, and options', () async {
-      Map<String, dynamic>? capturedBody;
-      var onPayloadSeen = false;
-      var onResponseSeen = false;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedBody = jsonDecode(await body.bytesToString())
-            as Map<String, dynamic>;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(okSse)),
-          200,
-        );
-      });
+    test(
+      'builds the request payload from context, tools, and options',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        var onPayloadSeen = false;
+        var onResponseSeen = false;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
 
-      final timestamp = DateTime.utc(2026);
-      final context = Context(
-        systemPrompt: 'You are helpful.',
-        messages: [
-          UserMessage.text('What is the weather?', timestamp: timestamp),
-          AssistantMessage(
-            content: const [
-              TextContent(text: 'Let me check.'),
-              ToolCall(
-                id: 'call_1',
-                name: 'get_weather',
-                arguments: {'location': 'Paris'},
-              ),
-            ],
-            api: 'openai-completions',
-            provider: 'openai',
-            model: 'gpt-4o-mini',
-            usage: Usage.zero,
-            stopReason: StopReason.toolUse,
-            timestamp: timestamp,
-          ),
-          ToolResultMessage(
-            toolCallId: 'call_1',
-            toolName: 'get_weather',
-            content: const [TextContent(text: 'Sunny, 21C')],
-            isError: false,
-            timestamp: timestamp,
-          ),
-          UserMessage(
-            content: const [
-              TextContent(text: 'And here is a picture:'),
-              ImageContent(data: 'aGk=', mimeType: 'image/png'),
-            ],
-            timestamp: timestamp,
-          ),
-        ],
-        tools: const [
-          Tool(
-            name: 'get_weather',
-            description: 'Get the weather',
-            parameters: {
-              'type': 'object',
-              'properties': {
-                'location': {'type': 'string'},
+        final timestamp = DateTime.utc(2026);
+        final context = Context(
+          systemPrompt: 'You are helpful.',
+          messages: [
+            UserMessage.text('What is the weather?', timestamp: timestamp),
+            AssistantMessage(
+              content: const [
+                TextContent(text: 'Let me check.'),
+                ToolCall(
+                  id: 'call_1',
+                  name: 'get_weather',
+                  arguments: {'location': 'Paris'},
+                ),
+              ],
+              api: 'openai-completions',
+              provider: 'openai',
+              model: 'gpt-4o-mini',
+              usage: Usage.zero,
+              stopReason: StopReason.toolUse,
+              timestamp: timestamp,
+            ),
+            ToolResultMessage(
+              toolCallId: 'call_1',
+              toolName: 'get_weather',
+              content: const [TextContent(text: 'Sunny, 21C')],
+              isError: false,
+              timestamp: timestamp,
+            ),
+            UserMessage(
+              content: const [
+                TextContent(text: 'And here is a picture:'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              timestamp: timestamp,
+            ),
+          ],
+          tools: const [
+            Tool(
+              name: 'get_weather',
+              description: 'Get the weather',
+              parameters: {
+                'type': 'object',
+                'properties': {
+                  'location': {'type': 'string'},
+                },
               },
+            ),
+          ],
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          context,
+          OpenAICompletionsOptions(
+            apiKey: 'test-key',
+            temperature: 0.2,
+            maxTokens: 512,
+            toolChoice: 'auto',
+            onPayload: (payload, model) {
+              onPayloadSeen = true;
+              return null;
+            },
+            onResponse: (statusCode, headers, model) {
+              onResponseSeen = true;
+              expect(statusCode, 200);
             },
           ),
-        ],
-      );
+          client,
+        );
+        await stream.result;
 
-      final stream = streamOpenAICompletions(
-        testModel,
-        context,
-        OpenAICompletionsOptions(
-          apiKey: 'test-key',
-          temperature: 0.2,
-          maxTokens: 512,
-          toolChoice: 'auto',
-          onPayload: (payload, model) {
-            onPayloadSeen = true;
-            return null;
-          },
-          onResponse: (statusCode, headers, model) {
-            onResponseSeen = true;
-            expect(statusCode, 200);
-          },
-        ),
-        client,
-      );
-      await stream.result;
+        expect(onPayloadSeen, isTrue);
+        expect(onResponseSeen, isTrue);
+        final body = capturedBody!;
+        expect(body['model'], 'gpt-4o-mini');
+        expect(body['stream'], isTrue);
+        expect(body['stream_options'], {'include_usage': true});
+        expect(body['max_completion_tokens'], 512);
+        expect(body['temperature'], 0.2);
+        expect(body['tool_choice'], 'auto');
 
-      expect(onPayloadSeen, isTrue);
-      expect(onResponseSeen, isTrue);
-      final body = capturedBody!;
-      expect(body['model'], 'gpt-4o-mini');
-      expect(body['stream'], isTrue);
-      expect(body['stream_options'], {'include_usage': true});
-      expect(body['max_completion_tokens'], 512);
-      expect(body['temperature'], 0.2);
-      expect(body['tool_choice'], 'auto');
+        final messages = body['messages'] as List;
+        expect(messages[0], {'role': 'system', 'content': 'You are helpful.'});
+        expect(messages[1], {
+          'role': 'user',
+          'content': 'What is the weather?',
+        });
+        expect(messages[2], {
+          'role': 'assistant',
+          'content': 'Let me check.',
+          'tool_calls': [
+            {
+              'id': 'call_1',
+              'type': 'function',
+              'function': {
+                'name': 'get_weather',
+                'arguments': '{"location":"Paris"}',
+              },
+            },
+          ],
+        });
+        expect(messages[3], {
+          'role': 'tool',
+          'content': 'Sunny, 21C',
+          'tool_call_id': 'call_1',
+        });
+        expect(messages[4], {
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': 'And here is a picture:'},
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:image/png;base64,aGk='},
+            },
+          ],
+        });
 
-      final messages = body['messages'] as List;
-      expect(messages[0], {'role': 'system', 'content': 'You are helpful.'});
-      expect(messages[1], {
-        'role': 'user',
-        'content': 'What is the weather?',
-      });
-      expect(messages[2], {
-        'role': 'assistant',
-        'content': 'Let me check.',
-        'tool_calls': [
+        expect(body['tools'], [
           {
-            'id': 'call_1',
             'type': 'function',
             'function': {
               'name': 'get_weather',
-              'arguments': '{"location":"Paris"}',
-            },
-          },
-        ],
-      });
-      expect(messages[3], {
-        'role': 'tool',
-        'content': 'Sunny, 21C',
-        'tool_call_id': 'call_1',
-      });
-      expect(messages[4], {
-        'role': 'user',
-        'content': [
-          {'type': 'text', 'text': 'And here is a picture:'},
-          {
-            'type': 'image_url',
-            'image_url': {'url': 'data:image/png;base64,aGk='},
-          },
-        ],
-      });
-
-      expect(body['tools'], [
-        {
-          'type': 'function',
-          'function': {
-            'name': 'get_weather',
-            'description': 'Get the weather',
-            'parameters': {
-              'type': 'object',
-              'properties': {
-                'location': {'type': 'string'},
+              'description': 'Get the weather',
+              'parameters': {
+                'type': 'object',
+                'properties': {
+                  'location': {'type': 'string'},
+                },
               },
             },
+            'strict': false,
           },
-          'strict': false,
-        },
-      ]);
-    });
+        ]);
+      },
+    );
 
-    test('sends OpenRouter-style reasoning object for reasoning models', () async {
-      Map<String, dynamic>? capturedBody;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedBody = jsonDecode(await body.bytesToString())
-            as Map<String, dynamic>;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(okSse)),
-          200,
+    test(
+      'sends OpenRouter-style reasoning object for reasoning models',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
+
+        final stream = streamOpenAICompletions(
+          openRouterModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(
+            apiKey: 'test-key',
+            reasoningEffort: 'high',
+          ),
+          client,
         );
-      });
+        await stream.result;
 
-      final stream = streamOpenAICompletions(
-        openRouterModel,
-        simpleContext(),
-        const OpenAICompletionsOptions(
-          apiKey: 'test-key',
-          reasoningEffort: 'high',
-        ),
-        client,
-      );
-      await stream.result;
-
-      expect(capturedBody!['reasoning'], {'effort': 'high'});
-      expect(capturedBody!.containsKey('reasoning_effort'), isFalse);
-    });
+        expect(capturedBody!['reasoning'], {'effort': 'high'});
+        expect(capturedBody!.containsKey('reasoning_effort'), isFalse);
+      },
+    );
   });
 
   group('serialization round-trip', () {

@@ -229,32 +229,34 @@ void main() {
       expect(agent.state.isStreaming, isFalse);
     });
 
-    test('waitForIdle resolves only after agent_end listeners settle',
-        () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      final agent = _agentWith(fake);
-      final settle = Completer<void>();
-      var agentEndSeen = false;
-      agent.subscribe((event, _) async {
-        if (event is AgentEndEvent) {
-          agentEndSeen = true;
-          await settle.future;
+    test(
+      'waitForIdle resolves only after agent_end listeners settle',
+      () async {
+        final fake = _FakeStreamFunction([_textTurn('ok')]);
+        final agent = _agentWith(fake);
+        final settle = Completer<void>();
+        var agentEndSeen = false;
+        agent.subscribe((event, _) async {
+          if (event is AgentEndEvent) {
+            agentEndSeen = true;
+            await settle.future;
+          }
+        });
+
+        final run = agent.prompt('hi');
+        while (!agentEndSeen) {
+          await Future<void>.delayed(Duration.zero);
         }
-      });
+        // The agent_end event fired, but its listener has not settled: the run
+        // is not idle yet (pi semantics).
+        expect(agent.state.isStreaming, isTrue);
 
-      final run = agent.prompt('hi');
-      while (!agentEndSeen) {
-        await Future<void>.delayed(Duration.zero);
-      }
-      // The agent_end event fired, but its listener has not settled: the run
-      // is not idle yet (pi semantics).
-      expect(agent.state.isStreaming, isTrue);
-
-      settle.complete();
-      await run;
-      await agent.waitForIdle();
-      expect(agent.state.isStreaming, isFalse);
-    });
+        settle.complete();
+        await run;
+        await agent.waitForIdle();
+        expect(agent.state.isStreaming, isFalse);
+      },
+    );
 
     test('a second prompt after idle reuses the transcript', () async {
       final fake = _FakeStreamFunction([_textTurn('a1'), _textTurn('a2')]);
@@ -397,15 +399,12 @@ void main() {
       );
       expect(steeredIndex, greaterThan(turnEndIndex));
       expect(
-        events
-            .sublist(turnEndIndex, steeredIndex)
-            .whereType<TurnStartEvent>(),
+        events.sublist(turnEndIndex, steeredIndex).whereType<TurnStartEvent>(),
         hasLength(1),
       );
     });
 
-    test('one-at-a-time mode consumes one steering message per turn',
-        () async {
+    test('one-at-a-time mode consumes one steering message per turn', () async {
       final fake = _FakeStreamFunction([_textTurn('a1'), _textTurn('a2')]);
       final agent = _agentWith(fake);
 
@@ -425,31 +424,33 @@ void main() {
       expect((fake.contexts[1].messages.last as UserMessage).content, 's2');
     });
 
-    test('all mode drains every queued steering message at one boundary',
-        () async {
-      final fake = _FakeStreamFunction([_textTurn('a1')]);
-      final agent = Agent(
-        model: _model,
-        streamFunction: fake.call,
-        toolExecutor: _unusedExecutor,
-        steeringMode: QueueMode.all,
-      );
-      expect(agent.steeringMode, QueueMode.all);
+    test(
+      'all mode drains every queued steering message at one boundary',
+      () async {
+        final fake = _FakeStreamFunction([_textTurn('a1')]);
+        final agent = Agent(
+          model: _model,
+          streamFunction: fake.call,
+          toolExecutor: _unusedExecutor,
+          steeringMode: QueueMode.all,
+        );
+        expect(agent.steeringMode, QueueMode.all);
 
-      agent.steer(UserMessage.text('s1'));
-      agent.steer(UserMessage.text('s2'));
-      await agent.prompt('p');
+        agent.steer(UserMessage.text('s1'));
+        agent.steer(UserMessage.text('s2'));
+        await agent.prompt('p');
 
-      expect(fake.calls, 1);
-      expect(fake.contexts[0].messages.map((m) => m.role), [
-        'user',
-        'user',
-        'user',
-      ]);
+        expect(fake.calls, 1);
+        expect(fake.contexts[0].messages.map((m) => m.role), [
+          'user',
+          'user',
+          'user',
+        ]);
 
-      agent.steeringMode = QueueMode.oneAtATime;
-      expect(agent.steeringMode, QueueMode.oneAtATime);
-    });
+        agent.steeringMode = QueueMode.oneAtATime;
+        expect(agent.steeringMode, QueueMode.oneAtATime);
+      },
+    );
 
     test('steer after the run ended is picked up by the next run', () async {
       final fake = _FakeStreamFunction([_textTurn('a1'), _textTurn('a2')]);
@@ -467,10 +468,7 @@ void main() {
         'user',
         'user',
       ]);
-      expect(
-        (fake.contexts[1].messages.last as UserMessage).content,
-        's1',
-      );
+      expect((fake.contexts[1].messages.last as UserMessage).content, 's1');
     });
   });
 
@@ -513,40 +511,42 @@ void main() {
       expect(followUpIndex, greaterThan(turnEndIndex));
     });
 
-    test('follow-up queued during follow-up processing extends the run',
-        () async {
-      final fake = _FakeStreamFunction([
-        _textTurn('a1'),
-        _textTurn('a2'),
-        _textTurn('a3'),
-      ]);
-      final agent = _agentWith(fake);
-      var turnEnds = 0;
-      agent.subscribe((event, _) {
-        if (event is TurnEndEvent) {
-          turnEnds++;
-          if (turnEnds == 1) agent.followUp(UserMessage.text('f1'));
-          if (turnEnds == 2) agent.followUp(UserMessage.text('f2'));
-        }
-      });
+    test(
+      'follow-up queued during follow-up processing extends the run',
+      () async {
+        final fake = _FakeStreamFunction([
+          _textTurn('a1'),
+          _textTurn('a2'),
+          _textTurn('a3'),
+        ]);
+        final agent = _agentWith(fake);
+        var turnEnds = 0;
+        agent.subscribe((event, _) {
+          if (event is TurnEndEvent) {
+            turnEnds++;
+            if (turnEnds == 1) agent.followUp(UserMessage.text('f1'));
+            if (turnEnds == 2) agent.followUp(UserMessage.text('f2'));
+          }
+        });
 
-      await agent.prompt('p');
+        await agent.prompt('p');
 
-      expect(fake.calls, 3);
-      expect(fake.contexts[1].messages.map((m) => m.role), [
-        'user',
-        'assistant',
-        'user',
-      ]);
-      expect(fake.contexts[2].messages.map((m) => m.role), [
-        'user',
-        'assistant',
-        'user',
-        'assistant',
-        'user',
-      ]);
-      expect((fake.contexts[2].messages.last as UserMessage).content, 'f2');
-    });
+        expect(fake.calls, 3);
+        expect(fake.contexts[1].messages.map((m) => m.role), [
+          'user',
+          'assistant',
+          'user',
+        ]);
+        expect(fake.contexts[2].messages.map((m) => m.role), [
+          'user',
+          'assistant',
+          'user',
+          'assistant',
+          'user',
+        ]);
+        expect((fake.contexts[2].messages.last as UserMessage).content, 'f2');
+      },
+    );
 
     test('all mode drains every queued follow-up at once', () async {
       final fake = _FakeStreamFunction([_textTurn('a1'), _textTurn('a2')]);
@@ -582,100 +582,103 @@ void main() {
   });
 
   group('hooks', () {
-    test('beforeToolCall fires with pi context and can block with a reason',
-        () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather', {'city': 'Berlin'})]),
-        _textTurn('blocked handled'),
-      ]);
-      BeforeToolCallContext? seen;
-      CancelToken? seenToken;
-      CancelToken? executorToken;
-      var executed = false;
-      final agent = Agent(
-        model: _model,
-        streamFunction: fake.call,
-        toolExecutor: (toolCall, cancelToken, onUpdate) async {
-          executed = true;
-          executorToken = cancelToken;
-          return ToolExecutionResult.text('unused');
-        },
-        beforeToolCall: (context, cancelToken) {
-          seen = context;
-          seenToken = cancelToken;
-          return const BeforeToolCallResult(block: true, reason: 'not today');
-        },
-      );
-      agent.state.tools = [_tool('weather')];
+    test(
+      'beforeToolCall fires with pi context and can block with a reason',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([
+            _call('call-1', 'weather', {'city': 'Berlin'}),
+          ]),
+          _textTurn('blocked handled'),
+        ]);
+        BeforeToolCallContext? seen;
+        CancelToken? seenToken;
+        CancelToken? executorToken;
+        var executed = false;
+        final agent = Agent(
+          model: _model,
+          streamFunction: fake.call,
+          toolExecutor: (toolCall, cancelToken, onUpdate) async {
+            executed = true;
+            executorToken = cancelToken;
+            return ToolExecutionResult.text('unused');
+          },
+          beforeToolCall: (context, cancelToken) {
+            seen = context;
+            seenToken = cancelToken;
+            return const BeforeToolCallResult(block: true, reason: 'not today');
+          },
+        );
+        agent.state.tools = [_tool('weather')];
 
-      await agent.prompt('go');
+        await agent.prompt('go');
 
-      expect(executed, isFalse);
-      expect(seen, isNotNull);
-      expect(seen!.toolCall.id, 'call-1');
-      expect(seen!.toolCall.arguments, {'city': 'Berlin'});
-      expect(seen!.assistantMessage.stopReason, StopReason.toolUse);
-      expect(seen!.context.tools, isNotNull);
-      expect(seenToken, isNotNull);
+        expect(executed, isFalse);
+        expect(seen, isNotNull);
+        expect(seen!.toolCall.id, 'call-1');
+        expect(seen!.toolCall.arguments, {'city': 'Berlin'});
+        expect(seen!.assistantMessage.stopReason, StopReason.toolUse);
+        expect(seen!.context.tools, isNotNull);
+        expect(seenToken, isNotNull);
 
-      final toolResult = agent.state.messages
-          .whereType<ToolResultMessage>()
-          .single;
-      expect(toolResult.isError, isTrue);
-      expect(
-        (toolResult.content.single as TextContent).text,
-        'not today',
-      );
-      // The blocked result goes back to the model, which answers next turn.
-      expect(fake.calls, 2);
+        final toolResult = agent.state.messages
+            .whereType<ToolResultMessage>()
+            .single;
+        expect(toolResult.isError, isTrue);
+        expect((toolResult.content.single as TextContent).text, 'not today');
+        // The blocked result goes back to the model, which answers next turn.
+        expect(fake.calls, 2);
 
-      // A later unblocked run shows the hook receives the run's cancel token.
-      seen = null;
-      final fake2 = _FakeStreamFunction([
-        _toolTurn([_call('call-2', 'weather')]),
-        _textTurn('ok'),
-      ]);
-      final agent2 = Agent(
-        model: _model,
-        streamFunction: fake2.call,
-        toolExecutor: (toolCall, cancelToken, onUpdate) async {
-          executorToken = cancelToken;
-          return ToolExecutionResult.text('ok');
-        },
-        beforeToolCall: (context, cancelToken) {
-          seenToken = cancelToken;
-          return null;
-        },
-      );
-      agent2.state.tools = [_tool('weather')];
-      await agent2.prompt('go');
-      expect(seenToken, same(executorToken));
-    });
+        // A later unblocked run shows the hook receives the run's cancel token.
+        seen = null;
+        final fake2 = _FakeStreamFunction([
+          _toolTurn([_call('call-2', 'weather')]),
+          _textTurn('ok'),
+        ]);
+        final agent2 = Agent(
+          model: _model,
+          streamFunction: fake2.call,
+          toolExecutor: (toolCall, cancelToken, onUpdate) async {
+            executorToken = cancelToken;
+            return ToolExecutionResult.text('ok');
+          },
+          beforeToolCall: (context, cancelToken) {
+            seenToken = cancelToken;
+            return null;
+          },
+        );
+        agent2.state.tools = [_tool('weather')];
+        await agent2.prompt('go');
+        expect(seenToken, same(executorToken));
+      },
+    );
 
-    test('beforeToolCall block without a reason uses the default message',
-        () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather')]),
-        _textTurn('ok'),
-      ]);
-      final agent = Agent(
-        model: _model,
-        streamFunction: fake.call,
-        toolExecutor: _unusedExecutor,
-        beforeToolCall: (_, _) => const BeforeToolCallResult(block: true),
-      );
-      agent.state.tools = [_tool('weather')];
+    test(
+      'beforeToolCall block without a reason uses the default message',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([_call('call-1', 'weather')]),
+          _textTurn('ok'),
+        ]);
+        final agent = Agent(
+          model: _model,
+          streamFunction: fake.call,
+          toolExecutor: _unusedExecutor,
+          beforeToolCall: (_, _) => const BeforeToolCallResult(block: true),
+        );
+        agent.state.tools = [_tool('weather')];
 
-      await agent.prompt('go');
+        await agent.prompt('go');
 
-      final toolResult = agent.state.messages
-          .whereType<ToolResultMessage>()
-          .single;
-      expect(
-        (toolResult.content.single as TextContent).text,
-        'Tool execution was blocked',
-      );
-    });
+        final toolResult = agent.state.messages
+            .whereType<ToolResultMessage>()
+            .single;
+        expect(
+          (toolResult.content.single as TextContent).text,
+          'Tool execution was blocked',
+        );
+      },
+    );
 
     test('beforeToolCall throwing becomes an error tool result', () async {
       final fake = _FakeStreamFunction([
@@ -708,43 +711,45 @@ void main() {
       expect(fake.calls, 2);
     });
 
-    test('beforeToolCall aborting the run yields an aborted tool result',
-        () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather')]),
-        _textTurn('unreachable'),
-      ]);
-      late final Agent agent;
-      var executed = false;
-      agent = Agent(
-        model: _model,
-        streamFunction: fake.call,
-        toolExecutor: (_, _, _) async {
-          executed = true;
-          return ToolExecutionResult.text('unused');
-        },
-        beforeToolCall: (context, cancelToken) {
-          agent.abort();
-          return null;
-        },
-      );
-      agent.state.tools = [_tool('weather')];
+    test(
+      'beforeToolCall aborting the run yields an aborted tool result',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([_call('call-1', 'weather')]),
+          _textTurn('unreachable'),
+        ]);
+        late final Agent agent;
+        var executed = false;
+        agent = Agent(
+          model: _model,
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async {
+            executed = true;
+            return ToolExecutionResult.text('unused');
+          },
+          beforeToolCall: (context, cancelToken) {
+            agent.abort();
+            return null;
+          },
+        );
+        agent.state.tools = [_tool('weather')];
 
-      await agent.prompt('go');
+        await agent.prompt('go');
 
-      expect(executed, isFalse);
-      final toolResult = agent.state.messages
-          .whereType<ToolResultMessage>()
-          .single;
-      expect(toolResult.isError, isTrue);
-      expect(
-        (toolResult.content.single as TextContent).text,
-        'Operation aborted',
-      );
-      // No further provider call: the next turn short-circuits on the
-      // cancelled token.
-      expect(fake.calls, 1);
-    });
+        expect(executed, isFalse);
+        final toolResult = agent.state.messages
+            .whereType<ToolResultMessage>()
+            .single;
+        expect(toolResult.isError, isTrue);
+        expect(
+          (toolResult.content.single as TextContent).text,
+          'Operation aborted',
+        );
+        // No further provider call: the next turn short-circuits on the
+        // cancelled token.
+        expect(fake.calls, 1);
+      },
+    );
 
     test('afterToolCall can replace content and force termination', () async {
       final fake = _FakeStreamFunction([
@@ -771,19 +776,13 @@ void main() {
       expect(seen, isNotNull);
       expect(seen!.toolCall.id, 'call-1');
       expect(seen!.isError, isFalse);
-      expect(
-        (seen!.result.content.single as TextContent).text,
-        'raw',
-      );
+      expect((seen!.result.content.single as TextContent).text, 'raw');
 
       final toolResult = agent.state.messages
           .whereType<ToolResultMessage>()
           .single;
       expect(toolResult.isError, isFalse);
-      expect(
-        (toolResult.content.single as TextContent).text,
-        'rewritten',
-      );
+      expect((toolResult.content.single as TextContent).text, 'rewritten');
       // terminate: true stopped the loop after the tool batch.
       expect(fake.calls, 1);
     });
@@ -837,33 +836,33 @@ void main() {
       );
     });
 
-    test('transformContext rewrites provider input, not the transcript',
-        () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      final agent = Agent(
-        model: _model,
-        streamFunction: fake.call,
-        toolExecutor: _unusedExecutor,
-        transformContext: (messages, cancelToken) async {
-          return [...messages, UserMessage.text('INJECTED')];
-        },
-      );
+    test(
+      'transformContext rewrites provider input, not the transcript',
+      () async {
+        final fake = _FakeStreamFunction([_textTurn('ok')]);
+        final agent = Agent(
+          model: _model,
+          streamFunction: fake.call,
+          toolExecutor: _unusedExecutor,
+          transformContext: (messages, cancelToken) async {
+            return [...messages, UserMessage.text('INJECTED')];
+          },
+        );
 
-      await agent.prompt('hi');
+        await agent.prompt('hi');
 
-      // The provider saw the transformed messages.
-      expect(
-        (fake.contexts.single.messages.last as UserMessage).content,
-        'INJECTED',
-      );
-      // The transcript is untouched.
-      expect(
-        agent.state.messages
-            .whereType<UserMessage>()
-            .map((m) => m.content),
-        ['hi'],
-      );
-    });
+        // The provider saw the transformed messages.
+        expect(
+          (fake.contexts.single.messages.last as UserMessage).content,
+          'INJECTED',
+        );
+        // The transcript is untouched.
+        expect(
+          agent.state.messages.whereType<UserMessage>().map((m) => m.content),
+          ['hi'],
+        );
+      },
+    );
 
     test('prepareNextTurn can swap the model for the next turn', () async {
       final fake = _FakeStreamFunction([
@@ -896,8 +895,7 @@ void main() {
       expect(seenContexts.last.toolResults, isEmpty);
     });
 
-    test('prepareNextTurn can replace the context for the next turn',
-        () async {
+    test('prepareNextTurn can replace the context for the next turn', () async {
       final fake = _FakeStreamFunction([
         _toolTurn([_call('call-1', 'weather')]),
         _textTurn('done'),
@@ -930,45 +928,47 @@ void main() {
   });
 
   group('abort', () {
-    test('abort mid-stream ends with aborted semantics and idle state',
-        () async {
-      final agent = Agent(
-        model: _model,
-        streamFunction: (model, context, {cancelToken}) {
-          final stream = AssistantMessageEventStream();
-          stream.push(StartEvent(partial: _assistant()));
-          unawaited(
-            cancelToken!.onCancel.then((_) {
-              stream.push(
-                ErrorEvent(
-                  reason: StopReason.aborted,
-                  error: _assistant(
-                    stopReason: StopReason.aborted,
-                    errorMessage: 'aborted',
+    test(
+      'abort mid-stream ends with aborted semantics and idle state',
+      () async {
+        final agent = Agent(
+          model: _model,
+          streamFunction: (model, context, {cancelToken}) {
+            final stream = AssistantMessageEventStream();
+            stream.push(StartEvent(partial: _assistant()));
+            unawaited(
+              cancelToken!.onCancel.then((_) {
+                stream.push(
+                  ErrorEvent(
+                    reason: StopReason.aborted,
+                    error: _assistant(
+                      stopReason: StopReason.aborted,
+                      errorMessage: 'aborted',
+                    ),
                   ),
-                ),
-              );
-              stream.end();
-            }),
-          );
-          return stream;
-        },
-        toolExecutor: _unusedExecutor,
-      );
-      final events = <AgentEvent>[];
-      agent.subscribe((event, _) => events.add(event));
+                );
+                stream.end();
+              }),
+            );
+            return stream;
+          },
+          toolExecutor: _unusedExecutor,
+        );
+        final events = <AgentEvent>[];
+        agent.subscribe((event, _) => events.add(event));
 
-      final run = agent.prompt('hi');
-      await Future<void>.delayed(Duration.zero);
-      agent.abort();
-      await run;
+        final run = agent.prompt('hi');
+        await Future<void>.delayed(Duration.zero);
+        agent.abort();
+        await run;
 
-      expect(agent.state.isStreaming, isFalse);
-      expect(agent.state.errorMessage, 'aborted');
-      expect(events.last, isA<AgentEndEvent>());
-      final last = agent.state.messages.last as AssistantMessage;
-      expect(last.stopReason, StopReason.aborted);
-    });
+        expect(agent.state.isStreaming, isFalse);
+        expect(agent.state.errorMessage, 'aborted');
+        expect(events.last, isA<AgentEndEvent>());
+        final last = agent.state.messages.last as AssistantMessage;
+        expect(last.stopReason, StopReason.aborted);
+      },
+    );
 
     test('abort during tool execution: steering is consumed at the boundary, '
         'follow-ups stay queued', () async {
@@ -1010,21 +1010,23 @@ void main() {
   });
 
   group('errors', () {
-    test('provider error event sets errorMessage and completes the prompt',
-        () async {
-      final fake = _FakeStreamFunction([_errorTurn('HTTP 500')]);
-      final agent = _agentWith(fake);
-      final events = <AgentEvent>[];
-      agent.subscribe((event, _) => events.add(event));
+    test(
+      'provider error event sets errorMessage and completes the prompt',
+      () async {
+        final fake = _FakeStreamFunction([_errorTurn('HTTP 500')]);
+        final agent = _agentWith(fake);
+        final events = <AgentEvent>[];
+        agent.subscribe((event, _) => events.add(event));
 
-      await agent.prompt('hi');
+        await agent.prompt('hi');
 
-      expect(agent.state.isStreaming, isFalse);
-      expect(agent.state.errorMessage, 'HTTP 500');
-      expect(events.last, isA<AgentEndEvent>());
-      final last = agent.state.messages.last as AssistantMessage;
-      expect(last.stopReason, StopReason.error);
-    });
+        expect(agent.state.isStreaming, isFalse);
+        expect(agent.state.errorMessage, 'HTTP 500');
+        expect(events.last, isA<AgentEndEvent>());
+        final last = agent.state.messages.last as AssistantMessage;
+        expect(last.stopReason, StopReason.error);
+      },
+    );
 
     test('a throwing transformContext fails the run with a synthetic error '
         'message', () async {
@@ -1100,8 +1102,7 @@ void main() {
       expect((fake.contexts[2].messages.last as UserMessage).content, 'm2');
     });
 
-    test('continues from a tool-result message without new prompts',
-        () async {
+    test('continues from a tool-result message without new prompts', () async {
       final fake = _FakeStreamFunction([
         _toolTurn([_call('call-1', 'weather')]),
         _textTurn('final answer'),

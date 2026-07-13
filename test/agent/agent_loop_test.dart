@@ -172,7 +172,9 @@ void main() {
 
     test('multi-turn run executes tool call and accumulates context', () async {
       final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather', {'city': 'Berlin'})]),
+        _toolTurn([
+          _call('call-1', 'weather', {'city': 'Berlin'}),
+        ]),
         _textTurn('It is sunny.'),
       ]);
       final executed = <_ToolCallRecord>[];
@@ -240,40 +242,45 @@ void main() {
       ]);
     });
 
-    test('multiple tool calls in one message produce results in source order',
-        () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('a', 'alpha'), _call('b', 'beta')]),
-        _textTurn('done'),
-      ]);
-      final stream = agentLoop(
-        prompts: [UserMessage.text('go')],
-        context: Context(messages: [], tools: [_tool('alpha'), _tool('beta')]),
-        config: const AgentLoopConfig(model: _model),
-        streamFunction: fake.call,
-        toolExecutor: (toolCall, _, _) async {
-          return ToolExecutionResult.text('${toolCall.name} result');
-        },
-      );
+    test(
+      'multiple tool calls in one message produce results in source order',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([_call('a', 'alpha'), _call('b', 'beta')]),
+          _textTurn('done'),
+        ]);
+        final stream = agentLoop(
+          prompts: [UserMessage.text('go')],
+          context: Context(
+            messages: [],
+            tools: [_tool('alpha'), _tool('beta')],
+          ),
+          config: const AgentLoopConfig(model: _model),
+          streamFunction: fake.call,
+          toolExecutor: (toolCall, _, _) async {
+            return ToolExecutionResult.text('${toolCall.name} result');
+          },
+        );
 
-      final events = await stream.toList();
-      final ends = events.whereType<ToolExecutionEndEvent>().toList();
-      expect(ends.map((e) => e.toolName), ['alpha', 'beta']);
+        final events = await stream.toList();
+        final ends = events.whereType<ToolExecutionEndEvent>().toList();
+        expect(ends.map((e) => e.toolName), ['alpha', 'beta']);
 
-      final results = events
-          .whereType<MessageEndEvent>()
-          .map((e) => e.message)
-          .whereType<ToolResultMessage>()
-          .toList();
-      expect(results.map((r) => r.toolCallId), ['a', 'b']);
+        final results = events
+            .whereType<MessageEndEvent>()
+            .map((e) => e.message)
+            .whereType<ToolResultMessage>()
+            .toList();
+        expect(results.map((r) => r.toolCallId), ['a', 'b']);
 
-      expect(fake.contexts[1].messages.map((m) => m.role), [
-        'user',
-        'assistant',
-        'toolResult',
-        'toolResult',
-      ]);
-    });
+        expect(fake.contexts[1].messages.map((m) => m.role), [
+          'user',
+          'assistant',
+          'toolResult',
+          'toolResult',
+        ]);
+      },
+    );
 
     test('parallel mode: end events in completion order, results in source '
         'order', () async {
@@ -315,7 +322,10 @@ void main() {
       ]);
       final stream = agentLoop(
         prompts: [UserMessage.text('go')],
-        context: Context(messages: [], tools: [_tool('first'), _tool('second')]),
+        context: Context(
+          messages: [],
+          tools: [_tool('first'), _tool('second')],
+        ),
         config: const AgentLoopConfig(
           model: _model,
           toolExecution: ToolExecutionMode.sequential,
@@ -382,8 +392,14 @@ void main() {
       expect(turnEnd.toolResults, isEmpty);
 
       final messages = await stream.result;
-      expect(messages.last, isA<AssistantMessage>()
-          .having((m) => m.stopReason, 'stopReason', StopReason.aborted));
+      expect(
+        messages.last,
+        isA<AssistantMessage>().having(
+          (m) => m.stopReason,
+          'stopReason',
+          StopReason.aborted,
+        ),
+      );
     });
 
     test('abort during tool execution: no further provider call', () async {
@@ -551,38 +567,42 @@ void main() {
       expect(toolResult.isError, isTrue);
     });
 
-    test('partial tool updates are relayed; post-settle updates are dropped',
-        () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather')]),
-        _textTurn('done'),
-      ]);
-      final stream = agentLoop(
-        prompts: [UserMessage.text('hi')],
-        context: Context(messages: [], tools: [_tool('weather')]),
-        config: const AgentLoopConfig(model: _model),
-        streamFunction: fake.call,
-        toolExecutor: (toolCall, _, onUpdate) async {
-          onUpdate?.call(ToolExecutionResult.text('halfway'));
-          // Scheduled after the executor future settles: must be ignored.
-          unawaited(
-            Future<void>(() => onUpdate?.call(ToolExecutionResult.text('late'))),
-          );
-          return ToolExecutionResult.text('final');
-        },
-      );
+    test(
+      'partial tool updates are relayed; post-settle updates are dropped',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([_call('call-1', 'weather')]),
+          _textTurn('done'),
+        ]);
+        final stream = agentLoop(
+          prompts: [UserMessage.text('hi')],
+          context: Context(messages: [], tools: [_tool('weather')]),
+          config: const AgentLoopConfig(model: _model),
+          streamFunction: fake.call,
+          toolExecutor: (toolCall, _, onUpdate) async {
+            onUpdate?.call(ToolExecutionResult.text('halfway'));
+            // Scheduled after the executor future settles: must be ignored.
+            unawaited(
+              Future<void>(
+                () => onUpdate?.call(ToolExecutionResult.text('late')),
+              ),
+            );
+            return ToolExecutionResult.text('final');
+          },
+        );
 
-      final events = await stream.toList();
-      await Future<void>.delayed(Duration.zero); // let the late update fire
+        final events = await stream.toList();
+        await Future<void>.delayed(Duration.zero); // let the late update fire
 
-      final updates = events.whereType<ToolExecutionUpdateEvent>().toList();
-      expect(updates, hasLength(1));
-      expect(updates.single.toolCallId, 'call-1');
-      expect(
-        (updates.single.partialResult.content.single as TextContent).text,
-        'halfway',
-      );
-    });
+        final updates = events.whereType<ToolExecutionUpdateEvent>().toList();
+        expect(updates, hasLength(1));
+        expect(updates.single.toolCallId, 'call-1');
+        expect(
+          (updates.single.partialResult.content.single as TextContent).text,
+          'halfway',
+        );
+      },
+    );
 
     test('terminate hint stops the loop after the tool batch', () async {
       final fake = _FakeStreamFunction([
@@ -606,24 +626,26 @@ void main() {
       expect(messages.map((m) => m.role), ['user', 'assistant', 'toolResult']);
     });
 
-    test('stream function throwing becomes an error turn, not a crash',
-        () async {
-      final stream = agentLoop(
-        prompts: [UserMessage.text('hi')],
-        context: const Context(messages: []),
-        config: const AgentLoopConfig(model: _model),
-        streamFunction: (model, context, {cancelToken}) {
-          throw StateError('no api key');
-        },
-        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
-      );
+    test(
+      'stream function throwing becomes an error turn, not a crash',
+      () async {
+        final stream = agentLoop(
+          prompts: [UserMessage.text('hi')],
+          context: const Context(messages: []),
+          config: const AgentLoopConfig(model: _model),
+          streamFunction: (model, context, {cancelToken}) {
+            throw StateError('no api key');
+          },
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+        );
 
-      final events = await stream.toList();
-      expect(events.last, isA<AgentEndEvent>());
-      final last = (await stream.result).last as AssistantMessage;
-      expect(last.stopReason, StopReason.error);
-      expect(last.errorMessage, contains('no api key'));
-    });
+        final events = await stream.toList();
+        expect(events.last, isA<AgentEndEvent>());
+        final last = (await stream.result).last as AssistantMessage;
+        expect(last.stopReason, StopReason.error);
+        expect(last.errorMessage, contains('no api key'));
+      },
+    );
   });
 
   group('agentLoopContinue', () {

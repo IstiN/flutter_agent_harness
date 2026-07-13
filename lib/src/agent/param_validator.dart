@@ -85,8 +85,7 @@ Map<String, dynamic> _validateObject(
     }
     final schemaMap = propertySchema.cast<String, dynamic>();
 
-    final hasValue =
-        arguments.containsKey(name) && arguments[name] != null;
+    final hasValue = arguments.containsKey(name) && arguments[name] != null;
     if (!hasValue) {
       final hasNullType = _schemaTypes(schemaMap).contains('null');
       if (arguments.containsKey(name) && hasNullType) {
@@ -251,7 +250,8 @@ String _typeLabel(List<String> types) {
 bool _matchesType(Object? value, String type) {
   return switch (type) {
     'number' => value is num,
-    'integer' => value is int || (value is double && value == value.roundToDouble()),
+    'integer' =>
+      value is int || (value is double && value == value.roundToDouble()),
     'boolean' => value is bool,
     'string' => value is String,
     'null' => value == null,

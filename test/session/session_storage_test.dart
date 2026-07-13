@@ -88,7 +88,9 @@ void main() {
 
       final reopened = await JsonlSessionStorage.open(fs, path);
       expect(await reopened.getLeafId(), 'e1');
-      final leaf = await reopened.getEntry((await reopened.getEntries()).last.id);
+      final leaf = await reopened.getEntry(
+        (await reopened.getEntries()).last.id,
+      );
       expect(leaf, isA<LeafRecord>());
 
       expect(
@@ -192,7 +194,10 @@ void main() {
         ),
       );
       expect((await storage.getPathToRoot(null)), isEmpty);
-      expect((await storage.getPathToRoot('e2')).map((e) => e.id), ['e1', 'e2']);
+      expect((await storage.getPathToRoot('e2')).map((e) => e.id), [
+        'e1',
+        'e2',
+      ]);
       expect(
         () => storage.getPathToRoot('ghost'),
         throwsA(
@@ -209,13 +214,7 @@ void main() {
       await createStorage();
       await fs.appendFile(
         path,
-        '${jsonEncode({
-          'type': 'message',
-          'id': 'orphan',
-          'parentId': 'ghost',
-          'timestamp': DateTime.utc(2026).toIso8601String(),
-          'message': UserMessage.text('x').toJson(),
-        })}\n',
+        '${jsonEncode({'type': 'message', 'id': 'orphan', 'parentId': 'ghost', 'timestamp': DateTime.utc(2026).toIso8601String(), 'message': UserMessage.text('x').toJson()})}\n',
       );
       final storage = await JsonlSessionStorage.open(fs, path);
       expect(

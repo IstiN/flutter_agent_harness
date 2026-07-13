@@ -52,7 +52,10 @@ void main() {
     test('appendFile appends and creates the file when missing', () async {
       await fs.appendFile('/work/log.txt', 'one\n');
       await fs.appendFile('/work/log.txt', 'two\n');
-      expect((await fs.readTextFile('/work/log.txt')).valueOrNull, 'one\ntwo\n');
+      expect(
+        (await fs.readTextFile('/work/log.txt')).valueOrNull,
+        'one\ntwo\n',
+      );
     });
 
     test('writeFile overwrites existing content', () async {
@@ -61,12 +64,15 @@ void main() {
       expect((await fs.readTextFile('/work/f.txt')).valueOrNull, 'second');
     });
 
-    test('exists is false for missing paths, true for files and dirs', () async {
-      expect((await fs.exists('/work/x')).valueOrNull, isFalse);
-      await fs.writeFile('/work/x/y.txt', 'y');
-      expect((await fs.exists('/work/x')).valueOrNull, isTrue);
-      expect((await fs.exists('/work/x/y.txt')).valueOrNull, isTrue);
-    });
+    test(
+      'exists is false for missing paths, true for files and dirs',
+      () async {
+        expect((await fs.exists('/work/x')).valueOrNull, isFalse);
+        await fs.writeFile('/work/x/y.txt', 'y');
+        expect((await fs.exists('/work/x')).valueOrNull, isTrue);
+        expect((await fs.exists('/work/x/y.txt')).valueOrNull, isTrue);
+      },
+    );
 
     test('listDir returns direct children with kinds', () async {
       await fs.writeFile('/work/d/file.txt', 'data');
@@ -113,7 +119,11 @@ void main() {
 
     test('readTextLines splits lines and honors maxLines', () async {
       await fs.writeFile('/work/l.txt', 'a\nb\nc\n');
-      expect((await fs.readTextLines('/work/l.txt')).getOrThrow(), ['a', 'b', 'c']);
+      expect((await fs.readTextLines('/work/l.txt')).getOrThrow(), [
+        'a',
+        'b',
+        'c',
+      ]);
       expect(
         (await fs.readTextLines('/work/l.txt', maxLines: 2)).getOrThrow(),
         ['a', 'b'],
@@ -124,10 +134,19 @@ void main() {
       );
     });
 
-    test('absolutePath resolves relatives against cwd and normalizes', () async {
-      expect((await fs.absolutePath('x/../y.txt')).getOrThrow(), '/work/y.txt');
-      expect((await fs.absolutePath('/abs/p.txt')).getOrThrow(), '/abs/p.txt');
-    });
+    test(
+      'absolutePath resolves relatives against cwd and normalizes',
+      () async {
+        expect(
+          (await fs.absolutePath('x/../y.txt')).getOrThrow(),
+          '/work/y.txt',
+        );
+        expect(
+          (await fs.absolutePath('/abs/p.txt')).getOrThrow(),
+          '/abs/p.txt',
+        );
+      },
+    );
 
     test('joinPath joins segments in the fs namespace', () async {
       expect(

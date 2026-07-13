@@ -21,10 +21,7 @@ void main() {
     test('write/append/read round-trip on real disk', () async {
       expect((await fs.writeFile('a/b.txt', 'one\n')).isOk, isTrue);
       expect((await fs.appendFile('a/b.txt', 'two\n')).isOk, isTrue);
-      expect(
-        (await fs.readTextFile('a/b.txt')).valueOrNull,
-        'one\ntwo\n',
-      );
+      expect((await fs.readTextFile('a/b.txt')).valueOrNull, 'one\ntwo\n');
       expect(File('${tempDir.path}/a/b.txt').readAsStringSync(), 'one\ntwo\n');
     });
 
@@ -36,10 +33,7 @@ void main() {
 
       final infos = (await fs.listDir('d')).getOrThrow();
       expect(infos.map((i) => i.name), containsAll(['sub', 'f.txt']));
-      expect(
-        infos.firstWhere((i) => i.name == 'sub').kind,
-        FileKind.directory,
-      );
+      expect(infos.firstWhere((i) => i.name == 'sub').kind, FileKind.directory);
 
       await fs.remove('d', recursive: true);
       expect((await fs.exists('d')).valueOrNull, isFalse);
@@ -53,7 +47,10 @@ void main() {
     });
 
     test('absolutePath resolves relatives against cwd', () async {
-      expect((await fs.absolutePath('x.txt')).getOrThrow(), '${tempDir.path}/x.txt');
+      expect(
+        (await fs.absolutePath('x.txt')).getOrThrow(),
+        '${tempDir.path}/x.txt',
+      );
     });
 
     test('fileInfo reports real size', () async {
@@ -102,7 +99,9 @@ void main() {
     test('JSONL session survives a real-disk reopen', () async {
       final env = LocalExecutionEnv(cwd: tempDir.path);
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: 'sessions');
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: tempDir.path));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: tempDir.path),
+      );
       await session.appendMessage(UserMessage.text('on disk'));
       final metadata = await session.getMetadata();
 

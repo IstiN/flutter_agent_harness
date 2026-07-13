@@ -49,9 +49,7 @@ Future<void> main() async {
   print('--- text streaming ---');
   final textStream = streamOpenAICompletions(
     openRouter,
-    Context(
-      messages: [UserMessage.text('Say hello in three words.')],
-    ),
+    Context(messages: [UserMessage.text('Say hello in three words.')]),
     const OpenAICompletionsOptions(apiKey: apiKey, maxTokens: 64),
   );
   await for (final event in textStream) {
@@ -61,8 +59,10 @@ Future<void> main() async {
   }
   final textMessage = await textStream.result;
   print('\nstopReason: ${textMessage.stopReason}');
-  print('usage: ${textMessage.usage.totalTokens} tokens, '
-      '\$${textMessage.usage.cost.total}');
+  print(
+    'usage: ${textMessage.usage.totalTokens} tokens, '
+    '\$${textMessage.usage.cost.total}',
+  );
 
   // 2. Tool-call streaming.
   print('\n--- tool-call streaming ---');
@@ -104,9 +104,7 @@ Future<void> main() async {
   final source = CancelTokenSource();
   final abortStream = streamOpenAICompletions(
     openRouter,
-    Context(
-      messages: [UserMessage.text('Count from 1 to 1000.')],
-    ),
+    Context(messages: [UserMessage.text('Count from 1 to 1000.')]),
     OpenAICompletionsOptions(
       apiKey: apiKey,
       maxTokens: 2048,
@@ -120,6 +118,8 @@ Future<void> main() async {
     }
   }
   final aborted = await abortStream.result;
-  print('\nstopReason: ${aborted.stopReason} '
-      '(${aborted.errorMessage ?? 'no error'})');
+  print(
+    '\nstopReason: ${aborted.stopReason} '
+    '(${aborted.errorMessage ?? 'no error'})',
+  );
 }
