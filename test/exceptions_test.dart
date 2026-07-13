@@ -51,6 +51,7 @@ void main() {
         ToolNotFoundException('t'),
         const ToolValidationException('t', 'v'),
         const SessionException('s'),
+        const CompactionException('k'),
       ];
       final kinds = exceptions.map((exception) {
         return switch (exception) {
@@ -58,9 +59,26 @@ void main() {
           ToolNotFoundException() => 'tool-not-found',
           ToolValidationException() => 'tool-validation',
           SessionException() => 'session',
+          CompactionException() => 'compaction',
         };
       }).toList();
-      expect(kinds, ['config', 'tool-not-found', 'tool-validation', 'session']);
+      expect(kinds, [
+        'config',
+        'tool-not-found',
+        'tool-validation',
+        'session',
+        'compaction',
+      ]);
+    });
+
+    test('CompactionException carries its error code', () {
+      const exception = CompactionException(
+        'provider down',
+        code: CompactionErrorCode.summarizationFailed,
+      );
+      expect(exception.code, CompactionErrorCode.summarizationFailed);
+      expect(exception.message, 'provider down');
+      expect(exception.toString(), contains('CompactionException'));
     });
 
     test('all subtypes implement Exception', () {
@@ -68,6 +86,7 @@ void main() {
       expect(ToolNotFoundException('t'), isA<Exception>());
       expect(const ToolValidationException('t', 'v'), isA<Exception>());
       expect(const SessionException('s'), isA<Exception>());
+      expect(const CompactionException('k'), isA<Exception>());
     });
   });
 }

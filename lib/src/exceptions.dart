@@ -83,6 +83,36 @@ enum SessionErrorCode {
   unknown,
 }
 
+/// Stable error codes for [CompactionException], ported from pi's
+/// `CompactionError` kinds.
+enum CompactionErrorCode {
+  /// The summarization LLM call failed; history is preserved untouched.
+  summarizationFailed,
+
+  /// The summarization LLM call was aborted.
+  aborted,
+
+  /// The session records could not be prepared for compaction.
+  invalidSession,
+}
+
+/// Thrown when the compaction pipeline cannot produce a summary.
+///
+/// Compaction is failure-safe: when this is thrown, no records have been
+/// appended and the session history is fully preserved (pi semantics).
+class CompactionException extends AgentHarnessException {
+  /// Creates a [CompactionException].
+  const CompactionException(
+    super.message, {
+    this.code = CompactionErrorCode.summarizationFailed,
+    super.cause,
+    super.causeStack,
+  });
+
+  /// Stable classification of the failure.
+  final CompactionErrorCode code;
+}
+
 /// Thrown when a session storage operation fails (read, write, or corrupt
 /// JSONL records).
 class SessionException extends AgentHarnessException {
