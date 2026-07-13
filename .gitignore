@@ -2,7 +2,8 @@
 .dart_tool/
 build/
 coverage/
-pubspec.lock  # library package: lockfile is not committed
+# library package: lockfile is not committed
+pubspec.lock
 *.iml
 .idea/
 .vscode/
