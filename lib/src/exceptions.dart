@@ -61,9 +61,39 @@ class ToolValidationException extends AgentHarnessException {
   final String toolName;
 }
 
+/// Stable error codes for [SessionException], ported from pi's
+/// `SessionErrorCode` union.
+enum SessionErrorCode {
+  /// The addressed session or record does not exist.
+  notFound,
+
+  /// The session file is structurally invalid (e.g. bad header).
+  invalidSession,
+
+  /// A JSONL entry line is invalid or corrupt.
+  invalidEntry,
+
+  /// A fork/navigation target is not a valid branch point.
+  invalidForkTarget,
+
+  /// The underlying filesystem operation failed.
+  storage,
+
+  /// Any other session failure.
+  unknown,
+}
+
 /// Thrown when a session storage operation fails (read, write, or corrupt
 /// JSONL records).
 class SessionException extends AgentHarnessException {
   /// Creates a [SessionException].
-  const SessionException(super.message, {super.cause, super.causeStack});
+  const SessionException(
+    super.message, {
+    this.code = SessionErrorCode.unknown,
+    super.cause,
+    super.causeStack,
+  });
+
+  /// Stable classification of the failure.
+  final SessionErrorCode code;
 }
