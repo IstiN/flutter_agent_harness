@@ -150,7 +150,11 @@ configured).
 
 ## Conventions
 
-- Commits in English, one logical change per commit, commit freely.
+- Commits in English, one logical change per commit, commit freely, and
+  push after every completed card.
+- **TDD for new code**: write failing tests first, then implement until
+  green. Coverage target is **> 90%** of `lib/` (the hard ratchet stays at
+  80%, but do not finish a card below 90%).
 - Public API documented (`dart doc` comments) — pub.dev scores it.
 - Tests mirror `lib/` structure; fake HTTP via `http.testing.MockClient`,
   never real network in unit tests.
