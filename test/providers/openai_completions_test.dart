@@ -333,7 +333,64 @@ void main() {
       expect(error.error.stopReason, StopReason.error);
       expect(error.error.errorMessage, contains('429'));
       expect(error.error.errorMessage, contains('Rate limit exceeded'));
+      expect(error.retryAfter, isNull);
       expect(await stream.result, same(error.error));
+    });
+
+    test('429 with Retry-After header surfaces the parsed duration', () async {
+      final client = http_testing.MockClient(
+        (request) async => http.Response(
+          '{"error":{"message":"Rate limit exceeded"}}',
+          429,
+          headers: {'retry-after': '30'},
+        ),
+      );
+
+      final stream = streamOpenAICompletions(
+        testModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final error = (await stream.toList()).single as ErrorEvent;
+      expect(error.reason, StopReason.error);
+      expect(error.retryAfter, const Duration(seconds: 30));
+    });
+
+    test('429 with HTTP-date Retry-After header surfaces the delta', () async {
+      final retryDate = DateTime.now().toUtc().add(const Duration(seconds: 45));
+      const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+      String two(int value) => value.toString().padLeft(2, '0');
+      // IMF-fixdate (RFC 9110): "Wed, 21 Oct 2015 07:28:00 GMT".
+      final httpDate =
+          '${weekdays[retryDate.weekday - 1]}, ${two(retryDate.day)} '
+          '${months[retryDate.month - 1]} ${retryDate.year} '
+          '${two(retryDate.hour)}:${two(retryDate.minute)}:'
+          '${two(retryDate.second)} GMT';
+      final client = http_testing.MockClient(
+        (request) async => http.Response(
+          '{"error":{"message":"Rate limit exceeded"}}',
+          429,
+          headers: {'retry-after': httpDate},
+        ),
+      );
+
+      final stream = streamOpenAICompletions(
+        testModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final error = (await stream.toList()).single as ErrorEvent;
+      expect(error.retryAfter, isNotNull);
+      expect(error.retryAfter!.inSeconds, greaterThan(0));
+      expect(error.retryAfter!.inSeconds, lessThanOrEqualTo(45));
     });
 
     test('malformed SSE data becomes an error event, not an exception', () async {

@@ -734,7 +734,11 @@ final class DoneEvent extends AssistantMessageEvent {
 /// Per the providers-never-throw contract, all provider failures arrive here
 /// instead of as exceptions.
 final class ErrorEvent extends AssistantMessageEvent {
-  const ErrorEvent({required this.reason, required this.error});
+  const ErrorEvent({
+    required this.reason,
+    required this.error,
+    this.retryAfter,
+  });
 
   /// Why the stream failed: [StopReason.error] or [StopReason.aborted].
   final StopReason reason;
@@ -742,6 +746,12 @@ final class ErrorEvent extends AssistantMessageEvent {
   /// The final message, with [AssistantMessage.stopReason] set to [reason]
   /// and [AssistantMessage.errorMessage] describing the failure.
   final AssistantMessage error;
+
+  /// Provider-suggested delay before retrying, parsed from the `Retry-After`
+  /// response header on rate-limit (HTTP 429) failures. `null` when the
+  /// failure was not an HTTP error or the provider sent no parseable header;
+  /// callers should then apply their own backoff strategy.
+  final Duration? retryAfter;
 
   @override
   AssistantMessage get partial => error;
