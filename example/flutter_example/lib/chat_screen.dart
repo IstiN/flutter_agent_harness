@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -35,6 +37,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Uint8List? _pendingImage;
   String? _pendingImageMime;
 
+  List<Message> _lastSynced = [];
+  Timer? _syncDebounce;
+  bool _isSyncing = false;
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +51,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _syncDebounce?.cancel();
     _textController.dispose();
     widget.service.removeListener(_onServiceChanged);
     _chatController.dispose();
@@ -52,16 +59,78 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onServiceChanged() {
-    _syncMessages();
+    _syncDebounce?.cancel();
+    _syncDebounce = Timer(const Duration(milliseconds: 50), () {
+      if (mounted) _syncMessages();
+    });
   }
 
   Future<void> _syncMessages() async {
-    final converted = await Future.wait(
-      widget.service.messages.indexed.map(
-        (entry) => _toMessage(entry.$1, entry.$2),
-      ),
-    );
-    await _chatController.setMessages(converted.toList());
+    if (_isSyncing) {
+      _syncDebounce?.cancel();
+      _syncDebounce = Timer(const Duration(milliseconds: 50), () {
+        if (mounted) _syncMessages();
+      });
+      return;
+    }
+    _isSyncing = true;
+
+    try {
+      final converted = await Future.wait(
+        widget.service.messages.indexed.map(
+          (entry) => _toMessage(entry.$1, entry.$2),
+        ),
+      );
+      final newList = converted.toList();
+
+      if (_lastSynced.isEmpty || newList.isEmpty) {
+        await _chatController.setMessages(newList);
+      } else {
+        final oldLen = _lastSynced.length;
+        final newLen = newList.length;
+        final minLen = math.min(oldLen, newLen);
+
+        var commonPrefix = 0;
+        while (commonPrefix < minLen &&
+            _lastSynced[commonPrefix].id == newList[commonPrefix].id) {
+          commonPrefix++;
+        }
+
+        for (var i = 0; i < commonPrefix; i++) {
+          if (_messageChanged(_lastSynced[i], newList[i])) {
+            await _chatController.updateMessage(_lastSynced[i], newList[i]);
+          }
+        }
+
+        for (var i = oldLen - 1; i >= commonPrefix; i--) {
+          await _chatController.removeMessage(_lastSynced[i]);
+        }
+
+        for (var i = commonPrefix; i < newLen; i++) {
+          await _chatController.insertMessage(newList[i], index: i);
+        }
+      }
+
+      _lastSynced = newList;
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  bool _messageChanged(Message a, Message b) {
+    if (a.runtimeType != b.runtimeType) return true;
+    return switch (a) {
+      TextMessage textA => textA.text != (b as TextMessage).text,
+      CustomMessage customA =>
+        customA.metadata?.toString() !=
+            (b as CustomMessage).metadata?.toString(),
+      ImageMessage imageA =>
+        // ignore: unnecessary_cast
+        imageA.source != (b as ImageMessage).source ||
+            // ignore: unnecessary_cast
+            imageA.text != (b as ImageMessage).text,
+      _ => true,
+    };
   }
 
   Future<Message> _toMessage(int index, FahChatMessage chat) async {
