@@ -13,6 +13,7 @@ export 'src/agent/param_validator.dart';
 export 'src/agent/tool_registry.dart';
 export 'src/cancel_token.dart';
 export 'src/cli/agent_cli.dart';
+export 'src/cli/prompt_templates.dart';
 export 'src/compaction/compaction.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/context.dart';
