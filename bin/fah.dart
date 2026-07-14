@@ -22,6 +22,7 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:yaml/yaml.dart' as yaml;
 
 const _version = '0.1.0';
 
@@ -38,6 +39,8 @@ Options:
   --vision-model <id>       Enable inspect_image tool using this vision model
                             (e.g. gpt-4o, openai/gpt-4o)
   --vision-base-url <url>   Override the vision provider base URL
+  --plugin <name>          Enable a built-in plugin (repeatable). Built-ins:
+                            inspect_image
   --cwd <dir>               Working directory (default: current directory)
   --session-root <dir>      Session storage root (default: ~/.fah/sessions)
   --help, -h                Show this help
@@ -48,6 +51,9 @@ Environment:
   ANTHROPIC_API_KEY         API key for --provider anthropic
   GOOGLE_API_KEY            API key for --provider google
   VISION_API_KEY            API key for --vision-model (defaults to main key)
+
+Configuration:
+  .fah/packages.yaml        Plugin configuration (see docs).
 
 Defaults per provider:
   openai-completions    anthropic/claude-sonnet-4 @ https://openrouter.ai/api/v1
@@ -62,6 +68,7 @@ final class _Args {
     this.baseUrl,
     this.visionModel,
     this.visionBaseUrl,
+    this.plugins = const [],
     this.cwd,
     this.sessionRoot,
   });
@@ -71,6 +78,7 @@ final class _Args {
   final String? baseUrl;
   final String? visionModel;
   final String? visionBaseUrl;
+  final List<String> plugins;
   final String? cwd;
   final String? sessionRoot;
 }
@@ -87,6 +95,7 @@ _Args _parseArgs(List<String> args) {
   String? baseUrl;
   String? visionModel;
   String? visionBaseUrl;
+  final plugins = <String>[];
   String? cwd;
   String? sessionRoot;
 
@@ -118,6 +127,9 @@ _Args _parseArgs(List<String> args) {
       case '--vision-base-url':
         visionBaseUrl = valueFor(i, '--vision-base-url');
         i++;
+      case '--plugin':
+        plugins.add(valueFor(i, '--plugin'));
+        i++;
       case '--cwd':
         cwd = valueFor(i, '--cwd');
         i++;
@@ -137,6 +149,7 @@ _Args _parseArgs(List<String> args) {
     baseUrl: baseUrl,
     visionModel: visionModel,
     visionBaseUrl: visionBaseUrl,
+    plugins: plugins,
     cwd: cwd,
     sessionRoot: sessionRoot,
   );
@@ -198,6 +211,45 @@ String _resolveApiKey(String provider, {String? fallback}) {
   return key;
 }
 
+/// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
+FahPlugin? _builtInPlugin(String name) {
+  return switch (name) {
+    'inspect_image' => const InspectImagePlugin(),
+    _ => null,
+  };
+}
+
+/// Loads plugin configuration from `.fah/packages.yaml` if it exists.
+/// Returns a map of plugin name -> config.
+Map<String, dynamic> _loadPackagesConfig(String cwd) {
+  final file = File('$cwd/.fah/packages.yaml');
+  if (!file.existsSync()) return const {};
+  try {
+    final doc = yaml.loadYaml(file.readAsStringSync());
+    if (doc is! Map) return const {};
+    return Map<String, dynamic>.fromEntries(
+      doc.entries.whereType<MapEntry<String, dynamic>>(),
+    );
+  } on Object catch (error) {
+    _fail('failed to parse .fah/packages.yaml: $error');
+  }
+}
+
+({List<FahPlugin> plugins, Map<String, dynamic> config}) _resolvePlugins(
+  _Args args,
+  String cwd,
+) {
+  final config = _loadPackagesConfig(cwd);
+  final enabled = <String>{...args.plugins, ...config.keys};
+  final plugins = <FahPlugin>[];
+  for (final name in enabled) {
+    final plugin = _builtInPlugin(name);
+    if (plugin == null) _fail('unknown plugin: $name');
+    plugins.add(plugin);
+  }
+  return (plugins: plugins, config: config);
+}
+
 String _defaultSessionRoot() {
   final home =
       Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
@@ -246,6 +298,8 @@ Future<void> main(List<String> args) async {
     );
   }
 
+  final resolved = _resolvePlugins(parsed, cwd);
+
   final io = _TerminalCliIO();
   final cli = AgentCli(
     config: AgentCliConfig(
@@ -255,6 +309,8 @@ Future<void> main(List<String> args) async {
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
       visionConfig: visionConfig,
+      plugins: resolved.plugins,
+      pluginConfig: resolved.config,
     ),
     io: io,
   );
