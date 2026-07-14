@@ -31,5 +31,6 @@ export 'src/session/session_storage.dart';
 export 'src/session/session_tree.dart';
 export 'src/sse_decoder.dart';
 export 'src/tools/builtin_tools.dart';
+export 'src/tools/inspect_image.dart';
 export 'src/types.dart';
 export 'src/usage_summary.dart';

@@ -33,6 +33,7 @@ import '../providers/openai_completions.dart';
 import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../tools/builtin_tools.dart';
+import '../tools/inspect_image.dart';
 import '../types.dart';
 import '../usage_summary.dart';
 
@@ -65,6 +66,7 @@ final class AgentCliConfig {
     required this.sessionRoot,
     this.providerKind = 'openai-completions',
     this.systemPrompt,
+    this.visionConfig,
   });
 
   /// The model to run. `/model <id>` swaps the id at runtime.
@@ -85,6 +87,10 @@ final class AgentCliConfig {
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].
   final String? systemPrompt;
+
+  /// Optional vision model configuration. When provided, the `inspect_image`
+  /// tool is registered and routes image analysis to a dedicated model.
+  final InspectImageConfig? visionConfig;
 }
 
 /// Builds the [StreamFunction] for a provider [kind] (`openai-completions`,
@@ -140,10 +146,17 @@ class AgentCli {
       systemPrompt:
           config.systemPrompt ?? defaultAgentCliSystemPrompt(config.env.cwd),
       streamFunction: _streamFunction,
-      toolRegistry: ToolRegistry(builtinTools(config.env)),
+      toolRegistry: ToolRegistry([
+        ...builtinTools(config.env),
+        if (config.visionConfig != null)
+          inspectImageTool(config.env, config.visionConfig!),
+      ]),
     );
     _agent.subscribe(_onAgentEvent);
   }
+
+  /// The underlying [Agent] driving the session.
+  Agent get agent => _agent;
 
   /// The effective system prompt sent to the model.
   String get systemPrompt =>
@@ -170,9 +183,6 @@ class AgentCli {
   var _streamedText = false;
   var _exited = false;
   Future<void> _settled = Future<void>.value();
-
-  /// The underlying agent (exposed for advanced wiring and tests).
-  Agent get agent => _agent;
 
   /// Whether a run is currently streaming.
   bool get isBusy => _agent.state.isStreaming;
