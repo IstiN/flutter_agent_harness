@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -36,6 +38,13 @@ void main() {
       expect(write.isOk, isTrue);
       final read = await fs.readTextFile('/work/a/b/c.txt');
       expect(read.valueOrNull, 'hello');
+    });
+
+    test('binary write/read round-trips', () async {
+      final bytes = Uint8List.fromList([0, 1, 2, 255]);
+      expect((await fs.writeBinaryFile('/work/bin.dat', bytes)).isOk, isTrue);
+      final read = await fs.readBinaryFile('/work/bin.dat');
+      expect(read.valueOrNull, bytes);
     });
 
     test('read of missing file returns not_found', () async {

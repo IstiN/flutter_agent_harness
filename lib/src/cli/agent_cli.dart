@@ -114,7 +114,8 @@ StreamFunction providerStreamFunction(String kind, String apiKey) {
 
 /// The default system prompt for the CLI agent.
 String defaultAgentCliSystemPrompt(String cwd) {
-  return 'You are fah, a coding agent running in a terminal. You help with '
+  return 'You are fah, a coding agent (also called fa). Never refer to '
+      'yourself as pi, Claude, or any other assistant name. You help with '
       'software engineering tasks in the working directory $cwd. Use the '
       'read, write, ls, and bash tools to inspect and modify files and run '
       'commands. Be concise.';
@@ -143,6 +144,10 @@ class AgentCli {
     );
     _agent.subscribe(_onAgentEvent);
   }
+
+  /// The effective system prompt sent to the model.
+  String get systemPrompt =>
+      config.systemPrompt ?? defaultAgentCliSystemPrompt(config.env.cwd);
 
   /// The static configuration.
   final AgentCliConfig config;

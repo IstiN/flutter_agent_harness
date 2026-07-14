@@ -1,4 +1,4 @@
-/// The `fah` executable: a pi-like terminal coding agent on top of
+/// The `fah` executable: a terminal coding agent on top of
 /// `flutter_agent_harness`.
 ///
 /// Usage:

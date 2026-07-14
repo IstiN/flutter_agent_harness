@@ -9,6 +9,8 @@
 /// substituted behind the same interfaces.
 library;
 
+import 'dart:typed_data';
+
 import '../cancel_token.dart';
 
 /// Result of a fallible operation. Expected failures are returned as [Err]
@@ -183,12 +185,21 @@ abstract interface class FileSystem {
   /// Reads a UTF-8 text file.
   Future<Result<String, FileError>> readTextFile(String path);
 
+  /// Reads the file as raw bytes.
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path);
+
   /// Reads UTF-8 text lines. Implementations should stop once [maxLines]
   /// lines have been read.
   Future<Result<List<String>, FileError>> readTextLines(
     String path, {
     int? maxLines,
   });
+
+  /// Writes raw bytes to a file, creating parent directories.
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  );
 
   /// Creates or overwrites a file, creating parent directories.
   Future<Result<void, FileError>> writeFile(String path, String content);

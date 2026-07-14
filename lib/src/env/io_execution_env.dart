@@ -9,6 +9,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'execution_env.dart';
 
@@ -110,6 +111,26 @@ final class LocalFileSystem implements FileSystem {
   }
 
   @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) async {
+    final resolved = _resolve(path);
+    try {
+      final stat = await FileStat.stat(resolved);
+      if (stat.type == FileSystemEntityType.directory) {
+        return Err(
+          FileError(
+            FileErrorCode.isDirectory,
+            'Is a directory',
+            path: resolved,
+          ),
+        );
+      }
+      return Ok(await File(resolved).readAsBytes());
+    } on Object catch (error) {
+      return Err(_toFileError(error, resolved));
+    }
+  }
+
+  @override
   Future<Result<List<String>, FileError>> readTextLines(
     String path, {
     int? maxLines,
@@ -137,6 +158,21 @@ final class LocalFileSystem implements FileSystem {
     try {
       await Directory(File(resolved).parent.path).create(recursive: true);
       await File(resolved).writeAsString(content);
+      return const Ok(null);
+    } on Object catch (error) {
+      return Err(_toFileError(error, resolved));
+    }
+  }
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) async {
+    final resolved = _resolve(path);
+    try {
+      await Directory(File(resolved).parent.path).create(recursive: true);
+      await File(resolved).writeAsBytes(content);
       return const Ok(null);
     } on Object catch (error) {
       return Err(_toFileError(error, resolved));
@@ -407,6 +443,10 @@ final class LocalExecutionEnv implements ExecutionEnv {
       _fs.readTextFile(path);
 
   @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _fs.readBinaryFile(path);
+
+  @override
   Future<Result<List<String>, FileError>> readTextLines(
     String path, {
     int? maxLines,
@@ -415,6 +455,12 @@ final class LocalExecutionEnv implements ExecutionEnv {
   @override
   Future<Result<void, FileError>> writeFile(String path, String content) =>
       _fs.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _fs.writeBinaryFile(path, content);
 
   @override
   Future<Result<void, FileError>> appendFile(String path, String content) =>
