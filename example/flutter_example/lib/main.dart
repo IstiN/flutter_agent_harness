@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env');
   runApp(const MyApp());
 }
 
@@ -30,7 +33,9 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  final _keyController = TextEditingController();
+  final _keyController = TextEditingController(
+    text: dotenv.isInitialized ? dotenv.env['OPENROUTER_API_KEY'] ?? '' : '',
+  );
   final _modelController = TextEditingController(text: 'openai/gpt-4o-mini');
   final _urlController = TextEditingController(
     text: 'https://openrouter.ai/api/v1',
