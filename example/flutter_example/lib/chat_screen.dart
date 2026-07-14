@@ -1,11 +1,19 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_chat_core/flutter_chat_core.dart';
+import 'package:flutter_chat_ui/flutter_chat_ui.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'agent_service.dart';
 
-/// A simple mobile chat UI backed by [AgentService].
+/// A chat UI backed by [AgentService], built on top of `flutter_chat_ui`.
+///
+/// Text messages are rendered as Markdown, tool calls/results are shown as
+/// distinct cards, and image attachments are supported.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.service});
 
@@ -16,47 +24,118 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final _controller = TextEditingController();
-  final _focusNode = FocusNode();
-  final _scrollController = ScrollController();
+  late final InMemoryChatController _chatController;
+
+  final _user = const User(id: 'user', name: 'Me');
+  final _assistant = const User(id: 'assistant', name: 'fah');
+  final _tool = const User(id: 'tool', name: 'tool');
+  final _system = const User(id: 'system', name: 'system');
+
   Uint8List? _pendingImage;
   String? _pendingImageMime;
 
   @override
   void initState() {
     super.initState();
+    _chatController = InMemoryChatController();
     widget.service.addListener(_onServiceChanged);
+    _syncMessages();
   }
 
   @override
   void dispose() {
     widget.service.removeListener(_onServiceChanged);
-    _controller.dispose();
-    _focusNode.dispose();
-    _scrollController.dispose();
+    _chatController.dispose();
     super.dispose();
   }
 
   void _onServiceChanged() {
-    setState(() {});
-    _scrollToBottom();
+    _syncMessages();
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
+  Future<void> _syncMessages() async {
+    final converted = await Future.wait(
+      widget.service.messages.indexed.map(
+        (entry) => _toMessage(entry.$1, entry.$2),
+      ),
+    );
+    await _chatController.setMessages(converted.toList());
+  }
+
+  Future<Message> _toMessage(int index, FahChatMessage chat) async {
+    final id = 'msg-$index';
+    final now = DateTime.now();
+
+    switch (chat.role) {
+      case 'user':
+        if (chat.imageBytes != null) {
+          final path = await _writeImageFile(index, chat.imageBytes!);
+          return Message.image(
+            id: id,
+            authorId: 'user',
+            source: path,
+            text: chat.content.isEmpty ? null : chat.content,
+            createdAt: now,
+          );
+        }
+        return Message.text(
+          id: id,
+          authorId: 'user',
+          text: chat.content,
+          createdAt: now,
         );
-      }
-    });
+      case 'assistant':
+        return Message.text(
+          id: id,
+          authorId: 'assistant',
+          text: chat.content,
+          createdAt: now,
+        );
+      case 'system':
+      case 'tool':
+        return Message.custom(
+          id: id,
+          authorId: chat.role == 'tool' ? 'tool' : 'system',
+          createdAt: now,
+          metadata: <String, dynamic>{
+            'role': chat.role,
+            'toolName': chat.toolName,
+            'content': chat.content,
+            'isError': chat.isError,
+          },
+        );
+      default:
+        return Message.text(
+          id: id,
+          authorId: 'system',
+          text: chat.content,
+          createdAt: now,
+        );
+    }
   }
 
-  Future<void> _pickImage() async {
+  Future<String> _writeImageFile(int index, Uint8List bytes) async {
+    final tmp = await getTemporaryDirectory();
+    final file = File('${tmp.path}/fah_chat_image_$index.png');
+    if (!file.existsSync() || file.lengthSync() != bytes.length) {
+      await file.writeAsBytes(bytes);
+    }
+    return file.path;
+  }
+
+  Future<User?> _resolveUser(UserID id) async {
+    return switch (id) {
+      'user' => _user,
+      'assistant' => _assistant,
+      'tool' => _tool,
+      'system' => _system,
+      _ => User(id: id, name: id),
+    };
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
+    final picked = await picker.pickImage(source: source);
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
     final mime = _mimeFromName(picked.name);
@@ -82,22 +161,166 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void _send() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty && _pendingImage == null) return;
-    _controller.clear();
+  Future<void> _send(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty && _pendingImage == null) return;
+
     final image = _pendingImage;
     final mime = _pendingImageMime;
     _clearPendingImage();
+
     if (image != null) {
       await widget.service.sendImage(
         bytes: image,
         mimeType: mime ?? 'image/jpeg',
-        text: text,
+        text: trimmed,
       );
     } else {
-      await widget.service.sendText(text);
+      await widget.service.sendText(trimmed);
     }
+  }
+
+  void _showAttachmentSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Gallery'),
+              onTap: () {
+                Navigator.of(context).pop();
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Camera'),
+              onTap: () {
+                Navigator.of(context).pop();
+                _pickImage(ImageSource.camera);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextMessage(
+    BuildContext context,
+    TextMessage message,
+    int index, {
+    required bool isSentByMe,
+    MessageGroupStatus? groupStatus,
+  }) {
+    return MarkdownBody(
+      data: message.text,
+      selectable: true,
+      styleSheet: MarkdownStyleSheet.fromTheme(
+        Theme.of(context),
+      ).copyWith(p: Theme.of(context).textTheme.bodyMedium),
+    );
+  }
+
+  Widget _buildCustomMessage(
+    BuildContext context,
+    CustomMessage message,
+    int index, {
+    required bool isSentByMe,
+    MessageGroupStatus? groupStatus,
+  }) {
+    final metadata = message.metadata ?? const {};
+    final toolName = metadata['toolName'] as String?;
+    final content = (metadata['content'] as String?) ?? '';
+    final isError = (metadata['isError'] as bool?) ?? false;
+
+    final theme = Theme.of(context);
+    final color = isError
+        ? theme.colorScheme.errorContainer
+        : theme.colorScheme.surfaceContainerHighest;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (toolName != null)
+            Text(
+              '[ $toolName ]',
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: isError ? theme.colorScheme.error : null,
+              ),
+            ),
+          if (toolName != null && content.isNotEmpty) const SizedBox(height: 4),
+          if (content.isNotEmpty)
+            Text(
+              content,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontFamily: 'monospace',
+                fontFamilyFallback: const ['Courier', 'monospace'],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildComposer(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_pendingImage != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    _pendingImage!,
+                    height: 64,
+                    width: 64,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: _clearPendingImage,
+                ),
+              ],
+            ),
+          ),
+        if (widget.service.isStreaming)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text('fah is typing...'),
+              ],
+            ),
+          ),
+        const Composer(),
+      ],
+    );
   }
 
   @override
@@ -139,167 +362,21 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(12),
-              itemCount: widget.service.messages.length,
-              itemBuilder: (context, index) {
-                return _MessageBubble(message: widget.service.messages[index]);
-              },
-            ),
-          ),
-          if (widget.service.isStreaming)
-            const Padding(
-              padding: EdgeInsets.only(left: 16, bottom: 8),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  SizedBox(width: 8),
-                  Text('fah is typing...'),
-                ],
+            child: Chat(
+              currentUserId: 'user',
+              resolveUser: _resolveUser,
+              chatController: _chatController,
+              onMessageSend: _send,
+              onAttachmentTap: _showAttachmentSheet,
+              builders: Builders(
+                textMessageBuilder: _buildTextMessage,
+                customMessageBuilder: _buildCustomMessage,
+                composerBuilder: _buildComposer,
               ),
+              theme: ChatTheme.light(),
             ),
-          if (_pendingImage != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.memory(
-                      _pendingImage!,
-                      height: 64,
-                      width: 64,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: _clearPendingImage,
-                  ),
-                ],
-              ),
-            ),
-          _InputBar(
-            controller: _controller,
-            focusNode: _focusNode,
-            isStreaming: widget.service.isStreaming,
-            onSend: _send,
-            onPickImage: _pickImage,
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
-
-  final ChatMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isUser = message.role == 'user';
-    final isAssistant = message.role == 'assistant';
-    final isTool = message.role == 'tool';
-    Color? bubbleColor;
-    if (isUser) bubbleColor = theme.colorScheme.primaryContainer;
-    if (isAssistant) bubbleColor = theme.colorScheme.secondaryContainer;
-    if (isTool) bubbleColor = theme.colorScheme.surfaceContainerHighest;
-    if (message.isError) bubbleColor = theme.colorScheme.errorContainer;
-
-    Widget content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (message.toolName != null)
-          Text(
-            '[${message.toolName}]',
-            style: theme.textTheme.labelSmall?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        if (message.content.isNotEmpty) SelectableText(message.content),
-        if (message.imageBytes != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.memory(message.imageBytes!, fit: BoxFit.cover),
-            ),
-          ),
-      ],
-    );
-
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.8,
-        ),
-        child: Card(
-          color: bubbleColor,
-          child: Padding(padding: const EdgeInsets.all(12), child: content),
-        ),
-      ),
-    );
-  }
-}
-
-class _InputBar extends StatelessWidget {
-  const _InputBar({
-    required this.controller,
-    required this.focusNode,
-    required this.isStreaming,
-    required this.onSend,
-    required this.onPickImage,
-  });
-
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final bool isStreaming;
-  final VoidCallback onSend;
-  final VoidCallback onPickImage;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.image),
-              tooltip: 'Attach image',
-              onPressed: isStreaming ? null : onPickImage,
-            ),
-            Expanded(
-              child: TextField(
-                controller: controller,
-                focusNode: focusNode,
-                decoration: const InputDecoration.collapsed(
-                  hintText: 'Message fah...',
-                ),
-                enabled: !isStreaming,
-                onSubmitted: (_) => onSend(),
-                minLines: 1,
-                maxLines: 6,
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.send),
-              tooltip: 'Send',
-              onPressed: isStreaming ? null : onSend,
-            ),
-          ],
-        ),
       ),
     );
   }
