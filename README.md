@@ -44,6 +44,34 @@ void main() async {
 Provider adapters and the agent loop land in the next phases — see the
 roadmap in [GOAL.md](GOAL.md).
 
+## CLI (`fah`)
+
+A pi-like terminal coding agent ships in `bin/fah.dart`: a REPL with the
+built-in `read` / `write` / `ls` / `bash` tools, JSONL session persistence
+under `~/.fah/sessions` (cwd-encoded layout), automatic context compaction,
+and slash commands.
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY
+dart run bin/fah.dart                 # defaults: OpenRouter, claude-sonnet-4
+dart run bin/fah.dart --provider anthropic --model claude-sonnet-4-5
+dart run bin/fah.dart --model openai/gpt-4o-mini --cwd . --session-root /tmp/fah
+```
+
+Flags: `--model <id>`, `--provider openai-completions|anthropic|google`,
+`--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `--help`,
+`--version`.
+
+Slash commands inside the REPL: `/exit`, `/reset` (new session), `/compact`
+(summarize history now), `/stats` (token/cost totals), `/model <id>` (show or
+switch model), `/help`. While a run is streaming, typed input is steered into
+the agent; Ctrl-C aborts the run (Ctrl-C at the idle prompt exits).
+
+The CLI core (`AgentCli` + `CliIO`) is pure Dart and lives in
+`lib/src/cli/agent_cli.dart`; only `bin/fah.dart` and `lib/io.dart` touch
+`dart:io`.
+
+
 ## Development
 
 ```bash
