@@ -7,6 +7,9 @@
 /// [ExecutionErrorCode.shellUnavailable] (the correct answer on web).
 library;
 
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'execution_env.dart';
 
 /// In-memory [FileSystem] with POSIX-style (`/`-separated) paths.
@@ -66,8 +69,7 @@ final class MemoryFileSystem implements FileSystem {
     return Ok(_normalize(parts.join('/')));
   }
 
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) async {
+  Future<Result<_MemoryFile, FileError>> _readFile(String path) async {
     final resolved = _normalize(path);
     if (_dirs.contains(resolved)) {
       return Err(
@@ -80,7 +82,21 @@ final class MemoryFileSystem implements FileSystem {
         FileError(FileErrorCode.notFound, 'No such file', path: resolved),
       );
     }
-    return Ok(file.content);
+    return Ok(file);
+  }
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) async {
+    final result = await _readFile(path);
+    if (result.isErr) return Err(result.errorOrNull!);
+    return Ok(utf8.decode(result.valueOrNull!.bytes));
+  }
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) async {
+    final result = await _readFile(path);
+    if (result.isErr) return Err(result.errorOrNull!);
+    return Ok(Uint8List.fromList(result.valueOrNull!.bytes));
   }
 
   @override
@@ -104,6 +120,14 @@ final class MemoryFileSystem implements FileSystem {
 
   @override
   Future<Result<void, FileError>> writeFile(String path, String content) async {
+    return writeBinaryFile(path, Uint8List.fromList(utf8.encode(content)));
+  }
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) async {
     final resolved = _normalize(path);
     _ensureParents(resolved);
     _files[resolved] = _MemoryFile(
@@ -121,8 +145,13 @@ final class MemoryFileSystem implements FileSystem {
     final resolved = _normalize(path);
     _ensureParents(resolved);
     final existing = _files[resolved];
+    final bytes = existing?.bytes ?? Uint8List(0);
+    final encoded = Uint8List.fromList(utf8.encode(content));
+    final appended = Uint8List(bytes.length + encoded.length);
+    appended.setAll(0, bytes);
+    appended.setAll(bytes.length, encoded);
     _files[resolved] = _MemoryFile(
-      (existing?.content ?? '') + content,
+      appended,
       DateTime.now().millisecondsSinceEpoch,
     );
     return const Ok(null);
@@ -138,7 +167,7 @@ final class MemoryFileSystem implements FileSystem {
           name: resolved.split('/').last,
           path: resolved,
           kind: FileKind.file,
-          size: file.content.length,
+          size: file.bytes.length,
           mtimeMs: file.mtimeMs,
         ),
       );
@@ -270,9 +299,9 @@ final class MemoryFileSystem implements FileSystem {
 }
 
 final class _MemoryFile {
-  _MemoryFile(this.content, this.mtimeMs);
+  _MemoryFile(this.bytes, this.mtimeMs);
 
-  final String content;
+  final Uint8List bytes;
   final int mtimeMs;
 }
 

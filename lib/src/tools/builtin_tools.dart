@@ -23,10 +23,14 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:image/image.dart';
 
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../env/execution_env.dart';
+import '../types.dart';
 
 /// Default line limit for tool output truncation (pi's `DEFAULT_MAX_LINES`).
 const defaultToolMaxLines = 2000;
@@ -180,21 +184,127 @@ _Truncation _truncateTail(
 }
 
 // ---------------------------------------------------------------------------
-// read (ported from pi's tools/read.ts, text files only)
+// Image handling for the read tool
 // ---------------------------------------------------------------------------
 
-/// Creates the `read` tool: reads a text file with optional `offset`
-/// (1-indexed) and `limit`, truncating to [defaultToolMaxLines] lines or
-/// [defaultToolMaxBytes] bytes with an actionable continuation notice.
+const _defaultImageMaxDimension = 2000;
+
+const _supportedImageFormats = {
+  ImageFormat.png,
+  ImageFormat.jpg,
+  ImageFormat.gif,
+  ImageFormat.webp,
+  ImageFormat.bmp,
+};
+
+String? _mimeTypeForImageFormat(ImageFormat format) {
+  return switch (format) {
+    ImageFormat.png => 'image/png',
+    ImageFormat.jpg => 'image/jpeg',
+    ImageFormat.gif => 'image/gif',
+    ImageFormat.webp => 'image/webp',
+    ImageFormat.bmp => 'image/bmp',
+    _ => null,
+  };
+}
+
+Uint8List _encodeImage(Image image, ImageFormat format) {
+  return switch (format) {
+    ImageFormat.png => encodePng(image),
+    ImageFormat.jpg => encodeJpg(image),
+    ImageFormat.gif => encodeGif(image),
+    ImageFormat.webp => encodeWebP(image),
+    ImageFormat.bmp => encodeBmp(image),
+    _ => encodePng(image),
+  };
+}
+
+({
+  String mimeType,
+  String base64,
+  int width,
+  int height,
+  bool resized,
+  int outputWidth,
+  int outputHeight,
+})
+_processImage(
+  Uint8List bytes,
+  ImageFormat format, {
+  int maxDimension = _defaultImageMaxDimension,
+}) {
+  final image = decodeImage(bytes);
+  if (image == null) {
+    throw StateError('Could not decode image');
+  }
+  final width = image.width;
+  final height = image.height;
+  var outputWidth = width;
+  var outputHeight = height;
+  var resized = false;
+  Image output = image;
+
+  if (width > maxDimension || height > maxDimension) {
+    if (width >= height) {
+      outputWidth = maxDimension;
+      outputHeight = (height * maxDimension / width).round();
+    } else {
+      outputHeight = maxDimension;
+      outputWidth = (width * maxDimension / height).round();
+    }
+    output = copyResize(
+      image,
+      width: outputWidth,
+      height: outputHeight,
+      interpolation: Interpolation.cubic,
+    );
+    resized = true;
+  }
+
+  final outputFormat = format == ImageFormat.bmp ? ImageFormat.jpg : format;
+  final encoded = _encodeImage(output, outputFormat);
+  final mimeType = _mimeTypeForImageFormat(outputFormat);
+  if (mimeType == null) {
+    throw StateError('Unsupported image format: $outputFormat');
+  }
+
+  return (
+    mimeType: mimeType,
+    base64: base64Encode(encoded),
+    width: width,
+    height: height,
+    resized: resized,
+    outputWidth: outputWidth,
+    outputHeight: outputHeight,
+  );
+}
+
+ImageFormat? _detectImageFormat(Uint8List bytes) {
+  if (bytes.isEmpty) return null;
+  try {
+    return findFormatForData(bytes);
+  } on Object {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// read (ported from pi's tools/read.ts, with image support)
+// ---------------------------------------------------------------------------
+
+/// Creates the `read` tool: reads a text file or image with optional `offset`
+/// (1-indexed) and `limit`, truncating text output to [defaultToolMaxLines]
+/// lines or [defaultToolMaxBytes] bytes with an actionable continuation notice.
+/// Images are decoded, optionally resized, and returned as base64 content.
 AgentTool readFileTool(ExecutionEnv env) {
   return AgentTool(
     name: 'read',
     label: 'read',
     description:
-        'Read the contents of a text file. Output is truncated to '
-        '$defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
-        '(whichever is hit first). Use offset/limit for large files; when '
-        'you need the full file, continue with offset until complete.',
+        'Read the contents of a text file or image. Text output is truncated '
+        'to $defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
+        '(whichever is hit first). Use offset/limit for large text files. '
+        'Images are returned as base64 content.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -218,6 +328,30 @@ AgentTool readFileTool(ExecutionEnv env) {
       final path = arguments['path'] as String;
       final offset = (arguments['offset'] as num?)?.toInt();
       final limit = (arguments['limit'] as num?)?.toInt();
+
+      final binaryRead = await env.readBinaryFile(path);
+      if (binaryRead.isErr) throw StateError('${binaryRead.errorOrNull}');
+      final bytes = binaryRead.valueOrNull!;
+      cancelToken?.throwIfCancelled();
+
+      final format = _detectImageFormat(bytes);
+      if (format != null && _supportedImageFormats.contains(format)) {
+        final processed = _processImage(bytes, format);
+        final note = StringBuffer()
+          ..write('[Image: $path, ${processed.width}x${processed.height}');
+        if (processed.resized) {
+          note.write(
+            ', resized to ${processed.outputWidth}x${processed.outputHeight}',
+          );
+        }
+        note.write(']');
+        return ToolExecutionResult(
+          content: [
+            TextContent(text: note.toString()),
+            ImageContent(data: processed.base64, mimeType: processed.mimeType),
+          ],
+        );
+      }
 
       final read = await env.readTextFile(path);
       if (read.isErr) throw StateError('${read.errorOrNull}');

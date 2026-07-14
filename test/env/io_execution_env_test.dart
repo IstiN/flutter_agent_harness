@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -23,6 +24,14 @@ void main() {
       expect((await fs.appendFile('a/b.txt', 'two\n')).isOk, isTrue);
       expect((await fs.readTextFile('a/b.txt')).valueOrNull, 'one\ntwo\n');
       expect(File('${tempDir.path}/a/b.txt').readAsStringSync(), 'one\ntwo\n');
+    });
+
+    test('binary write/read round-trip on real disk', () async {
+      final bytes = Uint8List.fromList([0, 1, 2, 255]);
+      expect((await fs.writeBinaryFile('bin.dat', bytes)).isOk, isTrue);
+      final read = await fs.readBinaryFile('bin.dat');
+      expect(read.valueOrNull, bytes);
+      expect(File('${tempDir.path}/bin.dat').readAsBytesSync(), bytes);
     });
 
     test('exists, listDir, createDir, remove against real disk', () async {

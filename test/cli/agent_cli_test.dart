@@ -209,6 +209,21 @@ void main() {
     return session.getEntries();
   }
 
+  test(
+    'default system prompt uses fah branding and forbids pi/Claude names',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final prompt = cli.systemPrompt;
+      expect(prompt, contains('You are fah'));
+      expect(prompt, contains('also called fa'));
+      expect(
+        prompt.toLowerCase(),
+        contains('never refer to yourself as pi, claude'),
+      );
+    },
+  );
+
   test('streams assistant text live and persists the session', () async {
     final fake = _FakeStreamFunction([_textTurn('Hello world')]);
     final cli = cliFor(fake.call);

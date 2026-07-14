@@ -1,4 +1,8 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:image/image.dart';
 import 'package:test/test.dart';
 
 String _text(ToolExecutionResult result) {
@@ -409,6 +413,64 @@ void main() {
       expect(text, isNot(contains('o1\n')));
       expect(text, contains('o2001'));
       expect(text, endsWith('\n\n[Showing lines 2-2001 of 2001.]'));
+    });
+  });
+
+  group('Image support in readFileTool', () {
+    late MemoryExecutionEnv env;
+    late ToolRegistry registry;
+
+    setUp(() {
+      env = MemoryExecutionEnv();
+      registry = ToolRegistry()
+        ..registerAll([readFileTool(env), writeFileTool(env)]);
+    });
+
+    Uint8List makePng(int width, int height) {
+      final img = Image(width: width, height: height)..getPixel(0, 0).r = 255;
+      return Uint8List.fromList(encodePng(img));
+    }
+
+    test('returns ImageContent for a PNG and resizes large images', () async {
+      await env.writeBinaryFile('/work/huge.png', makePng(3000, 2000));
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute({'path': '/work/huge.png'}, null, null);
+      final note = _text(result);
+      expect(note, contains('3000x2000'));
+      expect(note, contains('resized to 2000x1333'));
+      final images = result.content.whereType<ImageContent>().toList();
+      expect(images, hasLength(1));
+      expect(images.first.mimeType, 'image/png');
+      expect(images.first.data, isNotEmpty);
+      expect(base64Decode(images.first.data), isNotEmpty);
+    });
+
+    test('returns ImageContent unchanged for a small image', () async {
+      await env.writeBinaryFile('/work/small.png', makePng(100, 50));
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute(
+        {'path': '/work/small.png'},
+        null,
+        null,
+      );
+      final note = _text(result);
+      expect(note, contains('100x50'));
+      expect(note, isNot(contains('resized')));
+      final images = result.content.whereType<ImageContent>().toList();
+      expect(images, hasLength(1));
+      expect(images.first.mimeType, 'image/png');
+    });
+
+    test('empty files are treated as text, not images', () async {
+      await env.writeFile('/work/empty.txt', '');
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute(
+        {'path': '/work/empty.txt'},
+        null,
+        null,
+      );
+      expect(result.content.whereType<ImageContent>(), isEmpty);
+      expect(_text(result), isEmpty);
     });
   });
 }
