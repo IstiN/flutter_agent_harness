@@ -14,7 +14,8 @@ void main() {
         name: 'demo',
         description: 'demo tool',
         parameters: const {},
-        execute: (_, __, ___) async => ToolExecutionResult(content: []),
+        execute: (arguments, cancelToken, onUpdate) async =>
+            ToolExecutionResult(content: []),
       );
       context
         ..registerTool(tool)
@@ -58,7 +59,8 @@ void main() {
           pluginConfig: config ?? const {},
         ),
         io: io,
-        streamFunction: (_, __, {cancelToken}) => AssistantMessageEventStream(),
+        streamFunction: (model, context, {cancelToken}) =>
+            AssistantMessageEventStream(),
       );
     }
 
@@ -125,7 +127,8 @@ final class _DemoPlugin implements FahPlugin {
           name: 'demo_tool',
           description: 'demo',
           parameters: const {},
-          execute: (_, __, ___) async => ToolExecutionResult(content: []),
+          execute: (arguments, cancelToken, onUpdate) async =>
+              ToolExecutionResult(content: []),
         ),
       )
       ..registerSlashCommand('/demo', (args) async {
