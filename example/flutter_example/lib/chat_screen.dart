@@ -418,16 +418,15 @@ class _ChatScreenState extends State<ChatScreen> {
               currentUserId: 'user',
               resolveUser: _resolveUser,
               chatController: _chatController,
-              onMessageSend: _send,
-              onAttachmentTap: _showAttachmentSheet,
               builders: Builders(
                 textMessageBuilder: _buildTextMessage,
                 customMessageBuilder: _buildCustomMessage,
-                composerBuilder: _buildComposer,
+                composerBuilder: (_) => const SizedBox.shrink(),
               ),
               theme: ChatTheme.light(),
             ),
           ),
+          _buildComposer(context),
         ],
       ),
     );
