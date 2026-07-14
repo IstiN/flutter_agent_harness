@@ -25,6 +25,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   late final InMemoryChatController _chatController;
+  final _textController = TextEditingController();
 
   final _user = const User(id: 'user', name: 'Me');
   final _assistant = const User(id: 'assistant', name: 'fah');
@@ -44,6 +45,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _textController.dispose();
     widget.service.removeListener(_onServiceChanged);
     _chatController.dispose();
     super.dispose();
@@ -168,6 +170,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final image = _pendingImage;
     final mime = _pendingImageMime;
     _clearPendingImage();
+    _textController.clear();
 
     if (image != null) {
       await widget.service.sendImage(
@@ -275,51 +278,100 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildComposer(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (_pendingImage != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.memory(
-                    _pendingImage!,
-                    height: 64,
-                    width: 64,
-                    fit: BoxFit.cover,
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        border: Border(
+          top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.2)),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_pendingImage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        _pendingImage!,
+                        height: 64,
+                        width: 64,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: _clearPendingImage,
+                    ),
+                  ],
+                ),
+              ),
+            if (widget.service.isStreaming)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text('fah is typing...'),
+                  ],
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    onPressed: _showAttachmentSheet,
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: _clearPendingImage,
-                ),
-              ],
-            ),
-          ),
-        if (widget.service.isStreaming)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Theme.of(context).colorScheme.primary,
+                  Expanded(
+                    child: TextField(
+                      controller: _textController,
+                      decoration: const InputDecoration(
+                        hintText: 'Type a message',
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(24)),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                      ),
+                      maxLines: 5,
+                      minLines: 1,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: _send,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                const Text('fah is typing...'),
-              ],
+                  IconButton(
+                    icon: const Icon(Icons.send),
+                    onPressed: () => _send(_textController.text),
+                  ),
+                ],
+              ),
             ),
-          ),
-        const Composer(),
-      ],
+          ],
+        ),
+      ),
     );
   }
 
