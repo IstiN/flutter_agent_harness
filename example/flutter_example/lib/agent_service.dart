@@ -148,7 +148,7 @@ class AgentService extends ChangeNotifier {
     if (text.trim().isEmpty) return;
     _addUserMessage(text: text);
     _clearError();
-    unawaited(_agent.prompt(text));
+    _runWithTimeout(_agent.prompt(text));
   }
 
   /// Sends a user message with an attached image.
@@ -163,11 +163,29 @@ class AgentService extends ChangeNotifier {
       if (text.isNotEmpty) TextContent(text: text),
       ImageContent(data: base64Encode(bytes), mimeType: mimeType),
     ];
-    unawaited(
+    _runWithTimeout(
       _agent.promptMessage(
         UserMessage(content: content, timestamp: DateTime.now()),
       ),
     );
+  }
+
+  void _runWithTimeout(Future<void> run) {
+    run
+        .timeout(
+          const Duration(seconds: 90),
+          onTimeout: () {
+            abort();
+            throw TimeoutException(
+              'The model did not respond within 90 seconds.',
+            );
+          },
+        )
+        .catchError((Object e) {
+          isStreaming = false;
+          error = e.toString();
+          notifyListeners();
+        });
   }
 
   /// Aborts the current run, if any.
@@ -208,16 +226,10 @@ class AgentService extends ChangeNotifier {
     switch (event) {
       case AgentStartEvent():
         isStreaming = true;
-        messages.add(ChatMessage(role: 'assistant', content: ''));
         notifyListeners();
       case MessageUpdateEvent(:final assistantMessageEvent):
         if (assistantMessageEvent is TextDeltaEvent) {
-          final last = messages.lastWhere(
-            (m) => m.role == 'assistant',
-            orElse: () => ChatMessage(role: 'assistant', content: ''),
-          );
-          last.content += assistantMessageEvent.delta;
-          notifyListeners();
+          _appendAssistantDelta(assistantMessageEvent.delta);
         }
       case MessageEndEvent(:final message):
         if (message is ToolResultMessage) {
@@ -234,23 +246,7 @@ class AgentService extends ChangeNotifier {
           );
           notifyListeners();
         } else if (message is AssistantMessage) {
-          final last = messages.lastWhere(
-            (m) => m.role == 'assistant',
-            orElse: () => ChatMessage(role: 'assistant', content: ''),
-          );
-          if (last.content.isEmpty) {
-            last.content = message.content
-                .whereType<TextContent>()
-                .map((b) => b.text)
-                .join();
-            notifyListeners();
-          }
-          if (message.stopReason case StopReason.error || StopReason.aborted) {
-            error =
-                message.errorMessage ??
-                'Run failed (${message.stopReason.name})';
-            notifyListeners();
-          }
+          _finalizeAssistant(message);
         }
       case ToolExecutionStartEvent(:final toolName, :final args):
         messages.add(
@@ -284,6 +280,45 @@ class AgentService extends ChangeNotifier {
         notifyListeners();
       default:
     }
+  }
+
+  void _appendAssistantDelta(String delta) {
+    ChatMessage? last;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role == 'assistant') {
+        last = messages[i];
+        break;
+      }
+    }
+    if (last == null) {
+      last = ChatMessage(role: 'assistant', content: '');
+      messages.add(last);
+    }
+    last.content += delta;
+    notifyListeners();
+  }
+
+  void _finalizeAssistant(AssistantMessage message) {
+    final text = message.content
+        .whereType<TextContent>()
+        .map((b) => b.text)
+        .join();
+    ChatMessage? last;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role == 'assistant') {
+        last = messages[i];
+        break;
+      }
+    }
+    if (last == null) {
+      messages.add(ChatMessage(role: 'assistant', content: text));
+    } else {
+      last.content = text;
+    }
+    if (message.stopReason case StopReason.error || StopReason.aborted) {
+      error = message.errorMessage ?? 'Run failed (${message.stopReason.name})';
+    }
+    notifyListeners();
   }
 
   String _shortArgs(Map<String, dynamic> args) {

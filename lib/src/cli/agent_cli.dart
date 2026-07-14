@@ -74,6 +74,8 @@ final class AgentCliConfig {
     this.pluginConfig = const {},
     this.promptTemplateDirs = const [],
     this.initialMode = 'code',
+    this.onModelChanged,
+    this.onModeChanged,
   });
 
   /// Directories to scan for `/name` prompt templates (`.md` files).
@@ -81,6 +83,13 @@ final class AgentCliConfig {
 
   /// Initial mode name (`code`, `architect`, `review`).
   final String initialMode;
+
+  /// Called when the user switches the active model via `/model`.
+  final void Function(Model model)? onModelChanged;
+
+  /// Called when the user switches the active mode via `/mode`, `/code`,
+  /// `/architect`, or `/review`.
+  final void Function(String mode)? onModeChanged;
 
   /// The model to run. `/model <id>` swaps the id at runtime.
   final Model model;
@@ -427,6 +436,7 @@ class AgentCli {
     _currentMode = mode;
     _agent.state.systemPrompt = mode.systemPrompt;
     io.writeln('switched mode to ${mode.name}');
+    config.onModeChanged?.call(mode.name);
   }
 
   Future<void> _switchModel(String modelId) async {
@@ -454,6 +464,7 @@ class AgentCli {
       modelId: modelId,
     );
     io.writeln('switched model to $modelId');
+    config.onModelChanged?.call(_agent.state.model);
   }
 
   void _printHelp() {

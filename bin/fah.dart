@@ -305,31 +305,56 @@ final class _TerminalCliIO implements CliIO {
 
 Future<void> main(List<String> args) async {
   final parsed = _parseArgs(args);
-  final model = _buildModel(parsed);
-  final apiKey = _resolveApiKey(parsed.provider);
-  final cwd = parsed.cwd ?? Directory.current.path;
-  final sessionRoot = parsed.sessionRoot ?? _defaultSessionRoot();
+  final home = homeDirectory();
+  if (home == null || home.isEmpty) {
+    _fail('cannot resolve home directory; pass --session-root');
+  }
+  final saved = loadCliConfig(home);
+
+  final provider = parsed.provider;
+  final modelId = parsed.model ?? saved.modelId;
+  final baseUrl = parsed.baseUrl ?? saved.baseUrl;
+  final mode = parsed.mode ?? saved.mode;
+
+  final effective = _Args(
+    model: modelId,
+    provider: provider,
+    baseUrl: baseUrl,
+    visionModel: parsed.visionModel,
+    visionBaseUrl: parsed.visionBaseUrl,
+    plugins: parsed.plugins,
+    promptTemplateDirs: parsed.promptTemplateDirs,
+    mode: mode,
+    cwd: parsed.cwd,
+    sessionRoot: parsed.sessionRoot,
+  );
+
+  final model = _buildModel(effective);
+  final apiKey = _resolveApiKey(provider);
+  final cwd = effective.cwd ?? Directory.current.path;
+  final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
+
+  late final Future<void> Function() persistConfig;
 
   InspectImageConfig? visionConfig;
-  if (parsed.visionModel != null) {
+  if (effective.visionModel != null) {
     visionConfig = InspectImageConfig(
-      modelId: parsed.visionModel!,
+      modelId: effective.visionModel!,
       apiKey: _resolveApiKey('vision', fallback: apiKey),
-      baseUrl: parsed.visionBaseUrl,
+      baseUrl: effective.visionBaseUrl,
     );
   }
 
-  final resolved = _resolvePlugins(parsed, cwd);
+  final resolved = _resolvePlugins(effective, cwd);
 
-  if (parsed.mode != null &&
-      !const {'code', 'architect', 'review'}.contains(parsed.mode)) {
-    _fail('unknown mode: ${parsed.mode}');
+  if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
+    _fail('unknown mode: ${effective.mode}');
   }
 
   final promptTemplateDirs = <String>[
     '$cwd/.fah/prompts',
-    '${_homeDir()}/.fah/prompts',
-    ...parsed.promptTemplateDirs,
+    '$home/.fah/prompts',
+    ...effective.promptTemplateDirs,
   ];
 
   final io = _TerminalCliIO();
@@ -337,17 +362,33 @@ Future<void> main(List<String> args) async {
     config: AgentCliConfig(
       model: model,
       apiKey: apiKey,
-      providerKind: parsed.provider,
+      providerKind: provider,
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
       visionConfig: visionConfig,
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,
-      initialMode: parsed.mode ?? 'code',
+      initialMode: effective.mode!,
+      onModelChanged: (_) async => persistConfig(),
+      onModeChanged: (_) async => persistConfig(),
     ),
     io: io,
   );
+
+  persistConfig = () async {
+    await saveCliConfig(
+      home,
+      CliConfig(
+        providerKind: provider,
+        modelId: cli.agent.state.model.id,
+        baseUrl: cli.agent.state.model.baseUrl,
+        mode: cli.currentMode.name,
+      ),
+    );
+  };
+
+  await persistConfig();
 
   final sigintSub = ProcessSignal.sigint.watch().listen((_) {
     if (cli.isBusy) {
