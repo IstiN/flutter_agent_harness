@@ -1,0 +1,31 @@
+name: flutter_agent_example
+description: >-
+  Flutter example for flutter_agent_harness: a chat UI that runs the agent
+  with a mobile ExecutionEnv backed by path_provider and Process.run.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The local flutter_agent_harness package (pure Dart core + dart:io env).
+  flutter_agent_harness:
+    path: ../../
+
+  # Mobile-friendly filesystem root and image picking.
+  path_provider: ^2.1.5
+  image_picker: ^1.1.2
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
