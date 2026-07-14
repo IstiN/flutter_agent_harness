@@ -94,7 +94,11 @@ replayed forever in context, not portable to web.
 7. **Native tool calling** per provider (OpenAI `tools`, Anthropic
    `tool_use`, Google `functionCalling`); prompt-based tool calling is
    explicitly rejected.
-8. **Multi-provider subset for v1**: openai-completions (covers OpenRouter),
+8. **Plugin/package extension API** — third-party packages can register
+   tools, slash commands, and configuration through a `FahPlugin` interface.
+   Built-in plugins (e.g. `inspect_image`) ship in the core package and are
+   enabled via `.fah/packages.yaml` or CLI `--plugin`.
+9. **Multi-provider subset for v1**: openai-completions (covers OpenRouter),
    anthropic, google. Others later via the same contract.
 
 ## Roadmap
@@ -108,6 +112,8 @@ replayed forever in context, not portable to web.
   queues, tool registry + validation, hooks.
 - **Phase 3 — sessions & compaction:** JSONL session tree behind
   `ExecutionEnv` storage, token estimation, compaction pipeline.
+- **Phase 3.5 — plugins/packages:** `FahPlugin` API and built-in
+  `inspect_image` plugin, configured via `.fah/packages.yaml`.
 - **Phase 4 — consumer migration:** switch yoclip Studio assistant behind a
   feature flag; extract Flutter helpers into a sibling package if needed.
 - **Phase 5 — pub.dev release** (see below).
