@@ -41,6 +41,8 @@ Options:
   --vision-base-url <url>   Override the vision provider base URL
   --plugin <name>          Enable a built-in plugin (repeatable). Built-ins:
                             inspect_image
+  --prompt-template-dir <path>  Add a prompt template directory (repeatable)
+  --mode <name>           Initial mode: code | architect | review
   --cwd <dir>               Working directory (default: current directory)
   --session-root <dir>      Session storage root (default: ~/.fah/sessions)
   --help, -h                Show this help
@@ -69,6 +71,8 @@ final class _Args {
     this.visionModel,
     this.visionBaseUrl,
     this.plugins = const [],
+    this.promptTemplateDirs = const [],
+    this.mode,
     this.cwd,
     this.sessionRoot,
   });
@@ -79,6 +83,8 @@ final class _Args {
   final String? visionModel;
   final String? visionBaseUrl;
   final List<String> plugins;
+  final List<String> promptTemplateDirs;
+  final String? mode;
   final String? cwd;
   final String? sessionRoot;
 }
@@ -96,6 +102,8 @@ _Args _parseArgs(List<String> args) {
   String? visionModel;
   String? visionBaseUrl;
   final plugins = <String>[];
+  final promptTemplateDirs = <String>[];
+  String? mode;
   String? cwd;
   String? sessionRoot;
 
@@ -130,6 +138,12 @@ _Args _parseArgs(List<String> args) {
       case '--plugin':
         plugins.add(valueFor(i, '--plugin'));
         i++;
+      case '--prompt-template-dir':
+        promptTemplateDirs.add(valueFor(i, '--prompt-template-dir'));
+        i++;
+      case '--mode':
+        mode = valueFor(i, '--mode');
+        i++;
       case '--cwd':
         cwd = valueFor(i, '--cwd');
         i++;
@@ -150,6 +164,8 @@ _Args _parseArgs(List<String> args) {
     visionModel: visionModel,
     visionBaseUrl: visionBaseUrl,
     plugins: plugins,
+    promptTemplateDirs: promptTemplateDirs,
+    mode: mode,
     cwd: cwd,
     sessionRoot: sessionRoot,
   );
@@ -251,12 +267,17 @@ Map<String, dynamic> _loadPackagesConfig(String cwd) {
 }
 
 String _defaultSessionRoot() {
+  final home = _homeDir();
+  return '$home/.fah/sessions';
+}
+
+String _homeDir() {
   final home =
       Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
   if (home == null || home.isEmpty) {
     _fail('cannot resolve home directory; pass --session-root');
   }
-  return '$home/.fah/sessions';
+  return home;
 }
 
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
@@ -300,6 +321,17 @@ Future<void> main(List<String> args) async {
 
   final resolved = _resolvePlugins(parsed, cwd);
 
+  if (parsed.mode != null &&
+      !const {'code', 'architect', 'review'}.contains(parsed.mode)) {
+    _fail('unknown mode: ${parsed.mode}');
+  }
+
+  final promptTemplateDirs = <String>[
+    '$cwd/.fah/prompts',
+    '${_homeDir()}/.fah/prompts',
+    ...parsed.promptTemplateDirs,
+  ];
+
   final io = _TerminalCliIO();
   final cli = AgentCli(
     config: AgentCliConfig(
@@ -311,6 +343,8 @@ Future<void> main(List<String> args) async {
       visionConfig: visionConfig,
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
+      promptTemplateDirs: promptTemplateDirs,
+      initialMode: parsed.mode ?? 'code',
     ),
     io: io,
   );

@@ -38,6 +38,7 @@ import '../tools/inspect_image.dart';
 import '../plugins/plugin.dart';
 import '../types.dart';
 import '../usage_summary.dart';
+import 'prompt_templates.dart';
 
 /// Terminal IO abstracted for testability.
 ///
@@ -71,7 +72,15 @@ final class AgentCliConfig {
     this.visionConfig,
     this.plugins = const [],
     this.pluginConfig = const {},
+    this.promptTemplateDirs = const [],
+    this.initialMode = 'code',
   });
+
+  /// Directories to scan for `/name` prompt templates (`.md` files).
+  final List<String> promptTemplateDirs;
+
+  /// Initial mode name (`code`, `architect`, `review`).
+  final String initialMode;
 
   /// The model to run. `/model <id>` swaps the id at runtime.
   final Model model;
@@ -131,13 +140,8 @@ StreamFunction providerStreamFunction(String kind, String apiKey) {
 }
 
 /// The default system prompt for the CLI agent.
-String defaultAgentCliSystemPrompt(String cwd) {
-  return 'You are fah, a coding agent (also called fa). Never refer to '
-      'yourself as pi, Claude, or any other assistant name. You help with '
-      'software engineering tasks in the working directory $cwd. Use the '
-      'read, write, ls, and bash tools to inspect and modify files and run '
-      'commands. Be concise.';
-}
+String defaultAgentCliSystemPrompt(String cwd) =>
+    defaultAgentMode(cwd).systemPrompt;
 
 /// Adapts [CliIO] to the [PluginIO] surface exposed to plugins.
 final class _PluginIO implements PluginIO {
@@ -165,7 +169,9 @@ class AgentCli {
     this.prompt = 'fah> ',
   }) : _streamFunction =
            streamFunction ??
-           providerStreamFunction(config.providerKind, config.apiKey) {
+           providerStreamFunction(config.providerKind, config.apiKey),
+       _modes = builtInAgentModes(config.env.cwd) {
+    _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     final pluginTools = <AgentTool>[];
     for (final plugin in config.plugins) {
       final context = PluginContext(
@@ -180,8 +186,7 @@ class AgentCli {
 
     _agent = Agent(
       model: config.model,
-      systemPrompt:
-          config.systemPrompt ?? defaultAgentCliSystemPrompt(config.env.cwd),
+      systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
       streamFunction: _streamFunction,
       toolRegistry: ToolRegistry([
         ...builtinTools(config.env),
@@ -193,12 +198,14 @@ class AgentCli {
     _agent.subscribe(_onAgentEvent);
   }
 
-  /// The underlying [Agent] driving the session.
-  Agent get agent => _agent;
+  /// The active mode.
+  AgentMode get currentMode => _currentMode;
 
   /// The effective system prompt sent to the model.
-  String get systemPrompt =>
-      config.systemPrompt ?? defaultAgentCliSystemPrompt(config.env.cwd);
+  String get systemPrompt => config.systemPrompt ?? _currentMode.systemPrompt;
+
+  /// The underlying [Agent] driving the session.
+  Agent get agent => _agent;
 
   /// The static configuration.
   final AgentCliConfig config;
@@ -222,6 +229,9 @@ class AgentCli {
   var _exited = false;
   Future<void> _settled = Future<void>.value();
   final Map<String, SlashCommand> _pluginSlashCommands = {};
+  final Map<String, AgentMode> _modes;
+  late AgentMode _currentMode;
+  List<PromptTemplate> _templates = [];
 
   Map<String, dynamic> _pluginConfig(String name) {
     final raw = config.pluginConfig[name];
@@ -235,6 +245,10 @@ class AgentCli {
 
   /// Runs the REPL until `/exit` or the input stream closes.
   Future<void> run() async {
+    _templates = await loadPromptTemplates(
+      config.env,
+      config.promptTemplateDirs,
+    );
     _session = await _createSession();
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
@@ -376,14 +390,43 @@ class AgentCli {
         io.writeln('new session started');
       case '/compact':
         await _compact('[compacted]');
+      case '/mode':
+        await _handleMode(rest);
+      case '/code' || '/architect' || '/review':
+        await _switchMode(command.substring(1));
       default:
         final pluginHandler = _pluginSlashCommands[command];
         if (pluginHandler != null) {
           await pluginHandler(rest.split(RegExp(r'\s+')));
+          return;
+        }
+        final expanded = expandPromptTemplate(trimmed, _templates);
+        if (expanded != trimmed) {
+          _startRun(expanded);
         } else {
           io.writeln('unknown command: $command (try /help)');
         }
     }
+  }
+
+  Future<void> _handleMode(String rest) async {
+    if (rest.isEmpty) {
+      io.writeln('mode: ${_currentMode.name}');
+      io.writeln('modes: ${(_modes.keys.toList()..sort()).join(', ')}');
+      return;
+    }
+    await _switchMode(rest);
+  }
+
+  Future<void> _switchMode(String name) async {
+    final mode = _modes[name];
+    if (mode == null) {
+      io.writeln('unknown mode: $name');
+      return;
+    }
+    _currentMode = mode;
+    _agent.state.systemPrompt = mode.systemPrompt;
+    io.writeln('switched mode to ${mode.name}');
   }
 
   Future<void> _switchModel(String modelId) async {
@@ -415,12 +458,16 @@ class AgentCli {
 
   void _printHelp() {
     io.writeln('commands:');
-    io.writeln('  /exit        quit');
-    io.writeln('  /reset       start a new session');
-    io.writeln('  /compact     summarize history to free context');
-    io.writeln('  /stats       show token and cost totals');
-    io.writeln('  /model <id>  show or switch the model');
-    io.writeln('  /help        this help');
+    io.writeln('  /exit              quit');
+    io.writeln('  /reset             start a new session');
+    io.writeln('  /compact           summarize history to free context');
+    io.writeln('  /stats             show token and cost totals');
+    io.writeln('  /model <id>        show or switch the model');
+    io.writeln('  /mode [name]       show or switch the active mode');
+    io.writeln('  /code              switch to coding mode');
+    io.writeln('  /architect         switch to architect mode');
+    io.writeln('  /review            switch to review mode');
+    io.writeln('  /help              this help');
     io.writeln(
       'While a run is streaming, typed input steers the agent; '
       'Ctrl-C aborts the run.',
@@ -429,6 +476,13 @@ class AgentCli {
       io.writeln('plugin commands:');
       for (final entry in _pluginSlashCommands.entries) {
         io.writeln('  ${entry.key}');
+      }
+    }
+    if (_templates.isNotEmpty) {
+      io.writeln('prompt templates:');
+      for (final t in _templates) {
+        final hint = t.argumentHint ?? '';
+        io.writeln('  /${t.name} $hint');
       }
     }
   }
