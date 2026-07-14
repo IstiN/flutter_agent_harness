@@ -19,6 +19,7 @@ import 'dart:convert';
 
 import '../agent/agent.dart';
 import '../agent/agent_loop.dart';
+import '../agent/agent_tool.dart';
 import '../agent/tool_registry.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
@@ -34,6 +35,7 @@ import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/inspect_image.dart';
+import '../plugins/plugin.dart';
 import '../types.dart';
 import '../usage_summary.dart';
 
@@ -67,6 +69,8 @@ final class AgentCliConfig {
     this.providerKind = 'openai-completions',
     this.systemPrompt,
     this.visionConfig,
+    this.plugins = const [],
+    this.pluginConfig = const {},
   });
 
   /// The model to run. `/model <id>` swaps the id at runtime.
@@ -90,7 +94,15 @@ final class AgentCliConfig {
 
   /// Optional vision model configuration. When provided, the `inspect_image`
   /// tool is registered and routes image analysis to a dedicated model.
+  ///
+  /// Prefer using the `inspect_image` plugin via [plugins] / [pluginConfig].
   final InspectImageConfig? visionConfig;
+
+  /// Plugins to register at startup.
+  final List<FahPlugin> plugins;
+
+  /// Per-plugin configuration from `.fah/packages.yaml` (keyed by plugin name).
+  final Map<String, dynamic> pluginConfig;
 }
 
 /// Builds the [StreamFunction] for a provider [kind] (`openai-completions`,
@@ -127,6 +139,19 @@ String defaultAgentCliSystemPrompt(String cwd) {
       'commands. Be concise.';
 }
 
+/// Adapts [CliIO] to the [PluginIO] surface exposed to plugins.
+final class _PluginIO implements PluginIO {
+  _PluginIO(this._io);
+
+  final CliIO _io;
+
+  @override
+  void write(String text) => _io.write(text);
+
+  @override
+  void writeln(String text) => _io.writeln(text);
+}
+
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
 class AgentCli {
@@ -141,6 +166,18 @@ class AgentCli {
   }) : _streamFunction =
            streamFunction ??
            providerStreamFunction(config.providerKind, config.apiKey) {
+    final pluginTools = <AgentTool>[];
+    for (final plugin in config.plugins) {
+      final context = PluginContext(
+        env: config.env,
+        io: _PluginIO(io),
+        config: _pluginConfig(plugin.name),
+      );
+      plugin.register(context);
+      pluginTools.addAll(context.tools);
+      _pluginSlashCommands.addAll(context.slashCommands);
+    }
+
     _agent = Agent(
       model: config.model,
       systemPrompt:
@@ -150,6 +187,7 @@ class AgentCli {
         ...builtinTools(config.env),
         if (config.visionConfig != null)
           inspectImageTool(config.env, config.visionConfig!),
+        ...pluginTools,
       ]),
     );
     _agent.subscribe(_onAgentEvent);
@@ -183,6 +221,14 @@ class AgentCli {
   var _streamedText = false;
   var _exited = false;
   Future<void> _settled = Future<void>.value();
+  final Map<String, SlashCommand> _pluginSlashCommands = {};
+
+  Map<String, dynamic> _pluginConfig(String name) {
+    final raw = config.pluginConfig[name];
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return const {};
+  }
 
   /// Whether a run is currently streaming.
   bool get isBusy => _agent.state.isStreaming;
@@ -331,7 +377,12 @@ class AgentCli {
       case '/compact':
         await _compact('[compacted]');
       default:
-        io.writeln('unknown command: $command (try /help)');
+        final pluginHandler = _pluginSlashCommands[command];
+        if (pluginHandler != null) {
+          await pluginHandler(rest.split(RegExp(r'\s+')));
+        } else {
+          io.writeln('unknown command: $command (try /help)');
+        }
     }
   }
 
@@ -374,6 +425,12 @@ class AgentCli {
       'While a run is streaming, typed input steers the agent; '
       'Ctrl-C aborts the run.',
     );
+    if (_pluginSlashCommands.isNotEmpty) {
+      io.writeln('plugin commands:');
+      for (final entry in _pluginSlashCommands.entries) {
+        io.writeln('  ${entry.key}');
+      }
+    }
   }
 
   void _printStats() {

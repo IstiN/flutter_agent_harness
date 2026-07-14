@@ -24,6 +24,7 @@ dependencies:
   image: ^4.9.1
   meta: ^1.18.0
   mime: ^2.0.0
+  yaml: ^3.1.0
 
 dev_dependencies:
   coverage: ^1.15.1
