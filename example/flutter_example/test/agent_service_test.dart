@@ -40,7 +40,45 @@ StreamFunction _errorStream(String errorMessage) {
   };
 }
 
-Agent _createAgent(StreamFunction streamFunction) {
+StreamFunction _toolThenText(String toolOutput, String finalText) {
+  var callCount = 0;
+  return (model, context, {cancelToken}) {
+    callCount++;
+    final stream = AssistantMessageEventStream();
+    if (callCount == 1) {
+      final message = AssistantMessage(
+        content: [
+          ToolCall(id: 'tc-1', name: 'echo', arguments: const {'x': 'hi'}),
+        ],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.now(),
+      );
+      stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    } else {
+      final message = AssistantMessage(
+        content: [TextContent(text: finalText)],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.now(),
+      );
+      stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    }
+    stream.end();
+    return stream;
+  };
+}
+
+Agent _createAgent(
+  StreamFunction streamFunction, {
+  List<AgentTool> tools = const [],
+}) {
   return Agent(
     model: Model(
       id: 'test-model',
@@ -52,7 +90,7 @@ Agent _createAgent(StreamFunction streamFunction) {
     ),
     systemPrompt: 'You are fah.',
     streamFunction: streamFunction,
-    toolRegistry: ToolRegistry([]),
+    toolRegistry: ToolRegistry(tools),
   );
 }
 
@@ -114,6 +152,45 @@ void main() {
       await service.waitForIdle();
 
       expect(service.error, contains('something broke'));
+    });
+
+    test('tool calls and results are surfaced as distinct messages', () async {
+      final env = MemoryExecutionEnv();
+      final echoTool = AgentTool(
+        name: 'echo',
+        description: 'Echoes the input back.',
+        parameters: const {
+          'type': 'object',
+          'properties': {
+            'x': {'type': 'string'},
+          },
+          'required': ['x'],
+        },
+        execute: (arguments, cancelToken, onUpdate) async {
+          return ToolExecutionResult.text('echo: ${arguments['x']}');
+        },
+      );
+      final service = AgentService(
+        agent: _createAgent(
+          _toolThenText('echo: hi', 'done'),
+          tools: [echoTool],
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('call echo');
+      await service.waitForIdle();
+
+      final roles = service.messages.map((m) => m.role).toList();
+      expect(roles, contains('system'));
+      expect(roles, contains('tool'));
+      expect(roles, contains('assistant'));
+
+      final toolMsg = service.messages.firstWhere((m) => m.role == 'tool');
+      expect(toolMsg.toolName, 'echo');
+      expect(toolMsg.content, contains('echo: hi'));
     });
 
     test('reset clears messages and starts a new session', () async {

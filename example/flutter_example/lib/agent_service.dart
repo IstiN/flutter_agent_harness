@@ -8,8 +8,8 @@ import 'package:flutter_agent_harness/io.dart' show LocalExecutionEnv;
 import 'package:path_provider/path_provider.dart';
 
 /// A UI-facing chat message.
-final class ChatMessage {
-  ChatMessage({
+final class FahChatMessage {
+  FahChatMessage({
     required this.role,
     required this.content,
     this.imageBytes,
@@ -73,7 +73,7 @@ final class AgentConfig {
 /// Wraps an [Agent] for the Flutter chat UI.
 ///
 /// Persists sessions to [sessionsRoot] via [JsonlSessionRepo] and translates
-/// agent lifecycle events into a list of [ChatMessage].
+/// agent lifecycle events into a list of [FahChatMessage].
 class AgentService extends ChangeNotifier {
   AgentService({
     required this._agent,
@@ -123,7 +123,7 @@ class AgentService extends ChangeNotifier {
   final JsonlSessionRepo _repo;
   final String sessionsRoot;
 
-  final List<ChatMessage> messages = [];
+  final List<FahChatMessage> messages = [];
   bool isStreaming = false;
   String? error;
 
@@ -210,7 +210,7 @@ class AgentService extends ChangeNotifier {
     String? mimeType,
   }) {
     messages.add(
-      ChatMessage(role: 'user', content: text, imageBytes: imageBytes),
+      FahChatMessage(role: 'user', content: text, imageBytes: imageBytes),
     );
     notifyListeners();
   }
@@ -238,7 +238,7 @@ class AgentService extends ChangeNotifier {
               .map((b) => b.text)
               .join('\n');
           messages.add(
-            ChatMessage(
+            FahChatMessage(
               role: 'tool',
               content: text,
               toolName: message.toolName,
@@ -250,7 +250,7 @@ class AgentService extends ChangeNotifier {
         }
       case ToolExecutionStartEvent(:final toolName, :final args):
         messages.add(
-          ChatMessage(
+          FahChatMessage(
             role: 'system',
             content: '[$toolName] ${_shortArgs(args)}',
           ),
@@ -266,7 +266,7 @@ class AgentService extends ChangeNotifier {
             .map((b) => b.text)
             .join('\n');
         messages.add(
-          ChatMessage(
+          FahChatMessage(
             role: 'tool',
             content: text,
             toolName: toolName,
@@ -283,7 +283,7 @@ class AgentService extends ChangeNotifier {
   }
 
   void _appendAssistantDelta(String delta) {
-    ChatMessage? last;
+    FahChatMessage? last;
     for (var i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role == 'assistant') {
         last = messages[i];
@@ -291,7 +291,7 @@ class AgentService extends ChangeNotifier {
       }
     }
     if (last == null) {
-      last = ChatMessage(role: 'assistant', content: '');
+      last = FahChatMessage(role: 'assistant', content: '');
       messages.add(last);
     }
     last.content += delta;
@@ -303,7 +303,7 @@ class AgentService extends ChangeNotifier {
         .whereType<TextContent>()
         .map((b) => b.text)
         .join();
-    ChatMessage? last;
+    FahChatMessage? last;
     for (var i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role == 'assistant') {
         last = messages[i];
@@ -311,7 +311,7 @@ class AgentService extends ChangeNotifier {
       }
     }
     if (last == null) {
-      messages.add(ChatMessage(role: 'assistant', content: text));
+      messages.add(FahChatMessage(role: 'assistant', content: text));
     } else {
       last.content = text;
     }
