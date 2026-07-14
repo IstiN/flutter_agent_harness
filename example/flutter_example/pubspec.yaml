@@ -20,6 +20,9 @@ dependencies:
   path_provider: ^2.1.5
   image_picker: ^1.1.2
 
+  # Load API keys and runtime config from .env for local dev/simulator runs.
+  flutter_dotenv: ^5.2.1
+
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
@@ -29,3 +32,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - .env
+
