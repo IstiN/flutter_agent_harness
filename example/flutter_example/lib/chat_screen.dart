@@ -148,6 +148,21 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
+          if (widget.service.isStreaming)
+            const Padding(
+              padding: EdgeInsets.only(left: 16, bottom: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 8),
+                  Text('fah is typing...'),
+                ],
+              ),
+            ),
           if (_pendingImage != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),

@@ -5,4 +5,5 @@
 /// that is allowed to touch `dart:io`.
 library;
 
+export 'src/cli/cli_config.dart';
 export 'src/env/io_execution_env.dart';
