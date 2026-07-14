@@ -224,6 +224,26 @@ void main() {
     },
   );
 
+  test('registers inspect_image tool when visionConfig is provided', () {
+    final fake = _FakeStreamFunction([]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: _model,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        visionConfig: InspectImageConfig(
+          modelId: 'gpt-4o',
+          apiKey: 'vision-key',
+        ),
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    final names = cli.agent.state.tools.map((t) => t.name);
+    expect(names, contains('inspect_image'));
+  });
+
   test('streams assistant text live and persists the session', () async {
     final fake = _FakeStreamFunction([_textTurn('Hello world')]);
     final cli = cliFor(fake.call);

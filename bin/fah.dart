@@ -31,19 +31,23 @@ fah — flutter_agent_harness CLI agent
 Usage: dart run bin/fah.dart [options]
 
 Options:
-  --model <id>          Model id (default per provider, see below)
-  --provider <kind>     openai-completions | anthropic | google
-                        (default: openai-completions, via OpenRouter)
-  --base-url <url>      Override the provider API base URL
-  --cwd <dir>           Working directory (default: current directory)
-  --session-root <dir>  Session storage root (default: ~/.fah/sessions)
-  --help, -h            Show this help
-  --version             Print the version
+  --model <id>              Model id (default per provider, see below)
+  --provider <kind>         openai-completions | anthropic | google
+                            (default: openai-completions, via OpenRouter)
+  --base-url <url>          Override the provider API base URL
+  --vision-model <id>       Enable inspect_image tool using this vision model
+                            (e.g. gpt-4o, openai/gpt-4o)
+  --vision-base-url <url>   Override the vision provider base URL
+  --cwd <dir>               Working directory (default: current directory)
+  --session-root <dir>      Session storage root (default: ~/.fah/sessions)
+  --help, -h                Show this help
+  --version                 Print the version
 
 Environment:
-  OPENROUTER_API_KEY    API key for openai-completions (or OPENAI_API_KEY)
-  ANTHROPIC_API_KEY     API key for --provider anthropic
-  GOOGLE_API_KEY        API key for --provider google
+  OPENROUTER_API_KEY        API key for openai-completions (or OPENAI_API_KEY)
+  ANTHROPIC_API_KEY         API key for --provider anthropic
+  GOOGLE_API_KEY            API key for --provider google
+  VISION_API_KEY            API key for --vision-model (defaults to main key)
 
 Defaults per provider:
   openai-completions    anthropic/claude-sonnet-4 @ https://openrouter.ai/api/v1
@@ -56,6 +60,8 @@ final class _Args {
     this.model,
     this.provider = 'openai-completions',
     this.baseUrl,
+    this.visionModel,
+    this.visionBaseUrl,
     this.cwd,
     this.sessionRoot,
   });
@@ -63,6 +69,8 @@ final class _Args {
   final String? model;
   final String provider;
   final String? baseUrl;
+  final String? visionModel;
+  final String? visionBaseUrl;
   final String? cwd;
   final String? sessionRoot;
 }
@@ -77,6 +85,8 @@ _Args _parseArgs(List<String> args) {
   String? model;
   var provider = 'openai-completions';
   String? baseUrl;
+  String? visionModel;
+  String? visionBaseUrl;
   String? cwd;
   String? sessionRoot;
 
@@ -102,6 +112,12 @@ _Args _parseArgs(List<String> args) {
       case '--base-url':
         baseUrl = valueFor(i, '--base-url');
         i++;
+      case '--vision-model':
+        visionModel = valueFor(i, '--vision-model');
+        i++;
+      case '--vision-base-url':
+        visionBaseUrl = valueFor(i, '--vision-base-url');
+        i++;
       case '--cwd':
         cwd = valueFor(i, '--cwd');
         i++;
@@ -119,6 +135,8 @@ _Args _parseArgs(List<String> args) {
     model: model,
     provider: provider,
     baseUrl: baseUrl,
+    visionModel: visionModel,
+    visionBaseUrl: visionBaseUrl,
     cwd: cwd,
     sessionRoot: sessionRoot,
   );
@@ -160,17 +178,19 @@ Model _buildModel(_Args args) {
   };
 }
 
-String _resolveApiKey(String provider) {
+String _resolveApiKey(String provider, {String? fallback}) {
   final env = Platform.environment;
   final key = switch (provider) {
     'anthropic' => env['ANTHROPIC_API_KEY'],
     'google' => env['GOOGLE_API_KEY'],
+    'vision' => env['VISION_API_KEY'] ?? fallback,
     _ => env['OPENROUTER_API_KEY'] ?? env['OPENAI_API_KEY'],
   };
   if (key == null || key.isEmpty) {
     final name = switch (provider) {
       'anthropic' => 'ANTHROPIC_API_KEY',
       'google' => 'GOOGLE_API_KEY',
+      'vision' => 'VISION_API_KEY',
       _ => 'OPENROUTER_API_KEY',
     };
     _fail('missing API key: set $name in the environment');
@@ -217,6 +237,15 @@ Future<void> main(List<String> args) async {
   final cwd = parsed.cwd ?? Directory.current.path;
   final sessionRoot = parsed.sessionRoot ?? _defaultSessionRoot();
 
+  InspectImageConfig? visionConfig;
+  if (parsed.visionModel != null) {
+    visionConfig = InspectImageConfig(
+      modelId: parsed.visionModel!,
+      apiKey: _resolveApiKey('vision', fallback: apiKey),
+      baseUrl: parsed.visionBaseUrl,
+    );
+  }
+
   final io = _TerminalCliIO();
   final cli = AgentCli(
     config: AgentCliConfig(
@@ -225,6 +254,7 @@ Future<void> main(List<String> args) async {
       providerKind: parsed.provider,
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
+      visionConfig: visionConfig,
     ),
     io: io,
   );
