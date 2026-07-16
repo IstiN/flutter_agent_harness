@@ -6,24 +6,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
-import 'package:dart_git/dart_git.dart' as dart_git;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:dart_git/exceptions.dart';
-import 'package:dart_git/plumbing/commit_iterator.dart';
-import 'package:dart_git/plumbing/git_hash.dart';
-import 'package:dart_git/plumbing/objects/blob.dart';
-import 'package:dart_git/plumbing/objects/object.dart';
-import 'package:dart_git/plumbing/reference.dart';
-import 'package:dart_git/status.dart';
-import 'package:dart_git/utils/file_mode.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
 import 'shell_parser.dart';
+import 'wasm_shell_git.dart';
 
 /// A [Shell] backed by a sandbox of permissive WASI binaries.
 ///
@@ -56,7 +48,8 @@ final class WasiSandboxShell implements Shell {
     this.workingDirectory,
     this.sandboxHostPath,
     http.Client? httpClient,
-  }) : _httpClient = httpClient ?? http.Client();
+  }) : _httpClient = httpClient ?? http.Client(),
+       _currentDir = workingDirectory ?? '/';
 
   /// `coreutils` multicall module.
   final WasmModule coreutils;
@@ -89,6 +82,47 @@ final class WasiSandboxShell implements Shell {
   final String? sandboxHostPath;
 
   final http.Client _httpClient;
+
+  /// Current working directory of the shell, mutated by the `cd` builtin.
+  /// Initialized from [workingDirectory] and persisted across [exec] calls.
+  String _currentDir;
+
+  /// Variables set by the `export` builtin, persisted across [exec] calls and
+  /// visible to later WASM commands and builtins.
+  final Map<String, String> _shellEnv = <String, String>{};
+
+  late final GitSandboxCommands _git = GitSandboxCommands(this);
+
+  /// Host path for a sandbox-absolute path (public surface for git commands).
+  String hostPathOf(String sandboxPath) => _hostPath(sandboxPath);
+
+  /// Resolves a sandbox path against [cwd] (public surface for git commands).
+  String resolveSandboxPathFor(String path, String cwd) =>
+      _resolveSandboxPath(path, cwd);
+
+  /// Current working directory of the shell (public surface for git commands).
+  String get shellCwd => _currentDir;
+
+  /// HTTP client used by network builtins (public surface for git commands).
+  http.Client get shellHttpClient => _httpClient;
+
+  /// Runs a sandbox command (public surface for git commands, e.g. tar).
+  Future<Result<StageResult, ExecutionError>> runSandboxCommand(
+    String command,
+    List<String> args,
+  ) => _runCommand(
+    command: command,
+    args: args,
+    options: null,
+    inputSource: null,
+    captureStdout: true,
+    captureStderr: true,
+  );
+
+  Future<Result<StageResult, ExecutionError>> _gitBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) => _git.run(stage, options);
 
   /// Loads all three WASM modules from the Flutter asset bundle.
   static Future<WasiSandboxShell> load({
@@ -209,6 +243,7 @@ final class WasiSandboxShell implements Shell {
   /// do not increase the IPA size.
   static const Set<String> _builtinCommands = {
     'curl',
+    'wget',
     'git',
     'jq',
     'yq',
@@ -220,6 +255,17 @@ final class WasiSandboxShell implements Shell {
     'whoami',
     'xargs',
     'tr',
+    'cd',
+    'pwd',
+    'export',
+    'unset',
+    'grep',
+    'du',
+    'stat',
+    'tac',
+    'expr',
+    'id',
+    'relpath',
   };
 
   /// Whether [command] can be resolved to a WASM applet or a builtin.
@@ -257,13 +303,14 @@ final class WasiSandboxShell implements Shell {
   }
 
   /// Dispatches a builtin command to its Dart implementation.
-  Future<Result<_StageResult, ExecutionError>> _runBuiltin({
+  Future<Result<StageResult, ExecutionError>> _runBuiltin({
     required Stage stage,
     required ShellExecOptions? options,
     required String? inputSource,
   }) async {
     return switch (stage.command) {
       'curl' => _curlBuiltin(stage, options),
+      'wget' => _wgetBuiltin(stage, options),
       'git' => _gitBuiltin(stage, options),
       'jq' => _jqBuiltin(stage, inputSource),
       'yq' => _yqBuiltin(stage, inputSource),
@@ -274,6 +321,17 @@ final class WasiSandboxShell implements Shell {
       'whoami' => _whoamiBuiltin(),
       'xargs' => _xargsBuiltin(stage, options, inputSource),
       'tr' => _trBuiltin(stage, inputSource),
+      'cd' => _cdBuiltin(stage, options),
+      'pwd' => _pwdBuiltin(options),
+      'export' => _exportBuiltin(stage),
+      'unset' => _unsetBuiltin(stage),
+      'grep' => _grepBuiltin(stage, options, inputSource),
+      'du' => _duBuiltin(stage, options),
+      'stat' => _statBuiltin(stage, options),
+      'tac' => _tacBuiltin(stage, options, inputSource),
+      'expr' => _exprBuiltin(stage),
+      'id' => _idBuiltin(stage),
+      'relpath' => _relpathBuiltin(stage, options),
       _ => Err(
         ExecutionError(
           ExecutionErrorCode.unknown,
@@ -284,7 +342,7 @@ final class WasiSandboxShell implements Shell {
   }
 
   /// Runs either a builtin command or a WASM stage with stdin/source handling.
-  Future<Result<_StageResult, ExecutionError>> _runCommand({
+  Future<Result<StageResult, ExecutionError>> _runCommand({
     required String command,
     required List<String> args,
     required ShellExecOptions? options,
@@ -299,9 +357,11 @@ final class WasiSandboxShell implements Shell {
         inputSource: inputSource,
       );
     }
+    final cwd = options?.cwd ?? _currentDir;
+    final cwdArgs = _rewriteRelativeArgs(command, args, cwd);
     final effectiveArgs = inputSource != null && command != 'rg'
-        ? [...args, inputSource]
-        : args;
+        ? [...cwdArgs, inputSource]
+        : cwdArgs;
     return _runStage(
       command: command,
       args: effectiveArgs,
@@ -373,13 +433,18 @@ final class WasiSandboxShell implements Shell {
       final stage = pipeline.stages[i];
       final isLast = i == pipeline.stages.length - 1;
 
+      // Expand `$VAR` references at execution time so earlier statements in
+      // the same command line (e.g. `export A=1 && echo $A`) are visible.
+      final stageEnv = _effectiveEnv(options);
+      final expandedStage = _expandStage(stage, stageEnv);
+
       String? stdoutFile;
       String? stderrFile;
       var appendStdout = false;
       var appendStderr = false;
       String? stdinFile;
 
-      for (final redirect in stage.redirects) {
+      for (final redirect in expandedStage.redirects) {
         if (redirect.fd == 0 && redirect.kind == RedirectKind.read) {
           stdinFile = redirect.target;
         } else if (redirect.fd == 1 || redirect.fd == -1) {
@@ -402,11 +467,13 @@ final class WasiSandboxShell implements Shell {
       }
 
       // Resolve input source for this stage.
-      final inputSource = stdinFile ?? previousOutputFile;
+      final inputSource = stdinFile != null
+          ? _resolveSandboxPath(stdinFile, options?.cwd ?? _currentDir)
+          : previousOutputFile;
 
       final result = await _runCommand(
-        command: stage.command,
-        args: stage.args,
+        command: expandedStage.command,
+        args: expandedStage.args,
         options: options,
         inputSource: inputSource,
         captureStdout: true,
@@ -420,7 +487,9 @@ final class WasiSandboxShell implements Shell {
       _lastStageExitCode = data.exitCode;
 
       if (stdoutFile != null) {
-        final file = _hostFile(stdoutFile);
+        final file = _hostFile(
+          _resolveSandboxPath(stdoutFile, options?.cwd ?? _currentDir),
+        );
         await file.parent.create(recursive: true);
         if (appendStdout) {
           await file.writeAsBytes(data.stdout, mode: io.FileMode.append);
@@ -433,7 +502,9 @@ final class WasiSandboxShell implements Shell {
       }
 
       if (stderrFile != null) {
-        final file = _hostFile(stderrFile);
+        final file = _hostFile(
+          _resolveSandboxPath(stderrFile, options?.cwd ?? _currentDir),
+        );
         await file.parent.create(recursive: true);
         if (appendStderr) {
           await file.writeAsBytes(data.stderr, mode: io.FileMode.append);
@@ -492,32 +563,269 @@ final class WasiSandboxShell implements Shell {
     return host.isEmpty ? stripped : '$host/$stripped';
   }
 
-  String _sandboxPath(String hostPath) {
-    final host = sandboxHostPath ?? '';
-    if (host.isEmpty) return hostPath;
-    final prefix = host.endsWith('/') ? host : '$host/';
-    if (hostPath.startsWith(prefix)) {
-      return '/${hostPath.substring(prefix.length)}';
+  /// Effective environment visible to WASM commands, builtins, and variable
+  /// expansion: sandbox defaults, persistent `export`ed variables, and any
+  /// per-call overrides (later wins).
+  Map<String, String> _effectiveEnv(ShellExecOptions? options) {
+    final cwd = options?.cwd ?? _currentDir;
+    return <String, String>{
+      'HOME': '/',
+      'PATH': '/bin',
+      'PWD': cwd,
+      'SHELL': '/bin/sh',
+      'TERM': 'dumb',
+      'USER': io.Platform.environment['USER'] ?? 'fah',
+      ..._shellEnv,
+      ...?options?.env,
+    };
+  }
+
+  /// Normalizes a sandbox path: collapses `.` and `..` segments and always
+  /// returns an absolute path starting at the sandbox root `/`.
+  String _normalizeSandboxPath(String path) {
+    final segments = <String>[];
+    for (final part in path.split('/')) {
+      if (part.isEmpty || part == '.') continue;
+      if (part == '..') {
+        if (segments.isNotEmpty) segments.removeLast();
+        continue;
+      }
+      segments.add(part);
     }
-    return hostPath;
+    return '/${segments.join('/')}';
   }
 
-  String _resolveGitPath(String arg, String hostCwd) {
-    if (arg.startsWith('/')) return _hostPath(arg);
-    return p.normalize(p.join(hostCwd, arg));
+  /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
+  /// sandbox path.
+  String _resolveSandboxPath(String path, String cwd) {
+    if (path.startsWith('/')) return _normalizeSandboxPath(path);
+    return _normalizeSandboxPath('$cwd/$path');
   }
 
-  String? _findGitRoot(String hostPath) {
-    var dir = hostPath;
-    while (true) {
-      if (io.Directory(p.join(dir, '.git')).existsSync()) return dir;
-      final parent = p.dirname(dir);
-      if (parent == dir) return null;
-      dir = parent;
+  /// Expands `$NAME` and `${NAME}` references in [input] using [env]. Unknown
+  /// variables expand to the empty string; other `$` forms are kept literal.
+  String _expandVars(String input, Map<String, String> env) {
+    final buffer = StringBuffer();
+    var i = 0;
+    while (i < input.length) {
+      final ch = input[i];
+      if (ch != '\$') {
+        buffer.write(ch);
+        i++;
+        continue;
+      }
+      if (i + 1 >= input.length) {
+        buffer.write('\$');
+        i++;
+        continue;
+      }
+      final next = input[i + 1];
+      if (next == '{') {
+        final end = input.indexOf('}', i + 2);
+        if (end == -1) {
+          buffer.write('\${');
+          i += 2;
+          continue;
+        }
+        buffer.write(env[input.substring(i + 2, end)] ?? '');
+        i = end + 1;
+        continue;
+      }
+      final code = next.codeUnitAt(0);
+      final isVarStart =
+          (code >= 65 && code <= 90) ||
+          (code >= 97 && code <= 122) ||
+          code == 95;
+      if (!isVarStart) {
+        buffer.write('\$');
+        i++;
+        continue;
+      }
+      var j = i + 1;
+      while (j < input.length) {
+        final c = input.codeUnitAt(j);
+        final isVarChar =
+            (c >= 65 && c <= 90) ||
+            (c >= 97 && c <= 122) ||
+            (c >= 48 && c <= 57) ||
+            c == 95;
+        if (!isVarChar) break;
+        j++;
+      }
+      buffer.write(env[input.substring(i + 1, j)] ?? '');
+      i = j;
     }
+    return buffer.toString();
   }
 
-  Future<Result<_StageResult, ExecutionError>> _runStage({
+  /// Applies `$VAR` expansion to a parsed [stage] using [env], honoring the
+  /// per-word `expandable` flags set by the parser for single quotes and
+  /// `\$` escapes.
+  Stage _expandStage(Stage stage, Map<String, String> env) {
+    final expandedCommand = stage.isExpandable(0)
+        ? _expandVars(stage.command, env)
+        : stage.command;
+    final expandedArgs = <String>[
+      for (var k = 0; k < stage.args.length; k++)
+        stage.isExpandable(k + 1)
+            ? _expandVars(stage.args[k], env)
+            : stage.args[k],
+    ];
+    final expandedRedirects = <Redirect>[
+      for (final redirect in stage.redirects)
+        Redirect(
+          kind: redirect.kind,
+          fd: redirect.fd,
+          target: redirect.expandable
+              ? _expandVars(redirect.target, env)
+              : redirect.target,
+        ),
+    ];
+    return Stage(
+      command: expandedCommand,
+      args: expandedArgs,
+      redirects: expandedRedirects,
+    );
+  }
+
+  /// Commands whose positional arguments are file paths and therefore get
+  /// rewritten relative to the shell's current directory.
+  static const Set<String> _pathPositionalCommands = {
+    'basename',
+    'cat',
+    'cksum',
+    'comm',
+    'cp',
+    'csplit',
+    'cut',
+    'dir',
+    'dirname',
+    'du',
+    'expand',
+    'fmt',
+    'fold',
+    'gzip',
+    'head',
+    'install',
+    'join',
+    'link',
+    'ln',
+    'ls',
+    'md5sum',
+    'mkdir',
+    'mv',
+    'nl',
+    'od',
+    'paste',
+    'readlink',
+    'realpath',
+    'relpath',
+    'rm',
+    'rmdir',
+    'sha1sum',
+    'sha224sum',
+    'sha256sum',
+    'sha384sum',
+    'sha512sum',
+    'b2sum',
+    'shred',
+    'sort',
+    'split',
+    'stat',
+    'sum',
+    'tac',
+    'tail',
+    'tar',
+    'tee',
+    'touch',
+    'truncate',
+    'tsort',
+    'unexpand',
+    'uniq',
+    'unlink',
+    'vdir',
+    'wc',
+  };
+
+  /// Flags whose following argument is NOT a path, per command. Used by
+  /// [_rewriteRelativeArgs] to avoid rewriting flag values.
+  static const Map<String, Set<String>> _nonPathFlagValues = {
+    'cut': {'-b', '-c', '-d', '-f'},
+    'head': {'-c', '-n'},
+    'join': {'-1', '-2', '-e', '-t'},
+    'rg': {'-A', '-B', '-C', '-e', '-g', '-m', '-t', '-T'},
+    'sort': {'-k', '-t'},
+    'split': {'-a', '-b', '-l', '-n'},
+    'tail': {'-c', '-n'},
+    'find': {'-iname', '-mmin', '-mtime', '-name', '-size', '-type'},
+    'mktemp': {'-t'},
+  };
+
+  /// Rewrites relative path arguments to absolute sandbox paths based on
+  /// [cwd]. The WASI guest is rooted at `/`, so `cat file.txt` run after
+  /// `cd /work` would otherwise look for `/file.txt`.
+  List<String> _rewriteRelativeArgs(
+    String command,
+    List<String> args,
+    String cwd,
+  ) {
+    if (command == 'dd') {
+      return [for (final arg in args) _rewriteDdArg(arg, cwd)];
+    }
+    final skipFlags = _nonPathFlagValues[command] ?? const <String>{};
+    final result = <String>[];
+    var positionalIndex = 0;
+    for (var i = 0; i < args.length; i++) {
+      final arg = args[i];
+      if (arg.startsWith('-') && arg != '-') {
+        result.add(arg);
+        continue;
+      }
+      if (i > 0 && skipFlags.contains(args[i - 1])) {
+        result.add(arg);
+        continue;
+      }
+      positionalIndex++;
+      // sed/awk: the first positional argument is the script, not a path.
+      if ((command == 'sed' || command == 'awk') && positionalIndex == 1) {
+        result.add(arg);
+        continue;
+      }
+      result.add(_maybeRewritePath(command, arg, cwd));
+    }
+    return result;
+  }
+
+  String _rewriteDdArg(String arg, String cwd) {
+    final idx = arg.indexOf('=');
+    if (idx <= 0) return arg;
+    final key = arg.substring(0, idx);
+    if (key != 'if' && key != 'of') return arg;
+    final value = arg.substring(idx + 1);
+    if (value.isEmpty || value.startsWith('/')) return arg;
+    return '$key=${_resolveSandboxPath(value, cwd)}';
+  }
+
+  String _maybeRewritePath(String command, String arg, String cwd) {
+    if (arg.isEmpty || arg == '-') return arg;
+    if (arg.startsWith('/')) return arg;
+    if (arg.startsWith('./') || arg.startsWith('../') || arg.contains('/')) {
+      return _resolveSandboxPath(arg, cwd);
+    }
+    if (_pathPositionalCommands.contains(command)) {
+      return _resolveSandboxPath(arg, cwd);
+    }
+    // Heuristic for commands with mixed argument kinds (e.g. rg): rewrite a
+    // bare word only when it names an existing file or directory.
+    final resolved = _resolveSandboxPath(arg, cwd);
+    if (io.FileSystemEntity.typeSync(_hostPath(resolved)) !=
+        io.FileSystemEntityType.notFound) {
+      return resolved;
+    }
+    return arg;
+  }
+
+  Future<Result<StageResult, ExecutionError>> _runStage({
     required String command,
     required List<String> args,
     required ShellExecOptions? options,
@@ -528,13 +836,7 @@ final class WasiSandboxShell implements Shell {
     final module = resolved.module;
     final argv = [...resolved.argv, ...args];
 
-    final cwd = options?.cwd ?? workingDirectory;
-    final env = <String, String>{
-      // ignore: use_null_aware_elements
-      if (cwd != null) 'PWD': cwd,
-      'PATH': '/bin',
-      ...?options?.env,
-    };
+    final env = _effectiveEnv(options);
 
     final preopenedDirs = <PreopenedDir>[];
     final hostSandbox = sandboxHostPath;
@@ -670,7 +972,7 @@ final class WasiSandboxShell implements Shell {
     }
 
     return Ok(
-      _StageResult(
+      StageResult(
         stdout: stdoutBuffer,
         stderr: stderrBuffer,
         exitCode: _lastStageExitCode ?? 0,
@@ -708,12 +1010,12 @@ final class WasiSandboxShell implements Shell {
   // Builtin command implementations
   // ---------------------------------------------------------------------------
 
-  Future<Result<_StageResult, ExecutionError>> _testBuiltin(Stage stage) async {
+  Future<Result<StageResult, ExecutionError>> _testBuiltin(Stage stage) async {
     final rawArgs = stage.args.toList();
     if (stage.command == '[') {
       if (rawArgs.isEmpty || rawArgs.last != ']') {
         return Ok(
-          _StageResult(
+          StageResult(
             stdout: const [],
             stderr: utf8.encode('[[: missing `]]\n'),
             exitCode: 2,
@@ -724,7 +1026,7 @@ final class WasiSandboxShell implements Shell {
     }
     if (rawArgs.isEmpty) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('test: missing expression\n'),
           exitCode: 2,
@@ -735,21 +1037,27 @@ final class WasiSandboxShell implements Shell {
       final evaluator = _TestEvaluator(
         fileExists: (path) async {
           try {
-            return await io.File(_hostFile(path).path).exists();
+            return await io.File(
+              _hostFile(_resolveSandboxPath(path, _currentDir)).path,
+            ).exists();
           } on Object {
             return false;
           }
         },
         dirExists: (path) async {
           try {
-            return await io.Directory(_hostFile(path).path).exists();
+            return await io.Directory(
+              _hostFile(_resolveSandboxPath(path, _currentDir)).path,
+            ).exists();
           } on Object {
             return false;
           }
         },
         fileSize: (path) async {
           try {
-            return await io.File(_hostFile(path).path).length();
+            return await io.File(
+              _hostFile(_resolveSandboxPath(path, _currentDir)).path,
+            ).length();
           } on Object {
             return 0;
           }
@@ -757,7 +1065,7 @@ final class WasiSandboxShell implements Shell {
       );
       final value = await evaluator.evaluate(rawArgs);
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: const [],
           exitCode: value ? 0 : 1,
@@ -765,7 +1073,7 @@ final class WasiSandboxShell implements Shell {
       );
     } on _TestError catch (e) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('test: ${e.message}\n'),
           exitCode: 2,
@@ -773,7 +1081,7 @@ final class WasiSandboxShell implements Shell {
       );
     } on FormatException catch (e) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('test: integer expected: $e\n'),
           exitCode: 2,
@@ -782,12 +1090,10 @@ final class WasiSandboxShell implements Shell {
     }
   }
 
-  Future<Result<_StageResult, ExecutionError>> _whichBuiltin(
-    Stage stage,
-  ) async {
+  Future<Result<StageResult, ExecutionError>> _whichBuiltin(Stage stage) async {
     if (stage.args.isEmpty) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('which: missing argument\n'),
           exitCode: 1,
@@ -797,7 +1103,7 @@ final class WasiSandboxShell implements Shell {
     final name = stage.args.first;
     if (_isCommandAvailable(name)) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: utf8.encode('/bin/$name\n'),
           stderr: const [],
           exitCode: 0,
@@ -805,7 +1111,7 @@ final class WasiSandboxShell implements Shell {
       );
     }
     return Ok(
-      _StageResult(
+      StageResult(
         stdout: const [],
         stderr: utf8.encode('which: $name: not found\n'),
         exitCode: 1,
@@ -813,14 +1119,14 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
-  Future<Result<_StageResult, ExecutionError>> _commandBuiltin(
+  Future<Result<StageResult, ExecutionError>> _commandBuiltin(
     Stage stage,
   ) async {
     if (stage.args.length >= 2 && stage.args[0] == '-v') {
       final name = stage.args[1];
       if (_isCommandAvailable(name)) {
         return Ok(
-          _StageResult(
+          StageResult(
             stdout: utf8.encode('/bin/$name\n'),
             stderr: const [],
             exitCode: 0,
@@ -828,7 +1134,7 @@ final class WasiSandboxShell implements Shell {
         );
       }
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('command: $name: not found\n'),
           exitCode: 1,
@@ -836,7 +1142,7 @@ final class WasiSandboxShell implements Shell {
       );
     }
     return Ok(
-      _StageResult(
+      StageResult(
         stdout: const [],
         stderr: utf8.encode('command: unsupported usage\n'),
         exitCode: 1,
@@ -844,16 +1150,11 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
-  Future<Result<_StageResult, ExecutionError>> _envBuiltin(
+  Future<Result<StageResult, ExecutionError>> _envBuiltin(
     Stage stage,
     ShellExecOptions? options,
   ) async {
-    final env = <String, String>{
-      // ignore: use_null_aware_elements
-      if (workingDirectory != null) 'PWD': workingDirectory!,
-      'PATH': '/bin',
-      ...?options?.env,
-    };
+    final env = _effectiveEnv(options);
 
     final assignments = <String, String>{};
     final remaining = <String>[];
@@ -868,7 +1169,7 @@ final class WasiSandboxShell implements Shell {
 
     if (remaining.isNotEmpty) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode(
             "env: '${remaining.first}': No such file or directory\n",
@@ -882,7 +1183,7 @@ final class WasiSandboxShell implements Shell {
     final lines = merged.entries.map((e) => '${e.key}=${e.value}').toList()
       ..sort();
     return Ok(
-      _StageResult(
+      StageResult(
         stdout: utf8.encode(lines.join('\n') + (lines.isNotEmpty ? '\n' : '')),
         stderr: const [],
         exitCode: 0,
@@ -890,13 +1191,13 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
-  Future<Result<_StageResult, ExecutionError>> _curlBuiltin(
+  Future<Result<StageResult, ExecutionError>> _curlBuiltin(
     Stage stage,
     ShellExecOptions? options,
   ) async {
     final parsed = _parseCurlArgs(stage.args);
     if (parsed.url == null) {
-      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 2));
+      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 2));
     }
 
     Uri uri;
@@ -904,7 +1205,7 @@ final class WasiSandboxShell implements Shell {
       uri = Uri.parse(parsed.url!);
     } on FormatException {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('curl: invalid URL\n'),
           exitCode: 3,
@@ -927,14 +1228,16 @@ final class WasiSandboxShell implements Shell {
     final stderr = parsed.silent ? const <int>[] : utf8.encode(statusLine);
 
     if (parsed.outputFile != null) {
-      final file = _hostFile(parsed.outputFile!);
+      final file = _hostFile(
+        _resolveSandboxPath(parsed.outputFile!, options?.cwd ?? _currentDir),
+      );
       await file.parent.create(recursive: true);
       await file.writeAsBytes(response.bodyBytes);
-      return Ok(_StageResult(stdout: const [], stderr: stderr, exitCode: 0));
+      return Ok(StageResult(stdout: const [], stderr: stderr, exitCode: 0));
     }
 
     return Ok(
-      _StageResult(stdout: response.bodyBytes, stderr: stderr, exitCode: 0),
+      StageResult(stdout: response.bodyBytes, stderr: stderr, exitCode: 0),
     );
   }
 
@@ -996,13 +1299,13 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
-  Future<Result<_StageResult, ExecutionError>> _jqBuiltin(
+  Future<Result<StageResult, ExecutionError>> _jqBuiltin(
     Stage stage,
     String? inputSource,
   ) async {
     if (stage.args.isEmpty) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('jq: missing filter\n'),
           exitCode: 2,
@@ -1014,7 +1317,7 @@ final class WasiSandboxShell implements Shell {
 
     if (inputFile == null) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('jq: missing input\n'),
           exitCode: 2,
@@ -1022,10 +1325,10 @@ final class WasiSandboxShell implements Shell {
       );
     }
 
-    final file = _hostFile(inputFile);
+    final file = _hostFile(_resolveSandboxPath(inputFile, _currentDir));
     if (!await file.exists()) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('jq: $inputFile: No such file or directory\n'),
           exitCode: 2,
@@ -1039,7 +1342,7 @@ final class WasiSandboxShell implements Shell {
       json = jsonDecode(content);
     } on FormatException catch (e) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('jq: parse error: $e\n'),
           exitCode: 5,
@@ -1051,7 +1354,7 @@ final class WasiSandboxShell implements Shell {
     const encoder = JsonEncoder.withIndent('  ');
     final output = results.map((r) => encoder.convert(r)).join('\n');
     return Ok(
-      _StageResult(
+      StageResult(
         stdout: utf8.encode(output.isNotEmpty ? '$output\n' : ''),
         stderr: const [],
         exitCode: 0,
@@ -1059,13 +1362,13 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
-  Future<Result<_StageResult, ExecutionError>> _yqBuiltin(
+  Future<Result<StageResult, ExecutionError>> _yqBuiltin(
     Stage stage,
     String? inputSource,
   ) async {
     if (stage.args.isEmpty) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('yq: missing filter\n'),
           exitCode: 2,
@@ -1077,7 +1380,7 @@ final class WasiSandboxShell implements Shell {
 
     if (inputFile == null) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('yq: missing input\n'),
           exitCode: 2,
@@ -1085,10 +1388,10 @@ final class WasiSandboxShell implements Shell {
       );
     }
 
-    final file = _hostFile(inputFile);
+    final file = _hostFile(_resolveSandboxPath(inputFile, _currentDir));
     if (!await file.exists()) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('yq: $inputFile: No such file or directory\n'),
           exitCode: 2,
@@ -1102,7 +1405,7 @@ final class WasiSandboxShell implements Shell {
       yamlDoc = yaml.loadYaml(content);
     } on yaml.YamlException catch (e) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('yq: parse error: $e\n'),
           exitCode: 5,
@@ -1115,7 +1418,7 @@ final class WasiSandboxShell implements Shell {
     const encoder = JsonEncoder.withIndent('  ');
     final output = results.map((r) => encoder.convert(r)).join('\n');
     return Ok(
-      _StageResult(
+      StageResult(
         stdout: utf8.encode(output.isNotEmpty ? '$output\n' : ''),
         stderr: const [],
         exitCode: 0,
@@ -1184,779 +1487,13 @@ final class WasiSandboxShell implements Shell {
     return [current];
   }
 
-  Future<Result<_StageResult, ExecutionError>> _gitBuiltin(
-    Stage stage,
-    ShellExecOptions? options,
-  ) async {
-    final args = List<String>.from(stage.args);
-    String cwd = options?.cwd ?? workingDirectory ?? '/';
-
-    // Parse a single global -C option (common for git).
-    for (var i = 0; i < args.length; i++) {
-      if (args[i] == '-C') {
-        if (i + 1 >= args.length) {
-          return _gitError('fatal: option -C requires a value');
-        }
-        cwd = args[i + 1];
-        args.removeRange(i, i + 2);
-        break;
-      }
-    }
-
-    if (args.isEmpty) {
-      return _gitError(
-        'usage: git [--version] [--help] [-C <path>] <command> [<args>]',
-      );
-    }
-
-    final subcommand = args[0];
-    final subArgs = args.sublist(1);
-
-    if (subcommand == '--version' || subcommand == '-v') {
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('git version 2.47.0-fah\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    }
-
-    final hostCwd = _hostPath(cwd);
-
-    // Commands that do not require an existing repository.
-    if (subcommand == 'clone') {
-      return _gitClone(subArgs, hostCwd);
-    }
-    if (subcommand == 'init') {
-      return _gitInit(subArgs, hostCwd);
-    }
-
-    final root = _findGitRoot(hostCwd);
-    if (root == null) {
-      return _gitError(
-        'fatal: not a git repository (or any of the parent directories): .git',
-      );
-    }
-
-    try {
-      final repo = dart_git.GitRepository.load(root);
-      switch (subcommand) {
-        case 'add':
-          return _gitAdd(repo, subArgs, hostCwd);
-        case 'rm':
-          return _gitRm(repo, subArgs, hostCwd);
-        case 'commit':
-          return _gitCommit(repo, subArgs, options?.env);
-        case 'log':
-          return _gitLog(repo, subArgs);
-        case 'status':
-          return _gitStatus(repo);
-        case 'branch':
-          return _gitBranch(repo, subArgs);
-        case 'checkout':
-          return _gitCheckout(repo, subArgs, hostCwd);
-        case 'show':
-          return _gitShow(repo, subArgs);
-        case 'cat-file':
-          return _gitCatFile(repo, subArgs);
-        case 'hash-object':
-          return _gitHashObject(repo, subArgs, hostCwd);
-        case 'ls-tree':
-          return _gitLsTree(repo, subArgs);
-        case 'write-tree':
-          return _gitWriteTree(repo);
-        case 'merge-base':
-          return _gitMergeBase(repo, subArgs);
-        case 'reset':
-          return _gitReset(repo, subArgs);
-        default:
-          return _gitError('git: \'$subcommand\' is not a git command.');
-      }
-    } catch (e) {
-      return _gitError('error: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitError(String message) => Ok(
-    _StageResult(
-      stdout: const [],
-      stderr: utf8.encode('$message\n'),
-      exitCode: 1,
-    ),
-  );
-
-  Future<Result<_StageResult, ExecutionError>> _gitClone(
-    List<String> args,
-    String hostCwd,
-  ) async {
-    if (args.isEmpty) {
-      return _gitError('usage: git clone <repository> [<directory>]');
-    }
-    final repoUrl = args[0];
-    String dest;
-    if (args.length > 1 && !args[1].startsWith('-')) {
-      dest = args[1];
-    } else {
-      dest = p.basenameWithoutExtension(repoUrl);
-    }
-    final hostDest = _resolveGitPath(dest, hostCwd);
-
-    final githubRepo = _parseGitHubRepo(repoUrl);
-    if (githubRepo == null) {
-      return _gitError(
-        'git clone: only public GitHub HTTPS URLs are supported in this subset',
-      );
-    }
-    final (:owner, :repo) = githubRepo;
-    final archiveUrl = 'https://api.github.com/repos/$owner/$repo/tarball';
-
-    try {
-      final response = await _httpClient.get(Uri.parse(archiveUrl));
-      if (response.statusCode != 200) {
-        return _gitError(
-          'git clone: failed to download archive: HTTP ${response.statusCode}',
-        );
-      }
-
-      final archiveFile = io.File(p.join(hostDest, '.fah_clone.tar.gz'));
-      await archiveFile.parent.create(recursive: true);
-      await archiveFile.writeAsBytes(response.bodyBytes);
-
-      final tarFile = io.File(p.join(hostDest, '.fah_clone.tar'));
-      await tarFile.writeAsBytes(io.gzip.decode(archiveFile.readAsBytesSync()));
-
-      final tarSandboxPath = _sandboxPath(tarFile.path);
-      final destSandboxPath = _sandboxPath(hostDest);
-      final tarResult = await _runCommand(
-        command: 'tar',
-        args: ['-xf', tarSandboxPath, '-C', destSandboxPath],
-        options: null,
-        inputSource: null,
-        captureStdout: true,
-        captureStderr: true,
-      );
-      if (tarResult.isErr) return tarResult;
-      final tarData = tarResult.valueOrNull!;
-      if (tarData.exitCode != 0) {
-        final errMsg = utf8.decode(tarData.stderr, allowMalformed: true);
-        return _gitError('git clone: tar extraction failed: $errMsg');
-      }
-      await archiveFile.delete();
-      await tarFile.delete();
-
-      // GitHub tarballs unpack into a single `owner-repo-sha` directory.
-      // Move the contents up so the destination itself is the repository root.
-      final entries = await io.Directory(hostDest).list().toList();
-      final innerDir = entries.whereType<io.Directory>().firstOrNull;
-      if (innerDir != null) {
-        await for (final entity in innerDir.list()) {
-          final name = p.basename(entity.path);
-          final target = p.join(hostDest, name);
-          await entity.rename(target);
-        }
-        await innerDir.delete();
-      }
-
-      // Initialize a git repo so subsequent git commands work on the clone.
-      dart_git.GitRepository.init(hostDest);
-
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('Cloned into \'$dest\'\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: unable to clone: $e');
-    }
-  }
-
-  ({String owner, String repo})? _parseGitHubRepo(String url) {
-    final https = RegExp(r'https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$');
-    final match = https.firstMatch(url);
-    if (match != null) {
-      return (owner: match.group(1)!, repo: match.group(2)!);
-    }
-    final ssh = RegExp(r'git@github\.com:([^/]+)/([^/]+?)(?:\.git)?/?$');
-    final sshMatch = ssh.firstMatch(url);
-    if (sshMatch != null) {
-      return (owner: sshMatch.group(1)!, repo: sshMatch.group(2)!);
-    }
-    return null;
-  }
-
-  Future<Result<_StageResult, ExecutionError>> _gitInit(
-    List<String> args,
-    String hostCwd,
-  ) async {
-    var path = hostCwd;
-    String? virtualName;
-    for (var i = 0; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '--bare' || arg == '--shared') {
-        return _gitError('git init: unsupported flag $arg');
-      }
-      if (arg == '-b' || arg == '--initial-branch') {
-        if (i + 1 >= args.length) {
-          return _gitError('fatal: option $arg requires a value');
-        }
-        i++;
-        continue;
-      }
-      if (!arg.startsWith('-')) {
-        virtualName = arg;
-        path = _resolveGitPath(arg, hostCwd);
-      }
-    }
-
-    try {
-      dart_git.GitRepository.init(path);
-      final display = virtualName ?? path;
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode(
-            'Initialized empty Git repository in $display/.git/\n',
-          ),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitAdd(
-    dart_git.GitRepository repo,
-    List<String> args,
-    String hostCwd,
-  ) {
-    if (args.isEmpty) {
-      return _gitError('usage: git add <pathspec>...');
-    }
-    try {
-      for (final arg in args.where((a) => !a.startsWith('-'))) {
-        repo.add(_resolveGitPath(arg, hostCwd));
-      }
-      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitRm(
-    dart_git.GitRepository repo,
-    List<String> args,
-    String hostCwd,
-  ) {
-    if (args.isEmpty) {
-      return _gitError('usage: git rm <pathspec>...');
-    }
-    try {
-      for (final arg in args.where((a) => !a.startsWith('-'))) {
-        repo.rm(_resolveGitPath(arg, hostCwd));
-      }
-      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitCommit(
-    dart_git.GitRepository repo,
-    List<String> args,
-    Map<String, String>? env,
-  ) {
-    String? message;
-    for (var i = 0; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '-m' || arg == '--message') {
-        if (i + 1 >= args.length) {
-          return _gitError('fatal: option $arg requires a value');
-        }
-        message = args[i + 1];
-        i++;
-      }
-    }
-    if (message == null || message.isEmpty) {
-      return _gitError(
-        'fatal: cannot create an empty commit without a message',
-      );
-    }
-
-    final author = _gitAuthor(env);
-    try {
-      final commit = repo.commit(
-        message: message,
-        author: author,
-        committer: author,
-      );
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode(
-            '[${repo.currentBranch()} ${commit.hash.toOid()}] $message\n',
-          ),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } on GitEmptyCommit {
-      return _gitError(
-        'On branch ${repo.currentBranch()}\nnothing to commit, working tree clean',
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  dart_git.GitAuthor _gitAuthor(Map<String, String>? env) {
-    final name =
-        env?['GIT_AUTHOR_NAME'] ??
-        io.Platform.environment['GIT_AUTHOR_NAME'] ??
-        'fah';
-    final email =
-        env?['GIT_AUTHOR_EMAIL'] ??
-        io.Platform.environment['GIT_AUTHOR_EMAIL'] ??
-        'fah@example.com';
-    return dart_git.GitAuthor(name: name, email: email);
-  }
-
-  Result<_StageResult, ExecutionError> _gitLog(
-    dart_git.GitRepository repo,
-    List<String> args,
-  ) {
-    var maxCount = 0;
-    for (var i = 0; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '-n' || arg == '--max-count') {
-        if (i + 1 >= args.length) {
-          return _gitError('fatal: option $arg requires a value');
-        }
-        maxCount = int.tryParse(args[i + 1]) ?? 0;
-        i++;
-      }
-    }
-
-    try {
-      final from = repo.headHash();
-      final commits = commitIteratorBFS(
-        objStorage: repo.objStorage,
-        from: from,
-      );
-      final lines = <String>[];
-      var count = 0;
-      for (final commit in commits) {
-        if (maxCount > 0 && count >= maxCount) break;
-        final msg = commit.message.trim().split('\n').first;
-        lines.add('${commit.hash.toOid()} $msg');
-        count++;
-      }
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitStatus(dart_git.GitRepository repo) {
-    try {
-      final result = repo.status();
-      bool notGitEntry(String f) =>
-          f != '.git' && !f.endsWith('/.git') && !f.contains('/.git/');
-      final added = result.added.where(notGitEntry).toList();
-      final modified = result.modified.where(notGitEntry).toList();
-      final removed = result.removed.where(notGitEntry).toList();
-
-      final lines = <String>[];
-      if (added.isNotEmpty) {
-        lines.add('Untracked:');
-        for (final f in added) {
-          lines.add('  ${repo.toPathSpec(f)}');
-        }
-      }
-      if (modified.isNotEmpty) {
-        lines.add('Modified:');
-        for (final f in modified) {
-          lines.add('  ${repo.toPathSpec(f)}');
-        }
-      }
-      if (removed.isNotEmpty) {
-        lines.add('Deleted:');
-        for (final f in removed) {
-          lines.add('  ${repo.toPathSpec(f)}');
-        }
-      }
-      if (lines.isEmpty) {
-        lines.add('nothing to commit, working tree clean');
-      }
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('${lines.join('\n')}\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitBranch(
-    dart_git.GitRepository repo,
-    List<String> args,
-  ) {
-    try {
-      if (args.isEmpty) {
-        final current = repo.currentBranch();
-        final branches = repo.branches()..sort();
-        final lines = branches.map((b) => b == current ? '* $b' : '  $b');
-        return Ok(
-          _StageResult(
-            stdout: utf8.encode('${lines.join('\n')}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-
-      if (args[0] == '-d' || args[0] == '-D') {
-        if (args.length < 2) {
-          return _gitError('usage: git branch -d <branch>');
-        }
-        repo.deleteBranch(args[1]);
-        return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
-      }
-
-      final branchName = args.lastWhere((a) => !a.startsWith('-'));
-      repo.createBranch(branchName);
-      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitCheckout(
-    dart_git.GitRepository repo,
-    List<String> args,
-    String hostCwd,
-  ) {
-    if (args.isEmpty) {
-      return _gitError('usage: git checkout <branch>|<path>');
-    }
-    final target = args.lastWhere((a) => !a.startsWith('-'));
-    try {
-      if (repo.branches().contains(target)) {
-        repo.checkoutBranch(target);
-        return Ok(
-          _StageResult(
-            stdout: utf8.encode('Switched to branch \'$target\'\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      final count = repo.checkout(_resolveGitPath(target, hostCwd));
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('Updated $count paths\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitShow(
-    dart_git.GitRepository repo,
-    List<String> args,
-  ) {
-    final spec = args.isEmpty
-        ? 'HEAD'
-        : args.firstWhere((a) => !a.startsWith('-'));
-    final colonIdx = spec.indexOf(':');
-    try {
-      if (colonIdx == -1) {
-        final commit = _gitResolveCommit(repo, spec);
-        final lines = <String>[
-          'commit ${commit.hash}',
-          'Author: ${commit.author.name} <${commit.author.email}>',
-          'Date:   ${commit.author.date}',
-          '',
-          commit.message.trim(),
-        ];
-        return Ok(
-          _StageResult(
-            stdout: utf8.encode('${lines.join('\n')}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-
-      final commitish = spec.substring(0, colonIdx);
-      final pathSpec = spec.substring(colonIdx + 1);
-      final commit = _gitResolveCommit(repo, commitish);
-      final tree = repo.objStorage.readTree(commit.treeHash);
-      final entry = repo.objStorage.refSpec(tree, pathSpec);
-      final blob = repo.objStorage.readBlob(entry.hash);
-      return Ok(
-        _StageResult(stdout: blob.blobData, stderr: const [], exitCode: 0),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  dart_git.GitCommit _gitResolveCommit(
-    dart_git.GitRepository repo,
-    String spec,
-  ) {
-    if (spec == 'HEAD') return repo.headCommit();
-    if (repo.branches().contains(spec)) {
-      final commit = repo.branchCommit(spec);
-      if (commit != null) return commit;
-    }
-    // Treat as a full hash.
-    final hash = GitHash(spec);
-    return repo.objStorage.readCommit(hash);
-  }
-
-  Result<_StageResult, ExecutionError> _gitCatFile(
-    dart_git.GitRepository repo,
-    List<String> args,
-  ) {
-    if (args.length < 2) {
-      return _gitError('usage: git cat-file (-p|-t) <object>');
-    }
-    final flag = args[0];
-    final spec = args[1];
-    try {
-      GitObject? obj;
-      final colonIdx = spec.indexOf(':');
-      if (colonIdx != -1) {
-        final commitish = spec.substring(0, colonIdx);
-        final pathSpec = spec.substring(colonIdx + 1);
-        final commit = _gitResolveCommit(repo, commitish);
-        final tree = repo.objStorage.readTree(commit.treeHash);
-        final entry = repo.objStorage.refSpec(tree, pathSpec);
-        obj = repo.objStorage.read(entry.hash);
-      } else {
-        GitHash hash;
-        if (spec == 'HEAD') {
-          hash = repo.headHash();
-        } else if (repo.branches().contains(spec)) {
-          hash = repo.resolveReferenceName(ReferenceName.branch(spec))!.hash;
-        } else {
-          hash = GitHash(spec);
-        }
-        obj = repo.objStorage.read(hash);
-      }
-      if (obj == null) throw Exception('object not found');
-
-      if (flag == '-t') {
-        return Ok(
-          _StageResult(
-            stdout: utf8.encode('${obj.formatStr()}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      if (flag == '-p') {
-        if (obj is GitBlob) {
-          return Ok(
-            _StageResult(stdout: obj.blobData, stderr: const [], exitCode: 0),
-          );
-        }
-        return Ok(
-          _StageResult(
-            stdout: utf8.encode(
-              '${utf8.decode(obj.serializeData(), allowMalformed: true)}\n',
-            ),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      return _gitError('git cat-file: unsupported flag $flag');
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitHashObject(
-    dart_git.GitRepository repo,
-    List<String> args,
-    String hostCwd,
-  ) {
-    var write = false;
-    String? path;
-    for (final arg in args) {
-      if (arg == '-w') {
-        write = true;
-      } else if (!arg.startsWith('-')) {
-        path = arg;
-      }
-    }
-    if (path == null) {
-      return _gitError('usage: git hash-object [-w] <file>');
-    }
-    try {
-      final data = io.File(_resolveGitPath(path, hostCwd)).readAsBytesSync();
-      final blob = GitBlob(data, null);
-      final hash = GitHash.computeForObject(blob);
-      if (write) {
-        repo.objStorage.writeObject(blob);
-      }
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('$hash\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitLsTree(
-    dart_git.GitRepository repo,
-    List<String> args,
-  ) {
-    if (args.isEmpty) {
-      return _gitError('usage: git ls-tree <tree-ish>');
-    }
-    final spec = args.lastWhere((a) => !a.startsWith('-'));
-    try {
-      GitHash hash;
-      if (repo.branches().contains(spec)) {
-        final commit = repo.branchCommit(spec)!;
-        hash = commit.treeHash;
-      } else if (spec == 'HEAD') {
-        hash = repo.headCommit().treeHash;
-      } else {
-        hash = GitHash(spec);
-      }
-      final tree = repo.objStorage.readTree(hash);
-      final lines = tree.entries.map((e) {
-        final mode = e.mode.val.toRadixString(8).padLeft(6, '0');
-        final typeStr = e.mode == GitFileMode.Dir
-            ? 'tree'
-            : e.mode == GitFileMode.Submodule
-            ? 'commit'
-            : 'blob';
-        return '$mode $typeStr ${e.hash}\t${e.name}';
-      });
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('${lines.join('\n')}\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitWriteTree(
-    dart_git.GitRepository repo,
-  ) {
-    try {
-      final index = repo.indexStorage.readIndex();
-      final hash = repo.writeTree(index);
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('$hash\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitMergeBase(
-    dart_git.GitRepository repo,
-    List<String> args,
-  ) {
-    if (args.length < 2) {
-      return _gitError('usage: git merge-base <commit> <commit>');
-    }
-    try {
-      final a = _gitResolveCommit(repo, args[0]);
-      final b = _gitResolveCommit(repo, args[1]);
-      final bases = repo.mergeBase(a, b);
-      if (bases.isEmpty) {
-        return _gitError('fatal: no merge base found');
-      }
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('${bases.first.hash}\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Result<_StageResult, ExecutionError> _gitReset(
-    dart_git.GitRepository repo,
-    List<String> args,
-  ) {
-    if (args.isEmpty) {
-      return _gitError('usage: git reset [--hard] <commit>');
-    }
-    var hard = false;
-    String? target;
-    for (final arg in args) {
-      if (arg == '--hard') {
-        hard = true;
-      } else if (!arg.startsWith('-')) {
-        target = arg;
-      }
-    }
-    if (!hard) {
-      return _gitError('git reset: only --hard is supported');
-    }
-    if (target == null) {
-      return _gitError('usage: git reset --hard <commit>');
-    }
-    try {
-      final commit = _gitResolveCommit(repo, target);
-      repo.resetHard(commit.hash);
-      return Ok(
-        _StageResult(
-          stdout: utf8.encode('HEAD is now at ${commit.hash.toOid()}\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
-  }
-
-  Future<Result<_StageResult, ExecutionError>> _whoamiBuiltin() async {
+  Future<Result<StageResult, ExecutionError>> _whoamiBuiltin() async {
     final user =
         io.Platform.environment['USER'] ??
         io.Platform.environment['USERNAME'] ??
         'fah';
     return Ok(
-      _StageResult(
+      StageResult(
         stdout: utf8.encode('$user\n'),
         stderr: const [],
         exitCode: 0,
@@ -1964,16 +1501,624 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
-  Future<Result<_StageResult, ExecutionError>> _trBuiltin(
+  Future<Result<StageResult, ExecutionError>> _cdBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final target = stage.args.isEmpty ? '/' : stage.args.first;
+    final cwd = options?.cwd ?? _currentDir;
+    final resolved = _resolveSandboxPath(target, cwd);
+    try {
+      final dir = io.Directory(_hostPath(resolved));
+      if (!dir.existsSync()) {
+        return Ok(
+          StageResult(
+            stdout: const [],
+            stderr: utf8.encode('cd: $target: No such file or directory\n'),
+            exitCode: 1,
+          ),
+        );
+      }
+      _currentDir = resolved;
+      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+    } on Object catch (e) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('cd: $target: $e\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+  }
+
+  Future<Result<StageResult, ExecutionError>> _pwdBuiltin(
+    ShellExecOptions? options,
+  ) async {
+    final cwd = options?.cwd ?? _currentDir;
+    return Ok(
+      StageResult(stdout: utf8.encode('$cwd\n'), stderr: const [], exitCode: 0),
+    );
+  }
+
+  Future<Result<StageResult, ExecutionError>> _exportBuiltin(
+    Stage stage,
+  ) async {
+    if (stage.args.isEmpty) {
+      final names = _shellEnv.keys.toList()..sort();
+      final lines = names
+          .map((n) => 'declare -x $n="${_shellEnv[n]}"')
+          .toList();
+      return Ok(
+        StageResult(
+          stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    for (final arg in stage.args) {
+      final idx = arg.indexOf('=');
+      if (idx > 0) {
+        _shellEnv[arg.substring(0, idx)] = arg.substring(idx + 1);
+      } else {
+        _shellEnv.putIfAbsent(arg, () => '');
+      }
+    }
+    return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+  }
+
+  Future<Result<StageResult, ExecutionError>> _unsetBuiltin(Stage stage) async {
+    for (final arg in stage.args) {
+      _shellEnv.remove(arg);
+    }
+    return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+  }
+
+  Future<Result<StageResult, ExecutionError>> _grepBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    final flags = <String>[];
+    String? pattern;
+    final files = <String>[];
+    var quiet = false;
+
+    for (var i = 0; i < stage.args.length; i++) {
+      final arg = stage.args[i];
+      if (arg == '--') continue;
+      if (arg == '-e') {
+        if (i + 1 >= stage.args.length) {
+          return Ok(
+            StageResult(
+              stdout: const [],
+              stderr: utf8.encode('grep: option requires an argument -- e\n'),
+              exitCode: 2,
+            ),
+          );
+        }
+        pattern = stage.args[++i];
+        continue;
+      }
+      if (arg == '-q' || arg == '--quiet' || arg == '--silent') {
+        quiet = true;
+        continue;
+      }
+      if (arg == '-r' || arg == '-R' || arg == '-E') {
+        // rg searches recursively and uses regex syntax by default.
+        continue;
+      }
+      if (arg == '-i' ||
+          arg == '-v' ||
+          arg == '-w' ||
+          arg == '-x' ||
+          arg == '-F' ||
+          arg == '-n' ||
+          arg == '-c' ||
+          arg == '-l') {
+        flags.add(arg);
+        continue;
+      }
+      if (arg.startsWith('-m')) {
+        flags.add(arg);
+        if (arg == '-m' && i + 1 < stage.args.length) {
+          flags.add(stage.args[++i]);
+        }
+        continue;
+      }
+      if (pattern == null) {
+        pattern = arg;
+      } else {
+        files.add(arg);
+      }
+    }
+
+    if (pattern == null) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode(
+            'usage: grep [-ivwxFcclnq] [-m N] pattern [file...]\n',
+          ),
+          exitCode: 2,
+        ),
+      );
+    }
+    if (files.isEmpty && inputSource != null) {
+      files.add(inputSource);
+    }
+    final cwd = options?.cwd ?? _currentDir;
+    final rewrittenFiles = [
+      for (final file in files) _maybeRewritePath('rg', file, cwd),
+    ];
+
+    final rgResult = await _runStage(
+      command: 'rg',
+      args: [...flags, '-e', pattern, ...rewrittenFiles],
+      options: options,
+      captureStdout: true,
+      captureStderr: true,
+    );
+    if (rgResult.isErr) return rgResult;
+    final data = rgResult.valueOrNull!;
+    return Ok(
+      StageResult(
+        stdout: quiet ? const [] : data.stdout,
+        stderr: data.stderr,
+        exitCode: data.exitCode,
+      ),
+    );
+  }
+
+  Future<Result<StageResult, ExecutionError>> _wgetBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    // wget is a thin alias over the curl builtin: `wget [-q] [-O file] URL`.
+    final curlArgs = <String>[];
+    for (var i = 0; i < stage.args.length; i++) {
+      final arg = stage.args[i];
+      if (arg == '-O' || arg == '--output-document') {
+        if (i + 1 < stage.args.length) {
+          curlArgs.addAll(['-o', stage.args[++i]]);
+        }
+      } else if (arg.startsWith('--output-document=')) {
+        curlArgs.addAll(['-o', arg.substring('--output-document='.length)]);
+      } else if (arg == '-q' || arg == '--quiet') {
+        curlArgs.add('-s');
+      } else if (arg == '--no-check-certificate') {
+        // Ignored: TLS verification is not configurable in the curl builtin.
+      } else {
+        curlArgs.add(arg);
+      }
+    }
+    return _curlBuiltin(Stage(command: 'curl', args: curlArgs), options);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _duBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    var human = false;
+    var summarize = false;
+    final paths = <String>[];
+    for (final arg in stage.args) {
+      if (arg == '-h' || arg == '--human-readable') {
+        human = true;
+      } else if (arg == '-s' || arg == '--summarize') {
+        summarize = true;
+      } else if (!arg.startsWith('-')) {
+        paths.add(arg);
+      }
+    }
+    if (paths.isEmpty) paths.add('.');
+
+    final cwd = options?.cwd ?? _currentDir;
+    final lines = <String>[];
+    for (final path in paths) {
+      final resolved = _resolveSandboxPath(path, cwd);
+      final host = _hostPath(resolved);
+      final type = io.FileSystemEntity.typeSync(host);
+      if (type == io.FileSystemEntityType.notFound) {
+        return Ok(
+          StageResult(
+            stdout: const [],
+            stderr: utf8.encode('du: $path: No such file or directory\n'),
+            exitCode: 1,
+          ),
+        );
+      }
+      final bytes = await _duSize(host, recursive: !summarize);
+      final size = human
+          ? _formatHumanSize(bytes)
+          : '${(bytes + 1023) ~/ 1024}';
+      lines.add('$size\t$resolved');
+    }
+    return Ok(
+      StageResult(
+        stdout: utf8.encode('${lines.join('\n')}\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  Future<int> _duSize(String hostPath, {required bool recursive}) async {
+    final type = io.FileSystemEntity.typeSync(hostPath);
+    if (type == io.FileSystemEntityType.file) {
+      return io.File(hostPath).length();
+    }
+    if (type != io.FileSystemEntityType.directory) return 0;
+    if (!recursive) {
+      // Non-recursive du still counts the directory itself only.
+      return 4096;
+    }
+    var total = 0;
+    try {
+      await for (final entity in io.Directory(
+        hostPath,
+      ).list(recursive: true, followLinks: false)) {
+        if (entity is io.File) {
+          try {
+            total += await entity.length();
+          } on Object {
+            // Skip unreadable files.
+          }
+        }
+      }
+    } on Object {
+      // Skip unreadable directories.
+    }
+    return total;
+  }
+
+  String _formatHumanSize(int bytes) {
+    const units = ['B', 'K', 'M', 'G', 'T'];
+    var size = bytes.toDouble();
+    var unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit++;
+    }
+    final text = size >= 10 || unit == 0
+        ? size.round().toString()
+        : size.toStringAsFixed(1);
+    return '$text${units[unit]}';
+  }
+
+  Future<Result<StageResult, ExecutionError>> _statBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    String? format;
+    final files = <String>[];
+    for (var i = 0; i < stage.args.length; i++) {
+      final arg = stage.args[i];
+      if (arg == '-c' || arg == '--format') {
+        if (i + 1 >= stage.args.length) {
+          return Ok(
+            StageResult(
+              stdout: const [],
+              stderr: utf8.encode('stat: option requires an argument -- c\n'),
+              exitCode: 1,
+            ),
+          );
+        }
+        format = stage.args[++i];
+      } else if (arg.startsWith('--format=')) {
+        format = arg.substring('--format='.length);
+      } else if (!arg.startsWith('-')) {
+        files.add(arg);
+      }
+    }
+    if (files.isEmpty) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('stat: missing operand\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+
+    final cwd = options?.cwd ?? _currentDir;
+    final out = StringBuffer();
+    for (final file in files) {
+      final resolved = _resolveSandboxPath(file, cwd);
+      io.FileStat stat;
+      try {
+        stat = await io.FileStat.stat(_hostPath(resolved));
+      } on Object {
+        return Ok(
+          StageResult(
+            stdout: const [],
+            stderr: utf8.encode(
+              'stat: cannot stat \'$file\': No such file or directory\n',
+            ),
+            exitCode: 1,
+          ),
+        );
+      }
+      if (stat.type == io.FileSystemEntityType.notFound) {
+        return Ok(
+          StageResult(
+            stdout: const [],
+            stderr: utf8.encode(
+              'stat: cannot stat \'$file\': No such file or directory\n',
+            ),
+            exitCode: 1,
+          ),
+        );
+      }
+
+      if (format != null) {
+        final rendered = format
+            .replaceAll('%s', '${stat.size}')
+            .replaceAll('%n', resolved)
+            .replaceAll('%F', _statTypeName(stat.type))
+            .replaceAll('%Y', '${stat.modified.millisecondsSinceEpoch ~/ 1000}')
+            .replaceAll('%y', stat.modified.toIso8601String());
+        out.write('$rendered\n');
+        continue;
+      }
+
+      out
+        ..write('  File: $resolved\n')
+        ..write('  Size: ${stat.size}\n')
+        ..write('  Type: ${_statTypeName(stat.type)}\n')
+        ..write('Modify: ${stat.modified.toIso8601String()}\n')
+        ..write('Change: ${stat.changed.toIso8601String()}\n');
+    }
+    return Ok(
+      StageResult(
+        stdout: utf8.encode(out.toString()),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  String _statTypeName(io.FileSystemEntityType type) {
+    return switch (type) {
+      io.FileSystemEntityType.file => 'regular file',
+      io.FileSystemEntityType.directory => 'directory',
+      io.FileSystemEntityType.link => 'symbolic link',
+      _ => 'unknown',
+    };
+  }
+
+  Future<Result<StageResult, ExecutionError>> _tacBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    final cwd = options?.cwd ?? _currentDir;
+    final files = <String>[
+      for (final arg in stage.args)
+        if (!arg.startsWith('-')) arg,
+    ];
+    if (files.isEmpty && inputSource != null) files.add(inputSource);
+    if (files.isEmpty) {
+      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+    }
+
+    final out = StringBuffer();
+    for (final file in files) {
+      final resolved = _resolveSandboxPath(file, cwd);
+      final hostFile = io.File(_hostPath(resolved));
+      if (!hostFile.existsSync()) {
+        return Ok(
+          StageResult(
+            stdout: const [],
+            stderr: utf8.encode('tac: $file: No such file or directory\n'),
+            exitCode: 1,
+          ),
+        );
+      }
+      final content = await hostFile.readAsString();
+      final hadTrailingNewline = content.endsWith('\n');
+      final lines = content.split('\n');
+      if (hadTrailingNewline) lines.removeLast();
+      final reversed = lines.reversed.join('\n');
+      out.write(reversed);
+      if (hadTrailingNewline || reversed.isNotEmpty) out.write('\n');
+    }
+    return Ok(
+      StageResult(
+        stdout: utf8.encode(out.toString()),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  Future<Result<StageResult, ExecutionError>> _exprBuiltin(Stage stage) async {
+    try {
+      final value = _evalExpr(stage.args);
+      // GNU expr: exit status is 1 when the result is 0 or the empty string.
+      final exitCode = value == '0' || value.isEmpty ? 1 : 0;
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('$value\n'),
+          stderr: const [],
+          exitCode: exitCode,
+        ),
+      );
+    } on FormatException catch (e) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('expr: ${e.message}\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+  }
+
+  String _evalExpr(List<String> args) {
+    if (args.isEmpty) throw const FormatException('missing operand');
+
+    // String functions: length, substr.
+    if (args[0] == 'length') {
+      if (args.length != 2) throw const FormatException('syntax error');
+      return '${args[1].length}';
+    }
+    if (args[0] == 'substr') {
+      if (args.length != 4) throw const FormatException('syntax error');
+      final str = args[1];
+      final pos = int.tryParse(args[2]);
+      final len = int.tryParse(args[3]);
+      if (pos == null || len == null) {
+        throw const FormatException('non-numeric argument');
+      }
+      final start = (pos - 1).clamp(0, str.length);
+      final end = (start + len).clamp(0, str.length);
+      return str.substring(start, end);
+    }
+
+    // Integer arithmetic / comparisons with precedence climbing.
+    var pos = 0;
+    int peek() => pos < args.length ? 0 : -1;
+
+    int parseValue() {
+      if (pos >= args.length) throw const FormatException('syntax error');
+      final value = int.tryParse(args[pos]);
+      if (value == null) {
+        throw FormatException('non-integer argument: ${args[pos]}');
+      }
+      pos++;
+      return value;
+    }
+
+    int parseTerm() {
+      var value = parseValue();
+      while (pos < args.length &&
+          (args[pos] == '*' || args[pos] == '/' || args[pos] == '%')) {
+        final op = args[pos++];
+        final rhs = parseValue();
+        if (op == '*') value *= rhs;
+        if (op == '/') {
+          if (rhs == 0) throw const FormatException('division by zero');
+          value ~/= rhs;
+        }
+        if (op == '%') {
+          if (rhs == 0) throw const FormatException('division by zero');
+          value %= rhs;
+        }
+      }
+      return value;
+    }
+
+    int parseSum() {
+      var value = parseTerm();
+      while (pos < args.length && (args[pos] == '+' || args[pos] == '-')) {
+        final op = args[pos++];
+        final rhs = parseTerm();
+        if (op == '+') value += rhs;
+        if (op == '-') value -= rhs;
+      }
+      return value;
+    }
+
+    final left = parseSum();
+    if (peek() == -1) return '$left';
+    if (pos < args.length) {
+      const comparisons = {'=', '!=', '<', '<=', '>', '>='};
+      final op = args[pos++];
+      if (!comparisons.contains(op)) {
+        throw FormatException('syntax error: $op');
+      }
+      final right = parseSum();
+      if (pos != args.length) throw const FormatException('syntax error');
+      final result = switch (op) {
+        '=' => left == right,
+        '!=' => left != right,
+        '<' => left < right,
+        '<=' => left <= right,
+        '>' => left > right,
+        '>=' => left >= right,
+        _ => false,
+      };
+      return result ? '1' : '0';
+    }
+    return '$left';
+  }
+
+  Future<Result<StageResult, ExecutionError>> _idBuiltin(Stage stage) async {
+    const user = 'fah';
+    if (stage.args.contains('-u')) {
+      final name = stage.args.contains('-n') ? user : '0';
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('$name\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    if (stage.args.contains('-g')) {
+      final name = stage.args.contains('-n') ? user : '0';
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('$name\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    return Ok(
+      StageResult(
+        stdout: utf8.encode('uid=0($user) gid=0($user) groups=0($user)\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  Future<Result<StageResult, ExecutionError>> _relpathBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final paths = <String>[
+      for (final arg in stage.args)
+        if (!arg.startsWith('-')) arg,
+    ];
+    if (paths.isEmpty) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('relpath: missing operand\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+    final cwd = options?.cwd ?? _currentDir;
+    final from = _resolveSandboxPath(paths[0], cwd);
+    final start = paths.length > 1 ? _resolveSandboxPath(paths[1], cwd) : cwd;
+    final relative = p.relative(
+      from == '/' ? '/' : from.substring(1),
+      from: start == '/' ? '/' : start.substring(1),
+    );
+    return Ok(
+      StageResult(
+        stdout: utf8.encode('$relative\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  Future<Result<StageResult, ExecutionError>> _trBuiltin(
     Stage stage,
     String? inputSource,
   ) async {
     if (inputSource == null) {
-      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
+      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     }
     final file = _hostFile(inputSource);
     if (!await file.exists()) {
-      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
+      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     }
 
     var delete = false;
@@ -1991,7 +2136,7 @@ final class WasiSandboxShell implements Shell {
 
     if (set1 == null) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('tr: missing operand\n'),
           exitCode: 2,
@@ -2000,7 +2145,7 @@ final class WasiSandboxShell implements Shell {
     }
     if (!delete && set2 == null) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('tr: missing operand after "$set1"\n'),
           exitCode: 2,
@@ -2030,7 +2175,7 @@ final class WasiSandboxShell implements Shell {
     }
 
     return Ok(
-      _StageResult(stdout: utf8.encode(output), stderr: const [], exitCode: 0),
+      StageResult(stdout: utf8.encode(output), stderr: const [], exitCode: 0),
     );
   }
 
@@ -2083,17 +2228,17 @@ final class WasiSandboxShell implements Shell {
     return result;
   }
 
-  Future<Result<_StageResult, ExecutionError>> _xargsBuiltin(
+  Future<Result<StageResult, ExecutionError>> _xargsBuiltin(
     Stage stage,
     ShellExecOptions? options,
     String? inputSource,
   ) async {
     if (inputSource == null) {
-      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
+      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     }
     final file = _hostFile(inputSource);
     if (!await file.exists()) {
-      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
+      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     }
     final lines = await file.readAsLines();
 
@@ -2119,7 +2264,7 @@ final class WasiSandboxShell implements Shell {
 
     if (commandIndex >= stage.args.length) {
       return Ok(
-        _StageResult(
+        StageResult(
           stdout: const [],
           stderr: utf8.encode('xargs: missing command\n'),
           exitCode: 1,
@@ -2169,7 +2314,7 @@ final class WasiSandboxShell implements Shell {
       exitCode = data.exitCode;
     }
 
-    return Ok(_StageResult(stdout: stdout, stderr: stderr, exitCode: exitCode));
+    return Ok(StageResult(stdout: stdout, stderr: stderr, exitCode: exitCode));
   }
 }
 
@@ -2287,8 +2432,8 @@ final class _TestEvaluator {
   }
 }
 
-final class _StageResult {
-  const _StageResult({
+final class StageResult {
+  const StageResult({
     required this.stdout,
     required this.stderr,
     required this.exitCode,
