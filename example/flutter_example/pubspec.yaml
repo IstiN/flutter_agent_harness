@@ -31,6 +31,15 @@ dependencies:
   flutter_chat_core: ^2.9.0
   yaml: ^3.1.3
 
+  # Git support for the mobile sandbox: pure-Dart local porcelain (network clone
+  # is implemented as a GitHub tarball fallback; full smart HTTP clone is a TODO).
+  dart_git:
+    git:
+      url: https://github.com/GitJournal/dart-git.git
+      ref: master
+
+  path: ^1.9.0
+
   # WASM runtime used to run a uutils/ripgrep shell on iOS/Android/Web.
   wasm_run_flutter: ^0.1.0
   wasm_run: ^0.1.0+2
