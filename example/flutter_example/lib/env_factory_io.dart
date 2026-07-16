@@ -10,8 +10,9 @@ import 'wasm_shell.dart';
 /// Creates the execution environment for the current platform.
 ///
 /// Desktop keeps the existing [LocalExecutionEnv] with the host shell. Mobile
-/// uses a sandboxed host directory and a BusyBox WASM shell so the agent has a
-/// working `bash`/`sh` on iOS and Android.
+/// uses a sandboxed host directory and a WasiSandboxShell backed by
+/// MIT-licensed uutils/ripgrep WASM binaries so the agent has a working shell
+/// on iOS and Android.
 Future<ExecutionEnv> createPlatformEnv() async {
   if (kIsWeb) {
     // Fallback for the unlikely case this file is compiled for web; the stub
@@ -23,9 +24,7 @@ Future<ExecutionEnv> createPlatformEnv() async {
   if (Platform.isAndroid || Platform.isIOS) {
     final sandbox = Directory('${appDir.path}/fah_sandbox');
     await sandbox.create(recursive: true);
-    final module = await WasmShell.loadModule();
-    final shell = WasmShell(
-      module: module,
+    final shell = await WasiSandboxShell.load(
       workingDirectory: '/',
       sandboxHostPath: sandbox.path,
     );
