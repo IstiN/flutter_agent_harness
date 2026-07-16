@@ -40,11 +40,15 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Message> _lastSynced = [];
   Timer? _syncDebounce;
   bool _isSyncing = false;
+  bool _isStreaming = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
     _chatController = InMemoryChatController();
+    _isStreaming = widget.service.isStreaming;
+    _error = widget.service.error;
     widget.service.addListener(_onServiceChanged);
     _syncMessages();
   }
@@ -63,6 +67,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _syncDebounce = Timer(const Duration(milliseconds: 50), () {
       if (mounted) _syncMessages();
     });
+
+    final needsRebuild =
+        widget.service.isStreaming != _isStreaming ||
+        widget.service.error != _error;
+    if (needsRebuild) {
+      _isStreaming = widget.service.isStreaming;
+      _error = widget.service.error;
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _syncMessages() async {
@@ -384,7 +397,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
-            if (widget.service.isStreaming)
+            if (_isStreaming)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Row(
@@ -450,7 +463,7 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: const Text('fah'),
         actions: [
-          if (widget.service.isStreaming)
+          if (_isStreaming)
             IconButton(
               icon: const Icon(Icons.stop),
               tooltip: 'Abort',
@@ -465,7 +478,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
-          if (widget.service.error case final error?)
+          if (_error case final error?)
             Material(
               color: Theme.of(context).colorScheme.errorContainer,
               child: Padding(

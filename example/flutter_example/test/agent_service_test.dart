@@ -21,6 +21,47 @@ StreamFunction _singleTextResponse(String text) {
   };
 }
 
+StreamFunction _streamingTextResponse(String text) {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final now = DateTime.now();
+    AssistantMessage partial(int length) => AssistantMessage(
+      content: [TextContent(text: text.substring(0, length))],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: now,
+    );
+    for (var i = 1; i <= text.length; i++) {
+      stream.push(
+        TextDeltaEvent(
+          contentIndex: 0,
+          delta: text[i - 1],
+          partial: partial(i),
+        ),
+      );
+    }
+    stream.push(
+      DoneEvent(
+        reason: StopReason.stop,
+        message: AssistantMessage(
+          content: [TextContent(text: text)],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: now,
+        ),
+      ),
+    );
+    stream.end();
+    return stream;
+  };
+}
+
 StreamFunction _errorStream(String errorMessage) {
   return (model, context, {cancelToken}) {
     final stream = AssistantMessageEventStream();
@@ -209,6 +250,39 @@ void main() {
 
       expect(service.messages, isEmpty);
       expect(service.error, isNull);
+    });
+
+    test('second user message produces a new assistant message '
+        'instead of overwriting the previous one', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_streamingTextResponse('response')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('first');
+      await service.waitForIdle();
+
+      await service.sendText('second');
+      await service.waitForIdle();
+
+      expect(service.messages.length, 4);
+      expect(service.messages[0].role, 'user');
+      expect(service.messages[0].content, 'first');
+      expect(service.messages[1].role, 'assistant');
+      expect(service.messages[1].content, 'response');
+      expect(service.messages[2].role, 'user');
+      expect(service.messages[2].content, 'second');
+      expect(service.messages[3].role, 'assistant');
+      expect(service.messages[3].content, 'response');
+
+      final assistantContents = service.messages
+          .where((m) => m.role == 'assistant')
+          .map((m) => m.content)
+          .toList();
+      expect(assistantContents, ['response', 'response']);
     });
   });
 }
