@@ -492,6 +492,19 @@ AgentTool listDirTool(ExecutionEnv env) {
       final limit =
           (arguments['limit'] as num?)?.toInt() ?? defaultLsEntryLimit;
 
+      // POSIX ls accepts a file path and prints the file name. Check the
+      // target kind first so we don't fail with notDirectory for a file.
+      final info = await env.fileInfo(path);
+      if (info.isErr) {
+        // Fall back to listing if we can't stat (e.g. path with a trailing
+        // slash or a backend where fileInfo is unsupported).
+        if (info.errorOrNull!.code != FileErrorCode.notSupported) {
+          throw StateError('${info.errorOrNull}');
+        }
+      } else if (info.valueOrNull!.kind == FileKind.file) {
+        return ToolExecutionResult.text(info.valueOrNull!.name);
+      }
+
       final listed = await env.listDir(path);
       if (listed.isErr) throw StateError('${listed.errorOrNull}');
       cancelToken?.throwIfCancelled();
