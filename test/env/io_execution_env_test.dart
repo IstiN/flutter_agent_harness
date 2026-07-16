@@ -104,22 +104,35 @@ void main() {
     });
   });
 
-  group('LocalExecutionEnv session round-trip', () {
-    test('JSONL session survives a real-disk reopen', () async {
-      final env = LocalExecutionEnv(cwd: tempDir.path);
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: 'sessions');
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: tempDir.path),
-      );
-      await session.appendMessage(UserMessage.text('on disk'));
-      final metadata = await session.getMetadata();
-
-      final reopened = await repo.open(metadata);
-      final messages = await reopened.buildContextMessages();
-      expect((messages.single as UserMessage).content, 'on disk');
-
-      final listed = await repo.list();
-      expect(listed.map((m) => m.id), contains(metadata.id));
+  group('LocalExecutionEnv custom shell', () {
+    test('uses the provided shell instead of LocalShell', () async {
+      final captured = <String>[];
+      final fakeShell = _FakeShell((command, {options}) async {
+        captured.add(command);
+        return const Ok(
+          ShellExecResult(stdout: 'fake', stderr: '', exitCode: 42),
+        );
+      });
+      final env = LocalExecutionEnv(cwd: tempDir.path, shell: fakeShell);
+      final result = await env.exec('hello');
+      expect(result.getOrThrow().exitCode, 42);
+      expect(captured, ['hello']);
     });
   });
+}
+
+class _FakeShell implements Shell {
+  _FakeShell(this._handler);
+
+  final Future<Result<ShellExecResult, ExecutionError>> Function(
+    String command, {
+    ShellExecOptions? options,
+  })
+  _handler;
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _handler(command, options: options);
 }

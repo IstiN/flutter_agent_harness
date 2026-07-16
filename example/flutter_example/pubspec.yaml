@@ -29,14 +29,22 @@ dependencies:
   uuid: ^4.5.3
   flutter_chat_core: ^2.9.0
 
+  # WASM runtime used to run a busybox shell on iOS/Android/Web.
+  wasm_run_flutter: ^0.1.0
+  wasm_run: ^0.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+dependency_overrides:
+  freezed_annotation: ^3.1.0
 
 flutter:
   uses-material-design: true
 
   assets:
     - .env
+    - assets/busybox.wasm
 
