@@ -9,7 +9,9 @@ import 'dart:io' as io;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
 import 'package:wasm_run/wasm_run.dart';
+import 'package:yaml/yaml.dart' as yaml;
 
 import 'shell_parser.dart';
 
@@ -43,7 +45,8 @@ final class WasiSandboxShell implements Shell {
     required this.zip,
     this.workingDirectory,
     this.sandboxHostPath,
-  });
+    http.Client? httpClient,
+  }) : _httpClient = httpClient ?? http.Client();
 
   /// `coreutils` multicall module.
   final WasmModule coreutils;
@@ -75,10 +78,13 @@ final class WasiSandboxShell implements Shell {
   /// Host directory exposed to the WASM guest at `/`.
   final String? sandboxHostPath;
 
+  final http.Client _httpClient;
+
   /// Loads all three WASM modules from the Flutter asset bundle.
   static Future<WasiSandboxShell> load({
     String? workingDirectory,
     String? sandboxHostPath,
+    http.Client? httpClient,
   }) async {
     Future<WasmModule> loadAsset(String name) async {
       final byteData = await rootBundle.load('assets/wasm/$name');
@@ -107,6 +113,7 @@ final class WasiSandboxShell implements Shell {
       zip: await loadAsset('zip.wasm'),
       workingDirectory: workingDirectory,
       sandboxHostPath: sandboxHostPath,
+      httpClient: httpClient,
     );
   }
 
@@ -191,6 +198,9 @@ final class WasiSandboxShell implements Shell {
   /// Shell builtins implemented in Dart. These do not need a WASM module and
   /// do not increase the IPA size.
   static const Set<String> _builtinCommands = {
+    'curl',
+    'jq',
+    'yq',
     'env',
     'test',
     '[',
@@ -242,6 +252,9 @@ final class WasiSandboxShell implements Shell {
     required String? inputSource,
   }) async {
     return switch (stage.command) {
+      'curl' => _curlBuiltin(stage, options),
+      'jq' => _jqBuiltin(stage, inputSource),
+      'yq' => _yqBuiltin(stage, inputSource),
       'env' => _envBuiltin(stage, options),
       'test' || '[' => _testBuiltin(stage),
       'which' => _whichBuiltin(stage),
@@ -829,6 +842,300 @@ final class WasiSandboxShell implements Shell {
         exitCode: 0,
       ),
     );
+  }
+
+  Future<Result<_StageResult, ExecutionError>> _curlBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final parsed = _parseCurlArgs(stage.args);
+    if (parsed.url == null) {
+      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 2));
+    }
+
+    Uri uri;
+    try {
+      uri = Uri.parse(parsed.url!);
+    } on FormatException {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('curl: invalid URL\n'),
+          exitCode: 3,
+        ),
+      );
+    }
+
+    final request = http.Request(parsed.method, uri);
+    request.headers.addAll(parsed.headers);
+    if (parsed.body != null) request.body = parsed.body!;
+    request.followRedirects = parsed.followRedirects;
+
+    final timeout = options?.timeout ?? const Duration(seconds: 30);
+    final streamedResponse = await _httpClient.send(request).timeout(timeout);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    final statusLine =
+        'HTTP ${response.statusCode} '
+        '${response.reasonPhrase ?? ""}\n';
+    final stderr = parsed.silent ? const <int>[] : utf8.encode(statusLine);
+
+    if (parsed.outputFile != null) {
+      final file = _hostFile(parsed.outputFile!);
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(response.bodyBytes);
+      return Ok(_StageResult(stdout: const [], stderr: stderr, exitCode: 0));
+    }
+
+    return Ok(
+      _StageResult(stdout: response.bodyBytes, stderr: stderr, exitCode: 0),
+    );
+  }
+
+  ({
+    String? url,
+    String method,
+    Map<String, String> headers,
+    String? body,
+    String? outputFile,
+    bool silent,
+    bool followRedirects,
+  })
+  _parseCurlArgs(List<String> args) {
+    var method = 'GET';
+    final headers = <String, String>{};
+    String? body;
+    String? outputFile;
+    var silent = false;
+    var followRedirects = false;
+    String? url;
+
+    for (var i = 0; i < args.length; i++) {
+      final arg = args[i];
+      if (arg == '-X' || arg == '--request') {
+        if (i + 1 < args.length) method = args[++i];
+      } else if (arg == '-H' || arg == '--header') {
+        if (i + 1 < args.length) {
+          final header = args[++i];
+          final idx = header.indexOf(':');
+          if (idx > 0) {
+            headers[header.substring(0, idx).trim()] = header
+                .substring(idx + 1)
+                .trim();
+          }
+        }
+      } else if (arg == '-d' || arg == '--data' || arg == '--data-raw') {
+        if (i + 1 < args.length) body = args[++i];
+      } else if (arg == '-o' || arg == '--output') {
+        if (i + 1 < args.length) outputFile = args[++i];
+      } else if (arg == '-s' || arg == '--silent') {
+        silent = true;
+      } else if (arg == '-L' || arg == '--location') {
+        followRedirects = true;
+      } else if (arg == '--url') {
+        if (i + 1 < args.length) url = args[++i];
+      } else if (!arg.startsWith('-')) {
+        url = arg;
+      }
+    }
+
+    return (
+      url: url,
+      method: method,
+      headers: headers,
+      body: body,
+      outputFile: outputFile,
+      silent: silent,
+      followRedirects: followRedirects,
+    );
+  }
+
+  Future<Result<_StageResult, ExecutionError>> _jqBuiltin(
+    Stage stage,
+    String? inputSource,
+  ) async {
+    if (stage.args.isEmpty) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('jq: missing filter\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+    final filter = stage.args.first;
+    final inputFile = stage.args.length > 1 ? stage.args[1] : inputSource;
+
+    if (inputFile == null) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('jq: missing input\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+
+    final file = _hostFile(inputFile);
+    if (!await file.exists()) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('jq: $inputFile: No such file or directory\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+
+    final content = await file.readAsString();
+    dynamic json;
+    try {
+      json = jsonDecode(content);
+    } on FormatException catch (e) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('jq: parse error: $e\n'),
+          exitCode: 5,
+        ),
+      );
+    }
+
+    final results = _applyJqFilter(json, filter);
+    const encoder = JsonEncoder.withIndent('  ');
+    final output = results.map((r) => encoder.convert(r)).join('\n');
+    return Ok(
+      _StageResult(
+        stdout: utf8.encode(output.isNotEmpty ? '$output\n' : ''),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  Future<Result<_StageResult, ExecutionError>> _yqBuiltin(
+    Stage stage,
+    String? inputSource,
+  ) async {
+    if (stage.args.isEmpty) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('yq: missing filter\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+    final filter = stage.args.first;
+    final inputFile = stage.args.length > 1 ? stage.args[1] : inputSource;
+
+    if (inputFile == null) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('yq: missing input\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+
+    final file = _hostFile(inputFile);
+    if (!await file.exists()) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('yq: $inputFile: No such file or directory\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+
+    final content = await file.readAsString();
+    dynamic yamlDoc;
+    try {
+      yamlDoc = yaml.loadYaml(content);
+    } on yaml.YamlException catch (e) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('yq: parse error: $e\n'),
+          exitCode: 5,
+        ),
+      );
+    }
+
+    final json = _yamlToJson(yamlDoc);
+    final results = _applyJqFilter(json, filter);
+    const encoder = JsonEncoder.withIndent('  ');
+    final output = results.map((r) => encoder.convert(r)).join('\n');
+    return Ok(
+      _StageResult(
+        stdout: utf8.encode(output.isNotEmpty ? '$output\n' : ''),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  dynamic _yamlToJson(dynamic value) {
+    if (value is yaml.YamlMap) {
+      return {
+        for (final entry in value.entries)
+          entry.key.toString(): _yamlToJson(entry.value),
+      };
+    }
+    if (value is yaml.YamlList) {
+      return value.map(_yamlToJson).toList();
+    }
+    return value;
+  }
+
+  List<dynamic> _applyJqFilter(dynamic input, String filter) {
+    if (filter == '.') return [input];
+    if (filter == 'length') {
+      if (input is List || input is String || input is Map) {
+        return [(input as dynamic).length as Object];
+      }
+      return const [];
+    }
+    if (filter == 'keys') {
+      if (input is Map) return [input.keys.toList()];
+      return const [];
+    }
+
+    final parts = filter.split('.').where((s) => s.isNotEmpty).toList();
+    if (parts.isEmpty) return [input];
+
+    dynamic current = input;
+    for (var i = 0; i < parts.length; i++) {
+      final part = parts[i];
+      final isLast = i == parts.length - 1;
+      if (part == '[]') {
+        if (current is List) {
+          final rest = parts.sublist(i + 1).join('.');
+          return current
+              .expand((e) => _applyJqFilter(e, rest.isEmpty ? '.' : '.$rest'))
+              .toList();
+        }
+        return const [];
+      }
+      if (isLast && part == 'length') {
+        if (current is List || current is String || current is Map) {
+          return [(current as dynamic).length as Object];
+        }
+        return const [];
+      }
+      if (isLast && part == 'keys') {
+        if (current is Map) return [current.keys.toList()];
+        return const [];
+      }
+      if (current is Map) {
+        current = current[part];
+      } else {
+        return const [];
+      }
+    }
+    return [current];
   }
 
   Future<Result<_StageResult, ExecutionError>> _whoamiBuiltin() async {
