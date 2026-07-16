@@ -421,8 +421,12 @@ final class LocalShell implements Shell {
 /// Exported only from `lib/io.dart`.
 final class LocalExecutionEnv implements ExecutionEnv {
   /// Creates a [LocalExecutionEnv] rooted at [cwd].
-  LocalExecutionEnv({String? cwd, this._shell = const LocalShell()})
-    : _fs = LocalFileSystem(cwd: cwd);
+  ///
+  /// A custom [shell] may be provided to swap the default [LocalShell] for a
+  /// sandboxed WASM shell on mobile targets.
+  LocalExecutionEnv({String? cwd, Shell? shell})
+    : _fs = LocalFileSystem(cwd: cwd),
+      _shell = shell ?? const LocalShell();
 
   final LocalFileSystem _fs;
   final Shell _shell;

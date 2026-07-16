@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/io.dart' show LocalExecutionEnv;
-import 'package:path_provider/path_provider.dart';
+
+import 'env_factory.dart';
 
 /// A UI-facing chat message.
 final class FahChatMessage {
@@ -84,18 +83,20 @@ class AgentService extends ChangeNotifier {
     _agent.subscribe(_onAgentEvent);
   }
 
-  /// Creates a service for the mobile/desktop filesystem.
-  ///
-  /// [appDir] is used as both the execution-environment cwd and the parent of
-  /// the `sessions` directory. The [config] selects provider/model/credentials.
-  factory AgentService.fromLocalEnv({
-    required Directory appDir,
+  /// Convenience factory that creates the right [ExecutionEnv] for the
+  /// platform and wires up the agent.
+  static Future<AgentService> create({required AgentConfig config}) async {
+    final env = await createPlatformEnv();
+    return AgentService._withEnv(env: env, config: config);
+  }
+
+  AgentService._withEnv({
+    required ExecutionEnv env,
     required AgentConfig config,
-  }) {
-    final env = LocalExecutionEnv(cwd: appDir.path);
-    final model = config.toModel();
-    final agent = Agent(
-      model: model,
+  }) : sessionsRoot = '${env.cwd}/sessions',
+       _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
+    _agent = Agent(
+      model: config.toModel(),
       systemPrompt:
           config.systemPrompt ??
           'You are fah (also called fa), a helpful coding assistant. '
@@ -106,20 +107,10 @@ class AgentService extends ChangeNotifier {
       ),
       toolRegistry: ToolRegistry(builtinTools(env)),
     );
-    return AgentService(
-      agent: agent,
-      env: env,
-      sessionsRoot: '${appDir.path}/sessions',
-    );
+    _agent.subscribe(_onAgentEvent);
   }
 
-  /// Convenience factory that resolves the application documents directory.
-  static Future<AgentService> create({required AgentConfig config}) async {
-    final appDir = await getApplicationDocumentsDirectory();
-    return AgentService.fromLocalEnv(appDir: appDir, config: config);
-  }
-
-  final Agent _agent;
+  late final Agent _agent;
   final JsonlSessionRepo _repo;
   final String sessionsRoot;
 
