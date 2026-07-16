@@ -129,6 +129,7 @@ class AgentService extends ChangeNotifier {
 
   Session? _session;
   int _persistedCount = 0;
+  FahChatMessage? _currentAssistantMessage;
 
   /// Initializes session persistence.
   Future<void> initialize() async {
@@ -200,6 +201,7 @@ class AgentService extends ChangeNotifier {
     messages.clear();
     error = null;
     _persistedCount = 0;
+    _currentAssistantMessage = null;
     await initialize();
     notifyListeners();
   }
@@ -226,6 +228,7 @@ class AgentService extends ChangeNotifier {
     switch (event) {
       case AgentStartEvent():
         isStreaming = true;
+        _currentAssistantMessage = null;
         notifyListeners();
       case MessageUpdateEvent(:final assistantMessageEvent):
         if (assistantMessageEvent is TextDeltaEvent) {
@@ -276,25 +279,21 @@ class AgentService extends ChangeNotifier {
         notifyListeners();
       case AgentEndEvent():
         isStreaming = false;
-        await _persist();
+        _currentAssistantMessage = null;
         notifyListeners();
+        await _persist();
       default:
     }
   }
 
   void _appendAssistantDelta(String delta) {
-    FahChatMessage? last;
-    for (var i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role == 'assistant') {
-        last = messages[i];
-        break;
-      }
+    var target = _currentAssistantMessage;
+    if (target == null) {
+      target = FahChatMessage(role: 'assistant', content: '');
+      _currentAssistantMessage = target;
+      messages.add(target);
     }
-    if (last == null) {
-      last = FahChatMessage(role: 'assistant', content: '');
-      messages.add(last);
-    }
-    last.content += delta;
+    target.content += delta;
     notifyListeners();
   }
 
@@ -303,18 +302,13 @@ class AgentService extends ChangeNotifier {
         .whereType<TextContent>()
         .map((b) => b.text)
         .join();
-    FahChatMessage? last;
-    for (var i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role == 'assistant') {
-        last = messages[i];
-        break;
-      }
-    }
-    if (last == null) {
+    final target = _currentAssistantMessage;
+    if (target == null) {
       messages.add(FahChatMessage(role: 'assistant', content: text));
     } else {
-      last.content = text;
+      target.content = text;
     }
+    _currentAssistantMessage = null;
     if (message.stopReason case StopReason.error || StopReason.aborted) {
       error = message.errorMessage ?? 'Run failed (${message.stopReason.name})';
     }
