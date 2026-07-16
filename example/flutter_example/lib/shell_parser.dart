@@ -178,8 +178,21 @@ List<_Token> _tokenize(String input) {
       i++;
       while (i < input.length && input[i] != '"') {
         if (input[i] == '\\' && i + 1 < input.length) {
-          buffer.write(input[i + 1]);
-          i += 2;
+          final next = input[i + 1];
+          if (next == '"' ||
+              next == '\\' ||
+              next == '\$' ||
+              next == '`' ||
+              next == '\n') {
+            // POSIX double-quote escapes: \" \\ \$ \` \<newline>
+            buffer.write(next);
+            i += 2;
+          } else {
+            // Backslash is literal for any other following character.
+            buffer.write('\\');
+            buffer.write(next);
+            i += 2;
+          }
         } else {
           buffer.write(input[i]);
           i++;

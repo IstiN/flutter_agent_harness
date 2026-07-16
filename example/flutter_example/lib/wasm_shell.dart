@@ -20,6 +20,11 @@ import 'shell_parser.dart';
 ///   - `coreutils.wasm` for the POSIX utility set
 ///   - `rg.wasm` for ripgrep
 ///   - `find.wasm` for uutils find
+///   - `sed.wasm` for the uutils sed stream editor
+///   - `awk.wasm` for goawk
+///   - `tar.wasm` for tar archive creation/extraction
+///   - `gzip.wasm` for gzip compression/decompression
+///   - `zip.wasm` for zip archive creation/extraction
 ///
 /// A tiny shell parser supports pipelines, `\u0026\u0026` / `||`, `;`, and
 /// redirects. Each stage runs in its own WASM instance, so there is no need
@@ -31,6 +36,11 @@ final class WasiSandboxShell implements Shell {
     required this.coreutils,
     required this.rg,
     required this.find,
+    required this.sed,
+    required this.awk,
+    required this.tar,
+    required this.gzip,
+    required this.zip,
     this.workingDirectory,
     this.sandboxHostPath,
   });
@@ -43,6 +53,21 @@ final class WasiSandboxShell implements Shell {
 
   /// find module.
   final WasmModule find;
+
+  /// sed module.
+  final WasmModule sed;
+
+  /// awk module.
+  final WasmModule awk;
+
+  /// tar module.
+  final WasmModule tar;
+
+  /// gzip module.
+  final WasmModule gzip;
+
+  /// zip/unzip module.
+  final WasmModule zip;
 
   /// Default working directory used when [ShellExecOptions.cwd] is omitted.
   final String? workingDirectory;
@@ -75,6 +100,11 @@ final class WasiSandboxShell implements Shell {
       coreutils: await loadAsset('coreutils.wasm'),
       rg: await loadAsset('rg.wasm'),
       find: await loadAsset('find.wasm'),
+      sed: await loadAsset('sed.wasm'),
+      awk: await loadAsset('awk.wasm'),
+      tar: await loadAsset('tar.wasm'),
+      gzip: await loadAsset('gzip.wasm'),
+      zip: await loadAsset('zip.wasm'),
       workingDirectory: workingDirectory,
       sandboxHostPath: sandboxHostPath,
     );
@@ -161,19 +191,29 @@ final class WasiSandboxShell implements Shell {
   /// Shell builtins implemented in Dart. These do not need a WASM module and
   /// do not increase the IPA size.
   static const Set<String> _builtinCommands = {
+    'env',
     'test',
     '[',
     'which',
     'command',
     'whoami',
     'xargs',
+    'tr',
   };
 
   /// Whether [command] can be resolved to a WASM applet or a builtin.
   bool _isCommandAvailable(String command) {
     return _coreutilsApplets.contains(command) ||
-        command == 'rg' ||
-        command == 'find' ||
+        const {
+          'rg',
+          'find',
+          'sed',
+          'awk',
+          'tar',
+          'gzip',
+          'zip',
+          'unzip',
+        }.contains(command) ||
         _builtinCommands.contains(command);
   }
 
@@ -182,9 +222,17 @@ final class WasiSandboxShell implements Shell {
     if (_coreutilsApplets.contains(command)) {
       return (module: coreutils, argv: [command]);
     }
-    if (command == 'rg') return (module: rg, argv: ['rg']);
-    if (command == 'find') return (module: find, argv: ['find']);
-    return (module: coreutils, argv: [command]);
+    return switch (command) {
+      'rg' => (module: rg, argv: const ['rg']),
+      'find' => (module: find, argv: const ['find']),
+      'sed' => (module: sed, argv: const ['sed']),
+      'awk' => (module: awk, argv: const ['awk']),
+      'tar' => (module: tar, argv: const ['tar']),
+      'gzip' => (module: gzip, argv: const ['gzip']),
+      'zip' => (module: zip, argv: const ['zip']),
+      'unzip' => (module: zip, argv: const ['zip_util']),
+      _ => (module: coreutils, argv: [command]),
+    };
   }
 
   /// Dispatches a builtin command to its Dart implementation.
@@ -194,11 +242,13 @@ final class WasiSandboxShell implements Shell {
     required String? inputSource,
   }) async {
     return switch (stage.command) {
+      'env' => _envBuiltin(stage, options),
       'test' || '[' => _testBuiltin(stage),
       'which' => _whichBuiltin(stage),
       'command' => _commandBuiltin(stage),
       'whoami' => _whoamiBuiltin(),
       'xargs' => _xargsBuiltin(stage, options, inputSource),
+      'tr' => _trBuiltin(stage, inputSource),
       _ => Err(
         ExecutionError(
           ExecutionErrorCode.unknown,
@@ -334,8 +384,8 @@ final class WasiSandboxShell implements Shell {
         args: stage.args,
         options: options,
         inputSource: inputSource,
-        captureStdout: stdoutFile == null,
-        captureStderr: stderrFile == null,
+        captureStdout: true,
+        captureStderr: true,
       );
       if (result.isErr) {
         await _cleanup(tempFiles);
@@ -576,10 +626,11 @@ final class WasiSandboxShell implements Shell {
     if (error == null) return 0;
     final message = error.toString();
 
-    // wasmtime represents `proc_exit(n)` as `I32Exit(n)`. In older versions the
-    // Display format is "i32 exit with value N".
+    // wasmtime represents `proc_exit(n)` as `I32Exit(n)`. Older versions use
+    // "i32 exit with value N", newer versions wrap it as
+    // "Exited with i32 exit status N".
     final i32Match = RegExp(
-      r'i32\s+exit\s+with\s+value\s+(\d+)',
+      r'i32\s+(?:exit\s+with\s+value|exit\s+status)\s*(\d+)',
     ).firstMatch(message);
     if (i32Match != null) {
       return int.tryParse(i32Match.group(1)!);
@@ -734,6 +785,52 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
+  Future<Result<_StageResult, ExecutionError>> _envBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final env = <String, String>{
+      // ignore: use_null_aware_elements
+      if (workingDirectory != null) 'PWD': workingDirectory!,
+      'PATH': '/bin',
+      ...?options?.env,
+    };
+
+    final assignments = <String, String>{};
+    final remaining = <String>[];
+    for (final arg in stage.args) {
+      final idx = arg.indexOf('=');
+      if (idx > 0 && !arg.startsWith('-')) {
+        assignments[arg.substring(0, idx)] = arg.substring(idx + 1);
+      } else {
+        remaining.add(arg);
+      }
+    }
+
+    if (remaining.isNotEmpty) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode(
+            "env: '${remaining.first}': No such file or directory\n",
+          ),
+          exitCode: 127,
+        ),
+      );
+    }
+
+    final merged = <String, String>{...env, ...assignments};
+    final lines = merged.entries.map((e) => '${e.key}=${e.value}').toList()
+      ..sort();
+    return Ok(
+      _StageResult(
+        stdout: utf8.encode(lines.join('\n') + (lines.isNotEmpty ? '\n' : '')),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
   Future<Result<_StageResult, ExecutionError>> _whoamiBuiltin() async {
     final user =
         io.Platform.environment['USER'] ??
@@ -746,6 +843,125 @@ final class WasiSandboxShell implements Shell {
         exitCode: 0,
       ),
     );
+  }
+
+  Future<Result<_StageResult, ExecutionError>> _trBuiltin(
+    Stage stage,
+    String? inputSource,
+  ) async {
+    if (inputSource == null) {
+      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
+    }
+    final file = _hostFile(inputSource);
+    if (!await file.exists()) {
+      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
+    }
+
+    var delete = false;
+    String? set1;
+    String? set2;
+    for (final arg in stage.args) {
+      if (arg == '-d') {
+        delete = true;
+      } else if (set1 == null) {
+        set1 = arg;
+      } else {
+        set2 ??= arg;
+      }
+    }
+
+    if (set1 == null) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('tr: missing operand\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+    if (!delete && set2 == null) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('tr: missing operand after "$set1"\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+
+    final input = await file.readAsString();
+    final expanded1 = _expandTrSet(set1);
+    final expanded2 = delete ? null : _expandTrSet(set2!);
+
+    String output;
+    if (delete) {
+      final chars = expanded1.toSet();
+      output = input.split('').where((c) => !chars.contains(c)).join();
+    } else {
+      final map = <String, String>{};
+      for (var i = 0; i < expanded1.length; i++) {
+        map[expanded1[i]] = i < expanded2!.length
+            ? expanded2[i]
+            : expanded2.last;
+      }
+      output = input
+          .split('')
+          .map((c) => map.containsKey(c) ? map[c]! : c)
+          .join();
+    }
+
+    return Ok(
+      _StageResult(stdout: utf8.encode(output), stderr: const [], exitCode: 0),
+    );
+  }
+
+  /// Expands POSIX character classes (`[:lower:]`) and ranges (`a-z`) used by
+  /// the `tr` builtin.
+  List<String> _expandTrSet(String set) {
+    final result = <String>[];
+    var i = 0;
+    while (i < set.length) {
+      if (set.startsWith('[:lower:]', i)) {
+        result.addAll('abcdefghijklmnopqrstuvwxyz'.split(''));
+        i += 9;
+        continue;
+      }
+      if (set.startsWith('[:upper:]', i)) {
+        result.addAll('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''));
+        i += 9;
+        continue;
+      }
+      if (set.startsWith('[:digit:]', i)) {
+        result.addAll('0123456789'.split(''));
+        i += 9;
+        continue;
+      }
+      if (set.startsWith('[:alnum:]', i)) {
+        result.addAll(
+          'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+              .split(''),
+        );
+        i += 9;
+        continue;
+      }
+      if (set.startsWith('[:space:]', i)) {
+        result.addAll(' \t\n\r\f\v'.split(''));
+        i += 9;
+        continue;
+      }
+      if (i + 2 < set.length && set[i + 1] == '-') {
+        final start = set.codeUnitAt(i);
+        final end = set.codeUnitAt(i + 2);
+        for (var c = start; c <= end; c++) {
+          result.add(String.fromCharCode(c));
+        }
+        i += 3;
+        continue;
+      }
+      result.add(set[i]);
+      i++;
+    }
+    return result;
   }
 
   Future<Result<_StageResult, ExecutionError>> _xargsBuiltin(

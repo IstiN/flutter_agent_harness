@@ -25,6 +25,18 @@ void main() {
       expect(stage.args, ['hello world']);
     });
 
+    test('keeps backslash-n literal inside double quotes', () {
+      final cmd = parseCommandLine(r'printf "b\na\nc\n"');
+      final stage = cmd.statements.single.pipeline.stages.single;
+      expect(stage.args, [r'b\na\nc\n']);
+    });
+
+    test('escapes quotes and backslashes inside double quotes', () {
+      final cmd = parseCommandLine(r'echo "say \"hi\" and \\ backslash"');
+      final stage = cmd.statements.single.pipeline.stages.single;
+      expect(stage.args, ['say "hi" and \\ backslash']);
+    });
+
     test('parses a pipeline', () {
       final cmd = parseCommandLine('cat /data | sort | head -5');
       final stages = cmd.statements.single.pipeline.stages;
