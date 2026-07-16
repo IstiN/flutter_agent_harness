@@ -252,17 +252,15 @@ void main() {
       expect(_text(result), '(empty directory)');
     });
 
-    test('throws for a missing directory', () async {
-      expect(
-        tool.execute({'path': 'nope'}, null, null),
-        throwsA(isA<StateError>()),
-      );
+    test('returns the file name when the path is a file', () async {
+      await env.writeFile('f.txt', '');
+      final result = await tool.execute({'path': 'f.txt'}, null, null);
+      expect(_text(result), 'f.txt');
     });
 
-    test('throws when the path is a file', () async {
-      await env.writeFile('f.txt', '');
+    test('throws for a missing path', () async {
       expect(
-        tool.execute({'path': 'f.txt'}, null, null),
+        tool.execute({'path': 'nope'}, null, null),
         throwsA(isA<StateError>()),
       );
     });
