@@ -158,6 +158,25 @@ final class WasiSandboxShell implements Shell {
     'yes',
   };
 
+  /// Shell builtins implemented in Dart. These do not need a WASM module and
+  /// do not increase the IPA size.
+  static const Set<String> _builtinCommands = {
+    'test',
+    '[',
+    'which',
+    'command',
+    'whoami',
+    'xargs',
+  };
+
+  /// Whether [command] can be resolved to a WASM applet or a builtin.
+  bool _isCommandAvailable(String command) {
+    return _coreutilsApplets.contains(command) ||
+        command == 'rg' ||
+        command == 'find' ||
+        _builtinCommands.contains(command);
+  }
+
   /// Resolves a command to the module and the exact argv that selects it.
   ({WasmModule module, List<String> argv}) _resolve(String command) {
     if (_coreutilsApplets.contains(command)) {
@@ -166,6 +185,55 @@ final class WasiSandboxShell implements Shell {
     if (command == 'rg') return (module: rg, argv: ['rg']);
     if (command == 'find') return (module: find, argv: ['find']);
     return (module: coreutils, argv: [command]);
+  }
+
+  /// Dispatches a builtin command to its Dart implementation.
+  Future<Result<_StageResult, ExecutionError>> _runBuiltin({
+    required Stage stage,
+    required ShellExecOptions? options,
+    required String? inputSource,
+  }) async {
+    return switch (stage.command) {
+      'test' || '[' => _testBuiltin(stage),
+      'which' => _whichBuiltin(stage),
+      'command' => _commandBuiltin(stage),
+      'whoami' => _whoamiBuiltin(),
+      'xargs' => _xargsBuiltin(stage, options, inputSource),
+      _ => Err(
+        ExecutionError(
+          ExecutionErrorCode.unknown,
+          'Unknown builtin: ${stage.command}',
+        ),
+      ),
+    };
+  }
+
+  /// Runs either a builtin command or a WASM stage with stdin/source handling.
+  Future<Result<_StageResult, ExecutionError>> _runCommand({
+    required String command,
+    required List<String> args,
+    required ShellExecOptions? options,
+    required String? inputSource,
+    required bool captureStdout,
+    required bool captureStderr,
+  }) async {
+    if (_builtinCommands.contains(command)) {
+      return _runBuiltin(
+        stage: Stage(command: command, args: args),
+        options: options,
+        inputSource: inputSource,
+      );
+    }
+    final effectiveArgs = inputSource != null && command != 'rg'
+        ? [...args, inputSource]
+        : args;
+    return _runStage(
+      command: command,
+      args: effectiveArgs,
+      options: options,
+      captureStdout: captureStdout,
+      captureStderr: captureStderr,
+    );
   }
 
   @override
@@ -260,18 +328,12 @@ final class WasiSandboxShell implements Shell {
 
       // Resolve input source for this stage.
       final inputSource = stdinFile ?? previousOutputFile;
-      List<String> effectiveArgs = stage.args;
-      if (inputSource != null && stage.command != 'rg') {
-        // ripgrep reads stdin when no path is given, but because we cannot
-        // feed stdin bytes we add the file as a path argument. Most coreutils
-        // and find accept a trailing file argument; ripgrep also accepts it.
-        effectiveArgs = [...effectiveArgs, inputSource];
-      }
 
-      final result = await _runStage(
+      final result = await _runCommand(
         command: stage.command,
-        args: effectiveArgs,
+        args: stage.args,
         options: options,
+        inputSource: inputSource,
         captureStdout: stdoutFile == null,
         captureStderr: stderrFile == null,
       );
@@ -530,6 +592,363 @@ final class WasiSandboxShell implements Shell {
     }
 
     return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Builtin command implementations
+  // ---------------------------------------------------------------------------
+
+  Future<Result<_StageResult, ExecutionError>> _testBuiltin(Stage stage) async {
+    final rawArgs = stage.args.toList();
+    if (stage.command == '[') {
+      if (rawArgs.isEmpty || rawArgs.last != ']') {
+        return Ok(
+          _StageResult(
+            stdout: const [],
+            stderr: utf8.encode('[[: missing `]]\n'),
+            exitCode: 2,
+          ),
+        );
+      }
+      rawArgs.removeLast();
+    }
+    if (rawArgs.isEmpty) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('test: missing expression\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+    try {
+      final evaluator = _TestEvaluator(
+        fileExists: (path) async {
+          try {
+            return await io.File(_hostFile(path).path).exists();
+          } on Object {
+            return false;
+          }
+        },
+        dirExists: (path) async {
+          try {
+            return await io.Directory(_hostFile(path).path).exists();
+          } on Object {
+            return false;
+          }
+        },
+        fileSize: (path) async {
+          try {
+            return await io.File(_hostFile(path).path).length();
+          } on Object {
+            return 0;
+          }
+        },
+      );
+      final value = await evaluator.evaluate(rawArgs);
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: const [],
+          exitCode: value ? 0 : 1,
+        ),
+      );
+    } on _TestError catch (e) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('test: ${e.message}\n'),
+          exitCode: 2,
+        ),
+      );
+    } on FormatException catch (e) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('test: integer expected: $e\n'),
+          exitCode: 2,
+        ),
+      );
+    }
+  }
+
+  Future<Result<_StageResult, ExecutionError>> _whichBuiltin(
+    Stage stage,
+  ) async {
+    if (stage.args.isEmpty) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('which: missing argument\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+    final name = stage.args.first;
+    if (_isCommandAvailable(name)) {
+      return Ok(
+        _StageResult(
+          stdout: utf8.encode('/bin/$name\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    return Ok(
+      _StageResult(
+        stdout: const [],
+        stderr: utf8.encode('which: $name: not found\n'),
+        exitCode: 1,
+      ),
+    );
+  }
+
+  Future<Result<_StageResult, ExecutionError>> _commandBuiltin(
+    Stage stage,
+  ) async {
+    if (stage.args.length >= 2 && stage.args[0] == '-v') {
+      final name = stage.args[1];
+      if (_isCommandAvailable(name)) {
+        return Ok(
+          _StageResult(
+            stdout: utf8.encode('/bin/$name\n'),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      }
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('command: $name: not found\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+    return Ok(
+      _StageResult(
+        stdout: const [],
+        stderr: utf8.encode('command: unsupported usage\n'),
+        exitCode: 1,
+      ),
+    );
+  }
+
+  Future<Result<_StageResult, ExecutionError>> _whoamiBuiltin() async {
+    final user =
+        io.Platform.environment['USER'] ??
+        io.Platform.environment['USERNAME'] ??
+        'fah';
+    return Ok(
+      _StageResult(
+        stdout: utf8.encode('$user\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  Future<Result<_StageResult, ExecutionError>> _xargsBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    if (inputSource == null) {
+      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
+    }
+    final file = _hostFile(inputSource);
+    if (!await file.exists()) {
+      return Ok(const _StageResult(stdout: [], stderr: [], exitCode: 0));
+    }
+    final lines = await file.readAsLines();
+
+    String? placeholder;
+    var commandIndex = 0;
+    for (var i = 0; i < stage.args.length; i++) {
+      final arg = stage.args[i];
+      if (arg.startsWith('-I')) {
+        placeholder = arg.length > 2
+            ? arg.substring(2)
+            : (i + 1 < stage.args.length ? stage.args[++i] : null);
+        if (placeholder == null || placeholder.isEmpty) placeholder = '{}';
+        commandIndex = i + 1;
+        continue;
+      }
+      if (arg.startsWith('-')) {
+        commandIndex = i + 1;
+        continue;
+      }
+      commandIndex = i;
+      break;
+    }
+
+    if (commandIndex >= stage.args.length) {
+      return Ok(
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('xargs: missing command\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+
+    final command = stage.args[commandIndex];
+    final initialArgs = stage.args.sublist(commandIndex + 1);
+
+    final stdout = <int>[];
+    final stderr = <int>[];
+    var exitCode = 0;
+
+    if (placeholder != null) {
+      final ph = placeholder;
+      for (final line in lines) {
+        final args = initialArgs.map((a) => a.replaceAll(ph, line)).toList();
+        final result = await _runCommand(
+          command: command,
+          args: args,
+          options: options,
+          inputSource: null,
+          captureStdout: true,
+          captureStderr: true,
+        );
+        if (result.isErr) return result;
+        final data = result.valueOrNull!;
+        stdout.addAll(data.stdout);
+        stderr.addAll(data.stderr);
+        if (data.exitCode != 0) exitCode = data.exitCode;
+      }
+    } else {
+      final allArgs = [...initialArgs, ...lines];
+      final result = await _runCommand(
+        command: command,
+        args: allArgs,
+        options: options,
+        inputSource: null,
+        captureStdout: true,
+        captureStderr: true,
+      );
+      if (result.isErr) return result;
+      final data = result.valueOrNull!;
+      stdout.addAll(data.stdout);
+      stderr.addAll(data.stderr);
+      exitCode = data.exitCode;
+    }
+
+    return Ok(_StageResult(stdout: stdout, stderr: stderr, exitCode: exitCode));
+  }
+}
+
+/// Error thrown by [_TestEvaluator] for malformed `test` expressions.
+final class _TestError implements Exception {
+  _TestError(this.message);
+  final String message;
+}
+
+/// Minimal evaluator for POSIX `test`/`[` expressions.
+final class _TestEvaluator {
+  _TestEvaluator({
+    required this.fileExists,
+    required this.dirExists,
+    required this.fileSize,
+  });
+
+  final Future<bool> Function(String path) fileExists;
+  final Future<bool> Function(String path) dirExists;
+  final Future<int> Function(String path) fileSize;
+
+  late List<String> _args;
+  int _pos = 0;
+
+  Future<bool> evaluate(List<String> args) async {
+    _args = args;
+    _pos = 0;
+    return _parseOr();
+  }
+
+  String? get _peek => _pos < _args.length ? _args[_pos] : null;
+
+  String _advance() {
+    final token = _args[_pos];
+    _pos++;
+    return token;
+  }
+
+  Future<bool> _parseOr() async {
+    var result = await _parseAnd();
+    while (_peek == '-o') {
+      _advance();
+      result = result || await _parseAnd();
+    }
+    return result;
+  }
+
+  Future<bool> _parseAnd() async {
+    var result = await _parseUnary();
+    while (_peek == '-a') {
+      _advance();
+      result = result && await _parseUnary();
+    }
+    return result;
+  }
+
+  Future<bool> _parseUnary() async {
+    if (_peek == '!') {
+      _advance();
+      return !(await _parseUnary());
+    }
+    return _parsePrimary();
+  }
+
+  Future<bool> _parsePrimary() async {
+    final token = _advance();
+    if (token == '(') {
+      final result = await _parseOr();
+      if (_peek != ')') throw _TestError('missing `)`');
+      _advance();
+      return result;
+    }
+    if (token.startsWith('-')) {
+      final path = _advance();
+      switch (token) {
+        case '-e':
+          return await fileExists(path);
+        case '-f':
+          return await fileExists(path) && !await dirExists(path);
+        case '-d':
+          return await dirExists(path);
+        case '-s':
+          return await fileExists(path) && await fileSize(path) > 0;
+        case '-z':
+          return _advance().isEmpty;
+        case '-n':
+          return _advance().isNotEmpty;
+        default:
+          throw _TestError('unsupported unary operator: $token');
+      }
+    }
+    final left = token;
+    final op = _advance();
+    final right = _advance();
+    switch (op) {
+      case '=':
+        return left == right;
+      case '!=':
+        return left != right;
+      case '-eq':
+        return int.parse(left) == int.parse(right);
+      case '-ne':
+        return int.parse(left) != int.parse(right);
+      case '-lt':
+        return int.parse(left) < int.parse(right);
+      case '-le':
+        return int.parse(left) <= int.parse(right);
+      case '-gt':
+        return int.parse(left) > int.parse(right);
+      case '-ge':
+        return int.parse(left) >= int.parse(right);
+      default:
+        throw _TestError('unsupported binary operator: $op');
+    }
   }
 }
 

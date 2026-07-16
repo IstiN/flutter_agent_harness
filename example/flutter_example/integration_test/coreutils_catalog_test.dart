@@ -223,6 +223,40 @@ void main() {
       });
     });
 
+    group('builtins', () {
+      test('test and [ check file and directory existence', () async {
+        expect(
+          (await run('test -f fruits.txt && echo ok')).stdout.trim(),
+          'ok',
+        );
+        expect((await run('[ -d nested ] && echo ok')).stdout.trim(), 'ok');
+        expect(
+          (await run('[ -f missing.txt ] || echo no')).stdout.trim(),
+          'no',
+        );
+      });
+
+      test('which and command -v locate available commands', () async {
+        final which = await run('which ls');
+        expect(which.stdout.trim(), contains('ls'));
+        final command = await run('command -v cat');
+        expect(command.stdout.trim(), contains('cat'));
+      });
+
+      test('whoami returns a non-empty user', () async {
+        final whoami = await run('whoami');
+        expect(whoami.stdout.trim(), isNotEmpty);
+      });
+
+      test('xargs passes arguments from stdin', () async {
+        final all = await run('echo fruits.txt | xargs cat');
+        expect(all.stdout, 'cherry\napple\nbanana\napple\n');
+
+        final perLine = await run(r"printf 'a\nb\n' | xargs -I{} echo item:{}");
+        expect(perLine.stdout.trim().split('\n'), ['item:a', 'item:b']);
+      });
+    });
+
     group('commands NOT available in the WASM sandbox', () {
       test('curl is missing on mobile', () async {
         if (!isMobile) {
@@ -246,30 +280,6 @@ void main() {
           return;
         }
         await runFails('awk --version');
-      });
-
-      test('xargs is missing on mobile', () async {
-        if (!isMobile) {
-          markTestSkipped('xargs is available on the host shell');
-          return;
-        }
-        await runFails('xargs --version');
-      });
-
-      test('which is missing on mobile', () async {
-        if (!isMobile) {
-          markTestSkipped('which is available on the host shell');
-          return;
-        }
-        await runFails('which sh');
-      });
-
-      test('whoami is missing on mobile', () async {
-        if (!isMobile) {
-          markTestSkipped('whoami is available on the host shell');
-          return;
-        }
-        await runFails('whoami');
       });
     });
 
