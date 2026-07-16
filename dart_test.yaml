@@ -1,0 +1,4 @@
+tags:
+  integration:
+    # Integration tests spawn real processes / network and are excluded from the
+    # pre-commit gate. Run them manually with: dart test --tags integration
