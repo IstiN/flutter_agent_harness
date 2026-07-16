@@ -30,7 +30,7 @@ while IFS= read -r file; do
   case "$file" in
     *.dart)
       case "$file" in
-        *.g.dart|*.freezed.dart|*.mocks.dart) continue ;;
+        *.g.dart|*.freezed.dart|*.mocks.dart|*bridge_generated*.dart) continue ;;
       esac
       lines=$(wc -l < "$file")
       if (( lines > MAX_LINES )); then

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:wasm_run/wasm_run.dart';
@@ -60,9 +61,14 @@ final class WasiSandboxShell implements Shell {
         byteData.offsetInBytes,
         byteData.lengthInBytes,
       );
-      // WASI Preview 1 modules compiled by Rust do not need any extra proposal
-      // flags; the default module configuration validates everything we need.
-      return compileWasmModule(bytes);
+      // The bundled WASI binaries are built without SIMD; only enable the
+      // baseline SIMD proposal so validation passes on hosts that support it.
+      return compileWasmModule(
+        bytes,
+        config: const ModuleConfig(
+          wasmtime: ModuleConfigWasmtime(wasmSimd: false),
+        ),
+      );
     }
 
     return WasiSandboxShell(
@@ -353,6 +359,7 @@ final class WasiSandboxShell implements Shell {
 
     final cwd = options?.cwd ?? workingDirectory;
     final env = <String, String>{
+      // ignore: use_null_aware_elements
       if (cwd != null) 'PWD': cwd,
       'PATH': '/bin',
       ...?options?.env,
@@ -382,10 +389,12 @@ final class WasiSandboxShell implements Shell {
       ),
     );
 
+    debugPrint('[wasm_shell] building instance for $command...');
     late WasmInstance instance;
     try {
       instance = await builder.build();
     } on Object catch (error) {
+      debugPrint('[wasm_shell] build failed: $error');
       return Err(
         ExecutionError(
           ExecutionErrorCode.spawnError,
@@ -394,6 +403,7 @@ final class WasiSandboxShell implements Shell {
         ),
       );
     }
+    debugPrint('[wasm_shell] instance built, subscribing to stdio...');
 
     final stdoutBuffer = <int>[];
     final stderrBuffer = <int>[];
@@ -418,55 +428,46 @@ final class WasiSandboxShell implements Shell {
     }
 
     final stdoutSub = captureStdout
-        ? instance.stdout.listen(
-            (chunk) => collect(stdoutBuffer, chunk, options?.onStdout),
-          )
+        ? instance.stdout.listen((chunk) {
+            debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
+            collect(stdoutBuffer, chunk, options?.onStdout);
+          }, onDone: () => debugPrint('[wasm_shell] stdout done'))
         : null;
     final stderrSub = captureStderr
-        ? instance.stderr.listen(
-            (chunk) => collect(stderrBuffer, chunk, options?.onStderr),
-          )
+        ? instance.stderr.listen((chunk) {
+            debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
+            collect(stderrBuffer, chunk, options?.onStderr);
+          }, onDone: () => debugPrint('[wasm_shell] stderr done'))
         : null;
 
-    final timeout = options?.timeout;
+    final timeout = options?.timeout ?? const Duration(seconds: 30);
+    debugPrint('[wasm_shell] starting _start with timeout $timeout...');
     var timedOut = false;
-    final timeoutFuture = timeout == null
-        ? null
-        : Future<void>.delayed(timeout, () => timedOut = true);
+    final timeoutFuture = Future<void>.delayed(timeout, () => timedOut = true);
 
     Object? runError;
     final runCompleter = Completer<void>();
     try {
-      final start = instance.getFunction('_start');
-      if (start == null) {
-        return const Err(
-          ExecutionError(
-            ExecutionErrorCode.spawnError,
-            'WASM module has no _start export',
-          ),
-        );
-      }
       Future<void>(() async {
         try {
-          start.call([]);
+          await instance.runWasiStartAsync();
+          debugPrint('[wasm_shell] _start completed');
         } on Object catch (e) {
+          debugPrint('[wasm_shell] _start error: $e');
           runError = e;
         } finally {
           if (!runCompleter.isCompleted) runCompleter.complete();
         }
       });
-      await Future.any<void>([
-        runCompleter.future,
-        if (timeoutFuture != null) timeoutFuture,
-      ]);
+      await Future.any<void>([runCompleter.future, timeoutFuture]);
     } finally {
-      await stdoutSub?.asFuture<void>().catchError((_) {});
-      await stderrSub?.asFuture<void>().catchError((_) {});
+      debugPrint('[wasm_shell] cancelling stdio subscriptions...');
       await stdoutSub?.cancel();
       await stderrSub?.cancel();
       instance.dispose();
     }
 
+    debugPrint('[wasm_shell] run finished timedOut=$timedOut error=$runError');
     if (callbackError != null) return Err(callbackError!);
     if (timedOut) {
       return Err(

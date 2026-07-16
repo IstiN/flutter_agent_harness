@@ -1,5 +1,5 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+# Uncomment this line to define a global platform for this project
+platform :ios, '13.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -39,5 +39,29 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+  end
+
+  # The vendored WasmRun.xcframework only ships an arm64 simulator slice.
+  # Exclude x86_64 simulator everywhere so Debug simulator builds do not try
+  # to link a missing slice.
+  exclude_x86_64_sim = { 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'x86_64' }
+
+  installer.pods_project.build_configurations.each do |config|
+    config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+    exclude_x86_64_sim.each { |k, v| config.build_settings[k] = v }
+  end
+
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      exclude_x86_64_sim.each { |k, v| config.build_settings[k] = v }
+    end
+    aggregate_target.user_targets.each do |user_target|
+      user_target.build_configurations.each do |config|
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+        exclude_x86_64_sim.each { |k, v| config.build_settings[k] = v }
+      end
+    end
+    aggregate_target.user_project.save
   end
 end
