@@ -7,7 +7,12 @@ import 'package:wasm_run_flutter/wasm_run_flutter.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await WasmRunLibrary.setUp(override: false);
-  await dotenv.load(fileName: '.env');
+  try {
+    await dotenv.load(fileName: '.env');
+  } on Object {
+    // .env is intentionally not committed. Values can be supplied via
+    // --dart-define instead.
+  }
   runApp(const MyApp());
 }
 
@@ -34,17 +39,52 @@ class SetupScreen extends StatefulWidget {
   State<SetupScreen> createState() => _SetupScreenState();
 }
 
+const _dartDefines = <String, String>{
+  'OPENROUTER_API_KEY': String.fromEnvironment('OPENROUTER_API_KEY'),
+  'MODEL_ID': String.fromEnvironment(
+    'MODEL_ID',
+    defaultValue: 'openai/gpt-4o-mini',
+  ),
+  'BASE_URL': String.fromEnvironment(
+    'BASE_URL',
+    defaultValue: 'https://openrouter.ai/api/v1',
+  ),
+  'PROVIDER_KIND': String.fromEnvironment(
+    'PROVIDER_KIND',
+    defaultValue: 'openai-completions',
+  ),
+};
+
+String env(String name, String fallback) {
+  final dartValue = _dartDefines[name];
+  if (dartValue != null && dartValue.isNotEmpty) return dartValue;
+  if (dotenv.isInitialized && dotenv.env.containsKey(name)) {
+    return dotenv.env[name]!;
+  }
+  return fallback;
+}
+
 class _SetupScreenState extends State<SetupScreen> {
   final _keyController = TextEditingController(
-    text: dotenv.isInitialized ? dotenv.env['OPENROUTER_API_KEY'] ?? '' : '',
+    text: env('OPENROUTER_API_KEY', ''),
   );
-  final _modelController = TextEditingController(text: 'openai/gpt-4o-mini');
+  final _modelController = TextEditingController(
+    text: env('MODEL_ID', 'openai/gpt-4o-mini'),
+  );
   final _urlController = TextEditingController(
-    text: 'https://openrouter.ai/api/v1',
+    text: env('BASE_URL', 'https://openrouter.ai/api/v1'),
   );
-  String _provider = 'openai-completions';
+  final _provider = ValueNotifier<String>(
+    env('PROVIDER_KIND', 'openai-completions'),
+  );
   bool _loading = false;
   String? _error;
+
+  @override
+  void dispose() {
+    _provider.dispose();
+    super.dispose();
+  }
 
   Future<void> _connect() async {
     final key = _keyController.text.trim();
@@ -58,7 +98,7 @@ class _SetupScreenState extends State<SetupScreen> {
     });
     try {
       final config = AgentConfig(
-        providerKind: _provider,
+        providerKind: _provider.value,
         modelId: _modelController.text.trim(),
         baseUrl: _urlController.text.trim(),
         apiKey: key,
@@ -101,18 +141,22 @@ class _SetupScreenState extends State<SetupScreen> {
               decoration: const InputDecoration(labelText: 'Base URL'),
             ),
             const SizedBox(height: 12),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: 'openai-completions',
-                  label: Text('OpenAI'),
-                ),
-                ButtonSegment(value: 'anthropic', label: Text('Anthropic')),
-                ButtonSegment(value: 'google', label: Text('Google')),
-              ],
-              selected: <String>{_provider},
-              onSelectionChanged: (value) =>
-                  setState(() => _provider = value.first),
+            ValueListenableBuilder<String>(
+              valueListenable: _provider,
+              builder: (context, provider, _) {
+                return SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(
+                      value: 'openai-completions',
+                      label: Text('OpenAI'),
+                    ),
+                    ButtonSegment(value: 'anthropic', label: Text('Anthropic')),
+                    ButtonSegment(value: 'google', label: Text('Google')),
+                  ],
+                  selected: <String>{provider},
+                  onSelectionChanged: (value) => _provider.value = value.first,
+                );
+              },
             ),
             const SizedBox(height: 24),
             if (_error != null)

@@ -17,21 +17,21 @@ dependencies:
     path: ../../
 
   # Mobile-friendly filesystem root and image picking.
-  path_provider: ^2.1.5
-  image_picker: ^1.1.2
+  path_provider: ^2.1.6
+  image_picker: ^1.2.3
 
   # Load API keys and runtime config from .env for local dev/simulator runs.
-  flutter_dotenv: ^5.2.1
+  flutter_dotenv: ^6.0.1
 
-  cupertino_icons: ^1.0.8
+  cupertino_icons: ^1.0.9
   flutter_chat_ui: ^2.11.1
   flutter_markdown: ^0.7.7+1
-  uuid: ^4.5.3
+  uuid: ^4.6.0
   flutter_chat_core: ^2.9.0
 
-  # WASM runtime used to run a busybox shell on iOS/Android/Web.
+  # WASM runtime used to run a uutils/ripgrep shell on iOS/Android/Web.
   wasm_run_flutter: ^0.1.0
-  wasm_run: ^0.1.0
+  wasm_run: ^0.1.0+2
 
 dev_dependencies:
   flutter_test:
@@ -46,5 +46,11 @@ flutter:
 
   assets:
     - .env
-    - assets/busybox.wasm
+    - assets/wasm/coreutils.wasm
+    - assets/wasm/rg.wasm
+    - assets/wasm/find.wasm
+    - assets/wasm/LICENSE.coreutils
+    - assets/wasm/LICENSE.rg
+    - assets/wasm/LICENSE.findutils
+    - assets/wasm/ATTRIBUTION.md
 
