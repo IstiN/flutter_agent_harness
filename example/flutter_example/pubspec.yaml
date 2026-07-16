@@ -63,6 +63,11 @@ flutter:
 
   assets:
     - .env
+    # wasm_run web runtime helpers, served at the URLs that package:wasm_run
+    # injects as <script> tags on web (assets/packages/wasm_run/lib/assets/).
+    # browser_wasi_shim_dist*.js is a local copy of
+    # @bjorn3/browser_wasi_shim@0.2.9 so web does not depend on a CDN.
+    - assets/packages/wasm_run/lib/assets/
     - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm
     - assets/wasm/rg.wasm

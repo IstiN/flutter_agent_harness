@@ -11,9 +11,10 @@
 ///   - redirects: `> file`, `>> file`, `< file`, `2> file`, `2>> file`, `&> file`
 ///   - single and double quoting and backslash escapes.
 ///
-/// No variable expansion, no subshells, no globbing, no `cd`. Commands run
-/// inside the WASM sandbox always see `/` as the root and should use absolute
-/// paths.
+/// Words carry an [expandable] flag: it is false when any part of the word
+/// came from single quotes or a `\$` escape, in which case the shell must not
+/// apply `$VAR` expansion to it. Expansion is applied by the shell at
+/// execution time (so `export A=1 && echo $A` works), not by this parser.
 library;
 
 /// Parsed shell command line, split into statements.
@@ -65,6 +66,7 @@ final class Stage {
     required this.command,
     required this.args,
     this.redirects = const [],
+    this.argExpandable = const [],
   });
 
   /// Command name (first word).
@@ -76,14 +78,31 @@ final class Stage {
   /// File redirects attached to this stage.
   final List<Redirect> redirects;
 
+  /// Whether each element of [argv] allows `$VAR` expansion. False for words
+  /// that came from single quotes or `\$` escapes. Empty means every word is
+  /// expandable.
+  final List<bool> argExpandable;
+
   /// All tokens including command and arguments, convenient for callers.
   List<String> get argv => [command, ...args];
+
+  /// Whether argv element [index] allows `$VAR` expansion.
+  bool isExpandable(int index) {
+    if (index < 0 || index >= argv.length) return true;
+    if (index >= argExpandable.length) return true;
+    return argExpandable[index];
+  }
 }
 
 /// A file redirect attached to a stage.
 final class Redirect {
   /// Creates a redirect.
-  const Redirect({required this.kind, required this.fd, required this.target});
+  const Redirect({
+    required this.kind,
+    required this.fd,
+    required this.target,
+    this.expandable = true,
+  });
 
   /// Redirect kind.
   final RedirectKind kind;
@@ -93,6 +112,9 @@ final class Redirect {
 
   /// Target file path inside the sandbox.
   final String target;
+
+  /// Whether [target] allows `$VAR` expansion.
+  final bool expandable;
 }
 
 /// Kinds of redirect.
@@ -123,8 +145,12 @@ final class ShellParseException implements Exception {
 sealed class _Token {}
 
 final class _Word extends _Token {
-  _Word(this.value);
+  _Word(this.value, {this.expandable = true});
   final String value;
+
+  /// False when any part of the word came from single quotes or a `\$`
+  /// escape: the shell must not apply `$VAR` expansion to it.
+  final bool expandable;
 }
 
 final class _Operator extends _Token {
@@ -142,11 +168,13 @@ List<_Token> _tokenize(String input) {
   final tokens = <_Token>[];
   final buffer = StringBuffer();
   var i = 0;
+  var wordExpandable = true;
 
   void flushWord() {
     if (buffer.isEmpty) return;
-    tokens.add(_Word(buffer.toString()));
+    tokens.add(_Word(buffer.toString(), expandable: wordExpandable));
     buffer.clear();
+    wordExpandable = true;
   }
 
   String peek() => i + 1 < input.length ? input[i + 1] : '';
@@ -155,6 +183,9 @@ List<_Token> _tokenize(String input) {
     final ch = input[i];
 
     if (ch == '\\' && i + 1 < input.length) {
+      // `\$` produces a literal dollar sign: the word must not be expanded
+      // later by the shell.
+      if (input[i + 1] == '\$') wordExpandable = false;
       buffer.write(input[i + 1]);
       i += 2;
       continue;
@@ -162,6 +193,7 @@ List<_Token> _tokenize(String input) {
 
     if (ch == "'") {
       flushWord();
+      wordExpandable = false;
       i++;
       while (i < input.length && input[i] != "'") {
         buffer.write(input[i]);
@@ -185,6 +217,7 @@ List<_Token> _tokenize(String input) {
               next == '`' ||
               next == '\n') {
             // POSIX double-quote escapes: \" \\ \$ \` \<newline>
+            if (next == '\$') wordExpandable = false;
             buffer.write(next);
             i += 2;
           } else {
@@ -335,12 +368,14 @@ final class _Parser {
 
   Stage _stage() {
     final args = <String>[];
+    final expandable = <bool>[];
     final redirects = <Redirect>[];
 
     while (!_atEnd && !_isStatementSeparator && !_peekIsPipe) {
       final token = _advance();
       if (token is _Word) {
         args.add(token.value);
+        expandable.add(token.expandable);
       } else if (token is _Redirect) {
         if (_atEnd) throw const ShellParseException('missing redirect target');
         final next = _advance();
@@ -348,7 +383,12 @@ final class _Parser {
           throw const ShellParseException('redirect target must be a word');
         }
         redirects.add(
-          Redirect(kind: token.kind, fd: token.fd, target: next.value),
+          Redirect(
+            kind: token.kind,
+            fd: token.fd,
+            target: next.value,
+            expandable: next.expandable,
+          ),
         );
       } else {
         throw ShellParseException('unexpected operator: ${_opValue(token)}');
@@ -363,6 +403,7 @@ final class _Parser {
       command: args.first,
       args: args.sublist(1),
       redirects: redirects,
+      argExpandable: expandable,
     );
   }
 
