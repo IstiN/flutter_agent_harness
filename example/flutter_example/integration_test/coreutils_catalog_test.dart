@@ -4,14 +4,13 @@
 
 /// Integration test that catalogs the shell commands available in the mobile
 /// WASM sandbox (uutils coreutils + ripgrep + findutils + sed + awk + tar +
-/// gzip + zip/unzip) and the host shell on desktop.
+/// gzip + zip/unzip) plus the Dart-native builtins (curl, jq, yq) and the host
+/// shell on desktop.
 ///
 /// Run on an iOS/Android simulator or device:
 ///   flutter test integration_test/coreutils_catalog_test.dart
 ///
-/// The test deliberately exercises commands an agent typically relies on, and
-/// asserts that commands not shipped in the sandbox (curl) fail so the prompt
-/// can be tuned accordingly.
+/// The test deliberately exercises commands an agent typically relies on.
 library;
 
 import 'package:flutter/material.dart';
@@ -32,12 +31,6 @@ void main() {
       fail('"$command" failed: ${result.errorOrNull!}');
     }
     return result.valueOrNull!;
-  }
-
-  Future<void> runFails(ExecutionEnv env, String command) async {
-    final result = await env.exec(command);
-    if (result.isErr) return;
-    expect(result.valueOrNull!.exitCode, isNot(0));
   }
 
   testWidgets('basics and file operations', (tester) async {
@@ -224,10 +217,6 @@ void main() {
       r"printf 'a\nb\n' | xargs -I{} echo item:{}",
     );
     expect(perLine.stdout.trim().split('\n'), ['item:a', 'item:b']);
-
-    if (isMobile) {
-      await runFails(env, 'curl --version');
-    }
 
     await tester.pumpWidget(
       MaterialApp(
