@@ -36,19 +36,27 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
   flutter_lints: ^6.0.0
 
 dependency_overrides:
   freezed_annotation: ^3.1.0
+  wasm_run:
+    path: ../../vendor/wasm_run
+  wasm_run_flutter:
+    path: ../../vendor/wasm_run_flutter
 
 flutter:
   uses-material-design: true
 
   assets:
     - .env
+    - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm
     - assets/wasm/rg.wasm
     - assets/wasm/find.wasm
+    - assets/wasm/wasi_hello.wasm
     - assets/wasm/LICENSE.coreutils
     - assets/wasm/LICENSE.rg
     - assets/wasm/LICENSE.findutils

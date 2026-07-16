@@ -9,6 +9,22 @@ pubspec.lock
 .vscode/
 .DS_Store
 
-# Test output
-test_output/
-report/
+# Vendor dependencies (local wasm_run fork) - keep source, ignore build artifacts
+vendor/**/target/
+vendor/**/build/
+vendor/**/.dart_tool/
+# The prebuilt iOS framework is downloaded from pub cache by scripts/setup_vendor_ios.sh
+vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+

@@ -5,3 +5,5 @@ analyzer:
     - build/**
     - .dart_tool/**
     - example/build/**
+    - vendor/**
+    - example/**/vendor/**
