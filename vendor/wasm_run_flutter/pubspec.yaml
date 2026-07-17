@@ -63,9 +63,13 @@ flutter:
       windows:
         ffiPlugin: true
         dartPluginClass: WasmRunFlutterNative
-      web:
-        pluginClass: WasmRunFlutterWeb
-        fileName: wasm_run_flutter_web.dart
+      # NOTE (Flutter Agent Harness fork): the web platform entry was removed.
+      # The flutter_rust_bridge 1.x generated bindings in package:wasm_run
+      # import dart:ffi unconditionally, which cannot compile for the web;
+      # registering the web plugin broke `flutter build web` for consumers.
+      # Web support would require regenerating the bindings with a newer
+      # generator (which broke the native build), so apps must fall back to a
+      # pure-Dart implementation in the browser.
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:
