@@ -102,6 +102,10 @@ final class GitSandboxCommands {
           return _gitBranch(repo, subArgs);
         case 'checkout':
           return _gitCheckout(repo, subArgs, hostCwd);
+        case 'remote':
+          return _gitRemote(repo, subArgs);
+        case 'fetch':
+          return _gitFetch(repo, subArgs);
         case 'show':
           return _gitShow(repo, subArgs);
         case 'cat-file':
@@ -148,6 +152,19 @@ final class GitSandboxCommands {
     }
     final hostDest = _resolveGitPath(dest, hostCwd);
 
+    // Real git refuses to clone into a non-empty directory.
+    final destDir = io.Directory(hostDest);
+    if (destDir.existsSync()) {
+      final hasGitDir = io.Directory(p.join(hostDest, '.git')).existsSync();
+      final isEmpty = destDir.listSync(followLinks: false).isEmpty;
+      if (hasGitDir || !isEmpty) {
+        return _gitError(
+          "fatal: destination path '$dest' already exists and is not an "
+          'empty directory.',
+        );
+      }
+    }
+
     // Preferred path: a real smart-HTTP clone (works with any public git
     // remote, not just GitHub).
     if (repoUrl.startsWith('http://') || repoUrl.startsWith('https://')) {
@@ -163,9 +180,12 @@ final class GitSandboxCommands {
           ),
         );
       } catch (e) {
-        // Fall back to the GitHub tarball API when the remote does not speak
-        // the smart HTTP protocol (or is unreachable via this path).
-        if (_parseGitHubRepo(repoUrl) == null) {
+        // Fall back to the GitHub tarball API only when the smart path
+        // failed BEFORE creating any local state (i.e. the endpoint does
+        // not speak the protocol). A later failure is reported as-is so the
+        // original error is not masked by the fallback's GitRepoExists.
+        final partial = io.Directory(p.join(hostDest, '.git')).existsSync();
+        if (partial || _parseGitHubRepo(repoUrl) == null) {
           return _gitError('fatal: unable to clone: $e');
         }
       }
@@ -488,8 +508,55 @@ final class GitSandboxCommands {
     dart_git.GitRepository repo,
     List<String> args,
   ) {
+    var listRemote = false;
+    var listAll = false;
+    var delete = false;
+    final positional = <String>[];
+    for (final arg in args) {
+      if (arg == '-r') {
+        listRemote = true;
+      } else if (arg == '-a') {
+        listAll = true;
+      } else if (arg == '-d' || arg == '-D') {
+        delete = true;
+      } else if (arg.startsWith('-')) {
+        return _gitError('git branch: unknown option $arg');
+      } else {
+        positional.add(arg);
+      }
+    }
+
     try {
-      if (args.isEmpty) {
+      if (delete) {
+        if (positional.isEmpty) {
+          return _gitError('usage: git branch -d <branch>');
+        }
+        repo.deleteBranch(positional.first);
+        return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+      }
+
+      if (listRemote || listAll) {
+        final lines = <String>[];
+        if (listAll) {
+          final current = repo.currentBranch();
+          final branches = repo.branches()..sort();
+          lines.addAll(branches.map((b) => b == current ? '* $b' : '  $b'));
+        }
+        final remoteRefs = repo.refStorage.listReferences('refs/remotes/')
+          ..sort((a, b) => a.name.value.compareTo(b.name.value));
+        for (final ref in remoteRefs) {
+          lines.add('  ${ref.name.value.substring('refs/remotes/'.length)}');
+        }
+        return Ok(
+          StageResult(
+            stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      }
+
+      if (positional.isEmpty) {
         final current = repo.currentBranch();
         final branches = repo.branches()..sort();
         final lines = branches.map((b) => b == current ? '* $b' : '  $b');
@@ -502,16 +569,7 @@ final class GitSandboxCommands {
         );
       }
 
-      if (args[0] == '-d' || args[0] == '-D') {
-        if (args.length < 2) {
-          return _gitError('usage: git branch -d <branch>');
-        }
-        repo.deleteBranch(args[1]);
-        return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
-      }
-
-      final branchName = args.lastWhere((a) => !a.startsWith('-'));
-      repo.createBranch(branchName);
+      repo.createBranch(positional.first);
       return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     } catch (e) {
       return _gitError('fatal: $e');
@@ -523,11 +581,41 @@ final class GitSandboxCommands {
     List<String> args,
     String hostCwd,
   ) {
-    if (args.isEmpty) {
-      return _gitError('usage: git checkout <branch>|<path>');
+    var create = false;
+    final positional = <String>[];
+    for (final arg in args) {
+      if (arg == '-b') {
+        create = true;
+      } else if (!arg.startsWith('-')) {
+        positional.add(arg);
+      }
     }
-    final target = args.lastWhere((a) => !a.startsWith('-'));
+    if (positional.isEmpty) {
+      return _gitError('usage: git checkout [-b] <branch>|<path>');
+    }
+    final target = positional.first;
+
     try {
+      if (create) {
+        final startPoint = positional.length > 1 ? positional[1] : 'HEAD';
+        final hash = _gitResolveHash(repo, startPoint);
+        if (hash == null) {
+          return _gitError(
+            "fatal: '$startPoint' is not a commit and a branch "
+            "'$target' cannot be created from it",
+          );
+        }
+        repo.createBranch(target, hash: hash);
+        repo.checkoutBranch(target);
+        return Ok(
+          StageResult(
+            stdout: utf8.encode('Switched to a new branch \'$target\'\n'),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      }
+
       if (repo.branches().contains(target)) {
         repo.checkoutBranch(target);
         return Ok(
@@ -538,6 +626,26 @@ final class GitSandboxCommands {
           ),
         );
       }
+
+      // A remote ref or a full hash: detached HEAD checkout.
+      final hash = _gitResolveHash(repo, target);
+      if (hash != null) {
+        repo.refStorage.saveRef(HashReference(ReferenceName.HEAD(), hash));
+        repo.checkout(repo.workTree);
+        return Ok(
+          StageResult(
+            stdout: utf8.encode(
+              'Note: switching to \'$target\'.\n'
+              'You are in \'detached HEAD\' state.\n'
+              'HEAD is now at ${hash.toOid()}\n',
+            ),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      }
+
+      // Otherwise treat the target as a path checkout.
       final count = repo.checkout(_resolveGitPath(target, hostCwd));
       return Ok(
         StageResult(
@@ -548,6 +656,141 @@ final class GitSandboxCommands {
       );
     } catch (e) {
       return _gitError('fatal: $e');
+    }
+  }
+
+  /// Resolves [spec] to a commit hash: HEAD, a local branch, a remote ref
+  /// (e.g. `origin/main`), or a full 40-char hash. Returns `null` when the
+  /// spec cannot be resolved.
+  GitHash? _gitResolveHash(dart_git.GitRepository repo, String spec) {
+    try {
+      if (spec == 'HEAD') return repo.headHash();
+      if (repo.branches().contains(spec)) {
+        return repo.resolveReferenceName(ReferenceName.branch(spec))!.hash;
+      }
+      if (spec.contains('/')) {
+        final remoteRef = repo.resolveReferenceName(
+          ReferenceName('refs/remotes/$spec'),
+        );
+        if (remoteRef != null) return remoteRef.hash;
+      }
+      if (RegExp(r'^[0-9a-f]{40}$').hasMatch(spec)) return GitHash(spec);
+    } on Object {
+      return null;
+    }
+    return null;
+  }
+
+  Result<StageResult, ExecutionError> _gitRemote(
+    dart_git.GitRepository repo,
+    List<String> args,
+  ) {
+    try {
+      if (args.isEmpty) {
+        final names = repo.config.remotes.map((r) => r.name).toList()..sort();
+        return Ok(
+          StageResult(
+            stdout: utf8.encode(names.isEmpty ? '' : '${names.join('\n')}\n'),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      }
+
+      final action = args[0];
+      if (action == '-v' || action == '--verbose') {
+        final lines = <String>[
+          for (final r in repo.config.remotes) ...[
+            '${r.name}\t${r.url} (fetch)',
+            '${r.name}\t${r.url} (push)',
+          ],
+        ];
+        return Ok(
+          StageResult(
+            stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      }
+      if (action == 'add') {
+        if (args.length < 3) {
+          return _gitError('usage: git remote add <name> <url>');
+        }
+        repo.addRemote(args[1], args[2]);
+        return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+      }
+      if (action == 'remove' || action == 'rm') {
+        if (args.length < 2) {
+          return _gitError('usage: git remote remove <name>');
+        }
+        repo.removeRemote(args[1]);
+        return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+      }
+      if (action == 'get-url') {
+        if (args.length < 2) {
+          return _gitError('usage: git remote get-url <name>');
+        }
+        final remote = repo.config.remote(args[1]);
+        if (remote == null) {
+          return _gitError("fatal: No such remote '${args[1]}'");
+        }
+        return Ok(
+          StageResult(
+            stdout: utf8.encode('${remote.url}\n'),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      }
+      return _gitError('git remote: unknown subcommand $action');
+    } on GitRemoteAlreadyExists catch (e) {
+      return _gitError('fatal: remote ${e.name} already exists.');
+    } on GitRemoteNotFound catch (e) {
+      return _gitError('fatal: No such remote: ${e.name}');
+    } catch (e) {
+      return _gitError('fatal: $e');
+    }
+  }
+
+  Future<Result<StageResult, ExecutionError>> _gitFetch(
+    dart_git.GitRepository repo,
+    List<String> args,
+  ) async {
+    final remoteName = args.isEmpty ? 'origin' : args.first;
+    final remote = repo.config.remote(remoteName);
+    if (remote == null) {
+      return _gitError(
+        "fatal: '$remoteName' does not appear to be a git repository",
+      );
+    }
+    final url = remote.url;
+    if (url.isEmpty) {
+      return _gitError('fatal: no URL configured for remote $remoteName');
+    }
+
+    try {
+      final moved = await GitSmartHttp(client: _shell.shellHttpClient)
+          .fetchInto(
+            url: url,
+            hostDir: repo.workTree.endsWith('/')
+                ? repo.workTree.substring(0, repo.workTree.length - 1)
+                : repo.workTree,
+            remoteName: remoteName,
+          );
+      final lines = <String>['From $url'];
+      for (final branch in moved) {
+        lines.add(' * [new branch] $branch -> $remoteName/$branch');
+      }
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('${lines.join('\n')}\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    } catch (e) {
+      return _gitError('fatal: unable to fetch: $e');
     }
   }
 

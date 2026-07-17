@@ -52,7 +52,7 @@ final class GitSmartHttp {
       throw StateError('remote has no ref $branchRef');
     }
 
-    final packBytes = await _fetchPack(url, wantHash);
+    final packBytes = await _fetchPack(url, [wantHash]);
 
     GitRepository.init(hostDir);
     final repo = GitRepository.load(hostDir);
@@ -60,12 +60,22 @@ final class GitSmartHttp {
     final importer = _PackImporter();
     importer.import(packBytes, repo);
 
-    // Write every advertised branch/tag ref.
+    // Write every advertised branch/tag ref, plus the origin/* tracking
+    // refs so `git branch -r` and `git checkout origin/<branch>` work.
     for (final entry in advertisement.refs.entries) {
       if (!entry.key.startsWith('refs/')) continue;
       repo.refStorage.saveRef(
         HashReference(ReferenceName(entry.key), GitHash(entry.value)),
       );
+      if (entry.key.startsWith('refs/heads/')) {
+        final branch = entry.key.substring('refs/heads/'.length);
+        repo.refStorage.saveRef(
+          HashReference(
+            ReferenceName.remote('origin', branch),
+            GitHash(entry.value),
+          ),
+        );
+      }
     }
     // Point HEAD at the default branch.
     repo.refStorage.saveRef(
@@ -79,6 +89,60 @@ final class GitSmartHttp {
     repo.checkout(repo.workTree);
     repo.close();
     return branch;
+  }
+
+  /// Fetches all advertised branches of [url] into the repository at
+  /// [hostDir], updating `refs/remotes/<remoteName>/*`.
+  ///
+  /// Returns the list of branch names whose remote ref moved.
+  Future<List<String>> fetchInto({
+    required String url,
+    required String hostDir,
+    required String remoteName,
+  }) async {
+    final advertisement = await _fetchRefs(url);
+    final branchRefs = advertisement.refs.entries
+        .where((e) => e.key.startsWith('refs/heads/'))
+        .toList();
+    if (branchRefs.isEmpty) {
+      throw StateError('remote advertised no branches');
+    }
+
+    final repo = GitRepository.load(hostDir);
+
+    // Only request commits we do not already have; writeObject skips
+    // existing loose objects anyway, but this keeps the pack small when the
+    // local repo is almost up to date.
+    final missing = <String>[
+      for (final entry in branchRefs)
+        if (!_hasObject(repo, entry.value)) entry.value,
+    ];
+    if (missing.isNotEmpty) {
+      final packBytes = await _fetchPack(url, missing);
+      _PackImporter().import(packBytes, repo);
+    }
+
+    final moved = <String>[];
+    for (final entry in branchRefs) {
+      final branch = entry.key.substring('refs/heads/'.length);
+      final refName = ReferenceName.remote(remoteName, branch);
+      final existing = repo.resolveReferenceName(refName);
+      if (existing == null || existing.hash.toString() != entry.value) {
+        moved.add(branch);
+      }
+      repo.refStorage.saveRef(HashReference(refName, GitHash(entry.value)));
+    }
+    repo.close();
+    return moved;
+  }
+
+  bool _hasObject(GitRepository repo, String hash) {
+    try {
+      repo.objStorage.read(GitHash(hash));
+      return true;
+    } on Object {
+      return false;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -121,12 +185,16 @@ final class GitSmartHttp {
   // Protocol: upload-pack request/response
   // ---------------------------------------------------------------------------
 
-  Future<Uint8List> _fetchPack(String url, String wantHash) async {
+  Future<Uint8List> _fetchPack(String url, List<String> wantHashes) async {
     const capabilities =
         'multi_ack_detailed no-progress side-band-64k thin-pack ofs-delta '
         'agent=$_userAgent';
-    final body = BytesBuilder(copy: false)
-      ..add(_pktLine(utf8.encode('want $wantHash $capabilities\n')))
+    final body = BytesBuilder(copy: false);
+    for (var i = 0; i < wantHashes.length; i++) {
+      final suffix = i == 0 ? ' $capabilities' : '';
+      body.add(_pktLine(utf8.encode('want ${wantHashes[i]}$suffix\n')));
+    }
+    body
       ..add(_pktFlush())
       ..add(_pktLine(utf8.encode('done\n')));
 
