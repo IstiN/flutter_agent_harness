@@ -50,6 +50,7 @@ List<AgentTool> builtinTools(ExecutionEnv env) {
   return [
     readFileTool(env),
     writeFileTool(env),
+    editFileTool(env),
     listDirTool(env),
     shellTool(env),
   ];
@@ -455,6 +456,96 @@ AgentTool writeFileTool(ExecutionEnv env) {
       );
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// edit (search & replace with a uniqueness guarantee)
+// ---------------------------------------------------------------------------
+
+/// Creates the `edit` tool: replaces an exact text occurrence in a file.
+///
+/// The replacement only happens when `oldText` occurs exactly once — this is
+/// the cheap, model-friendly way to make precise code edits without
+/// rewriting whole files (mirrors pi's `edit` and Claude Code's
+/// `str_replace` tools).
+AgentTool editFileTool(ExecutionEnv env) {
+  return AgentTool(
+    name: 'edit',
+    label: 'edit',
+    description:
+        'Edit a file by replacing an exact text occurrence. oldText must '
+        'match exactly (including indentation and newlines) and occur exactly '
+        'once in the file. Prefer this over write for small, precise changes '
+        'to existing files; read the file first to get the exact text.',
+    parameters: const {
+      'type': 'object',
+      'properties': {
+        'path': {
+          'type': 'string',
+          'description': 'Path to the file to edit (relative or absolute)',
+        },
+        'oldText': {
+          'type': 'string',
+          'description':
+              'Exact text to replace. Must occur exactly once in the file.',
+        },
+        'newText': {
+          'type': 'string',
+          'description': 'Replacement text (may be empty to delete oldText)',
+        },
+      },
+      'required': ['path', 'oldText', 'newText'],
+    },
+    execute: (arguments, cancelToken, onUpdate) async {
+      cancelToken?.throwIfCancelled();
+      final path = arguments['path'] as String;
+      final oldText = arguments['oldText'] as String;
+      final newText = arguments['newText'] as String;
+
+      if (oldText.isEmpty) {
+        throw StateError('oldText must not be empty');
+      }
+
+      final read = await env.readTextFile(path);
+      if (read.isErr) throw StateError('${read.errorOrNull}');
+      cancelToken?.throwIfCancelled();
+      final content = read.valueOrNull!;
+
+      final occurrences = _countOccurrences(content, oldText);
+      if (occurrences == 0) {
+        throw StateError(
+          'No exact match found in $path. oldText must match the file '
+          'contents byte-for-byte (check whitespace and newlines with read).',
+        );
+      }
+      if (occurrences > 1) {
+        throw StateError(
+          'oldText occurs $occurrences times in $path and is ambiguous. '
+          'Include more surrounding context so it matches exactly once.',
+        );
+      }
+
+      final updated = content.replaceFirst(oldText, newText);
+      final written = await env.writeFile(path, updated);
+      if (written.isErr) throw StateError('${written.errorOrNull}');
+
+      return ToolExecutionResult.text(
+        'Edited $path: replaced ${_byteLength(oldText)} bytes with '
+        '${_byteLength(newText)} bytes.',
+      );
+    },
+  );
+}
+
+int _countOccurrences(String haystack, String needle) {
+  var count = 0;
+  var start = 0;
+  while (true) {
+    final index = haystack.indexOf(needle, start);
+    if (index == -1) return count;
+    count++;
+    start = index + needle.length;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -30,9 +30,9 @@ class _FakeShell implements Shell {
 
 void main() {
   group('builtinTools', () {
-    test('creates the four pi-shaped tools', () {
+    test('creates the pi-shaped tools', () {
       final tools = builtinTools(MemoryExecutionEnv());
-      expect(tools.map((t) => t.name), ['read', 'write', 'ls', 'bash']);
+      expect(tools.map((t) => t.name), ['read', 'write', 'edit', 'ls', 'bash']);
       for (final tool in tools) {
         expect(tool.description, isNotEmpty);
         expect(tool.parameters['type'], 'object');
@@ -207,6 +207,122 @@ void main() {
           null,
         ),
         throwsA(isA<ToolValidationException>()),
+      );
+    });
+  });
+
+  group('editFileTool', () {
+    late MemoryExecutionEnv env;
+    late AgentTool tool;
+
+    setUp(() async {
+      env = MemoryExecutionEnv(cwd: '/work');
+      tool = editFileTool(env);
+      await env.writeFile('main.dart', 'void main() {\n  print("hello");\n}\n');
+    });
+
+    test('replaces a unique occurrence', () async {
+      final result = await tool.execute(
+        {
+          'path': 'main.dart',
+          'oldText': 'print("hello");',
+          'newText': 'print("world");',
+        },
+        null,
+        null,
+      );
+      expect(_text(result), contains('Edited main.dart'));
+      expect(
+        (await env.readTextFile('/work/main.dart')).valueOrNull,
+        'void main() {\n  print("world");\n}\n',
+      );
+    });
+
+    test('replaces a multiline block exactly once', () async {
+      final result = await tool.execute(
+        {
+          'path': 'main.dart',
+          'oldText': 'void main() {\n  print("hello");\n}',
+          'newText': 'void main() {\n  print("a");\n  print("b");\n}',
+        },
+        null,
+        null,
+      );
+      expect(_text(result), contains('Edited main.dart'));
+      expect(
+        (await env.readTextFile('/work/main.dart')).valueOrNull,
+        'void main() {\n  print("a");\n  print("b");\n}\n',
+      );
+    });
+
+    test('errors when the text is missing, with an actionable message', () {
+      expect(
+        tool.execute(
+          {'path': 'main.dart', 'oldText': 'print("nope");', 'newText': 'x'},
+          null,
+          null,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('No exact match found'),
+          ),
+        ),
+      );
+    });
+
+    test('errors when the text is ambiguous', () async {
+      await env.writeFile('dup.txt', 'x\nx\n');
+      expect(
+        tool.execute(
+          {'path': 'dup.txt', 'oldText': 'x', 'newText': 'y'},
+          null,
+          null,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('ambiguous'),
+          ),
+        ),
+      );
+    });
+
+    test('errors for a missing file', () {
+      expect(
+        tool.execute(
+          {'path': 'missing.txt', 'oldText': 'a', 'newText': 'b'},
+          null,
+          null,
+        ),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('deletes text when newText is empty', () async {
+      final result = await tool.execute(
+        {'path': 'main.dart', 'oldText': '  print("hello");\n', 'newText': ''},
+        null,
+        null,
+      );
+      expect(_text(result), contains('Edited main.dart'));
+      expect(
+        (await env.readTextFile('/work/main.dart')).valueOrNull,
+        'void main() {\n}\n',
+      );
+    });
+
+    test('throws when the cancel token is already cancelled', () {
+      final source = CancelTokenSource()..cancel();
+      expect(
+        tool.execute(
+          {'path': 'main.dart', 'oldText': 'hello', 'newText': 'bye'},
+          source.token,
+          null,
+        ),
+        throwsA(anything),
       );
     });
   });

@@ -30,7 +30,10 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
       sandboxHostPath: sandbox.path,
       httpClient: httpClient,
     );
-    return LocalExecutionEnv(cwd: sandbox.path, shell: shell);
+    return _SandboxedExecutionEnv(
+      LocalExecutionEnv(cwd: sandbox.path, shell: shell),
+      sandbox.path,
+    );
   }
 
   return LocalExecutionEnv(cwd: appDir.path);
@@ -41,3 +44,88 @@ bool get isMobile => Platform.isAndroid || Platform.isIOS;
 
 /// `true` when running on the web.
 bool get isWebPlatform => false;
+
+/// Maps sandbox-absolute paths (`/foo`) into the sandbox host directory for
+/// the file tools, so `read`/`write`/`ls`/`edit` agree with the WASM shell's
+/// view of `/` as the sandbox root.
+final class _SandboxedExecutionEnv implements ExecutionEnv {
+  _SandboxedExecutionEnv(this._delegate, this._sandboxRoot);
+
+  final ExecutionEnv _delegate;
+  final String _sandboxRoot;
+
+  String _map(String path) {
+    if (path.startsWith('/')) return '$_sandboxRoot$path';
+    return path;
+  }
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _delegate.exec(command, options: options);
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(_map(path));
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(_map(path));
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(_map(path));
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(_map(path), maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(_map(path), content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(_map(path), content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(_map(path), content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(_map(path));
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(_map(path));
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) =>
+      _delegate.exists(_map(path));
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(_map(path), recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(_map(path), recursive: recursive, force: force);
+}
