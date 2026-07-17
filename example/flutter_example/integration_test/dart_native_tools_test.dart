@@ -26,6 +26,27 @@ void main() {
     return result.valueOrNull!;
   }
 
+  testWidgets('curl --version and --help exit 0', (tester) async {
+    final env = await makeEnv();
+
+    var result = await runCmd(env, 'curl --version');
+    expect(result.exitCode, 0);
+    expect(result.stdout, contains('curl'));
+    expect(result.stdout, contains('fah'));
+
+    result = await runCmd(env, 'curl --help');
+    expect(result.exitCode, 0);
+    expect(result.stdout, contains('Usage: curl'));
+
+    result = await runCmd(env, 'wget --version');
+    expect(result.exitCode, 0);
+    expect(result.stdout, contains('Wget'));
+
+    result = await runCmd(env, 'curl');
+    expect(result.exitCode, 2);
+    expect(result.stderr, contains('no URL specified'));
+  });
+
   testWidgets('curl GET returns body and status', (tester) async {
     final client = MockClient((request) async {
       expect(request.url.toString(), 'https://api.example.com/items');
