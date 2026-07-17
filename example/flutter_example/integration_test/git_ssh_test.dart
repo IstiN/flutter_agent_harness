@@ -44,7 +44,11 @@ void main() {
       contains('README.md'),
     );
 
-    // 2. Commit a unique file.
+    // 2. Commit a unique file on a unique branch (pushing a new branch
+    // never requires fast-forward, so the test is immune to races on main).
+    final branchName = 'ssh-test-$stamp';
+    r = await env.exec('git -C /sw checkout -b $branchName');
+    expect(r.valueOrNull?.exitCode, 0, reason: r.valueOrNull?.stderr);
     r = await env.exec(
       'echo "ssh push test $stamp" > /sw/$pushedFile && '
       'git -C /sw add $pushedFile && '
@@ -52,8 +56,9 @@ void main() {
     );
     expect(r.valueOrNull?.exitCode, 0, reason: r.valueOrNull?.stderr);
 
-    // 3. Push over SSH (origin URL is git@github.com:... from the clone).
-    r = await env.exec('git -C /sw push origin main', options: keyEnv);
+    // 3. Push the branch over SSH (origin URL is git@github.com:... from
+    // the clone).
+    r = await env.exec('git -C /sw push origin $branchName', options: keyEnv);
     expect(
       r.valueOrNull?.exitCode,
       0,
@@ -64,10 +69,17 @@ void main() {
     if (token.isNotEmpty) {
       r = await env.exec(
         'curl -s -H "Authorization: Bearer $token" '
-        'https://api.github.com/repos/IstiN/fah-git-test/contents/$pushedFile',
+        'https://api.github.com/repos/IstiN/fah-git-test/contents/$pushedFile?ref=$branchName',
       );
       expect(r.valueOrNull?.exitCode, 0);
       expect(r.valueOrNull?.stdout, contains(pushedFile));
+
+      // 5. Cleanup: delete the branch via the API.
+      r = await env.exec(
+        'curl -s -X DELETE -H "Authorization: Bearer $token" '
+        'https://api.github.com/repos/IstiN/fah-git-test/git/refs/heads/$branchName',
+      );
+      expect(r.valueOrNull?.exitCode, 0, reason: r.valueOrNull?.stderr);
     }
   });
 }

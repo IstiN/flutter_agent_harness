@@ -81,3 +81,12 @@ shell works on iOS, Android, and web without spawning host processes.
 
 - Source: `lib/python3.14` from the same cpython-wasi-build release
 - License: PSF-2.0 (see `LICENSE.python`)
+
+## qjs.wasm
+
+- Source: https://github.com/quickjs-ng/quickjs (v0.15.1, official
+  `qjs-wasi.wasm` release artifact)
+- License: MIT (see `LICENSE.quickjs`)
+- Target: `wasm32-wasip1`
+- Notes: QuickJS JavaScript engine (ES2023) with `qjs:std`/`qjs:os`
+  builtin modules. Mapped to the `qjs` and `js` shell commands.

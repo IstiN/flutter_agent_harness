@@ -79,6 +79,7 @@ flutter:
     - assets/wasm/zip.wasm
     - assets/wasm/python.wasm
     - assets/wasm/python_stdlib.zip
+    - assets/wasm/qjs.wasm
     - assets/wasm/wasi_hello.wasm
     - assets/wasm/LICENSE.coreutils
     - assets/wasm/LICENSE.rg
@@ -89,5 +90,6 @@ flutter:
     - assets/wasm/LICENSE.gzip
     - assets/wasm/LICENSE.zip
     - assets/wasm/LICENSE.python
+    - assets/wasm/LICENSE.quickjs
     - assets/wasm/ATTRIBUTION.md
 
