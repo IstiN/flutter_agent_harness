@@ -66,3 +66,18 @@ shell works on iOS, Android, and web without spawning host processes.
 - Target: `wasm32-wasip1`
 - Notes: Handles both `zip` creation and `unzip` extraction (the shell
   maps `unzip` to this module with the `-d` flag).
+
+## python.wasm
+
+- Source: https://github.com/brettcannon/cpython-wasi-build (official CPython
+  WASI builds, Python 3.14.6, wasi-sdk 24)
+- License: PSF-2.0 (see `LICENSE.python`)
+- Target: `wasm32-wasip1`
+- Notes: CPython interpreter. The standard library ships separately as
+  `python_stdlib.zip` (contents of `lib/python3.14` from the same release)
+  and is extracted to `/usr/local/lib` inside the sandbox on first use.
+
+## python_stdlib.zip
+
+- Source: `lib/python3.14` from the same cpython-wasi-build release
+- License: PSF-2.0 (see `LICENSE.python`)

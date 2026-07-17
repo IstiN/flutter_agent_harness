@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -45,6 +46,7 @@ final class WasiSandboxShell implements Shell {
     required this.tar,
     required this.gzip,
     required this.zip,
+    required this.python,
     this.workingDirectory,
     this.sandboxHostPath,
     http.Client? httpClient,
@@ -75,6 +77,9 @@ final class WasiSandboxShell implements Shell {
   /// zip/unzip module.
   final WasmModule zip;
 
+  /// CPython module (Python 3.14, WASI build).
+  final WasmModule python;
+
   /// Default working directory used when [ShellExecOptions.cwd] is omitted.
   final String? workingDirectory;
 
@@ -82,6 +87,37 @@ final class WasiSandboxShell implements Shell {
   final String? sandboxHostPath;
 
   final http.Client _httpClient;
+
+  bool _pythonStdlibReady = false;
+
+  /// Extracts the bundled CPython standard library into the sandbox at
+  /// `/usr/local/lib` (CPython's default WASI prefix) on first use.
+  Future<void> _ensurePythonStdlib() async {
+    if (_pythonStdlibReady) return;
+    final host = sandboxHostPath;
+    if (host == null || host.isEmpty) {
+      _pythonStdlibReady = true;
+      return;
+    }
+    final marker = io.File('$host/usr/local/lib/python3.14/json/__init__.py');
+    if (marker.existsSync()) {
+      _pythonStdlibReady = true;
+      return;
+    }
+    final data = await rootBundle.load('assets/wasm/python_stdlib.zip');
+    final zip = ZipDecoder().decodeBytes(
+      data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+    );
+    for (final file in zip.files) {
+      if (!file.isFile) continue;
+      // Archive entries are `lib/python3.14/...`; the WASI build expects the
+      // stdlib at /usr/local/lib/python3.14.
+      final out = io.File('$host/usr/local/${file.name}');
+      await out.parent.create(recursive: true);
+      await out.writeAsBytes(file.content as List<int>);
+    }
+    _pythonStdlibReady = true;
+  }
 
   /// Current working directory of the shell, mutated by the `cd` builtin.
   /// Initialized from [workingDirectory] and persisted across [exec] calls.
@@ -155,6 +191,7 @@ final class WasiSandboxShell implements Shell {
       tar: await loadAsset('tar.wasm'),
       gzip: await loadAsset('gzip.wasm'),
       zip: await loadAsset('zip.wasm'),
+      python: await loadAsset('python.wasm'),
       workingDirectory: workingDirectory,
       sandboxHostPath: sandboxHostPath,
       httpClient: httpClient,
@@ -280,6 +317,8 @@ final class WasiSandboxShell implements Shell {
           'gzip',
           'zip',
           'unzip',
+          'python',
+          'python3',
         }.contains(command) ||
         _builtinCommands.contains(command);
   }
@@ -298,6 +337,7 @@ final class WasiSandboxShell implements Shell {
       'gzip' => (module: gzip, argv: const ['gzip']),
       'zip' => (module: zip, argv: const ['zip']),
       'unzip' => (module: zip, argv: const ['zip_util']),
+      'python' || 'python3' => (module: python, argv: const ['python']),
       _ => (module: coreutils, argv: [command]),
     };
   }
@@ -835,6 +875,19 @@ final class WasiSandboxShell implements Shell {
     final resolved = _resolve(command);
     final module = resolved.module;
     final argv = [...resolved.argv, ...args];
+
+    if (module == python) {
+      try {
+        await _ensurePythonStdlib();
+      } on Object catch (e) {
+        return Err(
+          ExecutionError(
+            ExecutionErrorCode.unknown,
+            'python stdlib setup failed: $e',
+          ),
+        );
+      }
+    }
 
     final env = _effectiveEnv(options);
 
