@@ -5,8 +5,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
 
+import 'sandbox_builtins.dart';
 import 'shell_parser.dart';
 import 'web_git.dart';
 import 'web_interpreters_stub.dart'
@@ -22,14 +25,28 @@ import 'web_interpreters_stub.dart'
 /// redirects, `cd`/`export` state that persists across [exec] calls, and the
 /// common POSIX utilities — directly in Dart over the in-memory filesystem.
 ///
-/// Commands that genuinely need the WASM binaries or a network stack
-/// (`git`, `curl`, `jq`, `rg`, `sed`, `awk`, `tar`, ...) report
-/// "command not found" (exit code 127), which the agent can react to.
+/// On top of the core POSIX utilities, the following are implemented in
+/// pure Dart and work in the browser: `curl`/`wget`/`jq`/`yq` (shared with
+/// the WASM shell via `sandbox_builtins.dart`), `sed`, `awk`, `find`,
+/// `xargs`, `printf`, `realpath`, `tar`/`gzip`/`gunzip`/`zip`/`unzip` (via
+/// `package:archive`), and `rg` (an alias of the Dart `grep`
+/// implementation, mirroring iOS where `grep` maps to `rg` with grep
+/// semantics). `python3`/`qjs`/`sqlite3` run in browser-hosted interpreters
+/// loaded from CDNs (pyodide, quickjs-emscripten, sql.js) and report
+/// "command not found" (exit code 127) off the web. `git` works locally via
+/// dart_git; remote clone/push is not supported in the browser (CORS).
+/// Everything else reports exit code 127, which the agent can react to.
 final class MemoryShell implements Shell {
   /// Creates a shell without a filesystem. Call [attach] before [exec]; this
   /// indirection lets the shell and the [MemoryExecutionEnv] that owns it
   /// reference each other.
-  MemoryShell();
+  ///
+  /// [httpClient] backs the `curl`/`wget` builtins; tests can inject a
+  /// `MockClient` from `package:http/testing.dart`.
+  MemoryShell({http.Client? httpClient})
+    : _httpClient = httpClient ?? http.Client();
+
+  final http.Client _httpClient;
 
   late final MemoryFileSystem _fs;
   late final WebGitCommands _gitCommands;
@@ -49,39 +66,56 @@ final class MemoryShell implements Shell {
   /// Commands available in the sandbox, used by `which`/`command -v` and to
   /// decide between execution and "command not found".
   static const Set<String> _availableCommands = {
+    'awk',
     'basename',
     'cat',
     'cd',
     'command',
     'cp',
+    'curl',
     'dirname',
     'echo',
     'env',
     'export',
     'false',
+    'find',
     'git',
     'grep',
+    'gunzip',
+    'gzip',
     'head',
+    'jq',
     'js',
     'ls',
     'mkdir',
     'mv',
+    'printf',
     'pwd',
     'python',
     'python3',
     'qjs',
+    'realpath',
+    'rg',
     'rm',
     'rmdir',
+    'sed',
     'sort',
+    'sqlite3',
     'tail',
+    'tar',
     'test',
     'touch',
     'tr',
     'true',
     'unset',
+    'unzip',
     'wc',
+    'wget',
     'which',
     'whoami',
+    'xargs',
+    'yq',
+    'zip',
     '[',
   };
 
@@ -275,6 +309,23 @@ final class MemoryShell implements Shell {
       'export' => _export(args),
       'unset' => _unset(args),
       'git' => _git(ctx),
+      'curl' => _curl(ctx),
+      'wget' => _wget(ctx),
+      'jq' => _jq(ctx),
+      'yq' => _yq(ctx),
+      'rg' => _grep(ctx),
+      'sed' => _sed(ctx),
+      'awk' => _awk(ctx),
+      'find' => _find(ctx),
+      'xargs' => _xargs(ctx),
+      'printf' => _printf(ctx),
+      'realpath' => _realpath(ctx),
+      'tar' => _tar(ctx),
+      'gzip' => _gzip(ctx, decompress: false),
+      'gunzip' => _gzip(ctx, decompress: true),
+      'zip' => _zip(ctx),
+      'unzip' => _unzip(ctx),
+      'sqlite3' => _runSqlite(ctx),
       'python' || 'python3' => _runPython(ctx),
       'qjs' || 'js' => _runQjs(ctx),
       'whoami' => _text('${_effectiveEnv(ctx.options)['USER']}\n'),
@@ -299,6 +350,898 @@ final class MemoryShell implements Shell {
       stderr: utf8.encode(result.stderr),
       exitCode: result.exitCode,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared network/JSON builtins (curl, wget, jq, yq)
+  // ---------------------------------------------------------------------------
+
+  /// Wires the shared [SandboxBuiltins] to the in-memory filesystem, resolving
+  /// paths against the stage's working directory.
+  SandboxBuiltins _builtinsFor(_Context ctx) {
+    return SandboxBuiltins(
+      httpClient: _httpClient,
+      readTextFile: (path) async {
+        final result = await _fs.readTextFile(
+          _resolveSandboxPath(path, ctx.cwd),
+        );
+        return result.valueOrNull;
+      },
+      writeBinaryFile: (path, bytes) async {
+        await _fs.writeBinaryFile(
+          _resolveSandboxPath(path, ctx.cwd),
+          Uint8List.fromList(bytes),
+        );
+      },
+    );
+  }
+
+  Future<_StageResult> _toStage(Future<SandboxBuiltinResult> future) async {
+    final r = await future;
+    return _StageResult(
+      stdout: r.stdout,
+      stderr: r.stderr,
+      exitCode: r.exitCode,
+    );
+  }
+
+  Future<_StageResult> _curl(_Context ctx) {
+    return _toStage(
+      _builtinsFor(ctx).curl(ctx.args, timeout: ctx.options?.timeout),
+    );
+  }
+
+  Future<_StageResult> _wget(_Context ctx) {
+    return _toStage(
+      _builtinsFor(ctx).wget(ctx.args, timeout: ctx.options?.timeout),
+    );
+  }
+
+  Future<_StageResult> _jq(_Context ctx) {
+    return _toStage(_builtinsFor(ctx).jq(ctx.args, stdin: ctx.stdin));
+  }
+
+  Future<_StageResult> _yq(_Context ctx) {
+    return _toStage(_builtinsFor(ctx).yq(ctx.args, stdin: ctx.stdin));
+  }
+
+  // ---------------------------------------------------------------------------
+  // sqlite3 (sql.js in the browser)
+  // ---------------------------------------------------------------------------
+
+  Future<_StageResult> _runSqlite(_Context ctx) async {
+    final args = ctx.args;
+    if (args.contains('--version') || args.contains('-version')) {
+      final version = await WebInterpreters.sqliteVersion();
+      if (version == null) return _interpreterUnavailable('sqlite3');
+      return _text('$version (fah-sandbox sql.js)\n');
+    }
+
+    final positionals = <String>[];
+    for (var i = 0; i < args.length; i++) {
+      final arg = args[i];
+      if (arg == '-cmd' && i + 1 < args.length) {
+        // Accepted for parity with the WASM sqlite3; init commands are not
+        // needed because the full SQL arrives as one argument or via stdin.
+        i++;
+      } else if (arg == '-csv' || arg == '-list' || arg == '-readonly') {
+        // Output stays in the default `|`-separated list mode.
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error('sqlite3: unsupported option $arg\n', exitCode: 1);
+      } else {
+        positionals.add(arg);
+      }
+    }
+
+    final dbPath = positionals.isNotEmpty ? positionals[0] : null;
+    var sql = positionals.length > 1
+        ? positionals.sublist(1).join(' ')
+        : ctx.stdin;
+    sql ??= '';
+
+    Uint8List? dbBytes;
+    String? resolvedDb;
+    if (dbPath != null && dbPath != ':memory:') {
+      resolvedDb = _resolveSandboxPath(dbPath, ctx.cwd);
+      final read = await _fs.readBinaryFile(resolvedDb);
+      if (read.isOk) dbBytes = read.valueOrNull;
+    }
+
+    final result = await WebInterpreters.runSqlite(sql, dbBytes);
+    if (!result.available) return _interpreterUnavailable('sqlite3');
+
+    // sql.js is in-memory: serialize the database back to the sandbox file
+    // after every invocation so it persists across exec calls.
+    if (resolvedDb != null && result.dbBytes != null) {
+      await _fs.writeBinaryFile(resolvedDb, result.dbBytes!);
+    }
+
+    final hasError = result.stderr.isNotEmpty;
+    return _StageResult(
+      stdout: utf8.encode(result.stdout.isEmpty ? '' : '${result.stdout}\n'),
+      stderr: utf8.encode(hasError ? 'Error: ${result.stderr}\n' : ''),
+      exitCode: hasError ? 1 : 0,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Text stream utilities (sed, awk, printf)
+  // ---------------------------------------------------------------------------
+
+  _StageResult _printf(_Context ctx) {
+    if (ctx.args.isEmpty) {
+      return _error('usage: printf format [arguments...]\n');
+    }
+    final format = _unescapePrintf(ctx.args.first);
+    final args = ctx.args.sublist(1);
+    final out = StringBuffer();
+    var argIndex = 0;
+    // The format string is reused until every argument is consumed (POSIX).
+    while (true) {
+      final consumedBefore = argIndex;
+      for (var i = 0; i < format.length; i++) {
+        final ch = format[i];
+        if (ch == '%' && i + 1 < format.length) {
+          final spec = format[i + 1];
+          if (spec == '%') {
+            out.write('%');
+            i++;
+            continue;
+          }
+          final arg = argIndex < args.length ? args[argIndex] : '';
+          switch (spec) {
+            case 's':
+              argIndex++;
+              out.write(arg);
+            case 'd' || 'i':
+              argIndex++;
+              out.write(int.tryParse(arg) ?? 0);
+            case 'c':
+              argIndex++;
+              if (arg.isNotEmpty) out.write(arg[0]);
+            default:
+              out.write('%');
+              out.write(spec);
+          }
+          i++;
+          continue;
+        }
+        out.write(ch);
+      }
+      if (argIndex >= args.length || argIndex == consumedBefore) break;
+    }
+    return _text(out.toString());
+  }
+
+  /// Interprets the backslash escapes printf understands in its format
+  /// string (`\n`, `\t`, `\r`, `\\`, `\0`).
+  String _unescapePrintf(String input) {
+    final buffer = StringBuffer();
+    for (var i = 0; i < input.length; i++) {
+      if (input[i] == '\\' && i + 1 < input.length) {
+        final escape = switch (input[i + 1]) {
+          'n' => '\n',
+          't' => '\t',
+          'r' => '\r',
+          '0' => '\x00',
+          '\\' => '\\',
+          _ => null,
+        };
+        if (escape != null) {
+          buffer.write(escape);
+          i++;
+          continue;
+        }
+      }
+      buffer.write(input[i]);
+    }
+    return buffer.toString();
+  }
+
+  Future<_StageResult> _sed(_Context ctx) async {
+    var quiet = false;
+    var inPlace = false;
+    final scripts = <String>[];
+    final files = <String>[];
+
+    for (var i = 0; i < ctx.args.length; i++) {
+      final arg = ctx.args[i];
+      if (arg == '-n' || arg == '--quiet' || arg == '--silent') {
+        quiet = true;
+      } else if (arg == '-i' || arg.startsWith('-i')) {
+        inPlace = true;
+      } else if (arg == '-e') {
+        if (i + 1 >= ctx.args.length) {
+          return _error('sed: option requires an argument -- e\n', exitCode: 1);
+        }
+        scripts.add(ctx.args[++i]);
+      } else if (arg.startsWith('-e')) {
+        scripts.add(arg.substring(2));
+      } else if (arg == '-E' || arg == '-r') {
+        // Extended regex is the only syntax this subset supports anyway.
+      } else if (arg == '--') {
+        // End of options.
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error('sed: unsupported option $arg\n', exitCode: 1);
+      } else if (scripts.isEmpty && files.isEmpty) {
+        scripts.add(arg);
+      } else {
+        files.add(arg);
+      }
+    }
+
+    if (scripts.isEmpty) {
+      return _error(
+        'usage: sed [-n] [-i] [-e script] [script] [file...]\n',
+        exitCode: 1,
+      );
+    }
+    if (inPlace && files.isEmpty) {
+      return _error('sed: -i requires file arguments\n', exitCode: 1);
+    }
+
+    final commands = <_SedCommand>[];
+    for (final script in scripts) {
+      final command = _SedCommand.tryParse(script);
+      if (command == null) {
+        return _error('sed: unsupported script: $script\n', exitCode: 1);
+      }
+      commands.add(command);
+    }
+
+    if (inPlace) {
+      for (final arg in files) {
+        final resolved = _resolveSandboxPath(arg, ctx.cwd);
+        final read = await _fs.readTextFile(resolved);
+        if (read.isErr) {
+          return _error('sed: $arg: No such file or directory\n');
+        }
+        final result = _runSed(read.valueOrNull!, commands, quiet: false);
+        await _fs.writeFile(resolved, result);
+      }
+      return _ok;
+    }
+
+    String? errorPath;
+    final input = await _readInput(files, ctx, (path) => errorPath = path);
+    if (input == null) {
+      return _error('sed: $errorPath: No such file or directory\n');
+    }
+    return _text(_runSed(input, commands, quiet: quiet));
+  }
+
+  /// Applies [commands] to [input] line by line; auto-prints each line
+  /// unless [quiet] (`-n`) is set. Always ends the output with a newline
+  /// when the input was non-empty, mirroring GNU sed.
+  String _runSed(
+    String input,
+    List<_SedCommand> commands, {
+    bool quiet = false,
+  }) {
+    final lines = input.split('\n');
+    if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+    final out = StringBuffer();
+    final ranges = <_SedCommand, bool>{};
+    for (var n = 0; n < lines.length; n++) {
+      var line = lines[n];
+      final lineNo = n + 1;
+      final isLast = n == lines.length - 1;
+      for (final command in commands) {
+        final selected = command.select(lineNo, isLast, line, ranges);
+        if (!selected) continue;
+        switch (command.kind) {
+          case _SedKind.substitute:
+            line = command.applySubstitute(line);
+          case _SedKind.print:
+            out.writeln(line);
+        }
+      }
+      if (!quiet) out.writeln(line);
+    }
+    return out.toString();
+  }
+
+  Future<_StageResult> _awk(_Context ctx) async {
+    String? fieldSeparator;
+    final positionals = <String>[];
+    for (var i = 0; i < ctx.args.length; i++) {
+      final arg = ctx.args[i];
+      if (arg == '-F') {
+        if (i + 1 >= ctx.args.length) {
+          return _error('awk: option requires an argument -- F\n', exitCode: 2);
+        }
+        fieldSeparator = ctx.args[++i];
+      } else if (arg.startsWith('-F')) {
+        fieldSeparator = arg.substring(2);
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error('awk: unsupported option $arg\n', exitCode: 2);
+      } else {
+        positionals.add(arg);
+      }
+    }
+    if (fieldSeparator == r'\t') fieldSeparator = '\t';
+
+    if (positionals.isEmpty) {
+      return _error('usage: awk [-F sep] program [file...]\n', exitCode: 2);
+    }
+    final program = positionals.first;
+    final files = positionals.sublist(1);
+
+    var body = program.trim();
+    RegExp? pattern;
+    if (body.startsWith('/')) {
+      final end = body.indexOf('/', 1);
+      if (end <= 1) {
+        return _error('awk: bad pattern in program\n', exitCode: 2);
+      }
+      try {
+        pattern = RegExp(body.substring(1, end));
+      } on Object catch (e) {
+        return _error('awk: bad pattern: $e\n', exitCode: 2);
+      }
+      body = body.substring(end + 1).trim();
+    }
+    // A pattern without an action prints the whole record.
+    var printExpr = r'$0';
+    if (body.isNotEmpty) {
+      if (!body.startsWith('{') || !body.endsWith('}')) {
+        return _error('awk: unsupported program: $program\n', exitCode: 2);
+      }
+      final action = body.substring(1, body.length - 1).trim();
+      if (action != 'print' && !action.startsWith('print ')) {
+        return _error('awk: unsupported action: $action\n', exitCode: 2);
+      }
+      printExpr = action == 'print' ? r'$0' : action.substring(6).trim();
+    }
+
+    String? errorPath;
+    final input = await _readInput(files, ctx, (path) => errorPath = path);
+    if (input == null) {
+      return _error('awk: cannot open $errorPath: No such file or directory\n');
+    }
+
+    final lines = input.split('\n');
+    if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+    final out = StringBuffer();
+    for (var n = 0; n < lines.length; n++) {
+      final line = lines[n];
+      if (pattern != null && !pattern.hasMatch(line)) continue;
+      final trimmed = line.trim();
+      final fields = fieldSeparator != null
+          ? line.split(fieldSeparator)
+          : (trimmed.isEmpty ? <String>[] : trimmed.split(RegExp(r'\s+')));
+      final record = _AwkRecord(line: line, fields: fields, nr: n + 1);
+      final values = [
+        for (final expr in _awkSplitTopLevel(printExpr)) _awkEval(expr, record),
+      ];
+      out.writeln(values.join(' '));
+    }
+    return _text(out.toString());
+  }
+
+  /// Splits a print list on top-level commas (commas join fields with OFS,
+  /// a single space here).
+  List<String> _awkSplitTopLevel(String expr) {
+    final parts = <String>[];
+    var depth = 0;
+    var inString = false;
+    var start = 0;
+    for (var i = 0; i < expr.length; i++) {
+      final ch = expr[i];
+      if (ch == '"') inString = !inString;
+      if (inString) continue;
+      if (ch == '(') depth++;
+      if (ch == ')') depth--;
+      if (ch == ',' && depth == 0) {
+        parts.add(expr.substring(start, i));
+        start = i + 1;
+      }
+    }
+    parts.add(expr.substring(start));
+    return parts;
+  }
+
+  /// Evaluates a tiny awk expression: an additive chain of terms (`$N`,
+  /// `$0`, `NR`, `NF`, numbers, "strings") or their concatenation.
+  String _awkEval(String expr, _AwkRecord record) {
+    final tokens = _awkTokens(expr);
+    if (tokens.isEmpty) return '';
+    if (tokens.any((t) => t == '+' || t == '-')) {
+      var total = 0.0;
+      var op = '+';
+      for (final token in tokens) {
+        if (token == '+' || token == '-') {
+          op = token;
+          continue;
+        }
+        final value = _awkTermValue(token, record);
+        final number = value is num ? value : num.tryParse('$value') ?? 0;
+        total = op == '+' ? total + number : total - number;
+      }
+      return total == total.roundToDouble()
+          ? total.toInt().toString()
+          : total.toString();
+    }
+    return tokens.map((t) => '${_awkTermValue(t, record)}').join();
+  }
+
+  List<String> _awkTokens(String expr) {
+    final tokens = <String>[];
+    final buffer = StringBuffer();
+    var inString = false;
+    void flush() {
+      if (buffer.isEmpty) return;
+      tokens.add(buffer.toString());
+      buffer.clear();
+    }
+
+    for (var i = 0; i < expr.length; i++) {
+      final ch = expr[i];
+      if (ch == '"') {
+        buffer.write(ch);
+        inString = !inString;
+        continue;
+      }
+      if (!inString && (ch == '+' || ch == '-' || ch == ' ' || ch == '\t')) {
+        flush();
+        if (ch == '+' || ch == '-') tokens.add(ch);
+        continue;
+      }
+      buffer.write(ch);
+    }
+    flush();
+    return tokens;
+  }
+
+  Object _awkTermValue(String token, _AwkRecord record) {
+    final term = token.trim();
+    if (term.length >= 2 && term.startsWith('"') && term.endsWith('"')) {
+      return term.substring(1, term.length - 1);
+    }
+    if (term == 'NR') return record.nr;
+    if (term == 'NF') return record.fields.length;
+    if (term.startsWith(r'$')) {
+      final index = int.tryParse(term.substring(1));
+      if (index == null) return '';
+      if (index == 0) return record.line;
+      return index <= record.fields.length ? record.fields[index - 1] : '';
+    }
+    final number = num.tryParse(term);
+    if (number != null) return number;
+    return term;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Filesystem utilities (find, realpath)
+  // ---------------------------------------------------------------------------
+
+  Future<_StageResult> _find(_Context ctx) async {
+    final paths = <String>[];
+    String? namePattern;
+    String? type;
+    for (var i = 0; i < ctx.args.length; i++) {
+      final arg = ctx.args[i];
+      if (arg == '-name' && i + 1 < ctx.args.length) {
+        namePattern = ctx.args[++i];
+      } else if (arg == '-type' && i + 1 < ctx.args.length) {
+        type = ctx.args[++i];
+      } else if (arg.startsWith('-')) {
+        return _error('find: unsupported option $arg\n', exitCode: 1);
+      } else {
+        paths.add(arg);
+      }
+    }
+    if (paths.isEmpty) paths.add('.');
+
+    final nameRegex = namePattern == null ? null : _globToRegex(namePattern);
+    final out = StringBuffer();
+    final err = StringBuffer();
+    var exitCode = 0;
+
+    Future<void> walk(String resolved, String display, FileInfo info) async {
+      final typeOk =
+          type == null ||
+          (type == 'f' && info.kind == FileKind.file) ||
+          (type == 'd' && info.kind == FileKind.directory);
+      final nameOk = nameRegex == null || nameRegex.hasMatch(info.name);
+      if (typeOk && nameOk) out.writeln(display);
+      if (info.kind != FileKind.directory) return;
+      final entries = await _fs.listDir(resolved);
+      for (final entry in entries.valueOrNull ?? <FileInfo>[]) {
+        final childResolved = resolved == '/'
+            ? '/${entry.name}'
+            : '$resolved/${entry.name}';
+        final childDisplay = display == '/'
+            ? '/${entry.name}'
+            : '$display/${entry.name}';
+        await walk(childResolved, childDisplay, entry);
+      }
+    }
+
+    for (final arg in paths) {
+      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final info = await _fs.fileInfo(resolved);
+      if (info.isErr) {
+        err.write('find: $arg: No such file or directory\n');
+        exitCode = 1;
+        continue;
+      }
+      await walk(resolved, arg, info.valueOrNull!);
+    }
+    return _StageResult(
+      stdout: utf8.encode(out.toString()),
+      stderr: utf8.encode(err.toString()),
+      exitCode: exitCode,
+    );
+  }
+
+  /// Converts a `find -name` glob (`*`, `?`) into an anchored [RegExp].
+  RegExp _globToRegex(String glob) {
+    final buffer = StringBuffer('^');
+    for (var i = 0; i < glob.length; i++) {
+      final ch = glob[i];
+      if (ch == '*') {
+        buffer.write('.*');
+      } else if (ch == '?') {
+        buffer.write('.');
+      } else {
+        buffer.write(RegExp.escape(ch));
+      }
+    }
+    buffer.write(r'$');
+    return RegExp(buffer.toString());
+  }
+
+  Future<_StageResult> _realpath(_Context ctx) async {
+    final split = _splitArgs(ctx.args);
+    if (split.paths.isEmpty) {
+      return _error('realpath: missing operand\n');
+    }
+    final out = StringBuffer();
+    for (final arg in split.paths) {
+      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final exists = await _fs.exists(resolved);
+      if (!(exists.valueOrNull ?? false)) {
+        return _error('realpath: $arg: No such file or directory\n');
+      }
+      out.writeln(resolved);
+    }
+    return _text(out.toString());
+  }
+
+  // ---------------------------------------------------------------------------
+  // xargs
+  // ---------------------------------------------------------------------------
+
+  Future<_StageResult> _xargs(_Context ctx) async {
+    var batchSize = 0;
+    var utilityArgs = const <String>[];
+    for (var i = 0; i < ctx.args.length; i++) {
+      final arg = ctx.args[i];
+      if (arg == '-n' && i + 1 < ctx.args.length) {
+        batchSize = int.tryParse(ctx.args[++i]) ?? 0;
+      } else if (arg.startsWith('-n') &&
+          int.tryParse(arg.substring(2)) != null) {
+        batchSize = int.parse(arg.substring(2));
+      } else {
+        utilityArgs = ctx.args.sublist(i);
+        break;
+      }
+    }
+
+    final tokens = (ctx.stdin ?? '')
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
+    final command = utilityArgs.isEmpty ? 'echo' : utilityArgs.first;
+    final prefixArgs = utilityArgs.isEmpty
+        ? const <String>[]
+        : utilityArgs.sublist(1);
+
+    final batches = <List<String>>[
+      if (tokens.isEmpty)
+        const <String>[]
+      else if (batchSize > 0)
+        for (var i = 0; i < tokens.length; i += batchSize)
+          tokens.sublist(
+            i,
+            i + batchSize > tokens.length ? tokens.length : i + batchSize,
+          )
+      else
+        tokens,
+    ];
+
+    final out = StringBuffer();
+    final err = StringBuffer();
+    var exitCode = 0;
+    for (final batch in batches) {
+      final result = await _runCommand(
+        command,
+        [...prefixArgs, ...batch],
+        ctx.options,
+        ctx.cwd,
+        null,
+      );
+      out.write(utf8.decode(result.stdout, allowMalformed: true));
+      err.write(utf8.decode(result.stderr, allowMalformed: true));
+      if (result.exitCode != 0) exitCode = result.exitCode;
+    }
+    return _StageResult(
+      stdout: utf8.encode(out.toString()),
+      stderr: utf8.encode(err.toString()),
+      exitCode: exitCode,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Archives (tar, gzip, zip) via package:archive
+  // ---------------------------------------------------------------------------
+
+  Future<_StageResult> _tar(_Context ctx) async {
+    if (ctx.args.isEmpty) {
+      return _error('tar: no operation specified\n', exitCode: 2);
+    }
+    var index = 0;
+    var flags = '';
+    final first = ctx.args.first;
+    if (first.startsWith('-')) {
+      flags = first.substring(1);
+      index = 1;
+    } else if (RegExp(r'^[a-zA-Z]+$').hasMatch(first) &&
+        first.contains(RegExp(r'[ctx]'))) {
+      // Old-style `tar cf ...` without a dash.
+      flags = first;
+      index = 1;
+    }
+    final create = flags.contains('c');
+    final extract = flags.contains('x');
+    final compressed = flags.contains('z');
+    if (create == extract) {
+      return _error('tar: specify exactly one of -c or -x\n', exitCode: 2);
+    }
+
+    String? archiveArg;
+    if (flags.contains('f')) {
+      if (index >= ctx.args.length) {
+        return _error('tar: option requires an argument -- f\n', exitCode: 2);
+      }
+      archiveArg = ctx.args[index++];
+    }
+    String? changeDir;
+    final members = <String>[];
+    for (; index < ctx.args.length; index++) {
+      final arg = ctx.args[index];
+      if (arg == '-C' && index + 1 < ctx.args.length) {
+        changeDir = ctx.args[++index];
+      } else {
+        members.add(arg);
+      }
+    }
+    if (archiveArg == null) {
+      return _error('tar: no archive file specified (use -f)\n', exitCode: 2);
+    }
+    final archivePath = _resolveSandboxPath(archiveArg, ctx.cwd);
+
+    if (create) {
+      if (members.isEmpty) {
+        return _error(
+          'tar: Cowardly refusing to create an empty archive\n',
+          exitCode: 2,
+        );
+      }
+      final archive = Archive();
+      for (final member in members) {
+        final resolved = _resolveSandboxPath(member, ctx.cwd);
+        final info = await _fs.fileInfo(resolved);
+        if (info.isErr) {
+          return _error(
+            'tar: $member: Cannot stat: No such file or directory\n',
+            exitCode: 1,
+          );
+        }
+        await _tarAdd(archive, resolved, info.valueOrNull!);
+      }
+      var bytes = TarEncoder().encode(archive);
+      if (compressed) bytes = GZipEncoder().encode(bytes);
+      await _fs.writeBinaryFile(archivePath, Uint8List.fromList(bytes));
+      return _ok;
+    }
+
+    final read = await _fs.readBinaryFile(archivePath);
+    if (read.isErr) {
+      return _error(
+        'tar: $archiveArg: Cannot open: No such file or directory\n',
+        exitCode: 1,
+      );
+    }
+    var bytes = read.valueOrNull!;
+    if (compressed) {
+      try {
+        bytes = Uint8List.fromList(GZipDecoder().decodeBytes(bytes));
+      } on Object {
+        return _error('tar: $archiveArg: not in gzip format\n', exitCode: 1);
+      }
+    }
+    final Archive archive;
+    try {
+      archive = TarDecoder().decodeBytes(bytes);
+    } on Object {
+      return _error('tar: $archiveArg: not in tar format\n', exitCode: 1);
+    }
+    final root = changeDir != null
+        ? _resolveSandboxPath(changeDir, ctx.cwd)
+        : _resolveSandboxPath('.', ctx.cwd);
+    for (final file in archive.files) {
+      final name = file.name.startsWith('/')
+          ? file.name.substring(1)
+          : file.name;
+      if (!file.isFile) {
+        await _fs.createDir('$root/$name');
+        continue;
+      }
+      await _fs.writeBinaryFile('$root/$name', file.content);
+    }
+    return _ok;
+  }
+
+  /// Adds [resolved] (and its children when it is a directory) to [archive],
+  /// stripping the leading `/` from member names like GNU tar does.
+  Future<void> _tarAdd(Archive archive, String resolved, FileInfo info) async {
+    final name = resolved.startsWith('/') ? resolved.substring(1) : resolved;
+    if (info.kind == FileKind.directory) {
+      archive.addFile(ArchiveFile('$name/', 0, const <int>[])..isFile = false);
+      final entries = await _fs.listDir(resolved);
+      for (final entry in entries.valueOrNull ?? <FileInfo>[]) {
+        await _tarAdd(archive, '$resolved/${entry.name}', entry);
+      }
+      return;
+    }
+    final data = await _fs.readBinaryFile(resolved);
+    if (data.isErr) return;
+    final bytes = data.valueOrNull!;
+    archive.addFile(ArchiveFile(name, bytes.length, bytes));
+  }
+
+  Future<_StageResult> _gzip(_Context ctx, {required bool decompress}) async {
+    var unpack = decompress;
+    var keep = false;
+    final files = <String>[];
+    for (final arg in ctx.args) {
+      if (arg == '-d' || arg == '--decompress' || arg == '--uncompress') {
+        unpack = true;
+      } else if (arg == '-k' || arg == '--keep') {
+        keep = true;
+      } else if (RegExp(r'^-[1-9]$').hasMatch(arg)) {
+        // Compression level; irrelevant for the in-memory subset.
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error('gzip: unsupported option $arg\n', exitCode: 1);
+      } else {
+        files.add(arg);
+      }
+    }
+    final name = unpack ? 'gunzip' : 'gzip';
+    if (files.isEmpty) {
+      return _error('$name: missing operand\n', exitCode: 1);
+    }
+    for (final arg in files) {
+      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final read = await _fs.readBinaryFile(resolved);
+      if (read.isErr) {
+        return _error('$name: $arg: No such file or directory\n', exitCode: 1);
+      }
+      if (!unpack) {
+        final encoded = GZipEncoder().encode(read.valueOrNull!);
+        await _fs.writeBinaryFile('$resolved.gz', Uint8List.fromList(encoded));
+        if (!keep) await _fs.remove(resolved);
+        continue;
+      }
+      if (!resolved.endsWith('.gz')) {
+        return _error('gzip: $arg: unknown suffix -- ignored\n', exitCode: 1);
+      }
+      final List<int> decoded;
+      try {
+        decoded = GZipDecoder().decodeBytes(read.valueOrNull!);
+      } on Object {
+        return _error('gzip: $arg: not in gzip format\n', exitCode: 1);
+      }
+      final dest = resolved.substring(0, resolved.length - 3);
+      await _fs.writeBinaryFile(dest, Uint8List.fromList(decoded));
+      if (!keep) await _fs.remove(resolved);
+    }
+    return _ok;
+  }
+
+  Future<_StageResult> _zip(_Context ctx) async {
+    var recursive = false;
+    final positionals = <String>[];
+    for (final arg in ctx.args) {
+      if (arg.startsWith('-') && arg != '-') {
+        if (arg.contains('r') || arg.contains('R')) recursive = true;
+        // Other flags (quiet, compression level, ...) are accepted and
+        // ignored by this subset.
+      } else {
+        positionals.add(arg);
+      }
+    }
+    if (positionals.length < 2) {
+      return _error(
+        'zip error: Nothing to do! (usage: zip [-r] archive.zip file...)\n',
+        exitCode: 1,
+      );
+    }
+    final archivePath = _resolveSandboxPath(positionals.first, ctx.cwd);
+    final archive = Archive();
+    for (final member in positionals.sublist(1)) {
+      final resolved = _resolveSandboxPath(member, ctx.cwd);
+      final info = await _fs.fileInfo(resolved);
+      if (info.isErr) {
+        return _error(
+          'zip error: Nothing to do! ($member: No such file or directory)\n',
+          exitCode: 1,
+        );
+      }
+      final fileInfo = info.valueOrNull!;
+      if (fileInfo.kind == FileKind.directory && !recursive) {
+        return _error(
+          'zip error: Nothing to do! ($member is a directory; use -r)\n',
+          exitCode: 1,
+        );
+      }
+      await _tarAdd(archive, resolved, fileInfo);
+    }
+    final bytes = ZipEncoder().encode(archive);
+    await _fs.writeBinaryFile(archivePath, Uint8List.fromList(bytes));
+    return _ok;
+  }
+
+  Future<_StageResult> _unzip(_Context ctx) async {
+    String? destDir;
+    final archives = <String>[];
+    for (var i = 0; i < ctx.args.length; i++) {
+      final arg = ctx.args[i];
+      if (arg == '-d' && i + 1 < ctx.args.length) {
+        destDir = ctx.args[++i];
+      } else if (arg == '-q' || arg == '-o') {
+        // Quiet/overwrite are the defaults in this subset.
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error('unzip: unsupported option $arg\n', exitCode: 1);
+      } else {
+        archives.add(arg);
+      }
+    }
+    if (archives.isEmpty) {
+      return _error('unzip: missing archive operand\n', exitCode: 1);
+    }
+    for (final arg in archives) {
+      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final read = await _fs.readBinaryFile(resolved);
+      if (read.isErr) {
+        return _error(
+          'unzip: cannot find or open $arg, $arg.zip or $arg.ZIP\n',
+          exitCode: 1,
+        );
+      }
+      final Archive archive;
+      try {
+        archive = ZipDecoder().decodeBytes(read.valueOrNull!);
+      } on Object {
+        return _error('unzip: $arg: not in zip format\n', exitCode: 1);
+      }
+      final root = destDir != null
+          ? _resolveSandboxPath(destDir, ctx.cwd)
+          : _resolveSandboxPath('.', ctx.cwd);
+      for (final file in archive.files) {
+        final name = file.name.startsWith('/')
+            ? file.name.substring(1)
+            : file.name;
+        if (!file.isFile || name.endsWith('/')) {
+          await _fs.createDir('$root/$name');
+          continue;
+        }
+        await _fs.writeBinaryFile('$root/$name', file.content);
+      }
+    }
+    return _ok;
   }
 
   Future<_StageResult> _runPython(_Context ctx) async {
@@ -1464,4 +2407,279 @@ final class _StageResult {
   final List<int> stdout;
   final List<int> stderr;
   final int exitCode;
+}
+
+/// One awk record: the current line, its fields, and its 1-based number.
+final class _AwkRecord {
+  const _AwkRecord({
+    required this.line,
+    required this.fields,
+    required this.nr,
+  });
+
+  final String line;
+  final List<String> fields;
+  final int nr;
+}
+
+/// The sed commands this subset supports.
+enum _SedKind { substitute, print }
+
+/// A parsed sed command: an optional address range plus `s/pat/repl/[g]` or
+/// `p`. Addresses are 1-based line numbers, `$` (last line), or `/regex/`.
+final class _SedCommand {
+  const _SedCommand._({
+    required this.kind,
+    this.startLine,
+    this.endLine,
+    this.startLast = false,
+    this.endLast = false,
+    this.startRegex,
+    this.endRegex,
+    this.pattern,
+    this.replacement,
+    this.global = false,
+  });
+
+  final _SedKind kind;
+  final int? startLine;
+  final int? endLine;
+  final bool startLast;
+  final bool endLast;
+  final RegExp? startRegex;
+  final RegExp? endRegex;
+  final RegExp? pattern;
+  final String? replacement;
+  final bool global;
+
+  /// Parses `[addr[,addr]]cmd`; returns `null` for unsupported scripts.
+  static _SedCommand? tryParse(String script) {
+    var i = 0;
+
+    ({int? line, bool last, RegExp? regex})? readAddress() {
+      if (i >= script.length) return null;
+      final ch = script[i];
+      if (ch == r'$') {
+        i++;
+        return (line: null, last: true, regex: null);
+      }
+      if (ch == '/') {
+        final end = script.indexOf('/', i + 1);
+        if (end < 0) return null;
+        final RegExp regex;
+        try {
+          regex = RegExp(script.substring(i + 1, end));
+        } on Object {
+          return null;
+        }
+        i = end + 1;
+        return (line: null, last: false, regex: regex);
+      }
+      if (ch.codeUnitAt(0) >= 48 && ch.codeUnitAt(0) <= 57) {
+        var end = i;
+        while (end < script.length &&
+            script[end].codeUnitAt(0) >= 48 &&
+            script[end].codeUnitAt(0) <= 57) {
+          end++;
+        }
+        final line = int.parse(script.substring(i, end));
+        i = end;
+        return (line: line, last: false, regex: null);
+      }
+      return null;
+    }
+
+    final start = readAddress();
+    ({int? line, bool last, RegExp? regex})? end;
+    if (i < script.length && script[i] == ',') {
+      i++;
+      end = readAddress();
+      if (end == null) return null;
+    }
+    if (i >= script.length) return null;
+
+    final command = script[i];
+    if (command == 'p') {
+      if (i + 1 != script.length) return null;
+      return _SedCommand._(
+        kind: _SedKind.print,
+        startLine: start?.line,
+        endLine: end?.line,
+        startLast: start?.last ?? false,
+        endLast: end?.last ?? false,
+        startRegex: start?.regex,
+        endRegex: end?.regex,
+      );
+    }
+    if (command != 's') return null;
+    if (i + 1 >= script.length) return null;
+    final delimiter = script[i + 1];
+    String? scan(int from) {
+      final buffer = StringBuffer();
+      var j = from;
+      while (j < script.length) {
+        if (script[j] == '\\' && j + 1 < script.length) {
+          buffer
+            ..write(script[j])
+            ..write(script[j + 1]);
+          j += 2;
+          continue;
+        }
+        if (script[j] == delimiter) return buffer.toString();
+        buffer.write(script[j]);
+        j++;
+      }
+      return null;
+    }
+
+    final patternStart = i + 2;
+    final patternSource = scan(patternStart);
+    if (patternSource == null) return null;
+    // Advance past the pattern and its closing delimiter.
+    var j = patternStart;
+    while (j < script.length) {
+      if (script[j] == '\\' && j + 1 < script.length) {
+        j += 2;
+        continue;
+      }
+      if (script[j] == delimiter) break;
+      j++;
+    }
+    if (j >= script.length) return null;
+    final replacement = scan(j + 1);
+    if (replacement == null) return null;
+    j++;
+    while (j < script.length) {
+      if (script[j] == '\\' && j + 1 < script.length) {
+        j += 2;
+        continue;
+      }
+      if (script[j] == delimiter) break;
+      j++;
+    }
+    if (j >= script.length) return null;
+    final flags = script.substring(j + 1);
+    if (flags.isNotEmpty && flags != 'g') return null;
+
+    final RegExp regex;
+    try {
+      regex = RegExp(patternSource);
+    } on Object {
+      return null;
+    }
+    return _SedCommand._(
+      kind: _SedKind.substitute,
+      startLine: start?.line,
+      endLine: end?.line,
+      startLast: start?.last ?? false,
+      endLast: end?.last ?? false,
+      startRegex: start?.regex,
+      endRegex: end?.regex,
+      pattern: regex,
+      replacement: replacement,
+      global: flags == 'g',
+    );
+  }
+
+  bool _addressMatches(
+    int? line,
+    bool last,
+    RegExp? regex,
+    int lineNo,
+    bool isLast,
+    String text,
+  ) {
+    if (last) return isLast;
+    if (regex != null) return regex.hasMatch(text);
+    if (line != null) return lineNo == line;
+    return true;
+  }
+
+  /// Whether this command applies to [lineNo]; [ranges] tracks open address
+  /// ranges across lines.
+  bool select(
+    int lineNo,
+    bool isLast,
+    String text,
+    Map<_SedCommand, bool> ranges,
+  ) {
+    final hasStart = startLine != null || startLast || startRegex != null;
+    final hasEnd = endLine != null || endLast || endRegex != null;
+    if (!hasStart) return true;
+    if (!hasEnd) {
+      return _addressMatches(
+        startLine,
+        startLast,
+        startRegex,
+        lineNo,
+        isLast,
+        text,
+      );
+    }
+    var active = ranges[this] ?? false;
+    if (!active &&
+        _addressMatches(
+          startLine,
+          startLast,
+          startRegex,
+          lineNo,
+          isLast,
+          text,
+        )) {
+      active = true;
+      ranges[this] = true;
+      // A same-line end (e.g. `2,2`) closes the range immediately.
+      if (_addressMatches(endLine, endLast, endRegex, lineNo, isLast, text)) {
+        ranges[this] = false;
+      }
+      return true;
+    }
+    if (active) {
+      if (_addressMatches(endLine, endLast, endRegex, lineNo, isLast, text)) {
+        ranges[this] = false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /// Applies the substitution to [line]; `&` and `\N` in the replacement
+  /// reference the whole match and capture groups like POSIX sed.
+  String applySubstitute(String line) {
+    final regex = pattern!;
+    final replacement = this.replacement!;
+
+    String expand(Match match) {
+      final buffer = StringBuffer();
+      for (var i = 0; i < replacement.length; i++) {
+        final ch = replacement[i];
+        if (ch == '&') {
+          buffer.write(match[0]);
+          continue;
+        }
+        if (ch == '\\' && i + 1 < replacement.length) {
+          final next = replacement[i + 1];
+          final code = next.codeUnitAt(0);
+          if (code >= 49 && code <= 57) {
+            buffer.write(match[int.parse(next)] ?? '');
+          } else if (next == 'n') {
+            buffer.write('\n');
+          } else if (next == 't') {
+            buffer.write('\t');
+          } else {
+            buffer.write(next);
+          }
+          i++;
+          continue;
+        }
+        buffer.write(ch);
+      }
+      return buffer.toString();
+    }
+
+    if (global) return line.replaceAllMapped(regex, expand);
+    final match = regex.firstMatch(line);
+    if (match == null) return line;
+    return line.replaceRange(match.start, match.end, expand(match));
+  }
 }

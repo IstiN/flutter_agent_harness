@@ -13,8 +13,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
-import 'package:yaml/yaml.dart' as yaml;
 
+import 'sandbox_builtins.dart';
 import 'shell_parser.dart';
 import 'wasm_shell_git.dart';
 
@@ -1259,338 +1259,71 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
+  /// Wires the shared [SandboxBuiltins] to the sandbox host filesystem,
+  /// resolving paths against [cwd].
+  SandboxBuiltins _sandboxBuiltins(String cwd) {
+    return SandboxBuiltins(
+      httpClient: _httpClient,
+      readTextFile: (path) async {
+        final file = _hostFile(_resolveSandboxPath(path, cwd));
+        if (!await file.exists()) return null;
+        return file.readAsString();
+      },
+      writeBinaryFile: (path, bytes) async {
+        final file = _hostFile(_resolveSandboxPath(path, cwd));
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(bytes);
+      },
+    );
+  }
+
+  Ok<StageResult, ExecutionError> _builtinOk(SandboxBuiltinResult result) {
+    return Ok(
+      StageResult(
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      ),
+    );
+  }
+
   Future<Result<StageResult, ExecutionError>> _curlBuiltin(
     Stage stage,
     ShellExecOptions? options,
   ) async {
-    if (stage.args.contains('--version') || stage.args.contains('-V')) {
-      return Ok(
-        StageResult(
-          stdout: utf8.encode(
-            'curl 8.5.0 (fah-sandbox) Dart/${io.Platform.version.split(' ').first}\n'
-            'Release-Date: 2026-01-01\n'
-            'Protocols: http https\n'
-            'Features: builtin\n',
-          ),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    }
-    if (stage.args.contains('--help') || stage.args.contains('-h')) {
-      return Ok(
-        StageResult(
-          stdout: utf8.encode(
-            'Usage: curl [options...] <url>\n'
-            ' -X, --request <method>   HTTP method\n'
-            ' -H, --header <header>    Pass custom header\n'
-            ' -d, --data <data>        HTTP POST data\n'
-            ' -o, --output <file>      Write to file instead of stdout\n'
-            ' -s, --silent             Silent mode\n'
-            ' -L, --location           Follow redirects\n'
-            ' -V, --version            Show version\n',
-          ),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    }
-    final parsed = _parseCurlArgs(stage.args);
-    if (parsed.url == null) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('curl: no URL specified\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-
-    Uri uri;
-    try {
-      uri = Uri.parse(parsed.url!);
-    } on FormatException {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('curl: invalid URL\n'),
-          exitCode: 3,
-        ),
-      );
-    }
-
-    final request = http.Request(parsed.method, uri);
-    request.headers.addAll(parsed.headers);
-    if (parsed.body != null) request.body = parsed.body!;
-    request.followRedirects = parsed.followRedirects;
-
-    final timeout = options?.timeout ?? const Duration(seconds: 30);
-    final streamedResponse = await _httpClient.send(request).timeout(timeout);
-    final response = await http.Response.fromStream(streamedResponse);
-
-    final statusLine =
-        'HTTP ${response.statusCode} '
-        '${response.reasonPhrase ?? ""}\n';
-    final stderr = parsed.silent ? const <int>[] : utf8.encode(statusLine);
-
-    if (parsed.outputFile != null) {
-      final file = _hostFile(
-        _resolveSandboxPath(parsed.outputFile!, options?.cwd ?? _currentDir),
-      );
-      await file.parent.create(recursive: true);
-      await file.writeAsBytes(response.bodyBytes);
-      return Ok(StageResult(stdout: const [], stderr: stderr, exitCode: 0));
-    }
-
-    return Ok(
-      StageResult(stdout: response.bodyBytes, stderr: stderr, exitCode: 0),
-    );
-  }
-
-  ({
-    String? url,
-    String method,
-    Map<String, String> headers,
-    String? body,
-    String? outputFile,
-    bool silent,
-    bool followRedirects,
-  })
-  _parseCurlArgs(List<String> args) {
-    var method = 'GET';
-    final headers = <String, String>{};
-    String? body;
-    String? outputFile;
-    var silent = false;
-    var followRedirects = false;
-    String? url;
-
-    for (var i = 0; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '-X' || arg == '--request') {
-        if (i + 1 < args.length) method = args[++i];
-      } else if (arg == '-H' || arg == '--header') {
-        if (i + 1 < args.length) {
-          final header = args[++i];
-          final idx = header.indexOf(':');
-          if (idx > 0) {
-            headers[header.substring(0, idx).trim()] = header
-                .substring(idx + 1)
-                .trim();
-          }
-        }
-      } else if (arg == '-d' || arg == '--data' || arg == '--data-raw') {
-        if (i + 1 < args.length) body = args[++i];
-      } else if (arg == '-o' || arg == '--output') {
-        if (i + 1 < args.length) outputFile = args[++i];
-      } else if (arg == '-s' || arg == '--silent') {
-        silent = true;
-      } else if (arg == '-L' || arg == '--location') {
-        followRedirects = true;
-      } else if (arg == '--url') {
-        if (i + 1 < args.length) url = args[++i];
-      } else if (!arg.startsWith('-')) {
-        url = arg;
-      }
-    }
-
-    return (
-      url: url,
-      method: method,
-      headers: headers,
-      body: body,
-      outputFile: outputFile,
-      silent: silent,
-      followRedirects: followRedirects,
-    );
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+    ).curl(stage.args, timeout: options?.timeout);
+    return _builtinOk(result);
   }
 
   Future<Result<StageResult, ExecutionError>> _jqBuiltin(
     Stage stage,
     String? inputSource,
   ) async {
-    if (stage.args.isEmpty) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('jq: missing filter\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-    final filter = stage.args.first;
-    final inputFile = stage.args.length > 1 ? stage.args[1] : inputSource;
-
-    if (inputFile == null) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('jq: missing input\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-
-    final file = _hostFile(_resolveSandboxPath(inputFile, _currentDir));
-    if (!await file.exists()) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('jq: $inputFile: No such file or directory\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-
-    final content = await file.readAsString();
-    dynamic json;
-    try {
-      json = jsonDecode(content);
-    } on FormatException catch (e) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('jq: parse error: $e\n'),
-          exitCode: 5,
-        ),
-      );
-    }
-
-    final results = _applyJqFilter(json, filter);
-    const encoder = JsonEncoder.withIndent('  ');
-    final output = results.map((r) => encoder.convert(r)).join('\n');
-    return Ok(
-      StageResult(
-        stdout: utf8.encode(output.isNotEmpty ? '$output\n' : ''),
-        stderr: const [],
-        exitCode: 0,
-      ),
-    );
+    final result = await _sandboxBuiltins(
+      _currentDir,
+    ).jq(stage.args, stdin: await _stdinFromSource(stage, inputSource));
+    return _builtinOk(result);
   }
 
   Future<Result<StageResult, ExecutionError>> _yqBuiltin(
     Stage stage,
     String? inputSource,
   ) async {
-    if (stage.args.isEmpty) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('yq: missing filter\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-    final filter = stage.args.first;
-    final inputFile = stage.args.length > 1 ? stage.args[1] : inputSource;
-
-    if (inputFile == null) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('yq: missing input\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-
-    final file = _hostFile(_resolveSandboxPath(inputFile, _currentDir));
-    if (!await file.exists()) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('yq: $inputFile: No such file or directory\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-
-    final content = await file.readAsString();
-    dynamic yamlDoc;
-    try {
-      yamlDoc = yaml.loadYaml(content);
-    } on yaml.YamlException catch (e) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('yq: parse error: $e\n'),
-          exitCode: 5,
-        ),
-      );
-    }
-
-    final json = _yamlToJson(yamlDoc);
-    final results = _applyJqFilter(json, filter);
-    const encoder = JsonEncoder.withIndent('  ');
-    final output = results.map((r) => encoder.convert(r)).join('\n');
-    return Ok(
-      StageResult(
-        stdout: utf8.encode(output.isNotEmpty ? '$output\n' : ''),
-        stderr: const [],
-        exitCode: 0,
-      ),
-    );
+    final result = await _sandboxBuiltins(
+      _currentDir,
+    ).yq(stage.args, stdin: await _stdinFromSource(stage, inputSource));
+    return _builtinOk(result);
   }
 
-  dynamic _yamlToJson(dynamic value) {
-    if (value is yaml.YamlMap) {
-      return {
-        for (final entry in value.entries)
-          entry.key.toString(): _yamlToJson(entry.value),
-      };
-    }
-    if (value is yaml.YamlList) {
-      return value.map(_yamlToJson).toList();
-    }
-    return value;
-  }
-
-  List<dynamic> _applyJqFilter(dynamic input, String filter) {
-    if (filter == '.') return [input];
-    if (filter == 'length') {
-      if (input is List || input is String || input is Map) {
-        return [(input as dynamic).length as Object];
-      }
-      return const [];
-    }
-    if (filter == 'keys') {
-      if (input is Map) return [input.keys.toList()];
-      return const [];
-    }
-
-    final parts = filter.split('.').where((s) => s.isNotEmpty).toList();
-    if (parts.isEmpty) return [input];
-
-    dynamic current = input;
-    for (var i = 0; i < parts.length; i++) {
-      final part = parts[i];
-      final isLast = i == parts.length - 1;
-      if (part == '[]') {
-        if (current is List) {
-          final rest = parts.sublist(i + 1).join('.');
-          return current
-              .expand((e) => _applyJqFilter(e, rest.isEmpty ? '.' : '.$rest'))
-              .toList();
-        }
-        return const [];
-      }
-      if (isLast && part == 'length') {
-        if (current is List || current is String || current is Map) {
-          return [(current as dynamic).length as Object];
-        }
-        return const [];
-      }
-      if (isLast && part == 'keys') {
-        if (current is Map) return [current.keys.toList()];
-        return const [];
-      }
-      if (current is Map) {
-        current = current[part];
-      } else {
-        return const [];
-      }
-    }
-    return [current];
+  /// Reads the piped/redirected input for jq/yq when no file argument is
+  /// given; [inputSource] is an absolute sandbox path (pipe temp file).
+  Future<String?> _stdinFromSource(Stage stage, String? inputSource) async {
+    if (stage.args.length > 1 || inputSource == null) return null;
+    final file = _hostFile(_resolveSandboxPath(inputSource, _currentDir));
+    if (!await file.exists()) return null;
+    return file.readAsString();
   }
 
   Future<Result<StageResult, ExecutionError>> _whoamiBuiltin() async {
@@ -1781,34 +1514,10 @@ final class WasiSandboxShell implements Shell {
     Stage stage,
     ShellExecOptions? options,
   ) async {
-    if (stage.args.contains('--version') || stage.args.contains('-V')) {
-      return Ok(
-        StageResult(
-          stdout: utf8.encode('GNU Wget 1.21.4 (fah-sandbox builtin)\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    }
-    // wget is a thin alias over the curl builtin: `wget [-q] [-O file] URL`.
-    final curlArgs = <String>[];
-    for (var i = 0; i < stage.args.length; i++) {
-      final arg = stage.args[i];
-      if (arg == '-O' || arg == '--output-document') {
-        if (i + 1 < stage.args.length) {
-          curlArgs.addAll(['-o', stage.args[++i]]);
-        }
-      } else if (arg.startsWith('--output-document=')) {
-        curlArgs.addAll(['-o', arg.substring('--output-document='.length)]);
-      } else if (arg == '-q' || arg == '--quiet') {
-        curlArgs.add('-s');
-      } else if (arg == '--no-check-certificate') {
-        // Ignored: TLS verification is not configurable in the curl builtin.
-      } else {
-        curlArgs.add(arg);
-      }
-    }
-    return _curlBuiltin(Stage(command: 'curl', args: curlArgs), options);
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+    ).wget(stage.args, timeout: options?.timeout);
+    return _builtinOk(result);
   }
 
   Future<Result<StageResult, ExecutionError>> _duBuiltin(

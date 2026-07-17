@@ -106,3 +106,14 @@ shell works on iOS, Android, and web without spawning host processes.
   Loaded from jsdelivr on first `qjs`/`js` invocation in the browser.
 - pyodide 0.26.4 (MPL-2.0) — https://pyodide.org
   Loaded from jsdelivr on first `python`/`python3` invocation in the browser.
+- sql.js 1.14.1 (MIT) — https://github.com/sql-js/sql.js
+  SQLite compiled to WebAssembly. Loaded from jsdelivr (`sql-wasm.js` +
+  `sql-wasm.wasm`) on first `sqlite3` invocation in the browser; the
+  database is exported back into the sandbox filesystem after each run.
+
+## Pure-Dart packages (web sandbox shell)
+
+- package:archive (MIT) — https://pub.dev/packages/archive
+  Backs the `tar`/`gzip`/`gunzip`/`zip`/`unzip` commands of the pure-Dart
+  web shell (`MemoryShell`). Fetched by pub as a normal dependency; nothing
+  is bundled as an asset.
