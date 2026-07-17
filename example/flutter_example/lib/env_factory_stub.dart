@@ -10,7 +10,7 @@ import 'memory_shell.dart';
 /// import `dart:ffi`, which cannot compile for the browser), so the agent
 /// shell is the pure-Dart [MemoryShell] over an in-memory filesystem.
 Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
-  final shell = MemoryShell();
+  final shell = MemoryShell(httpClient: httpClient);
   final env = MemoryExecutionEnv(cwd: '/', shell: shell);
   shell.attach(env);
   return env;

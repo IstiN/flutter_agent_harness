@@ -2,8 +2,20 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:typed_data';
+
 /// Result of running a snippet in a browser-hosted interpreter.
 typedef InterpreterResult = ({bool available, String stdout, String stderr});
+
+/// Result of running SQL statements in the browser-hosted sql.js engine.
+/// [dbBytes] carries the exported database back to the caller so it can be
+/// persisted (sql.js keeps the database in memory only).
+typedef SqliteRunResult = ({
+  bool available,
+  String stdout,
+  String stderr,
+  Uint8List? dbBytes,
+});
 
 /// Browser-hosted Python (pyodide) and JavaScript (quickjs-emscripten)
 /// interpreters, used by [MemoryShell] on the web where no WASI runtime is
@@ -22,9 +34,23 @@ class WebInterpreters {
     return Future.value((available: false, stdout: '', stderr: ''));
   }
 
+  /// Runs [sql] against [dbBytes] via sql.js. Returns `available: false` on
+  /// non-web platforms.
+  static Future<SqliteRunResult> runSqlite(String sql, Uint8List? dbBytes) {
+    return Future.value((
+      available: false,
+      stdout: '',
+      stderr: '',
+      dbBytes: null,
+    ));
+  }
+
   /// QuickJS version string, or null when unavailable.
   static Future<String?> qjsVersion() => Future.value(null);
 
   /// Python version string, or null when unavailable.
   static Future<String?> pythonVersion() => Future.value(null);
+
+  /// SQLite version string, or null when unavailable.
+  static Future<String?> sqliteVersion() => Future.value(null);
 }
