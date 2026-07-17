@@ -17,6 +17,7 @@ import 'package:dart_git/utils/file_mode.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:path/path.dart' as p;
 
+import 'git_smart_http.dart';
 import 'shell_parser.dart';
 import 'wasm_shell.dart';
 
@@ -147,10 +148,42 @@ final class GitSandboxCommands {
     }
     final hostDest = _resolveGitPath(dest, hostCwd);
 
+    // Preferred path: a real smart-HTTP clone (works with any public git
+    // remote, not just GitHub).
+    if (repoUrl.startsWith('http://') || repoUrl.startsWith('https://')) {
+      try {
+        await GitSmartHttp(
+          client: _shell.shellHttpClient,
+        ).cloneInto(url: repoUrl, hostDir: hostDest);
+        return Ok(
+          StageResult(
+            stdout: utf8.encode('Cloned into \'$dest\'\n'),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      } catch (e) {
+        // Fall back to the GitHub tarball API when the remote does not speak
+        // the smart HTTP protocol (or is unreachable via this path).
+        if (_parseGitHubRepo(repoUrl) == null) {
+          return _gitError('fatal: unable to clone: $e');
+        }
+      }
+    }
+
+    return _gitCloneGitHubTarball(repoUrl, dest, hostDest);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _gitCloneGitHubTarball(
+    String repoUrl,
+    String dest,
+    String hostDest,
+  ) async {
     final githubRepo = _parseGitHubRepo(repoUrl);
     if (githubRepo == null) {
       return _gitError(
-        'git clone: only public GitHub HTTPS URLs are supported in this subset',
+        'git clone: unsupported repository URL '
+        '(smart HTTP failed and this is not a GitHub URL)',
       );
     }
     final (:owner, :repo) = githubRepo;

@@ -130,7 +130,7 @@ void main() {
     );
   });
 
-  testWidgets('git clone rejects non-GitHub URLs in the subset', (
+  testWidgets('git clone fails cleanly for a non-git HTTP endpoint', (
     tester,
   ) async {
     final env = await createPlatformEnv();
@@ -138,22 +138,23 @@ void main() {
       'git clone https://example.com/repo.git /unsupported_clone',
     );
     expect(result.valueOrNull?.exitCode, isNot(0));
-    expect(
-      result.valueOrNull?.stderr,
-      contains('only public GitHub HTTPS URLs are supported'),
-    );
+    expect(result.valueOrNull?.stderr, contains('unable to clone'));
   });
 
-  testWidgets('git clone downloads a public GitHub repo archive', (
-    tester,
-  ) async {
+  testWidgets('git clone over smart HTTP imports full history', (tester) async {
     final env = await createPlatformEnv();
+    // The simulator sandbox persists between runs: start from a clean slate.
+    final rmResult = await env.exec('rm -rf /github_clone');
+    debugPrint(
+      'RM exit=${rmResult.valueOrNull?.exitCode} '
+      'stderr=${rmResult.valueOrNull?.stderr}',
+    );
+    final lsResult0 = await env.exec('ls -a /github_clone 2>&1 || true');
+    debugPrint('LS BEFORE CLONE: ${lsResult0.valueOrNull?.stdout}');
     final result = await env.exec(
       'git clone https://github.com/IstiN/flutter_agent_harness.git /github_clone',
     );
     expect(result.valueOrNull?.exitCode, 0, reason: result.valueOrNull?.stderr);
-    debugPrint('CLONE stdout: ${result.valueOrNull?.stdout}');
-    debugPrint('CLONE stderr: ${result.valueOrNull?.stderr}');
     expect(
       result.valueOrNull?.stdout,
       contains('Cloned into'),
@@ -170,5 +171,31 @@ void main() {
 
     final gitDirResult = await env.exec('ls /github_clone/.git');
     expect(gitDirResult.valueOrNull?.exitCode, 0);
+
+    // A real smart-HTTP clone imports the commit history (the tarball
+    // fallback initializes an empty repo where `git log` fails).
+    final logResult = await env.exec('git -C /github_clone log');
+    expect(
+      logResult.valueOrNull?.exitCode,
+      0,
+      reason:
+          'smart-HTTP clone must have commit history: '
+          '${logResult.valueOrNull?.stderr}',
+    );
+    expect(logResult.valueOrNull?.stdout, isNotEmpty);
+
+    final showResult = await env.exec(
+      'git -C /github_clone show HEAD:README.md',
+    );
+    expect(showResult.valueOrNull?.exitCode, 0);
+    expect(showResult.valueOrNull?.stdout, contains('flutter_agent'));
+
+    final statusResult = await env.exec('git -C /github_clone status');
+    expect(statusResult.valueOrNull?.exitCode, 0);
+    expect(
+      statusResult.valueOrNull?.stdout,
+      contains('working tree clean'),
+      reason: 'fresh clone should have a clean working tree',
+    );
   });
 }

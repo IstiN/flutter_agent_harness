@@ -44,6 +44,10 @@ dependencies:
   wasm_run_flutter: ^0.1.0
   wasm_run: ^0.1.0+2
 
+  # Pure-Dart inflate with exact stream-end tracking, used by git_smart_http
+  # to parse packfiles (dart:io zlib cannot report the consumed length).
+  archive: ^4.0.9
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
