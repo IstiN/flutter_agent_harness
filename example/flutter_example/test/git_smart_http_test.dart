@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dart_git/dart_git.dart';
@@ -122,6 +123,139 @@ void main() {
         ),
         throwsA(anything),
       );
+    });
+
+    test('pushes a commit over git-receive-pack with token auth', () async {
+      final advertisement = File(
+        'test/fixtures/upload_pack_advertisement.bin',
+      ).readAsBytesSync();
+      final packResponse = File(
+        'test/fixtures/upload_pack_response.bin',
+      ).readAsBytesSync();
+      // The fixture's HEAD commit hash (from the advertisement).
+      const fixtureHead = 'b3c1526fe274e47d3270da3412314fa25b86c779';
+
+      String? capturedAuth;
+      String? capturedCommand;
+      var capturedPackValid = false;
+
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      unawaited(
+        server.forEach((request) async {
+          final path = request.uri.path;
+          if (path.endsWith('/info/refs')) {
+            final service = request.uri.queryParameters['service'];
+            request.response.headers.contentType = ContentType(
+              'application',
+              'x-$service-advertisement',
+            );
+            if (service == 'git-receive-pack') {
+              capturedAuth = request.headers.value('authorization');
+              // Advertise the fixture's current main.
+              final line = '$fixtureHead refs/heads/main';
+              final caps = 'report-status side-band-64k agent=mock';
+              final pkt =
+                  '${(line.length + 5 + caps.length + 4).toRadixString(16).padLeft(4, '0')}'
+                  '$line\x00$caps\n';
+              request.response
+                ..write(pkt)
+                ..write('0000');
+            } else {
+              request.response.add(advertisement);
+            }
+          } else if (path.endsWith('/git-upload-pack')) {
+            request.response
+              ..headers.contentType = ContentType(
+                'application',
+                'x-git-upload-pack-result',
+              )
+              ..add(packResponse);
+          } else if (path.endsWith('/git-receive-pack')) {
+            final body = await request.fold<List<int>>(
+              <int>[],
+              (acc, chunk) => acc..addAll(chunk),
+            );
+            // First pkt-line: "<old> <new> refs/heads/main\0capabilities".
+            final hexLen = String.fromCharCodes(body.sublist(0, 4));
+            final len = int.parse(hexLen, radix: 16);
+            capturedCommand = utf8.decode(body.sublist(4, len));
+            // The pack starts right after the flush pkt.
+            final flushIdx = len;
+            expect(
+              String.fromCharCodes(body.sublist(flushIdx, flushIdx + 4)),
+              '0000',
+              reason: 'a flush pkt must separate commands from the pack',
+            );
+            final pack = body.sublist(flushIdx + 4);
+            capturedPackValid =
+                pack.length > 32 &&
+                String.fromCharCodes(pack.sublist(0, 4)) == 'PACK';
+            // report-status in side-band-64k framing.
+            const unpack = 'unpack ok\n';
+            const ok = 'ok refs/heads/main\n';
+            request.response
+              ..headers.contentType = ContentType(
+                'application',
+                'x-git-receive-pack-result',
+              )
+              ..write(
+                '${(unpack.length + 5).toRadixString(16).padLeft(4, '0')}'
+                '\x01$unpack'
+                '${(ok.length + 5).toRadixString(16).padLeft(4, '0')}'
+                '\x01$ok'
+                '0000',
+              );
+          } else {
+            request.response.statusCode = HttpStatus.notFound;
+          }
+          await request.response.close();
+        }),
+      );
+
+      // Clone the fixture, then create a new commit on top of main.
+      final tmp = Directory.systemTemp.createTempSync('fah_git_push_test');
+      addTearDown(() => tmp.delete(recursive: true));
+      await GitSmartHttp().cloneInto(
+        url: 'http://127.0.0.1:${server.port}/repo.git',
+        hostDir: tmp.path,
+      );
+
+      final repo = GitRepository.load(tmp.path);
+      File('${tmp.path}/pushed.txt').writeAsStringSync('pushed content\n');
+      repo.add('${tmp.path}/pushed.txt');
+      final author = GitAuthor(name: 'fah', email: 'fah@example.com');
+      final commit = repo.commit(
+        message: 'push test commit',
+        author: author,
+        committer: author,
+      );
+
+      final report = await GitSmartHttp().pushInto(
+        url: 'http://127.0.0.1:${server.port}/repo.git',
+        hostDir: tmp.path,
+        branch: 'main',
+        token: 'secret-token',
+      );
+
+      expect(report, contains('unpack ok'));
+      expect(report, contains('ok refs/heads/main'));
+      expect(
+        capturedAuth,
+        isNotNull,
+        reason: 'receive-pack must receive the Authorization header',
+      );
+      expect(
+        capturedAuth,
+        'Basic ${base64Encode(utf8.encode('x-access-token:secret-token'))}',
+      );
+      expect(capturedCommand, isNotNull);
+      expect(
+        capturedCommand,
+        startsWith('$fixtureHead ${commit.hash} refs/heads/main'),
+      );
+      expect(capturedPackValid, isTrue, reason: 'push must send a packfile');
+      repo.close();
     });
   });
 }

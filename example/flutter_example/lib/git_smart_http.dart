@@ -12,26 +12,189 @@ import 'package:dart_git/plumbing/git_hash.dart';
 import 'package:dart_git/plumbing/objects/object.dart';
 import 'package:dart_git/plumbing/pack_file_delta.dart';
 import 'package:dart_git/plumbing/reference.dart';
+import 'package:dart_git/utils/file_mode.dart';
+import 'package:dartssh2/dartssh2.dart';
 import 'package:http/http.dart' as http;
 
-/// A minimal smart-HTTP (protocol v0) `git-upload-pack` client.
+/// Wire transport for the git smart protocol: ref advertisements and RPC
+/// bodies (upload-pack / receive-pack).
+abstract class GitTransport {
+  /// Fetches the ref advertisement for [service].
+  Future<Uint8List> advertise(String service);
+
+  /// Runs an RPC call against [service] with [body] and returns the response.
+  Future<Uint8List> rpc(String service, Uint8List body);
+}
+
+/// Smart-HTTP transport (protocol v0 over plain HTTP(S), optional token auth).
+final class HttpGitTransport implements GitTransport {
+  /// Creates a transport for [url] using [client], optionally with [token]
+  /// for Basic auth (GitHub PAT).
+  HttpGitTransport({required this.url, required this.client, this.token});
+
+  /// Repository base URL, e.g. `https://github.com/owner/repo.git`.
+  final String url;
+
+  /// Optional token for HTTP Basic auth.
+  final String? token;
+
+  /// HTTP client used for requests.
+  final http.Client client;
+
+  static const _userAgent = 'fah/1.0';
+
+  @override
+  Future<Uint8List> advertise(String service) async {
+    final uri = Uri.parse('$url/info/refs?service=$service');
+    final response = await client.get(
+      uri,
+      headers: {
+        'Accept': 'application/x-$service-advertisement',
+        'User-Agent': _userAgent,
+        ...?_authHeaders(),
+      },
+    );
+    if (response.statusCode != 200) {
+      throw StateError('info/refs failed: HTTP ${response.statusCode}');
+    }
+    return response.bodyBytes;
+  }
+
+  @override
+  Future<Uint8List> rpc(String service, Uint8List body) async {
+    final response = await client.post(
+      Uri.parse('$url/$service'),
+      headers: {
+        'Content-Type': 'application/x-$service-request',
+        'Accept': 'application/x-$service-result',
+        'User-Agent': _userAgent,
+        ...?_authHeaders(),
+      },
+      body: body,
+    );
+    if (response.statusCode != 200) {
+      throw StateError('$service failed: HTTP ${response.statusCode}');
+    }
+    return response.bodyBytes;
+  }
+
+  /// Builds auth headers for GitHub-style token auth. The token may come
+  /// from [token] or from the URL userinfo (`https://user:token@host/...`).
+  Map<String, String>? _authHeaders() {
+    var effective = token;
+    if (effective == null) {
+      final uri = Uri.parse(url);
+      if (uri.userInfo.isNotEmpty) {
+        effective = uri.userInfo.split(':').last;
+      }
+    }
+    if (effective == null || effective.isEmpty) return null;
+    final basic = base64Encode(utf8.encode('x-access-token:$effective'));
+    return {'Authorization': 'Basic $basic'};
+  }
+}
+
+/// SSH transport (`git@host:owner/repo.git`) via package:dartssh2 — no system
+/// ssh binary needed, works on iOS/Android.
+final class SshGitTransport implements GitTransport {
+  /// Creates a transport for the repository at [repoPath] on [host].
+  SshGitTransport({
+    required this.host,
+    required this.username,
+    required this.repoPath,
+    required this.privateKeyPem,
+    this.port = 22,
+  });
+
+  /// SSH host, e.g. `github.com`.
+  final String host;
+
+  /// SSH username, e.g. `git`.
+  final String username;
+
+  /// Repository path on the host, e.g. `/owner/repo.git`.
+  final String repoPath;
+
+  /// PEM-encoded private key (OpenSSH format).
+  final String privateKeyPem;
+
+  /// SSH port (defaults to 22).
+  final int port;
+
+  @override
+  Future<Uint8List> advertise(String service) => _exec(service, null);
+
+  @override
+  Future<Uint8List> rpc(String service, Uint8List body) => _exec(service, body);
+
+  Future<Uint8List> _exec(String service, Uint8List? body) async {
+    final socket = await SSHSocket.connect(host, port);
+    final client = SSHClient(
+      socket,
+      username: username,
+      identities: SSHKeyPair.fromPem(privateKeyPem),
+      // The sandbox has no known_hosts store; host key pinning is the
+      // caller's responsibility (same trade-off as GIT_SSH_COMMAND wrappers).
+      disableHostkeyVerification: true,
+    );
+    try {
+      final session = await client.execute("$service '$repoPath'");
+      if (body != null) {
+        session.stdin.add(body);
+      }
+      await session.stdin.close();
+
+      final out = BytesBuilder(copy: false);
+      final err = BytesBuilder(copy: false);
+      await Future.wait<void>([
+        session.stdout.forEach(out.add),
+        session.stderr.forEach(err.add),
+      ]);
+      final stderrText = utf8.decode(err.takeBytes(), allowMalformed: true);
+      final stdout = out.takeBytes();
+      if (stdout.isEmpty && stderrText.trim().isNotEmpty) {
+        throw StateError('ssh $service failed: ${stderrText.trim()}');
+      }
+      return stdout;
+    } finally {
+      client.close();
+    }
+  }
+}
+
+/// A minimal smart protocol v0 git client (`git-upload-pack` /
+/// `git-receive-pack`).
 ///
-/// Clones any public HTTP(S) git remote without a system git binary:
-///   1. `GET {url}/info/refs?service=git-upload-pack` (ref advertisement)
-///   2. `POST {url}/git-upload-pack` with the wanted refs
-///   3. Demuxes the side-band-64k response into a packfile
-///   4. Imports every object (incl. ofs/ref deltas) as loose objects via
+/// Clones, fetches, and pushes to any public HTTP(S) or SSH git remote
+/// without a system git binary:
+///   1. ref advertisement (pkt-line, `symref=HEAD` for the default branch)
+///   2. want/done negotiation, side-band-64k demuxing into a packfile
+///   3. imports every object (incl. ofs/ref deltas) as loose objects via
 ///      `dart_git` and checks out the default branch
+///   4. pushes by building a full-object packfile and sending receive-pack
+///      commands, verifying `report-status`
 ///
-/// Limitations: no authentication, no shallow clones, no protocol v2, no
-/// resume. Good enough for `git clone` of public repositories on mobile/web.
+/// Limitations: no shallow clones, no protocol v2, no resume, no delta
+/// compression on push. Good enough for everyday clone/fetch/push of public
+/// repositories on mobile/web.
 final class GitSmartHttp {
-  /// Creates a client using [client] for all requests.
-  GitSmartHttp({http.Client? client}) : _client = client ?? http.Client();
+  /// Creates a client. When [transport] is null a smart-HTTP transport is
+  /// used per call; pass an [SshGitTransport] for `git@host:` URLs.
+  GitSmartHttp({http.Client? client, this.transport})
+    : _client = client ?? http.Client();
 
   final http.Client _client;
 
-  static const _userAgent = 'fah/1.0 (dart_git smart-http)';
+  /// Optional transport override (e.g. [SshGitTransport]); when null a
+  /// smart-HTTP transport is created per call.
+  final GitTransport? transport;
+
+  static const _userAgent = 'fah/1.0';
+
+  GitTransport _transportFor(String url, String? token) {
+    return transport ??
+        HttpGitTransport(url: url, client: _client, token: token);
+  }
 
   /// Clones [url] into [hostDir] and checks out the default branch.
   ///
@@ -146,22 +309,216 @@ final class GitSmartHttp {
   }
 
   // ---------------------------------------------------------------------------
+  // Protocol: push (git-receive-pack)
+  // ---------------------------------------------------------------------------
+
+  /// Pushes the local [branch] of the repository at [hostDir] to [url].
+  ///
+  /// [token] is used for HTTP Basic auth (GitHub PAT). Returns the remote's
+  /// report-status text (`unpack ok ...`) or throws on rejection.
+  Future<String> pushInto({
+    required String url,
+    required String hostDir,
+    required String branch,
+    String? token,
+  }) async {
+    final repo = GitRepository.load(hostDir);
+    final localRef = repo.resolveReferenceName(ReferenceName.branch(branch));
+    if (localRef == null) {
+      throw StateError("error: src refspec $branch does not match any");
+    }
+    final localHash = localRef.hash;
+    final remoteRefName = 'refs/heads/$branch';
+
+    final advertisement = await _fetchRefs(
+      url,
+      service: 'git-receive-pack',
+      token: token,
+    );
+    final remoteHash = advertisement.refs[remoteRefName];
+    if (remoteHash == localHash.toString()) {
+      return 'Everything up-to-date';
+    }
+    if (remoteHash != null &&
+        !_isAncestor(repo, GitHash(remoteHash), localHash)) {
+      throw StateError(
+        'failed to push some refs (non-fast-forward; fetch first)',
+      );
+    }
+
+    final objects = _collectObjects(
+      repo,
+      from: localHash,
+      stopAt: remoteHash != null ? GitHash(remoteHash) : null,
+    );
+    final pack = _buildPack(objects);
+
+    final oldHash = remoteHash ?? '0000000000000000000000000000000000000000';
+    final body = BytesBuilder(copy: false)
+      ..add(
+        _pktLine(
+          utf8.encode(
+            '$oldHash $localHash $remoteRefName\x00'
+            'report-status side-band-64k agent=$_userAgent\n',
+          ),
+        ),
+      )
+      ..add(_pktFlush())
+      ..add(pack);
+
+    final response = await _transportFor(
+      url,
+      token,
+    ).rpc('git-receive-pack', body.takeBytes());
+    return _parseReportStatus(response);
+  }
+
+  /// Walks the object graph from [from] to (but excluding) [stopAt] and
+  /// returns every commit, tree, and blob that must be sent to the remote.
+  List<({int type, Uint8List data})> _collectObjects(
+    GitRepository repo, {
+    required GitHash from,
+    GitHash? stopAt,
+  }) {
+    const typeByName = {'commit': 1, 'tree': 2, 'blob': 3, 'tag': 4};
+    final seen = <String>{};
+    final result = <({int type, Uint8List data})>[];
+
+    void addObject(GitHash hash) {
+      if (!seen.add(hash.toString())) return;
+      final obj = repo.objStorage.read(hash);
+      if (obj == null) throw StateError('missing object $hash');
+      result.add((
+        type: typeByName[obj.formatStr()]!,
+        data: obj.serializeData(),
+      ));
+    }
+
+    void walkTree(GitHash treeHash) {
+      addObject(treeHash);
+      final tree = repo.objStorage.readTree(treeHash);
+      for (final entry in tree.entries) {
+        if (entry.mode == GitFileMode.Dir) {
+          walkTree(entry.hash);
+        } else {
+          addObject(entry.hash);
+        }
+      }
+    }
+
+    final queue = <GitHash>[from];
+    while (queue.isNotEmpty) {
+      final hash = queue.removeAt(0);
+      if (stopAt != null && hash == stopAt) continue;
+      if (seen.contains(hash.toString())) continue;
+      final commit = repo.objStorage.readCommit(hash);
+      addObject(hash);
+      walkTree(commit.treeHash);
+      queue.addAll(commit.parents);
+    }
+    return result;
+  }
+
+  bool _isAncestor(GitRepository repo, GitHash ancestor, GitHash child) {
+    final queue = <GitHash>[child];
+    final seen = <String>{};
+    while (queue.isNotEmpty) {
+      final hash = queue.removeAt(0);
+      if (hash == ancestor) return true;
+      if (!seen.add(hash.toString())) continue;
+      final commit = repo.objStorage.readCommit(hash);
+      queue.addAll(commit.parents);
+    }
+    return false;
+  }
+
+  /// Serializes objects into a packfile (no deltas: every object is stored
+  /// in full, zlib-deflated).
+  Uint8List _buildPack(List<({int type, Uint8List data})> objects) {
+    final out = BytesBuilder(copy: false)..add(ascii.encode('PACK'));
+    final meta = ByteData(8)
+      ..setUint32(0, 2)
+      ..setUint32(4, objects.length);
+    out.add(meta.buffer.asUint8List());
+
+    for (final obj in objects) {
+      // Type + size varint (4 bits in the first byte, then 7 per byte).
+      var size = obj.data.length;
+      final first = (obj.type << 4) | (size & 0x0f);
+      size >>= 4;
+      final headerBytes = <int>[];
+      if (size == 0) {
+        headerBytes.add(first);
+      } else {
+        headerBytes.add(first | 0x80);
+        while (size > 0x7f) {
+          headerBytes.add((size & 0x7f) | 0x80);
+          size >>= 7;
+        }
+        headerBytes.add(size);
+      }
+      out.add(headerBytes);
+      out.add(ZLibEncoder().encode(obj.data));
+    }
+
+    out.add(GitHash.compute(out.toBytes()).bytes);
+    return out.takeBytes();
+  }
+
+  /// Parses a receive-pack report-status response, tolerating both
+  /// side-band-64k framing (HTTP) and plain pkt-line text (SSH).
+  String _parseReportStatus(Uint8List bytes) {
+    final reader = _PktReader(bytes);
+    final status = StringBuffer();
+    String? error;
+    while (reader.hasNext) {
+      final payload = reader.next();
+      // Flush pkts separate the (SSH) ref advertisement from the actual
+      // report-status: skip them and keep reading.
+      if (payload == null) continue;
+      if (payload.isEmpty) continue;
+      String text;
+      final channel = payload[0];
+      if (channel >= 1 && channel <= 3) {
+        text = utf8.decode(payload.sublist(1), allowMalformed: true);
+      } else {
+        // Plain (non-side-band) report-status lines.
+        text = utf8.decode(payload, allowMalformed: true);
+      }
+      if (channel == 3) {
+        error = text.trim();
+      } else {
+        status.write(text);
+      }
+    }
+    if (error != null) {
+      throw StateError('remote error: $error');
+    }
+    final report = status.toString();
+    if (!report.contains('unpack ok')) {
+      throw StateError(
+        'push rejected: ${report.trim().isEmpty ? 'no report-status' : report.trim()}',
+      );
+    }
+    for (final line in report.split('\n')) {
+      if (line.startsWith('ng ')) {
+        throw StateError('push rejected: $line');
+      }
+    }
+    return report.trim();
+  }
+
+  // ---------------------------------------------------------------------------
   // Protocol: ref advertisement
   // ---------------------------------------------------------------------------
 
-  Future<_RefAdvertisement> _fetchRefs(String url) async {
-    final uri = Uri.parse('$url/info/refs?service=git-upload-pack');
-    final response = await _client.get(
-      uri,
-      headers: const {
-        'Accept': 'application/x-git-upload-pack-advertisement',
-        'User-Agent': _userAgent,
-      },
-    );
-    if (response.statusCode != 200) {
-      throw StateError('info/refs failed: HTTP ${response.statusCode}');
-    }
-    return _parseRefAdvertisement(response.bodyBytes);
+  Future<_RefAdvertisement> _fetchRefs(
+    String url, {
+    String service = 'git-upload-pack',
+    String? token,
+  }) async {
+    final body = await _transportFor(url, token).advertise(service);
+    return _parseRefAdvertisement(body);
   }
 
   String _pickDefaultBranch(_RefAdvertisement advertisement) {
@@ -185,7 +542,11 @@ final class GitSmartHttp {
   // Protocol: upload-pack request/response
   // ---------------------------------------------------------------------------
 
-  Future<Uint8List> _fetchPack(String url, List<String> wantHashes) async {
+  Future<Uint8List> _fetchPack(
+    String url,
+    List<String> wantHashes, {
+    String? token,
+  }) async {
     const capabilities =
         'multi_ack_detailed no-progress side-band-64k thin-pack ofs-delta '
         'agent=$_userAgent';
@@ -198,19 +559,11 @@ final class GitSmartHttp {
       ..add(_pktFlush())
       ..add(_pktLine(utf8.encode('done\n')));
 
-    final response = await _client.post(
-      Uri.parse('$url/git-upload-pack'),
-      headers: const {
-        'Content-Type': 'application/x-git-upload-pack-request',
-        'Accept': 'application/x-git-upload-pack-result',
-        'User-Agent': _userAgent,
-      },
-      body: body.takeBytes(),
-    );
-    if (response.statusCode != 200) {
-      throw StateError('git-upload-pack failed: HTTP ${response.statusCode}');
-    }
-    return _demuxSideband(response.bodyBytes);
+    final response = await _transportFor(
+      url,
+      token,
+    ).rpc('git-upload-pack', body.takeBytes());
+    return _demuxSideband(response);
   }
 
   /// Extracts the packfile bytes from an upload-pack response, handling both

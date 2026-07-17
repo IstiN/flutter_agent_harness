@@ -47,6 +47,7 @@ dependencies:
   # Pure-Dart inflate with exact stream-end tracking, used by git_smart_http
   # to parse packfiles (dart:io zlib cannot report the consumed length).
   archive: ^4.0.9
+  dartssh2: ^2.22.2
 
 dev_dependencies:
   flutter_test:
