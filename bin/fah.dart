@@ -334,6 +334,22 @@ Future<void> main(List<String> args) async {
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
 
+  // Redact the API keys this CLI knows about from tool results and the
+  // provider context, so they cannot leak into the LLM conversation or the
+  // session files. The spawned shell already inherits the process
+  // environment, so no env injection is needed here.
+  final redactor = SecretRedactor();
+  for (final name in const [
+    'OPENROUTER_API_KEY',
+    'OPENAI_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'GOOGLE_API_KEY',
+    'VISION_API_KEY',
+  ]) {
+    final value = Platform.environment[name];
+    if (value != null) redactor.register(name, value);
+  }
+
   late final Future<void> Function() persistConfig;
 
   InspectImageConfig? visionConfig;
@@ -375,6 +391,7 @@ Future<void> main(List<String> args) async {
     ),
     io: io,
   );
+  if (!redactor.isEmpty) attachSecretRedactor(cli.agent, redactor);
 
   persistConfig = () async {
     await saveCliConfig(
