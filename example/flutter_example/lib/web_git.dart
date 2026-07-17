@@ -868,8 +868,9 @@ final class WebGitCommands {
         return _ok(lines.isEmpty ? '' : '${lines.join('\n')}\n');
       }
       if (action == 'add') {
-        if (args.length < 3)
+        if (args.length < 3) {
           return _error('usage: git remote add <name> <url>');
+        }
         repo.addRemote(args[1], args[2]);
         return _ok('');
       }
