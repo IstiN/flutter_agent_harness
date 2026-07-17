@@ -72,7 +72,7 @@ final class GitSandboxCommands {
 
     // Commands that do not require an existing repository.
     if (subcommand == 'clone') {
-      return _gitClone(subArgs, hostCwd);
+      return _gitClone(subArgs, hostCwd, options?.env);
     }
     if (subcommand == 'init') {
       return _gitInit(subArgs, hostCwd);
@@ -105,7 +105,9 @@ final class GitSandboxCommands {
         case 'remote':
           return _gitRemote(repo, subArgs);
         case 'fetch':
-          return _gitFetch(repo, subArgs);
+          return _gitFetch(repo, subArgs, options?.env);
+        case 'push':
+          return _gitPush(repo, subArgs, options?.env);
         case 'show':
           return _gitShow(repo, subArgs);
         case 'cat-file':
@@ -139,6 +141,7 @@ final class GitSandboxCommands {
   Future<Result<StageResult, ExecutionError>> _gitClone(
     List<String> args,
     String hostCwd,
+    Map<String, String>? env,
   ) async {
     if (args.isEmpty) {
       return _gitError('usage: git clone <repository> [<directory>]');
@@ -162,6 +165,25 @@ final class GitSandboxCommands {
           "fatal: destination path '$dest' already exists and is not an "
           'empty directory.',
         );
+      }
+    }
+
+    // SSH URLs (git@host:owner/repo.git, ssh://...) go over dartssh2.
+    final sshTransport = _sshTransportFor(repoUrl, env);
+    if (sshTransport != null) {
+      try {
+        await GitSmartHttp(
+          transport: sshTransport,
+        ).cloneInto(url: repoUrl, hostDir: hostDest);
+        return Ok(
+          StageResult(
+            stdout: utf8.encode('Cloned into \'$dest\'\n'),
+            stderr: const [],
+            exitCode: 0,
+          ),
+        );
+      } catch (e) {
+        return _gitError('fatal: unable to clone: $e');
       }
     }
 
@@ -279,6 +301,65 @@ final class GitSandboxCommands {
     final sshMatch = ssh.firstMatch(url);
     if (sshMatch != null) {
       return (owner: sshMatch.group(1)!, repo: sshMatch.group(2)!);
+    }
+    return null;
+  }
+
+  /// Builds an [SshGitTransport] for `git@host:path` / `ssh://` URLs, or
+  /// `null` for non-SSH URLs. The private key comes from `GIT_SSH_KEY`
+  /// (inline PEM), `GIT_SSH_KEY_PATH` (a sandbox path), or the default
+  /// `/.ssh/id_ed25519` / `/.ssh/id_rsa` files when present.
+  SshGitTransport? _sshTransportFor(String repoUrl, Map<String, String>? env) {
+    String? host;
+    String? username;
+    String? repoPath;
+    var port = 22;
+
+    final scpLike = RegExp(r'^([\w.-]+)@([\w.-]+):(.+)$').firstMatch(repoUrl);
+    if (scpLike != null) {
+      username = scpLike.group(1)!;
+      host = scpLike.group(2)!;
+      repoPath = '/${scpLike.group(3)!}';
+    } else if (repoUrl.startsWith('ssh://')) {
+      final uri = Uri.parse(repoUrl);
+      host = uri.host;
+      username = uri.userInfo.isNotEmpty ? uri.userInfo : 'git';
+      if (uri.hasPort) port = uri.port;
+      repoPath = uri.path;
+    } else {
+      return null;
+    }
+
+    final pem = _resolveSshKey(env);
+    if (pem == null) {
+      throw StateError(
+        'no SSH key: set GIT_SSH_KEY (PEM) or GIT_SSH_KEY_PATH, '
+        'or place a key at /.ssh/id_ed25519',
+      );
+    }
+    return SshGitTransport(
+      host: host,
+      username: username,
+      repoPath: repoPath,
+      privateKeyPem: pem,
+      port: port,
+    );
+  }
+
+  String? _resolveSshKey(Map<String, String>? env) {
+    final inline =
+        env?['GIT_SSH_KEY'] ?? io.Platform.environment['GIT_SSH_KEY'];
+    if (inline != null && inline.contains('PRIVATE KEY')) return inline;
+
+    final keyPath =
+        env?['GIT_SSH_KEY_PATH'] ?? io.Platform.environment['GIT_SSH_KEY_PATH'];
+    final candidates = <String>[?keyPath, '/.ssh/id_ed25519', '/.ssh/id_rsa'];
+    for (final candidate in candidates) {
+      final file = io.File(_shell.hostPathOf(candidate));
+      if (file.existsSync()) {
+        final content = file.readAsStringSync();
+        if (content.contains('PRIVATE KEY')) return content;
+      }
     }
     return null;
   }
@@ -756,6 +837,7 @@ final class GitSandboxCommands {
   Future<Result<StageResult, ExecutionError>> _gitFetch(
     dart_git.GitRepository repo,
     List<String> args,
+    Map<String, String>? env,
   ) async {
     final remoteName = args.isEmpty ? 'origin' : args.first;
     final remote = repo.config.remote(remoteName);
@@ -770,8 +852,11 @@ final class GitSandboxCommands {
     }
 
     try {
-      final moved = await GitSmartHttp(client: _shell.shellHttpClient)
-          .fetchInto(
+      final moved =
+          await GitSmartHttp(
+            client: _shell.shellHttpClient,
+            transport: _sshTransportFor(url, env),
+          ).fetchInto(
             url: url,
             hostDir: repo.workTree.endsWith('/')
                 ? repo.workTree.substring(0, repo.workTree.length - 1)
@@ -791,6 +876,87 @@ final class GitSandboxCommands {
       );
     } catch (e) {
       return _gitError('fatal: unable to fetch: $e');
+    }
+  }
+
+  Future<Result<StageResult, ExecutionError>> _gitPush(
+    dart_git.GitRepository repo,
+    List<String> args,
+    Map<String, String>? env,
+  ) async {
+    final positional = <String>[
+      for (final arg in args)
+        if (!arg.startsWith('-')) arg,
+    ];
+    final remoteName = positional.isNotEmpty ? positional[0] : 'origin';
+    final branch = positional.length > 1
+        ? positional[1]
+        : _safeCurrentBranch(repo);
+    if (branch == null) {
+      return _gitError('fatal: You are not currently on a branch.');
+    }
+
+    final remote = repo.config.remote(remoteName);
+    if (remote == null) {
+      return _gitError(
+        "fatal: '$remoteName' does not appear to be a git repository",
+      );
+    }
+    final url = remote.url;
+    if (url.isEmpty) {
+      return _gitError('fatal: no URL configured for remote $remoteName');
+    }
+
+    // Token auth for GitHub-style HTTPS remotes: from the shell environment
+    // (GITHUB_TOKEN / GIT_TOKEN / FAH_GIT_TOKEN) or the URL userinfo.
+    final token =
+        env?['GITHUB_TOKEN'] ??
+        env?['GIT_TOKEN'] ??
+        env?['FAH_GIT_TOKEN'] ??
+        io.Platform.environment['GITHUB_TOKEN'] ??
+        io.Platform.environment['GIT_TOKEN'] ??
+        io.Platform.environment['FAH_GIT_TOKEN'];
+
+    try {
+      final report =
+          await GitSmartHttp(
+            client: _shell.shellHttpClient,
+            transport: _sshTransportFor(url, env),
+          ).pushInto(
+            url: url,
+            hostDir: repo.workTree.endsWith('/')
+                ? repo.workTree.substring(0, repo.workTree.length - 1)
+                : repo.workTree,
+            branch: branch,
+            token: token,
+          );
+      // Update the local remote-tracking ref after a successful push.
+      final localRef = repo.resolveReferenceName(ReferenceName.branch(branch));
+      if (localRef != null) {
+        repo.refStorage.saveRef(
+          HashReference(
+            ReferenceName.remote(remoteName, branch),
+            localRef.hash,
+          ),
+        );
+      }
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('To $url\n * $branch -> $branch\n$report\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    } catch (e) {
+      return _gitError('fatal: unable to push: $e');
+    }
+  }
+
+  String? _safeCurrentBranch(dart_git.GitRepository repo) {
+    try {
+      return repo.currentBranch();
+    } on Object {
+      return null;
     }
   }
 
