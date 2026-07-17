@@ -315,6 +315,9 @@ final class WasiSandboxShell implements Shell {
     'relpath',
     'diff',
     'patch',
+    'nslookup',
+    'dig',
+    'whois',
   };
 
   /// Whether [command] can be resolved to a WASM applet or a builtin.
@@ -391,6 +394,9 @@ final class WasiSandboxShell implements Shell {
       'relpath' => _relpathBuiltin(stage, options),
       'diff' => _diffBuiltin(stage, options, inputSource),
       'patch' => _patchBuiltin(stage, options, inputSource),
+      'nslookup' => _nslookupBuiltin(stage, options),
+      'dig' => _digBuiltin(stage, options),
+      'whois' => _whoisBuiltin(stage, options),
       _ => Err(
         ExecutionError(
           ExecutionErrorCode.unknown,
@@ -1264,10 +1270,14 @@ final class WasiSandboxShell implements Shell {
   }
 
   /// Wires the shared [SandboxBuiltins] to the sandbox host filesystem,
-  /// resolving paths against [cwd].
-  SandboxBuiltins _sandboxBuiltins(String cwd) {
+  /// resolving paths against [cwd]. DNS and whois use the dart:io transports
+  /// ([_systemDnsQuery], [_tcpWhois]).
+  SandboxBuiltins _sandboxBuiltins(String cwd, {Duration? timeout}) {
     return SandboxBuiltins(
       httpClient: _httpClient,
+      dnsQuery: _systemDnsQuery,
+      whoisConnector: (query, server) =>
+          _tcpWhois(query, server, timeout: timeout),
       readTextFile: (path) async {
         final file = _hostFile(_resolveSandboxPath(path, cwd));
         if (!await file.exists()) return null;
@@ -1279,6 +1289,66 @@ final class WasiSandboxShell implements Shell {
         await file.writeAsBytes(bytes);
       },
     );
+  }
+
+  /// Resolves DNS through the dart:io system resolver for A/AAAA/PTR (like
+  /// native nslookup) and falls back to DNS-over-HTTPS for the record types
+  /// `InternetAddress.lookup` cannot answer.
+  Future<SandboxDnsResult> _systemDnsQuery(String name, String type) async {
+    switch (type) {
+      case 'A' || 'AAAA':
+        final addresses = await io.InternetAddress.lookup(name);
+        final wantV4 = type == 'A';
+        return SandboxDnsResult(
+          status: 0,
+          resolver: 'system resolver',
+          answers: [
+            for (final address in addresses)
+              if ((address.type == io.InternetAddressType.IPv4) == wantV4)
+                SandboxDnsRecord(
+                  name: name,
+                  type: wantV4 ? 1 : 28,
+                  ttl: 0,
+                  data: address.address,
+                ),
+          ],
+        );
+      case 'PTR':
+        final ip = SandboxBuiltins.ipv4FromPtrName(name);
+        if (ip == null) {
+          throw FormatException('unsupported PTR query name: $name');
+        }
+        final reversed = await io.InternetAddress(ip).reverse();
+        return SandboxDnsResult(
+          status: 0,
+          resolver: 'system resolver',
+          answers: [
+            SandboxDnsRecord(name: name, type: 12, ttl: 0, data: reversed.host),
+          ],
+        );
+      default:
+        return SandboxBuiltins.dohQuery(_httpClient, name, type);
+    }
+  }
+
+  /// Runs one raw whois exchange with [server] over TCP port 43.
+  Future<String> _tcpWhois(
+    String query,
+    String server, {
+    Duration? timeout,
+  }) async {
+    final socket = await io.Socket.connect(
+      server,
+      43,
+      timeout: timeout ?? const Duration(seconds: 15),
+    );
+    try {
+      socket.write('$query\r\n');
+      await socket.flush();
+      return await utf8.decoder.bind(socket).join();
+    } finally {
+      socket.destroy();
+    }
   }
 
   Ok<StageResult, ExecutionError> _builtinOk(SandboxBuiltinResult result) {
@@ -1346,6 +1416,37 @@ final class WasiSandboxShell implements Shell {
         ? await builtins.readTextFile(inputSource)
         : null;
     final result = await builtins.patch(stage.args, stdin: stdin);
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _nslookupBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+    ).nslookup(stage.args, timeout: options?.timeout);
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _digBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+    ).dig(stage.args, timeout: options?.timeout);
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _whoisBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+      timeout: options?.timeout,
+    ).whois(stage.args, timeout: options?.timeout);
     return _builtinOk(result);
   }
 

@@ -39,10 +39,12 @@ void main() {
         'awk',
         'curl',
         'diff',
+        'dig',
         'find',
         'gunzip',
         'gzip',
         'jq',
+        'nslookup',
         'patch',
         'printf',
         'realpath',
@@ -52,6 +54,7 @@ void main() {
         'tar',
         'unzip',
         'wget',
+        'whois',
         'xargs',
         'yq',
         'zip',
@@ -166,6 +169,62 @@ void main() {
       expect(r.exitCode, 0);
       r = await run(env, 'grep -i "Example Domain" /builtins_example.html');
       expect(r.exitCode, 0);
+    });
+
+    // Mirrors the host netdiag coverage in memory_shell_test.dart (MockClient
+    // instead of live DoH/RDAP; see the library doc comment).
+    test('nslookup/dig/whois against an injected MockClient', () async {
+      final env = await createPlatformEnv(
+        httpClient: MockClient((request) async {
+          if (request.url.host == 'cloudflare-dns.com') {
+            expect(request.headers['Accept'], 'application/dns-json');
+            final type = request.url.queryParameters['type'];
+            if (type == 'MX') {
+              return http.Response(
+                '{"Status":0,"Answer":[{"name":"example.com.","type":15,'
+                '"TTL":300,"data":"10 mail.example.com."}]}',
+                200,
+              );
+            }
+            final recordType = type == 'AAAA' ? 28 : 1;
+            final data = type == 'AAAA'
+                ? '2606:2800:220:1:248:1893:25c8:1946'
+                : '93.184.216.34';
+            return http.Response(
+              '{"Status":0,"Answer":[{"name":"example.com.","type":$recordType,'
+              '"TTL":300,"data":"$data"}]}',
+              200,
+            );
+          }
+          expect(request.url.host, 'rdap.org');
+          expect(request.url.path, '/domain/example.com');
+          return http.Response(
+            '{"objectClassName":"domain","ldhName":"EXAMPLE.COM",'
+            '"nameservers":[{"ldhName":"A.IANA-SERVERS.NET"}]}',
+            200,
+          );
+        }),
+      );
+
+      var r = await run(env, 'nslookup example.com');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('Server:  cloudflare-dns.com'));
+      expect(r.stdout, contains('Address: 93.184.216.34'));
+      expect(r.stdout, contains('Address: 2606:2800:220:1:248:1893:25c8:1946'));
+
+      r = await run(env, 'dig example.com MX');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains(';; status: NOERROR'));
+      expect(r.stdout, contains('IN\tMX\t10 mail.example.com.'));
+
+      r = await run(env, 'whois example.com');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('Domain Name: EXAMPLE.COM'));
+      expect(r.stdout, contains('Name Server: A.IANA-SERVERS.NET'));
+
+      r = await run(env, 'nslookup');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('usage: nslookup'));
     });
 
     test('jq/yq filter files and curl pipes into jq', () async {

@@ -26,8 +26,10 @@ import 'web_interpreters_stub.dart'
 /// common POSIX utilities — directly in Dart over the in-memory filesystem.
 ///
 /// On top of the core POSIX utilities, the following are implemented in
-/// pure Dart and work in the browser: `curl`/`wget`/`jq`/`yq`/`diff`/`patch`
-/// (shared with the WASM shell via `sandbox_builtins.dart`), `sed`, `awk`, `find`,
+/// pure Dart and work in the browser: `curl`/`wget`/`jq`/`yq`/`diff`/`patch`,
+/// plus `nslookup`/`dig` (DNS-over-HTTPS via cloudflare-dns.com) and `whois`
+/// (RDAP over HTTPS via rdap.org) — all shared with the WASM shell via
+/// `sandbox_builtins.dart` — `sed`, `awk`, `find`,
 /// `xargs`, `printf`, `realpath`, `tar`/`gzip`/`gunzip`/`zip`/`unzip` (via
 /// `package:archive`), and `rg` (an alias of the Dart `grep`
 /// implementation, mirroring iOS where `grep` maps to `rg` with grep
@@ -74,6 +76,7 @@ final class MemoryShell implements Shell {
     'cp',
     'curl',
     'diff',
+    'dig',
     'dirname',
     'echo',
     'env',
@@ -90,6 +93,7 @@ final class MemoryShell implements Shell {
     'ls',
     'mkdir',
     'mv',
+    'nslookup',
     'patch',
     'printf',
     'pwd',
@@ -115,6 +119,7 @@ final class MemoryShell implements Shell {
     'wget',
     'which',
     'whoami',
+    'whois',
     'xargs',
     'yq',
     'zip',
@@ -316,7 +321,10 @@ final class MemoryShell implements Shell {
       'jq' => _jq(ctx),
       'yq' => _yq(ctx),
       'diff' => _diff(ctx),
+      'dig' => _dig(ctx),
       'patch' => _patch(ctx),
+      'nslookup' => _nslookup(ctx),
+      'whois' => _whois(ctx),
       'rg' => _grep(ctx),
       'sed' => _sed(ctx),
       'awk' => _awk(ctx),
@@ -415,6 +423,24 @@ final class MemoryShell implements Shell {
 
   Future<_StageResult> _patch(_Context ctx) {
     return _toStage(_builtinsFor(ctx).patch(ctx.args, stdin: ctx.stdin));
+  }
+
+  Future<_StageResult> _nslookup(_Context ctx) {
+    return _toStage(
+      _builtinsFor(ctx).nslookup(ctx.args, timeout: ctx.options?.timeout),
+    );
+  }
+
+  Future<_StageResult> _dig(_Context ctx) {
+    return _toStage(
+      _builtinsFor(ctx).dig(ctx.args, timeout: ctx.options?.timeout),
+    );
+  }
+
+  Future<_StageResult> _whois(_Context ctx) {
+    return _toStage(
+      _builtinsFor(ctx).whois(ctx.args, timeout: ctx.options?.timeout),
+    );
   }
 
   // ---------------------------------------------------------------------------
