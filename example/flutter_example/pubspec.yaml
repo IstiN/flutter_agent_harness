@@ -83,6 +83,7 @@ flutter:
     - assets/wasm/python.wasm
     - assets/wasm/python_stdlib.zip
     - assets/wasm/qjs.wasm
+    - assets/wasm/sqlite3.wasm
     - assets/wasm/wasi_hello.wasm
     - assets/wasm/LICENSE.coreutils
     - assets/wasm/LICENSE.rg

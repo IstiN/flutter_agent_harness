@@ -48,6 +48,7 @@ final class WasiSandboxShell implements Shell {
     required this.zip,
     required this.python,
     required this.qjs,
+    required this.sqlite3,
     this.workingDirectory,
     this.sandboxHostPath,
     http.Client? httpClient,
@@ -83,6 +84,9 @@ final class WasiSandboxShell implements Shell {
 
   /// QuickJS module (JavaScript engine, WASI build).
   final WasmModule qjs;
+
+  /// SQLite CLI module (WASI build from the official amalgamation).
+  final WasmModule sqlite3;
 
   /// Default working directory used when [ShellExecOptions.cwd] is omitted.
   final String? workingDirectory;
@@ -197,6 +201,7 @@ final class WasiSandboxShell implements Shell {
       zip: await loadAsset('zip.wasm'),
       python: await loadAsset('python.wasm'),
       qjs: await loadAsset('qjs.wasm'),
+      sqlite3: await loadAsset('sqlite3.wasm'),
       workingDirectory: workingDirectory,
       sandboxHostPath: sandboxHostPath,
       httpClient: httpClient,
@@ -326,6 +331,7 @@ final class WasiSandboxShell implements Shell {
           'python3',
           'qjs',
           'js',
+          'sqlite3',
         }.contains(command) ||
         _builtinCommands.contains(command);
   }
@@ -346,6 +352,7 @@ final class WasiSandboxShell implements Shell {
       'unzip' => (module: zip, argv: const ['zip_util']),
       'python' || 'python3' => (module: python, argv: const ['python']),
       'qjs' || 'js' => (module: qjs, argv: const ['qjs']),
+      'sqlite3' => (module: sqlite3, argv: const ['sqlite3']),
       _ => (module: coreutils, argv: [command]),
     };
   }

@@ -90,3 +90,12 @@ shell works on iOS, Android, and web without spawning host processes.
 - Target: `wasm32-wasip1`
 - Notes: QuickJS JavaScript engine (ES2023) with `qjs:std`/`qjs:os`
   builtin modules. Mapped to the `qjs` and `js` shell commands.
+
+## sqlite3.wasm
+
+- Source: https://sqlite.org (SQLite 3.53.3 amalgamation), built locally
+  with wasi-sdk 33 (clang --target=wasm32-wasip1, THREADSAFE=0,
+  OMIT_LOAD_EXTENSION, ENABLE_MATH_FUNCTIONS)
+- License: public domain (SQLite is not licensed)
+- Target: `wasm32-wasip1`
+- Notes: sqlite3 CLI; `system()` stubbed (no process spawning under WASI).
