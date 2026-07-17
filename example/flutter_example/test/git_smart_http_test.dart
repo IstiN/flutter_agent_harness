@@ -3,10 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dart_git/dart_git.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_example/git_smart_http.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  // Requires dart:io (HttpServer, dart_git on the host FS): host-only test.
+  if (kIsWeb) return;
+
   group('GitSmartHttp', () {
     late HttpServer server;
     late int port;

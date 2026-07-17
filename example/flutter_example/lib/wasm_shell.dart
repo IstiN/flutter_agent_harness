@@ -47,6 +47,7 @@ final class WasiSandboxShell implements Shell {
     required this.gzip,
     required this.zip,
     required this.python,
+    required this.qjs,
     this.workingDirectory,
     this.sandboxHostPath,
     http.Client? httpClient,
@@ -79,6 +80,9 @@ final class WasiSandboxShell implements Shell {
 
   /// CPython module (Python 3.14, WASI build).
   final WasmModule python;
+
+  /// QuickJS module (JavaScript engine, WASI build).
+  final WasmModule qjs;
 
   /// Default working directory used when [ShellExecOptions.cwd] is omitted.
   final String? workingDirectory;
@@ -192,6 +196,7 @@ final class WasiSandboxShell implements Shell {
       gzip: await loadAsset('gzip.wasm'),
       zip: await loadAsset('zip.wasm'),
       python: await loadAsset('python.wasm'),
+      qjs: await loadAsset('qjs.wasm'),
       workingDirectory: workingDirectory,
       sandboxHostPath: sandboxHostPath,
       httpClient: httpClient,
@@ -319,6 +324,8 @@ final class WasiSandboxShell implements Shell {
           'unzip',
           'python',
           'python3',
+          'qjs',
+          'js',
         }.contains(command) ||
         _builtinCommands.contains(command);
   }
@@ -338,6 +345,7 @@ final class WasiSandboxShell implements Shell {
       'zip' => (module: zip, argv: const ['zip']),
       'unzip' => (module: zip, argv: const ['zip_util']),
       'python' || 'python3' => (module: python, argv: const ['python']),
+      'qjs' || 'js' => (module: qjs, argv: const ['qjs']),
       _ => (module: coreutils, argv: [command]),
     };
   }
