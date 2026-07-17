@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'env_factory.dart';
+import 'secrets_store.dart';
 
 /// A UI-facing chat message.
 final class FahChatMessage {
@@ -79,7 +80,9 @@ class AgentService extends ChangeNotifier {
     required ExecutionEnv env,
     required this.sessionsRoot,
     JsonlSessionRepo? repo,
+    SecretRedactor? redactor,
   }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+    _attachRedactor(redactor);
     _agent.subscribe(_onAgentEvent);
   }
 
@@ -87,24 +90,52 @@ class AgentService extends ChangeNotifier {
   /// platform and wires up the agent.
   static Future<AgentService> create({required AgentConfig config}) async {
     final env = await createPlatformEnv();
-    return AgentService._withEnv(env: env, config: config);
+    final secrets = await createSecretsStore().readAll();
+    final redactor = SecretRedactor.fromSecrets(secrets);
+    return AgentService._withEnv(
+      env: secrets.isEmpty ? env : SecretsExecutionEnv(env, secrets),
+      config: config,
+      redactor: redactor,
+    );
   }
 
   AgentService._withEnv({
     required ExecutionEnv env,
     required AgentConfig config,
+    SecretRedactor? redactor,
   }) : sessionsRoot = '${env.cwd}/sessions',
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
     _agent = Agent(
       model: config.toModel(),
-      systemPrompt: config.systemPrompt ?? _defaultSystemPrompt,
+      systemPrompt: _effectiveSystemPrompt(config, redactor),
       streamFunction: providerStreamFunction(
         config.providerKind,
         config.apiKey,
       ),
       toolRegistry: ToolRegistry(builtinTools(env)),
     );
+    _attachRedactor(redactor);
     _agent.subscribe(_onAgentEvent);
+  }
+
+  /// The system prompt plus a secret-name hint (names only, never values).
+  static String _effectiveSystemPrompt(
+    AgentConfig config,
+    SecretRedactor? redactor,
+  ) {
+    final base = config.systemPrompt ?? _defaultSystemPrompt;
+    final names = redactor?.names ?? const <String>[];
+    if (names.isEmpty) return base;
+    return '$base\n\nAvailable secret env vars: ${names.join(', ')} — '
+        'reference them as \$NAME in shell commands; never ask the user for '
+        'their values and never print them.';
+  }
+
+  /// Composes redaction hooks onto the agent so secret values never reach
+  /// the model, the transcript, or the session files.
+  void _attachRedactor(SecretRedactor? redactor) {
+    if (redactor == null || redactor.isEmpty) return;
+    attachSecretRedactor(_agent, redactor);
   }
 
   /// Default system prompt for the mobile/web sandbox: names the assistant
