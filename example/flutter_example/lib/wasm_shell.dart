@@ -313,6 +313,8 @@ final class WasiSandboxShell implements Shell {
     'expr',
     'id',
     'relpath',
+    'diff',
+    'patch',
   };
 
   /// Whether [command] can be resolved to a WASM applet or a builtin.
@@ -387,6 +389,8 @@ final class WasiSandboxShell implements Shell {
       'expr' => _exprBuiltin(stage),
       'id' => _idBuiltin(stage),
       'relpath' => _relpathBuiltin(stage, options),
+      'diff' => _diffBuiltin(stage, options, inputSource),
+      'patch' => _patchBuiltin(stage, options, inputSource),
       _ => Err(
         ExecutionError(
           ExecutionErrorCode.unknown,
@@ -1314,6 +1318,34 @@ final class WasiSandboxShell implements Shell {
     final result = await _sandboxBuiltins(
       _currentDir,
     ).yq(stage.args, stdin: await _stdinFromSource(stage, inputSource));
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _diffBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    final builtins = _sandboxBuiltins(options?.cwd ?? _currentDir);
+    // Only a `-` operand reads the piped/redirected input; plain
+    // `diff a b` ignores stdin like GNU diff.
+    final stdin = stage.args.contains('-') && inputSource != null
+        ? await builtins.readTextFile(inputSource)
+        : null;
+    final result = await builtins.diff(stage.args, stdin: stdin);
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _patchBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    final builtins = _sandboxBuiltins(options?.cwd ?? _currentDir);
+    final stdin = inputSource != null
+        ? await builtins.readTextFile(inputSource)
+        : null;
+    final result = await builtins.patch(stage.args, stdin: stdin);
     return _builtinOk(result);
   }
 

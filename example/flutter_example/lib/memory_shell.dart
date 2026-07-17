@@ -26,8 +26,8 @@ import 'web_interpreters_stub.dart'
 /// common POSIX utilities — directly in Dart over the in-memory filesystem.
 ///
 /// On top of the core POSIX utilities, the following are implemented in
-/// pure Dart and work in the browser: `curl`/`wget`/`jq`/`yq` (shared with
-/// the WASM shell via `sandbox_builtins.dart`), `sed`, `awk`, `find`,
+/// pure Dart and work in the browser: `curl`/`wget`/`jq`/`yq`/`diff`/`patch`
+/// (shared with the WASM shell via `sandbox_builtins.dart`), `sed`, `awk`, `find`,
 /// `xargs`, `printf`, `realpath`, `tar`/`gzip`/`gunzip`/`zip`/`unzip` (via
 /// `package:archive`), and `rg` (an alias of the Dart `grep`
 /// implementation, mirroring iOS where `grep` maps to `rg` with grep
@@ -73,6 +73,7 @@ final class MemoryShell implements Shell {
     'command',
     'cp',
     'curl',
+    'diff',
     'dirname',
     'echo',
     'env',
@@ -89,6 +90,7 @@ final class MemoryShell implements Shell {
     'ls',
     'mkdir',
     'mv',
+    'patch',
     'printf',
     'pwd',
     'python',
@@ -313,6 +315,8 @@ final class MemoryShell implements Shell {
       'wget' => _wget(ctx),
       'jq' => _jq(ctx),
       'yq' => _yq(ctx),
+      'diff' => _diff(ctx),
+      'patch' => _patch(ctx),
       'rg' => _grep(ctx),
       'sed' => _sed(ctx),
       'awk' => _awk(ctx),
@@ -403,6 +407,14 @@ final class MemoryShell implements Shell {
 
   Future<_StageResult> _yq(_Context ctx) {
     return _toStage(_builtinsFor(ctx).yq(ctx.args, stdin: ctx.stdin));
+  }
+
+  Future<_StageResult> _diff(_Context ctx) {
+    return _toStage(_builtinsFor(ctx).diff(ctx.args, stdin: ctx.stdin));
+  }
+
+  Future<_StageResult> _patch(_Context ctx) {
+    return _toStage(_builtinsFor(ctx).patch(ctx.args, stdin: ctx.stdin));
   }
 
   // ---------------------------------------------------------------------------

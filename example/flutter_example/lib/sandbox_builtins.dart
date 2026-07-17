@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:diffutil_dart/diffutil.dart' as diffutil;
 import 'package:http/http.dart' as http;
 import 'package:yaml/yaml.dart' as yaml;
 
@@ -39,8 +40,9 @@ final class SandboxBuiltinResult {
   final int exitCode;
 }
 
-/// Dart-native implementations of `curl`, `wget`, `jq`, and `yq` shared by
-/// the WASM shell (iOS/Android) and the in-memory web shell.
+/// Dart-native implementations of `curl`, `wget`, `jq`, `yq`, `diff`, and
+/// `patch` shared by the WASM shell (iOS/Android) and the in-memory web
+/// shell.
 ///
 /// These are pure Dart (no `dart:io`) so they compile for the browser; each
 /// shell injects its own filesystem access through [SandboxTextReader] and
@@ -315,6 +317,247 @@ final class SandboxBuiltins {
     return _ok(utf8.encode(output.isNotEmpty ? '$output\n' : ''));
   }
 
+  // ---------------------------------------------------------------------------
+  // diff / patch
+  // ---------------------------------------------------------------------------
+
+  /// Runs the `diff` builtin: compares two files line by line and prints a
+  /// unified diff (`-u` is the default and only format; `-U n` changes the
+  /// context width). `-q`/`--brief` only reports whether the files differ,
+  /// and `-N`/`--new-file` treats a missing file as empty. An operand of `-`
+  /// reads [stdin] (piped input). Exit codes follow GNU diff: 0 when the
+  /// inputs are identical, 1 when they differ, 2 on error.
+  Future<SandboxBuiltinResult> diff(List<String> args, {String? stdin}) async {
+    var brief = false;
+    var newFile = false;
+    var context = 3;
+    final operands = <String>[];
+    var noMoreFlags = false;
+    var i = 0;
+    while (i < args.length) {
+      final arg = args[i];
+      if (!noMoreFlags && arg == '--') {
+        noMoreFlags = true;
+      } else if (!noMoreFlags && arg == '--brief') {
+        brief = true;
+      } else if (!noMoreFlags && arg == '--new-file') {
+        newFile = true;
+      } else if (!noMoreFlags && arg == '--unified') {
+        // Unified output is the default.
+      } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
+        for (var j = 1; j < arg.length; j++) {
+          final flag = arg[j];
+          switch (flag) {
+            case 'u':
+              break; // Unified output is the default.
+            case 'q':
+              brief = true;
+            case 'N':
+              newFile = true;
+            case 'U':
+              final inline = arg.substring(j + 1);
+              final value = inline.isNotEmpty
+                  ? inline
+                  : (i + 1 < args.length ? args[++i] : '');
+              final parsed = int.tryParse(value);
+              if (parsed == null || parsed < 0) {
+                return _error("diff: invalid context length '$value'\n", 2);
+              }
+              context = parsed;
+              j = arg.length; // The rest of the arg is the number.
+            default:
+              return _error("diff: invalid option -- '$flag'\n", 2);
+          }
+        }
+      } else {
+        operands.add(arg);
+      }
+      i++;
+    }
+    if (operands.length != 2) {
+      return _error('diff: expected two file operands\n', 2);
+    }
+
+    Future<String?> readOperand(String name) async {
+      if (name == '-') return stdin ?? '';
+      final read = await readTextFile(name);
+      return read ?? (newFile ? '' : null);
+    }
+
+    final oldContent = await readOperand(operands[0]);
+    if (oldContent == null) {
+      return _error('diff: ${operands[0]}: No such file or directory\n', 2);
+    }
+    final newContent = await readOperand(operands[1]);
+    if (newContent == null) {
+      return _error('diff: ${operands[1]}: No such file or directory\n', 2);
+    }
+
+    final oldDoc = _LineDoc(oldContent);
+    final newDoc = _LineDoc(newContent);
+    final ops = _diffOps(oldDoc.tokens, newDoc.tokens);
+    final differ = ops.any((op) => op.kind != _DiffOpKind.context);
+    if (!differ) return _ok(const []);
+    if (brief) {
+      return SandboxBuiltinResult(
+        stdout: utf8.encode('Files ${operands[0]} and ${operands[1]} differ\n'),
+        stderr: const [],
+        exitCode: 1,
+      );
+    }
+    return SandboxBuiltinResult(
+      stdout: utf8.encode(
+        _formatUnified(
+          ops,
+          oldDoc.tokens,
+          newDoc.tokens,
+          oldLabel: operands[0],
+          newLabel: operands[1],
+          context: context,
+        ),
+      ),
+      stderr: const [],
+      exitCode: 1,
+    );
+  }
+
+  /// Runs the `patch` builtin: applies a unified diff read from [stdin]
+  /// (piped input), from `-i file`/`--input=file`, or from a second
+  /// positional argument, to files in the sandbox filesystem. `-p n` /
+  /// `--strip=n` strips n leading path components from the file names in the
+  /// diff headers (default 0); a positional target overrides those names
+  /// entirely. Hunks are applied with offset search (no fuzz); a file is
+  /// written only when all of its hunks apply. Exit codes follow GNU patch:
+  /// 0 when everything applied, 1 when hunks failed, 2 on error.
+  Future<SandboxBuiltinResult> patch(List<String> args, {String? stdin}) async {
+    var strip = 0;
+    String? patchFile;
+    final positional = <String>[];
+    var noMoreFlags = false;
+    var i = 0;
+    while (i < args.length) {
+      final arg = args[i];
+      if (!noMoreFlags && arg == '--') {
+        noMoreFlags = true;
+      } else if (!noMoreFlags &&
+          (arg.startsWith('-p') || arg.startsWith('--strip'))) {
+        final String value;
+        if (arg.startsWith('--strip=')) {
+          value = arg.substring('--strip='.length);
+        } else if (arg == '--strip' || arg == '-p') {
+          if (i + 1 >= args.length) {
+            return _error('patch: option requires an argument -- p\n', 2);
+          }
+          value = args[++i];
+        } else if (arg.startsWith('-p') && !arg.startsWith('--')) {
+          value = arg.substring(2);
+        } else {
+          return _error("patch: unrecognized option '$arg'\n", 2);
+        }
+        final parsed = int.tryParse(value);
+        if (parsed == null || parsed < 0) {
+          return _error("patch: invalid strip count '$value'\n", 2);
+        }
+        strip = parsed;
+      } else if (!noMoreFlags &&
+          (arg.startsWith('-i') || arg.startsWith('--input'))) {
+        if (arg.startsWith('--input=')) {
+          patchFile = arg.substring('--input='.length);
+        } else if (arg == '--input' || arg == '-i') {
+          if (i + 1 >= args.length) {
+            return _error('patch: option requires an argument -- i\n', 2);
+          }
+          patchFile = args[++i];
+        } else if (arg.startsWith('-i') && !arg.startsWith('--')) {
+          patchFile = arg.substring(2);
+        } else {
+          return _error("patch: unrecognized option '$arg'\n", 2);
+        }
+      } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
+        return _error("patch: unrecognized option '$arg'\n", 2);
+      } else {
+        positional.add(arg);
+      }
+      i++;
+    }
+    if (positional.length > 2) {
+      return _error('patch: too many file arguments\n', 2);
+    }
+    final target = positional.isNotEmpty ? positional[0] : null;
+    if (positional.length > 1) patchFile ??= positional[1];
+
+    final String patchText;
+    if (patchFile != null) {
+      final read = await readTextFile(patchFile);
+      if (read == null) {
+        return _error('patch: $patchFile: No such file or directory\n', 2);
+      }
+      patchText = read;
+    } else {
+      patchText = stdin ?? '';
+    }
+
+    final files = _parsePatch(patchText);
+    if (files == null) {
+      return _error('patch: malformed patch input\n', 2);
+    }
+    if (files.isEmpty) {
+      return _error('patch: no patch found in input\n', 2);
+    }
+    if (target != null && files.length > 1) {
+      return _error(
+        'patch: patch contains multiple files; omit the target operand\n',
+        2,
+      );
+    }
+
+    final out = StringBuffer();
+    final err = StringBuffer();
+    var failed = false;
+    for (final file in files) {
+      if (file.deletesFile) {
+        return _error('patch: deleting files is not supported\n', 2);
+      }
+      final name = target ?? _stripPath(file.targetName, strip);
+      if (name.isEmpty) {
+        return _error('patch: empty file name after -p stripping\n', 2);
+      }
+      final _LineDoc doc;
+      if (file.createsFile) {
+        if (await readTextFile(name) != null) {
+          err.write('patch: $name: already exists\n');
+          failed = true;
+          continue;
+        }
+        doc = _LineDoc('');
+      } else {
+        final content = await readTextFile(name);
+        if (content == null) {
+          return _error('patch: $name: No such file or directory\n', 2);
+        }
+        doc = _LineDoc(content);
+      }
+      final applied = _applyHunks(doc, file.hunks);
+      if (applied.failures.isNotEmpty) {
+        failed = true;
+        for (final hunkNumber in applied.failures) {
+          err.write('patch: Hunk #$hunkNumber FAILED in $name\n');
+        }
+        continue; // Never write a partially patched file.
+      }
+      out.write('patching file $name\n');
+      await writeBinaryFile(
+        name,
+        utf8.encode(_joinLines(applied.lines, applied.trailingNewline)),
+      );
+    }
+    return SandboxBuiltinResult(
+      stdout: utf8.encode(out.toString()),
+      stderr: utf8.encode(err.toString()),
+      exitCode: failed ? 1 : 0,
+    );
+  }
+
   dynamic _yamlToJson(dynamic value) {
     if (value is yaml.YamlMap) {
       return {
@@ -375,4 +618,443 @@ final class SandboxBuiltins {
     }
     return [current];
   }
+}
+
+// ---------------------------------------------------------------------------
+// diff/patch helpers
+// ---------------------------------------------------------------------------
+
+/// A text file viewed as lines: the line contents (without terminators),
+/// whether the file ends with a newline, and the comparison tokens that make
+/// a missing trailing newline visible to the diff.
+final class _LineDoc {
+  _LineDoc(String content)
+    : trailingNewline = content.isEmpty || content.endsWith('\n'),
+      lines = _splitLines(content) {
+    tokens = trailingNewline || lines.isEmpty
+        ? lines
+        : [...lines.sublist(0, lines.length - 1), '${lines.last}\x00'];
+  }
+
+  static List<String> _splitLines(String content) {
+    if (content.isEmpty) return const [];
+    final lines = content.split('\n');
+    if (content.endsWith('\n')) lines.removeLast();
+    return lines;
+  }
+
+  /// Line contents without line terminators.
+  final List<String> lines;
+
+  /// Whether the file ends with a newline.
+  final bool trailingNewline;
+
+  /// Line tokens for comparison; the `\x00` sentinel suffix marks a last
+  /// line without a trailing newline so it differs from its terminated twin.
+  late final List<String> tokens;
+}
+
+/// One line operation in a computed diff: [context] lines are present in
+/// both files, [delete] lines only in the old file, [insert] lines only in
+/// the new file.
+enum _DiffOpKind { context, delete, insert }
+
+/// A single line operation with its position in both files.
+final class _DiffOp {
+  const _DiffOp({
+    required this.kind,
+    required this.oldIndex,
+    required this.newIndex,
+    required this.oldBefore,
+    required this.newBefore,
+  });
+
+  final _DiffOpKind kind;
+
+  /// Index into the old/new token list ([oldIndex] is -1 for inserts,
+  /// [newIndex] is -1 for deletes).
+  final int oldIndex;
+  final int newIndex;
+
+  /// Number of old/new lines consumed before this op; used in hunk headers.
+  final int oldBefore;
+  final int newBefore;
+}
+
+/// Computes the line op sequence transforming [oldTokens] into [newTokens]
+/// with the Myers algorithm from `package:diffutil_dart`. The package emits
+/// RecyclerView-style updates; replaying them over a list of old line
+/// indices yields the old→new line mapping.
+List<_DiffOp> _diffOps(List<String> oldTokens, List<String> newTokens) {
+  final result = diffutil.calculateListDiff<String>(
+    oldTokens,
+    newTokens,
+    detectMoves: false,
+  );
+  // Replay the updates. Tokens hold the old line index, or -1 for inserted
+  // lines. With string line equality and no move detection only Insert and
+  // Remove updates are ever produced.
+  final replay = [for (var i = 0; i < oldTokens.length; i++) i];
+  for (final update in result.getUpdates(batch: false)) {
+    switch (update) {
+      case diffutil.Insert(:final position, :final count):
+        replay.insertAll(position, List.filled(count, -1));
+      case diffutil.Remove(:final position, :final count):
+        for (var k = 0; k < count; k++) {
+          replay.removeAt(position);
+        }
+      case diffutil.Change() || diffutil.Move():
+        throw StateError('unexpected diff update: $update');
+    }
+  }
+  final oldToNew = List.filled(oldTokens.length, -1);
+  final newToOld = List.filled(newTokens.length, -1);
+  for (var j = 0; j < replay.length; j++) {
+    final oldIndex = replay[j];
+    if (oldIndex >= 0) {
+      oldToNew[oldIndex] = j;
+      newToOld[j] = oldIndex;
+    }
+  }
+  final ops = <_DiffOp>[];
+  var i = 0;
+  var j = 0;
+  while (i < oldTokens.length || j < newTokens.length) {
+    if (i < oldTokens.length && oldToNew[i] == -1) {
+      ops.add(
+        _DiffOp(
+          kind: _DiffOpKind.delete,
+          oldIndex: i,
+          newIndex: -1,
+          oldBefore: i,
+          newBefore: j,
+        ),
+      );
+      i++;
+    } else if (j < newTokens.length && newToOld[j] == -1) {
+      ops.add(
+        _DiffOp(
+          kind: _DiffOpKind.insert,
+          oldIndex: -1,
+          newIndex: j,
+          oldBefore: i,
+          newBefore: j,
+        ),
+      );
+      j++;
+    } else {
+      ops.add(
+        _DiffOp(
+          kind: _DiffOpKind.context,
+          oldIndex: i,
+          newIndex: j,
+          oldBefore: i,
+          newBefore: j,
+        ),
+      );
+      i++;
+      j++;
+    }
+  }
+  return ops;
+}
+
+/// Renders [ops] as a unified diff with `---`/`+++` file headers and
+/// `@@ -a,b +c,d @@` hunks with [context] lines of context, mirroring
+/// `diff -u` (including `\ No newline at end of file` markers).
+String _formatUnified(
+  List<_DiffOp> ops,
+  List<String> oldTokens,
+  List<String> newTokens, {
+  required String oldLabel,
+  required String newLabel,
+  required int context,
+}) {
+  final out = StringBuffer()
+    ..writeln('--- $oldLabel')
+    ..writeln('+++ $newLabel');
+  var i = 0;
+  while (i < ops.length) {
+    // Hunks only exist around changes; skip leading context.
+    var change = i;
+    while (change < ops.length && ops[change].kind == _DiffOpKind.context) {
+      change++;
+    }
+    if (change == ops.length) break;
+    final hunkStart = change - context > 0 ? change - context : 0;
+    // Extend the hunk while changes are separated by at most 2*context
+    // context lines; a larger gap starts a new hunk.
+    var lastChange = change;
+    var j = change + 1;
+    while (j < ops.length) {
+      if (ops[j].kind != _DiffOpKind.context) {
+        lastChange = j;
+        j++;
+      } else if (j - lastChange > 2 * context) {
+        break;
+      } else {
+        j++;
+      }
+    }
+    var hunkEnd = lastChange + context + 1;
+    if (hunkEnd > ops.length) hunkEnd = ops.length;
+
+    var oldCount = 0;
+    var newCount = 0;
+    for (var k = hunkStart; k < hunkEnd; k++) {
+      if (ops[k].kind != _DiffOpKind.insert) oldCount++;
+      if (ops[k].kind != _DiffOpKind.delete) newCount++;
+    }
+    final first = ops[hunkStart];
+    final oldStart = oldCount == 0 ? first.oldBefore : first.oldBefore + 1;
+    final newStart = newCount == 0 ? first.newBefore : first.newBefore + 1;
+    out.writeln(
+      '@@ -${_hunkRange(oldStart, oldCount)} '
+      '+${_hunkRange(newStart, newCount)} @@',
+    );
+    for (var k = hunkStart; k < hunkEnd; k++) {
+      final op = ops[k];
+      final token = op.kind == _DiffOpKind.insert
+          ? newTokens[op.newIndex]
+          : oldTokens[op.oldIndex];
+      final noNewline = token.endsWith('\x00');
+      final text = noNewline ? token.substring(0, token.length - 1) : token;
+      final prefix = switch (op.kind) {
+        _DiffOpKind.context => ' ',
+        _DiffOpKind.delete => '-',
+        _DiffOpKind.insert => '+',
+      };
+      out.writeln('$prefix$text');
+      if (noNewline) out.writeln('\\ No newline at end of file');
+    }
+    i = hunkEnd;
+  }
+  return out.toString();
+}
+
+/// Formats one hunk range; a single-line range omits the count like GNU diff.
+String _hunkRange(int start, int count) {
+  return count == 1 ? '$start' : '$start,$count';
+}
+
+/// One file section of a parsed unified diff.
+final class _PatchFile {
+  const _PatchFile({
+    required this.oldName,
+    required this.newName,
+    required this.hunks,
+  });
+
+  final String oldName;
+  final String newName;
+  final List<_PatchHunk> hunks;
+
+  /// The file to patch: the new name, unless the patch deletes the file.
+  String get targetName => newName == '/dev/null' ? oldName : newName;
+
+  /// Whether the patch creates the file (old name is `/dev/null`).
+  bool get createsFile => oldName == '/dev/null';
+
+  /// Whether the patch deletes the file (new name is `/dev/null`).
+  bool get deletesFile => newName == '/dev/null';
+}
+
+/// One parsed `@@` hunk: header coordinates plus the raw body lines
+/// (including `\ No newline at end of file` markers).
+final class _PatchHunk {
+  const _PatchHunk({
+    required this.oldStart,
+    required this.oldCount,
+    required this.newStart,
+    required this.newCount,
+    required this.body,
+  });
+
+  final int oldStart;
+  final int oldCount;
+  final int newStart;
+  final int newCount;
+  final List<String> body;
+}
+
+final _hunkHeaderPattern = RegExp(
+  r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@',
+);
+
+/// Parses unified-diff [text] into per-file sections. Preamble lines (such
+/// as `diff --git` or `index` lines from git) are skipped; hunk bodies are
+/// read by line count, so surrounding garbage cannot corrupt a hunk.
+/// Returns null when the input is structurally malformed.
+List<_PatchFile>? _parsePatch(String text) {
+  final lines = text.split('\n');
+  final files = <_PatchFile>[];
+  var i = 0;
+  while (i < lines.length) {
+    if (!lines[i].startsWith('--- ')) {
+      i++;
+      continue;
+    }
+    final oldName = _patchFileName(lines[i].substring(4));
+    i++;
+    if (i >= lines.length || !lines[i].startsWith('+++ ')) return null;
+    final newName = _patchFileName(lines[i].substring(4));
+    i++;
+    final hunks = <_PatchHunk>[];
+    while (i < lines.length && lines[i].startsWith('@@ ')) {
+      final match = _hunkHeaderPattern.firstMatch(lines[i]);
+      if (match == null) return null;
+      final oldStart = int.parse(match[1]!);
+      final oldCount = match[2] != null ? int.parse(match[2]!) : 1;
+      final newStart = int.parse(match[3]!);
+      final newCount = match[4] != null ? int.parse(match[4]!) : 1;
+      i++;
+      final body = <String>[];
+      var oldSeen = 0;
+      var newSeen = 0;
+      var malformed = false;
+      while (oldSeen < oldCount || newSeen < newCount) {
+        if (i >= lines.length) {
+          malformed = true;
+          break;
+        }
+        final line = lines[i];
+        final kind = line.isEmpty ? ' ' : line[0];
+        if (kind == '\\') {
+          body.add(line);
+          i++;
+          continue;
+        }
+        if (kind != ' ' && kind != '-' && kind != '+') {
+          malformed = true;
+          break;
+        }
+        body.add(line);
+        if (kind != '+') oldSeen++;
+        if (kind != '-') newSeen++;
+        i++;
+      }
+      if (malformed) return null;
+      // A `\ No newline at end of file` marker can follow the last counted
+      // body line.
+      while (i < lines.length && lines[i].startsWith('\\')) {
+        body.add(lines[i]);
+        i++;
+      }
+      hunks.add(
+        _PatchHunk(
+          oldStart: oldStart,
+          oldCount: oldCount,
+          newStart: newStart,
+          newCount: newCount,
+          body: body,
+        ),
+      );
+    }
+    files.add(_PatchFile(oldName: oldName, newName: newName, hunks: hunks));
+  }
+  return files;
+}
+
+/// Extracts the file name from a `---`/`+++` header line, dropping a
+/// tab-separated timestamp when present.
+String _patchFileName(String header) {
+  final tab = header.indexOf('\t');
+  return (tab >= 0 ? header.substring(0, tab) : header).trim();
+}
+
+/// Applies the `-p` strip level to [name]: removes [strip] leading path
+/// components while preserving an absolute-path leading slash.
+String _stripPath(String name, int strip) {
+  final absolute = name.startsWith('/');
+  final segments = name
+      .split('/')
+      .where((s) => s.isNotEmpty && s != '.')
+      .toList();
+  if (segments.length <= strip) return '';
+  final stripped = segments.sublist(strip).join('/');
+  return absolute ? '/$stripped' : stripped;
+}
+
+/// Applies [hunks] to [doc], searching for each hunk's position with a
+/// growing offset from the header position (no fuzz). Failed hunks are
+/// skipped and reported by 1-based number; the file content is left
+/// partially patched in that case, and the caller decides not to write it.
+({List<String> lines, bool trailingNewline, List<int> failures}) _applyHunks(
+  _LineDoc doc,
+  List<_PatchHunk> hunks,
+) {
+  final lines = [...doc.lines];
+  var trailingNewline = doc.trailingNewline;
+  final failures = <int>[];
+  var shift = 0;
+  for (var h = 0; h < hunks.length; h++) {
+    final hunk = hunks[h];
+    final oldPart = <String>[];
+    final newPart = <String>[];
+    var markerOld = false;
+    var markerNew = false;
+    String? previousKind;
+    for (final bodyLine in hunk.body) {
+      final kind = bodyLine.isEmpty ? ' ' : bodyLine[0];
+      if (kind == '\\') {
+        if (previousKind == '-') {
+          markerOld = true;
+        } else if (previousKind == '+') {
+          markerNew = true;
+        } else if (previousKind == ' ') {
+          markerOld = true;
+          markerNew = true;
+        }
+        continue;
+      }
+      final text = bodyLine.isEmpty ? '' : bodyLine.substring(1);
+      if (kind != '+') oldPart.add(text);
+      if (kind != '-') newPart.add(text);
+      previousKind = kind;
+    }
+    final start = hunk.oldCount == 0 ? hunk.oldStart : hunk.oldStart - 1;
+    final position = _findHunkPosition(lines, oldPart, start + shift);
+    if (position == null) {
+      failures.add(h + 1);
+      continue;
+    }
+    lines.replaceRange(position, position + oldPart.length, newPart);
+    // Track the drift between original and current coordinates so later
+    // hunk positions stay meaningful after inserts/deletes and offsets.
+    shift = position + newPart.length - (start + hunk.oldCount);
+    if (markerNew) trailingNewline = false;
+    if (markerOld && !markerNew) trailingNewline = true;
+  }
+  return (lines: lines, trailingNewline: trailingNewline, failures: failures);
+}
+
+/// Finds the position where [oldPart] matches [lines], trying [expected]
+/// first and then growing offsets in both directions (like GNU patch,
+/// without fuzz). Returns null when the hunk applies nowhere.
+int? _findHunkPosition(List<String> lines, List<String> oldPart, int expected) {
+  bool matches(int position) {
+    if (position < 0 || position + oldPart.length > lines.length) {
+      return false;
+    }
+    for (var k = 0; k < oldPart.length; k++) {
+      if (lines[position + k] != oldPart[k]) return false;
+    }
+    return true;
+  }
+
+  final limit = lines.length + expected.abs() + 1;
+  for (var distance = 0; distance <= limit; distance++) {
+    if (matches(expected + distance)) return expected + distance;
+    if (distance > 0 && matches(expected - distance)) {
+      return expected - distance;
+    }
+  }
+  return null;
+}
+
+/// Joins [lines] back into file content, honoring [trailingNewline].
+String _joinLines(List<String> lines, bool trailingNewline) {
+  if (lines.isEmpty) return '';
+  final joined = lines.map((line) => '$line\n').join();
+  return trailingNewline ? joined : joined.substring(0, joined.length - 1);
 }
