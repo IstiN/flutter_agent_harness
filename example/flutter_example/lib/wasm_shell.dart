@@ -1195,9 +1195,47 @@ final class WasiSandboxShell implements Shell {
     Stage stage,
     ShellExecOptions? options,
   ) async {
+    if (stage.args.contains('--version') || stage.args.contains('-V')) {
+      return Ok(
+        StageResult(
+          stdout: utf8.encode(
+            'curl 8.5.0 (fah-sandbox) Dart/${io.Platform.version.split(' ').first}\n'
+            'Release-Date: 2026-01-01\n'
+            'Protocols: http https\n'
+            'Features: builtin\n',
+          ),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    if (stage.args.contains('--help') || stage.args.contains('-h')) {
+      return Ok(
+        StageResult(
+          stdout: utf8.encode(
+            'Usage: curl [options...] <url>\n'
+            ' -X, --request <method>   HTTP method\n'
+            ' -H, --header <header>    Pass custom header\n'
+            ' -d, --data <data>        HTTP POST data\n'
+            ' -o, --output <file>      Write to file instead of stdout\n'
+            ' -s, --silent             Silent mode\n'
+            ' -L, --location           Follow redirects\n'
+            ' -V, --version            Show version\n',
+          ),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
     final parsed = _parseCurlArgs(stage.args);
     if (parsed.url == null) {
-      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 2));
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('curl: no URL specified\n'),
+          exitCode: 2,
+        ),
+      );
     }
 
     Uri uri;
@@ -1675,6 +1713,15 @@ final class WasiSandboxShell implements Shell {
     Stage stage,
     ShellExecOptions? options,
   ) async {
+    if (stage.args.contains('--version') || stage.args.contains('-V')) {
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('GNU Wget 1.21.4 (fah-sandbox builtin)\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
     // wget is a thin alias over the curl builtin: `wget [-q] [-O file] URL`.
     final curlArgs = <String>[];
     for (var i = 0; i < stage.args.length; i++) {
