@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:wasm_run_flutter/wasm_run_flutter.dart';
+
+import 'wasm_setup_stub.dart' if (dart.library.io) 'wasm_setup_io.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await WasmRunLibrary.setUp(override: false);
+  await setUpWasmRuntime();
   try {
     await dotenv.load(fileName: '.env');
   } on Object {
