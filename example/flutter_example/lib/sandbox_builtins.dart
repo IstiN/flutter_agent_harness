@@ -40,23 +40,92 @@ final class SandboxBuiltinResult {
   final int exitCode;
 }
 
-/// Dart-native implementations of `curl`, `wget`, `jq`, `yq`, `diff`, and
-/// `patch` shared by the WASM shell (iOS/Android) and the in-memory web
-/// shell.
+/// One DNS answer record, in the shape `dig` prints it.
+final class SandboxDnsRecord {
+  /// Creates a record with an owner [name], numeric [type] (1 = A,
+  /// 28 = AAAA, ...), [ttl] in seconds, and the record [data].
+  const SandboxDnsRecord({
+    required this.name,
+    required this.type,
+    required this.ttl,
+    required this.data,
+  });
+
+  /// Owner name of the record.
+  final String name;
+
+  /// Numeric record type (1 = A, 5 = CNAME, 12 = PTR, 28 = AAAA, ...).
+  final int type;
+
+  /// Time to live in seconds (0 when the resolver does not report one).
+  final int ttl;
+
+  /// Record payload (an address, host name, or type-specific text).
+  final String data;
+}
+
+/// Result of a DNS query: the response status and the answer section.
+final class SandboxDnsResult {
+  /// Creates a result with an rcode [status], the [answers] section, and a
+  /// human-readable [resolver] label for the status line.
+  const SandboxDnsResult({
+    required this.status,
+    required this.answers,
+    required this.resolver,
+  });
+
+  /// Response code: 0 = NOERROR, 2 = SERVFAIL, 3 = NXDOMAIN, ...
+  final int status;
+
+  /// The answer section records (empty on NXDOMAIN).
+  final List<SandboxDnsRecord> answers;
+
+  /// Resolver label shown in the output, e.g. `cloudflare-dns.com`.
+  final String resolver;
+}
+
+/// Performs a DNS query for [name] and [type] (`A`, `AAAA`, `MX`, ...).
+/// Throws on transport failure; an empty answer section is not an error.
+typedef SandboxDnsQuery =
+    Future<SandboxDnsResult> Function(String name, String type);
+
+/// Exchanges a raw whois [query] with [server] over TCP port 43 and returns
+/// the response text. Only implementable where raw TCP exists (`dart:io`).
+typedef SandboxWhoisConnector =
+    Future<String> Function(String query, String server);
+
+/// Dart-native implementations of `curl`, `wget`, `jq`, `yq`, `diff`,
+/// `patch`, `nslookup`, `dig`, and `whois` shared by the WASM shell
+/// (iOS/Android) and the in-memory web shell.
 ///
 /// These are pure Dart (no `dart:io`) so they compile for the browser; each
 /// shell injects its own filesystem access through [SandboxTextReader] and
 /// [SandboxBytesWriter], and HTTP goes through an injectable [http.Client]
-/// so tests can use `MockClient` from `package:http/testing.dart`.
+/// so tests can use `MockClient` from `package:http/testing.dart`. The DNS
+/// and whois transports are injectable too: the native shell resolves
+/// A/AAAA/PTR via the `dart:io` system resolver and runs whois over raw TCP
+/// port 43, while the defaults (used on the web) are DNS-over-HTTPS against
+/// cloudflare-dns.com and RDAP over HTTPS via rdap.org.
 final class SandboxBuiltins {
-  /// Creates the builtins over the injected filesystem and HTTP client.
+  /// Creates the builtins over the injected filesystem, HTTP client, and
+  /// network-diagnostic transports.
   SandboxBuiltins({
     http.Client? httpClient,
     required this.readTextFile,
     required this.writeBinaryFile,
+    this.dnsQuery,
+    this.whoisConnector,
   }) : _httpClient = httpClient ?? http.Client();
 
   final http.Client _httpClient;
+
+  /// Injected DNS resolver; when null, [dohQuery] (cloudflare-dns.com) is
+  /// used. See [SandboxDnsQuery].
+  final SandboxDnsQuery? dnsQuery;
+
+  /// Injected raw whois transport (TCP port 43); when null, `whois` falls
+  /// back to RDAP over HTTPS via rdap.org. See [SandboxWhoisConnector].
+  final SandboxWhoisConnector? whoisConnector;
 
   /// Injected text-file reader; see [SandboxTextReader].
   final SandboxTextReader readTextFile;
@@ -556,6 +625,512 @@ final class SandboxBuiltins {
       stderr: utf8.encode(err.toString()),
       exitCode: failed ? 1 : 0,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // nslookup / dig / whois
+  // ---------------------------------------------------------------------------
+
+  /// Runs the `nslookup` builtin: `nslookup <host|ipv4>`. A host name is
+  /// resolved for A and AAAA records; an IPv4 literal triggers a PTR reverse
+  /// lookup. Queries go through the injected [SandboxDnsQuery] (the `dart:io`
+  /// system resolver on native), or DNS-over-HTTPS against
+  /// cloudflare-dns.com when none is injected (the web default).
+  /// Exit codes: 0 success, 1 lookup failure, 2 usage error.
+  Future<SandboxBuiltinResult> nslookup(
+    List<String> args, {
+    Duration? timeout,
+  }) async {
+    if (args.length != 1) {
+      return _error('usage: nslookup <host>\n', 2);
+    }
+    final host = args.first;
+    final out = StringBuffer();
+
+    final ptrName = ipv4PtrName(host);
+    if (ptrName != null) {
+      final SandboxDnsResult result;
+      try {
+        result = await _dns(ptrName, 'PTR', timeout);
+      } on Object catch (e) {
+        return _error('nslookup: $e\n', 1);
+      }
+      if (result.answers.isEmpty) {
+        return _error("server can't find $host: NXDOMAIN\n", 1);
+      }
+      out
+        ..writeln('Server:  ${result.resolver}')
+        ..writeln();
+      for (final record in result.answers) {
+        out.writeln('$ptrName name = ${record.data}');
+      }
+      return _ok(utf8.encode(out.toString()));
+    }
+
+    final answers = <SandboxDnsRecord>[];
+    var resolver = 'system resolver';
+    var nxdomain = false;
+    try {
+      for (final type in const ['A', 'AAAA']) {
+        final result = await _dns(host, type, timeout);
+        resolver = result.resolver;
+        nxdomain = nxdomain || result.status == 3;
+        answers.addAll(result.answers);
+      }
+    } on Object catch (e) {
+      return _error('nslookup: $e\n', 1);
+    }
+    if (answers.isEmpty) {
+      return _error(
+        "server can't find $host: ${nxdomain ? 'NXDOMAIN' : 'NOERROR'}\n",
+        1,
+      );
+    }
+    out
+      ..writeln('Server:  $resolver')
+      ..writeln();
+    for (final record in answers) {
+      if (record.type == 5) {
+        out.writeln('${record.name} canonical name = ${record.data}');
+      } else {
+        out
+          ..writeln('Name:    ${record.name}')
+          ..writeln('Address: ${record.data}');
+      }
+    }
+    return _ok(utf8.encode(out.toString()));
+  }
+
+  /// Record types accepted by the `dig` builtin.
+  static const _digTypes = {
+    'A',
+    'AAAA',
+    'CNAME',
+    'MX',
+    'NS',
+    'PTR',
+    'SOA',
+    'SRV',
+    'TXT',
+  };
+
+  /// Runs the `dig` builtin: `dig [-x] <host> [TYPE]` with compact output —
+  /// a status line, the answer section, and the resolver (full BIND output
+  /// is not reproduced). TYPE defaults to A; `-x` turns an IPv4 literal into
+  /// a PTR query. On native, A/AAAA/PTR go through the `dart:io` system
+  /// resolver and the other types through DNS-over-HTTPS; on the web
+  /// everything uses DNS-over-HTTPS. Exit codes: 0 when the query completed
+  /// (any status, including NXDOMAIN, like real dig), 1 on transport
+  /// failure, 2 on usage error. Note: on native a failed A/AAAA system
+  /// lookup surfaces as a transport failure (exit 1) because the OS
+  /// resolver does not expose the rcode — an exact NXDOMAIN status line is
+  /// only available through DNS-over-HTTPS.
+  Future<SandboxBuiltinResult> dig(
+    List<String> args, {
+    Duration? timeout,
+  }) async {
+    var reverse = false;
+    String? name;
+    var type = 'A';
+    for (final arg in args) {
+      if (arg == '-x') {
+        reverse = true;
+      } else if (arg.startsWith('-')) {
+        return _error("dig: unknown option '$arg'\n", 2);
+      } else if (name == null) {
+        name = arg;
+      } else {
+        final upper = arg.toUpperCase();
+        if (!_digTypes.contains(upper)) {
+          return _error("dig: unknown query type '$arg'\n", 2);
+        }
+        if (type != 'A') {
+          return _error('usage: dig [-x] <host> [TYPE]\n', 2);
+        }
+        type = upper;
+      }
+    }
+    if (name == null) {
+      return _error('usage: dig [-x] <host> [TYPE]\n', 2);
+    }
+    if (reverse) {
+      final ptrName = ipv4PtrName(name);
+      if (ptrName == null) {
+        return _error('dig: -x expects an IPv4 address\n', 2);
+      }
+      name = ptrName;
+      type = 'PTR';
+    }
+
+    final SandboxDnsResult result;
+    try {
+      result = await _dns(name, type, timeout);
+    } on Object catch (e) {
+      return _error(';; communications error: $e\n', 1);
+    }
+    final out = StringBuffer()
+      ..writeln(';; status: ${_dnsStatusName(result.status)}')
+      ..writeln(';; SERVER: ${result.resolver}');
+    if (result.answers.isNotEmpty) {
+      out
+        ..writeln()
+        ..writeln(';; ANSWER SECTION:');
+      for (final record in result.answers) {
+        out.writeln(
+          '${record.name}\t${record.ttl}\tIN\t'
+          '${_dnsTypeName(record.type)}\t${record.data}',
+        );
+      }
+    }
+    return _ok(utf8.encode(out.toString()));
+  }
+
+  /// Runs the `whois` builtin: `whois <domain|ip>`. With an injected
+  /// [SandboxWhoisConnector] (`dart:io`, TCP port 43) the query goes to
+  /// whois.iana.org (the TLD for a domain, the literal for an IP) and
+  /// follows one `refer:`/`whois:` referral to the authoritative server,
+  /// printing the authoritative response (or the IANA response when there
+  /// is no referral or the referred server is unreachable). Without a
+  /// connector (the web default), whois falls back to RDAP over HTTPS via
+  /// rdap.org and prints a compact summary of the JSON record. Exit codes:
+  /// 0 success, 1 lookup failure, 2 usage error.
+  Future<SandboxBuiltinResult> whois(
+    List<String> args, {
+    Duration? timeout,
+  }) async {
+    if (args.length != 1) {
+      return _error('usage: whois <domain|ip>\n', 2);
+    }
+    final target = args.first;
+    final connector = whoisConnector;
+    if (connector != null) return _whoisTcp(target, connector);
+    return _whoisRdap(target, timeout);
+  }
+
+  Future<SandboxBuiltinResult> _whoisTcp(
+    String target,
+    SandboxWhoisConnector connector,
+  ) async {
+    // IANA answers TLD lookups: a domain target is reduced to its last
+    // label; IP literals and bare TLDs go verbatim.
+    final isIp = ipv4PtrName(target) != null || target.contains(':');
+    final ianaQuery = isIp || !target.contains('.')
+        ? target
+        : target.split('.').last;
+    final String iana;
+    try {
+      iana = await connector(ianaQuery, 'whois.iana.org');
+    } on Object catch (e) {
+      return _error('whois: whois.iana.org: $e\n', 1);
+    }
+    final refer = _whoisReferral(iana);
+    if (refer == null) return _ok(utf8.encode(_terminated(iana)));
+    try {
+      final authoritative = await connector(target, refer);
+      if (authoritative.isNotEmpty) {
+        return _ok(utf8.encode(_terminated(authoritative)));
+      }
+    } on Object {
+      // The referral target is unreachable; the IANA response still carries
+      // the TLD info, so report success with what we have.
+    }
+    return _ok(utf8.encode(_terminated(iana)));
+  }
+
+  Future<SandboxBuiltinResult> _whoisRdap(
+    String target,
+    Duration? timeout,
+  ) async {
+    final isIp = ipv4PtrName(target) != null || target.contains(':');
+    final uri = Uri.parse('https://rdap.org/${isIp ? 'ip' : 'domain'}/$target');
+    final http.Response response;
+    try {
+      response = await _httpClient
+          .get(uri, headers: {'Accept': 'application/rdap+json'})
+          .timeout(timeout ?? const Duration(seconds: 30));
+    } on TimeoutException {
+      return _error('whois: rdap.org: operation timed out\n', 1);
+    } on Object catch (e) {
+      // Includes connection failures and browser CORS rejections.
+      return _error('whois: rdap.org: $e\n', 1);
+    }
+    if (response.statusCode == 404) {
+      return _error('whois: $target: not found\n', 1);
+    }
+    if (response.statusCode != 200) {
+      return _error('whois: rdap.org: HTTP ${response.statusCode}\n', 1);
+    }
+    final Object? doc;
+    try {
+      doc = jsonDecode(response.body);
+    } on FormatException {
+      return _error('whois: rdap.org: malformed JSON response\n', 1);
+    }
+    return _ok(utf8.encode(_rdapSummary(doc)));
+  }
+
+  Future<SandboxDnsResult> _dns(String name, String type, Duration? timeout) {
+    final query = dnsQuery;
+    if (query != null) return query(name, type);
+    return dohQuery(_httpClient, name, type, timeout: timeout);
+  }
+
+  /// Queries DNS over HTTPS against cloudflare-dns.com (the
+  /// `application/dns-json` API) using [client]. This is the default
+  /// resolver when no [SandboxDnsQuery] is injected (the web case); native
+  /// shells also fall back to it for the record types
+  /// `InternetAddress.lookup` cannot answer. Throws on transport failure.
+  static Future<SandboxDnsResult> dohQuery(
+    http.Client client,
+    String name,
+    String type, {
+    Duration? timeout,
+  }) async {
+    final uri = Uri.https('cloudflare-dns.com', '/dns-query', {
+      'name': name,
+      'type': type,
+    });
+    final http.Response response;
+    try {
+      response = await client
+          .get(uri, headers: {'Accept': 'application/dns-json'})
+          .timeout(timeout ?? const Duration(seconds: 15));
+    } on TimeoutException {
+      throw const FormatException(
+        'DNS-over-HTTPS query to cloudflare-dns.com timed out',
+      );
+    }
+    if (response.statusCode != 200) {
+      throw FormatException(
+        'DNS-over-HTTPS query failed: HTTP ${response.statusCode}',
+      );
+    }
+    final Object? doc = jsonDecode(response.body);
+    if (doc is! Map<String, dynamic>) {
+      throw const FormatException('malformed DNS-over-HTTPS response');
+    }
+    final answers = <SandboxDnsRecord>[];
+    final answerSection = doc['Answer'];
+    if (answerSection is List) {
+      for (final record in answerSection) {
+        if (record is! Map<String, dynamic>) continue;
+        final recordName = record['name'];
+        final recordType = record['type'];
+        final ttl = record['TTL'];
+        final data = record['data'];
+        if (recordName is! String || recordType is! int || data is! String) {
+          continue;
+        }
+        answers.add(
+          SandboxDnsRecord(
+            name: recordName,
+            type: recordType,
+            ttl: ttl is int ? ttl : 0,
+            data: data,
+          ),
+        );
+      }
+    }
+    final status = doc['Status'];
+    return SandboxDnsResult(
+      status: status is int ? status : 0,
+      answers: answers,
+      resolver: 'cloudflare-dns.com',
+    );
+  }
+
+  /// Returns the `in-addr.arpa` PTR name for an IPv4 literal like `1.2.3.4`,
+  /// or null when [host] is not a dotted-quad address.
+  static String? ipv4PtrName(String host) {
+    final parts = host.split('.');
+    if (parts.length != 4) return null;
+    for (final part in parts) {
+      final value = int.tryParse(part);
+      if (value == null || value > 255 || part != '$value') return null;
+    }
+    return '${parts.reversed.join('.')}.in-addr.arpa';
+  }
+
+  /// Inverse of [ipv4PtrName]: the IPv4 literal of an `in-addr.arpa` name,
+  /// or null when [ptrName] is not one. Used by the `dart:io` resolver to
+  /// feed `InternetAddress.reverse`.
+  static String? ipv4FromPtrName(String ptrName) {
+    const suffix = '.in-addr.arpa';
+    if (!ptrName.endsWith(suffix)) return null;
+    final literal = ptrName
+        .substring(0, ptrName.length - suffix.length)
+        .split('.')
+        .reversed
+        .join('.');
+    return ipv4PtrName(literal) != null ? literal : null;
+  }
+
+  /// Extracts the authoritative whois server from an IANA response's
+  /// `refer:`/`whois:` line, or null when there is none.
+  static String? _whoisReferral(String text) {
+    for (final line in text.split('\n')) {
+      final colon = line.indexOf(':');
+      if (colon < 0) continue;
+      final key = line.substring(0, colon).trim().toLowerCase();
+      if (key == 'refer' || key == 'whois') {
+        final server = line.substring(colon + 1).trim();
+        if (server.isNotEmpty) return server;
+      }
+    }
+    return null;
+  }
+
+  /// Renders an RDAP JSON document as compact whois-style `Key: value`
+  /// lines; falls back to pretty-printed JSON when the document has none of
+  /// the recognized fields.
+  static String _rdapSummary(Object? doc) {
+    if (doc is Map<String, dynamic>) {
+      final out = StringBuffer();
+      final isDomain = doc['objectClassName'] == 'domain';
+      void field(String label, Object? value) {
+        if (value is String && value.isNotEmpty) {
+          out.writeln('$label: $value');
+        }
+      }
+
+      if (isDomain) {
+        field('Domain Name', doc['ldhName']);
+        field('Registry Domain ID', doc['handle']);
+      } else {
+        field('NetName', doc['name']);
+        field('NetHandle', doc['handle']);
+        final start = doc['startAddress'];
+        final end = doc['endAddress'];
+        if (start is String && end is String) {
+          out.writeln('NetRange: $start - $end');
+        }
+        field('Country', doc['country']);
+      }
+      final status = doc['status'];
+      if (status is List) {
+        for (final value in status) {
+          field(isDomain ? 'Domain Status' : 'Status', value);
+        }
+      }
+      final entities = doc['entities'];
+      if (entities is List) {
+        for (final entity in entities) {
+          if (entity is! Map<String, dynamic>) continue;
+          final name = _rdapEntityName(entity);
+          final roles = entity['roles'];
+          if (name == null || roles is! List) continue;
+          if (roles.contains('registrar')) {
+            var line = name;
+            final publicIds = entity['publicIds'];
+            if (publicIds is List && publicIds.isNotEmpty) {
+              final id = publicIds.first;
+              if (id is Map<String, dynamic>) {
+                line += ' (IANA ID: ${id['identifier']})';
+              }
+            }
+            out.writeln('Registrar: $line');
+          } else {
+            for (final role in roles) {
+              out.writeln('${_rdapRoleName(role)}: $name');
+            }
+          }
+        }
+      }
+      final events = doc['events'];
+      if (events is List) {
+        for (final event in events) {
+          if (event is! Map<String, dynamic>) continue;
+          final action = event['eventAction'];
+          final date = event['eventDate'];
+          if (action is! String || date is! String) continue;
+          out.writeln('${_rdapEventName(action)}: $date');
+        }
+      }
+      final nameservers = doc['nameservers'];
+      if (nameservers is List) {
+        for (final ns in nameservers) {
+          if (ns is Map<String, dynamic>) field('Name Server', ns['ldhName']);
+        }
+      }
+      if (out.isNotEmpty) return out.toString();
+    }
+    return '${const JsonEncoder.withIndent('  ').convert(doc)}\n';
+  }
+
+  /// Extracts the display name (`fn`) from an RDAP entity's vCard, falling
+  /// back to the entity handle.
+  static String? _rdapEntityName(Map<String, dynamic> entity) {
+    final vcard = entity['vcardArray'];
+    if (vcard is List && vcard.length > 1 && vcard[1] is List) {
+      for (final property in vcard[1] as List) {
+        if (property is List && property.length > 3 && property[0] == 'fn') {
+          final value = property[3];
+          if (value is String && value.isNotEmpty) return value;
+        }
+      }
+    }
+    final handle = entity['handle'];
+    return handle is String && handle.isNotEmpty ? handle : null;
+  }
+
+  static String _rdapRoleName(Object? role) {
+    const names = {
+      'registrant': 'Registrant',
+      'administrative': 'Admin',
+      'technical': 'Tech',
+      'abuse': 'Abuse Contact',
+      'billing': 'Billing',
+      'sponsor': 'Sponsor',
+    };
+    return names[role] ?? '$role';
+  }
+
+  static String _rdapEventName(String action) {
+    const names = {
+      'registration': 'Creation Date',
+      'reregistration': 'Updated Date',
+      'last changed': 'Updated Date',
+      'expiration': 'Registry Expiry Date',
+      'deletion': 'Deletion Date',
+      'reinstantiation': 'Reinstantiation Date',
+      'transfer': 'Transfer Date',
+      'locked': 'Locked Date',
+      'unlocked': 'Unlocked Date',
+      'last update of RDAP database': 'RDAP Updated Date',
+    };
+    return names[action] ?? '$action Date';
+  }
+
+  static String _terminated(String text) {
+    return text.endsWith('\n') ? text : '$text\n';
+  }
+
+  /// DNS record type names by number, for dig-style output.
+  static const _dnsTypeNames = {
+    1: 'A',
+    2: 'NS',
+    5: 'CNAME',
+    6: 'SOA',
+    12: 'PTR',
+    15: 'MX',
+    16: 'TXT',
+    28: 'AAAA',
+    33: 'SRV',
+    255: 'ANY',
+  };
+
+  static String _dnsTypeName(int type) => _dnsTypeNames[type] ?? 'TYPE$type';
+
+  static String _dnsStatusName(int status) {
+    const names = {
+      0: 'NOERROR',
+      1: 'FORMERR',
+      2: 'SERVFAIL',
+      3: 'NXDOMAIN',
+      4: 'NOTIMP',
+      5: 'REFUSED',
+    };
+    return names[status] ?? 'STATUS$status';
   }
 
   dynamic _yamlToJson(dynamic value) {

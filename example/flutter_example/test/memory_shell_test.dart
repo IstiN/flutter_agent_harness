@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_example/memory_shell.dart';
+import 'package:flutter_agent_example/sandbox_builtins.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -695,6 +698,348 @@ void main() {
       expect(r.exitCode, 2);
       r = await run('patch /orig.txt /missing.diff');
       expect(r.exitCode, 2);
+    });
+  });
+
+  group('netdiag (nslookup/dig/whois)', () {
+    /// Builds a canned DNS-over-HTTPS JSON body (cloudflare-dns.com shape).
+    String dohJson(int status, List<Map<String, Object>> answers) {
+      return jsonEncode({
+        'Status': status,
+        if (answers.isNotEmpty) 'Answer': answers,
+      });
+    }
+
+    Map<String, Object> dohRecord(String name, int type, String data) {
+      return {'name': name, 'type': type, 'TTL': 300, 'data': data};
+    }
+
+    test('which resolves the netdiag commands', () async {
+      for (final name in ['nslookup', 'dig', 'whois']) {
+        final r = await run('which $name');
+        expect(r.exitCode, 0, reason: '$name not registered');
+      }
+    });
+
+    test('nslookup resolves A and AAAA via DoH', () async {
+      final m = await mockEnv(
+        MockClient((request) async {
+          expect(request.url.host, 'cloudflare-dns.com');
+          expect(request.headers['Accept'], 'application/dns-json');
+          expect(request.url.queryParameters['name'], 'example.com');
+          final type = request.url.queryParameters['type'];
+          return http.Response(
+            dohJson(0, [
+              if (type == 'A')
+                dohRecord('example.com.', 1, '93.184.216.34')
+              else
+                dohRecord(
+                  'example.com.',
+                  28,
+                  '2606:2800:220:1:248:1893:25c8:1946',
+                ),
+            ]),
+            200,
+          );
+        }),
+      );
+
+      final r = await m.run('nslookup example.com');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('Server:  cloudflare-dns.com'));
+      expect(r.stdout, contains('Name:    example.com.'));
+      expect(r.stdout, contains('Address: 93.184.216.34'));
+      expect(r.stdout, contains('Address: 2606:2800:220:1:248:1893:25c8:1946'));
+    });
+
+    test('nslookup of an IPv4 literal does a PTR query', () async {
+      final m = await mockEnv(
+        MockClient((request) async {
+          expect(request.url.queryParameters['name'], '1.1.1.1.in-addr.arpa');
+          expect(request.url.queryParameters['type'], 'PTR');
+          return http.Response(
+            dohJson(0, [
+              dohRecord('1.1.1.1.in-addr.arpa.', 12, 'one.one.one.one.'),
+            ]),
+            200,
+          );
+        }),
+      );
+
+      final r = await m.run('nslookup 1.1.1.1');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('name = one.one.one.one.'));
+    });
+
+    test(
+      'nslookup reports NXDOMAIN and transport failure with exit 1',
+      () async {
+        var m = await mockEnv(
+          MockClient((request) async => http.Response(dohJson(3, []), 200)),
+        );
+        var r = await m.run('nslookup nope.invalid');
+        expect(r.exitCode, 1);
+        expect(r.stderr, contains("server can't find nope.invalid: NXDOMAIN"));
+
+        m = await mockEnv(
+          MockClient((request) async => http.Response('oops', 502)),
+        );
+        r = await m.run('nslookup example.com');
+        expect(r.exitCode, 1);
+        expect(r.stderr, contains('HTTP 502'));
+
+        r = await run('nslookup');
+        expect(r.exitCode, 2);
+        expect(r.stderr, contains('usage: nslookup'));
+      },
+    );
+
+    test('dig prints the status line and answer section', () async {
+      final m = await mockEnv(
+        MockClient((request) async {
+          expect(request.url.queryParameters['type'], 'A');
+          return http.Response(
+            dohJson(0, [dohRecord('example.com.', 1, '93.184.216.34')]),
+            200,
+          );
+        }),
+      );
+
+      final r = await m.run('dig example.com');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains(';; status: NOERROR'));
+      expect(r.stdout, contains(';; SERVER: cloudflare-dns.com'));
+      expect(r.stdout, contains(';; ANSWER SECTION:'));
+      expect(r.stdout, contains('example.com.\t300\tIN\tA\t93.184.216.34'));
+    });
+
+    test('dig supports an explicit query type and -x reverse', () async {
+      final m = await mockEnv(
+        MockClient((request) async {
+          final name = request.url.queryParameters['name'];
+          final type = request.url.queryParameters['type'];
+          if (type == 'MX') {
+            return http.Response(
+              dohJson(0, [
+                dohRecord('example.com.', 15, '10 mail.example.com.'),
+              ]),
+              200,
+            );
+          }
+          expect(name, '1.1.1.1.in-addr.arpa');
+          expect(type, 'PTR');
+          return http.Response(
+            dohJson(0, [
+              dohRecord('1.1.1.1.in-addr.arpa.', 12, 'one.one.one.one.'),
+            ]),
+            200,
+          );
+        }),
+      );
+
+      var r = await m.run('dig example.com MX');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('IN\tMX\t10 mail.example.com.'));
+
+      r = await m.run('dig -x 1.1.1.1');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('IN\tPTR\tone.one.one.one.'));
+    });
+
+    test('dig keeps exit 0 on NXDOMAIN and rejects bad usage', () async {
+      final m = await mockEnv(
+        MockClient((request) async => http.Response(dohJson(3, []), 200)),
+      );
+
+      var r = await m.run('dig nope.invalid');
+      expect(r.exitCode, 0);
+      expect(r.stdout, contains(';; status: NXDOMAIN'));
+      expect(r.stdout, isNot(contains('ANSWER SECTION')));
+
+      r = await m.run('dig');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('usage: dig'));
+      r = await m.run('dig example.com BOGUS');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains("unknown query type 'BOGUS'"));
+      r = await m.run('dig -x example.com');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('-x expects an IPv4 address'));
+    });
+
+    test('whois summarizes RDAP JSON on the web path', () async {
+      final m = await mockEnv(
+        MockClient((request) async {
+          expect(request.url.host, 'rdap.org');
+          if (request.url.path == '/domain/example.com') {
+            return http.Response(
+              jsonEncode({
+                'objectClassName': 'domain',
+                'ldhName': 'EXAMPLE.COM',
+                'handle': '2336799_DOMAIN_COM-VRSN',
+                'status': ['client delete prohibited'],
+                'entities': [
+                  {
+                    'objectClassName': 'entity',
+                    'handle': '376',
+                    'roles': ['registrar'],
+                    'publicIds': [
+                      {'type': 'IANA Registrar ID', 'identifier': '376'},
+                    ],
+                    'vcardArray': [
+                      'vcard',
+                      [
+                        ['version', {}, 'text', '4.0'],
+                        [
+                          'fn',
+                          {},
+                          'text',
+                          'RESERVED-Internet Assigned Numbers Authority',
+                        ],
+                      ],
+                    ],
+                  },
+                ],
+                'events': [
+                  {
+                    'eventAction': 'registration',
+                    'eventDate': '1995-08-14T04:00:00Z',
+                  },
+                  {
+                    'eventAction': 'expiration',
+                    'eventDate': '2026-08-13T04:00:00Z',
+                  },
+                ],
+                'nameservers': [
+                  {
+                    'objectClassName': 'nameserver',
+                    'ldhName': 'A.IANA-SERVERS.NET',
+                  },
+                ],
+              }),
+              200,
+            );
+          }
+          expect(request.url.path, '/ip/1.1.1.1');
+          return http.Response(
+            jsonEncode({
+              'objectClassName': 'ip network',
+              'handle': 'NET-1-1-1-0-1',
+              'name': 'APNIC-LABS',
+              'startAddress': '1.1.1.0',
+              'endAddress': '1.1.1.255',
+              'country': 'AU',
+            }),
+            200,
+          );
+        }),
+      );
+
+      var r = await m.run('whois example.com');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('Domain Name: EXAMPLE.COM'));
+      expect(r.stdout, contains('Registry Domain ID: 2336799_DOMAIN_COM-VRSN'));
+      expect(r.stdout, contains('Domain Status: client delete prohibited'));
+      expect(
+        r.stdout,
+        contains(
+          'Registrar: RESERVED-Internet Assigned Numbers Authority '
+          '(IANA ID: 376)',
+        ),
+      );
+      expect(r.stdout, contains('Creation Date: 1995-08-14T04:00:00Z'));
+      expect(r.stdout, contains('Registry Expiry Date: 2026-08-13T04:00:00Z'));
+      expect(r.stdout, contains('Name Server: A.IANA-SERVERS.NET'));
+
+      r = await m.run('whois 1.1.1.1');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('NetRange: 1.1.1.0 - 1.1.1.255'));
+      expect(r.stdout, contains('NetName: APNIC-LABS'));
+      expect(r.stdout, contains('Country: AU'));
+    });
+
+    test('whois exits 1 on RDAP errors and 2 on usage', () async {
+      final m = await mockEnv(
+        MockClient((request) async => http.Response('', 404)),
+      );
+      var r = await m.run('whois nope.invalid');
+      expect(r.exitCode, 1);
+      expect(r.stderr, contains('whois: nope.invalid: not found'));
+
+      r = await m.run('whois');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('usage: whois'));
+    });
+
+    test('whois over TCP follows one referral (canned text)', () async {
+      SandboxBuiltins tcpBuiltins(
+        Future<String> Function(String query, String server) connector,
+      ) {
+        return SandboxBuiltins(
+          readTextFile: (path) async => null,
+          writeBinaryFile: (path, bytes) async {},
+          whoisConnector: connector,
+        );
+      }
+
+      // Domain: IANA is asked for the TLD (whois: key, as in real IANA
+      // responses); the registry gets the full domain.
+      final exchanges = <String>[];
+      final following = tcpBuiltins((query, server) async {
+        exchanges.add('$server?$query');
+        if (server == 'whois.iana.org') {
+          return 'domain:       COM\nwhois:        whois.verisign-grs.com\n';
+        }
+        return 'Domain Name: EXAMPLE.COM\nRegistrar: IANA\n';
+      });
+      var r = await following.whois(['example.com']);
+      expect(r.exitCode, 0);
+      expect(exchanges, [
+        'whois.iana.org?com',
+        'whois.verisign-grs.com?example.com',
+      ]);
+      expect(utf8.decode(r.stdout), contains('Domain Name: EXAMPLE.COM'));
+
+      // IP: the literal goes to IANA verbatim and the refer: key is used.
+      exchanges.clear();
+      final ipReferral = tcpBuiltins((query, server) async {
+        exchanges.add('$server?$query');
+        if (server == 'whois.iana.org') {
+          return 'refer:        whois.apnic.net\n';
+        }
+        return 'inetnum:        1.1.1.0 - 1.1.1.255\n';
+      });
+      r = await ipReferral.whois(['1.1.1.1']);
+      expect(r.exitCode, 0);
+      expect(exchanges, ['whois.iana.org?1.1.1.1', 'whois.apnic.net?1.1.1.1']);
+      expect(utf8.decode(r.stdout), contains('inetnum:'));
+
+      // Without a referral the IANA response is printed as-is.
+      final noReferral = tcpBuiltins(
+        (query, server) async => 'TLD information only\n',
+      );
+      r = await noReferral.whois(['example.void']);
+      expect(r.exitCode, 0);
+      expect(utf8.decode(r.stdout), 'TLD information only\n');
+
+      // A dead referral target still yields the IANA response.
+      final deadReferral = tcpBuiltins((query, server) async {
+        if (server == 'whois.iana.org') {
+          return 'refer: whois.dead.example\n';
+        }
+        throw StateError('connection refused');
+      });
+      r = await deadReferral.whois(['example.com']);
+      expect(r.exitCode, 0);
+      expect(utf8.decode(r.stdout), 'refer: whois.dead.example\n');
+
+      // A dead whois.iana.org is a hard failure.
+      final deadIana = tcpBuiltins(
+        (query, server) async => throw StateError('connection refused'),
+      );
+      r = await deadIana.whois(['example.com']);
+      expect(r.exitCode, 1);
+      expect(utf8.decode(r.stderr), contains('whois.iana.org'));
     });
   });
 }
