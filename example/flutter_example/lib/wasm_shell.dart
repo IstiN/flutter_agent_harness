@@ -32,6 +32,11 @@ import 'wasm_shell_ssh.dart';
 ///   - `gzip.wasm` for gzip compression/decompression
 ///   - `zip.wasm` for zip archive creation/extraction
 ///
+/// `tree`, `file`, and `xz`/`bzip2` decompression (`unxz`/`bunzip2`) are
+/// Dart builtins shared with the web shell (see `sandbox_builtins.dart`);
+/// `base64` and the `md5sum`/`sha*sum` checksums are already served by the
+/// `coreutils.wasm` applets, so they are not duplicated as builtins.
+///
 /// A tiny shell parser supports pipelines, `\u0026\u0026` / `||`, `;`, and
 /// redirects. Each stage runs in its own WASM instance, so there is no need
 /// for `fork`, `exec`, or process-level pipes — WASM does not expose those on
@@ -322,6 +327,12 @@ final class WasiSandboxShell implements Shell {
     'ssh',
     'scp',
     'sftp',
+    'tree',
+    'file',
+    'xz',
+    'unxz',
+    'bzip2',
+    'bunzip2',
   };
 
   /// Whether [command] can be resolved to a WASM applet or a builtin.
@@ -404,6 +415,15 @@ final class WasiSandboxShell implements Shell {
       'ssh' => _sshBuiltin(stage, options, inputSource),
       'scp' => _scpBuiltin(stage, options),
       'sftp' => _sftpBuiltin(stage, options, inputSource),
+      'tree' => _treeBuiltin(stage, options),
+      'file' => _fileBuiltin(stage, options),
+      'xz' ||
+      'unxz' => _xzBuiltin(stage, options, decompress: stage.command == 'unxz'),
+      'bzip2' || 'bunzip2' => _bzip2Builtin(
+        stage,
+        options,
+        decompress: stage.command == 'bunzip2',
+      ),
       _ => Err(
         ExecutionError(
           ExecutionErrorCode.unknown,
@@ -1295,6 +1315,36 @@ final class WasiSandboxShell implements Shell {
         await file.parent.create(recursive: true);
         await file.writeAsBytes(bytes);
       },
+      readBinaryFile: (path) async {
+        final file = _hostFile(_resolveSandboxPath(path, cwd));
+        if (!await file.exists()) return null;
+        return file.readAsBytes();
+      },
+      listDirectory: (path) async {
+        final host = _hostPath(_resolveSandboxPath(path, cwd));
+        if (io.FileSystemEntity.typeSync(host) !=
+            io.FileSystemEntityType.directory) {
+          return null;
+        }
+        final entries = <SandboxDirEntry>[];
+        try {
+          await for (final entity in io.Directory(
+            host,
+          ).list(followLinks: false)) {
+            entries.add((
+              name: p.basename(entity.path),
+              isDirectory: entity is io.Directory,
+            ));
+          }
+        } on Object {
+          // Unreadable directories list as empty.
+        }
+        return entries;
+      },
+      removeFile: (path) async {
+        final file = _hostFile(_resolveSandboxPath(path, cwd));
+        if (await file.exists()) await file.delete();
+      },
     );
   }
 
@@ -1395,6 +1445,48 @@ final class WasiSandboxShell implements Shell {
     final result = await _sandboxBuiltins(
       _currentDir,
     ).yq(stage.args, stdin: await _stdinFromSource(stage, inputSource));
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _treeBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+    ).tree(stage.args);
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _fileBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+    ).file(stage.args);
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _xzBuiltin(
+    Stage stage,
+    ShellExecOptions? options, {
+    required bool decompress,
+  }) async {
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+    ).xz(stage.args, decompress: decompress);
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _bzip2Builtin(
+    Stage stage,
+    ShellExecOptions? options, {
+    required bool decompress,
+  }) async {
+    final result = await _sandboxBuiltins(
+      options?.cwd ?? _currentDir,
+    ).bzip2(stage.args, decompress: decompress);
     return _builtinOk(result);
   }
 
