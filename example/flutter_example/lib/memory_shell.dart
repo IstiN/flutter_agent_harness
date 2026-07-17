@@ -29,9 +29,11 @@ import 'web_interpreters_stub.dart'
 /// pure Dart and work in the browser: `curl`/`wget`/`jq`/`yq`/`diff`/`patch`,
 /// plus `nslookup`/`dig` (DNS-over-HTTPS via cloudflare-dns.com) and `whois`
 /// (RDAP over HTTPS via rdap.org) — all shared with the WASM shell via
-/// `sandbox_builtins.dart` — `sed`, `awk`, `find`,
-/// `xargs`, `printf`, `realpath`, `tar`/`gzip`/`gunzip`/`zip`/`unzip` (via
-/// `package:archive`), and `rg` (an alias of the Dart `grep`
+/// `sandbox_builtins.dart` — `sed`, `awk`, `find`, `xargs`, `printf`,
+/// `realpath`, `tar`/`gzip`/`gunzip`/`zip`/`unzip`/`xz -d`/`bzip2 -d`
+/// (+`unxz`/`bunzip2`) and `file` (via `package:archive`), `tree`,
+/// `base64`, `md5sum`/`sha*sum` (via `package:crypto`, matching the uutils
+/// applets on iOS), and `rg` (an alias of the Dart `grep`
 /// implementation, mirroring iOS where `grep` maps to `rg` with grep
 /// semantics). `python3`/`qjs`/`sqlite3` run in browser-hosted interpreters
 /// loaded from CDNs (pyodide, quickjs-emscripten, sql.js) and report
@@ -71,7 +73,10 @@ final class MemoryShell implements Shell {
   /// decide between execution and "command not found".
   static const Set<String> _availableCommands = {
     'awk',
+    'base64',
     'basename',
+    'bunzip2',
+    'bzip2',
     'cat',
     'cd',
     'command',
@@ -84,6 +89,7 @@ final class MemoryShell implements Shell {
     'env',
     'export',
     'false',
+    'file',
     'find',
     'git',
     'grep',
@@ -93,6 +99,7 @@ final class MemoryShell implements Shell {
     'jq',
     'js',
     'ls',
+    'md5sum',
     'mkdir',
     'mv',
     'nslookup',
@@ -109,6 +116,11 @@ final class MemoryShell implements Shell {
     'scp',
     'sed',
     'sftp',
+    'sha1sum',
+    'sha224sum',
+    'sha256sum',
+    'sha384sum',
+    'sha512sum',
     'sort',
     'sqlite3',
     'ssh',
@@ -117,8 +129,10 @@ final class MemoryShell implements Shell {
     'test',
     'touch',
     'tr',
+    'tree',
     'true',
     'unset',
+    'unxz',
     'unzip',
     'wc',
     'wget',
@@ -126,9 +140,20 @@ final class MemoryShell implements Shell {
     'whoami',
     'whois',
     'xargs',
+    'xz',
     'yq',
     'zip',
     '[',
+  };
+
+  /// Checksum commands dispatched to [_hashsum].
+  static const _hashCommands = {
+    'md5sum',
+    'sha1sum',
+    'sha224sum',
+    'sha256sum',
+    'sha384sum',
+    'sha512sum',
   };
 
   @override
@@ -330,6 +355,14 @@ final class MemoryShell implements Shell {
       'patch' => _patch(ctx),
       'nslookup' => _nslookup(ctx),
       'whois' => _whois(ctx),
+      'tree' => _toStage(_builtinsFor(ctx).tree(ctx.args)),
+      'file' => _toStage(_builtinsFor(ctx).file(ctx.args)),
+      'xz' || 'unxz' => _xz(ctx, decompress: command == 'unxz'),
+      'bzip2' || 'bunzip2' => _bzip2(ctx, decompress: command == 'bunzip2'),
+      'base64' => _toStage(
+        _builtinsFor(ctx).base64(ctx.args, stdin: ctx.stdin),
+      ),
+      _ when _hashCommands.contains(command) => _hashsum(command, ctx),
       'rg' => _grep(ctx),
       'sed' => _sed(ctx),
       'awk' => _awk(ctx),
@@ -391,6 +424,15 @@ final class MemoryShell implements Shell {
           Uint8List.fromList(bytes),
         );
       },
+      readBinaryFile: (path) async => (await _fs.readBinaryFile(
+        _resolveSandboxPath(path, ctx.cwd),
+      )).valueOrNull,
+      listDirectory: (path) async => (await _fs.listDir(
+        _resolveSandboxPath(path, ctx.cwd),
+      )).valueOrNull?.map(_dirEntry).toList(),
+      removeFile: (path) async {
+        await _fs.remove(_resolveSandboxPath(path, ctx.cwd));
+      },
     );
   }
 
@@ -402,6 +444,9 @@ final class MemoryShell implements Shell {
       exitCode: r.exitCode,
     );
   }
+
+  static SandboxDirEntry _dirEntry(FileInfo e) =>
+      (name: e.name, isDirectory: e.kind == FileKind.directory);
 
   Future<_StageResult> _curl(_Context ctx) {
     return _toStage(
@@ -448,6 +493,15 @@ final class MemoryShell implements Shell {
       _builtinsFor(ctx).whois(ctx.args, timeout: ctx.options?.timeout),
     );
   }
+
+  Future<_StageResult> _xz(_Context ctx, {required bool decompress}) =>
+      _toStage(_builtinsFor(ctx).xz(ctx.args, decompress: decompress));
+
+  Future<_StageResult> _bzip2(_Context ctx, {required bool decompress}) =>
+      _toStage(_builtinsFor(ctx).bzip2(ctx.args, decompress: decompress));
+
+  Future<_StageResult> _hashsum(String command, _Context ctx) =>
+      _toStage(_builtinsFor(ctx).hashsum(command, ctx.args, stdin: ctx.stdin));
 
   // ---------------------------------------------------------------------------
   // sqlite3 (sql.js in the browser)

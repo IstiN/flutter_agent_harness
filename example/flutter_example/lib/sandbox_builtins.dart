@@ -5,6 +5,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:diffutil_dart/diffutil.dart' as diffutil;
 import 'package:http/http.dart' as http;
 import 'package:yaml/yaml.dart' as yaml;
@@ -19,6 +21,25 @@ typedef SandboxTextReader = Future<String?> Function(String path);
 /// closure resolves it against the shell's current directory.
 typedef SandboxBytesWriter =
     Future<void> Function(String path, List<int> bytes);
+
+/// Reads a binary file from the shell's filesystem. Returns `null` when the
+/// file does not exist. The path is the verbatim command argument; the
+/// closure resolves it against the shell's current directory.
+typedef SandboxBytesReader = Future<List<int>?> Function(String path);
+
+/// Removes a file from the shell's filesystem; a missing file is ignored.
+/// The path is the verbatim command argument; the closure resolves it
+/// against the shell's current directory.
+typedef SandboxFileRemover = Future<void> Function(String path);
+
+/// One immediate child of a directory, listed by [SandboxDirLister].
+typedef SandboxDirEntry = ({String name, bool isDirectory});
+
+/// Lists the immediate children of the directory at [path], or returns
+/// `null` when [path] is not a directory (or does not exist). The path is
+/// the verbatim command argument; the closure resolves it against the
+/// shell's current directory.
+typedef SandboxDirLister = Future<List<SandboxDirEntry>?> Function(String path);
 
 /// Raw result of a single builtin command, in the same shape both shells
 /// use for a pipeline stage.
@@ -95,12 +116,14 @@ typedef SandboxWhoisConnector =
     Future<String> Function(String query, String server);
 
 /// Dart-native implementations of `curl`, `wget`, `jq`, `yq`, `diff`,
-/// `patch`, `nslookup`, `dig`, and `whois` shared by the WASM shell
-/// (iOS/Android) and the in-memory web shell.
+/// `patch`, `nslookup`, `dig`, `whois`, `tree`, `file`, `xz`/`bzip2`
+/// (decompression), `base64`, and the `md5sum`/`sha*sum` checksums, shared
+/// by the WASM shell (iOS/Android) and the in-memory web shell.
 ///
 /// These are pure Dart (no `dart:io`) so they compile for the browser; each
-/// shell injects its own filesystem access through [SandboxTextReader] and
-/// [SandboxBytesWriter], and HTTP goes through an injectable [http.Client]
+/// shell injects its own filesystem access through [SandboxTextReader],
+/// [SandboxBytesReader], [SandboxBytesWriter], [SandboxFileRemover], and
+/// [SandboxDirLister], and HTTP goes through an injectable [http.Client]
 /// so tests can use `MockClient` from `package:http/testing.dart`. The DNS
 /// and whois transports are injectable too: the native shell resolves
 /// A/AAAA/PTR via the `dart:io` system resolver and runs whois over raw TCP
@@ -113,6 +136,9 @@ final class SandboxBuiltins {
     http.Client? httpClient,
     required this.readTextFile,
     required this.writeBinaryFile,
+    this.readBinaryFile,
+    this.listDirectory,
+    this.removeFile,
     this.dnsQuery,
     this.whoisConnector,
   }) : _httpClient = httpClient ?? http.Client();
@@ -132,6 +158,19 @@ final class SandboxBuiltins {
 
   /// Injected binary-file writer; see [SandboxBytesWriter].
   final SandboxBytesWriter writeBinaryFile;
+
+  /// Injected binary-file reader (`file`, `xz`/`bzip2`, `base64`, checksum
+  /// input); when null those commands report "not supported by this shell".
+  /// See [SandboxBytesReader].
+  final SandboxBytesReader? readBinaryFile;
+
+  /// Injected directory lister for `tree`; when null `tree` reports
+  /// "not supported by this shell". See [SandboxDirLister].
+  final SandboxDirLister? listDirectory;
+
+  /// Injected file remover used by `xz -d`/`bzip2 -d` to drop the original
+  /// archive unless `-k` is given; when null the original is kept.
+  final SandboxFileRemover? removeFile;
 
   static SandboxBuiltinResult _ok(
     List<int> stdout, [
@@ -1193,6 +1232,554 @@ final class SandboxBuiltins {
     }
     return [current];
   }
+
+  // ---------------------------------------------------------------------------
+  // tree
+  // ---------------------------------------------------------------------------
+
+  /// Runs the `tree` builtin: `tree [path] [-L depth] [-a]` prints a
+  /// recursive listing with the classic tree-drawing characters
+  /// (`├──`/`└──`/`│`), sorted alphabetically with directories mixed in
+  /// (the real tree's default order). Dotfiles are hidden unless `-a` is
+  /// given; `-L n` limits the display depth (the root's immediate children
+  /// are level 1). The listing ends with a `N directories, M files` summary
+  /// line; a file argument prints just itself (`0 directories, 1 file`).
+  /// Exit codes: 0 success, 1 when the path does not exist, 2 usage error.
+  Future<SandboxBuiltinResult> tree(List<String> args) async {
+    final lister = listDirectory;
+    if (lister == null) {
+      return _error('tree: not supported by this shell\n', 2);
+    }
+    var showHidden = false;
+    int? maxDepth;
+    String? root;
+    for (var i = 0; i < args.length; i++) {
+      final arg = args[i];
+      if (arg == '-a') {
+        showHidden = true;
+      } else if (arg == '--help') {
+        return _ok(utf8.encode('usage: tree [-a] [-L level] [directory]\n'));
+      } else if (arg == '-L' || (arg.startsWith('-L') && arg.length > 2)) {
+        final value = arg == '-L'
+            ? (i + 1 < args.length ? args[++i] : null)
+            : arg.substring(2);
+        if (value == null) {
+          return _error('tree: Missing argument to -L option.\n', 2);
+        }
+        maxDepth = int.tryParse(value);
+        if (maxDepth == null || maxDepth < 1) {
+          return _error('tree: Invalid level, must be greater than 0.\n', 2);
+        }
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error("tree: Invalid option - '${arg.substring(1)}'\n", 2);
+      } else if (root == null) {
+        root = arg;
+      } else {
+        return _error('tree: too many arguments\n', 2);
+      }
+    }
+    final target = root ?? '.';
+
+    final out = StringBuffer()..writeln(target);
+    var directories = 0;
+    var files = 0;
+
+    Future<void> walk(String path, String prefix, int depth) async {
+      if (maxDepth != null && depth > maxDepth) return;
+      final entries = await lister(path);
+      if (entries == null) return;
+      final visible = [
+        for (final entry in entries)
+          if (showHidden || !entry.name.startsWith('.')) entry,
+      ]..sort((a, b) => a.name.compareTo(b.name));
+      for (var k = 0; k < visible.length; k++) {
+        final entry = visible[k];
+        final last = k == visible.length - 1;
+        out
+          ..write(prefix)
+          ..write(last ? '└── ' : '├── ')
+          ..writeln(entry.name);
+        if (entry.isDirectory) {
+          directories++;
+          await walk(
+            path.endsWith('/') ? '$path${entry.name}' : '$path/${entry.name}',
+            '$prefix${last ? '    ' : '│   '}',
+            depth + 1,
+          );
+        } else {
+          files++;
+        }
+      }
+    }
+
+    if (await lister(target) != null) {
+      await walk(target, '', 1);
+    } else {
+      // A file root prints itself and counts as one file (like real tree).
+      final reader = readBinaryFile;
+      if (reader == null || await reader(target) == null) {
+        return _error('tree: $target: No such file or directory\n', 1);
+      }
+      files++;
+    }
+    out
+      ..writeln()
+      ..writeln(
+        '${directories == 1 ? '1 directory' : '$directories directories'}, '
+        '${files == 1 ? '1 file' : '$files files'}',
+      );
+    return _ok(utf8.encode(out.toString()));
+  }
+
+  // ---------------------------------------------------------------------------
+  // file
+  // ---------------------------------------------------------------------------
+
+  /// Runs the `file` builtin: `file <path...>` classifies each operand by
+  /// its magic bytes — the formats the sandbox itself produces or consumes
+  /// (wasm, zip, gzip, xz, bzip2, tar, PNG/JPEG/GIF/WebP, PDF, SQLite3,
+  /// ELF, Mach-O) — falling back to ASCII/UTF-8 text detection and finally
+  /// `data`. Output follows BSD file: `path: description`. Exit codes:
+  /// 0 when every operand was classified, 1 when one was missing, 2 usage
+  /// error.
+  Future<SandboxBuiltinResult> file(List<String> args) async {
+    final reader = readBinaryFile;
+    if (reader == null) {
+      return _error('file: not supported by this shell\n', 2);
+    }
+    final paths = <String>[];
+    for (final arg in args) {
+      if (arg.startsWith('-') && arg != '-') {
+        return _error("file: invalid option -- '${arg.substring(1)}'\n", 2);
+      }
+      paths.add(arg);
+    }
+    if (paths.isEmpty) {
+      return _error('usage: file file...\n', 2);
+    }
+    final out = StringBuffer();
+    var failed = false;
+    for (final path in paths) {
+      final bytes = await reader(path);
+      if (bytes == null) {
+        out.writeln("$path: cannot open '$path' (No such file or directory)");
+        failed = true;
+        continue;
+      }
+      out.writeln('$path: ${_describeBytes(bytes)}');
+    }
+    return SandboxBuiltinResult(
+      stdout: utf8.encode(out.toString()),
+      stderr: const [],
+      exitCode: failed ? 1 : 0,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // xz / bzip2 (decompress only)
+  // ---------------------------------------------------------------------------
+
+  /// Runs the `xz` builtin: decompression only (`xz -d`, or `unxz` with
+  /// [decompress] preset). Each `.xz` operand is replaced by its decoded
+  /// sibling file (the original is removed unless `-k`); `-c` writes the
+  /// decoded bytes to stdout instead and skips the suffix check, mirroring
+  /// the codebase's `gzip -d`/`gunzip` behavior. Decoding goes through
+  /// `package:archive`'s XZ decoder behind a magic-bytes check (the
+  /// package's own error reporting is disabled, so corrupt payloads with a
+  /// valid header decode silently — a known limitation). The compress
+  /// direction is not supported. Exit codes: 0 success, 1 on
+  /// missing/corrupt input, 2 usage error.
+  Future<SandboxBuiltinResult> xz(
+    List<String> args, {
+    bool decompress = false,
+  }) {
+    return _decompress(
+      'xz',
+      args,
+      decompress: decompress,
+      suffix: '.xz',
+      decode: (bytes) {
+        _requireMagic(bytes, const [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
+        return XZDecoder().decodeBytes(bytes);
+      },
+    );
+  }
+
+  /// Runs the `bzip2` builtin: decompression only (`bzip2 -d`, or `bunzip2`
+  /// with [decompress] preset); behaves exactly like [xz] but for `.bz2`
+  /// files via `package:archive`'s bzip2 decoder (same magic-bytes caveat).
+  Future<SandboxBuiltinResult> bzip2(
+    List<String> args, {
+    bool decompress = false,
+  }) {
+    return _decompress(
+      'bzip2',
+      args,
+      decompress: decompress,
+      suffix: '.bz2',
+      decode: (bytes) {
+        _requireMagic(bytes, 'BZh'.codeUnits);
+        return BZip2Decoder().decodeBytes(bytes);
+      },
+    );
+  }
+
+  Future<SandboxBuiltinResult> _decompress(
+    String name,
+    List<String> args, {
+    required bool decompress,
+    required String suffix,
+    required List<int> Function(List<int> bytes) decode,
+  }) async {
+    final reader = readBinaryFile;
+    if (reader == null) {
+      return _error('$name: not supported by this shell\n', 2);
+    }
+    var unpack = decompress;
+    var keep = false;
+    var toStdout = false;
+    final files = <String>[];
+    for (final arg in args) {
+      if (arg == '-d' || arg == '--decompress' || arg == '--uncompress') {
+        unpack = true;
+      } else if (arg == '-k' || arg == '--keep') {
+        keep = true;
+      } else if (arg == '-c' || arg == '--stdout' || arg == '--to-stdout') {
+        toStdout = true;
+      } else if (arg.startsWith('--')) {
+        return _error('$name: unsupported option $arg\n', 2);
+      } else if (arg.startsWith('-') && arg != '-') {
+        // Bundled short flags (-dc, -dk, ...).
+        for (var j = 1; j < arg.length; j++) {
+          switch (arg[j]) {
+            case 'd':
+              unpack = true;
+            case 'k':
+              keep = true;
+            case 'c':
+              toStdout = true;
+            default:
+              return _error('$name: unsupported option -${arg[j]}\n', 2);
+          }
+        }
+      } else {
+        files.add(arg);
+      }
+    }
+    if (!unpack) {
+      return _error(
+        '$name: compression is not supported in this sandbox, '
+        'use $name -d to decompress\n',
+        2,
+      );
+    }
+    if (files.isEmpty) {
+      return _error('$name: missing operand\n', 1);
+    }
+    final stdout = <int>[];
+    for (final arg in files) {
+      final read = await reader(arg);
+      if (read == null) {
+        return _error('$name: $arg: No such file or directory\n', 1);
+      }
+      if (!toStdout && !arg.endsWith(suffix)) {
+        return _error('$name: $arg: unknown suffix -- ignored\n', 1);
+      }
+      final List<int> decoded;
+      try {
+        decoded = decode(read);
+      } on Object {
+        return _error('$name: $arg: not in $name format\n', 1);
+      }
+      if (toStdout) {
+        stdout.addAll(decoded);
+        continue;
+      }
+      await writeBinaryFile(
+        arg.substring(0, arg.length - suffix.length),
+        decoded,
+      );
+      final remover = removeFile;
+      if (!keep && remover != null) await remover(arg);
+    }
+    return _ok(stdout);
+  }
+
+  // ---------------------------------------------------------------------------
+  // base64
+  // ---------------------------------------------------------------------------
+
+  /// Runs the `base64` builtin: `base64 [-d|--decode] [-w cols] [file]`.
+  /// Encoding wraps at 76 columns by default (GNU behavior; `-w 0` disables
+  /// wrapping) and ends with a newline; `-d` decodes, tolerating whitespace
+  /// in the input. Input comes from [file], or from [stdin] when no file
+  /// (or `-`) is given. Exit codes: 0 success, 1 on invalid input or a
+  /// missing file, 2 usage error.
+  Future<SandboxBuiltinResult> base64(
+    List<String> args, {
+    String? stdin,
+  }) async {
+    var decode = false;
+    var wrap = 76;
+    String? inputFile;
+    for (var i = 0; i < args.length; i++) {
+      final arg = args[i];
+      String? columns;
+      if (arg == '-d' || arg == '--decode') {
+        decode = true;
+      } else if (arg == '-w' || arg == '--wrap') {
+        columns = i + 1 < args.length ? args[++i] : null;
+        if (columns == null) {
+          return _error("base64: option requires an argument -- 'w'\n", 2);
+        }
+      } else if (arg.startsWith('--wrap=')) {
+        columns = arg.substring('--wrap='.length);
+      } else if (arg.startsWith('-w') && arg.length > 2) {
+        columns = arg.substring(2);
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error("base64: invalid option -- '${arg.substring(1)}'\n", 2);
+      } else if (inputFile == null) {
+        inputFile = arg;
+      } else {
+        return _error("base64: extra operand '$arg'\n", 2);
+      }
+      if (columns != null) {
+        wrap = int.tryParse(columns) ?? -1;
+        if (wrap < 0) {
+          return _error("base64: invalid wrap size: '$columns'\n", 2);
+        }
+      }
+    }
+
+    final List<int> input;
+    if (inputFile != null && inputFile != '-') {
+      final reader = readBinaryFile;
+      if (reader == null) {
+        return _error('base64: not supported by this shell\n', 2);
+      }
+      final read = await reader(inputFile);
+      if (read == null) {
+        return _error('base64: $inputFile: No such file or directory\n', 1);
+      }
+      input = read;
+    } else {
+      input = utf8.encode(stdin ?? '');
+    }
+
+    if (decode) {
+      final text = utf8
+          .decode(input, allowMalformed: true)
+          .replaceAll(RegExp(r'\s'), '');
+      final List<int> decoded;
+      try {
+        decoded = base64Decode(text);
+      } on FormatException {
+        return _error('base64: invalid input\n', 1);
+      }
+      return _ok(decoded);
+    }
+
+    final encoded = base64Encode(input);
+    if (encoded.isEmpty) return _ok(const []);
+    final lines = <String>[
+      if (wrap > 0)
+        for (var i = 0; i < encoded.length; i += wrap)
+          encoded.substring(
+            i,
+            i + wrap > encoded.length ? encoded.length : i + wrap,
+          )
+      else
+        encoded,
+    ];
+    return _ok(utf8.encode('${lines.join('\n')}\n'));
+  }
+
+  // ---------------------------------------------------------------------------
+  // md5sum / sha*sum
+  // ---------------------------------------------------------------------------
+
+  /// Runs a checksum builtin selected by [name] (`md5sum`, `sha1sum`,
+  /// `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`), printing
+  /// `<hex digest>  <path>` per operand like the GNU tools. With no operand
+  /// (or `-`) the input is read from [stdin] and reported as `-`. Digests
+  /// come from `package:crypto`. Exit codes: 0 when every operand hashed,
+  /// 1 when one was missing, 2 usage error.
+  Future<SandboxBuiltinResult> hashsum(
+    String name,
+    List<String> args, {
+    String? stdin,
+  }) async {
+    final hash = switch (name) {
+      'md5sum' => md5,
+      'sha1sum' => sha1,
+      'sha224sum' => sha224,
+      'sha256sum' => sha256,
+      'sha384sum' => sha384,
+      'sha512sum' => sha512,
+      _ => throw ArgumentError.value(name, 'name', 'unsupported checksum'),
+    };
+    final paths = <String>[];
+    for (final arg in args) {
+      if (arg == '-b' || arg == '-t' || arg == '--binary' || arg == '--text') {
+        // Binary/text mode is a no-op in the sandbox (no CRLF translation).
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error("$name: invalid option -- '${arg.substring(1)}'\n", 2);
+      } else {
+        paths.add(arg);
+      }
+    }
+    if (paths.isEmpty) paths.add('-');
+
+    final reader = readBinaryFile;
+    if (reader == null) {
+      return _error('$name: not supported by this shell\n', 2);
+    }
+    final out = StringBuffer();
+    final err = StringBuffer();
+    var failed = false;
+    for (final path in paths) {
+      final bytes = path == '-' ? utf8.encode(stdin ?? '') : await reader(path);
+      if (bytes == null) {
+        err.writeln('$name: $path: No such file or directory');
+        failed = true;
+        continue;
+      }
+      out.writeln('${hash.convert(bytes)}  $path');
+    }
+    return SandboxBuiltinResult(
+      stdout: utf8.encode(out.toString()),
+      stderr: utf8.encode(err.toString()),
+      exitCode: failed ? 1 : 0,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// file(1) magic helpers
+// ---------------------------------------------------------------------------
+
+/// Whether [bytes] starts with [magic].
+bool _hasPrefix(List<int> bytes, List<int> magic) =>
+    _hasMagicAt(bytes, 0, magic);
+
+/// Whether [bytes] carries [magic] at [offset].
+bool _hasMagicAt(List<int> bytes, int offset, List<int> magic) {
+  if (bytes.length < offset + magic.length) return false;
+  for (var i = 0; i < magic.length; i++) {
+    if (bytes[offset + i] != magic[i]) return false;
+  }
+  return true;
+}
+
+/// Throws a [FormatException] unless [bytes] starts with [magic]. The
+/// `package:archive` XZ/bzip2 decoders fail silently on malformed input
+/// (their error reporting is commented out upstream), so decompression
+/// validates the signature itself before decoding.
+void _requireMagic(List<int> bytes, List<int> magic) {
+  if (!_hasPrefix(bytes, magic)) {
+    throw const FormatException('unexpected file signature');
+  }
+}
+
+/// Classifies [bytes] BSD-file style by magic-number matching; the subset
+/// covers the formats the sandbox can produce or consume. Falls back to
+/// text detection and finally `data`.
+String _describeBytes(List<int> bytes) {
+  if (bytes.isEmpty) return 'empty';
+  if (_hasPrefix(bytes, const [0x00, 0x61, 0x73, 0x6d])) {
+    // The wasm version is a little-endian uint32 at offset 4 (1 = MVP).
+    if (bytes.length >= 8) {
+      final version =
+          bytes[4] +
+          bytes[5] * 0x100 +
+          bytes[6] * 0x10000 +
+          bytes[7] * 0x1000000;
+      return 'WebAssembly (wasm) binary module version 0x$version (MVP)';
+    }
+    return 'WebAssembly (wasm) binary module';
+  }
+  if (_hasPrefix(bytes, const [0x50, 0x4b, 0x03, 0x04]) ||
+      _hasPrefix(bytes, const [0x50, 0x4b, 0x05, 0x06]) ||
+      _hasPrefix(bytes, const [0x50, 0x4b, 0x07, 0x08])) {
+    return 'Zip archive data';
+  }
+  if (_hasPrefix(bytes, const [0x1f, 0x8b])) return 'gzip compressed data';
+  if (_hasPrefix(bytes, const [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00])) {
+    return 'XZ compressed data';
+  }
+  if (_hasPrefix(bytes, const [0x42, 0x5a, 0x68])) {
+    final digit = bytes.length > 3 ? bytes[3] : 0;
+    final blockSize = digit >= 0x31 && digit <= 0x39
+        ? ', block size = ${digit - 0x30}00k'
+        : '';
+    return 'bzip2 compressed data$blockSize';
+  }
+  if (_hasPrefix(bytes, const [
+    0x89,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
+  ])) {
+    return 'PNG image data';
+  }
+  if (_hasPrefix(bytes, const [0xff, 0xd8, 0xff])) return 'JPEG image data';
+  if (_hasPrefix(bytes, 'GIF87a'.codeUnits)) {
+    return 'GIF image data, version 87a';
+  }
+  if (_hasPrefix(bytes, 'GIF89a'.codeUnits)) {
+    return 'GIF image data, version 89a';
+  }
+  if (_hasPrefix(bytes, 'RIFF'.codeUnits) &&
+      _hasMagicAt(bytes, 8, 'WEBP'.codeUnits)) {
+    return 'RIFF (little-endian) data, Web/P image';
+  }
+  if (_hasPrefix(bytes, '%PDF-'.codeUnits)) return 'PDF document';
+  if (_hasPrefix(bytes, 'SQLite format 3\x00'.codeUnits)) {
+    return 'SQLite 3.x database';
+  }
+  if (_hasMagicAt(bytes, 257, 'ustar'.codeUnits)) return 'POSIX tar archive';
+  if (_hasPrefix(bytes, const [0x7f, 0x45, 0x4c, 0x46])) {
+    if (bytes.length < 6) return 'ELF executable';
+    final bits = bytes[4] == 1 ? '32-bit' : '64-bit';
+    final endian = bytes[5] == 2 ? 'MSB' : 'LSB';
+    return 'ELF $bits $endian executable';
+  }
+  if (_hasPrefix(bytes, const [0xfe, 0xed, 0xfa, 0xce]) ||
+      _hasPrefix(bytes, const [0xce, 0xfa, 0xed, 0xfe])) {
+    return 'Mach-O 32-bit executable';
+  }
+  if (_hasPrefix(bytes, const [0xfe, 0xed, 0xfa, 0xcf]) ||
+      _hasPrefix(bytes, const [0xcf, 0xfa, 0xed, 0xfe])) {
+    return 'Mach-O 64-bit executable';
+  }
+  if (_hasPrefix(bytes, const [0xca, 0xfe, 0xba, 0xbe])) {
+    return 'Mach-O universal binary';
+  }
+  if (_isUtf8Text(bytes)) {
+    return bytes.every((b) => b < 0x80) ? 'ASCII text' : 'UTF-8 Unicode text';
+  }
+  return 'data';
+}
+
+/// Whether [bytes] decode as UTF-8 without control characters other than
+/// the common whitespace ones (tab, LF, CR, FF).
+bool _isUtf8Text(List<int> bytes) {
+  try {
+    utf8.decode(bytes);
+  } on FormatException {
+    return false;
+  }
+  for (final b in bytes) {
+    if (b < 0x20 && b != 0x09 && b != 0x0a && b != 0x0d && b != 0x0c) {
+      return false;
+    }
+    if (b == 0x7f) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------

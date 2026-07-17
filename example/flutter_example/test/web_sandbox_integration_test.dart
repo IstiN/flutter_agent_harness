@@ -37,13 +37,18 @@ void main() {
       final env = await createPlatformEnv();
       for (final command in [
         'awk',
+        'base64',
+        'bunzip2',
+        'bzip2',
         'curl',
         'diff',
         'dig',
+        'file',
         'find',
         'gunzip',
         'gzip',
         'jq',
+        'md5sum',
         'nslookup',
         'patch',
         'printf',
@@ -52,13 +57,21 @@ void main() {
         'scp',
         'sed',
         'sftp',
+        'sha1sum',
+        'sha224sum',
+        'sha256sum',
+        'sha384sum',
+        'sha512sum',
         'sqlite3',
         'ssh',
         'tar',
+        'tree',
+        'unxz',
         'unzip',
         'wget',
         'whois',
         'xargs',
+        'xz',
         'yq',
         'zip',
       ]) {
@@ -408,6 +421,221 @@ void main() {
         expect(r.stderr, contains('FAILED'));
         r = await run(env, 'cat /other.txt');
         expect(r.stdout, 'completely\ndifferent\n');
+      },
+    );
+
+    // Mirrors the host coverage in sandbox_utils_test.dart.
+    test(
+      'tree/file/xz/bzip2/base64/checksum builtins in the web sandbox',
+      () async {
+        final env = await createPlatformEnv();
+
+        await run(
+          env,
+          'mkdir -p /u/sub && echo data > /u/sub/f.txt && echo top > /u/top.txt',
+        );
+        var r = await run(env, 'tree /u');
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect(
+          r.stdout,
+          '/u\n├── sub\n│   └── f.txt\n└── top.txt\n\n1 directory, 2 files\n',
+        );
+
+        await env.writeBinaryFile(
+          '/u/img.png',
+          Uint8List.fromList(const [
+            0x89,
+            0x50,
+            0x4e,
+            0x47,
+            0x0d,
+            0x0a,
+            0x1a,
+            0x0a,
+          ]),
+        );
+        r = await run(env, 'file /u/img.png /u/top.txt');
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect(
+          r.stdout,
+          '/u/img.png: PNG image data\n/u/top.txt: ASCII text\n',
+        );
+
+        r = await run(env, "printf 'hello' | base64 | base64 -d");
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect(r.stdout, 'hello');
+
+        r = await run(env, "printf 'abc' | md5sum");
+        expect(r.stdout, '900150983cd24fb0d6963f7d28e17f72  -\n');
+        r = await run(env, "printf 'abc' | sha256sum");
+        expect(
+          r.stdout,
+          'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  -\n',
+        );
+
+        const payload = 'web archive round trip\n';
+        // Fixtures pre-encoded with package:archive on the host: XZEncoder
+        // needs CRC64, which package:archive does not implement for the
+        // browser (the XZ decoder is CRC32-only and works everywhere).
+        const xzFixture = [
+          253,
+          55,
+          122,
+          88,
+          90,
+          0,
+          0,
+          4,
+          230,
+          214,
+          180,
+          70,
+          2,
+          0,
+          33,
+          1,
+          22,
+          0,
+          0,
+          0,
+          116,
+          47,
+          229,
+          163,
+          1,
+          0,
+          22,
+          119,
+          101,
+          98,
+          32,
+          97,
+          114,
+          99,
+          104,
+          105,
+          118,
+          101,
+          32,
+          114,
+          111,
+          117,
+          110,
+          100,
+          32,
+          116,
+          114,
+          105,
+          112,
+          10,
+          0,
+          0,
+          105,
+          236,
+          191,
+          169,
+          117,
+          41,
+          254,
+          29,
+          0,
+          1,
+          47,
+          23,
+          129,
+          8,
+          73,
+          177,
+          31,
+          182,
+          243,
+          125,
+          1,
+          0,
+          0,
+          0,
+          0,
+          4,
+          89,
+          90,
+        ];
+        const bz2Fixture = [
+          66,
+          90,
+          104,
+          57,
+          49,
+          65,
+          89,
+          38,
+          83,
+          89,
+          37,
+          210,
+          43,
+          160,
+          0,
+          0,
+          11,
+          81,
+          128,
+          0,
+          16,
+          64,
+          0,
+          62,
+          97,
+          215,
+          128,
+          32,
+          0,
+          49,
+          67,
+          77,
+          48,
+          0,
+          81,
+          167,
+          168,
+          208,
+          244,
+          154,
+          122,
+          132,
+          59,
+          225,
+          160,
+          249,
+          17,
+          9,
+          166,
+          81,
+          162,
+          11,
+          226,
+          238,
+          72,
+          167,
+          10,
+          18,
+          4,
+          186,
+          69,
+          116,
+          0,
+        ];
+        await env.writeBinaryFile('/u/p.txt.xz', Uint8List.fromList(xzFixture));
+        r = await run(env, 'xz -d /u/p.txt.xz');
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect((await run(env, 'cat /u/p.txt')).stdout, payload);
+
+        await env.writeBinaryFile(
+          '/u/b.txt.bz2',
+          Uint8List.fromList(bz2Fixture),
+        );
+        r = await run(env, 'bunzip2 /u/b.txt.bz2');
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect((await run(env, 'cat /u/b.txt')).stdout, payload);
       },
     );
 

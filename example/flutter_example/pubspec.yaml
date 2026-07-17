@@ -52,7 +52,11 @@ dependencies:
 
   # Pure-Dart inflate with exact stream-end tracking, used by git_smart_http
   # to parse packfiles (dart:io zlib cannot report the consumed length).
+  # Its XZ/bzip2 decoders also back the sandbox xz/bzip2 -d builtins.
   archive: ^4.0.9
+
+  # MD5/SHA digests for the sandbox md5sum/sha*sum builtins.
+  crypto: ^3.0.3
   dartssh2: ^2.22.2
 
 dev_dependencies:
