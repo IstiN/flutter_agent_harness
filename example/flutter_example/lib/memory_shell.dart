@@ -37,6 +37,8 @@ import 'web_interpreters_stub.dart'
 /// loaded from CDNs (pyodide, quickjs-emscripten, sql.js) and report
 /// "command not found" (exit code 127) off the web. `git` works locally via
 /// dart_git; remote clone/push is not supported in the browser (CORS).
+/// `ssh`/`scp`/`sftp` are registered (so `which` finds them) but always fail
+/// with exit code 127 — browsers cannot open raw TCP connections.
 /// Everything else reports exit code 127, which the agent can react to.
 final class MemoryShell implements Shell {
   /// Creates a shell without a filesystem. Call [attach] before [exec]; this
@@ -104,9 +106,12 @@ final class MemoryShell implements Shell {
     'rg',
     'rm',
     'rmdir',
+    'scp',
     'sed',
+    'sftp',
     'sort',
     'sqlite3',
+    'ssh',
     'tail',
     'tar',
     'test',
@@ -343,6 +348,7 @@ final class MemoryShell implements Shell {
       'whoami' => _text('${_effectiveEnv(ctx.options)['USER']}\n'),
       'basename' => _basename(ctx),
       'dirname' => _dirname(ctx),
+      'ssh' || 'scp' || 'sftp' => _sshUnavailable(command),
       _ => _StageResult(
         stdout: const [],
         stderr: utf8.encode('$command: command not found\n'),
@@ -1356,6 +1362,20 @@ final class MemoryShell implements Shell {
     return _StageResult(
       stdout: const [],
       stderr: utf8.encode('$name: command not found\n'),
+      exitCode: 127,
+    );
+  }
+
+  /// ssh/scp/sftp exist in the web command set (so `which` reports them and
+  /// the agent can react) but raw TCP is impossible in a browser, so every
+  /// invocation fails with exit code 127.
+  _StageResult _sshUnavailable(String name) {
+    return _StageResult(
+      stdout: const [],
+      stderr: utf8.encode(
+        '$name: not available in the web sandbox '
+        '(browsers cannot open raw TCP connections)\n',
+      ),
       exitCode: 127,
     );
   }

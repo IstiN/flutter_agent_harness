@@ -49,8 +49,11 @@ void main() {
         'printf',
         'realpath',
         'rg',
+        'scp',
         'sed',
+        'sftp',
         'sqlite3',
+        'ssh',
         'tar',
         'unzip',
         'wget',
@@ -225,6 +228,21 @@ void main() {
       r = await run(env, 'nslookup');
       expect(r.exitCode, 2);
       expect(r.stderr, contains('usage: nslookup'));
+    });
+
+    // ssh/scp/sftp are registered on web (so `which` finds them) but always
+    // exit 127: browsers cannot open raw TCP connections.
+    test('ssh/scp/sftp exit 127 in the web sandbox', () async {
+      final env = await createPlatformEnv();
+      for (final command in [
+        'ssh user@example.com echo hi',
+        'scp file.txt user@example.com:/tmp/',
+        'sftp user@example.com',
+      ]) {
+        final r = await run(env, command);
+        expect(r.exitCode, 127, reason: command);
+        expect(r.stderr, contains('not available in the web sandbox'));
+      }
     });
 
     test('jq/yq filter files and curl pipes into jq', () async {

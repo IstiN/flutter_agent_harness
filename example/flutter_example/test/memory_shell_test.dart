@@ -184,6 +184,29 @@ void main() {
     expect(r.stdout, contains('git version'));
   });
 
+  group('ssh/scp/sftp (registered on web, exit 127)', () {
+    test('which resolves the ssh commands', () async {
+      for (final name in ['ssh', 'scp', 'sftp']) {
+        final r = await run('which $name');
+        expect(r.exitCode, 0, reason: '$name not registered');
+        expect(r.stdout, contains('/bin/$name'));
+      }
+    });
+
+    test('ssh/scp/sftp exit 127: raw TCP is impossible on web', () async {
+      for (final command in [
+        'ssh user@example.com echo hi',
+        'scp file.txt user@example.com:/tmp/',
+        'sftp user@example.com',
+      ]) {
+        final r = await run(command);
+        expect(r.exitCode, 127, reason: command);
+        expect(r.stderr, contains('not available in the web sandbox'));
+        expect(r.stderr, contains('raw TCP'));
+      }
+    });
+  });
+
   test('printf formats directives and repeats for extra args', () async {
     var r = await run(r"printf 'hello %s\n' world");
     expect(r.exitCode, 0);
