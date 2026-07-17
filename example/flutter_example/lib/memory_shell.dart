@@ -9,6 +9,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'shell_parser.dart';
 import 'web_git.dart';
+import 'web_interpreters_stub.dart'
+    if (dart.library.html) 'web_interpreters_web.dart';
 
 /// A pure-Dart [Shell] that operates on a [MemoryFileSystem].
 ///
@@ -60,10 +62,14 @@ final class MemoryShell implements Shell {
     'git',
     'grep',
     'head',
+    'js',
     'ls',
     'mkdir',
     'mv',
     'pwd',
+    'python',
+    'python3',
+    'qjs',
     'rm',
     'rmdir',
     'sort',
@@ -269,6 +275,8 @@ final class MemoryShell implements Shell {
       'export' => _export(args),
       'unset' => _unset(args),
       'git' => _git(ctx),
+      'python' || 'python3' => _runPython(ctx),
+      'qjs' || 'js' => _runQjs(ctx),
       'whoami' => _text('${_effectiveEnv(ctx.options)['USER']}\n'),
       'basename' => _basename(ctx),
       'dirname' => _dirname(ctx),
@@ -290,6 +298,84 @@ final class MemoryShell implements Shell {
       stdout: utf8.encode(result.stdout),
       stderr: utf8.encode(result.stderr),
       exitCode: result.exitCode,
+    );
+  }
+
+  Future<_StageResult> _runPython(_Context ctx) async {
+    final args = ctx.args;
+    if (args.contains('--version') || args.contains('-V')) {
+      final version = await WebInterpreters.pythonVersion();
+      if (version == null) return _interpreterUnavailable('python3');
+      return _text('Python $version\n');
+    }
+
+    final code = await _interpreterCode(args, ctx, flag: '-c');
+    if (code == null) {
+      return _error(
+        'usage: python3 [--version] [-c code] [script.py] [args...]\n',
+        exitCode: 2,
+      );
+    }
+    final result = await WebInterpreters.runPython(code);
+    if (!result.available) return _interpreterUnavailable('python3');
+    final hasError = result.stderr.isNotEmpty;
+    return _StageResult(
+      stdout: utf8.encode(result.stdout.isEmpty ? '' : '${result.stdout}\n'),
+      stderr: utf8.encode(result.stderr.isEmpty ? '' : '${result.stderr}\n'),
+      exitCode: hasError ? 1 : 0,
+    );
+  }
+
+  Future<_StageResult> _runQjs(_Context ctx) async {
+    final args = ctx.args;
+    if (args.contains('--version') || args.contains('-v')) {
+      final version = await WebInterpreters.qjsVersion();
+      if (version == null) return _interpreterUnavailable('qjs');
+      return _text('$version\n');
+    }
+
+    final code = await _interpreterCode(args, ctx, flag: '-e');
+    if (code == null) {
+      return _error(
+        'usage: qjs [--version] [-e code] [script.js] [args...]\n',
+        exitCode: 2,
+      );
+    }
+    final result = await WebInterpreters.runQjs(code);
+    if (!result.available) return _interpreterUnavailable('qjs');
+    final hasError = result.stderr.isNotEmpty;
+    return _StageResult(
+      stdout: utf8.encode(result.stdout.isEmpty ? '' : '${result.stdout}\n'),
+      stderr: utf8.encode(result.stderr.isEmpty ? '' : '${result.stderr}\n'),
+      exitCode: hasError ? 1 : 0,
+    );
+  }
+
+  /// Extracts the code to run: inline via [flag], or a script file's content.
+  Future<String?> _interpreterCode(
+    List<String> args,
+    _Context ctx, {
+    required String flag,
+  }) async {
+    for (var i = 0; i < args.length; i++) {
+      if (args[i] == flag) {
+        if (i + 1 < args.length) return args[i + 1];
+        return null;
+      }
+      if (args[i].startsWith('-')) continue;
+      final resolved = _resolveSandboxPath(args[i], ctx.cwd);
+      final read = await _fs.readTextFile(resolved);
+      if (read.isErr) return null;
+      return read.valueOrNull!;
+    }
+    return null;
+  }
+
+  _StageResult _interpreterUnavailable(String name) {
+    return _StageResult(
+      stdout: const [],
+      stderr: utf8.encode('$name: command not found\n'),
+      exitCode: 127,
     );
   }
 

@@ -99,3 +99,10 @@ shell works on iOS, Android, and web without spawning host processes.
 - License: public domain (SQLite is not licensed)
 - Target: `wasm32-wasip1`
 - Notes: sqlite3 CLI; `system()` stubbed (no process spawning under WASI).
+
+## Browser interpreters (web build, loaded from CDN at runtime)
+
+- quickjs-emscripten 0.31.0 (MIT) — https://github.com/justjavac/quickjs-emscripten
+  Loaded from jsdelivr on first `qjs`/`js` invocation in the browser.
+- pyodide 0.26.4 (MPL-2.0) — https://pyodide.org
+  Loaded from jsdelivr on first `python`/`python3` invocation in the browser.

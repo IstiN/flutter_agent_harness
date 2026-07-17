@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -245,6 +245,32 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Copies the whole session transcript to the clipboard as plain text.
+  Future<void> _copySession() async {
+    final buffer = StringBuffer();
+    for (final m in widget.service.messages) {
+      final header = switch (m.role) {
+        'user' => '## You',
+        'assistant' => '## fah',
+        'tool' => '## tool (${m.toolName ?? 'call'})',
+        _ => '## ${m.role}',
+      };
+      buffer.writeln(header);
+      if (m.imageBytes != null) buffer.writeln('[image attached]');
+      if (m.content.isNotEmpty) buffer.writeln(m.content);
+      buffer.writeln();
+    }
+    await Clipboard.setData(ClipboardData(text: buffer.toString()));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Session copied to clipboard'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   Future<void> _send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && _pendingImage == null) return;
@@ -469,6 +495,11 @@ class _ChatScreenState extends State<ChatScreen> {
               tooltip: 'Abort',
               onPressed: widget.service.abort,
             ),
+          IconButton(
+            icon: const Icon(Icons.copy_outlined),
+            tooltip: 'Copy session',
+            onPressed: _copySession,
+          ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: 'New session',

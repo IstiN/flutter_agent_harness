@@ -147,11 +147,11 @@ void main() {
   });
 
   test('unavailable commands report 127 command not found', () async {
-    var r = await run('python3 --version');
+    var r = await run('node --version');
     expect(r.exitCode, 127);
     expect(r.stderr, contains('command not found'));
 
-    r = await run('node --version');
+    r = await run('make --version');
     expect(r.exitCode, 127);
     expect(r.stderr, contains('command not found'));
 
