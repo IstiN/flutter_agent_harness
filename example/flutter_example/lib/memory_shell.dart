@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'shell_parser.dart';
+import 'web_git.dart';
 
 /// A pure-Dart [Shell] that operates on a [MemoryFileSystem].
 ///
@@ -29,10 +30,12 @@ final class MemoryShell implements Shell {
   MemoryShell();
 
   late final MemoryFileSystem _fs;
+  late final WebGitCommands _gitCommands;
 
   /// Binds the shell to [fs]. Must be called exactly once before use.
   void attach(MemoryFileSystem fs) {
     _fs = fs;
+    _gitCommands = WebGitCommands(fs);
   }
 
   String _currentDir = '/';
@@ -54,6 +57,7 @@ final class MemoryShell implements Shell {
     'env',
     'export',
     'false',
+    'git',
     'grep',
     'head',
     'ls',
@@ -264,6 +268,7 @@ final class MemoryShell implements Shell {
       'env' => _env(ctx),
       'export' => _export(args),
       'unset' => _unset(args),
+      'git' => _git(ctx),
       'whoami' => _text('${_effectiveEnv(ctx.options)['USER']}\n'),
       'basename' => _basename(ctx),
       'dirname' => _dirname(ctx),
@@ -273,6 +278,19 @@ final class MemoryShell implements Shell {
         exitCode: 127,
       ),
     };
+  }
+
+  Future<_StageResult> _git(_Context ctx) async {
+    final result = await _gitCommands.run(
+      ctx.args,
+      cwd: ctx.cwd,
+      env: _effectiveEnv(ctx.options),
+    );
+    return _StageResult(
+      stdout: utf8.encode(result.stdout),
+      stderr: utf8.encode(result.stderr),
+      exitCode: result.exitCode,
+    );
   }
 
   // ---------------------------------------------------------------------------

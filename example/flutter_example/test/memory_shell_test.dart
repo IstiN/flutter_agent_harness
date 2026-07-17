@@ -147,8 +147,17 @@ void main() {
   });
 
   test('unavailable commands report 127 command not found', () async {
-    final r = await run('git --version');
+    var r = await run('python3 --version');
     expect(r.exitCode, 127);
     expect(r.stderr, contains('command not found'));
+
+    r = await run('node --version');
+    expect(r.exitCode, 127);
+    expect(r.stderr, contains('command not found'));
+
+    // git IS available in the web sandbox (local porcelain only).
+    r = await run('git --version');
+    expect(r.exitCode, 0);
+    expect(r.stdout, contains('git version'));
   });
 }
