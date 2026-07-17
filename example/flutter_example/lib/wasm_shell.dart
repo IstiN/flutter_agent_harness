@@ -17,6 +17,7 @@ import 'package:wasm_run/wasm_run.dart';
 import 'sandbox_builtins.dart';
 import 'shell_parser.dart';
 import 'wasm_shell_git.dart';
+import 'wasm_shell_ssh.dart';
 
 /// A [Shell] backed by a sandbox of permissive WASI binaries.
 ///
@@ -318,6 +319,9 @@ final class WasiSandboxShell implements Shell {
     'nslookup',
     'dig',
     'whois',
+    'ssh',
+    'scp',
+    'sftp',
   };
 
   /// Whether [command] can be resolved to a WASM applet or a builtin.
@@ -397,6 +401,9 @@ final class WasiSandboxShell implements Shell {
       'nslookup' => _nslookupBuiltin(stage, options),
       'dig' => _digBuiltin(stage, options),
       'whois' => _whoisBuiltin(stage, options),
+      'ssh' => _sshBuiltin(stage, options, inputSource),
+      'scp' => _scpBuiltin(stage, options),
+      'sftp' => _sftpBuiltin(stage, options, inputSource),
       _ => Err(
         ExecutionError(
           ExecutionErrorCode.unknown,
@@ -1448,6 +1455,63 @@ final class WasiSandboxShell implements Shell {
       timeout: options?.timeout,
     ).whois(stage.args, timeout: options?.timeout);
     return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _sshBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    final result = await WasmSshCommands(this)
+        .builtinsFor(options?.cwd ?? _currentDir)
+        .ssh(
+          stage.args,
+          stdin: await _inputBytes(inputSource),
+          env: _effectiveEnv(options),
+          timeout: options?.timeout,
+        );
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _scpBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final result = await WasmSshCommands(this)
+        .builtinsFor(options?.cwd ?? _currentDir)
+        .scp(
+          stage.args,
+          env: _effectiveEnv(options),
+          timeout: options?.timeout,
+        );
+    return _builtinOk(result);
+  }
+
+  Future<Result<StageResult, ExecutionError>> _sftpBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    final cwd = options?.cwd ?? _currentDir;
+    final result = await WasmSshCommands(this)
+        .builtinsFor(cwd)
+        .sftp(
+          stage.args,
+          stdin: await _inputBytes(inputSource),
+          env: _effectiveEnv(options),
+          cwd: cwd,
+          timeout: options?.timeout,
+        );
+    return _builtinOk(result);
+  }
+
+  /// Reads the piped/redirected input as raw bytes; [inputSource] is an
+  /// absolute sandbox path (pipe temp file).
+  Future<List<int>?> _inputBytes(String? inputSource) async {
+    if (inputSource == null) return null;
+    final file = _hostFile(_resolveSandboxPath(inputSource, _currentDir));
+    if (!await file.exists()) return null;
+    return file.readAsBytes();
   }
 
   /// Reads the piped/redirected input for jq/yq when no file argument is
