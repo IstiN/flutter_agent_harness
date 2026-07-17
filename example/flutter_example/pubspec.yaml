@@ -40,6 +40,9 @@ dependencies:
 
   path: ^1.9.0
 
+  # package:file MemoryFileSystem for the web sandbox git store.
+  file: ^7.0.1
+
   # WASM runtime used to run a uutils/ripgrep shell on iOS/Android/Web.
   wasm_run_flutter: ^0.1.0
   wasm_run: ^0.1.0+2
