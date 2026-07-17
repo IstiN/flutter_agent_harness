@@ -726,7 +726,14 @@ final class _PackImporter {
 
   /// Parses [packBytes] and writes every object into [repo]'s object storage.
   void import(Uint8List packBytes, GitRepository repo) {
-    _parseAll(packBytes);
+    try {
+      _parseAll(packBytes);
+    } catch (e) {
+      throw StateError(
+        'pack parse failed (${packBytes.length} bytes, '
+        '${_raws.length} objects parsed before the error): $e',
+      );
+    }
 
     final pending = List<_RawPackObject>.from(_raws);
     var progressed = true;
