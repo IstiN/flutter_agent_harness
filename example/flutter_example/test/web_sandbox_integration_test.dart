@@ -38,10 +38,12 @@ void main() {
       for (final command in [
         'awk',
         'curl',
+        'diff',
         'find',
         'gunzip',
         'gzip',
         'jq',
+        'patch',
         'printf',
         'realpath',
         'rg',
@@ -266,6 +268,71 @@ void main() {
       );
       await run(env, 'rm -r /zip_out /archive.zip');
     });
+
+    // Mirrors the host diff/patch coverage in memory_shell_test.dart.
+    test('diff exit codes and unified output in the web sandbox', () async {
+      final env = await createPlatformEnv();
+      await env.writeFile('/da.txt', 'one\ntwo\nthree\n');
+      await env.writeFile('/db.txt', 'one\ntwo\nthree\n');
+
+      var r = await run(env, 'diff /da.txt /db.txt');
+      expect(r.exitCode, 0);
+      expect(r.stdout, isEmpty);
+
+      await env.writeFile('/db.txt', 'one\nTWO\nthree\n');
+      r = await run(env, 'diff /da.txt /db.txt');
+      expect(r.exitCode, 1);
+      expect(r.stdout, contains('--- /da.txt\n'));
+      expect(r.stdout, contains('+++ /db.txt\n'));
+      expect(r.stdout, contains('@@ -1,3 +1,3 @@\n'));
+      expect(r.stdout, contains('-two\n'));
+      expect(r.stdout, contains('+TWO\n'));
+
+      r = await run(env, 'diff -q /da.txt /db.txt');
+      expect(r.exitCode, 1);
+      expect(r.stdout, 'Files /da.txt and /db.txt differ\n');
+
+      r = await run(env, 'diff /missing.txt /da.txt');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('No such file or directory'));
+
+      // One operand from stdin via a pipe.
+      r = await run(env, "printf 'one\ntwo\nthree\n' | diff /db.txt -");
+      expect(r.exitCode, 1);
+      expect(r.stdout, contains('+two\n'));
+    });
+
+    test(
+      'patch round-trip applies a diff to a copy in the web sandbox',
+      () async {
+        final env = await createPlatformEnv();
+        await env.writeFile('/porig.txt', 'a\nb\nc\n');
+        await env.writeFile('/pmod.txt', 'a\nB\nc\nd\n');
+
+        await run(env, 'cp /porig.txt /pcopy.txt');
+        var r = await run(env, 'diff /porig.txt /pmod.txt | patch /pcopy.txt');
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect(r.stdout, 'patching file /pcopy.txt\n');
+        r = await run(env, 'diff /pcopy.txt /pmod.txt');
+        expect(r.exitCode, 0, reason: r.stdout);
+
+        // Same again with the patch read from a file redirect.
+        await run(env, 'diff /porig.txt /pmod.txt > /fix.diff');
+        await run(env, 'cp /porig.txt /pcopy2.txt');
+        r = await run(env, 'patch /pcopy2.txt < /fix.diff');
+        expect(r.exitCode, 0, reason: r.stderr);
+        r = await run(env, 'diff /pcopy2.txt /pmod.txt');
+        expect(r.exitCode, 0, reason: r.stdout);
+
+        // A hunk that does not apply fails with exit 1 and no partial write.
+        await env.writeFile('/other.txt', 'completely\ndifferent\n');
+        r = await run(env, 'patch /other.txt < /fix.diff');
+        expect(r.exitCode, 1);
+        expect(r.stderr, contains('FAILED'));
+        r = await run(env, 'cat /other.txt');
+        expect(r.stdout, 'completely\ndifferent\n');
+      },
+    );
 
     // Mirrors integration_test/sqlite_sandbox_test.dart (sql.js instead of
     // the WASI sqlite3 CLI binary).

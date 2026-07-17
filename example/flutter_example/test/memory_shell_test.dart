@@ -547,4 +547,154 @@ void main() {
     },
     timeout: kIsWeb ? const Timeout(Duration(seconds: 180)) : null,
   );
+
+  group('diff/patch', () {
+    test('diff exits 0 with empty output for identical files', () async {
+      await run("printf 'one\ntwo\nthree\n' > /a.txt");
+      await run('cp /a.txt /b.txt');
+      final r = await run('diff /a.txt /b.txt');
+      expect(r.exitCode, 0);
+      expect(r.stdout, isEmpty);
+      expect(r.stderr, isEmpty);
+    });
+
+    test(
+      'diff prints unified output and exits 1 for different files',
+      () async {
+        await run("printf 'one\ntwo\nthree\n' > /a.txt");
+        await run("printf 'one\nTWO\nthree\nfour\n' > /b.txt");
+        final r = await run('diff /a.txt /b.txt');
+        expect(r.exitCode, 1);
+        expect(r.stdout, contains('--- /a.txt\n'));
+        expect(r.stdout, contains('+++ /b.txt\n'));
+        expect(r.stdout, contains('@@ -1,3 +1,4 @@\n'));
+        expect(r.stdout, contains('-two\n'));
+        expect(r.stdout, contains('+TWO\n'));
+        expect(r.stdout, contains('+four\n'));
+        // -u is the default already; being explicit changes nothing.
+        final explicit = await run('diff -u /a.txt /b.txt');
+        expect(explicit.stdout, r.stdout);
+      },
+    );
+
+    test(
+      'diff -q reports briefly; missing files exit 2, -N treats as empty',
+      () async {
+        await run("printf 'x\n' > /a.txt");
+        await run("printf 'y\n' > /b.txt");
+        var r = await run('diff -q /a.txt /b.txt');
+        expect(r.exitCode, 1);
+        expect(r.stdout, 'Files /a.txt and /b.txt differ\n');
+        r = await run('diff -q /a.txt /a.txt');
+        expect(r.exitCode, 0);
+        expect(r.stdout, isEmpty);
+        r = await run('diff /missing.txt /a.txt');
+        expect(r.exitCode, 2);
+        expect(r.stderr, contains('No such file or directory'));
+        r = await run('diff -N /missing.txt /a.txt');
+        expect(r.exitCode, 1);
+        expect(r.stdout, contains('+x\n'));
+      },
+    );
+
+    test('diff reads an operand from stdin via -', () async {
+      await run("printf 'one\ntwo\nthree\n' > /a.txt");
+      final r = await run("printf 'one\nTWO\nthree\n' | diff /a.txt -");
+      expect(r.exitCode, 1);
+      expect(r.stdout, contains('--- /a.txt\n'));
+      expect(r.stdout, contains('+++ -\n'));
+      expect(r.stdout, contains('-two\n'));
+      expect(r.stdout, contains('+TWO\n'));
+    });
+
+    test('diff marks a missing trailing newline', () async {
+      await run("printf 'one\ntwo' > /a.txt");
+      await run("printf 'one\ntwo\n' > /b.txt");
+      final r = await run('diff /a.txt /b.txt');
+      expect(r.exitCode, 1);
+      expect(r.stdout, contains('\\ No newline at end of file'));
+    });
+
+    test('patch applies a diff produced by diff (round-trip)', () async {
+      await run("printf 'one\ntwo\nthree\n' > /orig.txt");
+      await run("printf 'one\nTWO\nthree\nfour\n' > /mod.txt");
+      await run('cp /orig.txt /copy.txt');
+      final p = await run('diff /orig.txt /mod.txt | patch /copy.txt');
+      expect(p.exitCode, 0, reason: p.stderr);
+      expect(p.stdout, 'patching file /copy.txt\n');
+      final cmp = await run('diff /copy.txt /mod.txt');
+      expect(cmp.exitCode, 0, reason: cmp.stdout);
+    });
+
+    test(
+      'patch reads the patch from a redirect, a file operand, or -i',
+      () async {
+        await run("printf 'a\nb\nc\n' > /orig.txt");
+        await run("printf 'a\nB\nc\n' > /mod.txt");
+        await run('diff /orig.txt /mod.txt > /fix.diff');
+
+        await run('cp /orig.txt /t1.txt');
+        var r = await run('patch /t1.txt < /fix.diff');
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect((await run('diff /t1.txt /mod.txt')).exitCode, 0);
+
+        await run('cp /orig.txt /t2.txt');
+        r = await run('patch /t2.txt /fix.diff');
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect((await run('diff /t2.txt /mod.txt')).exitCode, 0);
+
+        await run('cp /orig.txt /t3.txt');
+        r = await run('patch -i /fix.diff /t3.txt');
+        expect(r.exitCode, 0, reason: r.stderr);
+        expect((await run('diff /t3.txt /mod.txt')).exitCode, 0);
+      },
+    );
+
+    test('patch -p1 strips git-style a/ b/ prefixes', () async {
+      await run("printf 'hello\n' > /file.txt");
+      await run(
+        "printf '%s\n' '--- a/file.txt' '+++ b/file.txt' '@@ -1 +1 @@' "
+        "'-hello' '+goodbye' > /g.diff",
+      );
+      final r = await run('patch -p1 < /g.diff');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect((await run('cat /file.txt')).stdout, 'goodbye\n');
+    });
+
+    test('patch round-trip preserves a missing trailing newline', () async {
+      await run("printf 'one\ntwo' > /orig.txt");
+      await run("printf 'one\nTWO' > /mod.txt");
+      await run('cp /orig.txt /copy.txt');
+      final p = await run('diff /orig.txt /mod.txt | patch /copy.txt');
+      expect(p.exitCode, 0, reason: p.stderr);
+      expect((await run('cat /copy.txt')).stdout, 'one\nTWO');
+    });
+
+    test(
+      'patch exits 1 on failed hunks and leaves the file untouched',
+      () async {
+        await run("printf 'one\ntwo\nthree\n' > /orig.txt");
+        await run("printf 'one\nTWO\nthree\n' > /mod.txt");
+        await run('diff /orig.txt /mod.txt > /fix.diff');
+        await run("printf 'completely\ndifferent\n' > /other.txt");
+        final r = await run('patch /other.txt < /fix.diff');
+        expect(r.exitCode, 1);
+        expect(r.stderr, contains('FAILED'));
+        expect((await run('cat /other.txt')).stdout, 'completely\ndifferent\n');
+      },
+    );
+
+    test('patch exits 2 on missing target and on garbage input', () async {
+      await run("printf 'one\ntwo\nthree\n' > /orig.txt");
+      await run("printf 'one\nTWO\nthree\n' > /mod.txt");
+      await run('diff /orig.txt /mod.txt > /fix.diff');
+      var r = await run('patch /missing.txt < /fix.diff');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('No such file or directory'));
+      r = await run('echo garbage | patch /orig.txt');
+      expect(r.exitCode, 2);
+      r = await run('patch /orig.txt /missing.diff');
+      expect(r.exitCode, 2);
+    });
+  });
 }
