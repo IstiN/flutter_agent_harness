@@ -221,4 +221,8 @@
 
 - feat(example): WebLLM function calling (tools for Hermes-3 FC preset)
 
+## 0.1.16
+
+- feat(example): left sidebar (model picker + sessions), files move right
+
 ## Unreleased
