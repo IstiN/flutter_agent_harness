@@ -137,7 +137,7 @@ shell works on iOS, Android, and web without spawning host processes.
 
 ## On-device LLM runtime (web build, loaded from CDN at runtime)
 
-- @mlc-ai/web-llm 0.2.81 (Apache-2.0) — https://github.com/mlc-ai/web-llm
+- @mlc-ai/web-llm 0.2.84 (Apache-2.0) — https://github.com/mlc-ai/web-llm
   Imported as an ES module from jsdelivr by `web/index.html` (exposed as
   `window.webllm`) when the "On-device (WebLLM)" provider is selected.
   Model weights download from HuggingFace (`mlc-ai/` org) into the

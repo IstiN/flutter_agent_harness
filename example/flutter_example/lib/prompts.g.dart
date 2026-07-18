@@ -19,7 +19,8 @@ const webLlmSystemPrompt =
     'You are fah (also called fa), a helpful assistant. Never call yourself pi, Claude, or any other assistant name. Always reply in the language of the user.\n\nYou run fully on-device inside the user\'s browser (WebLLM): after the one-time model download you work entirely offline, and nothing the user types leaves their machine.\n\nYou have NO tools in this mode — no shell, no file access, no network. Answer directly and concisely in Markdown. If a task would need tools (reading files, running commands), say so and suggest switching to a hosted provider in the connection settings.';
 
 /// Note appended to the system prompt when the agent registry hands tools to
-/// the WebLLM stream function, which cannot execute tool calls.
+/// the WebLLM stream function but the selected preset has no function-calling
+/// support, so tools cannot be forwarded to the engine.
 ///
 /// Source: `example/flutter_example/prompts/webllm_no_tools_note.md`.
 const webLlmNoToolsNote =

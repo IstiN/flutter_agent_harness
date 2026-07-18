@@ -5,7 +5,7 @@
 /// Minimal `dart:js_interop` bindings for `@mlc-ai/web-llm` loaded from CDN.
 ///
 /// `web/index.html` exposes the library as `window.webllm` via an ES-module
-/// import (`https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.81/+esm`) and
+/// import (`https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm`) and
 /// installs `window.webllmStreamWithCallbacks` from `web/webllm_helpers.js`.
 /// Only the surface the example app needs is wrapped: engine construction,
 /// model reload, streaming chat completion, init-progress callbacks, and
@@ -60,9 +60,10 @@ extension type WebLlmEngine._(JSObject _) implements JSObject {
 external JSObject? get webLlmPrebuiltAppConfig;
 
 /// Helper from `web/webllm_helpers.js`: consumes the chat-completion async
-/// iterable and forwards deltas through `options.onChunk`, terminating with
-/// `options.onDone` or `options.onError`. Returns a cancel function that
-/// breaks the iterator loop early.
+/// iterable and forwards text deltas through `options.onChunk` and
+/// `delta.tool_calls` arrays (JSON-encoded) through `options.onToolCalls`,
+/// terminating with `options.onDone(finishReason)` or `options.onError`.
+/// Returns a cancel function that breaks the iterator loop early.
 @JS('webllmStreamWithCallbacks')
 external JSFunction webLlmStreamWithCallbacks(
   JSObject asyncIterable,
