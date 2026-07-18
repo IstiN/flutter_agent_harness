@@ -64,8 +64,10 @@ PY
 
   git add pubspec.yaml CHANGELOG.md
   git commit -m "chore(release): v$next"
-  git tag "v$next"
-  if git push origin main --follow-tags; then
+  # Annotated tag: --follow-tags only pushes annotated tags, lightweight
+  # ones stay local. --atomic makes main+tag land together or not at all.
+  git tag -a "v$next" -m "Release v$next"
+  if git push --atomic origin main --follow-tags; then
     echo "Released v$next"
     exit 0
   fi
