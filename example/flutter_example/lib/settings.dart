@@ -62,9 +62,9 @@ enum ProviderPreset {
   String? get corsNote => switch (this) {
     ProviderPreset.openrouter => null,
     ProviderPreset.ollamaCloud =>
-      'Calls go straight from your browser to ollama.com. If the endpoint '
-          'rejects cross-origin browser requests (CORS), the connection will '
-          'fail — use OpenRouter or a CORS-enabled endpoint instead.',
+      'Calls go straight from your browser to ollama.com, which currently '
+          'does not send CORS headers — browser calls fail. Use OpenRouter '
+          'here, or pick Ollama from the mobile/desktop app instead.',
     ProviderPreset.custom =>
       'Any OpenAI-compatible endpoint. The provider must allow browser '
           '(CORS) requests — api.anthropic.com does not, so reach Anthropic '
