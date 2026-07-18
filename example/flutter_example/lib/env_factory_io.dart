@@ -30,7 +30,7 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
       sandboxHostPath: sandbox.path,
       httpClient: httpClient,
     );
-    return _SandboxedExecutionEnv(
+    return SandboxedExecutionEnv(
       LocalExecutionEnv(cwd: sandbox.path, shell: shell),
       sandbox.path,
     );
@@ -48,13 +48,32 @@ bool get isWebPlatform => false;
 /// Maps sandbox-absolute paths (`/foo`) into the sandbox host directory for
 /// the file tools, so `read`/`write`/`ls`/`edit` agree with the WASM shell's
 /// view of `/` as the sandbox root.
-final class _SandboxedExecutionEnv implements ExecutionEnv {
-  _SandboxedExecutionEnv(this._delegate, this._sandboxRoot);
+///
+/// The mapping is idempotent: paths already inside the sandbox host directory
+/// pass through unchanged. That matters because this env reports the *host*
+/// path as [cwd], so any path derived from values the env itself hands out —
+/// `'${env.cwd}/sessions'`, [absolutePath]/[joinPath] results, or
+/// [FileInfo.path] from [listDir] — must remain valid input. Without the
+/// pass-through, `JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/
+/// sessions')` resolved and wrote sessions into a nested
+/// `<sandbox>/<sandbox-host-path>/sessions` directory.
+///
+/// A sandbox-virtual absolute path that textually begins with the host root
+/// is indistinguishable from an already-mapped host path and is treated as
+/// the latter; both readings stay inside the sandbox, so the sandbox
+/// boundary is preserved either way.
+final class SandboxedExecutionEnv implements ExecutionEnv {
+  /// Creates an env mapping sandbox-absolute paths onto [_sandboxRoot],
+  /// delegating everything else (relative paths, [exec]) to [_delegate].
+  SandboxedExecutionEnv(this._delegate, this._sandboxRoot);
 
   final ExecutionEnv _delegate;
   final String _sandboxRoot;
 
   String _map(String path) {
+    if (path == _sandboxRoot || path.startsWith('$_sandboxRoot/')) {
+      return path;
+    }
     if (path.startsWith('/')) return '$_sandboxRoot$path';
     return path;
   }
