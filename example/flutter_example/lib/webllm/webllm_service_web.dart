@@ -124,8 +124,10 @@ final class WebLlmService implements WebLlmEngineApi {
   Future<void Function()> chatStream({
     required List<WebLlmChatMessage> messages,
     required void Function(String chunk) onChunk,
-    void Function()? onDone,
+    void Function(String finishReason)? onDone,
     void Function(String message)? onError,
+    void Function(String toolCallsJson)? onToolCalls,
+    List<Map<String, dynamic>>? tools,
     int? maxTokens,
   }) async {
     final engine = _engine;
@@ -137,8 +139,18 @@ final class WebLlmService implements WebLlmEngineApi {
               'stream': true,
               'messages': [
                 for (final m in messages)
-                  {'role': m.role, 'content': m.content},
+                  {
+                    'role': m.role,
+                    'content': m.content,
+                    'tool_call_id': ?m.toolCallId,
+                  },
               ],
+              if (tools != null && tools.isNotEmpty) ...{
+                'tools': tools,
+                // Ignored by web-llm (no validation), kept for OpenAI shape
+                // fidelity; the Hermes function-calling template governs.
+                'tool_choice': 'auto',
+              },
               if (maxTokens != null) 'max_tokens': maxTokens,
               'stop': ['<|endoftext|>', '<|im_end|>', '</s>'],
             }.jsify()!
@@ -154,8 +166,11 @@ final class WebLlmService implements WebLlmEngineApi {
                 final text = content.toDart;
                 if (text.isNotEmpty) onChunk(text);
               }).toJS,
-              'onDone': (() {
-                onDone?.call();
+              'onToolCalls': ((JSString toolCallsJson) {
+                onToolCalls?.call(toolCallsJson.toDart);
+              }).toJS,
+              'onDone': ((JSString finishReason) {
+                onDone?.call(finishReason.toDart);
               }).toJS,
               'onError': ((JSString error) {
                 onError?.call(error.toDart);

@@ -15,8 +15,10 @@ library;
 const webLlmProviderKind = 'webllm';
 
 /// A chat message in the OpenAI-style shape WebLLM's `chatCompletion`
-/// expects (`{role, content}`, plain-text only).
-typedef WebLlmChatMessage = ({String role, String content});
+/// expects (`{role, content}`, plain-text only). [toolCallId] is set only on
+/// `tool`-role messages (OpenAI `tool_call_id`); WebLLM's conversation layer
+/// reads just role + content, but the id keeps the payload shape faithful.
+typedef WebLlmChatMessage = ({String role, String content, String? toolCallId});
 
 /// A preset describing an on-device model available through
 /// `@mlc-ai/web-llm`'s prebuilt app config.
@@ -34,6 +36,7 @@ final class WebLlmModelPreset {
     this.contextWindow = 2048,
     this.temperature = 0.7,
     this.topP = 0.9,
+    this.supportsTools = false,
   });
 
   /// The prebuilt model id passed to `MLCEngine.reload`.
@@ -54,6 +57,18 @@ final class WebLlmModelPreset {
 
   /// Top-p sampling sent in the reload chat config.
   final double topP;
+
+  /// Whether WebLLM accepts `tools` (OpenAI-style function calling) for this
+  /// model.
+  ///
+  /// Source of truth: `functionCallingModelIds` in `@mlc-ai/web-llm`'s
+  /// `src/config.ts` (verified against v0.2.84, the pinned CDN version) —
+  /// passing `tools` for a model not in that list throws
+  /// `UnsupportedModelIdError` inside the engine. As of 0.2.84 the list is
+  /// Hermes-2-Pro-Llama-3-8B (q4f16/q4f32), Hermes-2-Pro-Mistral-7B (q4f16),
+  /// and Hermes-3-Llama-3.1-8B (q4f16/q4f32); of the presets below only
+  /// Hermes-3-Llama-3.1-8B-q4f16_1-MLC qualifies.
+  final bool supportsTools;
 }
 
 /// The on-device models offered by the example app, grouped by family.
@@ -214,7 +229,10 @@ const webLlmModelPresets = <WebLlmModelPreset>[
     temperature: 0.6,
   ),
 
-  // === Hermes / tool-calling variants ===
+  // === Hermes ===
+  // NOTE: Hermes-3-Llama-3.2-3B is NOT in web-llm's functionCallingModelIds
+  // (only the 8B is), so it keeps supportsTools = false despite its
+  // tool-capable upstream chat template — the engine would reject `tools`.
   WebLlmModelPreset(
     id: 'Hermes-3-Llama-3.2-3B-q4f16_1-MLC',
     displayName: 'Hermes 3 Llama 3.2 3B',
@@ -226,6 +244,8 @@ const webLlmModelPresets = <WebLlmModelPreset>[
     displayName: 'Hermes 3 Llama 3.1 8B',
     sizeLabel: '~4.5 GB',
     temperature: 0.6,
+    // In web-llm's functionCallingModelIds (see the supportsTools doc).
+    supportsTools: true,
   ),
 ];
 
@@ -272,13 +292,29 @@ abstract interface class WebLlmEngineApi {
 
   /// Starts a streaming chat completion over [messages].
   ///
-  /// Chunks arrive via [onChunk]; exactly one of [onDone] / [onError] fires
-  /// at the end. Returns a cancel function that stops the JS-side iterator.
+  /// Text chunks arrive via [onChunk]; when the engine emits `tool_calls`
+  /// (function-calling presets only), each chunk's `delta.tool_calls` array
+  /// is forwarded to [onToolCalls] as a JSON-encoded string in the OpenAI
+  /// streaming shape (`[{index, function: {name, arguments}, type}]` —
+  /// WebLLM delivers complete calls in the final chunk, never partial
+  /// argument deltas). Exactly one of [onDone] / [onError] fires at the end;
+  /// [onDone] receives the completion's finish reason (`stop`, `length`,
+  /// `tool_calls`, or `''` when the engine reports none).
+  ///
+  /// [tools] is the OpenAI tools array (`[{type: 'function', function:
+  /// {name, description, parameters}}]`); pass null/empty for plain chat.
+  /// Only call with tools when the loaded preset's
+  /// [WebLlmModelPreset.supportsTools] is true — the engine rejects them
+  /// otherwise.
+  ///
+  /// Returns a cancel function that stops the JS-side iterator.
   Future<void Function()> chatStream({
     required List<WebLlmChatMessage> messages,
     required void Function(String chunk) onChunk,
-    void Function()? onDone,
+    void Function(String finishReason)? onDone,
     void Function(String message)? onError,
+    void Function(String toolCallsJson)? onToolCalls,
+    List<Map<String, dynamic>>? tools,
     int? maxTokens,
   });
 

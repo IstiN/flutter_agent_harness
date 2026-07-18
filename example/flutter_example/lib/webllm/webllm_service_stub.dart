@@ -37,8 +37,10 @@ final class WebLlmService implements WebLlmEngineApi {
   Future<void Function()> chatStream({
     required List<WebLlmChatMessage> messages,
     required void Function(String chunk) onChunk,
-    void Function()? onDone,
+    void Function(String finishReason)? onDone,
     void Function(String message)? onError,
+    void Function(String toolCallsJson)? onToolCalls,
+    List<Map<String, dynamic>>? tools,
     int? maxTokens,
   }) => Future.error(StateError(webLlmUnavailableMessage));
 

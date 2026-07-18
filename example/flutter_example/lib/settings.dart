@@ -388,7 +388,20 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             for (final preset in webLlmModelPresets)
               DropdownMenuItem(
                 value: preset,
-                child: Text('${preset.displayName} · ${preset.sizeLabel}'),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${preset.displayName} · ${preset.sizeLabel}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (preset.supportsTools) ...[
+                      const SizedBox(width: 8),
+                      const _ToolsBadge(),
+                    ],
+                  ],
+                ),
               ),
           ],
           onChanged: _loading
@@ -452,6 +465,30 @@ class SettingsDialog extends StatelessWidget {
               if (context.mounted) Navigator.of(context).pop(service);
             },
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The small "tools" chip shown next to function-calling presets
+/// ([WebLlmModelPreset.supportsTools]) in the on-device model picker.
+class _ToolsBadge extends StatelessWidget {
+  const _ToolsBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        'tools',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onPrimaryContainer,
         ),
       ),
     );
