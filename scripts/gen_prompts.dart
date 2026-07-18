@@ -115,10 +115,6 @@ const exampleSpecs = <PromptSpec>[
     constName: 'sandboxSystemPrompt',
   ),
   PromptSpec(
-    source: 'example/flutter_example/prompts/webllm_system.md',
-    constName: 'webLlmSystemPrompt',
-  ),
-  PromptSpec(
     source: 'example/flutter_example/prompts/webllm_no_tools_note.md',
     constName: 'webLlmNoToolsNote',
   ),

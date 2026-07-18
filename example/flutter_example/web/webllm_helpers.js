@@ -6,12 +6,9 @@
 // Adapted from the flutter_agent_memory demo's index.html stream helper.
 
 // Consumes the async iterable returned by
-// MLCEngine.chatCompletion({stream: true}) and forwards:
-//  - each text delta via options.onChunk(content),
-//  - each delta.tool_calls array via options.onToolCalls(jsonString) in the
-//    OpenAI streaming shape (WebLLM function calling delivers complete tool
-//    calls in the final chunk, so this fires at most once per request),
-//  - exactly one of options.onDone(finishReason)/onError(message) at the end.
+// MLCEngine.chatCompletion({stream: true}) and forwards each text delta via
+// options.onChunk(content), terminating with exactly one of
+// options.onDone(finishReason)/onError(message) at the end.
 // Returns a cancel function that breaks the iterator loop.
 window.webllmStreamWithCallbacks = (asyncIterable, options) => {
   const maxTokens = options?.maxTokens ?? Number.MAX_SAFE_INTEGER;
@@ -39,10 +36,6 @@ window.webllmStreamWithCallbacks = (asyncIterable, options) => {
         if (content) {
           tokens += 1;
           options?.onChunk?.(content);
-        }
-        const toolCalls = choice?.delta?.tool_calls;
-        if (toolCalls && toolCalls.length > 0) {
-          options?.onToolCalls?.(JSON.stringify(toolCalls));
         }
         if (choice?.finish_reason) {
           finishReason = choice.finish_reason;

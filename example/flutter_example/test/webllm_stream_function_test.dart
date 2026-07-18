@@ -4,20 +4,15 @@ import 'package:flutter_agent_example/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Fake [WebLlmEngineApi] driven entirely by test script: canned chunks,
-/// canned `tool_calls` payloads, an optional stream/load failure, and a
-/// "hold the stream open" mode for abort tests. Records everything the
-/// stream function hands it.
+/// Fake [WebLlmEngineApi] driven entirely by test script: canned chunks, an
+/// optional stream/load failure, and a "hold the stream open" mode for abort
+/// tests. Records everything the stream function hands it.
 final class FakeWebLlmEngine implements WebLlmEngineApi {
   /// Chunks delivered through `onChunk`, in order.
   List<String> chunks = [];
 
-  /// `tool_calls` JSON payloads delivered through `onToolCalls`, in order
-  /// (each is one chunk's `delta.tool_calls` array, JSON-encoded).
-  List<String> toolCallsPayloads = [];
-
-  /// Finish reason reported through `onDone` (web-llm reports `stop`,
-  /// `length`, or `tool_calls`).
+  /// Finish reason reported through `onDone` (web-llm reports `stop` or
+  /// `length`).
   String finishReason = 'stop';
 
   /// When set, `chatStream` reports this via `onError` instead of chunks.
@@ -32,7 +27,6 @@ final class FakeWebLlmEngine implements WebLlmEngineApi {
 
   WebLlmModelPreset? loadedPreset;
   List<WebLlmChatMessage>? lastMessages;
-  List<Map<String, dynamic>>? lastTools;
   int? lastMaxTokens;
   var interruptCount = 0;
   var jsStreamCancelled = false;
@@ -59,12 +53,9 @@ final class FakeWebLlmEngine implements WebLlmEngineApi {
     required void Function(String chunk) onChunk,
     void Function(String finishReason)? onDone,
     void Function(String message)? onError,
-    void Function(String toolCallsJson)? onToolCalls,
-    List<Map<String, dynamic>>? tools,
     int? maxTokens,
   }) async {
     lastMessages = messages;
-    lastTools = tools;
     lastMaxTokens = maxTokens;
     final streamError = streamErrorMessage;
     if (streamError != null) {
@@ -72,9 +63,6 @@ final class FakeWebLlmEngine implements WebLlmEngineApi {
     } else {
       for (final chunk in chunks) {
         onChunk(chunk);
-      }
-      for (final payload in toolCallsPayloads) {
-        onToolCalls?.call(payload);
       }
       if (completeStream) onDone?.call(finishReason);
     }
@@ -92,10 +80,6 @@ final class FakeWebLlmEngine implements WebLlmEngineApi {
   @override
   Future<void> deleteCachedModel(String modelId) async {}
 }
-
-/// The one preset with `supportsTools: true` (in web-llm's
-/// functionCallingModelIds).
-const _fcPresetId = 'Hermes-3-Llama-3.1-8B-q4f16_1-MLC';
 
 Model _model([String? id]) => Model(
   id: id ?? webLlmModelPresets.first.id,
@@ -142,7 +126,7 @@ String _partialText(AssistantMessage message) =>
     message.content.whereType<TextContent>().map((block) => block.text).join();
 
 void main() {
-  group('webLlmStreamFunction event mapping', () {
+  group('streamWebLlm event mapping', () {
     test(
       'streams chunks partial-first and ends with DoneEvent(stop)',
       () async {
@@ -150,7 +134,7 @@ void main() {
         final events = await streamWebLlm(
           engine,
           _model(),
-          _context(),
+          _context(tools: [_bashTool]),
         ).toList();
 
         expect(events.first, isA<StartEvent>());
@@ -185,16 +169,15 @@ void main() {
         await streamWebLlm(
           engine,
           _model(),
-          _context(systemPrompt: 'You are fah.'),
+          _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
         ).toList();
 
         expect(engine.loadedPreset?.id, webLlmModelPresets.first.id);
         expect(engine.lastMessages, [
-          (role: 'system', content: 'You are fah.', toolCallId: null),
-          (role: 'user', content: 'hi', toolCallId: null),
+          (role: 'system', content: 'You are fah.'),
+          (role: 'user', content: 'hi'),
         ]);
         expect(engine.lastMaxTokens, 1024);
-        expect(engine.lastTools, isNull);
       },
     );
 
@@ -301,195 +284,182 @@ void main() {
     );
   });
 
-  group('webLlmStreamFunction tool calling', () {
-    test('serializes tools for function-calling presets, drops the system '
-        'message, and keeps the no-tools note off', () async {
-      final engine = FakeWebLlmEngine();
-      final events = await streamWebLlm(
-        engine,
-        _model(_fcPresetId),
+  group('webLlmStreamFunction prompt-tools wrapper', () {
+    test('the system prompt plus tool instructions (names and schemas) reach '
+        'the engine', () async {
+      final engine = FakeWebLlmEngine()..chunks = ['ok'];
+      final events = await webLlmStreamFunction(engine)(
+        _model(),
         _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
       ).toList();
 
       expect(events.whereType<DoneEvent>(), hasLength(1));
-      expect(engine.loadedPreset?.id, _fcPresetId);
-      expect(engine.lastTools, [
-        {
-          'type': 'function',
-          'function': {
-            'name': 'bash',
-            'description': 'Runs a shell command',
-            'parameters': _bashTool.parameters,
-          },
-        },
-      ]);
-      // WebLLM injects its own function-calling system prompt and rejects a
-      // user-supplied one (CustomSystemPromptError), so none may be sent.
-      expect(engine.lastMessages!.where((m) => m.role == 'system'), isEmpty);
-      expect(engine.lastMessages, [
-        (role: 'user', content: 'hi', toolCallId: null),
-      ]);
+      final system = engine.lastMessages!.first;
+      expect(system.role, 'system');
+      // The fah system prompt passes through untouched...
+      expect(system.content, startsWith('You are fah.'));
+      // ...with the wrapper's tool section appended: the actual tool
+      // name, description, and parameter schema reach the model.
+      expect(system.content, contains('## Available tools'));
+      expect(system.content, contains('bash: Runs a shell command'));
+      expect(system.content, contains('"cmd"'));
+      expect(system.content, contains('```tool_call'));
+      // Tools exist, so the no-tools note must NOT appear.
+      expect(system.content, isNot(contains(webLlmNoToolsNote)));
     });
 
     test(
-      'streams tool_calls into start/delta/end events with parsed args',
+      'a fenced tool_call block becomes start/delta/end and StopReason.'
+      'toolUse — for ANY preset (SmolLM2 here, not a function-calling one)',
       () async {
         final engine = FakeWebLlmEngine()
-          // Raw tool-call JSON streams as content — must be suppressed.
-          ..chunks = ['[{"name": "bash", "arguments": {"cmd": "ls"}}]']
-          ..finishReason = 'tool_calls'
-          ..toolCallsPayloads = [
-            '[{"index": 0, "type": "function", '
-                '"function": {"name": "bash", "arguments": "{\\"cmd\\": \\"ls\\"}"}}]',
+          ..chunks = [
+            'Let me check.\n',
+            '```tool_call\n'
+                '{"name": "bash", "arguments": {"cmd": "ls"}}\n'
+                '```',
           ];
-        final events = await streamWebLlm(
-          engine,
-          _model(_fcPresetId),
+        final events = await webLlmStreamFunction(engine)(
+          _model(), // SmolLM2 135M — tools now work for every preset.
           _context(tools: [_bashTool]),
         ).toList();
 
-        // No text leaks: the raw JSON never becomes a TextContent block.
-        expect(events.whereType<TextDeltaEvent>(), isEmpty);
-        expect(events.whereType<TextStartEvent>(), isEmpty);
+        // The text before the fence streams as ordinary text.
+        final deltas = events.whereType<TextDeltaEvent>().toList();
+        expect(deltas, isNotEmpty);
+        expect(deltas.map((e) => e.delta).join(), 'Let me check.\n');
 
         final start = events.whereType<ToolCallStartEvent>().single;
-        expect(start.contentIndex, 0);
-
         final delta = events.whereType<ToolCallDeltaEvent>().single;
-        expect(delta.contentIndex, 0);
-        expect(delta.delta, '{"cmd": "ls"}');
-        // Partial-first: the delta's snapshot carries the accumulated raw JSON.
-        final partialCall = delta.partial.content[0] as ToolCall;
-        expect(partialCall.name, 'bash');
-        expect(partialCall.partialArguments, '{"cmd": "ls"}');
-        expect(partialCall.arguments, isEmpty);
-        // WebLLM streaming tool_calls carry no id — one is synthesized.
-        expect(partialCall.id, isNotEmpty);
-        expect(partialCall.id, contains('bash'));
+        expect(start.contentIndex, delta.contentIndex);
+        expect(delta.delta, '{"cmd":"ls"}');
 
         final end = events.whereType<ToolCallEndEvent>().single;
-        expect(end.contentIndex, 0);
         expect(end.toolCall.name, 'bash');
         expect(end.toolCall.arguments, {'cmd': 'ls'});
-        expect(end.toolCall.partialArguments, isNull);
+        expect(end.toolCall.id, isNotEmpty);
 
         final done = events.whereType<DoneEvent>().single;
         expect(done.reason, StopReason.toolUse);
         expect(done.message.stopReason, StopReason.toolUse);
-        final call = done.message.content.single as ToolCall;
-        expect(call.id, end.toolCall.id);
+        final call = done.message.content.whereType<ToolCall>().single;
         expect(call.name, 'bash');
         expect(call.arguments, {'cmd': 'ls'});
-        expect(call.partialArguments, isNull);
         expect(events.last, same(done));
       },
     );
 
-    test('multiple tool calls keep stream order and distinct ids', () async {
-      final engine = FakeWebLlmEngine()
-        ..finishReason = 'tool_calls'
-        ..toolCallsPayloads = [
-          '['
-              '{"index": 0, "type": "function", "function": '
-              '{"name": "bash", "arguments": "{\\"cmd\\": \\"ls\\"}"}},'
-              '{"index": 1, "type": "function", "function": '
-              '{"name": "read", "arguments": "{\\"path\\": \\"a.txt\\"}"}}'
-              ']',
-        ];
-      final events = await streamWebLlm(
-        engine,
-        _model(_fcPresetId),
-        _context(tools: [_bashTool]),
+    test(
+      'tool calls and results round-trip to the engine as fenced text',
+      () async {
+        final engine = FakeWebLlmEngine()..chunks = ['done'];
+        final events = await webLlmStreamFunction(engine)(
+          _model(),
+          _context(
+            tools: [_bashTool],
+            messages: [
+              UserMessage.text('list files'),
+              _assistant([
+                const TextContent(text: 'Let me check.'),
+                const ToolCall(
+                  id: 'call-1',
+                  name: 'bash',
+                  arguments: {'cmd': 'ls'},
+                ),
+              ]),
+              ToolResultMessage(
+                toolCallId: 'call-1',
+                toolName: 'bash',
+                content: [const TextContent(text: 'a.txt')],
+                isError: false,
+                timestamp: DateTime.now(),
+              ),
+            ],
+          ),
+        ).toList();
+
+        expect(events.whereType<DoneEvent>(), hasLength(1));
+        final messages = engine.lastMessages!;
+        expect(messages.map((m) => m.role), [
+          'system',
+          'user',
+          'assistant',
+          'user',
+        ]);
+        // The historical call is re-serialized in the assistant's own wire
+        // format (the fenced block the wrapper taught it).
+        expect(messages[2].content, contains('Let me check.'));
+        expect(messages[2].content, contains('```tool_call'));
+        expect(messages[2].content, contains('"name":"bash"'));
+        // The result arrives as a user-role fenced tool_result block.
+        expect(messages[3].content, contains('```tool_result'));
+        expect(messages[3].content, contains('tool: bash'));
+        expect(messages[3].content, contains('a.txt'));
+      },
+    );
+
+    test('plain chat without tools is a passthrough: no tool instructions, the '
+        'no-tools note appended', () async {
+      final engine = FakeWebLlmEngine()..chunks = ['plain'];
+      final events = await webLlmStreamFunction(engine)(
+        _model(),
+        _context(systemPrompt: 'You are fah.'),
       ).toList();
 
-      final starts = events.whereType<ToolCallStartEvent>().toList();
-      expect(starts.map((e) => e.contentIndex), [0, 1]);
-      final deltas = events.whereType<ToolCallDeltaEvent>().toList();
-      expect(deltas.map((e) => e.contentIndex), [0, 1]);
-      final ends = events.whereType<ToolCallEndEvent>().toList();
-      expect(ends.map((e) => e.contentIndex), [0, 1]);
-      expect(ends[0].toolCall.name, 'bash');
-      expect(ends[1].toolCall.name, 'read');
-      expect(ends[1].toolCall.arguments, {'path': 'a.txt'});
-      expect(ends[0].toolCall.id, isNot(ends[1].toolCall.id));
+      final system = engine.lastMessages!.first;
+      expect(system.role, 'system');
+      expect(system.content, startsWith('You are fah.'));
+      expect(system.content, contains(webLlmNoToolsNote));
+      expect(system.content, isNot(contains('## Available tools')));
 
+      expect(events.whereType<ToolCallStartEvent>(), isEmpty);
       final done = events.whereType<DoneEvent>().single;
-      expect(done.message.content.map((b) => (b as ToolCall).name), [
-        'bash',
-        'read',
-      ]);
+      expect(done.reason, StopReason.stop);
+      expect(_partialText(done.message), 'plain');
     });
 
-    test('an empty tool_calls array ends with stop and no content', () async {
+    test('without tools a fenced block stays plain text', () async {
       final engine = FakeWebLlmEngine()
-        ..finishReason = 'tool_calls'
-        ..toolCallsPayloads = ['[]'];
-      final events = await streamWebLlm(
-        engine,
-        _model(_fcPresetId),
-        _context(tools: [_bashTool]),
+        ..chunks = ['```tool_call\n{"name": "bash"}\n```'];
+      final events = await webLlmStreamFunction(engine)(
+        _model(),
+        _context(),
       ).toList();
 
       expect(events.whereType<ToolCallStartEvent>(), isEmpty);
       final done = events.whereType<DoneEvent>().single;
       expect(done.reason, StopReason.stop);
-      expect(done.message.content, isEmpty);
-    });
-
-    test('non-FC presets never receive tools, even when registered', () async {
-      final engine = FakeWebLlmEngine()..chunks = ['ok'];
-      await streamWebLlm(
-        engine,
-        _model(), // SmolLM2 135M — supportsTools: false
-        _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
-      ).toList();
-
-      expect(engine.lastTools, isNull);
-      final system = engine.lastMessages!.first;
-      expect(system.role, 'system');
-      expect(system.content, contains(webLlmNoToolsNote));
+      expect(_partialText(done.message), contains('```tool_call'));
     });
   });
 
   group('convertWebLlmMessages', () {
-    test('system prompt becomes the leading system message', () {
+    test('system prompt becomes the leading system message (no note when tools '
+        'are registered)', () {
       final messages = convertWebLlmMessages(
+        _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
+      );
+      expect(messages.first, (role: 'system', content: 'You are fah.'));
+      expect(messages.last, (role: 'user', content: 'hi'));
+    });
+
+    test('the no-tools note is appended only when the registry is empty', () {
+      final noTools = convertWebLlmMessages(
         _context(systemPrompt: 'You are fah.'),
       );
-      expect(messages.first, (
-        role: 'system',
-        content: 'You are fah.',
-        toolCallId: null,
-      ));
-      expect(messages.last, (role: 'user', content: 'hi', toolCallId: null));
+      expect(noTools.first.role, 'system');
+      expect(noTools.first.content, 'You are fah.\n\n$webLlmNoToolsNote');
+
+      final emptyTools = convertWebLlmMessages(
+        _context(systemPrompt: 'You are fah.', tools: const []),
+      );
+      expect(emptyTools.first.content, contains(webLlmNoToolsNote));
     });
 
-    test('no system message when there is no prompt and no tools', () {
-      final messages = convertWebLlmMessages(_context());
+    test('no system message when there is no prompt and tools exist', () {
+      final messages = convertWebLlmMessages(_context(tools: [_bashTool]));
       expect(messages.single.role, 'user');
     });
-
-    test(
-      'registered tools are NOT forwarded; the no-tools note is appended',
-      () {
-        const tool = Tool(
-          name: 'bash',
-          description: 'runs commands',
-          parameters: {'type': 'object'},
-        );
-        final messages = convertWebLlmMessages(
-          _context(systemPrompt: 'You are fah.', tools: [tool]),
-        );
-
-        expect(messages, hasLength(2));
-        final system = messages.first;
-        expect(system.role, 'system');
-        expect(system.content, startsWith('You are fah.'));
-        expect(system.content, contains(webLlmNoToolsNote));
-        // The tool schema itself never reaches the engine payload.
-        expect(system.content, isNot(contains('runs commands')));
-      },
-    );
 
     test('tool calls and results degrade to plain-text lines', () {
       final messages = convertWebLlmMessages(
@@ -514,10 +484,14 @@ void main() {
         ),
       );
 
-      expect(messages.map((m) => m.role), ['user', 'assistant', 'user']);
-      expect(messages[1].content, contains('[tool call: bash({"cmd":"ls"})]'));
-      expect(messages[2].content, '[tool result · bash]\na.txt');
-      expect(messages[2].toolCallId, isNull);
+      expect(messages.map((m) => m.role), [
+        'system',
+        'user',
+        'assistant',
+        'user',
+      ]);
+      expect(messages[2].content, contains('[tool call: bash({"cmd":"ls"})]'));
+      expect(messages[3].content, '[tool result · bash]\na.txt');
     });
 
     test('errored tool results are flagged in the fallback header', () {
@@ -534,7 +508,7 @@ void main() {
           ],
         ),
       );
-      expect(messages.single.content, '[tool result · bash · error]\nnope');
+      expect(messages.last.content, '[tool result · bash · error]\nnope');
     });
 
     test('images degrade to an omission note (presets are text-only)', () {
@@ -551,111 +525,19 @@ void main() {
           ],
         ),
       );
-      expect(messages.single.role, 'user');
-      expect(messages.single.content, contains('what is this?'));
-      expect(messages.single.content, contains('image omitted'));
+      expect(messages.last.role, 'user');
+      expect(messages.last.content, contains('what is this?'));
+      expect(messages.last.content, contains('image omitted'));
     });
 
     test('empty user messages are dropped', () {
       final messages = convertWebLlmMessages(
-        _context(messages: [UserMessage.text('   '), UserMessage.text('real')]),
-      );
-      expect(messages.single, (
-        role: 'user',
-        content: 'real',
-        toolCallId: null,
-      ));
-    });
-  });
-
-  group('convertWebLlmMessages (toolsMode)', () {
-    test('omits the system message and the no-tools note', () {
-      final messages = convertWebLlmMessages(
-        _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
-        toolsMode: true,
-      );
-      expect(messages.where((m) => m.role == 'system'), isEmpty);
-      expect(
-        messages.any((m) => m.content.contains(webLlmNoToolsNote)),
-        isFalse,
-      );
-    });
-
-    test('assistant tool calls serialize as the raw JSON array', () {
-      final messages = convertWebLlmMessages(
-        toolsMode: true,
         _context(
-          messages: [
-            UserMessage.text('list files'),
-            _assistant([
-              const TextContent(text: 'Let me check.'),
-              const ToolCall(
-                id: 'call-1',
-                name: 'bash',
-                arguments: {'cmd': 'ls'},
-              ),
-              const ToolCall(
-                id: 'call-2',
-                name: 'read',
-                arguments: {'path': 'a.txt'},
-              ),
-            ]),
-            ToolResultMessage(
-              toolCallId: 'call-1',
-              toolName: 'bash',
-              content: [const TextContent(text: 'a.txt')],
-              isError: false,
-              timestamp: DateTime.now(),
-            ),
-          ],
+          tools: [_bashTool],
+          messages: [UserMessage.text('   '), UserMessage.text('real')],
         ),
       );
-
-      expect(messages.map((m) => m.role), ['user', 'assistant', 'tool']);
-      // WebLLM requires string assistant content (no OpenAI tool_calls
-      // arrays in history); the JSON array is the model's own output shape.
-      expect(
-        messages[1].content,
-        'Let me check.\n'
-        '[{"name":"bash","arguments":{"cmd":"ls"}},'
-        '{"name":"read","arguments":{"path":"a.txt"}}]',
-      );
-      expect(messages[1].toolCallId, isNull);
-      // Tool results map to the tool role with the call id.
-      expect(messages[2].content, 'a.txt');
-      expect(messages[2].toolCallId, 'call-1');
-    });
-
-    test('empty tool results become a placeholder tool message', () {
-      final messages = convertWebLlmMessages(
-        toolsMode: true,
-        _context(
-          messages: [
-            ToolResultMessage(
-              toolCallId: 'call-1',
-              toolName: 'bash',
-              content: const [],
-              isError: false,
-              timestamp: DateTime.now(),
-            ),
-          ],
-        ),
-      );
-      expect(messages.single.role, 'tool');
-      expect(messages.single.content, '(no output)');
-      expect(messages.single.toolCallId, 'call-1');
-    });
-  });
-
-  group('webLlmModelPresets tool capability', () {
-    test('only web-llm functionCallingModelIds presets get supportsTools', () {
-      final withTools = webLlmModelPresets
-          .where((p) => p.supportsTools)
-          .map((p) => p.id)
-          .toList();
-      // Source: functionCallingModelIds in @mlc-ai/web-llm src/config.ts
-      // (v0.2.84) — Hermes-2-Pro/Hermes-2-Mistral entries are not presets.
-      expect(withTools, ['Hermes-3-Llama-3.1-8B-q4f16_1-MLC']);
+      expect(messages.single, (role: 'user', content: 'real'));
     });
   });
 }

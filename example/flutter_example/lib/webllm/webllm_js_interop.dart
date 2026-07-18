@@ -60,10 +60,9 @@ extension type WebLlmEngine._(JSObject _) implements JSObject {
 external JSObject? get webLlmPrebuiltAppConfig;
 
 /// Helper from `web/webllm_helpers.js`: consumes the chat-completion async
-/// iterable and forwards text deltas through `options.onChunk` and
-/// `delta.tool_calls` arrays (JSON-encoded) through `options.onToolCalls`,
-/// terminating with `options.onDone(finishReason)` or `options.onError`.
-/// Returns a cancel function that breaks the iterator loop early.
+/// iterable and forwards text deltas through `options.onChunk`, terminating
+/// with `options.onDone(finishReason)` or `options.onError`. Returns a
+/// cancel function that breaks the iterator loop early.
 @JS('webllmStreamWithCallbacks')
 external JSFunction webLlmStreamWithCallbacks(
   JSObject asyncIterable,

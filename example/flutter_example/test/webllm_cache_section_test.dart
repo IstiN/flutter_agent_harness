@@ -32,8 +32,6 @@ final class _FakeEngine implements WebLlmEngineApi {
     required void Function(String chunk) onChunk,
     void Function(String finishReason)? onDone,
     void Function(String message)? onError,
-    void Function(String toolCallsJson)? onToolCalls,
-    List<Map<String, dynamic>>? tools,
     int? maxTokens,
   }) async => () {};
 

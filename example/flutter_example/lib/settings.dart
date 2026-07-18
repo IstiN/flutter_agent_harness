@@ -7,7 +7,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'agent_service.dart';
 import 'gemma/gemma_service.dart';
 import 'gemma/gemma_types.dart';
-import 'prompts.g.dart';
 import 'provider_registry.dart';
 import 'webllm/webllm_cache_section.dart';
 import 'webllm/webllm_service.dart';
@@ -422,7 +421,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           modelId: preset.id,
           baseUrl: '',
           apiKey: '',
-          systemPrompt: webLlmSystemPrompt,
+          // No WebLLM-specific system prompt: the default sandbox prompt
+          // (identity + capabilities) applies, and the prompt-tools wrapper
+          // appends the tool instructions upstream.
           contextWindow: preset.contextWindow,
           maxTokens: 1024,
         ),
@@ -685,10 +686,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (preset.supportsTools) ...[
-                      const SizedBox(width: 8),
-                      const _ToolsBadge(),
-                    ],
+                    const SizedBox(width: 8),
+                    const _ToolsBadge(),
                   ],
                 ),
               ),
@@ -1046,8 +1045,10 @@ double _dialogContentWidth(BuildContext context, double preferred) {
   return available < preferred ? available.clamp(0.0, preferred) : preferred;
 }
 
-/// The small "tools" chip shown next to function-calling presets
-/// ([WebLlmModelPreset.supportsTools]) in the on-device model picker.
+/// The small "tools via prompt" chip shown next to every preset in the
+/// on-device (WebLLM) model picker: tool calling works for all presets
+/// through the harness's prompt-tools wrapper (fenced `tool_call` blocks),
+/// not the engine's native function calling.
 class _ToolsBadge extends StatelessWidget {
   const _ToolsBadge();
 
@@ -1061,7 +1062,7 @@ class _ToolsBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        'tools',
+        'tools via prompt',
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onPrimaryContainer,
         ),
