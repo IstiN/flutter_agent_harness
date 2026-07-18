@@ -180,4 +180,9 @@
 
 - refactor(prompts): extract LLM prompts to prompts/*.md + codegen (AGENTS.md convention)
 
+## 0.1.6
+
+- feat(site): GitHub Pages landing + live web demo with BYOK
+- feat(example): BYOK connection settings with provider presets
+
 ## Unreleased
