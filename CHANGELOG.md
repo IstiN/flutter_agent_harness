@@ -237,4 +237,8 @@
 
 - fix(example): settings dialogs adapt to narrow phone screens
 
+## 0.1.20
+
+- feat(core): prompt-based tool-calling wrapper (universal chat-model tools)
+
 ## Unreleased
