@@ -5,6 +5,7 @@ import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
 import 'package:flutter_agent_example/file_browser.dart';
 import 'package:flutter_agent_example/file_preview.dart';
+import 'package:flutter_agent_example/upload.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -87,6 +88,23 @@ AgentService _fakeService(ExecutionEnv env) {
     sessionsRoot: '/sessions',
   );
 }
+
+/// Fake [UploadPicker] returning canned files without a platform dialog.
+final class _FakePicker implements UploadPicker {
+  _FakePicker(this.files);
+
+  List<UploadFile> files;
+  int calls = 0;
+
+  @override
+  Future<List<UploadFile>> pick() async {
+    calls++;
+    return files;
+  }
+}
+
+UploadFile _uploadFile(String name, String content) =>
+    (name: name, bytes: Uint8List.fromList(content.codeUnits));
 
 void main() {
   group('FileBrowser', () {
@@ -201,6 +219,112 @@ void main() {
     });
   });
 
+  group('FileBrowser upload', () {
+    testWidgets('uploaded files land in the currently viewed folder', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([
+        _uploadFile('new.txt', 'brand new'),
+        _uploadFile('sub/deep.txt', 'nested upload'),
+      ]);
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, uploadPicker: picker)),
+      );
+      await tester.pumpAndSettle();
+
+      // Navigate into zzz_dir and upload there.
+      await tester.tap(find.text('zzz_dir'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Upload files here'));
+      await tester.pumpAndSettle();
+
+      expect(picker.calls, 1);
+      // The listing refreshed with the new entries…
+      expect(_listedNames(tester), ['sub', 'inner.txt', 'new.txt']);
+      // …and the files really live in the agent's filesystem.
+      expect(
+        (await env.readTextFile('zzz_dir/new.txt')).getOrThrow(),
+        'brand new',
+      );
+      expect(
+        (await env.readTextFile('zzz_dir/sub/deep.txt')).getOrThrow(),
+        'nested upload',
+      );
+      expect(find.text('Uploaded 2 files'), findsOneWidget);
+    });
+
+    testWidgets('root upload writes into the sandbox root', (tester) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([_uploadFile('root.txt', 'at root')]);
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, uploadPicker: picker)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Upload files here'));
+      await tester.pumpAndSettle();
+
+      expect((await env.readTextFile('root.txt')).getOrThrow(), 'at root');
+      expect(find.text('root.txt'), findsOneWidget);
+    });
+
+    testWidgets('an oversized batch is refused before anything is written', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([
+        _uploadFile('big.bin', '0123456789'),
+        _uploadFile('overflow.bin', 'x'),
+      ]);
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(env: env, uploadPicker: picker, maxUploadBatchBytes: 10),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Upload files here'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('too large'), findsOneWidget);
+      expect((await env.exists('big.bin')).getOrThrow(), isFalse);
+      expect((await env.exists('overflow.bin')).getOrThrow(), isFalse);
+    });
+
+    testWidgets('host default: no platform picker, no upload button', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Upload files here'), findsNothing);
+    });
+
+    test('uploadBatchSizeError enforces the cap over the batch total', () {
+      expect(uploadBatchSizeError([_uploadFile('a', 'x')]), isNull);
+      expect(
+        uploadBatchSizeError([_uploadFile('a', 'x' * kMaxUploadBatchBytes)]),
+        isNull,
+      );
+      final over = uploadBatchSizeError([
+        _uploadFile('a', 'x' * kMaxUploadBatchBytes),
+        _uploadFile('b', 'y'),
+      ]);
+      expect(over, contains('too large'));
+      expect(over, contains('25.0 MB'));
+    });
+
+    test('sanitizeUploadName strips traversal and keeps subdirectories', () {
+      expect(sanitizeUploadName('plain.txt'), 'plain.txt');
+      expect(sanitizeUploadName('sub/dir/file.txt'), 'sub/dir/file.txt');
+      expect(sanitizeUploadName('../../etc/passwd'), 'etc/passwd');
+      expect(sanitizeUploadName('..'), isEmpty);
+      expect(sanitizeUploadName(r'a\b\c.txt'), 'a/b/c.txt');
+      expect(sanitizeUploadName('./dot/./file.txt'), 'dot/file.txt');
+    });
+  });
+
   group('ChatScreen integration', () {
     testWidgets('wide surface: Files icon toggles the left panel', (
       tester,
@@ -248,6 +372,28 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(FilePreviewScreen), findsOneWidget);
       expect(_selectableText('hello notes'), findsOneWidget);
+    });
+
+    testWidgets('attach sheet uploads arbitrary files into the sandbox root', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([_uploadFile('chat.txt', 'via chat')]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(service: _fakeService(env), uploadPicker: picker),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Upload to files'));
+      await tester.pumpAndSettle();
+
+      expect(picker.calls, 1);
+      expect((await env.readTextFile('chat.txt')).getOrThrow(), 'via chat');
+      expect(find.textContaining('Uploaded 1 file'), findsOneWidget);
     });
   });
 }

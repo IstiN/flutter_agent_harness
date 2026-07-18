@@ -20,6 +20,7 @@ library;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_example/env_factory.dart';
+import 'package:flutter_agent_example/persistent_web_env.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -272,6 +273,30 @@ void main() {
       r = await run(env, 'nslookup');
       expect(r.exitCode, 2);
       expect(r.stderr, contains('usage: nslookup'));
+    });
+
+    // Uploaded (and agent-written) files survive a page reload: the env
+    // factory wraps the memory FS in a PersistentWebExecutionEnv mirrored
+    // into IndexedDB. Real IndexedDB in Chrome; fully offline-safe.
+    test('sandbox FS persists across env rebuilds via IndexedDB', () async {
+      final env = await createPlatformEnv();
+      (await env.writeFile(
+        '/persisted_probe.txt',
+        'survives reload',
+      )).getOrThrow();
+      await (env as PersistentWebExecutionEnv).flush();
+
+      // A fresh env is what a page reload gets: restore runs before the
+      // AgentService is built.
+      final rebuilt = await createPlatformEnv();
+      expect(
+        (await rebuilt.readTextFile('/persisted_probe.txt')).getOrThrow(),
+        'survives reload',
+      );
+
+      // Leave no trace for the other tests (or the next run).
+      (await rebuilt.remove('/persisted_probe.txt')).getOrThrow();
+      await (rebuilt as PersistentWebExecutionEnv).flush();
     });
 
     // ssh/scp/sftp are registered on web (so `which` finds them) but always
