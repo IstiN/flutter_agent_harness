@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'agent_service.dart';
+import 'prompts.g.dart';
+import 'webllm/webllm_service.dart';
+import 'webllm/webllm_types.dart';
 
 /// Compile-time configuration injected via `--dart-define`. Values fall back
 /// to the `.env` file (local dev) at runtime — see [settingsEnv].
@@ -22,9 +27,9 @@ String settingsEnv(String name, String fallback) {
   return fallback;
 }
 
-/// A bring-your-own-key provider preset. Every preset talks to an
-/// OpenAI-compatible chat-completions endpoint; only the base URL, default
-/// model, and guidance differ.
+/// A bring-your-own-key provider preset. Hosted presets talk to an
+/// OpenAI-compatible chat-completions endpoint; [webllm] runs a small model
+/// on-device in the browser (no key, no endpoint).
 enum ProviderPreset {
   openrouter(
     label: 'OpenRouter',
@@ -36,7 +41,8 @@ enum ProviderPreset {
     baseUrl: 'https://ollama.com/v1',
     defaultModel: 'gpt-oss:120b',
   ),
-  custom(label: 'Custom', baseUrl: null, defaultModel: '');
+  custom(label: 'Custom', baseUrl: null, defaultModel: ''),
+  webllm(label: 'On-device (WebLLM)', baseUrl: null, defaultModel: '');
 
   const ProviderPreset({
     required this.label,
@@ -47,7 +53,8 @@ enum ProviderPreset {
   /// Short label shown in the segmented selector.
   final String label;
 
-  /// Fixed endpoint for hosted presets; `null` for [custom] (user-editable).
+  /// Fixed endpoint for hosted presets; `null` for [custom] (user-editable)
+  /// and [webllm] (no endpoint at all).
   final String? baseUrl;
 
   /// Model prefill applied while the user has not typed their own.
@@ -55,6 +62,10 @@ enum ProviderPreset {
 
   /// Whether the base-URL field is editable for this preset.
   bool get hasEditableBaseUrl => this == ProviderPreset.custom;
+
+  /// Whether this preset is the on-device (WebLLM) provider, which replaces
+  /// the key/model/URL fields with a model picker and a download bar.
+  bool get isOnDevice => this == ProviderPreset.webllm;
 
   /// Shown under the form for providers that may reject browser (CORS)
   /// calls. OpenRouter allows cross-origin browser requests, so it has no
@@ -69,6 +80,7 @@ enum ProviderPreset {
       'Any OpenAI-compatible endpoint. The provider must allow browser '
           '(CORS) requests — api.anthropic.com does not, so reach Anthropic '
           'models via OpenRouter instead.',
+    ProviderPreset.webllm => null,
   };
 
   /// Infers a preset from a configured base URL (for env-prefilled setups).
@@ -112,6 +124,13 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   late final TextEditingController _modelController;
   late final TextEditingController _urlController;
 
+  /// Selected on-device model (only meaningful for [ProviderPreset.webllm]).
+  WebLlmModelPreset _webllmModel = webLlmModelPresets.first;
+
+  /// Engine-init progress while the on-device model downloads/compiles.
+  double? _loadFraction;
+  String? _loadStatus;
+
   bool _loading = false;
   String? _error;
 
@@ -144,8 +163,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   void _selectPreset(ProviderPreset preset) {
     setState(() {
       _preset = preset;
-      if (!preset.hasEditableBaseUrl) {
-        _urlController.text = preset.baseUrl!;
+      final baseUrl = preset.baseUrl;
+      if (baseUrl != null) {
+        _urlController.text = baseUrl;
       }
       // Follow the preset's default model only while the user has not typed
       // a custom one (still empty or equal to the previous default).
@@ -154,10 +174,14 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         _modelController.text = preset.defaultModel;
       }
       _lastDefaultModel = preset.defaultModel;
+      _error = null;
     });
   }
 
   Future<void> _connect() async {
+    if (_preset.isOnDevice) {
+      return _connectWebLlm();
+    }
     final key = _keyController.text.trim();
     final model = _modelController.text.trim();
     final baseUrl = _urlController.text.trim();
@@ -193,6 +217,57 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
   }
 
+  /// On-device connect: downloads/compiles the selected model (showing
+  /// engine-init progress in the form) before handing over to [onConnect].
+  /// The engine is a singleton, so the stream function reuses this warm
+  /// instance — the first chat turn does not pay the load again.
+  Future<void> _connectWebLlm() async {
+    final preset = _webllmModel;
+    final service = createWebLlmService();
+    setState(() {
+      _loading = true;
+      _error = null;
+      _loadFraction = null;
+      _loadStatus = null;
+    });
+    StreamSubscription<WebLlmProgress>? progressSub;
+    try {
+      progressSub = service.progressEvents.listen((report) {
+        if (!mounted) return;
+        setState(() {
+          _loadFraction = report.fraction;
+          _loadStatus = report.text;
+        });
+      });
+      await service.loadModel(preset);
+      if (!mounted) return;
+      await widget.onConnect(
+        AgentConfig(
+          providerKind: webLlmProviderKind,
+          modelId: preset.id,
+          baseUrl: '',
+          apiKey: '',
+          systemPrompt: webLlmSystemPrompt,
+          contextWindow: preset.contextWindow,
+          maxTokens: 1024,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e is StateError ? e.message : e.toString());
+      }
+    } finally {
+      await progressSub?.cancel();
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFraction = null;
+          _loadStatus = null;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -210,52 +285,56 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           onSelectionChanged: (value) => _selectPreset(value.first),
         ),
         const SizedBox(height: 16),
-        TextField(
-          controller: _keyController,
-          decoration: const InputDecoration(
-            labelText: 'API key',
-            hintText: 'Paste your provider key',
-          ),
-          obscureText: true,
-          autocorrect: false,
-          enableSuggestions: false,
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _modelController,
-          decoration: const InputDecoration(labelText: 'Model id'),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _urlController,
-          enabled: _preset.hasEditableBaseUrl,
-          decoration: InputDecoration(
-            labelText: 'Base URL',
-            helperText: _preset.hasEditableBaseUrl
-                ? 'OpenAI-compatible endpoint'
-                : null,
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              Icons.lock_outline,
-              size: 16,
-              color: theme.colorScheme.primary,
+        if (_preset.isOnDevice)
+          _buildWebLlmFields(theme)
+        else ...[
+          TextField(
+            controller: _keyController,
+            decoration: const InputDecoration(
+              labelText: 'API key',
+              hintText: 'Paste your provider key',
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'In-memory only: your key is never persisted and is gone on '
-                'reload. Calls go straight from your browser to the provider '
-                '— nothing is proxied or stored.',
-                style: theme.textTheme.bodySmall,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _modelController,
+            decoration: const InputDecoration(labelText: 'Model id'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _urlController,
+            enabled: _preset.hasEditableBaseUrl,
+            decoration: InputDecoration(
+              labelText: 'Base URL',
+              helperText: _preset.hasEditableBaseUrl
+                  ? 'OpenAI-compatible endpoint'
+                  : null,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.lock_outline,
+                size: 16,
+                color: theme.colorScheme.primary,
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'In-memory only: your key is never persisted and is gone on '
+                  'reload. Calls go straight from your browser to the provider '
+                  '— nothing is proxied or stored.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
         if (corsNote != null) ...[
           const SizedBox(height: 8),
           Row(
@@ -282,14 +361,71 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           ),
         FilledButton(
           onPressed: _loading ? null : _connect,
-          child: _loading
+          child: _loading && !_preset.isOnDevice
               ? const SizedBox(
                   width: 20,
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : Text(widget.connectLabel),
+              : Text(_loading ? 'Loading model…' : widget.connectLabel),
         ),
+      ],
+    );
+  }
+
+  /// The on-device (WebLLM) replacement for the key/model/URL fields: a
+  /// model picker over [webLlmModelPresets], the offline/WebGPU note, and —
+  /// while a load is in flight — the engine-init progress bar.
+  Widget _buildWebLlmFields(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<WebLlmModelPreset>(
+          initialValue: _webllmModel,
+          decoration: const InputDecoration(labelText: 'On-device model'),
+          items: [
+            for (final preset in webLlmModelPresets)
+              DropdownMenuItem(
+                value: preset,
+                child: Text('${preset.displayName} · ${preset.sizeLabel}'),
+              ),
+          ],
+          onChanged: _loading
+              ? null
+              : (preset) {
+                  if (preset == null) return;
+                  setState(() => _webllmModel = preset);
+                },
+        ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Runs fully offline after download · needs WebGPU '
+                '(Chrome/Edge/newer Safari) · weights ~0.5-4 GB cached in '
+                'your browser',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+        if (_loading) ...[
+          const SizedBox(height: 12),
+          LinearProgressIndicator(value: _loadFraction),
+          const SizedBox(height: 4),
+          Text(
+            _loadStatus != null && _loadStatus!.isNotEmpty
+                ? _loadStatus!
+                : 'Downloading model weights…',
+            style: theme.textTheme.bodySmall,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ],
     );
   }

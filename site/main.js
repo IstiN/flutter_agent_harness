@@ -75,4 +75,49 @@
     }, { threshold: 0.08 });
     revealEls.forEach(function (el) { io.observe(el); });
   }
+
+  /* ── Copy buttons ─────────────────────────────────────────────────── */
+  function flash(btn, label) {
+    btn.textContent = label;
+    btn.classList.add('copied');
+    setTimeout(function () {
+      btn.textContent = 'Copy';
+      btn.classList.remove('copied');
+    }, 1500);
+  }
+
+  function copyText(text, done) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { done(true); },
+        function () { done(legacyCopy(text)); }
+      );
+    } else {
+      done(legacyCopy(text));
+    }
+  }
+
+  function legacyCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { /* no-op */ }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  document.querySelectorAll('[data-copy-target]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var target = document.getElementById(btn.getAttribute('data-copy-target'));
+      if (!target) { return; }
+      copyText(target.textContent.trim(), function (ok) {
+        flash(btn, ok ? 'Copied ✓' : 'Failed');
+      });
+    });
+  });
 })();

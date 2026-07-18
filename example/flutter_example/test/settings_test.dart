@@ -116,6 +116,45 @@ void main() {
       expect(find.textContaining('api.anthropic.com'), findsOneWidget);
     });
 
+    testWidgets('on-device preset shows the model picker and offline note', (
+      tester,
+    ) async {
+      await tester.pumpWidget(const MyApp());
+
+      await tester.tap(find.text('On-device (WebLLM)'));
+      await tester.pump();
+
+      // The key/model/URL fields are replaced by the on-device model picker.
+      expect(find.text('API key'), findsNothing);
+      expect(find.text('Base URL'), findsNothing);
+      expect(find.text('On-device model'), findsOneWidget);
+      expect(find.textContaining('Qwen3 0.6B'), findsOneWidget);
+      expect(
+        find.textContaining('Runs fully offline after download'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('WebGPU'), findsOneWidget);
+    });
+
+    testWidgets('host build reports on-device inference as unavailable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(const MyApp());
+
+      await tester.tap(find.text('On-device (WebLLM)'));
+      await tester.pump();
+      await tester.tap(find.text('Start chat'));
+      await tester.pump();
+      await tester.pump();
+
+      // The stub engine (non-web platform) fails politely, no crash.
+      expect(
+        find.textContaining('only available in the web build'),
+        findsOneWidget,
+      );
+      expect(find.text('Connect to fah'), findsOneWidget);
+    });
+
     testWidgets('a typed model is not clobbered by preset switching', (
       tester,
     ) async {

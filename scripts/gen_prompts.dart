@@ -109,6 +109,14 @@ const exampleSpecs = <PromptSpec>[
     source: 'example/flutter_example/prompts/sandbox_system.md',
     constName: 'sandboxSystemPrompt',
   ),
+  PromptSpec(
+    source: 'example/flutter_example/prompts/webllm_system.md',
+    constName: 'webLlmSystemPrompt',
+  ),
+  PromptSpec(
+    source: 'example/flutter_example/prompts/webllm_no_tools_note.md',
+    constName: 'webLlmNoToolsNote',
+  ),
 ];
 
 /// A Markdown prompt file loaded and validated for generation.

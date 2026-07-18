@@ -7,6 +7,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'env_factory.dart';
 import 'prompts.g.dart';
 import 'secrets_store.dart';
+import 'webllm/webllm_service.dart';
+import 'webllm/webllm_stream_function.dart';
+import 'webllm/webllm_types.dart';
 
 /// A UI-facing chat message.
 final class FahChatMessage {
@@ -43,22 +46,33 @@ final class AgentConfig {
     required this.baseUrl,
     required this.apiKey,
     this.systemPrompt,
+    this.contextWindow = 128000,
+    this.maxTokens = 4096,
   });
 
-  /// Provider adapter kind: `openai-completions`, `anthropic`, or `google`.
+  /// Provider adapter kind: `openai-completions`, `anthropic`, `google`, or
+  /// `webllm` (on-device, web-only — see `lib/webllm/`).
   final String providerKind;
 
   /// Model id passed to the provider.
   final String modelId;
 
   /// Provider base URL (e.g. OpenRouter `https://openrouter.ai/api/v1`).
+  /// Empty for on-device providers.
   final String baseUrl;
 
-  /// API key for the provider.
+  /// API key for the provider. Empty for on-device providers.
   final String apiKey;
 
   /// Optional system prompt override.
   final String? systemPrompt;
+
+  /// Context window reported to the agent loop (drives overflow/compaction
+  /// heuristics). Small for on-device models.
+  final int contextWindow;
+
+  /// Output-token cap reported to the agent loop.
+  final int maxTokens;
 
   Model toModel() => Model(
     id: modelId,
@@ -66,8 +80,8 @@ final class AgentConfig {
     api: providerKind,
     provider: providerKind,
     baseUrl: baseUrl,
-    contextWindow: 128000,
-    maxTokens: 4096,
+    contextWindow: contextWindow,
+    maxTokens: maxTokens,
   );
 }
 
@@ -83,6 +97,7 @@ class AgentService extends ChangeNotifier {
     JsonlSessionRepo? repo,
     SecretRedactor? redactor,
   }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+    _responseTimeout = const Duration(seconds: 90);
     _attachRedactor(redactor);
     _agent.subscribe(_onAgentEvent);
   }
@@ -106,13 +121,17 @@ class AgentService extends ChangeNotifier {
     SecretRedactor? redactor,
   }) : sessionsRoot = '${env.cwd}/sessions',
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
+    _responseTimeout = config.providerKind == webLlmProviderKind
+        // First on-device generation compiles WebGPU shaders, which can take
+        // minutes on large presets; hosted providers keep the tight timeout.
+        ? const Duration(minutes: 10)
+        : const Duration(seconds: 90);
     _agent = Agent(
       model: config.toModel(),
       systemPrompt: _effectiveSystemPrompt(config, redactor),
-      streamFunction: providerStreamFunction(
-        config.providerKind,
-        config.apiKey,
-      ),
+      streamFunction: config.providerKind == webLlmProviderKind
+          ? webLlmStreamFunction(createWebLlmService())
+          : providerStreamFunction(config.providerKind, config.apiKey),
       toolRegistry: ToolRegistry(builtinTools(env)),
     );
     _attachRedactor(redactor);
@@ -140,6 +159,11 @@ class AgentService extends ChangeNotifier {
   }
 
   late final Agent _agent;
+
+  /// Response deadline for one agent run; 10 minutes for the on-device
+  /// (WebLLM) provider (first run compiles WebGPU shaders), 90 s otherwise.
+  /// Assigned in `_withEnv`; the default covers the direct constructor.
+  late final Duration _responseTimeout;
   final JsonlSessionRepo _repo;
   final String sessionsRoot;
 
@@ -201,11 +225,12 @@ class AgentService extends ChangeNotifier {
   void _runWithTimeout(Future<void> run) {
     run
         .timeout(
-          const Duration(seconds: 90),
+          _responseTimeout,
           onTimeout: () {
             abort();
             throw TimeoutException(
-              'The model did not respond within 90 seconds.',
+              'The model did not respond within '
+              '${_responseTimeout.inSeconds} seconds.',
             );
           },
         )

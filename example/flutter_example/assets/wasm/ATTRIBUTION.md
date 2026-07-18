@@ -135,6 +135,16 @@ shell works on iOS, Android, and web without spawning host processes.
   `sql-wasm.wasm`) on first `sqlite3` invocation in the browser; the
   database is exported back into the sandbox filesystem after each run.
 
+## On-device LLM runtime (web build, loaded from CDN at runtime)
+
+- @mlc-ai/web-llm 0.2.81 (Apache-2.0) — https://github.com/mlc-ai/web-llm
+  Imported as an ES module from jsdelivr by `web/index.html` (exposed as
+  `window.webllm`) when the "On-device (WebLLM)" provider is selected.
+  Model weights download from HuggingFace (`mlc-ai/` org) into the
+  browser's CacheStorage on first use; model libraries come from
+  https://github.com/mlc-ai/binary-mlc-llm-libs. Nothing is bundled into
+  the app; the stream helper is `web/webllm_helpers.js`.
+
 ## Pure-Dart packages (web sandbox shell)
 
 - package:archive (MIT) — https://pub.dev/packages/archive

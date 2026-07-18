@@ -272,6 +272,51 @@ section {
 }
 .fineprint { margin-top: 14px; color: var(--dim); font-size: 0.88rem; }
 
+/* ── Install ─────────────────────────────────────────────────────────── */
+.install-term { margin-top: 30px; }
+.install-term .term-body { min-height: 0; padding: 16px 20px; font-size: 0.92rem; }
+.term-bar .copy-btn { margin-left: auto; }
+.copy-btn {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--dim);
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid var(--border-bright);
+  border-radius: 7px;
+  padding: 4px 11px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.copy-btn:hover { color: var(--text); border-color: var(--accent); }
+.copy-btn.copied { color: var(--accent); border-color: var(--accent); }
+.install-alts { margin-top: 18px; }
+.cmdline {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  background: rgba(148, 163, 184, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+.cmdline code,
+.cmdline .cmdpre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ── Feature grid ────────────────────────────────────────────────────── */
 .grid {
   display: grid;
