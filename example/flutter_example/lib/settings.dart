@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -35,8 +36,8 @@ String settingsEnv(String name, String fallback) {
 /// A bring-your-own-key provider preset. Hosted presets talk to an
 /// OpenAI-compatible chat-completions endpoint; [webllm] runs a small model
 /// on-device in the browser (no key, no endpoint); [gemma] runs Gemma 4
-/// on-device on iOS/Android via the `flutter_gemma` plugin (hidden on other
-/// platforms — see [gemmaProviderSupported]).
+/// on-device via the `flutter_gemma` plugin — on iOS/Android and on web
+/// (hidden on desktop — see [gemmaProviderSupported]).
 ///
 /// Presets are built-in and cannot be deleted; user-added providers
 /// ([CustomProvider], managed by [ProviderRegistry]) appear in the same
@@ -528,7 +529,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           decoration: const InputDecoration(labelText: 'Provider'),
           items: [
             for (final preset in ProviderPreset.values)
-              // Gemma is iOS/Android-only; hidden on web and desktop.
+              // Gemma runs on web + iOS/Android; hidden on desktop.
               if (preset != ProviderPreset.gemma || gemmaProviderSupported)
                 DropdownMenuItem(value: preset, child: Text(preset.label)),
             for (final provider in _registry.providers)
@@ -780,9 +781,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Runs fully offline after download · weights stay on the '
-                'device · the token is used for the download only and is '
-                'never persisted',
+                gemmaStorageNote(isWeb: kIsWeb, preset: _gemmaModel),
                 style: theme.textTheme.bodySmall,
               ),
             ),

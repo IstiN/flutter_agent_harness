@@ -112,6 +112,29 @@
     import * as webllm from 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm';
     window.webllm = webllm;
   </script>
+  <!-- LiteRT-LM web engine for the on-device Gemma provider (.litertlm models
+       via @litert-lm/core, pinned — the version matches the interop in
+       flutter_gemma_litertlm 1.1.0). The ESM does not assign window globals
+       and module scripts are deferred, so the plugin's Dart side awaits the
+       window.litertLmReady handshake before any static Engine interop (see
+       lib/gemma/ and the flutter_gemma README "Web .litertlm setup"). -->
+  <script type="module">
+    window.litertLmReady = (async () => {
+      const m = await import('https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/+esm');
+      window.Engine = m.Engine;
+      return m.Engine;
+    })();
+  </script>
+  <!-- flutter_gemma web storage helpers. opfs_helper.js (defines
+       window.flutterGemmaOPFS) is required by WebStorageMode.streaming —
+       Gemma 4 E2B/E4B exceed Chrome's ~2 GB single-blob limit, so the model
+       streams into OPFS and the engine consumes a ReadableStream. The pub
+       package does not ship opfs_helper.js; it is vendored here from the
+       flutter_gemma repo (interface matches flutter_gemma 1.3.1's
+       web_opfs_interop.dart). cache_api.js ships inside the pub package and
+       backs the non-streaming fallback paths. -->
+  <script src="cache_api.js"></script>
+  <script src="opfs_helper.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

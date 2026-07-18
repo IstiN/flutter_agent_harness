@@ -6,8 +6,8 @@
 ///
 /// This file is pure Dart (plus `flutter/foundation`) so host tests can use
 /// it (and fake the engine) without the `flutter_gemma` plugin. The concrete
-/// engine lives in `gemma_service_io.dart` (iOS/Android) and
-/// `gemma_service_stub.dart` (everywhere else) — see `gemma_service.dart`.
+/// engine lives in `gemma_service_plugin.dart` (web + iOS/Android) and
+/// `gemma_service_stub.dart` (desktop) — see `gemma_service.dart`.
 library;
 
 import 'package:flutter/foundation.dart';
@@ -18,13 +18,14 @@ import 'package:flutter/foundation.dart';
 const gemmaProviderKind = 'gemma';
 
 /// Shown when the Gemma provider is used on an unsupported platform. The
-/// provider is iOS/Android only: the `.litertlm` engine ships no web build
-/// here (WebLLM covers web), and desktop needs extra native packaging that
-/// this app does not do (see the flutter_gemma README's macOS section).
+/// provider runs on web (`@litert-lm/core`) and on iOS/Android (FFI);
+/// desktop builds hide it — the plugin's desktop path needs extra native
+/// packaging that this app does not do (see the flutter_gemma README's
+/// macOS section).
 const gemmaUnsupportedPlatformMessage =
-    'On-device inference (Gemma 4) is only available in the iOS/Android '
-    'builds of this app. Pick a hosted provider here; on web use the '
-    'WebLLM on-device provider instead.';
+    'On-device inference (Gemma 4) is not available in the desktop builds '
+    'of this app. Pick a hosted provider here — or use the web build '
+    '(Chrome/Edge) or the iOS/Android app, which run Gemma 4 on-device.';
 
 /// Whether the Gemma provider appears in the settings provider picker.
 /// Pure function so widget/unit tests can exercise the web and desktop
@@ -33,14 +34,33 @@ bool gemmaProviderVisible({
   required bool isWeb,
   required TargetPlatform platform,
 }) {
-  if (isWeb) return false;
+  if (isWeb) return true;
   return platform == TargetPlatform.iOS || platform == TargetPlatform.android;
 }
 
-/// Whether the Gemma provider is offered on this platform (iOS/Android
-/// only; hidden on web and desktop).
+/// Whether the Gemma provider is offered on this platform (web and
+/// iOS/Android; hidden on desktop).
 bool get gemmaProviderSupported =>
     gemmaProviderVisible(isWeb: kIsWeb, platform: defaultTargetPlatform);
+
+/// The storage note shown under the Gemma model picker in the settings
+/// form. On web the weights stream into the browser's OPFS storage
+/// (flutter_gemma's `WebStorageMode.streaming` — required because Gemma 4
+/// E2B/E4B exceed Chrome's ~2 GB single-blob limit); on mobile they live in
+/// the app's on-device storage. The token sentence is identical on both so
+/// the form's privacy story stays uniform.
+String gemmaStorageNote({
+  required bool isWeb,
+  required GemmaModelPreset preset,
+}) {
+  const tokenNote =
+      'the token is used for the download only and is never persisted';
+  return isWeb
+      ? 'Runs fully offline after download · downloads ${preset.sizeLabel} '
+            'once, cached by the browser (OPFS) · $tokenNote'
+      : 'Runs fully offline after download · weights stay on the device · '
+            '$tokenNote';
+}
 
 /// A chat message in the provider-neutral shape the Gemma stream function
 /// hands to the engine. Roles:
@@ -54,7 +74,8 @@ typedef GemmaChatMessage = ({String role, String content, String? toolName});
 
 /// A preset describing an on-device Gemma 4 model installable through the
 /// `flutter_gemma` plugin (LiteRT-LM `.litertlm` builds from the
-/// `litert-community` HuggingFace repos).
+/// `litert-community` HuggingFace repos; FFI on iOS/Android,
+/// `@litert-lm/core` on web).
 final class GemmaModelPreset {
   /// Creates a model preset.
   const GemmaModelPreset({
@@ -146,11 +167,12 @@ final class GemmaProgress {
 }
 
 /// The engine surface the Gemma stream function and the settings form talk
-/// to. The iOS/Android build implements it over the `flutter_gemma` plugin;
-/// other platforms get a stub that reports unavailable, and tests inject
+/// to. The web and iOS/Android builds implement it over the `flutter_gemma`
+/// plugin; desktop gets a stub that reports unavailable, and tests inject
 /// fakes.
 abstract interface class GemmaEngineApi {
-  /// Whether on-device inference can run on this platform (iOS/Android).
+  /// Whether on-device inference can run on this platform (web and
+  /// iOS/Android; desktop reports unavailable).
   bool get isAvailable;
 
   /// The preset id currently loaded in the engine, if any.
