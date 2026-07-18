@@ -105,9 +105,8 @@
   <!-- WebLLM (@mlc-ai/web-llm, pinned): runs small LLMs on-device via WebGPU.
        Loaded as an ES module from jsdelivr and exposed as window.webllm for
        the Dart side (lib/webllm/). Version matches the interop bindings.
-       >= 0.2.84 is required for Hermes-3 function calling (tools): earlier
-       versions accept `tools` for Hermes-3 but never inject them into the
-       prompt and crash parsing plain-text answers as tool calls. -->
+       Used chat-only: tool calling is the Dart-side prompt-tools wrapper's
+       job, not the engine's native function-calling mode. -->
   <script type="module">
     import * as webllm from 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm';
     window.webllm = webllm;
