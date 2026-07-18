@@ -17,6 +17,14 @@ typedef SqliteRunResult = ({
   Uint8List? dbBytes,
 });
 
+/// Result of a `pip` run through the browser-hosted micropip.
+typedef PipInterpreterResult = ({
+  bool available,
+  String stdout,
+  String stderr,
+  int exitCode,
+});
+
 /// Browser-hosted Python (pyodide) and JavaScript (quickjs-emscripten)
 /// interpreters, used by [MemoryShell] on the web where no WASI runtime is
 /// available. Both load from CDN on first use (nothing is bundled into the
@@ -32,6 +40,17 @@ class WebInterpreters {
   /// Runs Python [code]. Returns `available: false` on non-web platforms.
   static Future<InterpreterResult> runPython(String code) {
     return Future.value((available: false, stdout: '', stderr: ''));
+  }
+
+  /// Runs `pip` [args] through pyodide's micropip. Returns
+  /// `available: false` on non-web platforms.
+  static Future<PipInterpreterResult> runPip(List<String> args) {
+    return Future.value((
+      available: false,
+      stdout: '',
+      stderr: '',
+      exitCode: 127,
+    ));
   }
 
   /// Runs [sql] against [dbBytes] via sql.js. Returns `available: false` on

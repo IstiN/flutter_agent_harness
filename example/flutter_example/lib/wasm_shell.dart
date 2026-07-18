@@ -15,6 +15,7 @@ import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
 
 import 'sandbox_builtins.dart';
+import 'sandbox_pip.dart';
 import 'shell_parser.dart';
 import 'wasm_shell_git.dart';
 import 'wasm_shell_ssh.dart';
@@ -37,6 +38,11 @@ import 'wasm_shell_ssh.dart';
 /// Dart builtins shared with the web shell (see `sandbox_builtins.dart`);
 /// `base64` and the `md5sum`/`sha*sum` checksums are already served by the
 /// `coreutils.wasm` applets, so they are not duplicated as builtins.
+///
+/// `pip`/`pip3` are pip-lite Dart builtins (see `sandbox_pip.dart`): they
+/// install pure-Python wheels from PyPI into the python site-packages at
+/// `/usr/local/lib/python3.14/site-packages`, which is exported to the
+/// interpreter as `PYTHONPATH` on every python launch.
 ///
 /// A tiny shell parser supports pipelines, `\u0026\u0026` / `||`, `;`, and
 /// redirects. Each stage runs in its own WASM instance, so there is no need
@@ -339,6 +345,8 @@ final class WasiSandboxShell implements Shell {
     'unxz',
     'bzip2',
     'bunzip2',
+    'pip',
+    'pip3',
   };
 
   /// Whether [command] can be resolved to a WASM applet or a builtin.
@@ -432,6 +440,7 @@ final class WasiSandboxShell implements Shell {
         options,
         decompress: stage.command == 'bunzip2',
       ),
+      'pip' || 'pip3' => _pipBuiltin(stage, options),
       _ => Err(
         ExecutionError(
           ExecutionErrorCode.unknown,
@@ -950,6 +959,11 @@ final class WasiSandboxShell implements Shell {
     }
 
     final env = _effectiveEnv(options);
+    if (module == python) {
+      // Let the interpreter import pip-installed wheels (an explicit user
+      // PYTHONPATH, e.g. via `export`, wins).
+      env.putIfAbsent('PYTHONPATH', () => _pythonSitePackages);
+    }
 
     final preopenedDirs = <PreopenedDir>[];
     final hostSandbox = sandboxHostPath;
@@ -1815,6 +1829,63 @@ final class WasiSandboxShell implements Shell {
       options?.cwd ?? _currentDir,
     ).wget(stage.args, timeout: options?.timeout);
     return _builtinOk(result);
+  }
+
+  /// Site-packages directory pip installs into and python imports from
+  /// (CPython WASI convention under the `/usr/local` prefix).
+  static const _pythonSitePackages = '/usr/local/lib/python3.14/site-packages';
+
+  /// Runs the pip-lite builtin: downloads pure-Python wheels from PyPI in
+  /// Dart and unzips them into [_pythonSitePackages] (see `sandbox_pip.dart`).
+  Future<Result<StageResult, ExecutionError>> _pipBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+  ) async {
+    final host = sandboxHostPath;
+    if (host == null || host.isEmpty) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('pip: sandbox filesystem unavailable\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+    final pip = SandboxPipBuiltins(
+      httpClient: _httpClient,
+      sitePackagesPath: _pythonSitePackages,
+      writeBinaryFile: (path, bytes) async {
+        final file = _hostFile(path);
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(bytes);
+      },
+      listDirectory: (path) async {
+        final dir = io.Directory(_hostPath(path));
+        if (!await dir.exists()) return null;
+        final entries = <SandboxDirEntry>[];
+        await for (final entity in dir.list(followLinks: false)) {
+          entries.add((
+            name: p.basename(entity.path),
+            isDirectory: entity is io.Directory,
+          ));
+        }
+        return entries;
+      },
+      readTextFile: (path) async {
+        final file = _hostFile(path);
+        if (!await file.exists()) return null;
+        return file.readAsString();
+      },
+      removeFile: (path) async {
+        final file = _hostFile(path);
+        if (await file.exists()) await file.delete();
+      },
+      removeDirectory: (path) async {
+        final dir = io.Directory(_hostPath(path));
+        if (await dir.exists()) await dir.delete(recursive: true);
+      },
+    );
+    return _builtinOk(await pip.run(stage.args, timeout: options?.timeout));
   }
 
   Future<Result<StageResult, ExecutionError>> _duBuiltin(

@@ -76,6 +76,10 @@ shell works on iOS, Android, and web without spawning host processes.
 - Notes: CPython interpreter. The standard library ships separately as
   `python_stdlib.zip` (contents of `lib/python3.14` from the same release)
   and is extracted to `/usr/local/lib` inside the sandbox on first use.
+  The `pip` builtin (pure Dart, see `lib/sandbox_pip.dart`) installs
+  pure-Python wheels from PyPI into
+  `/usr/local/lib/python3.14/site-packages`, which is exported to the
+  interpreter as `PYTHONPATH`.
 
 ## python_stdlib.zip
 

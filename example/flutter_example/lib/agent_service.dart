@@ -157,7 +157,7 @@ class AgentService extends ChangeNotifier {
       'whois, git (clone/fetch/'
       'push over HTTPS and SSH), ssh/scp/sftp (key auth from ~/.ssh; not '
       'available on web), python3 (CPython 3.14 with the standard '
-      'library; no pip, no '
+      'library; pip/pip3 install pure-Python wheels only; no '
       'sockets), qjs/js (QuickJS JavaScript engine, ES2023, with qjs:std), '
       'sqlite3 (SQLite CLI), cd/pwd, export/unset, \$VAR expansion, pipes, '
       '&& || ; and redirects. There is NO node, make, or a C compiler.\n'

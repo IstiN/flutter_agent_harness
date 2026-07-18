@@ -36,7 +36,8 @@ import 'web_interpreters_stub.dart'
 /// applets on iOS), and `rg` (an alias of the Dart `grep`
 /// implementation, mirroring iOS where `grep` maps to `rg` with grep
 /// semantics). `python3`/`qjs`/`sqlite3` run in browser-hosted interpreters
-/// loaded from CDNs (pyodide, quickjs-emscripten, sql.js); `lua` has no
+/// loaded from CDNs (pyodide, quickjs-emscripten, sql.js) and `pip`/`pip3`
+/// install pure-Python wheels via pyodide's micropip; `lua` has no
 /// browser build. All report "command not found" (127). `git` works locally via
 /// dart_git; remote clone/push is not supported in the browser (CORS).
 /// `ssh`/`scp`/`sftp` are registered (so `which` finds them) but always fail
@@ -105,6 +106,8 @@ final class MemoryShell implements Shell {
     'mv',
     'nslookup',
     'patch',
+    'pip',
+    'pip3',
     'printf',
     'pwd',
     'python',
@@ -375,9 +378,10 @@ final class MemoryShell implements Shell {
       'gzip' => _gzip(ctx, decompress: false),
       'gunzip' => _gzip(ctx, decompress: true),
       'zip' => _zip(ctx),
-      'unzip' => _unzip(ctx),
+      'unzip' => _toStage(_builtinsFor(ctx).unzip(ctx.args)),
       'sqlite3' => _runSqlite(ctx),
       'python' || 'python3' => _runPython(ctx),
+      'pip' || 'pip3' => _runPip(ctx),
       'qjs' || 'js' => _runQjs(ctx),
       'lua' => _interpreterUnavailable('lua'),
       'whoami' => _text('${_effectiveEnv(ctx.options)['USER']}\n'),
@@ -434,6 +438,9 @@ final class MemoryShell implements Shell {
       )).valueOrNull?.map(_dirEntry).toList(),
       removeFile: (path) async {
         await _fs.remove(_resolveSandboxPath(path, ctx.cwd));
+      },
+      makeDirectory: (path) async {
+        await _fs.createDir(_resolveSandboxPath(path, ctx.cwd));
       },
     );
   }
@@ -1294,56 +1301,6 @@ final class MemoryShell implements Shell {
     return _ok;
   }
 
-  Future<_StageResult> _unzip(_Context ctx) async {
-    String? destDir;
-    final archives = <String>[];
-    for (var i = 0; i < ctx.args.length; i++) {
-      final arg = ctx.args[i];
-      if (arg == '-d' && i + 1 < ctx.args.length) {
-        destDir = ctx.args[++i];
-      } else if (arg == '-q' || arg == '-o') {
-        // Quiet/overwrite are the defaults in this subset.
-      } else if (arg.startsWith('-') && arg != '-') {
-        return _error('unzip: unsupported option $arg\n', exitCode: 1);
-      } else {
-        archives.add(arg);
-      }
-    }
-    if (archives.isEmpty) {
-      return _error('unzip: missing archive operand\n', exitCode: 1);
-    }
-    for (final arg in archives) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
-      final read = await _fs.readBinaryFile(resolved);
-      if (read.isErr) {
-        return _error(
-          'unzip: cannot find or open $arg, $arg.zip or $arg.ZIP\n',
-          exitCode: 1,
-        );
-      }
-      final Archive archive;
-      try {
-        archive = ZipDecoder().decodeBytes(read.valueOrNull!);
-      } on Object {
-        return _error('unzip: $arg: not in zip format\n', exitCode: 1);
-      }
-      final root = destDir != null
-          ? _resolveSandboxPath(destDir, ctx.cwd)
-          : _resolveSandboxPath('.', ctx.cwd);
-      for (final file in archive.files) {
-        final name = file.name.startsWith('/')
-            ? file.name.substring(1)
-            : file.name;
-        if (!file.isFile || name.endsWith('/')) {
-          await _fs.createDir('$root/$name');
-          continue;
-        }
-        await _fs.writeBinaryFile('$root/$name', file.content);
-      }
-    }
-    return _ok;
-  }
-
   Future<_StageResult> _runPython(_Context ctx) async {
     final args = ctx.args;
     if (args.contains('--version') || args.contains('-V')) {
@@ -1366,6 +1323,19 @@ final class MemoryShell implements Shell {
       stdout: utf8.encode(result.stdout.isEmpty ? '' : '${result.stdout}\n'),
       stderr: utf8.encode(result.stderr.isEmpty ? '' : '${result.stderr}\n'),
       exitCode: hasError ? 1 : 0,
+    );
+  }
+
+  /// pip-lite for the web sandbox: installs pure-Python wheels through
+  /// pyodide's micropip (loaded from the CDN on first real use; usage errors
+  /// short-circuit before any network). See `sandbox_pip.dart`.
+  Future<_StageResult> _runPip(_Context ctx) async {
+    final r = await WebInterpreters.runPip(ctx.args);
+    if (!r.available) return _interpreterUnavailable('pip');
+    return _StageResult(
+      stdout: utf8.encode(r.stdout),
+      stderr: utf8.encode(r.stderr),
+      exitCode: r.exitCode,
     );
   }
 

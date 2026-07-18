@@ -41,6 +41,11 @@ typedef SandboxDirEntry = ({String name, bool isDirectory});
 /// shell's current directory.
 typedef SandboxDirLister = Future<List<SandboxDirEntry>?> Function(String path);
 
+/// Creates a directory (with parents) in the shell's filesystem. The path
+/// is the verbatim command argument; the closure resolves it against the
+/// shell's current directory.
+typedef SandboxDirMaker = Future<void> Function(String path);
+
 /// Raw result of a single builtin command, in the same shape both shells
 /// use for a pipeline stage.
 final class SandboxBuiltinResult {
@@ -139,6 +144,7 @@ final class SandboxBuiltins {
     this.readBinaryFile,
     this.listDirectory,
     this.removeFile,
+    this.makeDirectory,
     this.dnsQuery,
     this.whoisConnector,
   }) : _httpClient = httpClient ?? http.Client();
@@ -171,6 +177,11 @@ final class SandboxBuiltins {
   /// Injected file remover used by `xz -d`/`bzip2 -d` to drop the original
   /// archive unless `-k` is given; when null the original is kept.
   final SandboxFileRemover? removeFile;
+
+  /// Injected directory creator used by `unzip` to materialize archive
+  /// directory entries; when null those entries are skipped (file writes
+  /// still create their parents). See [SandboxDirMaker].
+  final SandboxDirMaker? makeDirectory;
 
   static SandboxBuiltinResult _ok(
     List<int> stdout, [
@@ -1651,6 +1662,64 @@ final class SandboxBuiltins {
       stderr: utf8.encode(err.toString()),
       exitCode: failed ? 1 : 0,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // unzip
+  // ---------------------------------------------------------------------------
+
+  /// Runs the `unzip` builtin: extracts zip archives (via package:archive)
+  /// into the current directory, or into the directory given with `-d`.
+  /// `-q`/`-o` are accepted as no-ops (quiet/overwrite are the defaults).
+  Future<SandboxBuiltinResult> unzip(List<String> args) async {
+    final reader = readBinaryFile;
+    if (reader == null) {
+      return _error('unzip: not supported by this shell\n', 1);
+    }
+    String? destDir;
+    final archives = <String>[];
+    for (var i = 0; i < args.length; i++) {
+      final arg = args[i];
+      if (arg == '-d' && i + 1 < args.length) {
+        destDir = args[++i];
+      } else if (arg == '-q' || arg == '-o') {
+        // Quiet/overwrite are the defaults in this subset.
+      } else if (arg.startsWith('-') && arg != '-') {
+        return _error('unzip: unsupported option $arg\n', 1);
+      } else {
+        archives.add(arg);
+      }
+    }
+    if (archives.isEmpty) {
+      return _error('unzip: missing archive operand\n', 1);
+    }
+    for (final arg in archives) {
+      final bytes = await reader(arg);
+      if (bytes == null) {
+        return _error(
+          'unzip: cannot find or open $arg, $arg.zip or $arg.ZIP\n',
+          1,
+        );
+      }
+      final Archive archive;
+      try {
+        archive = ZipDecoder().decodeBytes(bytes);
+      } on Object {
+        return _error('unzip: $arg: not in zip format\n', 1);
+      }
+      final root = destDir ?? '.';
+      for (final file in archive.files) {
+        final name = file.name.startsWith('/')
+            ? file.name.substring(1)
+            : file.name;
+        if (!file.isFile || name.endsWith('/')) {
+          await makeDirectory?.call('$root/$name');
+          continue;
+        }
+        await writeBinaryFile('$root/$name', file.content as List<int>);
+      }
+    }
+    return _ok(const []);
   }
 }
 

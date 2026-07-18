@@ -8,6 +8,8 @@ import 'dart:html' as html;
 import 'dart:js_interop';
 import 'dart:typed_data';
 
+import 'sandbox_pip.dart';
+
 /// Result of running a snippet in a browser-hosted interpreter.
 typedef InterpreterResult = ({bool available, String stdout, String stderr});
 
@@ -21,11 +23,22 @@ typedef SqliteRunResult = ({
   Uint8List? dbBytes,
 });
 
+/// Result of a `pip` run through the browser-hosted micropip.
+typedef PipInterpreterResult = ({
+  bool available,
+  String stdout,
+  String stderr,
+  int exitCode,
+});
+
 @JS('__fahQjsRun')
 external JSPromise _fahQjsRun(String code);
 
 @JS('__fahPyRun')
 external JSPromise _fahPyRun(String code);
+
+@JS('__fahPyPip')
+external JSPromise _fahPyPip(String code);
 
 @JS('__fahSqlRun')
 external JSPromise _fahSqlRun(String payloadJson);
@@ -160,7 +173,10 @@ window.__fahQjsRun = function(code) {
 ''';
 
   /// Installs `window.__fahPyRun(code)`, a stdout/stderr-capturing pyodide
-  /// runner that reuses one interpreter instance.
+  /// runner that reuses one interpreter instance, and
+  /// `window.__fahPyPip(code)`, the micropip-backed `pip` runner (loads the
+  /// micropip package from the pyodide CDN, then runs [code] with
+  /// `runPythonAsync` so snippets can use top-level `await`).
   static const _pyRunnerSource = r'''
 window.__fahPyRun = function(code) {
   if (!window.__fahPyPromise) {
@@ -178,6 +194,26 @@ window.__fahPyRun = function(code) {
       error = String((e && e.message) || e);
     }
     return JSON.stringify({ stdout: out.join('\n'), stderr: err.join('\n'), error: error });
+  });
+};
+window.__fahPyPip = function(code) {
+  if (!window.__fahPyPromise) {
+    window.__fahPyPromise = loadPyodide();
+  }
+  return window.__fahPyPromise.then(function(py) {
+    return py.loadPackage('micropip').then(function() {
+      var out = [];
+      var err = [];
+      py.setStdout({ batched: function(s) { out.push(s); } });
+      py.setStderr({ batched: function(s) { err.push(s); } });
+      return py.runPythonAsync(code).then(function() {
+        return JSON.stringify({ stdout: out.join('\n'), stderr: err.join('\n'), error: null });
+      }, function(e) {
+        return JSON.stringify({ stdout: out.join('\n'), stderr: err.join('\n'), error: String((e && e.message) || e) });
+      });
+    }, function(e) {
+      return JSON.stringify({ stdout: '', stderr: '', error: 'failed to load micropip: ' + String((e && e.message) || e) });
+    });
   });
 };
 ''';
@@ -276,6 +312,31 @@ window.__fahSqlRun = function(payloadJson) {
       );
     } catch (e) {
       return (available: false, stdout: '', stderr: '$e');
+    }
+  }
+
+  /// Runs `pip` [args] through pyodide's micropip. Usage errors are
+  /// short-circuited in pure Dart before pyodide (and the CDN) is touched;
+  /// real subcommands load pyodide lazily inside the runner closure.
+  static Future<PipInterpreterResult> runPip(List<String> args) async {
+    try {
+      final result = await runMicropipPip(args, (code) async {
+        await _ensurePyodide();
+        final r = await _parse(_fahPyPip(code));
+        return (
+          stdout: (r['stdout'] as String?) ?? '',
+          stderr: (r['stderr'] as String?) ?? '',
+          error: r['error'] as String?,
+        );
+      });
+      return (
+        available: true,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      );
+    } catch (e) {
+      return (available: false, stdout: '', stderr: '$e', exitCode: 127);
     }
   }
 
