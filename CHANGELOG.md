@@ -213,4 +213,8 @@
 
 - feat(example): dark theme matching the landing (terminal aesthetic)
 
+## 0.1.14
+
+- feat(example): branded web loading splash (first-frame fade)
+
 ## Unreleased
