@@ -229,4 +229,8 @@
 
 - feat(example): custom provider management + WebLLM model cache management in settings
 
+## 0.1.18
+
+- feat(example): Gemma 4 on-device provider via flutter_gemma (iOS/Android)
+
 ## Unreleased
