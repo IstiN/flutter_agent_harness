@@ -100,6 +100,26 @@ shell works on iOS, Android, and web without spawning host processes.
 - Target: `wasm32-wasip1`
 - Notes: sqlite3 CLI; `system()` stubbed (no process spawning under WASI).
 
+## lua.wasm
+
+- Source: https://github.com/yuin/gopher-lua (v1.1.1), built locally with
+  Go 1.25 (`GOOS=wasip1 GOARCH=wasm go build -ldflags="-s -w"`) plus a small
+  CLI wrapper mirroring the PUC lua standalone (`-v`, `-e`, `--`, script file
+  with the `arg` table, `-` = stdin, `lua: <err>` on stderr with exit 1).
+- License: MIT (see `LICENSE.lua`)
+- Target: `wasm32-wasip1`
+- Notes: Lua 5.1-compatible interpreter (`_VERSION` is `Lua 5.1`). This is
+  NOT the stock PUC-Rio C implementation: stock Lua handles errors
+  (pcall/error) with setjmp/longjmp, which wasi-sdk 33 can only lower to
+  WebAssembly exception-handling instructions (`-mllvm -wasm-enable-sjlj`
+  + libsetjmp.a). The runtime embedded in the app (wasmi 0.31, see
+  `vendor/wasm_run_flutter`) rejects such modules ("exceptions proposal not
+  enabled"), so a C build was verified to compile but cannot run in-app.
+  gopher-lua implements the VM in pure Go — no setjmp — and runs under the
+  sandbox unchanged. Under WASI `os.execute` reports failure (1) and
+  `io.popen` returns nil plus "Not implemented on wasip1" — process
+  spawning is impossible, but neither call crashes the runtime.
+
 ## Browser interpreters (web build, loaded from CDN at runtime)
 
 - quickjs-emscripten 0.31.0 (MIT) — https://github.com/justjavac/quickjs-emscripten

@@ -48,6 +48,7 @@ void main() {
         'gunzip',
         'gzip',
         'jq',
+        'lua',
         'md5sum',
         'nslookup',
         'patch',
@@ -255,6 +256,21 @@ void main() {
         final r = await run(env, command);
         expect(r.exitCode, 127, reason: command);
         expect(r.stderr, contains('not available in the web sandbox'));
+      }
+    });
+
+    // lua is registered on web (so `which` finds it) but has no
+    // browser-hosted build, so every invocation exits 127.
+    test('lua exits 127 in the web sandbox', () async {
+      final env = await createPlatformEnv();
+      for (final command in [
+        'lua -v',
+        "lua -e 'print(1)'",
+        'lua /script.lua',
+      ]) {
+        final r = await run(env, command);
+        expect(r.exitCode, 127, reason: command);
+        expect(r.stderr, contains('command not found'));
       }
     });
 

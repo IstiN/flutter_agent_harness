@@ -36,8 +36,8 @@ import 'web_interpreters_stub.dart'
 /// applets on iOS), and `rg` (an alias of the Dart `grep`
 /// implementation, mirroring iOS where `grep` maps to `rg` with grep
 /// semantics). `python3`/`qjs`/`sqlite3` run in browser-hosted interpreters
-/// loaded from CDNs (pyodide, quickjs-emscripten, sql.js) and report
-/// "command not found" (exit code 127) off the web. `git` works locally via
+/// loaded from CDNs (pyodide, quickjs-emscripten, sql.js); `lua` has no
+/// browser build. All report "command not found" (127). `git` works locally via
 /// dart_git; remote clone/push is not supported in the browser (CORS).
 /// `ssh`/`scp`/`sftp` are registered (so `which` finds them) but always fail
 /// with exit code 127 — browsers cannot open raw TCP connections.
@@ -99,6 +99,7 @@ final class MemoryShell implements Shell {
     'jq',
     'js',
     'ls',
+    'lua',
     'md5sum',
     'mkdir',
     'mv',
@@ -378,6 +379,7 @@ final class MemoryShell implements Shell {
       'sqlite3' => _runSqlite(ctx),
       'python' || 'python3' => _runPython(ctx),
       'qjs' || 'js' => _runQjs(ctx),
+      'lua' => _interpreterUnavailable('lua'),
       'whoami' => _text('${_effectiveEnv(ctx.options)['USER']}\n'),
       'basename' => _basename(ctx),
       'dirname' => _dirname(ctx),

@@ -207,6 +207,26 @@ void main() {
     });
   });
 
+  group('lua (registered on web, exit 127)', () {
+    test('which resolves lua', () async {
+      final r = await run('which lua');
+      expect(r.exitCode, 0, reason: 'lua not registered');
+      expect(r.stdout, contains('/bin/lua'));
+    });
+
+    test('lua exits 127: no browser-hosted build', () async {
+      for (final command in [
+        'lua -v',
+        "lua -e 'print(1)'",
+        'lua /script.lua',
+      ]) {
+        final r = await run(command);
+        expect(r.exitCode, 127, reason: command);
+        expect(r.stderr, contains('command not found'));
+      }
+    });
+  });
+
   test('printf formats directives and repeats for extra args', () async {
     var r = await run(r"printf 'hello %s\n' world");
     expect(r.exitCode, 0);

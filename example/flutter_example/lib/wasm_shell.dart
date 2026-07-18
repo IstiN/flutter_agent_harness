@@ -31,6 +31,7 @@ import 'wasm_shell_ssh.dart';
 ///   - `tar.wasm` for tar archive creation/extraction
 ///   - `gzip.wasm` for gzip compression/decompression
 ///   - `zip.wasm` for zip archive creation/extraction
+///   - `lua.wasm` for the Lua interpreter (gopher-lua, Lua 5.1)
 ///
 /// `tree`, `file`, and `xz`/`bzip2` decompression (`unxz`/`bunzip2`) are
 /// Dart builtins shared with the web shell (see `sandbox_builtins.dart`);
@@ -55,6 +56,7 @@ final class WasiSandboxShell implements Shell {
     required this.python,
     required this.qjs,
     required this.sqlite3,
+    required this.lua,
     this.workingDirectory,
     this.sandboxHostPath,
     http.Client? httpClient,
@@ -93,6 +95,9 @@ final class WasiSandboxShell implements Shell {
 
   /// SQLite CLI module (WASI build from the official amalgamation).
   final WasmModule sqlite3;
+
+  /// Lua interpreter module (gopher-lua, Lua 5.1, WASI build).
+  final WasmModule lua;
 
   /// Default working directory used when [ShellExecOptions.cwd] is omitted.
   final String? workingDirectory;
@@ -208,6 +213,7 @@ final class WasiSandboxShell implements Shell {
       python: await loadAsset('python.wasm'),
       qjs: await loadAsset('qjs.wasm'),
       sqlite3: await loadAsset('sqlite3.wasm'),
+      lua: await loadAsset('lua.wasm'),
       workingDirectory: workingDirectory,
       sandboxHostPath: sandboxHostPath,
       httpClient: httpClient,
@@ -352,6 +358,7 @@ final class WasiSandboxShell implements Shell {
           'qjs',
           'js',
           'sqlite3',
+          'lua',
         }.contains(command) ||
         _builtinCommands.contains(command);
   }
@@ -373,6 +380,7 @@ final class WasiSandboxShell implements Shell {
       'python' || 'python3' => (module: python, argv: const ['python']),
       'qjs' || 'js' => (module: qjs, argv: const ['qjs']),
       'sqlite3' => (module: sqlite3, argv: const ['sqlite3']),
+      'lua' => (module: lua, argv: const ['lua']),
       _ => (module: coreutils, argv: [command]),
     };
   }
