@@ -193,4 +193,8 @@
 
 - feat(site): SEO/GEO pack + OG share image
 
+## 0.1.9
+
+- feat(example): web file upload + IndexedDB-persisted sandbox FS
+
 ## Unreleased
