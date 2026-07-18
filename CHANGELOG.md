@@ -217,4 +217,8 @@
 
 - feat(example): branded web loading splash (first-frame fade)
 
+## 0.1.15
+
+- feat(example): WebLLM function calling (tools for Hermes-3 FC preset)
+
 ## Unreleased
