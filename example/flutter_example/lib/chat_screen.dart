@@ -13,6 +13,9 @@ import 'package:path_provider/path_provider.dart';
 import 'agent_service.dart';
 import 'file_browser.dart';
 import 'settings.dart';
+import 'upload.dart';
+import 'upload_picker_stub.dart'
+    if (dart.library.html) 'upload_picker_web.dart';
 
 /// Minimum body width (logical px) at which the file browser becomes a
 /// persistent, collapsible left panel instead of a drawer.
@@ -23,9 +26,14 @@ const double _kWideLayoutBreakpoint = 900;
 /// Text messages are rendered as Markdown, tool calls/results are shown as
 /// distinct cards, and image attachments are supported.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.service});
+  const ChatScreen({super.key, required this.service, this.uploadPicker});
 
   final AgentService service;
+
+  /// File chooser behind the attach sheet's "Upload to files" entry.
+  /// Defaults to the platform picker (`null` off the web → the entry is
+  /// hidden); tests inject a fake.
+  final UploadPicker? uploadPicker;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -51,6 +59,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
+
+  /// Arbitrary-file picker for the attach sheet's "Upload to files" entry;
+  /// `null` off the web, which hides the entry.
+  late final UploadPicker? _uploadPicker =
+      widget.uploadPicker ?? createUploadPicker();
 
   /// Opens the file browser: toggles the side panel on wide layouts, opens
   /// the drawer on narrow ones. [context] must be below the [Scaffold].
@@ -323,6 +336,56 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Picks arbitrary files and writes them into the sandbox root, so the
+  /// agent can work with them (web only; elsewhere the picker is `null`).
+  Future<void> _uploadToSandbox() async {
+    final picker = _uploadPicker;
+    if (picker == null) return;
+    final List<UploadFile> picked;
+    try {
+      picked = await picker.pick();
+    } on Object catch (e) {
+      if (mounted) _showSnack('Upload failed: $e');
+      return;
+    }
+    if (picked.isEmpty || !mounted) return;
+
+    final sizeError = uploadBatchSizeError(picked);
+    if (sizeError != null) {
+      _showSnack(sizeError);
+      return;
+    }
+
+    var written = 0;
+    var failed = 0;
+    for (final file in picked) {
+      final name = sanitizeUploadName(file.name);
+      if (name.isEmpty) {
+        failed++;
+        continue;
+      }
+      final result = await widget.service.env.writeBinaryFile(name, file.bytes);
+      if (result.isOk) {
+        written++;
+      } else {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    _showSnack(
+      'Uploaded $written file${written == 1 ? '' : 's'} to the sandbox'
+      '${failed > 0 ? ', $failed failed' : ''}',
+    );
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
+      );
+  }
+
   void _showAttachmentSheet() {
     showModalBottomSheet<void>(
       context: context,
@@ -346,6 +409,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 _pickImage(ImageSource.camera);
               },
             ),
+            if (_uploadPicker != null)
+              ListTile(
+                leading: const Icon(Icons.upload_file),
+                title: const Text('Upload to files'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _uploadToSandbox();
+                },
+              ),
           ],
         ),
       ),

@@ -2,16 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'file_preview.dart';
+import 'upload.dart';
+import 'upload_picker_stub.dart'
+    if (dart.library.html) 'upload_picker_web.dart';
 
 /// Width of the file browser panel (side panel on wide layouts, drawer on
 /// narrow ones).
 const double kFileBrowserPanelWidth = 300;
 
-/// Read-only file browser over the agent's [ExecutionEnv].
+/// File browser over the agent's [ExecutionEnv].
 ///
 /// Folders navigate (breadcrumb + up), files open a preview — inline in the
 /// panel when [inlinePreview] is true (wide layouts), or as a pushed
 /// [FilePreviewScreen] route otherwise (narrow layouts).
+///
+/// The header offers an upload button (when an [UploadPicker] is available,
+/// i.e. on web or when one is injected) that writes picked files into the
+/// currently viewed folder, so they land in the same sandbox filesystem the
+/// agent's tools see.
 ///
 /// Typed against the [ExecutionEnv] abstraction only, so a cloud-backed env
 /// can drop in later without UI changes. Navigation uses paths relative to
@@ -20,7 +28,13 @@ const double kFileBrowserPanelWidth = 300;
 /// absolute paths are not portable across envs (e.g. the mobile sandbox maps
 /// `/`-rooted paths onto a host directory).
 class FileBrowser extends StatefulWidget {
-  const FileBrowser({super.key, required this.env, this.inlinePreview = true});
+  const FileBrowser({
+    super.key,
+    required this.env,
+    this.inlinePreview = true,
+    this.uploadPicker,
+    this.maxUploadBatchBytes = kMaxUploadBatchBytes,
+  });
 
   /// The environment whose filesystem is browsed — the same instance the
   /// agent's tools use (see `AgentService.env`).
@@ -29,6 +43,14 @@ class FileBrowser extends StatefulWidget {
   /// Whether file previews render inside the panel (true) or push a
   /// full-screen route (false).
   final bool inlinePreview;
+
+  /// File chooser behind the upload button. Defaults to the platform picker
+  /// (`null` off the web → the button is hidden); tests inject a fake.
+  final UploadPicker? uploadPicker;
+
+  /// Total-byte cap for one upload batch; oversized batches are refused
+  /// with a message before anything is written.
+  final int maxUploadBatchBytes;
 
   @override
   State<FileBrowser> createState() => _FileBrowserState();
@@ -44,6 +66,11 @@ class _FileBrowserState extends State<FileBrowser> {
 
   /// Inline preview target, when [FileBrowser.inlinePreview] is on.
   ({String path, String name})? _preview;
+
+  /// Resolved picker: the injected one, else the platform default (`null`
+  /// off the web, which hides the upload button).
+  late final UploadPicker? _picker =
+      widget.uploadPicker ?? createUploadPicker();
 
   @override
   void initState() {
@@ -137,6 +164,63 @@ class _FileBrowserState extends State<FileBrowser> {
     }
   }
 
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
+      );
+  }
+
+  /// Picks files and writes them into the currently viewed folder of the
+  /// sandbox filesystem, so the agent can work with them right away.
+  Future<void> _upload() async {
+    final picker = _picker;
+    if (picker == null) return;
+    final List<UploadFile> picked;
+    try {
+      picked = await picker.pick();
+    } on Object catch (e) {
+      if (mounted) _showSnack('Upload failed: $e');
+      return;
+    }
+    if (picked.isEmpty || !mounted) return;
+
+    final sizeError = uploadBatchSizeError(
+      picked,
+      maxBytes: widget.maxUploadBatchBytes,
+    );
+    if (sizeError != null) {
+      _showSnack(sizeError);
+      return;
+    }
+
+    var written = 0;
+    var failed = 0;
+    for (final file in picked) {
+      final name = sanitizeUploadName(file.name);
+      if (name.isEmpty) {
+        failed++;
+        continue;
+      }
+      final result = await widget.env.writeBinaryFile(
+        _childPath(name),
+        file.bytes,
+      );
+      if (result.isOk) {
+        written++;
+      } else {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    if (written > 0) await _load();
+    _showSnack(
+      'Uploaded $written file${written == 1 ? '' : 's'}'
+      '${failed > 0 ? ', $failed failed' : ''}',
+    );
+  }
+
   IconData _iconFor(FileInfo info) {
     if (info.kind == FileKind.directory) return Icons.folder_outlined;
     return switch (fileExtension(info.name)) {
@@ -167,6 +251,12 @@ class _FileBrowserState extends State<FileBrowser> {
           Icon(Icons.folder_open_outlined, size: 20, color: theme.hintColor),
           const SizedBox(width: 8),
           Expanded(child: Text('Files', style: theme.textTheme.titleMedium)),
+          if (_picker != null)
+            IconButton(
+              icon: const Icon(Icons.upload_file),
+              tooltip: 'Upload files here',
+              onPressed: _upload,
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
