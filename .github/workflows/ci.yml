@@ -18,11 +18,20 @@ jobs:
         with:
           sdk: stable
 
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - run: dart pub get
+
+      # The example Flutter app lives in this repo; without its package
+      # config the repo-wide `dart analyze` cannot resolve Flutter imports.
+      - name: Example app pub get (for repo-wide analyze)
+        run: cd example/flutter_example && flutter pub get
 
       - name: File size guard (no dart file over 2800 lines)
         run: |
