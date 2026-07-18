@@ -77,7 +77,7 @@ final class AgentConfig {
 class AgentService extends ChangeNotifier {
   AgentService({
     required this._agent,
-    required ExecutionEnv env,
+    required this.env,
     required this.sessionsRoot,
     JsonlSessionRepo? repo,
     SecretRedactor? redactor,
@@ -100,7 +100,7 @@ class AgentService extends ChangeNotifier {
   }
 
   AgentService._withEnv({
-    required ExecutionEnv env,
+    required this.env,
     required AgentConfig config,
     SecretRedactor? redactor,
   }) : sessionsRoot = '${env.cwd}/sessions',
@@ -171,6 +171,13 @@ class AgentService extends ChangeNotifier {
   late final Agent _agent;
   final JsonlSessionRepo _repo;
   final String sessionsRoot;
+
+  /// The execution environment the agent's tools (and session storage) run
+  /// against. Exposed so UI affordances — the file browser — show the exact
+  /// filesystem the agent works in. Typed as the [ExecutionEnv] abstraction,
+  /// never a concrete env, so alternative backends (in-memory web FS, cloud
+  /// drives) drop in without UI changes.
+  final ExecutionEnv env;
 
   final List<FahChatMessage> messages = [];
   bool isStreaming = false;
