@@ -176,4 +176,8 @@
 
 - chore: mark fake PEM stubs as false_secrets for pub validation
 
+## 0.1.5
+
+- refactor(prompts): extract LLM prompts to prompts/*.md + codegen (AGENTS.md convention)
+
 ## Unreleased
