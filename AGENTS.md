@@ -7,6 +7,10 @@ Conventions for AI agents and contributors working in this repository.
 - `lib/` — the `flutter_agent_harness` package (pure Dart core).
 - `bin/fah.dart` — the `fah`/`fa` CLI executable.
 - `example/flutter_example/` — Flutter chat example (mobile/web sandbox).
+- `site/` — static GitHub Pages landing (hand-rolled HTML/CSS/JS, no build
+  step). `.github/workflows/pages.yml` builds the Flutter web demo into
+  `app/` inside the Pages artifact (never committed) and deploys on pushes
+  touching `site/`, `example/`, `lib/`, or `vendor/`.
 - `prompts/` — all LLM prompts as Markdown (see below); `test/` mirrors `lib/`.
 - `scripts/` — codegen and quality-gate scripts.
 
