@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'agent_service.dart';
 import 'file_browser.dart';
+import 'settings.dart';
 
 /// Minimum body width (logical px) at which the file browser becomes a
 /// persistent, collapsible left panel instead of a drawer.
@@ -289,10 +290,23 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Opens the BYOK connection settings (gear icon). On a successful
+  /// reconnect the dialog returns a freshly-created [AgentService], which
+  /// replaces this screen.
+  Future<void> _openSettings() async {
+    final service = await showDialog<AgentService>(
+      context: context,
+      builder: (_) => const SettingsDialog(),
+    );
+    if (service == null || !mounted) return;
+    await Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => ChatScreen(service: service)),
+    );
+  }
+
   Future<void> _send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && _pendingImage == null) return;
-
     final image = _pendingImage;
     final mime = _pendingImageMime;
     _clearPendingImage();
@@ -564,6 +578,11 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: const Icon(Icons.delete_outline),
             tooltip: 'New session',
             onPressed: widget.service.reset,
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Connection settings',
+            onPressed: _openSettings,
           ),
         ],
       ),
