@@ -52,6 +52,8 @@ void main() {
         'md5sum',
         'nslookup',
         'patch',
+        'pip',
+        'pip3',
         'printf',
         'realpath',
         'rg',
@@ -186,6 +188,34 @@ void main() {
       expect(r.exitCode, 0);
       r = await run(env, 'grep -i "Example Domain" /builtins_example.html');
       expect(r.exitCode, 0);
+    });
+
+    // pip-lite (micropip) usage/version paths are pure Dart and never load
+    // pyodide, so they run offline. Subcommands that need pyodide would hit
+    // the CDN and are not exercised here (see test/sandbox_pip_test.dart for
+    // the orchestration coverage with a fake runner).
+    test('pip usage errors and version are offline-safe', () async {
+      final env = await createPlatformEnv();
+
+      var r = await run(env, 'pip');
+      expect(r.exitCode, 0);
+      expect(r.stdout, contains('Usage: pip'));
+      expect(r.stdout, contains('pure-Python wheels'));
+
+      r = await run(env, 'pip --version');
+      expect(r.exitCode, 0);
+      expect(r.stdout, contains('micropip'));
+
+      r = await run(env, 'pip frobnicate');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('unknown command'));
+
+      r = await run(env, "pip install '<<bad>>'");
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('invalid requirement'));
+
+      r = await run(env, 'pip3 list extra-arg');
+      expect(r.exitCode, 2);
     });
 
     // Mirrors the host netdiag coverage in memory_shell_test.dart (MockClient
