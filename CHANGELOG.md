@@ -172,4 +172,8 @@
 - Phase 0: port AssistantMessageEventStream contract and SSE line decoder from pi-mono
 - GOAL.md: allow agent publishing on explicit user instruction; OIDC for tagged releases
 
+## 0.1.4
+
+- chore: mark fake PEM stubs as false_secrets for pub validation
+
 ## Unreleased
