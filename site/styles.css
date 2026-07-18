@@ -328,8 +328,19 @@ section {
 }
 .matrix tbody tr:last-child td { border-bottom: none; }
 .matrix td { color: var(--dim); }
-.matrix td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+.matrix td:first-child { color: var(--text); font-weight: 600; }
 .matrix .yes { color: var(--accent); font-weight: 700; }
+.matrix .part { color: #febc2e; font-weight: 700; }
+.matrix .no { color: var(--dim); opacity: 0.75; }
+.matrix-caps th:not(:first-child),
+.matrix-caps td:not(:first-child) { text-align: center; }
+.matrix-notes {
+  margin-top: 16px;
+  font-size: 0.8rem;
+  line-height: 1.75;
+  color: var(--dim);
+  max-width: 76ch;
+}
 
 /* ── Footer ──────────────────────────────────────────────────────────── */
 .footer {
