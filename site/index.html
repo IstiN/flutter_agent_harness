@@ -196,45 +196,70 @@
       host shell.
     </p>
     <div class="matrix-wrap">
-      <table class="matrix">
+      <table class="matrix matrix-caps">
         <thead>
           <tr>
-            <th>Platform</th><th>Form</th><th>Agent loop</th>
-            <th>Shell</th><th>Git</th><th>Interpreters</th>
+            <th>Capability</th>
+            <th>Browser</th><th>macOS</th><th>iOS</th><th>Android</th><th>Windows</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td>Web <span class="muted">(this page)</span></td>
-            <td>Flutter app</td><td class="yes">✓</td>
-            <td>pure-Dart memory shell</td>
-            <td>HTTP/SSH <span class="muted">(dart_git)</span></td>
-            <td>python3 · qjs · sqlite3 <span class="muted">via CDN</span></td>
+            <td>Agent loop, tools, sessions, compaction</td>
+            <td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td>
           </tr>
           <tr>
-            <td>iOS / Android</td>
-            <td>Flutter app</td><td class="yes">✓</td>
-            <td>WASM <span class="muted">(uutils, rg)</span></td>
-            <td class="yes">✓</td>
-            <td>WASM <span class="muted">(python, qjs, sqlite, lua)</span></td>
+            <td>Chat UI + file browser</td>
+            <td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓<span class="muted">⁴</span></td>
           </tr>
           <tr>
-            <td>macOS / Windows / Linux</td>
-            <td>Flutter app</td><td class="yes">✓</td>
-            <td>host shell</td>
-            <td class="yes">✓</td>
-            <td>host tools</td>
+            <td>Shell: curl, jq, rg, sed, awk, tar, zip, diff, patch…</td>
+            <td>pure-Dart builtins</td><td>host shell</td><td>WASI binaries</td><td>WASI binaries</td><td>host shell</td>
           </tr>
           <tr>
-            <td>CLI <span class="muted">(fah)</span></td>
-            <td>terminal REPL</td><td class="yes">✓</td>
-            <td>host shell</td>
-            <td>host git</td>
-            <td>host tools</td>
+            <td>python3 + pip (pure-python wheels)</td>
+            <td>pyodide <span class="muted">CDN¹</span></td><td>host</td><td>CPython 3.14 <span class="muted">WASI</span></td><td>CPython 3.14 <span class="muted">WASI</span></td><td>host</td>
+          </tr>
+          <tr>
+            <td>sqlite3</td>
+            <td>sql.js <span class="muted">CDN¹</span></td><td>host</td><td>WASI</td><td>WASI</td><td>host</td>
+          </tr>
+          <tr>
+            <td>JavaScript (qjs) / lua</td>
+            <td>qjs <span class="muted">CDN¹</span> · lua <span class="no">—</span></td><td>host</td><td>qjs + lua <span class="muted">WASI</span></td><td>qjs + lua <span class="muted">WASI</span></td><td>host</td>
+          </tr>
+          <tr>
+            <td>git — local ops</td>
+            <td class="yes">✓ <span class="muted">dart_git</span></td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td>
+          </tr>
+          <tr>
+            <td>git — clone / push (remote)</td>
+            <td class="no">— <span class="muted">CORS²</span></td><td class="yes">✓</td><td class="yes">✓ <span class="muted">HTTP+SSH</span></td><td class="yes">✓ <span class="muted">HTTP+SSH</span></td><td class="yes">✓</td>
+          </tr>
+          <tr>
+            <td>ssh / scp / sftp · dig / whois</td>
+            <td class="part">~ <span class="muted">DoH+RDAP³</span></td><td class="yes">✓ <span class="muted">host</span></td><td class="yes">✓ <span class="muted">builtins</span></td><td class="yes">✓ <span class="muted">builtins</span></td><td class="part">~ <span class="muted">ssh⁵</span></td>
+          </tr>
+          <tr>
+            <td>File upload + persistence</td>
+            <td>IndexedDB <span class="muted">(upload UI)</span></td><td>host FS</td><td>app sandbox</td><td>app sandbox</td><td>host FS</td>
+          </tr>
+          <tr>
+            <td>Secrets — env injection + redaction</td>
+            <td class="yes">✓ <span class="muted">in-memory</span></td><td class="yes">✓ <span class="muted">.env</span></td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓ <span class="muted">.env</span></td>
           </tr>
         </tbody>
       </table>
     </div>
+    <p class="matrix-notes">
+      <span class="yes">✓</span> full support · <span class="part">~</span> partial /
+      host-dependent · <span class="no">—</span> not possible on the platform.<br>
+      ¹ Web interpreters (pyodide, quickjs-emscripten, sql.js) lazy-load from jsDelivr on first use.
+      ² Browsers can't reach remote git (CORS) — local repos work fully.
+      ³ No raw TCP in browsers: DNS-over-HTTPS and RDAP whois work; ssh/scp/sftp report unavailable.
+      ⁴ Windows and Linux share the tested desktop code path; manual testing happens on macOS + iOS simulator.
+      ⁵ Windows has no stock dig/whois; ssh/scp/sftp work via the built-in dartssh2 client on platforms with the Dart builtins, or the host OpenSSH client on desktop.
+    </p>
   </section>
 
   <!-- ── BYOK ─────────────────────────────────────────────────────────── -->
