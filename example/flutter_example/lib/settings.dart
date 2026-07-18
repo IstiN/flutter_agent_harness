@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'agent_service.dart';
+import 'gemma/gemma_service.dart';
+import 'gemma/gemma_types.dart';
 import 'prompts.g.dart';
 import 'provider_registry.dart';
 import 'webllm/webllm_cache_section.dart';
@@ -16,6 +18,7 @@ const settingsDartDefines = <String, String>{
   'OPENROUTER_API_KEY': String.fromEnvironment('OPENROUTER_API_KEY'),
   'MODEL_ID': String.fromEnvironment('MODEL_ID'),
   'BASE_URL': String.fromEnvironment('BASE_URL'),
+  'HUGGINGFACE_TOKEN': String.fromEnvironment('HUGGINGFACE_TOKEN'),
 };
 
 /// Resolves a configuration default: `--dart-define` wins, then `.env`, then
@@ -31,7 +34,9 @@ String settingsEnv(String name, String fallback) {
 
 /// A bring-your-own-key provider preset. Hosted presets talk to an
 /// OpenAI-compatible chat-completions endpoint; [webllm] runs a small model
-/// on-device in the browser (no key, no endpoint).
+/// on-device in the browser (no key, no endpoint); [gemma] runs Gemma 4
+/// on-device on iOS/Android via the `flutter_gemma` plugin (hidden on other
+/// platforms — see [gemmaProviderSupported]).
 ///
 /// Presets are built-in and cannot be deleted; user-added providers
 /// ([CustomProvider], managed by [ProviderRegistry]) appear in the same
@@ -48,7 +53,8 @@ enum ProviderPreset {
     defaultModel: 'gpt-oss:120b',
   ),
   custom(label: 'Custom', baseUrl: null, defaultModel: ''),
-  webllm(label: 'On-device (WebLLM)', baseUrl: null, defaultModel: '');
+  webllm(label: 'On-device (WebLLM)', baseUrl: null, defaultModel: ''),
+  gemma(label: 'On-device (Gemma)', baseUrl: null, defaultModel: '');
 
   const ProviderPreset({
     required this.label,
@@ -60,7 +66,7 @@ enum ProviderPreset {
   final String label;
 
   /// Fixed endpoint for hosted presets; `null` for [custom] (user-editable)
-  /// and [webllm] (no endpoint at all).
+  /// and the on-device presets (no endpoint at all).
   final String? baseUrl;
 
   /// Model prefill applied while the user has not typed their own.
@@ -69,9 +75,10 @@ enum ProviderPreset {
   /// Whether the base-URL field is editable for this preset.
   bool get hasEditableBaseUrl => this == ProviderPreset.custom;
 
-  /// Whether this preset is the on-device (WebLLM) provider, which replaces
-  /// the key/model/URL fields with a model picker and a download bar.
-  bool get isOnDevice => this == ProviderPreset.webllm;
+  /// Whether this preset is an on-device provider, which replaces the
+  /// key/model/URL fields with a model picker and a download bar.
+  bool get isOnDevice =>
+      this == ProviderPreset.webllm || this == ProviderPreset.gemma;
 
   /// Shown under the form for providers that may reject browser (CORS)
   /// calls. OpenRouter allows cross-origin browser requests, so it has no
@@ -86,7 +93,7 @@ enum ProviderPreset {
       'Any OpenAI-compatible endpoint. The provider must allow browser '
           '(CORS) requests — api.anthropic.com does not, so reach Anthropic '
           'models via OpenRouter instead.',
-    ProviderPreset.webllm => null,
+    ProviderPreset.webllm || ProviderPreset.gemma => null,
   };
 
   /// Infers a preset from a configured base URL (for env-prefilled setups).
@@ -112,6 +119,7 @@ class AgentSettingsForm extends StatefulWidget {
     required this.onConnect,
     this.connectLabel = 'Start chat',
     this.registry,
+    this.gemmaEngine,
   });
 
   /// Called with the assembled [AgentConfig]. Throw to surface an error in
@@ -125,6 +133,10 @@ class AgentSettingsForm extends StatefulWidget {
   /// The user-added providers shown in the picker. `null` falls back to a
   /// non-persisting in-memory registry (tests, previews).
   final ProviderRegistry? registry;
+
+  /// Engine override for the on-device Gemma provider (tests); defaults to
+  /// the platform singleton.
+  final GemmaEngineApi? gemmaEngine;
 
   @override
   State<AgentSettingsForm> createState() => _AgentSettingsFormState();
@@ -140,9 +152,13 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   late final TextEditingController _keyController;
   late final TextEditingController _modelController;
   late final TextEditingController _urlController;
+  late final TextEditingController _hfTokenController;
 
   /// Selected on-device model (only meaningful for [ProviderPreset.webllm]).
   WebLlmModelPreset _webllmModel = webLlmModelPresets.first;
+
+  /// Selected on-device model (only meaningful for [ProviderPreset.gemma]).
+  GemmaModelPreset _gemmaModel = gemmaModelPresets.first;
 
   /// Engine-init progress while the on-device model downloads/compiles.
   double? _loadFraction;
@@ -170,6 +186,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       text: settingsEnv('MODEL_ID', preset.defaultModel),
     );
     _urlController = TextEditingController(text: initialUrl);
+    _hfTokenController = TextEditingController(
+      text: settingsEnv('HUGGINGFACE_TOKEN', ''),
+    );
   }
 
   @override
@@ -178,10 +197,13 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _keyController.dispose();
     _modelController.dispose();
     _urlController.dispose();
+    _hfTokenController.dispose();
     super.dispose();
   }
 
   bool get _isOnDevice => _selection == ProviderPreset.webllm;
+
+  bool get _isGemma => _selection == ProviderPreset.gemma;
 
   bool get _hasEditableBaseUrl =>
       _selection is CustomProvider || _selection == ProviderPreset.custom;
@@ -325,6 +347,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (_isOnDevice) {
       return _connectWebLlm();
     }
+    if (_isGemma) {
+      return _connectGemma();
+    }
     final key = _keyController.text.trim();
     final model = _modelController.text.trim();
     final baseUrl = _urlController.text.trim();
@@ -406,7 +431,71 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         setState(() => _error = e is StateError ? e.message : e.toString());
       }
     } finally {
-      await progressSub?.cancel();
+      // Not awaited: the subscription detaches synchronously on cancel(),
+      // and awaiting the completion future can stall this finally inside
+      // widget-test zones (the returned future is zone-scheduled).
+      unawaited(progressSub?.cancel());
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFraction = null;
+          _loadStatus = null;
+        });
+      }
+    }
+  }
+
+  /// On-device Gemma connect: downloads the selected model (skipping what is
+  /// already installed, showing progress in the form), loads it into memory,
+  /// then hands over to [onConnect]. The engine is a singleton, so the
+  /// stream function reuses this warm instance — the first chat turn does
+  /// not pay the load again. The HuggingFace token is used for this install
+  /// only and never persisted.
+  Future<void> _connectGemma() async {
+    final preset = _gemmaModel;
+    final service = widget.gemmaEngine ?? createGemmaService();
+    setState(() {
+      _loading = true;
+      _error = null;
+      _loadFraction = null;
+      _loadStatus = null;
+    });
+    StreamSubscription<GemmaProgress>? progressSub;
+    try {
+      if (!service.isAvailable) {
+        throw StateError(gemmaUnsupportedPlatformMessage);
+      }
+      progressSub = service.progressEvents.listen((report) {
+        if (!mounted) return;
+        setState(() {
+          _loadFraction = report.fraction;
+          _loadStatus = report.text;
+        });
+      });
+      final hfToken = _hfTokenController.text.trim();
+      await service.installModel(
+        preset,
+        huggingFaceToken: hfToken.isEmpty ? null : hfToken,
+      );
+      await service.loadModel(preset);
+      if (!mounted) return;
+      await widget.onConnect(
+        AgentConfig(
+          providerKind: gemmaProviderKind,
+          modelId: preset.id,
+          baseUrl: '',
+          apiKey: '',
+          contextWindow: preset.contextWindow,
+          maxTokens: 1024,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e is StateError ? e.message : e.toString());
+      }
+    } finally {
+      // See _connectWebLlm: not awaited on purpose.
+      unawaited(progressSub?.cancel());
       if (mounted) {
         setState(() {
           _loading = false;
@@ -439,7 +528,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           decoration: const InputDecoration(labelText: 'Provider'),
           items: [
             for (final preset in ProviderPreset.values)
-              DropdownMenuItem(value: preset, child: Text(preset.label)),
+              // Gemma is iOS/Android-only; hidden on web and desktop.
+              if (preset != ProviderPreset.gemma || gemmaProviderSupported)
+                DropdownMenuItem(value: preset, child: Text(preset.label)),
             for (final provider in _registry.providers)
               DropdownMenuItem(
                 value: provider,
@@ -477,6 +568,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         const SizedBox(height: 12),
         if (_isOnDevice)
           _buildWebLlmFields(theme)
+        else if (_isGemma)
+          _buildGemmaFields(theme)
         else ...[
           TextField(
             controller: _keyController,
@@ -556,7 +649,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           ),
         FilledButton(
           onPressed: _loading ? null : _connect,
-          child: _loading && !_isOnDevice
+          child: _loading && !_isOnDevice && !_isGemma
               ? const SizedBox(
                   width: 20,
                   height: 20,
@@ -617,6 +710,79 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
                 'Runs fully offline after download · needs WebGPU '
                 '(Chrome/Edge/newer Safari) · weights ~0.5-4 GB cached in '
                 'your browser',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+        if (_loading) ...[
+          const SizedBox(height: 12),
+          LinearProgressIndicator(value: _loadFraction),
+          const SizedBox(height: 4),
+          Text(
+            _loadStatus != null && _loadStatus!.isNotEmpty
+                ? _loadStatus!
+                : 'Downloading model weights…',
+            style: theme.textTheme.bodySmall,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// The on-device (Gemma) replacement for the key/model/URL fields: a
+  /// model picker over [gemmaModelPresets], the HuggingFace token field
+  /// (session-only), the offline note, and — while an install/load is in
+  /// flight — the progress bar.
+  Widget _buildGemmaFields(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<GemmaModelPreset>(
+          initialValue: _gemmaModel,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'On-device model'),
+          items: [
+            for (final preset in gemmaModelPresets)
+              DropdownMenuItem(
+                value: preset,
+                child: Text(
+                  '${preset.displayName} · ${preset.sizeLabel}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: _loading
+              ? null
+              : (preset) {
+                  if (preset == null) return;
+                  setState(() => _gemmaModel = preset);
+                },
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _hfTokenController,
+          decoration: const InputDecoration(
+            labelText: 'HuggingFace token (optional)',
+            hintText: 'hf_… — needed if the repo is gated',
+          ),
+          obscureText: true,
+          autocorrect: false,
+          enableSuggestions: false,
+        ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Runs fully offline after download · weights stay on the '
+                'device · the token is used for the download only and is '
+                'never persisted',
                 style: theme.textTheme.bodySmall,
               ),
             ),
@@ -825,6 +991,7 @@ class SettingsDialog extends StatelessWidget {
     required this.service,
     this.registry,
     this.webLlmEngine,
+    this.gemmaEngine,
   });
 
   /// The service whose backend the form reconfigures.
@@ -836,6 +1003,10 @@ class SettingsDialog extends StatelessWidget {
   /// Engine override for the downloaded-models section (tests); defaults to
   /// the platform singleton.
   final WebLlmEngineApi? webLlmEngine;
+
+  /// Engine override for the on-device Gemma provider (tests); defaults to
+  /// the platform singleton.
+  final GemmaEngineApi? gemmaEngine;
 
   @override
   Widget build(BuildContext context) {
@@ -851,6 +1022,7 @@ class SettingsDialog extends StatelessWidget {
               AgentSettingsForm(
                 connectLabel: 'Apply',
                 registry: registry,
+                gemmaEngine: gemmaEngine,
                 onConnect: (config) async {
                   await service.reconfigure(config);
                   if (context.mounted) Navigator.of(context).pop();

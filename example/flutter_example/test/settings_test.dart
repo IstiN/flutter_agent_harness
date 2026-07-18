@@ -1,6 +1,10 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
+import 'package:flutter_agent_example/gemma/gemma_types.dart';
 import 'package:flutter_agent_example/main.dart';
 import 'package:flutter_agent_example/provider_registry.dart';
 import 'package:flutter_agent_example/settings.dart';
@@ -78,6 +82,7 @@ Future<void> _pumpForm(
   WidgetTester tester,
   ProviderRegistry registry, {
   Future<void> Function(AgentConfig config)? onConnect,
+  GemmaEngineApi? gemmaEngine,
 }) {
   return tester.pumpWidget(
     MaterialApp(
@@ -85,12 +90,86 @@ Future<void> _pumpForm(
         body: SingleChildScrollView(
           child: AgentSettingsForm(
             registry: registry,
+            gemmaEngine: gemmaEngine,
             onConnect: onConnect ?? (_) async {},
           ),
         ),
       ),
     ),
   );
+}
+
+/// Fake [GemmaEngineApi] for the settings form: records install/load calls,
+/// emits scripted progress reports, and can hold the install open (to assert
+/// mid-download UI) or fail it.
+final class FakeGemmaEngine implements GemmaEngineApi {
+  var available = true;
+  Object? installError;
+
+  /// Standard (async) broadcast, like the real engine: progress lands on a
+  /// later microtask, so tests pump to let it render.
+  final progress = StreamController<GemmaProgress>.broadcast();
+
+  GemmaModelPreset? installedPreset;
+  String? installedWithToken;
+  GemmaModelPreset? loadedPreset;
+
+  /// While non-null and incomplete, `installModel` awaits it after emitting
+  /// [pendingProgress].
+  Completer<void>? installGate;
+
+  /// Emitted by `installModel` before the gate.
+  GemmaProgress? pendingProgress;
+
+  @override
+  bool get isAvailable => available;
+
+  @override
+  String? get loadedModelId => loadedPreset?.id;
+
+  @override
+  Stream<GemmaProgress> get progressEvents => progress.stream;
+
+  @override
+  Future<bool> isModelInstalled(GemmaModelPreset preset) async => false;
+
+  @override
+  Future<void> installModel(
+    GemmaModelPreset preset, {
+    String? huggingFaceToken,
+  }) async {
+    final error = installError;
+    if (error != null) throw error;
+    installedPreset = preset;
+    installedWithToken = huggingFaceToken;
+    final pending = pendingProgress;
+    if (pending != null) progress.add(pending);
+    final gate = installGate;
+    if (gate != null) await gate.future;
+  }
+
+  @override
+  Future<void> loadModel(GemmaModelPreset preset) async {
+    loadedPreset = preset;
+  }
+
+  @override
+  Future<void> chatStream({
+    required List<GemmaChatMessage> messages,
+    required void Function(String chunk) onChunk,
+    String? systemInstruction,
+    void Function()? onDone,
+    void Function(String message)? onError,
+    void Function(String toolCallsJson)? onToolCalls,
+    List<Map<String, dynamic>>? tools,
+    int? maxOutputTokens,
+  }) async {}
+
+  @override
+  Future<void> interrupt() async {}
+
+  @override
+  Future<void> unload() async {}
 }
 
 void main() {
@@ -406,6 +485,173 @@ void main() {
       await _tapConnect(tester, 'Apply');
 
       expect(find.text('API key is required'), findsOneWidget);
+    });
+  });
+
+  group('On-device (Gemma) provider', () {
+    // Widget tests run with defaultTargetPlatform = android by default, so
+    // the Gemma preset is visible unless a test overrides the platform. The
+    // override must be reset before the test body ends (the binding's
+    // invariant check runs before addTearDown callbacks).
+    void setPlatform(TargetPlatform? platform) {
+      debugDefaultTargetPlatformOverride = platform;
+    }
+
+    testWidgets('shows the model picker and the HF token field on mobile', (
+      tester,
+    ) async {
+      setPlatform(TargetPlatform.android);
+      await tester.pumpWidget(const MyApp());
+
+      await _selectProvider(tester, 'On-device (Gemma)');
+
+      // The key/model/URL fields are replaced by the on-device model picker.
+      expect(find.text('API key'), findsNothing);
+      expect(find.text('Base URL'), findsNothing);
+      expect(find.text('On-device model'), findsOneWidget);
+      expect(find.textContaining('Gemma 4 E2B'), findsOneWidget);
+      expect(find.text('HuggingFace token (optional)'), findsOneWidget);
+      expect(
+        find.textContaining('Runs fully offline after download'),
+        findsOneWidget,
+      );
+      setPlatform(null);
+    });
+
+    testWidgets('is hidden on desktop (and web hides it via kIsWeb)', (
+      tester,
+    ) async {
+      setPlatform(TargetPlatform.macOS);
+      await tester.pumpWidget(const MyApp());
+
+      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.pumpAndSettle();
+      expect(find.text('On-device (Gemma)'), findsNothing);
+      // WebLLM stays offered everywhere (its stub reports unavailable).
+      expect(find.text('On-device (WebLLM)'), findsOneWidget);
+      await tester.tap(find.text('OpenRouter').last);
+      await tester.pumpAndSettle();
+      setPlatform(null);
+    });
+
+    testWidgets('connect installs with progress and hands over the gemma '
+        'config', (tester) async {
+      setPlatform(TargetPlatform.android);
+      final engine = FakeGemmaEngine()
+        ..pendingProgress = const GemmaProgress(
+          fraction: 0.4,
+          text: 'Downloading Gemma 4 E2B… 40%',
+        )
+        ..installGate = Completer<void>();
+      AgentConfig? connected;
+      await _pumpForm(
+        tester,
+        ProviderRegistry.inMemory(),
+        gemmaEngine: engine,
+        onConnect: (config) async => connected = config,
+      );
+
+      await _selectProvider(tester, 'On-device (Gemma)');
+      await tester.enterText(
+        find.widgetWithText(TextField, 'HuggingFace token (optional)'),
+        'hf_test_token',
+      );
+
+      await tester.ensureVisible(find.text('Start chat'));
+      await tester.tap(find.text('Start chat'));
+      // Let the connect flow reach the (held) install and render progress.
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Downloading Gemma 4 E2B… 40%'), findsOneWidget);
+      final bar = tester.widget<LinearProgressIndicator>(
+        find.byType(LinearProgressIndicator),
+      );
+      expect(bar.value, 0.4);
+      expect(engine.installedPreset?.id, gemmaModelPresets.first.id);
+      expect(engine.installedWithToken, 'hf_test_token');
+      expect(connected, isNull);
+
+      engine.installGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(engine.loadedPreset?.id, gemmaModelPresets.first.id);
+      expect(connected?.providerKind, gemmaProviderKind);
+      expect(connected?.modelId, gemmaModelPresets.first.id);
+      expect(connected?.baseUrl, isEmpty);
+      expect(connected?.apiKey, isEmpty);
+      expect(connected?.contextWindow, gemmaModelPresets.first.contextWindow);
+      expect(connected?.maxTokens, 1024);
+      // Progress UI is cleared once the connect flow finishes.
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      setPlatform(null);
+    });
+
+    testWidgets('a failed install surfaces the engine error', (tester) async {
+      setPlatform(TargetPlatform.android);
+      final engine = FakeGemmaEngine()
+        ..installError = StateError('403: gated repo, token required');
+      await _pumpForm(tester, ProviderRegistry.inMemory(), gemmaEngine: engine);
+
+      await _selectProvider(tester, 'On-device (Gemma)');
+      await _tapConnect(tester, 'Start chat');
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('403: gated repo, token required'),
+        findsOneWidget,
+      );
+      expect(engine.loadedPreset, isNull);
+      setPlatform(null);
+    });
+
+    testWidgets('an unavailable engine surfaces the platform message', (
+      tester,
+    ) async {
+      setPlatform(TargetPlatform.android);
+      final engine = FakeGemmaEngine()..available = false;
+      await _pumpForm(tester, ProviderRegistry.inMemory(), gemmaEngine: engine);
+
+      await _selectProvider(tester, 'On-device (Gemma)');
+      await _tapConnect(tester, 'Start chat');
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('only available in the iOS/Android'),
+        findsOneWidget,
+      );
+      setPlatform(null);
+    });
+  });
+
+  group('gemmaProviderVisible', () {
+    test('iOS/Android only, never web', () {
+      for (final platform in TargetPlatform.values) {
+        expect(
+          gemmaProviderVisible(isWeb: true, platform: platform),
+          isFalse,
+          reason: 'web must never show the Gemma provider',
+        );
+      }
+      expect(
+        gemmaProviderVisible(isWeb: false, platform: TargetPlatform.iOS),
+        isTrue,
+      );
+      expect(
+        gemmaProviderVisible(isWeb: false, platform: TargetPlatform.android),
+        isTrue,
+      );
+      for (final desktop in [
+        TargetPlatform.macOS,
+        TargetPlatform.linux,
+        TargetPlatform.windows,
+      ]) {
+        expect(
+          gemmaProviderVisible(isWeb: false, platform: desktop),
+          isFalse,
+          reason: 'desktop needs extra native packaging — hidden for now',
+        );
+      }
     });
   });
 }
