@@ -382,6 +382,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       children: [
         DropdownButtonFormField<WebLlmModelPreset>(
           initialValue: _webllmModel,
+          isExpanded: true,
           decoration: const InputDecoration(labelText: 'On-device model'),
           items: [
             for (final preset in webLlmModelPresets)

@@ -128,7 +128,7 @@ void main() {
       expect(find.text('API key'), findsNothing);
       expect(find.text('Base URL'), findsNothing);
       expect(find.text('On-device model'), findsOneWidget);
-      expect(find.textContaining('Qwen3 0.6B'), findsOneWidget);
+      expect(find.textContaining('SmolLM2 135M'), findsOneWidget);
       expect(
         find.textContaining('Runs fully offline after download'),
         findsOneWidget,

@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'agent_service.dart';
+import 'app_theme.dart';
 import 'file_browser.dart';
 import 'settings.dart';
 import 'upload.dart';
@@ -431,12 +432,37 @@ class _ChatScreenState extends State<ChatScreen> {
     required bool isSentByMe,
     MessageGroupStatus? groupStatus,
   }) {
-    return MarkdownBody(
-      data: message.text,
-      selectable: true,
-      styleSheet: MarkdownStyleSheet.fromTheme(
-        Theme.of(context),
-      ).copyWith(p: Theme.of(context).textTheme.bodyMedium),
+    final theme = Theme.of(context);
+    final styleSheet = MarkdownStyleSheet.fromTheme(theme).copyWith(
+      p: theme.textTheme.bodyMedium,
+      a: const TextStyle(color: FahPalette.teal),
+      code: FahPalette.mono().copyWith(backgroundColor: FahPalette.codeBg),
+      codeblockDecoration: BoxDecoration(
+        color: FahPalette.panelAlt,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: FahPalette.border),
+      ),
+      codeblockPadding: const EdgeInsets.all(10),
+      blockquoteDecoration: const BoxDecoration(
+        border: Border(left: BorderSide(color: FahPalette.indigo, width: 3)),
+      ),
+    );
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 560),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isSentByMe ? FahPalette.userBubble : FahPalette.panel,
+        border: Border.all(
+          color: isSentByMe ? FahPalette.userBubbleBorder : FahPalette.border,
+        ),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: MarkdownBody(
+        data: message.text,
+        selectable: true,
+        styleSheet: styleSheet,
+      ),
     );
   }
 
@@ -452,38 +478,64 @@ class _ChatScreenState extends State<ChatScreen> {
     final content = (metadata['content'] as String?) ?? '';
     final isError = (metadata['isError'] as bool?) ?? false;
 
-    final theme = Theme.of(context);
-    final color = isError
-        ? theme.colorScheme.errorContainer
-        : theme.colorScheme.surfaceContainerHighest;
-
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(8),
+        color: FahPalette.panelAlt,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isError
+              ? FahPalette.error.withValues(alpha: 0.45)
+              : FahPalette.border,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (toolName != null)
-            Text(
-              '[ $toolName ]',
-              style: theme.textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: isError ? theme.colorScheme.error : null,
-              ),
+          if (toolName != null) ...[
+            Row(
+              children: [
+                Icon(
+                  isError ? Icons.close : Icons.check,
+                  size: 14,
+                  color: isError ? FahPalette.error : FahPalette.teal,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '[ $toolName ]',
+                    overflow: TextOverflow.ellipsis,
+                    style: FahPalette.mono(
+                      color: isError ? FahPalette.error : FahPalette.indigo,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          if (toolName != null && content.isNotEmpty) const SizedBox(height: 4),
+            if (content.isNotEmpty) const SizedBox(height: 6),
+          ],
           if (content.isNotEmpty)
-            Text(
-              content,
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontFamily: 'monospace',
-                fontFamilyFallback: const ['Courier', 'monospace'],
-              ),
-            ),
+            toolName == null
+                // System rows (e.g. tool-call echoes) read like shell input:
+                // a teal `$` prompt followed by dim mono text.
+                ? Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: r'$ ',
+                          style: FahPalette.mono(color: FahPalette.teal),
+                        ),
+                        TextSpan(
+                          text: content,
+                          style: FahPalette.mono(color: FahPalette.dim),
+                        ),
+                      ],
+                    ),
+                  )
+                : Text(content, style: FahPalette.mono(color: FahPalette.dim)),
         ],
       ),
     );
@@ -491,14 +543,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildComposer(BuildContext context) {
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
 
     return Container(
-      decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor,
-        border: Border(
-          top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.2)),
-        ),
+      decoration: const BoxDecoration(
+        color: FahPalette.bg,
+        border: Border(top: BorderSide(color: FahPalette.border)),
       ),
       child: SafeArea(
         top: false,
@@ -532,16 +581,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Row(
                   children: [
-                    SizedBox(
+                    const SizedBox(
                       width: 14,
                       height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: colorScheme.primary,
-                      ),
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     const SizedBox(width: 8),
-                    const Text('fah is typing...'),
+                    Text(
+                      'fah is typing...',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: FahPalette.dim,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -551,6 +602,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.add),
+                    tooltip: 'Attach',
                     onPressed: _showAttachmentSheet,
                   ),
                   Expanded(
@@ -566,6 +618,14 @@ class _ChatScreenState extends State<ChatScreen> {
                           borderRadius: BorderRadius.all(Radius.circular(24)),
                           borderSide: BorderSide.none,
                         ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(24)),
+                          borderSide: BorderSide.none,
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(24)),
+                          borderSide: BorderSide.none,
+                        ),
                         filled: true,
                       ),
                       maxLines: 5,
@@ -574,9 +634,18 @@ class _ChatScreenState extends State<ChatScreen> {
                       onSubmitted: _send,
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.send),
-                    onPressed: () => _send(_textController.text),
+                  const SizedBox(width: 4),
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: FahPalette.brandGradient,
+                      shape: BoxShape.circle,
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.send, size: 20),
+                      color: FahPalette.onAccent,
+                      tooltip: 'Send',
+                      onPressed: () => _send(_textController.text),
+                    ),
                   ),
                 ],
               ),
@@ -599,7 +668,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   Icon(Icons.error, color: Theme.of(context).colorScheme.error),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(error)),
+                  Expanded(
+                    child: Text(
+                      error,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -614,7 +690,7 @@ class _ChatScreenState extends State<ChatScreen> {
               customMessageBuilder: _buildCustomMessage,
               composerBuilder: (_) => const SizedBox.shrink(),
             ),
-            theme: ChatTheme.light(),
+            theme: buildFahChatTheme(),
           ),
         ),
         _buildComposer(context),
