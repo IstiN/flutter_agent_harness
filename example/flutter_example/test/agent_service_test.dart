@@ -346,6 +346,60 @@ void main() {
       expect(service.error, isNull);
     });
 
+    test('reconfigure swaps the backend and keeps the transcript', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+      await service.sendText('hi');
+      await service.waitForIdle();
+      expect(service.messages, hasLength(2));
+
+      await service.reconfigure(
+        AgentConfig(
+          providerKind: 'anthropic',
+          modelId: 'claude-test',
+          baseUrl: 'https://api.anthropic.com',
+          apiKey: 'sk-test',
+        ),
+      );
+
+      expect(service.providerKind, 'anthropic');
+      expect(service.modelId, 'claude-test');
+      // The visible transcript survives the switch.
+      expect(service.messages, hasLength(2));
+      expect(service.messages[0].content, 'hi');
+    });
+
+    test('loadSession restores a persisted session into the chat', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('hello back')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+      await service.sendText('first');
+      await service.waitForIdle();
+      final stored = (await service.listSessions()).single;
+
+      await service.reset();
+      expect(service.messages, isEmpty);
+      expect((await service.listSessions()), hasLength(2));
+
+      await service.loadSession(stored);
+
+      expect(service.currentSessionId, stored.id);
+      expect(service.messages, hasLength(2));
+      expect(service.messages[0].role, 'user');
+      expect(service.messages[0].content, 'first');
+      expect(service.messages[1].role, 'assistant');
+      expect(service.messages[1].content, 'hello back');
+    });
+
     test('second user message produces a new assistant message '
         'instead of overwriting the previous one', () async {
       final env = MemoryExecutionEnv();

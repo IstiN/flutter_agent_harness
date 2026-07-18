@@ -108,8 +108,8 @@ class AgentSettingsForm extends StatefulWidget {
   /// the form; return normally when the connection succeeded.
   final Future<void> Function(AgentConfig config) onConnect;
 
-  /// Label of the primary button (`Start chat` on first run, `Reconnect`
-  /// from the settings dialog).
+  /// Label of the primary button (`Start chat` on first run, `Apply` from
+  /// the settings dialog).
   final String connectLabel;
 
   @override
@@ -445,10 +445,16 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   }
 }
 
-/// The gear-icon dialog from the chat screen: reconfigure provider/model/key
-/// mid-session. Pops with a fresh [AgentService] on successful connect.
+/// The gear-icon dialog from the chat screen (also opened from the session
+/// sidebar's model tile): reconfigure provider/model/key mid-session.
+/// Applying swaps the backend of [service] via [AgentService.reconfigure] —
+/// the visible transcript, the sandbox filesystem, and the current session
+/// all survive.
 class SettingsDialog extends StatelessWidget {
-  const SettingsDialog({super.key});
+  const SettingsDialog({super.key, required this.service});
+
+  /// The service whose backend the form reconfigures.
+  final AgentService service;
 
   @override
   Widget build(BuildContext context) {
@@ -458,11 +464,10 @@ class SettingsDialog extends StatelessWidget {
         width: 440,
         child: SingleChildScrollView(
           child: AgentSettingsForm(
-            connectLabel: 'Reconnect',
+            connectLabel: 'Apply',
             onConnect: (config) async {
-              final service = await AgentService.create(config: config);
-              await service.initialize();
-              if (context.mounted) Navigator.of(context).pop(service);
+              await service.reconfigure(config);
+              if (context.mounted) Navigator.of(context).pop();
             },
           ),
         ),

@@ -326,7 +326,7 @@ void main() {
   });
 
   group('ChatScreen integration', () {
-    testWidgets('wide surface: Files icon toggles the left panel', (
+    testWidgets('wide surface: Files icon toggles the right files panel', (
       tester,
     ) async {
       tester.view.devicePixelRatio = 1.0;
@@ -344,14 +344,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsOneWidget);
       expect(find.text('notes.txt'), findsOneWidget);
+      // The panel is docked on the RIGHT edge of the surface.
+      expect(tester.getTopLeft(find.byType(FileBrowser)).dx, greaterThan(1000));
 
       await tester.tap(find.byTooltip('Files'));
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
     });
 
-    testWidgets('narrow surface: Files icon opens a drawer; file tap pushes '
-        'a preview route', (tester) async {
+    testWidgets('narrow surface: Files icon opens the files end drawer; file '
+        'tap pushes a preview route', (tester) async {
       tester.view.devicePixelRatio = 1.0;
       tester.view.physicalSize = const Size(500, 900);
       addTearDown(tester.view.reset);
