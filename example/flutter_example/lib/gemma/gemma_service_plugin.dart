@@ -3,20 +3,21 @@
 // in the LICENSE file.
 
 /// The real on-device Gemma engine, backed by the `flutter_gemma` plugin
-/// (LiteRT-LM `.litertlm` engine). Compiles on IO platforms; web builds get
-/// `gemma_service_stub.dart` instead. Host tests inject fakes and never
-/// touch this implementation.
+/// (LiteRT-LM `.litertlm` engine). Compiles on IO platforms (FFI engine) and
+/// on web (`@litert-lm/core` via `flutter_gemma_litertlm`'s conditional
+/// export); desktop builds get `gemma_service_stub.dart` instead. Host tests
+/// inject fakes and never touch this implementation.
 library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart';
 
 import 'gemma_types.dart';
+import 'gemma_web_registration.dart';
 
 /// Returns the shared [GemmaService] (the plugin is process-global, so the
 /// service is a singleton — the settings form's load and the stream
@@ -30,6 +31,15 @@ GemmaEngineApi createGemmaService() => GemmaService.instance;
 /// just re-activated, which is also how E2B↔E4B switching works);
 /// [loadModel] creates the in-memory [InferenceModel]; [chatStream] opens a
 /// fresh `openChat` per turn.
+///
+/// Web specifics: the plugin is initialized with
+/// `WebStorageMode.streaming`, so the download streams into the browser's
+/// OPFS storage (Gemma 4 E2B/E4B exceed Chrome's ~2 GB single-blob limit)
+/// and the `@litert-lm/core` engine consumes it as a `ReadableStream`. The
+/// plugin's web URL registry is in-memory only, so [loadModel] re-runs the
+/// idempotent install on web: after a page reload this re-registers the
+/// `opfs://` source from the OPFS cache without a download (and without the
+/// HuggingFace token, which is never persisted).
 final class GemmaService implements GemmaEngineApi {
   GemmaService._();
 
@@ -43,7 +53,7 @@ final class GemmaService implements GemmaEngineApi {
   final _progress = StreamController<GemmaProgress>.broadcast();
 
   @override
-  bool get isAvailable => !kIsWeb && (Platform.isIOS || Platform.isAndroid);
+  bool get isAvailable => gemmaProviderSupported;
 
   @override
   String? get loadedModelId => _loadedPreset?.id;
@@ -55,9 +65,20 @@ final class GemmaService implements GemmaEngineApi {
   /// set here — it is passed per-download via `fromNetwork(token:)` so a
   /// token entered (or changed) in the settings form takes effect without
   /// re-initializing the plugin.
+  ///
+  /// `WebStorageMode.streaming` only affects web (ignored on mobile): it
+  /// puts model storage in OPFS with `ReadableStream` loading, the only
+  /// mode that clears Chrome's ~2 GB blob-fetch limit for Gemma 4.
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
-    await FlutterGemma.initialize(inferenceEngines: const [LiteRtLmEngine()]);
+    // Web only (no-op elsewhere): dart2js release builds tree-shake the
+    // plugin registrant's platform-instance assignment out, which would
+    // dead-code the whole web engine — see gemma_web_registration.dart.
+    ensureGemmaWebRegistered();
+    await FlutterGemma.initialize(
+      inferenceEngines: const [LiteRtLmEngine()],
+      webStorageMode: WebStorageMode.streaming,
+    );
     _initialized = true;
   }
 
@@ -106,6 +127,16 @@ final class GemmaService implements GemmaEngineApi {
     _requireAvailable();
     await _ensureInitialized();
     if (_loadedPreset?.id == preset.id && _model != null) return;
+    if (kIsWeb) {
+      // The plugin's web URL registry is in-memory: after a page reload the
+      // `opfs://` registration is gone and `getActiveModel` would fall back
+      // to the raw https URL, making the engine re-download the weights.
+      // The idempotent install re-registers the OPFS stream from the
+      // browser's cache (no download, no token needed) and re-marks the
+      // model active. On mobile the active identity + files survive a
+      // restart natively, so this stays web-only.
+      await installModel(preset);
+    }
     final previous = _model;
     _model = null;
     _loadedPreset = null;

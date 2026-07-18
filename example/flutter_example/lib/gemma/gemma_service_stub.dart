@@ -2,9 +2,10 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-/// Non-IO stub for the Gemma engine: on-device inference needs the
-/// `flutter_gemma` plugin (iOS/Android), so every operation reports
-/// unavailability instead of failing obscurely.
+/// Desktop stub for the Gemma engine: on-device inference runs through the
+/// `flutter_gemma` plugin on web (`@litert-lm/core`) and iOS/Android (FFI),
+/// so on desktop every operation reports unavailability instead of failing
+/// obscurely.
 library;
 
 import 'gemma_types.dart';

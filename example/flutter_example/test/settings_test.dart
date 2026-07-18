@@ -515,10 +515,23 @@ void main() {
         find.textContaining('Runs fully offline after download'),
         findsOneWidget,
       );
+      // The mobile note points at on-device storage (the web variant —
+      // "cached by the browser (OPFS)" — is pure-function tested; kIsWeb is
+      // a compile-time constant widget tests cannot flip).
+      expect(find.textContaining('weights stay on the device'), findsOneWidget);
+
+      // The picker offers both presets, E2B first (E4B is the ~4.3 GB one).
+      await tester.tap(find.byType(DropdownButtonFormField<GemmaModelPreset>));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Gemma 4 E2B'), findsWidgets);
+      expect(find.textContaining('Gemma 4 E4B'), findsOneWidget);
+      await tester.tap(find.textContaining('Gemma 4 E4B'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Gemma 4 E4B'), findsOneWidget);
       setPlatform(null);
     });
 
-    testWidgets('is hidden on desktop (and web hides it via kIsWeb)', (
+    testWidgets('is hidden on desktop (web shows it via kIsWeb)', (
       tester,
     ) async {
       setPlatform(TargetPlatform.macOS);
@@ -617,7 +630,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.textContaining('only available in the iOS/Android'),
+        find.textContaining('not available in the desktop builds'),
         findsOneWidget,
       );
       setPlatform(null);
@@ -625,12 +638,12 @@ void main() {
   });
 
   group('gemmaProviderVisible', () {
-    test('iOS/Android only, never web', () {
+    test('iOS/Android and web, never desktop', () {
       for (final platform in TargetPlatform.values) {
         expect(
           gemmaProviderVisible(isWeb: true, platform: platform),
-          isFalse,
-          reason: 'web must never show the Gemma provider',
+          isTrue,
+          reason: 'web shows the Gemma provider (litert-lm web engine)',
         );
       }
       expect(
@@ -653,5 +666,36 @@ void main() {
         );
       }
     });
+  });
+
+  group('gemmaStorageNote', () {
+    test(
+      'web cites the one-time OPFS download, mobile the on-device weights',
+      () {
+        final e2b = gemmaModelPresets.first;
+        expect(
+          gemmaStorageNote(isWeb: true, preset: e2b),
+          allOf([
+            contains('downloads ~2.4 GB once'),
+            contains('cached by the browser (OPFS)'),
+            contains('Runs fully offline after download'),
+            contains('never persisted'),
+          ]),
+        );
+        final e4b = gemmaModelPresets.last;
+        expect(
+          gemmaStorageNote(isWeb: true, preset: e4b),
+          contains('downloads ~4.3 GB once'),
+        );
+        expect(
+          gemmaStorageNote(isWeb: false, preset: e2b),
+          allOf([
+            contains('weights stay on the device'),
+            isNot(contains('OPFS')),
+            contains('never persisted'),
+          ]),
+        );
+      },
+    );
   });
 }
