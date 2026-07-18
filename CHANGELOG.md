@@ -225,4 +225,8 @@
 
 - feat(example): left sidebar (model picker + sessions), files move right
 
+## 0.1.17
+
+- feat(example): custom provider management + WebLLM model cache management in settings
+
 ## Unreleased
