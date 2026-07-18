@@ -241,4 +241,8 @@
 
 - feat(core): prompt-based tool-calling wrapper (universal chat-model tools)
 
+## 0.1.21
+
+- feat(example): Gemma provider on web via flutter_gemma litert-lm web (Gemma 4 tools in-browser)
+
 ## Unreleased
