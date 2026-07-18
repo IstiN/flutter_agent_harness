@@ -201,4 +201,8 @@
 
 - feat(site): capability comparison table (Browser/macOS/iOS/Android/Windows)
 
+## 0.1.11
+
+- feat(example): WebLLM on-device provider for the web demo (no API key needed)
+
 ## Unreleased
