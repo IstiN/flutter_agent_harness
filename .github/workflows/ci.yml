@@ -67,6 +67,7 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
@@ -75,7 +76,7 @@ jobs:
       - run: dart pub get
       - name: dart test --tags integration (skipped without keys)
         run: |
-          if [ -z "${OPENROUTER_API_KEY}${ANTHROPIC_API_KEY}${GOOGLE_API_KEY}" ]; then
+          if [ -z "${OPENROUTER_API_KEY}${ANTHROPIC_API_KEY}${GOOGLE_API_KEY}${OLLAMA_API_KEY}" ]; then
             echo "No LLM API keys configured, skipping integration tests."
             exit 0
           fi
@@ -110,3 +111,30 @@ jobs:
 
       - name: Publish (automated publishing via OIDC)
         run: dart pub publish --force
+
+  release:
+    name: Auto-release (patch bump + tag)
+    runs-on: ubuntu-latest
+    needs: quality
+    # Every push to main gets a release with an auto-incremented patch version
+    # (0.1.x -> 0.1.y). The release commit itself is skipped to avoid a loop.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):')
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # PAT (not GITHUB_TOKEN) so the pushed tag triggers the publish job —
+          # GITHUB_TOKEN pushes never trigger downstream workflow runs.
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Bump version, changelog, tag and push
+        run: bash scripts/auto_release.sh
