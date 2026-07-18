@@ -56,31 +56,26 @@ final class WebLlmModelPreset {
   final double topP;
 }
 
-/// The on-device models offered by the example app, smallest download first.
+/// The on-device models offered by the example app, grouped by family.
 ///
-/// Deliberately capped at ~2 GB downloads: larger weights make the first-run
-/// experience in a browser miserable. All ids are `q4f16_1` quantizations
-/// from the WebLLM prebuilt list.
+/// Mirrors the flutter_agent_memory demo list exactly (ids from the WebLLM
+/// prebuilt list; sizes are approximate download weights, cached by the
+/// browser after the first load).
 const webLlmModelPresets = <WebLlmModelPreset>[
+  // === SmolLM2 ===
   WebLlmModelPreset(
-    id: 'Qwen3-0.6B-q4f16_1-MLC',
-    displayName: 'Qwen3 0.6B',
-    sizeLabel: '~750 MB',
-    temperature: 0.7,
-    topP: 0.8,
+    id: 'SmolLM2-135M-Instruct-q0f16-MLC',
+    displayName: 'SmolLM2 135M',
+    sizeLabel: '~270 MB',
+    temperature: 1,
+    topP: 1,
   ),
   WebLlmModelPreset(
-    id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
-    displayName: 'Llama 3.2 1B',
-    sizeLabel: '~770 MB',
-    temperature: 0.6,
-  ),
-  WebLlmModelPreset(
-    id: 'gemma-2-2b-it-q4f16_1-MLC',
-    displayName: 'Gemma 2 2B',
-    sizeLabel: '~1.6 GB',
-    temperature: 0.7,
-    topP: 0.95,
+    id: 'SmolLM2-360M-Instruct-q0f16-MLC',
+    displayName: 'SmolLM2 360M',
+    sizeLabel: '~720 MB',
+    temperature: 1,
+    topP: 1,
   ),
   WebLlmModelPreset(
     id: 'SmolLM2-1.7B-Instruct-q4f16_1-MLC',
@@ -89,11 +84,75 @@ const webLlmModelPresets = <WebLlmModelPreset>[
     temperature: 1,
     topP: 1,
   ),
+
+  // === Qwen 2.5 ===
   WebLlmModelPreset(
-    id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
-    displayName: 'Llama 3.2 3B',
+    id: 'Qwen2.5-0.5B-Instruct-q0f16-MLC',
+    displayName: 'Qwen2.5 0.5B',
+    sizeLabel: '~1 GB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+  WebLlmModelPreset(
+    id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',
+    displayName: 'Qwen2.5 1.5B',
+    sizeLabel: '~1 GB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+  WebLlmModelPreset(
+    id: 'Qwen2.5-3B-Instruct-q4f16_1-MLC',
+    displayName: 'Qwen2.5 3B',
     sizeLabel: '~1.9 GB',
-    temperature: 0.6,
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+  WebLlmModelPreset(
+    id: 'Qwen2.5-7B-Instruct-q4f16_1-MLC',
+    displayName: 'Qwen2.5 7B',
+    sizeLabel: '~4.2 GB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+
+  // === Qwen 3 ===
+  WebLlmModelPreset(
+    id: 'Qwen3-0.6B-q4f16_1-MLC',
+    displayName: 'Qwen3 0.6B',
+    sizeLabel: '~750 MB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+  WebLlmModelPreset(
+    id: 'Qwen3-1.7B-q4f16_1-MLC',
+    displayName: 'Qwen3 1.7B',
+    sizeLabel: '~1.4 GB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+  WebLlmModelPreset(
+    id: 'Qwen3-4B-q4f16_1-MLC',
+    displayName: 'Qwen3 4B',
+    sizeLabel: '~2.8 GB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+
+  // === Phi ===
+  WebLlmModelPreset(
+    id: 'Phi-3.5-mini-instruct-q4f16_1-MLC',
+    displayName: 'Phi-3.5 mini',
+    sizeLabel: '~2.3 GB',
+    temperature: 1,
+    topP: 1,
+  ),
+  WebLlmModelPreset(
+    id: 'Phi-3.5-mini-instruct-q4f16_1-MLC-1k',
+    displayName: 'Phi-3.5 mini (1k)',
+    sizeLabel: '~1.6 GB',
+    contextWindow: 1024,
+    temperature: 1,
+    topP: 1,
   ),
   WebLlmModelPreset(
     id: 'Phi-4-mini-instruct-q4f16_1-MLC',
@@ -101,6 +160,72 @@ const webLlmModelPresets = <WebLlmModelPreset>[
     sizeLabel: '~2.1 GB',
     temperature: 1,
     topP: 1,
+  ),
+
+  // === Gemma 2 ===
+  WebLlmModelPreset(
+    id: 'gemma-2-2b-it-q4f16_1-MLC',
+    displayName: 'Gemma 2 2B',
+    sizeLabel: '~1.6 GB',
+    temperature: 0.7,
+    topP: 0.95,
+  ),
+  WebLlmModelPreset(
+    id: 'gemma-2-2b-it-q4f16_1-MLC-1k',
+    displayName: 'Gemma 2 2B (1k)',
+    sizeLabel: '~1.2 GB',
+    contextWindow: 1024,
+    temperature: 0.7,
+    topP: 0.95,
+  ),
+
+  // === Llama 3.2 ===
+  WebLlmModelPreset(
+    id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
+    displayName: 'Llama 3.2 1B',
+    sizeLabel: '~770 MB',
+    temperature: 0.6,
+  ),
+  WebLlmModelPreset(
+    id: 'Llama-3.2-1B-Instruct-q4f32_1-MLC',
+    displayName: 'Llama 3.2 1B (f32)',
+    sizeLabel: '~1.4 GB',
+    temperature: 0.6,
+  ),
+  WebLlmModelPreset(
+    id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+    displayName: 'Llama 3.2 3B',
+    sizeLabel: '~1.9 GB',
+    temperature: 0.6,
+  ),
+
+  // === Llama 3.1 ===
+  WebLlmModelPreset(
+    id: 'Llama-3.1-8B-Instruct-q4f16_1-MLC-1k',
+    displayName: 'Llama 3.1 8B (1k)',
+    sizeLabel: '~4.3 GB',
+    contextWindow: 1024,
+    temperature: 0.6,
+  ),
+  WebLlmModelPreset(
+    id: 'Llama-3.1-8B-Instruct-q4f16_1-MLC',
+    displayName: 'Llama 3.1 8B',
+    sizeLabel: '~4.6 GB',
+    temperature: 0.6,
+  ),
+
+  // === Hermes / tool-calling variants ===
+  WebLlmModelPreset(
+    id: 'Hermes-3-Llama-3.2-3B-q4f16_1-MLC',
+    displayName: 'Hermes 3 Llama 3.2 3B',
+    sizeLabel: '~1.9 GB',
+    temperature: 0.6,
+  ),
+  WebLlmModelPreset(
+    id: 'Hermes-3-Llama-3.1-8B-q4f16_1-MLC',
+    displayName: 'Hermes 3 Llama 3.1 8B',
+    sizeLabel: '~4.5 GB',
+    temperature: 0.6,
   ),
 ];
 
