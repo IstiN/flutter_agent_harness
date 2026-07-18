@@ -189,4 +189,8 @@
 
 - fix(example): sharpen Ollama Cloud CORS guidance in BYOK notes
 
+## 0.1.8
+
+- feat(site): SEO/GEO pack + OG share image
+
 ## Unreleased
