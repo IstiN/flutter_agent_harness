@@ -5,6 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'env_factory.dart';
+import 'gemma/gemma_service.dart';
+import 'gemma/gemma_stream_function.dart';
+import 'gemma/gemma_types.dart';
 import 'prompts.g.dart';
 import 'secrets_store.dart';
 import 'webllm/webllm_service.dart';
@@ -50,8 +53,9 @@ final class AgentConfig {
     this.maxTokens = 4096,
   });
 
-  /// Provider adapter kind: `openai-completions`, `anthropic`, `google`, or
-  /// `webllm` (on-device, web-only — see `lib/webllm/`).
+  /// Provider adapter kind: `openai-completions`, `anthropic`, `google`,
+  /// `webllm` (on-device, web-only — see `lib/webllm/`), or `gemma`
+  /// (on-device, iOS/Android — see `lib/gemma/`).
   final String providerKind;
 
   /// Model id passed to the provider.
@@ -134,21 +138,37 @@ class AgentService extends ChangeNotifier {
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
     _providerKind = config.providerKind;
     _redactor = redactor;
-    _responseTimeout = config.providerKind == webLlmProviderKind
-        // First on-device generation compiles WebGPU shaders, which can take
-        // minutes on large presets; hosted providers keep the tight timeout.
+    _responseTimeout = _isOnDeviceKind(config.providerKind)
+        // First on-device generation compiles WebGPU shaders (WebLLM) or
+        // loads multi-GB weights into memory (Gemma), which can take
+        // minutes; hosted providers keep the tight timeout.
         ? const Duration(minutes: 10)
         : const Duration(seconds: 90);
     _agent = Agent(
       model: config.toModel(),
       systemPrompt: _effectiveSystemPrompt(config, redactor),
-      streamFunction: config.providerKind == webLlmProviderKind
-          ? webLlmStreamFunction(createWebLlmService())
-          : providerStreamFunction(config.providerKind, config.apiKey),
+      streamFunction: _streamFunctionFor(config),
       toolRegistry: ToolRegistry(builtinTools(env)),
     );
     _attachRedactor(redactor);
     _agent.subscribe(_onAgentEvent);
+  }
+
+  /// Whether [providerKind] is an on-device backend (WebLLM or Gemma),
+  /// which needs the relaxed response timeout.
+  static bool _isOnDeviceKind(String providerKind) =>
+      providerKind == webLlmProviderKind || providerKind == gemmaProviderKind;
+
+  /// Picks the stream function for [config]'s backend: the on-device
+  /// bridges for `webllm`/`gemma`, the HTTP adapters otherwise.
+  static StreamFunction _streamFunctionFor(AgentConfig config) {
+    if (config.providerKind == webLlmProviderKind) {
+      return webLlmStreamFunction(createWebLlmService());
+    }
+    if (config.providerKind == gemmaProviderKind) {
+      return gemmaStreamFunction(createGemmaService());
+    }
+    return providerStreamFunction(config.providerKind, config.apiKey);
   }
 
   /// The system prompt plus a secret-name hint (names only, never values).
@@ -174,7 +194,8 @@ class AgentService extends ChangeNotifier {
   late final Agent _agent;
 
   /// Response deadline for one agent run; 10 minutes for the on-device
-  /// (WebLLM) provider (first run compiles WebGPU shaders), 90 s otherwise.
+  /// providers (WebLLM's first run compiles WebGPU shaders; Gemma loads
+  /// multi-GB weights), 90 s otherwise.
   /// Reassigned by [reconfigure] when the backend kind changes.
   late Duration _responseTimeout;
   final JsonlSessionRepo _repo;
@@ -305,11 +326,9 @@ class AgentService extends ChangeNotifier {
     await waitForIdle();
     _agent.state.model = config.toModel();
     _agent.state.systemPrompt = _effectiveSystemPrompt(config, _redactor);
-    _agent.streamFunction = config.providerKind == webLlmProviderKind
-        ? webLlmStreamFunction(createWebLlmService())
-        : providerStreamFunction(config.providerKind, config.apiKey);
+    _agent.streamFunction = _streamFunctionFor(config);
     _providerKind = config.providerKind;
-    _responseTimeout = config.providerKind == webLlmProviderKind
+    _responseTimeout = _isOnDeviceKind(config.providerKind)
         ? const Duration(minutes: 10)
         : const Duration(seconds: 90);
     error = null;

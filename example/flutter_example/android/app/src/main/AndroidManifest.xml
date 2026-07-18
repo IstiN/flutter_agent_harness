@@ -30,6 +30,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- flutter_gemma: required for the GPU backend on Android 12+ — the
+             OpenCL loader uses libvndksupport.so (android_load_sphal_library)
+             to dlopen the vendor OpenCL driver. Without it OpenCL can't load
+             and the engine falls back to WebGPU, which hard-freezes some Mali
+             GPUs on the vision encoder (flutter_gemma #324). -->
+        <uses-native-library android:name="libvndksupport.so" android:required="false"/>
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false"/>
+        <uses-native-library android:name="libOpenCL-car.so" android:required="false"/>
+        <uses-native-library android:name="libOpenCL-pixel.so" android:required="false"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
