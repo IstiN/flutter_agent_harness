@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import 'agent_service.dart';
 import 'app_theme.dart';
 import 'file_browser.dart';
+import 'provider_registry.dart';
 import 'session_sidebar.dart';
 import 'settings.dart';
 import 'upload.dart';
@@ -29,7 +30,12 @@ const double _kWideLayoutBreakpoint = 900;
 /// Text messages are rendered as Markdown, tool calls/results are shown as
 /// distinct cards, and image attachments are supported.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.service, this.uploadPicker});
+  const ChatScreen({
+    super.key,
+    required this.service,
+    this.uploadPicker,
+    this.registry,
+  });
 
   final AgentService service;
 
@@ -37,6 +43,10 @@ class ChatScreen extends StatefulWidget {
   /// Defaults to the platform picker (`null` off the web → the entry is
   /// hidden); tests inject a fake.
   final UploadPicker? uploadPicker;
+
+  /// The custom-provider registry shared with the settings dialog/sidebar;
+  /// `null` falls back to an in-memory one inside the form (tests).
+  final ProviderRegistry? registry;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -327,7 +337,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _openSettings() async {
     await showDialog<void>(
       context: context,
-      builder: (_) => SettingsDialog(service: widget.service),
+      builder: (_) =>
+          SettingsDialog(service: widget.service, registry: widget.registry),
     );
   }
 
@@ -758,6 +769,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Builder(
                   builder: (drawerContext) => SessionSidebar(
                     service: widget.service,
+                    registry: widget.registry,
                     onAction: () => Scaffold.of(drawerContext).closeDrawer(),
                   ),
                 ),
@@ -780,7 +792,10 @@ class _ChatScreenState extends State<ChatScreen> {
           if (isWide && _leftPanelOpen) ...[
             SizedBox(
               width: kSessionSidebarWidth,
-              child: SessionSidebar(service: widget.service),
+              child: SessionSidebar(
+                service: widget.service,
+                registry: widget.registry,
+              ),
             ),
             const VerticalDivider(width: 1),
           ],

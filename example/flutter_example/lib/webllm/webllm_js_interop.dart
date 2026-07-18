@@ -70,6 +70,26 @@ external JSFunction webLlmStreamWithCallbacks(
   JSObject options,
 );
 
+/// Helper from `web/webllm_helpers.js`: scans CacheStorage for entries whose
+/// URL contains the model id, reporting `{cached, bytes}` (`bytes` sums the
+/// entries' `content-length` headers; `null` when unknown).
+@JS('webllmModelCacheInfo')
+external JSPromise webLlmModelCacheInfo(JSString modelId);
+
+/// Helper from `web/webllm_helpers.js`: deletes every CacheStorage entry
+/// whose URL contains the model id (weights and model library).
+@JS('webllmDeleteModel')
+external JSPromise webLlmDeleteModel(JSString modelId);
+
+/// The `{cached, bytes}` object returned by [webLlmModelCacheInfo].
+extension type WebLlmModelCacheInfoJs._(JSObject _) implements JSObject {
+  /// Whether any cache entries match the model id.
+  external JSBoolean? get cached;
+
+  /// Sum of the matched entries' `content-length` headers, when known.
+  external JSNumber? get bytes;
+}
+
 /// One init-progress report passed to [WebLlmEngine.setInitProgressCallback].
 extension type WebLlmProgressReport._(JSObject _) implements JSObject {
   /// Download/init fraction in `0..1`.
