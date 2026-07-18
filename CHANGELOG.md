@@ -185,4 +185,8 @@
 - feat(site): GitHub Pages landing + live web demo with BYOK
 - feat(example): BYOK connection settings with provider presets
 
+## 0.1.7
+
+- fix(example): sharpen Ollama Cloud CORS guidance in BYOK notes
+
 ## Unreleased
