@@ -60,6 +60,7 @@
   </a>
   <nav class="nav-links" aria-label="Sections">
     <a href="#demo">Demo</a>
+    <a href="#install">Install</a>
     <a href="#features">Features</a>
     <a href="#platforms">Platforms</a>
     <a href="#byok">BYOK</a>
@@ -129,6 +130,52 @@
       reload. OpenRouter works from browsers; some providers block
       cross-origin calls (see <a href="#byok">BYOK</a>).
     </p>
+  </section>
+
+  <!-- ── Install ────────────────────────────────────────────────────── -->
+  <section id="install" class="install reveal">
+    <p class="kicker">Install</p>
+    <h2>Get the CLI.</h2>
+    <p class="section-lede">
+      fah runs in your terminal on macOS, Windows, and Linux. It needs the
+      Dart SDK (bundled with Flutter) — the installer checks for it,
+      activates the package from <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>,
+      and prints your next steps.
+    </p>
+    <div class="term install-term">
+      <div class="term-bar">
+        <span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span>
+        <span class="term-title">sh</span>
+        <button class="copy-btn" type="button" data-copy-target="install-oneliner">Copy</button>
+      </div>
+      <pre class="term-body"><code class="cmd" id="install-oneliner">curl -fsSL https://istin.github.io/flutter_agent_harness/install.sh | sh</code></pre>
+    </div>
+    <div class="grid grid-3 install-alts">
+      <article class="card">
+        <h3>pub.dev direct</h3>
+        <p>No script — activate straight from pub.dev with the Dart SDK.</p>
+        <div class="cmdline">
+          <code id="cmd-pub">dart pub global activate flutter_agent_harness</code>
+          <button class="copy-btn" type="button" data-copy-target="cmd-pub">Copy</button>
+        </div>
+      </article>
+      <article class="card">
+        <h3>Flutter demo app</h3>
+        <p>The full mobile / desktop sandbox, from source.</p>
+        <div class="cmdline">
+          <pre class="cmdpre" id="cmd-app">git clone https://github.com/IstiN/flutter_agent_harness
+cd flutter_agent_harness/example/flutter_example
+flutter run</pre>
+          <button class="copy-btn" type="button" data-copy-target="cmd-app">Copy</button>
+        </div>
+      </article>
+      <article class="card">
+        <h3>Web demo</h3>
+        <p>No install at all — the full agent runs in your browser with your
+        own key. <a href="#demo">Try it above ↑</a> or
+        <a href="./app/" target="_blank" rel="noopener">open it full screen ↗</a>.</p>
+      </article>
+    </div>
   </section>
 
   <!-- ── Features ─────────────────────────────────────────────────────── -->
@@ -295,6 +342,7 @@
   <p><span class="brand-mark" aria-hidden="true">&gt;_</span> fah —
   flutter_agent_harness. MIT licensed, static files only.</p>
   <nav aria-label="Footer links">
+    <a href="#install">Install</a>
     <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
     <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
     <a href="https://github.com/IstiN/flutter_agent_harness/blob/main/LICENSE" rel="noopener">License</a>

@@ -13,6 +13,17 @@
   bring your own key (BYOK). Keys are held in memory only — never persisted —
   and calls go directly from the visitor's browser to the LLM provider.
 
+## Install
+
+- CLI (macOS, Windows, Linux; requires the Dart SDK, bundled with Flutter):
+  `curl -fsSL https://istin.github.io/flutter_agent_harness/install.sh | sh`
+  or `dart pub global activate flutter_agent_harness`. Both provide the `fah`
+  and `fa` executables. Set a provider API key (e.g. OPENROUTER_API_KEY),
+  then run `fah`.
+- Flutter demo app from source:
+  `git clone https://github.com/IstiN/flutter_agent_harness`, then
+  `cd flutter_agent_harness/example/flutter_example && flutter run`.
+
 ## Project
 
 - [GitHub repository](https://github.com/IstiN/flutter_agent_harness)

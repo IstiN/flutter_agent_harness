@@ -41,6 +41,16 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <!-- Stream helper for the on-device WebLLM provider (plain script so the
+       Dart side can call it even while the module below is still loading). -->
+  <script src="webllm_helpers.js"></script>
+  <!-- WebLLM (@mlc-ai/web-llm, pinned): runs small LLMs on-device via WebGPU.
+       Loaded as an ES module from jsdelivr and exposed as window.webllm for
+       the Dart side (lib/webllm/). Version matches the interop bindings. -->
+  <script type="module">
+    import * as webllm from 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.81/+esm';
+    window.webllm = webllm;
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
