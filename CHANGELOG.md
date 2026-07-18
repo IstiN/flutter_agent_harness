@@ -205,4 +205,8 @@
 
 - feat(example): WebLLM on-device provider for the web demo (no API key needed)
 
+## 0.1.12
+
+- feat(example): full WebLLM preset list matching flutter_agent_memory (22 models)
+
 ## Unreleased
