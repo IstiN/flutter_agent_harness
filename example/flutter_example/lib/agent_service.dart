@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'env_factory.dart';
+import 'prompts.g.dart';
 import 'secrets_store.dart';
 
 /// A UI-facing chat message.
@@ -123,7 +124,7 @@ class AgentService extends ChangeNotifier {
     AgentConfig config,
     SecretRedactor? redactor,
   ) {
-    final base = config.systemPrompt ?? _defaultSystemPrompt;
+    final base = config.systemPrompt ?? sandboxSystemPrompt;
     final names = redactor?.names ?? const <String>[];
     if (names.isEmpty) return base;
     return '$base\n\nAvailable secret env vars: ${names.join(', ')} — '
@@ -137,36 +138,6 @@ class AgentService extends ChangeNotifier {
     if (redactor == null || redactor.isEmpty) return;
     attachSecretRedactor(_agent, redactor);
   }
-
-  /// Default system prompt for the mobile/web sandbox: names the assistant
-  /// and teaches the agent the sandbox's actual capabilities so it does not
-  /// discover them by trial and error.
-  static const String _defaultSystemPrompt =
-      'You are fah (also called fa), a helpful coding assistant. '
-      'Never call yourself pi, Claude, or any other assistant name. '
-      'Always reply in the language of the user.\n\n'
-      'You run inside a sandbox with file tools and a bash shell:\n'
-      '- File tools: read (text + images), write (full files), edit '
-      '(precise edits: oldText must match the file byte-for-byte exactly '
-      'once), ls. Prefer edit over write for small changes.\n'
-      '- Shell: coreutils (ls cp mv rm mkdir cat echo printf head tail sort '
-      'uniq wc tr cut find xargs test basename dirname realpath touch tee '
-      'mktemp date uname), ripgrep (also as grep), sed, awk, tar, gzip, '
-      'zip/unzip, xz/bzip2 (decompress only), tree, file, base64, '
-      'md5sum/sha1sum/sha256sum/sha512sum, curl/wget, jq/yq, nslookup/dig, '
-      'whois, git (clone/fetch/'
-      'push over HTTPS and SSH), ssh/scp/sftp (key auth from ~/.ssh; not '
-      'available on web), python3 (CPython 3.14 with the standard '
-      'library; pip/pip3 install pure-Python wheels only; no '
-      'sockets), qjs/js (QuickJS JavaScript engine, ES2023, with qjs:std), '
-      'sqlite3 (SQLite CLI), cd/pwd, export/unset, \$VAR expansion, pipes, '
-      '&& || ; and redirects. There is NO node, make, or a C compiler.\n'
-      '- cd and exported variables persist between bash calls. The sandbox '
-      'root / is your writable workspace.\n\n'
-      'Coding workflow: git clone the repo; read files; make precise edits '
-      'with the edit tool; verify with bash (run available build/test '
-      'commands); git add/commit; git push when asked. Show your work with '
-      'git log/status/show.';
 
   late final Agent _agent;
   final JsonlSessionRepo _repo;

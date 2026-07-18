@@ -4,7 +4,9 @@
 /// prompt-templates.ts`): markdown files with optional YAML frontmatter are
 /// loaded from `.fah/prompts/` and the user config directory, then invoked by
 /// typing `/name <args>` in the REPL. Built-in system-prompt modes (`/architect`,
-/// `/code`, `/review`) are also provided.
+/// `/code`, `/review`) are also provided; their prompt templates are Markdown
+/// files under `prompts/cli/` in this repository (see AGENTS.md), compiled
+/// into `../prompts/prompts.g.dart`.
 library;
 
 import 'dart:async';
@@ -12,6 +14,7 @@ import 'dart:async';
 import 'package:yaml/yaml.dart' as yaml;
 
 import '../env/execution_env.dart';
+import '../prompts/prompts.g.dart';
 
 /// A prompt template loaded from a markdown file.
 final class PromptTemplate {
@@ -243,41 +246,32 @@ final class AgentMode {
   final String systemPrompt;
 }
 
+/// Substitutes the working directory into a mode prompt template.
+///
+/// The templates live outside Dart code in `prompts/cli/` (see AGENTS.md) and
+/// carry a `{{cwd}}` placeholder that is replaced here.
+String _modePrompt(String template, String cwd) =>
+    template.replaceAll('{{cwd}}', cwd);
+
 /// The default coding-agent mode.
 AgentMode defaultAgentMode(String cwd) => AgentMode(
   name: 'code',
   description: 'General coding assistant mode (default).',
-  systemPrompt:
-      'You are fah, a coding agent (also called fa). Never refer to '
-      'yourself as pi, Claude, or any other assistant name. You help with '
-      'software engineering tasks in the working directory $cwd. Use the '
-      'read, write, ls, and bash tools to inspect and modify files and run '
-      'commands. Be concise.',
+  systemPrompt: _modePrompt(cliCodeModePrompt, cwd),
 );
 
 /// High-level design and planning mode.
 AgentMode architectMode(String cwd) => AgentMode(
   name: 'architect',
   description: 'High-level design, trade-offs, and planning.',
-  systemPrompt:
-      'You are fah in architect mode (also called fa). Never refer to '
-      'yourself as pi, Claude, or any other assistant name. You help design '
-      'and plan software engineering work in the working directory $cwd. '
-      'Focus on high-level structure, trade-offs, APIs, dependencies, and '
-      'implementation strategy. Ask clarifying questions when requirements are '
-      'ambiguous. Be concise.',
+  systemPrompt: _modePrompt(cliArchitectModePrompt, cwd),
 );
 
 /// Code-review mode.
 AgentMode reviewMode(String cwd) => AgentMode(
   name: 'review',
   description: 'Review code for correctness, security, and maintainability.',
-  systemPrompt:
-      'You are fah in code review mode (also called fa). Never refer to '
-      'yourself as pi, Claude, or any other assistant name. Review code in '
-      'the working directory $cwd for correctness, security, performance, '
-      'maintainability, and clarity. Point out issues, suggest concrete fixes, '
-      'and explain the reasoning. Be concise.',
+  systemPrompt: _modePrompt(cliReviewModePrompt, cwd),
 );
 
 /// All built-in modes keyed by name.
