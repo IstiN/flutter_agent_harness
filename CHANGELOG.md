@@ -209,4 +209,8 @@
 
 - feat(example): full WebLLM preset list matching flutter_agent_memory (22 models)
 
+## 0.1.13
+
+- feat(example): dark theme matching the landing (terminal aesthetic)
+
 ## Unreleased
