@@ -33,6 +33,12 @@ jobs:
       - name: Example app pub get (for repo-wide analyze)
         run: cd example/flutter_example && flutter pub get
 
+      # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
+      # without it the analyzer fails with asset_does_not_exist (a fresh
+      # clone hits the same warning locally).
+      - name: Create placeholder .env for the example app
+        run: touch example/flutter_example/.env
+
       - name: File size guard (no dart file over 2800 lines)
         run: |
           violations=$(find lib test example -name '*.dart' \
