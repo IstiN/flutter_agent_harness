@@ -19,6 +19,7 @@ import '../context.dart';
 import '../env/execution_env.dart';
 import '../event_stream.dart';
 import '../model.dart';
+import '../prompts/prompts.g.dart';
 import '../providers/openai_completions.dart';
 import '../types.dart';
 
@@ -55,12 +56,6 @@ final class InspectImageConfig {
   final http.Client? httpClient;
 }
 
-/// Default system prompt for the vision model.
-const _defaultVisionSystemPrompt =
-    'You are a helpful vision assistant. Describe the supplied image '
-    'accurately and concisely. If the user asks a specific question, '
-    'answer it based on what you see.';
-
 /// Builds the [Model] descriptor used for the vision call.
 Model _visionModel(InspectImageConfig config) {
   final baseUrl =
@@ -91,7 +86,7 @@ Future<String> _inspectWithVisionModel(
   final model = _visionModel(config);
   final image = ImageContent(data: base64Encode(bytes), mimeType: mimeType);
   final context = Context(
-    systemPrompt: _defaultVisionSystemPrompt,
+    systemPrompt: inspectImageVisionSystemPrompt,
     messages: [
       UserMessage(
         content: [

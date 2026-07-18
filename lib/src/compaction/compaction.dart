@@ -35,128 +35,27 @@ import '../cancel_token.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../model.dart';
+import '../prompts/prompts.g.dart';
 import '../session/session_record.dart';
 import '../session/session_tree.dart';
 import '../types.dart';
 import 'token_estimation.dart';
 
+export '../prompts/prompts.g.dart'
+    show
+        summarizationPrompt,
+        summarizationSystemPrompt,
+        turnPrefixSummarizationPrompt,
+        updateSummarizationPrompt;
+
 // ---------------------------------------------------------------------------
 // Prompts (ported verbatim from pi's compaction.ts)
 // ---------------------------------------------------------------------------
-
-/// System prompt for the summarization LLM. Ported verbatim from pi's
-/// `SUMMARIZATION_SYSTEM_PROMPT`.
-const summarizationSystemPrompt =
-    'You are a context summarization assistant. Your task is to read a '
-    'conversation between a user and an AI assistant, then produce a '
-    'structured summary following the exact format specified.\n'
-    '\n'
-    'Do NOT continue the conversation. Do NOT respond to any questions in '
-    'the conversation. ONLY output the structured summary.';
-
-/// Structured checkpoint prompt for a first-time summary. Ported verbatim
-/// from pi's `SUMMARIZATION_PROMPT`.
-const summarizationPrompt =
-    'The messages above are a conversation to summarize. Create a structured '
-    'context checkpoint summary that another LLM will use to continue the '
-    'work.\n'
-    '\n'
-    'Use this EXACT format:\n'
-    '\n'
-    '## Goal\n'
-    '[What is the user trying to accomplish? Can be multiple items if the '
-    'session covers different tasks.]\n'
-    '\n'
-    '## Constraints & Preferences\n'
-    '- [Any constraints, preferences, or requirements mentioned by user]\n'
-    '- [Or "(none)" if none were mentioned]\n'
-    '\n'
-    '## Progress\n'
-    '### Done\n'
-    '- [x] [Completed tasks/changes]\n'
-    '\n'
-    '### In Progress\n'
-    '- [ ] [Current work]\n'
-    '\n'
-    '### Blocked\n'
-    '- [Issues preventing progress, if any]\n'
-    '\n'
-    '## Key Decisions\n'
-    '- **[Decision]**: [Brief rationale]\n'
-    '\n'
-    '## Next Steps\n'
-    '1. [Ordered list of what should happen next]\n'
-    '\n'
-    '## Critical Context\n'
-    '- [Any data, examples, or references needed to continue]\n'
-    '- [Or "(none)" if not applicable]\n'
-    '\n'
-    'Keep each section concise. Preserve exact file paths, function names, '
-    'and error messages.';
-
-/// Prompt for updating an existing summary with new messages. Ported
-/// verbatim from pi's `UPDATE_SUMMARIZATION_PROMPT`.
-const updateSummarizationPrompt =
-    'The messages above are NEW conversation messages to incorporate into '
-    'the existing summary provided in <previous-summary> tags.\n'
-    '\n'
-    'Update the existing structured summary with new information. RULES:\n'
-    '- PRESERVE all existing information from the previous summary\n'
-    '- ADD new progress, decisions, and context from the new messages\n'
-    '- UPDATE the Progress section: move items from "In Progress" to "Done" '
-    'when completed\n'
-    '- UPDATE "Next Steps" based on what was accomplished\n'
-    '- PRESERVE exact file paths, function names, and error messages\n'
-    '- If something is no longer relevant, you may remove it\n'
-    '\n'
-    'Use this EXACT format:\n'
-    '\n'
-    '## Goal\n'
-    '[Preserve existing goals, add new ones if the task expanded]\n'
-    '\n'
-    '## Constraints & Preferences\n'
-    '- [Preserve existing, add new ones discovered]\n'
-    '\n'
-    '## Progress\n'
-    '### Done\n'
-    '- [x] [Include previously done items AND newly completed items]\n'
-    '\n'
-    '### In Progress\n'
-    '- [ ] [Current work - update based on progress]\n'
-    '\n'
-    '### Blocked\n'
-    '- [Current blockers - remove if resolved]\n'
-    '\n'
-    '## Key Decisions\n'
-    '- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n'
-    '\n'
-    '## Next Steps\n'
-    '1. [Update based on current state]\n'
-    '\n'
-    '## Critical Context\n'
-    '- [Preserve important context, add new if needed]\n'
-    '\n'
-    'Keep each section concise. Preserve exact file paths, function names, '
-    'and error messages.';
-
-/// Prompt for summarizing the prefix of a split turn. Ported verbatim from
-/// pi's `TURN_PREFIX_SUMMARIZATION_PROMPT`.
-const turnPrefixSummarizationPrompt =
-    'This is the PREFIX of a turn that was too large to keep. The SUFFIX '
-    '(recent work) is retained.\n'
-    '\n'
-    'Summarize the prefix to provide context for the retained suffix:\n'
-    '\n'
-    '## Original Request\n'
-    '[What did the user ask for in this turn?]\n'
-    '\n'
-    '## Early Progress\n'
-    '- [Key decisions and work done in the prefix]\n'
-    '\n'
-    '## Context for Suffix\n'
-    '- [Information needed to understand the retained recent work]\n'
-    '\n'
-    "Be concise. Focus on what's needed to understand the kept suffix.";
+//
+// The summarization prompts live outside Dart code in `prompts/compaction/`
+// (see AGENTS.md); the constants are generated into
+// `../prompts/prompts.g.dart` and re-exported here so existing imports keep
+// working.
 
 // ---------------------------------------------------------------------------
 // Conversation serialization (ported from pi's compaction/utils.ts)
