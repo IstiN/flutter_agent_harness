@@ -106,12 +106,21 @@ class AgentService extends ChangeNotifier {
 
   /// Convenience factory that creates the right [ExecutionEnv] for the
   /// platform and wires up the agent.
-  static Future<AgentService> create({required AgentConfig config}) async {
-    final env = await createPlatformEnv();
+  ///
+  /// [env] overrides the platform env — the app passes its shared instance
+  /// so the provider registry and the agent (and, on web, the IndexedDB
+  /// snapshot persistence) all operate on one filesystem.
+  static Future<AgentService> create({
+    required AgentConfig config,
+    ExecutionEnv? env,
+  }) async {
+    final resolvedEnv = env ?? await createPlatformEnv();
     final secrets = await createSecretsStore().readAll();
     final redactor = SecretRedactor.fromSecrets(secrets);
     return AgentService._withEnv(
-      env: secrets.isEmpty ? env : SecretsExecutionEnv(env, secrets),
+      env: secrets.isEmpty
+          ? resolvedEnv
+          : SecretsExecutionEnv(resolvedEnv, secrets),
       config: config,
       redactor: redactor,
     );

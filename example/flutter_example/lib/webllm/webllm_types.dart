@@ -258,6 +258,23 @@ WebLlmModelPreset? findWebLlmPreset(String id) {
   return null;
 }
 
+/// Cache-storage info for one on-device model's downloaded weights.
+///
+/// WebLLM stores weights in the browser's CacheStorage (keyed by download
+/// URL, which contains the model id); off the web there is no cache and
+/// [WebLlmEngineApi.modelCacheInfo] returns `null`.
+final class WebLlmCacheInfo {
+  /// Creates a cache report.
+  const WebLlmCacheInfo({required this.cached, this.bytes});
+
+  /// Whether any CacheStorage entries for the model id exist.
+  final bool cached;
+
+  /// Total cached bytes when cheaply known (sum of `content-length`
+  /// headers), else `null` — the preset's `sizeLabel` is the fallback.
+  final int? bytes;
+}
+
 /// One engine-init progress report from `@mlc-ai/web-llm` (weights download
 /// and shader compilation), surfaced by the settings form as a progress bar.
 final class WebLlmProgress {
@@ -321,4 +338,13 @@ abstract interface class WebLlmEngineApi {
   /// Interrupts any in-flight generation (maps to
   /// `MLCEngine.interruptGenerate`).
   Future<void> interrupt();
+
+  /// CacheStorage report for [modelId]'s downloaded weights, or `null` when
+  /// the cache cannot be queried (non-web platforms, blocked storage).
+  Future<WebLlmCacheInfo?> modelCacheInfo(String modelId);
+
+  /// Deletes [modelId]'s weights from CacheStorage. When [modelId] is the
+  /// currently loaded model, the engine state is reset so the next
+  /// [loadModel] re-downloads instead of running against dropped weights.
+  Future<void> deleteCachedModel(String modelId);
 }

@@ -85,6 +85,12 @@ final class FakeWebLlmEngine implements WebLlmEngineApi {
   Future<void> interrupt() async {
     interruptCount++;
   }
+
+  @override
+  Future<WebLlmCacheInfo?> modelCacheInfo(String modelId) async => null;
+
+  @override
+  Future<void> deleteCachedModel(String modelId) async {}
 }
 
 /// The one preset with `supportsTools: true` (in web-llm's

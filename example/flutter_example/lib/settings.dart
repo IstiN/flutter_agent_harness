@@ -5,6 +5,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'agent_service.dart';
 import 'prompts.g.dart';
+import 'provider_registry.dart';
+import 'webllm/webllm_cache_section.dart';
 import 'webllm/webllm_service.dart';
 import 'webllm/webllm_types.dart';
 
@@ -30,6 +32,10 @@ String settingsEnv(String name, String fallback) {
 /// A bring-your-own-key provider preset. Hosted presets talk to an
 /// OpenAI-compatible chat-completions endpoint; [webllm] runs a small model
 /// on-device in the browser (no key, no endpoint).
+///
+/// Presets are built-in and cannot be deleted; user-added providers
+/// ([CustomProvider], managed by [ProviderRegistry]) appear in the same
+/// picker and can be edited and removed.
 enum ProviderPreset {
   openrouter(
     label: 'OpenRouter',
@@ -50,7 +56,7 @@ enum ProviderPreset {
     required this.defaultModel,
   });
 
-  /// Short label shown in the segmented selector.
+  /// Short label shown in the provider picker.
   final String label;
 
   /// Fixed endpoint for hosted presets; `null` for [custom] (user-editable)
@@ -94,14 +100,18 @@ enum ProviderPreset {
 /// The BYOK connection form shared by the first-run [SetupScreen] and the
 /// in-chat [SettingsDialog].
 ///
-/// Everything entered here is held in memory only: the example app never
-/// persists keys (the web secrets store is in-memory by design), so a reload
-/// wipes the configuration.
+/// The provider picker mixes the built-in [ProviderPreset]s with user-added
+/// [CustomProvider]s from [registry]; "Add provider" saves a named
+/// OpenAI-compatible endpoint (name, base URL, model id) that persists
+/// across reloads (see [ProviderRegistry]). API keys are never persisted:
+/// for custom providers the key is remembered in memory for the session
+/// only, so a reload requires re-entering it.
 class AgentSettingsForm extends StatefulWidget {
   const AgentSettingsForm({
     super.key,
     required this.onConnect,
     this.connectLabel = 'Start chat',
+    this.registry,
   });
 
   /// Called with the assembled [AgentConfig]. Throw to surface an error in
@@ -112,14 +122,21 @@ class AgentSettingsForm extends StatefulWidget {
   /// the settings dialog).
   final String connectLabel;
 
+  /// The user-added providers shown in the picker. `null` falls back to a
+  /// non-persisting in-memory registry (tests, previews).
+  final ProviderRegistry? registry;
+
   @override
   State<AgentSettingsForm> createState() => _AgentSettingsFormState();
 }
 
 class _AgentSettingsFormState extends State<AgentSettingsForm> {
-  late ProviderPreset _preset;
+  /// The picker selection: a built-in [ProviderPreset] or a user-added
+  /// [CustomProvider].
+  late Object _selection;
   late String _lastDefaultModel;
 
+  late final ProviderRegistry _registry;
   late final TextEditingController _keyController;
   late final TextEditingController _modelController;
   late final TextEditingController _urlController;
@@ -137,49 +154,175 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   @override
   void initState() {
     super.initState();
+    _registry = widget.registry ?? ProviderRegistry.inMemory();
+    _registry.addListener(_onRegistryChanged);
     final initialUrl = settingsEnv(
       'BASE_URL',
       ProviderPreset.openrouter.baseUrl!,
     );
-    _preset = ProviderPreset.fromBaseUrl(initialUrl);
+    final preset = ProviderPreset.fromBaseUrl(initialUrl);
+    _selection = preset;
     _keyController = TextEditingController(
       text: settingsEnv('OPENROUTER_API_KEY', ''),
     );
-    _lastDefaultModel = _preset.defaultModel;
+    _lastDefaultModel = preset.defaultModel;
     _modelController = TextEditingController(
-      text: settingsEnv('MODEL_ID', _preset.defaultModel),
+      text: settingsEnv('MODEL_ID', preset.defaultModel),
     );
     _urlController = TextEditingController(text: initialUrl);
   }
 
   @override
   void dispose() {
+    _registry.removeListener(_onRegistryChanged);
     _keyController.dispose();
     _modelController.dispose();
     _urlController.dispose();
     super.dispose();
   }
 
-  void _selectPreset(ProviderPreset preset) {
+  bool get _isOnDevice => _selection == ProviderPreset.webllm;
+
+  bool get _hasEditableBaseUrl =>
+      _selection is CustomProvider || _selection == ProviderPreset.custom;
+
+  /// Keeps the picker consistent when providers are edited or deleted: a
+  /// deleted selection falls back to OpenRouter; an edited one tracks the
+  /// registry's instance.
+  void _onRegistryChanged() {
+    if (!mounted) return;
+    final selection = _selection;
+    if (selection is! CustomProvider) {
+      setState(() {});
+      return;
+    }
+    CustomProvider? match;
+    for (final provider in _registry.providers) {
+      if (provider.id == selection.id) {
+        match = provider;
+        break;
+      }
+    }
     setState(() {
-      _preset = preset;
-      final baseUrl = preset.baseUrl;
-      if (baseUrl != null) {
-        _urlController.text = baseUrl;
+      if (match != null) {
+        _selection = match;
+      } else {
+        _applyPreset(ProviderPreset.openrouter);
+        // The deleted provider's key must not linger next to a different
+        // endpoint.
+        _keyController.clear();
       }
-      // Follow the preset's default model only while the user has not typed
-      // a custom one (still empty or equal to the previous default).
-      final current = _modelController.text.trim();
-      if (current.isEmpty || current == _lastDefaultModel) {
-        _modelController.text = preset.defaultModel;
-      }
-      _lastDefaultModel = preset.defaultModel;
-      _error = null;
     });
   }
 
+  void _applyPreset(ProviderPreset preset) {
+    _selection = preset;
+    final baseUrl = preset.baseUrl;
+    if (baseUrl != null) {
+      _urlController.text = baseUrl;
+    }
+    // Follow the preset's default model only while the user has not typed
+    // a custom one (still empty or equal to the previous default).
+    final current = _modelController.text.trim();
+    if (current.isEmpty || current == _lastDefaultModel) {
+      _modelController.text = preset.defaultModel;
+    }
+    _lastDefaultModel = preset.defaultModel;
+    _error = null;
+  }
+
+  void _applyCustomProvider(CustomProvider provider) {
+    _selection = provider;
+    _urlController.text = provider.baseUrl;
+    _modelController.text = provider.modelId;
+    _keyController.text = _registry.keyFor(provider.id) ?? '';
+    _lastDefaultModel = provider.modelId;
+    _error = null;
+  }
+
+  void _selectProvider(Object value) {
+    setState(() {
+      switch (value) {
+        case ProviderPreset preset:
+          _applyPreset(preset);
+        case CustomProvider provider:
+          _applyCustomProvider(provider);
+      }
+    });
+  }
+
+  Future<void> _addProvider() async {
+    final result = await showDialog<ProviderEditorResult>(
+      context: context,
+      builder: (_) => const ProviderEditorDialog(title: 'Add provider'),
+    );
+    if (result == null) return;
+    final provider = await _registry.add(
+      name: result.name,
+      baseUrl: result.baseUrl,
+      modelId: result.modelId,
+    );
+    if (result.apiKey.isNotEmpty) {
+      _registry.rememberKey(provider.id, result.apiKey);
+    }
+    setState(() => _applyCustomProvider(provider));
+  }
+
+  Future<void> _editProvider() async {
+    final selection = _selection;
+    if (selection is! CustomProvider) return;
+    final result = await showDialog<ProviderEditorResult>(
+      context: context,
+      builder: (_) => ProviderEditorDialog(
+        title: 'Edit provider',
+        initial: selection,
+        initialKey: _registry.keyFor(selection.id),
+      ),
+    );
+    if (result == null) return;
+    final updated = CustomProvider(
+      id: selection.id,
+      name: result.name,
+      baseUrl: result.baseUrl,
+      modelId: result.modelId,
+    );
+    await _registry.update(updated);
+    if (result.apiKey.isNotEmpty) {
+      _registry.rememberKey(updated.id, result.apiKey);
+    }
+    setState(() => _applyCustomProvider(updated));
+  }
+
+  Future<void> _deleteProvider() async {
+    final selection = _selection;
+    if (selection is! CustomProvider) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete ${selection.name}?'),
+        content: const Text(
+          'The provider is removed from the picker. The current connection '
+          'is not affected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    // _onRegistryChanged resets the selection to OpenRouter.
+    await _registry.remove(selection.id);
+  }
+
   Future<void> _connect() async {
-    if (_preset.isOnDevice) {
+    if (_isOnDevice) {
       return _connectWebLlm();
     }
     final key = _keyController.text.trim();
@@ -210,6 +353,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           apiKey: key,
         ),
       );
+      // Connected: keep the key for this session so reopening settings (or
+      // re-picking the provider) prefills it. Never persisted.
+      final selection = _selection;
+      if (selection is CustomProvider) {
+        _registry.rememberKey(selection.id, key);
+      }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
@@ -271,21 +420,62 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final corsNote = _preset.corsNote;
+    final selection = _selection;
+    final corsNote = switch (selection) {
+      ProviderPreset preset => preset.corsNote,
+      // Custom providers share the custom preset's CORS note.
+      _ => ProviderPreset.custom.corsNote,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        SegmentedButton<ProviderPreset>(
-          segments: [
+        DropdownButtonFormField<Object>(
+          // The key forces the FormField to re-seed when the selection is
+          // changed programmatically (provider added/selected/deleted).
+          key: ValueKey<Object>(_selection),
+          initialValue: _selection,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Provider'),
+          items: [
             for (final preset in ProviderPreset.values)
-              ButtonSegment(value: preset, label: Text(preset.label)),
+              DropdownMenuItem(value: preset, child: Text(preset.label)),
+            for (final provider in _registry.providers)
+              DropdownMenuItem(
+                value: provider,
+                child: Text(provider.name, overflow: TextOverflow.ellipsis),
+              ),
           ],
-          selected: {_preset},
-          onSelectionChanged: (value) => _selectPreset(value.first),
+          onChanged: _loading
+              ? null
+              : (value) {
+                  if (value != null) _selectProvider(value);
+                },
         ),
-        const SizedBox(height: 16),
-        if (_preset.isOnDevice)
+        Row(
+          children: [
+            TextButton.icon(
+              onPressed: _loading ? null : _addProvider,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add provider'),
+            ),
+            if (selection is CustomProvider) ...[
+              TextButton(
+                onPressed: _loading ? null : _editProvider,
+                child: const Text('Edit'),
+              ),
+              TextButton(
+                onPressed: _loading ? null : _deleteProvider,
+                style: TextButton.styleFrom(
+                  foregroundColor: theme.colorScheme.error,
+                ),
+                child: const Text('Delete'),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_isOnDevice)
           _buildWebLlmFields(theme)
         else ...[
           TextField(
@@ -306,10 +496,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           const SizedBox(height: 12),
           TextField(
             controller: _urlController,
-            enabled: _preset.hasEditableBaseUrl,
+            enabled: _hasEditableBaseUrl,
             decoration: InputDecoration(
               labelText: 'Base URL',
-              helperText: _preset.hasEditableBaseUrl
+              helperText: _hasEditableBaseUrl
                   ? 'OpenAI-compatible endpoint'
                   : null,
             ),
@@ -326,9 +516,14 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'In-memory only: your key is never persisted and is gone on '
-                  'reload. Calls go straight from your browser to the provider '
-                  '— nothing is proxied or stored.',
+                  selection is CustomProvider
+                      ? 'The provider definition (name, URL, model) is saved '
+                            '— no secrets. The API key stays in memory for '
+                            'this session only and is gone on reload.'
+                      : 'In-memory only: your key is never persisted and is '
+                            'gone on reload. Calls go straight from your '
+                            'browser to the provider — nothing is proxied or '
+                            'stored.',
                   style: theme.textTheme.bodySmall,
                 ),
               ),
@@ -361,7 +556,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           ),
         FilledButton(
           onPressed: _loading ? null : _connect,
-          child: _loading && !_preset.isOnDevice
+          child: _loading && !_isOnDevice
               ? const SizedBox(
                   width: 20,
                   height: 20,
@@ -445,30 +640,227 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   }
 }
 
+/// The values collected by the add/edit-provider dialog.
+///
+/// [apiKey] is optional; when given it is remembered in memory for the
+/// session only (see [ProviderRegistry.rememberKey]) — never persisted.
+final class ProviderEditorResult {
+  /// Creates an editor result.
+  const ProviderEditorResult({
+    required this.name,
+    required this.baseUrl,
+    required this.modelId,
+    required this.apiKey,
+  });
+
+  /// Display name in the provider picker.
+  final String name;
+
+  /// OpenAI-compatible endpoint.
+  final String baseUrl;
+
+  /// Default model id.
+  final String modelId;
+
+  /// Session-only API key (may be empty).
+  final String apiKey;
+}
+
+/// The add/edit dialog for a [CustomProvider]. With [initial] set it edits
+/// that provider, otherwise it collects a new one. Pops with a
+/// [ProviderEditorResult], or `null` when cancelled.
+class ProviderEditorDialog extends StatefulWidget {
+  const ProviderEditorDialog({
+    super.key,
+    required this.title,
+    this.initial,
+    this.initialKey,
+  });
+
+  /// Dialog title (`Add provider` / `Edit provider`).
+  final String title;
+
+  /// The provider being edited; `null` when adding a new one.
+  final CustomProvider? initial;
+
+  /// The session key prefill (edit mode); leave empty to keep the current
+  /// key.
+  final String? initialKey;
+
+  @override
+  State<ProviderEditorDialog> createState() => _ProviderEditorDialogState();
+}
+
+class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _urlController;
+  late final TextEditingController _modelController;
+  late final TextEditingController _keyController;
+
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.initial?.name ?? '');
+    _urlController = TextEditingController(text: widget.initial?.baseUrl ?? '');
+    _modelController = TextEditingController(
+      text: widget.initial?.modelId ?? '',
+    );
+    _keyController = TextEditingController(text: widget.initialKey ?? '');
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _urlController.dispose();
+    _modelController.dispose();
+    _keyController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final name = _nameController.text.trim();
+    final baseUrl = _urlController.text.trim();
+    final modelId = _modelController.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'Name is required');
+      return;
+    }
+    if (baseUrl.isEmpty) {
+      setState(() => _error = 'Base URL is required');
+      return;
+    }
+    if (modelId.isEmpty) {
+      setState(() => _error = 'Model id is required');
+      return;
+    }
+    Navigator.of(context).pop(
+      ProviderEditorResult(
+        name: name,
+        baseUrl: baseUrl,
+        modelId: modelId,
+        apiKey: _keyController.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  hintText: 'My provider',
+                ),
+                autofocus: true,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _urlController,
+                decoration: const InputDecoration(
+                  labelText: 'Base URL',
+                  hintText: 'https://example.com/v1',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _modelController,
+                decoration: const InputDecoration(labelText: 'Model id'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _keyController,
+                decoration: const InputDecoration(
+                  labelText: 'API key (optional)',
+                ),
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Name, URL and model are saved; the key is kept in memory '
+                'for this session only — never persisted.',
+                style: theme.textTheme.bodySmall,
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
 /// The gear-icon dialog from the chat screen (also opened from the session
-/// sidebar's model tile): reconfigure provider/model/key mid-session.
+/// sidebar's model tile): reconfigure provider/model/key mid-session,
+/// manage saved providers, and manage the on-device model cache.
 /// Applying swaps the backend of [service] via [AgentService.reconfigure] —
 /// the visible transcript, the sandbox filesystem, and the current session
 /// all survive.
 class SettingsDialog extends StatelessWidget {
-  const SettingsDialog({super.key, required this.service});
+  const SettingsDialog({
+    super.key,
+    required this.service,
+    this.registry,
+    this.webLlmEngine,
+  });
 
   /// The service whose backend the form reconfigures.
   final AgentService service;
 
+  /// The user-added providers shown in the form's picker.
+  final ProviderRegistry? registry;
+
+  /// Engine override for the downloaded-models section (tests); defaults to
+  /// the platform singleton.
+  final WebLlmEngineApi? webLlmEngine;
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Connection settings'),
+      title: const Text('Settings'),
       content: SizedBox(
         width: 440,
         child: SingleChildScrollView(
-          child: AgentSettingsForm(
-            connectLabel: 'Apply',
-            onConnect: (config) async {
-              await service.reconfigure(config);
-              if (context.mounted) Navigator.of(context).pop();
-            },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AgentSettingsForm(
+                connectLabel: 'Apply',
+                registry: registry,
+                onConnect: (config) async {
+                  await service.reconfigure(config);
+                  if (context.mounted) Navigator.of(context).pop();
+                },
+              ),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 8),
+              WebLlmCacheSection(engine: webLlmEngine),
+            ],
           ),
         ),
       ),

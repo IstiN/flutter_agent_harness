@@ -46,4 +46,11 @@ final class WebLlmService implements WebLlmEngineApi {
 
   @override
   Future<void> interrupt() async {}
+
+  @override
+  Future<WebLlmCacheInfo?> modelCacheInfo(String modelId) async => null;
+
+  @override
+  Future<void> deleteCachedModel(String modelId) =>
+      Future.error(StateError(webLlmUnavailableMessage));
 }

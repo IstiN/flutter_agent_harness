@@ -119,7 +119,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Connection settings'), findsOneWidget);
+      expect(find.text('Settings'), findsOneWidget);
 
       await tester.enterText(
         find.widgetWithText(TextField, 'API key'),
@@ -129,13 +129,15 @@ void main() {
         find.widgetWithText(TextField, 'Model id'),
         'new-model-2',
       );
+      await tester.ensureVisible(find.text('Apply'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Apply'));
       await tester.pumpAndSettle();
 
       // The backend switched…
       expect(service.providerKind, 'openai-completions');
       expect(service.modelId, 'new-model-2');
-      expect(find.text('Connection settings'), findsNothing);
+      expect(find.text('Settings'), findsNothing);
       // …and the visible transcript survived.
       expect(service.messages, hasLength(2));
       expect(service.messages[0].content, 'hello');

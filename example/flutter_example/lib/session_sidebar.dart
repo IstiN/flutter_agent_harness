@@ -3,6 +3,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
 import 'app_theme.dart';
+import 'provider_registry.dart';
 import 'settings.dart';
 import 'webllm/webllm_types.dart';
 
@@ -22,7 +23,12 @@ const double kSessionSidebarWidth = 280;
 /// rows show what the header exposes cheaply: creation time and the model
 /// recorded at session creation.
 class SessionSidebar extends StatefulWidget {
-  const SessionSidebar({super.key, required this.service, this.onAction});
+  const SessionSidebar({
+    super.key,
+    required this.service,
+    this.onAction,
+    this.registry,
+  });
 
   /// The chat service backing the model card and the session list.
   final AgentService service;
@@ -30,6 +36,10 @@ class SessionSidebar extends StatefulWidget {
   /// Called after an action that replaces the chat content (session loaded,
   /// new session started) — the narrow drawer uses it to close itself.
   final VoidCallback? onAction;
+
+  /// The custom-provider registry handed to the [SettingsDialog] opened from
+  /// the model card; `null` falls back to an in-memory one (tests).
+  final ProviderRegistry? registry;
 
   @override
   State<SessionSidebar> createState() => _SessionSidebarState();
@@ -81,7 +91,8 @@ class _SessionSidebarState extends State<SessionSidebar> {
   Future<void> _switchModel() async {
     await showDialog<void>(
       context: context,
-      builder: (_) => SettingsDialog(service: _service),
+      builder: (_) =>
+          SettingsDialog(service: _service, registry: widget.registry),
     );
   }
 

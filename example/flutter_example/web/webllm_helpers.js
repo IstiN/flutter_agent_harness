@@ -61,3 +61,53 @@ window.webllmStreamWithCallbacks = (asyncIterable, options) => {
   run();
   return cancel;
 };
+
+// Reports whether a model's weights are in the browser CacheStorage (WebLLM
+// caches downloads under URLs that contain the model id). Resolves to
+// {cached: boolean, bytes: number|null} — bytes sums the matched entries'
+// content-length headers when available, without reading the bodies.
+// Adapted from the flutter_agent_memory demo's cache helpers.
+window.webllmModelCacheInfo = async (modelId) => {
+  try {
+    const cacheNames = await caches.keys();
+    for (const name of cacheNames) {
+      const cache = await caches.open(name);
+      const keys = await cache.keys();
+      const matched = keys.filter((req) => req.url.includes(modelId));
+      if (matched.length > 0) {
+        let bytes = 0;
+        let known = false;
+        for (const req of matched) {
+          const resp = await cache.match(req);
+          const len = resp && resp.headers.get('content-length');
+          if (len) {
+            const n = parseInt(len, 10);
+            if (!Number.isNaN(n)) {
+              bytes += n;
+              known = true;
+            }
+          }
+        }
+        return { cached: true, bytes: known ? bytes : null };
+      }
+    }
+    return { cached: false, bytes: null };
+  } catch {
+    return { cached: false, bytes: null };
+  }
+};
+
+// Deletes a model's weights (and model library) from the browser
+// CacheStorage: every entry whose URL contains the model id.
+window.webllmDeleteModel = async (modelId) => {
+  const cacheNames = await caches.keys();
+  for (const name of cacheNames) {
+    const cache = await caches.open(name);
+    const keys = await cache.keys();
+    for (const req of keys) {
+      if (req.url.includes(modelId)) {
+        await cache.delete(req);
+      }
+    }
+  }
+};

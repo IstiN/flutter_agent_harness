@@ -195,6 +195,33 @@ final class WebLlmService implements WebLlmEngineApi {
       // the JS side; cancellation is best-effort.
     }
   }
+
+  @override
+  Future<WebLlmCacheInfo?> modelCacheInfo(String modelId) async {
+    try {
+      final info =
+          await webLlmModelCacheInfo(modelId.toJS).toDart
+              as WebLlmModelCacheInfoJs;
+      return WebLlmCacheInfo(
+        cached: info.cached?.toDart ?? false,
+        bytes: info.bytes?.toDartInt,
+      );
+    } catch (_) {
+      // CacheStorage unavailable (blocked, private mode) → unknown.
+      return null;
+    }
+  }
+
+  @override
+  Future<void> deleteCachedModel(String modelId) async {
+    await webLlmDeleteModel(modelId.toJS).toDart;
+    if (loadedModelId == modelId) {
+      // The loaded model's weights are gone — drop the engine so the next
+      // loadModel re-downloads instead of failing obscurely mid-inference.
+      loadedModelId = null;
+      _engine = null;
+    }
+  }
 }
 
 String _jsErrorText(Object error) {
