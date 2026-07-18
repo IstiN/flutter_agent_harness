@@ -7,7 +7,8 @@
 - Seeded `CancelToken` / `CancelTokenSource` / `CancelledException` — the
   universal cancellation primitive (Dart counterpart of web `AbortSignal`).
 
-## Unreleased
+## 0.1.1
+
 
 - Ported pi-mono `packages/ai`: EventStream contract (partial-first deltas,
   errors-as-events), SSE line decoder, openai-completions (OpenRouter-ready),
@@ -25,3 +26,5 @@
   IO (`lib/src/cli/agent_cli.dart`) — live streaming output, slash commands
   (`/exit`, `/reset`, `/compact`, `/stats`, `/model`, `/help`), steering,
   Ctrl-C abort, JSONL session persistence, and auto-compaction.
+
+## Unreleased
