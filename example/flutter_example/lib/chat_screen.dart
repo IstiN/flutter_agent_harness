@@ -11,6 +11,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'agent_service.dart';
+import 'file_browser.dart';
+
+/// Minimum body width (logical px) at which the file browser becomes a
+/// persistent, collapsible left panel instead of a drawer.
+const double _kWideLayoutBreakpoint = 900;
 
 /// A chat UI backed by [AgentService], built on top of `flutter_chat_ui`.
 ///
@@ -42,6 +47,19 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSyncing = false;
   bool _isStreaming = false;
   String? _error;
+
+  /// Whether the file browser side panel is expanded (wide layouts only).
+  bool _filesPanelOpen = false;
+
+  /// Opens the file browser: toggles the side panel on wide layouts, opens
+  /// the drawer on narrow ones. [context] must be below the [Scaffold].
+  void _openFiles(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width >= _kWideLayoutBreakpoint) {
+      setState(() => _filesPanelOpen = !_filesPanelOpen);
+    } else {
+      Scaffold.of(context).openDrawer();
+    }
+  }
 
   @override
   void initState() {
@@ -483,6 +501,41 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _buildChatBody(BuildContext context) {
+    return Column(
+      children: [
+        if (_error case final error?)
+          Material(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(Icons.error, color: Theme.of(context).colorScheme.error),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(error)),
+                ],
+              ),
+            ),
+          ),
+        Expanded(
+          child: Chat(
+            currentUserId: 'user',
+            resolveUser: _resolveUser,
+            chatController: _chatController,
+            builders: Builders(
+              textMessageBuilder: _buildTextMessage,
+              customMessageBuilder: _buildCustomMessage,
+              composerBuilder: (_) => const SizedBox.shrink(),
+            ),
+            theme: ChatTheme.light(),
+          ),
+        ),
+        _buildComposer(context),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -495,6 +548,13 @@ class _ChatScreenState extends State<ChatScreen> {
               tooltip: 'Abort',
               onPressed: widget.service.abort,
             ),
+          Builder(
+            builder: (context) => IconButton(
+              icon: const Icon(Icons.folder_outlined),
+              tooltip: 'Files',
+              onPressed: () => _openFiles(context),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.copy_outlined),
             tooltip: 'Copy session',
@@ -507,40 +567,30 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_error case final error?)
-            Material(
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.error,
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(error)),
-                  ],
+      drawer: Drawer(
+        width: kFileBrowserPanelWidth,
+        child: SafeArea(
+          child: FileBrowser(env: widget.service.env, inlinePreview: false),
+        ),
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final showPanel =
+              constraints.maxWidth >= _kWideLayoutBreakpoint && _filesPanelOpen;
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (showPanel) ...[
+                SizedBox(
+                  width: kFileBrowserPanelWidth,
+                  child: FileBrowser(env: widget.service.env),
                 ),
-              ),
-            ),
-          Expanded(
-            child: Chat(
-              currentUserId: 'user',
-              resolveUser: _resolveUser,
-              chatController: _chatController,
-              builders: Builders(
-                textMessageBuilder: _buildTextMessage,
-                customMessageBuilder: _buildCustomMessage,
-                composerBuilder: (_) => const SizedBox.shrink(),
-              ),
-              theme: ChatTheme.light(),
-            ),
-          ),
-          _buildComposer(context),
-        ],
+                const VerticalDivider(width: 1),
+              ],
+              Expanded(child: _buildChatBody(context)),
+            ],
+          );
+        },
       ),
     );
   }
