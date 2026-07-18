@@ -203,5 +203,28 @@ void main() {
       // The files end drawer stays closed.
       expect(find.byType(FileBrowser), findsNothing);
     });
+
+    testWidgets(
+      'narrow: settings dialog fits a phone screen without overflow',
+      (tester) async {
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(390, 844);
+        addTearDown(tester.view.reset);
+
+        final env = MemoryExecutionEnv();
+        await tester.pumpWidget(
+          MaterialApp(home: ChatScreen(service: _fakeService(env))),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byTooltip('Connection settings'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Settings'), findsOneWidget);
+        expect(find.byType(AlertDialog), findsOneWidget);
+        // A RenderFlex overflow or the old fixed 440px width would throw here.
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }

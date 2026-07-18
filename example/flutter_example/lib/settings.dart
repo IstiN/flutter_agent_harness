@@ -917,7 +917,7 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
     return AlertDialog(
       title: Text(widget.title),
       content: SizedBox(
-        width: 380,
+        width: _dialogContentWidth(context, 380),
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1013,7 +1013,7 @@ class SettingsDialog extends StatelessWidget {
     return AlertDialog(
       title: const Text('Settings'),
       content: SizedBox(
-        width: 440,
+        width: _dialogContentWidth(context, 440),
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1038,6 +1038,13 @@ class SettingsDialog extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Responsive dialog content width: [preferred] on wide screens, shrinking
+/// to fit narrow phones (AlertDialog's default inset padding is 16-24 px).
+double _dialogContentWidth(BuildContext context, double preferred) {
+  final available = MediaQuery.sizeOf(context).width - 32;
+  return available < preferred ? available.clamp(0.0, preferred) : preferred;
 }
 
 /// The small "tools" chip shown next to function-calling presets
