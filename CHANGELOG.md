@@ -245,4 +245,8 @@
 
 - feat(example): Gemma provider on web via flutter_gemma litert-lm web (Gemma 4 tools in-browser)
 
+## 0.1.22
+
+- refactor(example): WebLLM goes chat-only + universal prompt-tools wrapper
+
 ## Unreleased
