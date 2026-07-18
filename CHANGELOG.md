@@ -233,4 +233,8 @@
 
 - feat(example): Gemma 4 on-device provider via flutter_gemma (iOS/Android)
 
+## 0.1.19
+
+- fix(example): settings dialogs adapt to narrow phone screens
+
 ## Unreleased
