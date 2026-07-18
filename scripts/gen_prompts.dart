@@ -101,6 +101,11 @@ const rootSpecs = <PromptSpec>[
     source: 'prompts/tools/inspect_image.md',
     constName: 'inspectImageVisionSystemPrompt',
   ),
+  PromptSpec(
+    source: 'prompts/tools/tool_calling.md',
+    constName: 'toolCallingInstructionsPrompt',
+    requiredToken: '{{tools}}',
+  ),
 ];
 
 /// The example app prompts, emitted into [exampleOutputPath] in this order.

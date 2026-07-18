@@ -56,3 +56,11 @@ const cliReviewModePrompt =
 /// Source: `prompts/tools/inspect_image.md`.
 const inspectImageVisionSystemPrompt =
     'You are a helpful vision assistant. Describe the supplied image accurately and concisely. If the user asks a specific question, answer it based on what you see.';
+
+/// Tools section appended to the system prompt by the prompt-based tool-calling
+/// wrapper; lists the available tools and specifies the fenced
+/// tool_call/tool_result wire format.
+///
+/// Source: `prompts/tools/tool_calling.md`.
+const toolCallingInstructionsPrompt =
+    '## Available tools\n\nYou can call tools to act on the user\'s behalf. The available tools are:\n\n{{tools}}\n\n## Calling a tool\n\nTo call a tool, output a fenced code block tagged `tool_call` containing one JSON object with the tool\'s `name` and its `arguments`:\n\n```tool_call\n{"name": "example_tool", "arguments": {"path": "README.md"}}\n```\n\nRules:\n- One tool call per block; emit several blocks to call several tools.\n- `arguments` must be valid JSON matching the tool\'s parameter schema; use `{}` when the tool takes no parameters.\n- After your tool call blocks, STOP immediately — write nothing after the last block and never predict or fabricate results.\n- Tool results arrive in a follow-up user message as a ```tool_result fenced block; a line reading `error: true` marks a failed call.\n- When you are done, answer in plain text WITHOUT any tool_call blocks.\n- Only call tools listed above; never invent tools.';

@@ -92,8 +92,9 @@ replayed forever in context, not portable to web.
 6. **Token accounting inline** in provider responses; overflow detection
    ported from `utils/overflow.ts`.
 7. **Native tool calling** per provider (OpenAI `tools`, Anthropic
-   `tool_use`, Google `functionCalling`); prompt-based tool calling is
-   explicitly rejected.
+   `tool_use`, Google `functionCalling`). Prompt-based tool calling exists
+   only as an opt-in adapter (`promptToolStreamFunction`) that wraps chat-only
+   streams (e.g. on-device WebLLM) — it never replaces native calling.
 8. **Plugin/package extension API** — third-party packages can register
    tools, slash commands, and configuration through a `FahPlugin` interface.
    Built-in plugins (e.g. `inspect_image`) ship in the core package and are
