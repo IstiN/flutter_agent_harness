@@ -2,6 +2,8 @@
 .dart_tool/
 build/
 coverage/
+# The Pages workflow assembles the Flutter web demo here; never commit it.
+site/app/
 # library package: lockfile is not committed
 pubspec.lock
 *.iml

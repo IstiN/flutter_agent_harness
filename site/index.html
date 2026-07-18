@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fah — one agent harness, every device</title>
+<meta name="description" content="flutter_agent_harness (fah): a Dart/Flutter coding agent with a real sandbox shell, git, and interpreters — running on iOS, Android, web, desktop, and CLI. Try it live in your browser with your own API key.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="bg" aria-hidden="true"></div>
+
+<header class="nav">
+  <a class="brand" href="#top">
+    <span class="brand-mark" aria-hidden="true">&gt;_</span>
+    <span class="brand-name">fah</span>
+    <span class="brand-sub">flutter_agent_harness</span>
+  </a>
+  <nav class="nav-links" aria-label="Sections">
+    <a href="#demo">Demo</a>
+    <a href="#features">Features</a>
+    <a href="#platforms">Platforms</a>
+    <a href="#byok">BYOK</a>
+  </nav>
+  <nav class="nav-ext" aria-label="Project links">
+    <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
+    <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <!-- ── Hero ─────────────────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">flutter_agent_harness · Dart &amp; Flutter</p>
+      <h1>One agent harness.<br><span class="grad">Every device.</span></h1>
+      <p class="lede">
+        fah is a coding agent with a real tool loop — a sandboxed shell, git,
+        interpreters, and a file browser — built on a pure-Dart core that runs
+        on iOS, Android, web, desktop, and in your terminal. Same harness,
+        same tools, everywhere. This page is the proof: the app below runs
+        entirely in your browser.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#demo">▶ Try it in your browser</a>
+        <a class="btn" href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
+        <a class="btn" href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
+      </div>
+      <ul class="pills" aria-label="Supported platforms">
+        <li>iOS</li><li>Android</li><li>Web</li><li>macOS</li>
+        <li>Windows</li><li>Linux</li><li>CLI</li>
+      </ul>
+    </div>
+
+    <div class="term" role="img" aria-label="Animated terminal session of the fah agent">
+      <div class="term-bar" aria-hidden="true">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="term-title">fah — web sandbox</span>
+      </div>
+      <pre class="term-body"><code id="term-lines"></code><span class="caret" id="caret">&nbsp;</span></pre>
+      <noscript><pre class="term-body"><code>$ fah — enable JavaScript for the demo reel, or just scroll down and use the real thing.</code></pre></noscript>
+    </div>
+  </section>
+
+  <!-- ── Live demo ────────────────────────────────────────────────────── -->
+  <section id="demo" class="demo reveal">
+    <p class="kicker">Live demo</p>
+    <h2>Try it right here.</h2>
+    <p class="section-lede">
+      The full agent app as static files — no server, no account. Pick a
+      provider, paste your own key, and put the agent to work. Its sandbox
+      shell (<code>curl</code>, <code>jq</code>, <code>rg</code>,
+      <code>git</code>, <code>python3</code>, <code>sqlite3</code>) runs in an
+      in-memory filesystem on your machine.
+    </p>
+    <div class="frame">
+      <div class="frame-bar" aria-hidden="true">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="frame-url">istin.github.io/flutter_agent_harness/app/</span>
+        <a class="frame-open" href="./app/" target="_blank" rel="noopener">Open full screen ↗</a>
+      </div>
+      <iframe src="./app/" title="fah agent — live web demo" loading="lazy"></iframe>
+    </div>
+    <p class="fineprint">
+      Bring your own key: it is held in memory only — never persisted, gone on
+      reload. OpenRouter works from browsers; some providers block
+      cross-origin calls (see <a href="#byok">BYOK</a>).
+    </p>
+  </section>
+
+  <!-- ── Features ─────────────────────────────────────────────────────── -->
+  <section id="features" class="features reveal">
+    <p class="kicker">Capabilities</p>
+    <h2>A real workbench, not a chat box.</h2>
+    <div class="grid">
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">$_</p>
+        <h3>A real shell in a sandbox</h3>
+        <p><code>curl</code> · <code>wget</code> · <code>jq</code> ·
+        <code>yq</code> · <code>rg</code> · <code>sed</code> ·
+        <code>awk</code> · <code>find</code> · <code>xargs</code> ·
+        <code>diff</code> · <code>patch</code> · <code>tar</code> ·
+        <code>zip</code>, plus <code>nslookup</code>/<code>dig</code>/<code>whois</code>.
+        On web it is a pure-Dart memory shell; on mobile the same commands run
+        as WASM (uutils coreutils + ripgrep).</p>
+      </article>
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">±</p>
+        <h3>git over HTTP/SSH</h3>
+        <p>Pure-Dart git: smart-HTTP clone and push, SSH remotes, commits and
+        diffs. No native binary — it works the same in a browser tab as on a
+        phone.</p>
+      </article>
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">&gt;&gt;&gt;</p>
+        <h3>python3 · qjs · sqlite3</h3>
+        <p>Interpreters stream in from a CDN on demand: Python 3 (with
+        <code>pip</code> installs into the sandbox), QuickJS, and SQLite via
+        sql.js. The agent picks the right tool for the job.</p>
+      </article>
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">***</p>
+        <h3>Secrets redaction</h3>
+        <p>Secret values never reach the model, the transcript, or session
+        files. The agent references them as <code>$NAME</code> in shell
+        commands; redaction hooks scrub tool output on the way back.</p>
+      </article>
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">▤</p>
+        <h3>File browser</h3>
+        <p>A live view of the exact filesystem the agent works in — browse,
+        preview, and watch files appear as the agent writes them. No hidden
+        state.</p>
+      </article>
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">↻</p>
+        <h3>Sessions + compaction</h3>
+        <p>Append-only JSONL session trees you can resume and fork, with
+        automatic LLM-powered compaction when the context window fills
+        up.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ── Platforms ────────────────────────────────────────────────────── -->
+  <section id="platforms" class="platforms reveal">
+    <p class="kicker">Runs everywhere</p>
+    <h2>One core, every form factor.</h2>
+    <p class="section-lede">
+      The harness is pure Dart — no <code>dart:io</code> in the core — so the
+      same agent loop, tools, and session format run behind any
+      <code>ExecutionEnv</code>: browser memory FS, phone sandbox, or your
+      host shell.
+    </p>
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>Platform</th><th>Form</th><th>Agent loop</th>
+            <th>Shell</th><th>Git</th><th>Interpreters</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Web <span class="muted">(this page)</span></td>
+            <td>Flutter app</td><td class="yes">✓</td>
+            <td>pure-Dart memory shell</td>
+            <td>HTTP/SSH <span class="muted">(dart_git)</span></td>
+            <td>python3 · qjs · sqlite3 <span class="muted">via CDN</span></td>
+          </tr>
+          <tr>
+            <td>iOS / Android</td>
+            <td>Flutter app</td><td class="yes">✓</td>
+            <td>WASM <span class="muted">(uutils, rg)</span></td>
+            <td class="yes">✓</td>
+            <td>WASM <span class="muted">(python, qjs, sqlite, lua)</span></td>
+          </tr>
+          <tr>
+            <td>macOS / Windows / Linux</td>
+            <td>Flutter app</td><td class="yes">✓</td>
+            <td>host shell</td>
+            <td class="yes">✓</td>
+            <td>host tools</td>
+          </tr>
+          <tr>
+            <td>CLI <span class="muted">(fah)</span></td>
+            <td>terminal REPL</td><td class="yes">✓</td>
+            <td>host shell</td>
+            <td>host git</td>
+            <td>host tools</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── BYOK ─────────────────────────────────────────────────────────── -->
+  <section id="byok" class="byok reveal">
+    <p class="kicker">BYOK</p>
+    <h2>Your key never leaves your browser.</h2>
+    <div class="grid grid-3">
+      <article class="card">
+        <h3>Straight to the provider</h3>
+        <p>API calls go directly from your machine to the provider. This page
+        is static files — there is no server, no proxy, and nothing in the
+        middle to log your key.</p>
+      </article>
+      <article class="card">
+        <h3>In-memory only</h3>
+        <p>The key lives in page memory: never persisted, never written to
+        localStorage, cookies, or disk — and gone on reload. The app's web
+        secrets store is in-memory by design.</p>
+      </article>
+      <article class="card">
+        <h3>CORS is the only catch</h3>
+        <p>The provider must allow cross-origin browser requests. OpenRouter
+        does. <code>api.anthropic.com</code> does not — reach Anthropic models
+        through OpenRouter instead. Self-hosted endpoints need CORS
+        headers.</p>
+      </article>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <p><span class="brand-mark" aria-hidden="true">&gt;_</span> fah —
+  flutter_agent_harness. MIT licensed, static files only.</p>
+  <nav aria-label="Footer links">
+    <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
+    <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
+    <a href="https://github.com/IstiN/flutter_agent_harness/blob/main/LICENSE" rel="noopener">License</a>
+    <a href="https://github.com/IstiN/flutter_agent_harness/issues" rel="noopener">Issues</a>
+  </nav>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>
