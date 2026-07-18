@@ -197,4 +197,8 @@
 
 - feat(example): web file upload + IndexedDB-persisted sandbox FS
 
+## 0.1.10
+
+- feat(site): capability comparison table (Browser/macOS/iOS/Android/Windows)
+
 ## Unreleased
