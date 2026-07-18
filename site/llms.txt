@@ -1,0 +1,29 @@
+# flutter_agent_harness (fah)
+
+> One agent harness, every device. fah is an open-source coding agent for Dart and
+> Flutter with a real tool loop: a sandboxed shell (curl, wget, jq, yq, rg, sed,
+> awk, find, xargs, diff/patch, tar/zip), git over HTTP and SSH, python3 and
+> sqlite3 running in the browser, secrets redaction, a file browser, and a
+> session tree with context compaction. It runs on iOS, Android, web, desktop,
+> and as a CLI.
+
+## Live demo
+
+- [Try fah in your browser](https://istin.github.io/flutter_agent_harness/app/):
+  bring your own key (BYOK). Keys are held in memory only — never persisted —
+  and calls go directly from the visitor's browser to the LLM provider.
+
+## Project
+
+- [GitHub repository](https://github.com/IstiN/flutter_agent_harness)
+- [pub.dev package](https://pub.dev/packages/flutter_agent_harness)
+- [Issue tracker](https://github.com/IstiN/flutter_agent_harness/issues)
+
+## Key facts
+
+- Written in Dart; the core library is pure Dart (no dart:io) and compiles to web.
+- Providers: OpenAI-compatible (incl. OpenRouter and Ollama Cloud), Anthropic, Google.
+- Web sandbox is a pure-Dart in-memory shell; mobile uses WASI binaries
+  (uutils coreutils, ripgrep, sed/awk, python3, sqlite3, lua) under an embedded
+  wasm runtime.
+- License: MIT. Published on pub.dev as `flutter_agent_harness`.
