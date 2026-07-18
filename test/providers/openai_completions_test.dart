@@ -548,6 +548,100 @@ void main() {
       },
     );
 
+    test('mid-stream network error becomes an error event', () async {
+      final controller = StreamController<List<int>>();
+      final client = http_testing.MockClient.streaming(
+        (request, body) async => http.StreamedResponse(
+          controller.stream,
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        ),
+      );
+
+      final source = CancelTokenSource();
+      final stream = streamOpenAICompletions(
+        testModel,
+        simpleContext(),
+        OpenAICompletionsOptions(apiKey: 'test-key', cancelToken: source.token),
+        client,
+      );
+
+      final events = <AssistantMessageEvent>[];
+      final consumed = stream.forEach(events.add);
+      controller.add(
+        utf8.encode(
+          sseChunk({
+            'choices': [
+              {
+                'delta': {'content': 'partial'},
+              },
+            ],
+          }),
+        ),
+      );
+      await pumpEventQueue();
+      controller.addError(http.ClientException('connection reset'));
+      await consumed;
+      unawaited(controller.close());
+
+      // The token is not cancelled, so the error propagates to the adapter's
+      // try/catch and surfaces as a regular error event.
+      final error = events.last as ErrorEvent;
+      expect(error.reason, StopReason.error);
+      expect(error.error.errorMessage, contains('connection reset'));
+      expect((error.error.content.single as TextContent).text, 'partial');
+    });
+
+    test('post-abort connection teardown error is swallowed', () async {
+      final controller = StreamController<List<int>>();
+      final client = http_testing.MockClient.streaming(
+        (request, body) async => http.StreamedResponse(
+          controller.stream,
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        ),
+      );
+
+      final source = CancelTokenSource();
+      final stream = streamOpenAICompletions(
+        testModel,
+        simpleContext(),
+        OpenAICompletionsOptions(apiKey: 'test-key', cancelToken: source.token),
+        client,
+      );
+
+      final events = <AssistantMessageEvent>[];
+      final consumed = stream.forEach(events.add);
+      controller.add(
+        utf8.encode(
+          sseChunk({
+            'choices': [
+              {
+                'delta': {'content': 'partial'},
+              },
+            ],
+          }),
+        ),
+      );
+      await pumpEventQueue();
+      source.cancel();
+      await consumed;
+
+      // Cancellation through the async* SseDecoder is lazy, so the response
+      // subscription is still active here. Mirrors what force-closing the
+      // owned HTTP client injects into the dying connection on a real abort
+      // (seen live against OpenRouter): it must not escape as an unhandled
+      // async error.
+      controller.addError(
+        http.ClientException('Connection closed while receiving data'),
+      );
+      await pumpEventQueue();
+      unawaited(controller.close());
+
+      final error = events.last as ErrorEvent;
+      expect(error.reason, StopReason.aborted);
+    });
+
     test(
       'CancelToken abort before sending ends with aborted stop reason',
       () async {

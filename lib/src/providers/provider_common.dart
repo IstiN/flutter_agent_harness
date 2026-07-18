@@ -227,12 +227,28 @@ Future<http.StreamedResponse> sendProviderRequest(
 
 /// Wires an SSE [StreamIterator] over [response]'s body, cancelling the
 /// subscription when [cancelToken] fires so the connection closes promptly.
+///
+/// Cancellation through the `async*` [SseDecoder] is lazy: the cancel future
+/// only completes once the generator body resumes, so the response-body
+/// subscription can still be active when `runProviderStream` force-closes
+/// the owned HTTP client on abort. The injected "connection closed" error
+/// is therefore swallowed here whenever [cancelToken] is cancelled; real
+/// mid-stream errors (token not cancelled) propagate to the adapter's
+/// try/catch unchanged.
 StreamIterator<ServerSentEvent> createSseIterator(
   http.StreamedResponse response,
   CancelToken? cancelToken,
 ) {
+  Stream<List<int>> stream = response.stream;
+  if (cancelToken != null) {
+    stream = stream.handleError((Object error) {
+      if (!cancelToken.isCancelled) {
+        throw error;
+      }
+    });
+  }
   final iterator = StreamIterator(
-    response.stream.transform(utf8.decoder).transform(const SseDecoder()),
+    stream.transform(utf8.decoder).transform(const SseDecoder()),
   );
   if (cancelToken != null) {
     unawaited(cancelToken.onCancel.then((_) => unawaited(iterator.cancel())));
