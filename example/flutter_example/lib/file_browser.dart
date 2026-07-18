@@ -6,8 +6,8 @@ import 'upload.dart';
 import 'upload_picker_stub.dart'
     if (dart.library.html) 'upload_picker_web.dart';
 
-/// Width of the file browser panel (side panel on wide layouts, drawer on
-/// narrow ones).
+/// Width of the file browser panel (right side panel on wide layouts, end
+/// drawer on narrow ones).
 const double kFileBrowserPanelWidth = 300;
 
 /// File browser over the agent's [ExecutionEnv].

@@ -13,13 +13,15 @@ import 'package:path_provider/path_provider.dart';
 import 'agent_service.dart';
 import 'app_theme.dart';
 import 'file_browser.dart';
+import 'session_sidebar.dart';
 import 'settings.dart';
 import 'upload.dart';
 import 'upload_picker_stub.dart'
     if (dart.library.html) 'upload_picker_web.dart';
 
-/// Minimum body width (logical px) at which the file browser becomes a
-/// persistent, collapsible left panel instead of a drawer.
+/// Minimum body width (logical px) at which the side panels (sessions/model
+/// on the left, files on the right) become persistent, collapsible panels
+/// instead of drawers.
 const double _kWideLayoutBreakpoint = 900;
 
 /// A chat UI backed by [AgentService], built on top of `flutter_chat_ui`.
@@ -58,6 +60,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isStreaming = false;
   String? _error;
 
+  /// Whether the left session/model sidebar is expanded (wide layouts only).
+  bool _leftPanelOpen = true;
+
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
 
@@ -66,13 +71,25 @@ class _ChatScreenState extends State<ChatScreen> {
   late final UploadPicker? _uploadPicker =
       widget.uploadPicker ?? createUploadPicker();
 
-  /// Opens the file browser: toggles the side panel on wide layouts, opens
-  /// the drawer on narrow ones. [context] must be below the [Scaffold].
+  /// Opens the session/model sidebar: toggles the side panel on wide
+  /// layouts, opens the drawer on narrow ones. [context] must be below the
+  /// [Scaffold].
+  void _openSidebar(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width >= _kWideLayoutBreakpoint) {
+      setState(() => _leftPanelOpen = !_leftPanelOpen);
+    } else {
+      Scaffold.of(context).openDrawer();
+    }
+  }
+
+  /// Opens the file browser: toggles the right side panel on wide layouts,
+  /// opens the end drawer on narrow ones. [context] must be below the
+  /// [Scaffold].
   void _openFiles(BuildContext context) {
     if (MediaQuery.sizeOf(context).width >= _kWideLayoutBreakpoint) {
       setState(() => _filesPanelOpen = !_filesPanelOpen);
     } else {
-      Scaffold.of(context).openDrawer();
+      Scaffold.of(context).openEndDrawer();
     }
   }
 
@@ -304,17 +321,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Opens the BYOK connection settings (gear icon). On a successful
-  /// reconnect the dialog returns a freshly-created [AgentService], which
-  /// replaces this screen.
+  /// Opens the BYOK connection settings (gear icon). Applying reconfigures
+  /// this screen's service in place (see [AgentService.reconfigure]) — the
+  /// visible transcript survives the backend switch.
   Future<void> _openSettings() async {
-    final service = await showDialog<AgentService>(
+    await showDialog<void>(
       context: context,
-      builder: (_) => const SettingsDialog(),
-    );
-    if (service == null || !mounted) return;
-    await Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => ChatScreen(service: service)),
+      builder: (_) => SettingsDialog(service: widget.service),
     );
   }
 
@@ -700,8 +713,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.sizeOf(context).width >= _kWideLayoutBreakpoint;
     return Scaffold(
       appBar: AppBar(
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            tooltip: 'Sessions & model',
+            onPressed: () => _openSidebar(context),
+          ),
+        ),
         title: const Text('fah'),
         actions: [
           if (_isStreaming)
@@ -723,41 +744,55 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: _copySession,
           ),
           IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'New session',
-            onPressed: widget.service.reset,
-          ),
-          IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Connection settings',
             onPressed: _openSettings,
           ),
         ],
       ),
-      drawer: Drawer(
-        width: kFileBrowserPanelWidth,
-        child: SafeArea(
-          child: FileBrowser(env: widget.service.env, inlinePreview: false),
-        ),
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final showPanel =
-              constraints.maxWidth >= _kWideLayoutBreakpoint && _filesPanelOpen;
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (showPanel) ...[
-                SizedBox(
-                  width: kFileBrowserPanelWidth,
-                  child: FileBrowser(env: widget.service.env),
+      drawer: isWide
+          ? null
+          : Drawer(
+              width: kSessionSidebarWidth,
+              child: SafeArea(
+                child: Builder(
+                  builder: (drawerContext) => SessionSidebar(
+                    service: widget.service,
+                    onAction: () => Scaffold.of(drawerContext).closeDrawer(),
+                  ),
                 ),
-                const VerticalDivider(width: 1),
-              ],
-              Expanded(child: _buildChatBody(context)),
-            ],
-          );
-        },
+              ),
+            ),
+      endDrawer: isWide
+          ? null
+          : Drawer(
+              width: kFileBrowserPanelWidth,
+              child: SafeArea(
+                child: FileBrowser(
+                  env: widget.service.env,
+                  inlinePreview: false,
+                ),
+              ),
+            ),
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (isWide && _leftPanelOpen) ...[
+            SizedBox(
+              width: kSessionSidebarWidth,
+              child: SessionSidebar(service: widget.service),
+            ),
+            const VerticalDivider(width: 1),
+          ],
+          Expanded(child: _buildChatBody(context)),
+          if (isWide && _filesPanelOpen) ...[
+            const VerticalDivider(width: 1),
+            SizedBox(
+              width: kFileBrowserPanelWidth,
+              child: FileBrowser(env: widget.service.env),
+            ),
+          ],
+        ],
       ),
     );
   }

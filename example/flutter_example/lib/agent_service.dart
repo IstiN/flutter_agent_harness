@@ -98,6 +98,8 @@ class AgentService extends ChangeNotifier {
     SecretRedactor? redactor,
   }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
     _responseTimeout = const Duration(seconds: 90);
+    _providerKind = _agent.state.model.provider;
+    _redactor = redactor;
     _attachRedactor(redactor);
     _agent.subscribe(_onAgentEvent);
   }
@@ -121,6 +123,8 @@ class AgentService extends ChangeNotifier {
     SecretRedactor? redactor,
   }) : sessionsRoot = '${env.cwd}/sessions',
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
+    _providerKind = config.providerKind;
+    _redactor = redactor;
     _responseTimeout = config.providerKind == webLlmProviderKind
         // First on-device generation compiles WebGPU shaders, which can take
         // minutes on large presets; hosted providers keep the tight timeout.
@@ -162,10 +166,23 @@ class AgentService extends ChangeNotifier {
 
   /// Response deadline for one agent run; 10 minutes for the on-device
   /// (WebLLM) provider (first run compiles WebGPU shaders), 90 s otherwise.
-  /// Assigned in `_withEnv`; the default covers the direct constructor.
-  late final Duration _responseTimeout;
+  /// Reassigned by [reconfigure] when the backend kind changes.
+  late Duration _responseTimeout;
   final JsonlSessionRepo _repo;
   final String sessionsRoot;
+
+  /// Provider adapter kind of the active backend (`openai-completions`,
+  /// `webllm`, ...). Updated by [reconfigure].
+  String get providerKind => _providerKind;
+  late String _providerKind;
+
+  /// Model id of the active backend (shorthand for the agent's current
+  /// model; updated by [reconfigure]).
+  String get modelId => _agent.state.model.id;
+
+  /// Redactor captured at construction so [reconfigure] can rebuild the
+  /// system prompt's secret-name hint.
+  SecretRedactor? _redactor;
 
   /// The execution environment the agent's tools (and session storage) run
   /// against. Exposed so UI affordances — the file browser — show the exact
@@ -179,12 +196,16 @@ class AgentService extends ChangeNotifier {
   String? error;
 
   Session? _session;
+  String? _sessionId;
   int _persistedCount = 0;
   FahChatMessage? _currentAssistantMessage;
 
+  /// Id of the session new messages persist to (`null` until [initialize]).
+  String? get currentSessionId => _sessionId;
+
   /// Initializes session persistence.
   Future<void> initialize() async {
-    _session = await _repo.create(
+    final session = await _repo.create(
       JsonlSessionCreateOptions(
         cwd: _agent.state.model.provider,
         metadata: {
@@ -193,6 +214,8 @@ class AgentService extends ChangeNotifier {
         },
       ),
     );
+    _session = session;
+    _sessionId = (await session.getMetadata()).id;
   }
 
   /// Sends a plain-text user message.
@@ -256,6 +279,107 @@ class AgentService extends ChangeNotifier {
     _currentAssistantMessage = null;
     await initialize();
     notifyListeners();
+  }
+
+  /// Switches the backend (provider/model/key) for subsequent messages while
+  /// keeping the visible transcript and the current session.
+  ///
+  /// Any in-flight run is aborted first and awaited, so no zombie stream
+  /// survives the switch; the deliberate abort's error banner is cleared.
+  /// The [Agent] itself is reused — only its model, system prompt, and
+  /// stream function are swapped — so tool wiring and the transcript live
+  /// on. For WebLLM the settings form has already run `loadModel` (the
+  /// engine is a singleton), so the new stream function reuses the warm
+  /// instance. The switch is recorded as a `model_change` session record.
+  Future<void> reconfigure(AgentConfig config) async {
+    abort();
+    await waitForIdle();
+    _agent.state.model = config.toModel();
+    _agent.state.systemPrompt = _effectiveSystemPrompt(config, _redactor);
+    _agent.streamFunction = config.providerKind == webLlmProviderKind
+        ? webLlmStreamFunction(createWebLlmService())
+        : providerStreamFunction(config.providerKind, config.apiKey);
+    _providerKind = config.providerKind;
+    _responseTimeout = config.providerKind == webLlmProviderKind
+        ? const Duration(minutes: 10)
+        : const Duration(seconds: 90);
+    error = null;
+    notifyListeners();
+    // Best effort: a failed marker write must not break the switch.
+    try {
+      await _session?.appendModelChange(
+        provider: config.providerKind,
+        modelId: config.modelId,
+      );
+    } on Object {
+      // Session persistence is best effort here.
+    }
+  }
+
+  /// Lists persisted sessions, newest first (across all provider dirs under
+  /// [sessionsRoot]). Cheap: reads only the JSONL headers.
+  Future<List<SessionMetadata>> listSessions() => _repo.list();
+
+  /// Loads a persisted session into the chat: the agent's context and the
+  /// visible transcript are replaced by the session's active branch, and new
+  /// messages append to that session.
+  Future<void> loadSession(SessionMetadata metadata) async {
+    abort();
+    await waitForIdle();
+    final session = await _repo.open(metadata);
+    final contextMessages = await session.buildContextMessages();
+    _agent.reset();
+    _agent.state.messages = contextMessages;
+    _session = session;
+    _sessionId = metadata.id;
+    _persistedCount = contextMessages.length;
+    _currentAssistantMessage = null;
+    error = null;
+    messages
+      ..clear()
+      ..addAll(contextMessages.map(_toChatMessage));
+    notifyListeners();
+  }
+
+  /// Projects a persisted context [Message] back into the UI transcript.
+  static FahChatMessage _toChatMessage(Message message) {
+    switch (message) {
+      case UserMessage(:final content):
+        if (content is String) {
+          return FahChatMessage(role: 'user', content: content);
+        }
+        final blocks = content as List<ContentBlock>;
+        Uint8List? imageBytes;
+        for (final block in blocks.whereType<ImageContent>()) {
+          imageBytes = base64Decode(block.data);
+          break;
+        }
+        return FahChatMessage(
+          role: 'user',
+          content: blocks
+              .whereType<TextContent>()
+              .map((b) => b.text)
+              .join('\n'),
+          imageBytes: imageBytes,
+        );
+      case AssistantMessage(:final content):
+        return FahChatMessage(
+          role: 'assistant',
+          content: content.whereType<TextContent>().map((b) => b.text).join(),
+        );
+      case ToolResultMessage(:final content, :final toolName, :final isError):
+        return FahChatMessage(
+          role: 'tool',
+          content: content
+              .whereType<TextContent>()
+              .map((b) => b.text)
+              .join('\n'),
+          toolName: toolName,
+          isError: isError,
+        );
+      default:
+        return FahChatMessage(role: 'system', content: message.toString());
+    }
   }
 
   void _addUserMessage({

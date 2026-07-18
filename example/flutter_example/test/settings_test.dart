@@ -185,7 +185,7 @@ void main() {
       expect(find.text('OpenRouter'), findsOneWidget);
       expect(find.textContaining('never persisted'), findsOneWidget);
       expect(find.textContaining('gone on reload'), findsOneWidget);
-      expect(find.text('Reconnect'), findsOneWidget);
+      expect(find.text('Apply'), findsOneWidget);
     });
 
     testWidgets('dialog validates the key without touching the network', (
@@ -198,7 +198,7 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Reconnect'));
+      await tester.tap(find.text('Apply'));
       await tester.pump();
 
       expect(find.text('API key is required'), findsOneWidget);
