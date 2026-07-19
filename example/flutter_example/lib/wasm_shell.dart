@@ -16,6 +16,7 @@ import 'package:wasm_run/wasm_run.dart';
 
 import 'sandbox_builtins.dart';
 import 'sandbox_pip.dart';
+import 'sandbox_registry.dart';
 import 'shell_parser.dart';
 import 'wasm_shell_git.dart';
 import 'wasm_shell_ssh.dart';
@@ -226,148 +227,20 @@ final class WasiSandboxShell implements Shell {
     );
   }
 
-  /// Applets exported by the `coreutils.wasm` multicall binary.
-  static const Set<String> _coreutilsApplets = {
-    'arch',
-    'b2sum',
-    'base32',
-    'base64',
-    'basename',
-    'basenc',
-    'cat',
-    'cksum',
-    'comm',
-    'cp',
-    'csplit',
-    'cut',
-    'date',
-    'dd',
-    'dir',
-    'dircolors',
-    'dirname',
-    'echo',
-    'expand',
-    'factor',
-    'false',
-    'fmt',
-    'fold',
-    'head',
-    'join',
-    'link',
-    'ln',
-    'ls',
-    'md5sum',
-    'mkdir',
-    'mktemp',
-    'mv',
-    'nl',
-    'nproc',
-    'numfmt',
-    'od',
-    'paste',
-    'pathchk',
-    'pr',
-    'printenv',
-    'printf',
-    'ptx',
-    'pwd',
-    'readlink',
-    'realpath',
-    'rm',
-    'rmdir',
-    'seq',
-    'sha1sum',
-    'sha224sum',
-    'sha256sum',
-    'sha384sum',
-    'sha512sum',
-    'shred',
-    'shuf',
-    'sleep',
-    'sort',
-    'split',
-    'sum',
-    'tail',
-    'tee',
-    'touch',
-    'tr',
-    'true',
-    'truncate',
-    'tsort',
-    'tty',
-    'uname',
-    'unexpand',
-    'uniq',
-    'unlink',
-    'vdir',
-    'wc',
-    'yes',
-  };
+  /// Applets exported by the `coreutils.wasm` multicall binary:
+  /// [mobileCoreutilsApplets] from the central registry
+  /// (`sandbox_registry.dart`).
+  static const Set<String> _coreutilsApplets = mobileCoreutilsApplets;
 
-  /// Shell builtins implemented in Dart. These do not need a WASM module and
-  /// do not increase the IPA size.
-  static const Set<String> _builtinCommands = {
-    'curl',
-    'wget',
-    'git',
-    'jq',
-    'yq',
-    'env',
-    'test',
-    '[',
-    'which',
-    'command',
-    'whoami',
-    'xargs',
-    'tr',
-    'cd',
-    'pwd',
-    'export',
-    'unset',
-    'grep',
-    'du',
-    'stat',
-    'tac',
-    'expr',
-    'id',
-    'relpath',
-    'diff',
-    'patch',
-    'nslookup',
-    'dig',
-    'whois',
-    'ssh',
-    'scp',
-    'sftp',
-    'tree',
-    'file',
-    'xz',
-    'unxz',
-    'bzip2',
-    'bunzip2',
-    'pip',
-    'pip3',
-  };
+  /// Shell builtins implemented in Dart ([mobileBuiltinCommands] from the
+  /// central registry). These do not need a WASM module and do not increase
+  /// the IPA size.
+  static const Set<String> _builtinCommands = mobileBuiltinCommands;
 
   /// Whether [command] can be resolved to a WASM applet or a builtin.
   bool _isCommandAvailable(String command) {
     return _coreutilsApplets.contains(command) ||
-        const {
-          'rg',
-          'find',
-          'sed',
-          'awk',
-          'tar',
-          'gzip',
-          'zip',
-          'unzip',
-          'python',
-          'python3',
-          'qjs',
-          'js',
-          'sqlite3',
-          'lua',
-        }.contains(command) ||
+        mobileModuleCommands.contains(command) ||
         _builtinCommands.contains(command);
   }
 

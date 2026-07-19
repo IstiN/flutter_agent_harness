@@ -10,6 +10,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
 import 'sandbox_builtins.dart';
+import 'sandbox_registry.dart';
 import 'shell_parser.dart';
 import 'web_git.dart';
 import 'web_interpreters_stub.dart'
@@ -70,85 +71,10 @@ final class MemoryShell implements Shell {
   String? _lastStdout;
   String? _lastStderr;
 
-  /// Commands available in the sandbox, used by `which`/`command -v` and to
-  /// decide between execution and "command not found".
-  static const Set<String> _availableCommands = {
-    'awk',
-    'base64',
-    'basename',
-    'bunzip2',
-    'bzip2',
-    'cat',
-    'cd',
-    'command',
-    'cp',
-    'curl',
-    'diff',
-    'dig',
-    'dirname',
-    'echo',
-    'env',
-    'export',
-    'false',
-    'file',
-    'find',
-    'git',
-    'grep',
-    'gunzip',
-    'gzip',
-    'head',
-    'jq',
-    'js',
-    'ls',
-    'lua',
-    'md5sum',
-    'mkdir',
-    'mv',
-    'nslookup',
-    'patch',
-    'pip',
-    'pip3',
-    'printf',
-    'pwd',
-    'python',
-    'python3',
-    'qjs',
-    'realpath',
-    'rg',
-    'rm',
-    'rmdir',
-    'scp',
-    'sed',
-    'sftp',
-    'sha1sum',
-    'sha224sum',
-    'sha256sum',
-    'sha384sum',
-    'sha512sum',
-    'sort',
-    'sqlite3',
-    'ssh',
-    'tail',
-    'tar',
-    'test',
-    'touch',
-    'tr',
-    'tree',
-    'true',
-    'unset',
-    'unxz',
-    'unzip',
-    'wc',
-    'wget',
-    'which',
-    'whoami',
-    'whois',
-    'xargs',
-    'xz',
-    'yq',
-    'zip',
-    '[',
-  };
+  /// Commands available in the sandbox: [webShellCommandNames] from the
+  /// central registry (`sandbox_registry.dart`), used by `which`/`command -v`
+  /// and to decide between execution and "command not found".
+  static const Set<String> _availableCommands = webShellCommandNames;
 
   /// Checksum commands dispatched to [_hashsum].
   static const _hashCommands = {
