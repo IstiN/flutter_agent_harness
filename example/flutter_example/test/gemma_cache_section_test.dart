@@ -154,7 +154,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.textContaining('available in the web and iOS/Android builds'),
+        find.textContaining('available in the iOS/Android builds only'),
         findsOneWidget,
       );
       expect(find.text('On-device models (Gemma)'), findsNothing);

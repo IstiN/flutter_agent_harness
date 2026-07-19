@@ -144,6 +144,21 @@ shell works on iOS, Android, and web without spawning host processes.
   browser's CacheStorage on first use; model libraries come from
   https://github.com/mlc-ai/binary-mlc-llm-libs. Nothing is bundled into
   the app; the stream helper is `web/webllm_helpers.js`.
+- @huggingface/transformers 4.2.0 (Apache-2.0) —
+  https://github.com/huggingface/transformers.js
+  Imported as an ES module from jsdelivr by `web/index.html` (exposed as
+  `window.transformersjs`) when the "On-device (Gemma, transformers.js)"
+  provider is selected. Runs models via ONNX Runtime Web (WebGPU);
+  onnxruntime-web 1.26.x (MIT) — https://github.com/microsoft/onnxruntime —
+  loads from jsdelivr automatically (WASM/WebGPU assets). Nothing is bundled
+  into the app; the helpers are `web/transformers_js_helpers.js`.
+- onnx-community/gemma-4-E2B-it-ONNX (Apache-2.0 export of
+  google/gemma-4-E2B-it, which is subject to Google's Gemma Terms of Use) —
+  https://huggingface.co/onnx-community/gemma-4-E2B-it-ONNX
+  Public model repo: q4f16 ONNX weights (text + vision encoder, ~3.2 GB)
+  download from huggingface.co into the browser's CacheStorage
+  (`transformers-cache`) on first use of the transformers.js provider. No
+  HuggingFace token needed.
 
 ## Pure-Dart packages (web sandbox shell)
 

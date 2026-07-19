@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -9,6 +9,9 @@ import 'gemma/gemma_cache_section.dart';
 import 'gemma/gemma_service.dart';
 import 'gemma/gemma_types.dart';
 import 'provider_registry.dart';
+import 'transformers_js/transformers_js_cache_section.dart';
+import 'transformers_js/transformers_js_service.dart';
+import 'transformers_js/transformers_js_types.dart';
 import 'webllm/webllm_cache_section.dart';
 import 'webllm/webllm_service.dart';
 import 'webllm/webllm_types.dart';
@@ -36,8 +39,10 @@ String settingsEnv(String name, String fallback) {
 /// A bring-your-own-key provider preset. Hosted presets talk to an
 /// OpenAI-compatible chat-completions endpoint; [webllm] runs a small model
 /// on-device in the browser (no key, no endpoint); [gemma] runs Gemma 4
-/// on-device via the `flutter_gemma` plugin — on iOS/Android and on web
-/// (hidden on desktop — see [gemmaProviderSupported]).
+/// on-device via the `flutter_gemma` plugin on iOS/Android (hidden
+/// elsewhere — see [gemmaProviderSupported]); [transformersJs] runs Gemma 4
+/// ONNX on-device in the browser via `@huggingface/transformers`
+/// (web-only — see [transformersJsProviderSupported]).
 ///
 /// Presets are built-in and cannot be deleted; user-added providers
 /// ([CustomProvider], managed by [ProviderRegistry]) appear in the same
@@ -55,7 +60,12 @@ enum ProviderPreset {
   ),
   custom(label: 'Custom', baseUrl: null, defaultModel: ''),
   webllm(label: 'On-device (WebLLM)', baseUrl: null, defaultModel: ''),
-  gemma(label: 'On-device (Gemma)', baseUrl: null, defaultModel: '');
+  gemma(label: 'On-device (Gemma)', baseUrl: null, defaultModel: ''),
+  transformersJs(
+    label: 'On-device (Gemma, transformers.js)',
+    baseUrl: null,
+    defaultModel: '',
+  );
 
   const ProviderPreset({
     required this.label,
@@ -79,7 +89,9 @@ enum ProviderPreset {
   /// Whether this preset is an on-device provider, which replaces the
   /// key/model/URL fields with a model picker and a download bar.
   bool get isOnDevice =>
-      this == ProviderPreset.webllm || this == ProviderPreset.gemma;
+      this == ProviderPreset.webllm ||
+      this == ProviderPreset.gemma ||
+      this == ProviderPreset.transformersJs;
 
   /// Shown under the form for providers that may reject browser (CORS)
   /// calls. OpenRouter allows cross-origin browser requests, so it has no
@@ -94,7 +106,9 @@ enum ProviderPreset {
       'Any OpenAI-compatible endpoint. The provider must allow browser '
           '(CORS) requests — api.anthropic.com does not, so reach Anthropic '
           'models via OpenRouter instead.',
-    ProviderPreset.webllm || ProviderPreset.gemma => null,
+    ProviderPreset.webllm ||
+    ProviderPreset.gemma ||
+    ProviderPreset.transformersJs => null,
   };
 
   /// Infers a preset from a configured base URL (for env-prefilled setups).
@@ -121,6 +135,8 @@ class AgentSettingsForm extends StatefulWidget {
     this.connectLabel = 'Start chat',
     this.registry,
     this.gemmaEngine,
+    this.transformersJsEngine,
+    this.isWeb,
   });
 
   /// Called with the assembled [AgentConfig]. Throw to surface an error in
@@ -138,6 +154,16 @@ class AgentSettingsForm extends StatefulWidget {
   /// Engine override for the on-device Gemma provider (tests); defaults to
   /// the platform singleton.
   final GemmaEngineApi? gemmaEngine;
+
+  /// Engine override for the on-device transformers.js provider (tests);
+  /// defaults to the platform singleton.
+  final TransformersJsEngineApi? transformersJsEngine;
+
+  /// Platform override for tests (host tests run with `kIsWeb == false`, so
+  /// the web-only provider visibility — [transformersJsProviderVisible],
+  /// [gemmaProviderVisible] — is exercised through this seam, the same
+  /// pattern as `GemmaCacheSection.isWeb`).
+  final bool? isWeb;
 
   @override
   State<AgentSettingsForm> createState() => _AgentSettingsFormState();
@@ -160,6 +186,15 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
 
   /// Selected on-device model (only meaningful for [ProviderPreset.gemma]).
   GemmaModelPreset _gemmaModel = gemmaModelPresets.first;
+
+  /// Selected on-device model (only meaningful for
+  /// [ProviderPreset.transformersJs]).
+  TransformersJsModelPreset _transformersJsModel =
+      transformersJsModelPresets.first;
+
+  /// Web-ness of the platform (overridable for tests — see
+  /// [AgentSettingsForm.isWeb]).
+  late final bool _isWeb = widget.isWeb ?? kIsWeb;
 
   /// Engine-init progress while the on-device model downloads/compiles.
   double? _loadFraction;
@@ -205,6 +240,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   bool get _isOnDevice => _selection == ProviderPreset.webllm;
 
   bool get _isGemma => _selection == ProviderPreset.gemma;
+
+  bool get _isTransformersJs => _selection == ProviderPreset.transformersJs;
 
   bool get _hasEditableBaseUrl =>
       _selection is CustomProvider || _selection == ProviderPreset.custom;
@@ -350,6 +387,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
     if (_isGemma) {
       return _connectGemma();
+    }
+    if (_isTransformersJs) {
+      return _connectTransformersJs();
     }
     final key = _keyController.text.trim();
     final model = _modelController.text.trim();
@@ -509,6 +549,62 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
   }
 
+  /// On-device transformers.js connect: downloads/compiles the selected
+  /// model (showing download progress in the form) before handing over to
+  /// [onConnect]. The engine is a singleton, so the stream function reuses
+  /// this warm instance — the first chat turn does not pay the load again.
+  /// No HuggingFace token: the ONNX repos are public.
+  Future<void> _connectTransformersJs() async {
+    final preset = _transformersJsModel;
+    final service =
+        widget.transformersJsEngine ?? createTransformersJsService();
+    setState(() {
+      _loading = true;
+      _error = null;
+      _loadFraction = null;
+      _loadStatus = null;
+    });
+    StreamSubscription<TransformersJsProgress>? progressSub;
+    try {
+      progressSub = service.progressEvents.listen((report) {
+        if (!mounted) return;
+        setState(() {
+          _loadFraction = report.fraction;
+          _loadStatus = report.text;
+        });
+      });
+      await service.loadModel(preset);
+      if (!mounted) return;
+      await widget.onConnect(
+        AgentConfig(
+          providerKind: transformersJsProviderKind,
+          modelId: preset.id,
+          baseUrl: '',
+          apiKey: '',
+          // No provider-specific system prompt: the default sandbox prompt
+          // (identity + capabilities) applies, and the prompt-tools wrapper
+          // appends the tool instructions upstream.
+          contextWindow: preset.contextWindow,
+          maxTokens: 1024,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e is StateError ? e.message : e.toString());
+      }
+    } finally {
+      // See _connectWebLlm: not awaited on purpose.
+      unawaited(progressSub?.cancel());
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFraction = null;
+          _loadStatus = null;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -531,8 +627,15 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           decoration: const InputDecoration(labelText: 'Provider'),
           items: [
             for (final preset in ProviderPreset.values)
-              // Gemma runs on web + iOS/Android; hidden on desktop.
-              if (preset != ProviderPreset.gemma || gemmaProviderSupported)
+              // Gemma runs on iOS/Android only (on web the transformers.js
+              // provider replaces it); transformers.js is web-only.
+              if ((preset != ProviderPreset.gemma ||
+                      gemmaProviderVisible(
+                        isWeb: _isWeb,
+                        platform: defaultTargetPlatform,
+                      )) &&
+                  (preset != ProviderPreset.transformersJs ||
+                      transformersJsProviderVisible(isWeb: _isWeb)))
                 DropdownMenuItem(value: preset, child: Text(preset.label)),
             for (final provider in _registry.providers)
               DropdownMenuItem(
@@ -573,6 +676,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           _buildWebLlmFields(theme)
         else if (_isGemma)
           _buildGemmaFields(theme)
+        else if (_isTransformersJs)
+          _buildTransformersJsFields(theme)
         else ...[
           TextField(
             controller: _keyController,
@@ -652,7 +757,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           ),
         FilledButton(
           onPressed: _loading ? null : _connect,
-          child: _loading && !_isOnDevice && !_isGemma
+          child: _loading && !_isOnDevice && !_isGemma && !_isTransformersJs
               ? const SizedBox(
                   width: 20,
                   height: 20,
@@ -783,6 +888,81 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             Expanded(
               child: Text(
                 gemmaStorageNote(isWeb: kIsWeb, preset: _gemmaModel),
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+        if (_loading) ...[
+          const SizedBox(height: 12),
+          LinearProgressIndicator(value: _loadFraction),
+          const SizedBox(height: 4),
+          Text(
+            _loadStatus != null && _loadStatus!.isNotEmpty
+                ? _loadStatus!
+                : 'Downloading model weights…',
+            style: theme.textTheme.bodySmall,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// The on-device (transformers.js) replacement for the key/model/URL
+  /// fields: a model picker over [transformersJsModelPresets], the
+  /// offline/WebGPU note, and — while a load is in flight — the download
+  /// progress bar. No token field: the ONNX repos are public.
+  Widget _buildTransformersJsFields(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<TransformersJsModelPreset>(
+          initialValue: _transformersJsModel,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'On-device model'),
+          items: [
+            for (final preset in transformersJsModelPresets)
+              DropdownMenuItem(
+                value: preset,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${preset.displayName} · ${preset.sizeLabel}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (preset.supportsVision) ...[
+                      const _VisionBadge(),
+                      const SizedBox(width: 4),
+                    ],
+                    const _ToolsBadge(),
+                  ],
+                ),
+              ),
+          ],
+          onChanged: _loading
+              ? null
+              : (preset) {
+                  if (preset == null) return;
+                  setState(() => _transformersJsModel = preset);
+                },
+        ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Runs fully offline after download · needs WebGPU '
+                '(Chrome/Edge/newer Safari) · weights download once from '
+                'HuggingFace (public repo, no token) and are cached in your '
+                'browser',
                 style: theme.textTheme.bodySmall,
               ),
             ),
@@ -992,6 +1172,7 @@ class SettingsDialog extends StatelessWidget {
     this.registry,
     this.webLlmEngine,
     this.gemmaEngine,
+    this.transformersJsEngine,
   });
 
   /// The service whose backend the form reconfigures.
@@ -1008,6 +1189,10 @@ class SettingsDialog extends StatelessWidget {
   /// (tests); defaults to the platform singleton.
   final GemmaEngineApi? gemmaEngine;
 
+  /// Engine override for the on-device transformers.js provider and its
+  /// cache section (tests); defaults to the platform singleton.
+  final TransformersJsEngineApi? transformersJsEngine;
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -1023,6 +1208,7 @@ class SettingsDialog extends StatelessWidget {
                 connectLabel: 'Apply',
                 registry: registry,
                 gemmaEngine: gemmaEngine,
+                transformersJsEngine: transformersJsEngine,
                 onConnect: (config) async {
                   await service.reconfigure(config);
                   if (context.mounted) Navigator.of(context).pop();
@@ -1032,8 +1218,18 @@ class SettingsDialog extends StatelessWidget {
               const Divider(),
               const SizedBox(height: 8),
               WebLlmCacheSection(engine: webLlmEngine),
-              const SizedBox(height: 16),
-              GemmaCacheSection(engine: gemmaEngine),
+              // The transformers.js section is web-only (its provider is);
+              // the Gemma section hides where its provider is unsupported —
+              // on web the litert-lm path is abandoned in favour of
+              // transformers.js, on desktop neither exists.
+              if (transformersJsProviderSupported) ...[
+                const SizedBox(height: 16),
+                TransformersJsCacheSection(engine: transformersJsEngine),
+              ],
+              if (gemmaProviderSupported) ...[
+                const SizedBox(height: 16),
+                GemmaCacheSection(engine: gemmaEngine),
+              ],
             ],
           ),
         ),
@@ -1069,6 +1265,31 @@ class _ToolsBadge extends StatelessWidget {
         'tools via prompt',
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onPrimaryContainer,
+        ),
+      ),
+    );
+  }
+}
+
+/// The small "vision" chip shown next to transformers.js presets that load
+/// a vision encoder and accept image inputs
+/// ([TransformersJsModelPreset.supportsVision]).
+class _VisionBadge extends StatelessWidget {
+  const _VisionBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        'vision',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onTertiaryContainer,
         ),
       ),
     );

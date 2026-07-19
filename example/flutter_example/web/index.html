@@ -103,6 +103,9 @@
   <!-- Stream helper for the on-device WebLLM provider (plain script so the
        Dart side can call it even while the module below is still loading). -->
   <script src="webllm_helpers.js"></script>
+  <!-- Helpers for the on-device transformers.js provider (plain script, same
+       reasoning as webllm_helpers.js). -->
+  <script src="transformers_js_helpers.js"></script>
   <!-- WebLLM (@mlc-ai/web-llm, pinned): runs small LLMs on-device via WebGPU.
        Loaded as an ES module from jsdelivr and exposed as window.webllm for
        the Dart side (lib/webllm/). Version matches the interop bindings.
@@ -112,12 +115,25 @@
     import * as webllm from 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm';
     window.webllm = webllm;
   </script>
-  <!-- LiteRT-LM web engine for the on-device Gemma provider (.litertlm models
-       via @litert-lm/core, pinned — the version matches the interop in
-       flutter_gemma_litertlm 1.1.0). The ESM does not assign window globals
-       and module scripts are deferred, so the plugin's Dart side awaits the
-       window.litertLmReady handshake before any static Engine interop (see
-       lib/gemma/ and the flutter_gemma README "Web .litertlm setup"). -->
+  <!-- Transformers.js (@huggingface/transformers, pinned): runs Gemma 4 ONNX
+       on-device via ONNX Runtime Web + WebGPU — the web on-device Gemma path
+       (lib/transformers_js/), replacing the litert-lm web engine below.
+       v3.x has no Gemma 4 support, so this pins 4.2.0 (the version family
+       the webml-community/Gemma-4-WebGPU space runs). Loaded as an ES module
+       from jsdelivr and exposed as window.transformersjs for the Dart side;
+       onnxruntime-web's WASM/WebGPU assets load from jsdelivr automatically.
+       Weights download from huggingface.co into CacheStorage on first use. -->
+  <script type="module">
+    import * as transformersjs from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/+esm';
+    window.transformersjs = transformersjs;
+  </script>
+  <!-- LiteRT-LM web engine, formerly used by the on-device Gemma provider.
+       DEAD on web since the transformers.js provider above replaced it (the
+       pinned @litert-lm/core 0.12.1 crashes creating the GPU executor for
+       the -web.litertlm builds, and newer engines break the flutter_gemma
+       web streaming pump) — kept only because removal touches the plugin's
+       awaited window.litertLmReady handshake; cleanup is tracked as
+       follow-up work. Mobile builds still use flutter_gemma via FFI. -->
   <script type="module">
     window.litertLmReady = (async () => {
       const m = await import('https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/+esm');

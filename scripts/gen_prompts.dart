@@ -118,6 +118,10 @@ const exampleSpecs = <PromptSpec>[
     source: 'example/flutter_example/prompts/webllm_no_tools_note.md',
     constName: 'webLlmNoToolsNote',
   ),
+  PromptSpec(
+    source: 'example/flutter_example/prompts/transformers_js_no_tools_note.md',
+    constName: 'transformersJsNoToolsNote',
+  ),
 ];
 
 /// A Markdown prompt file loaded and validated for generation.
