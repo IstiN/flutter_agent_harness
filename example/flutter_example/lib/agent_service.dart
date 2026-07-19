@@ -172,7 +172,11 @@ class AgentService extends ChangeNotifier {
       systemPrompt: _effectiveSystemPrompt(config, redactor),
       streamFunction: _streamFunctionFor(config),
       toolRegistry: ToolRegistry([
-        ...builtinTools(env, webSearch: webSearchConfig),
+        ...builtinTools(
+          env,
+          webSearch: webSearchConfig,
+          model: () => _agent.state.model,
+        ),
         askTool(callback: _answerAskQuestions),
       ]),
     );

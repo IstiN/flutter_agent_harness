@@ -39,6 +39,7 @@ import '../tools/ask_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
 import '../tools/inspect_image.dart';
+import '../tools/transcribe_audio.dart';
 import '../plugins/plugin.dart';
 import '../types.dart';
 import '../usage_summary.dart';
@@ -81,6 +82,7 @@ final class AgentCliConfig {
     this.providerKind = 'openai-completions',
     this.systemPrompt,
     this.visionConfig,
+    this.transcribeConfig,
     this.webSearchConfig,
     this.plugins = const [],
     this.pluginConfig = const {},
@@ -143,6 +145,14 @@ final class AgentCliConfig {
   ///
   /// Prefer using the `inspect_image` plugin via [plugins] / [pluginConfig].
   final InspectImageConfig? visionConfig;
+
+  /// Optional transcription endpoint configuration. When provided, the
+  /// `transcribe_audio` tool is registered and routes audio transcription to
+  /// a Whisper-compatible endpoint.
+  ///
+  /// Prefer using the `transcribe_audio` plugin via [plugins] /
+  /// [pluginConfig].
+  final TranscribeAudioConfig? transcribeConfig;
 
   /// Optional web search configuration. When provided, `web_search` and
   /// `web_fetch` are registered (see [builtinTools]); keyless DuckDuckGo
@@ -228,12 +238,18 @@ class AgentCli {
     }
 
     _toolRegistry = ToolRegistry([
-      ...builtinTools(config.env, webSearch: config.webSearchConfig),
+      ...builtinTools(
+        config.env,
+        webSearch: config.webSearchConfig,
+        model: () => _agent.state.model,
+      ),
       // Non-interactive input (piped) gets a null ask callback: ask calls
       // then fail with a "host cannot answer" error result (safe default).
       askTool(callback: io.isInteractive ? _answerAskQuestions : null),
       if (config.visionConfig != null)
         inspectImageTool(config.env, config.visionConfig!),
+      if (config.transcribeConfig != null)
+        transcribeAudioTool(config.env, config.transcribeConfig!),
       ...pluginTools,
     ]);
     _agent = Agent(

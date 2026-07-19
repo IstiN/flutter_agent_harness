@@ -15,11 +15,83 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../cancel_token.dart';
+import '../context.dart';
 import '../event_stream.dart';
 import '../json_parse.dart';
 import '../model.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
+
+/// Placeholder substituted for user-message images when the target model has
+/// no `image` input (pi's `NON_VISION_USER_IMAGE_PLACEHOLDER`).
+const nonVisionUserImagePlaceholder =
+    '(image omitted: model does not support images)';
+
+/// Placeholder substituted for tool-result images when the target model has
+/// no `image` input (pi's `NON_VISION_TOOL_IMAGE_PLACEHOLDER`).
+const nonVisionToolImagePlaceholder =
+    '(tool image omitted: model does not support images)';
+
+/// pi's `replaceImagesWithPlaceholder`: consecutive images collapse into a
+/// single placeholder, and a text block already equal to the placeholder
+/// suppresses a duplicate.
+List<ContentBlock> _replaceImagesWithPlaceholder(
+  List<ContentBlock> content,
+  String placeholder,
+) {
+  final result = <ContentBlock>[];
+  var previousWasPlaceholder = false;
+  for (final block in content) {
+    if (block is ImageContent) {
+      if (!previousWasPlaceholder) {
+        result.add(TextContent(text: placeholder));
+      }
+      previousWasPlaceholder = true;
+      continue;
+    }
+    result.add(block);
+    previousWasPlaceholder = block is TextContent && block.text == placeholder;
+  }
+  return result;
+}
+
+/// Replaces image blocks with explicit placeholder text when [model] has no
+/// `image` input, so nothing is dropped silently at request time.
+///
+/// Ported from the `downgradeUnsupportedImages` half of pi's
+/// `transformMessages` pre-pass (transform-messages.ts): user messages and
+/// tool results get distinct placeholders; the image bytes stay in the
+/// session transcript, only the request payload is rewritten. Each adapter
+/// runs this at the top of its message conversion.
+List<Message> downgradeUnsupportedImages(List<Message> messages, Model model) {
+  if (model.input.contains('image')) {
+    return messages;
+  }
+  return [
+    for (final message in messages)
+      if (message is UserMessage && message.content is List<ContentBlock>)
+        UserMessage(
+          content: _replaceImagesWithPlaceholder(
+            message.content as List<ContentBlock>,
+            nonVisionUserImagePlaceholder,
+          ),
+          timestamp: message.timestamp,
+        )
+      else if (message is ToolResultMessage)
+        ToolResultMessage(
+          toolCallId: message.toolCallId,
+          toolName: message.toolName,
+          content: _replaceImagesWithPlaceholder(
+            message.content,
+            nonVisionToolImagePlaceholder,
+          ),
+          isError: message.isError,
+          timestamp: message.timestamp,
+        )
+      else
+        message,
+  ];
+}
 
 /// Whether [headers] contains a non-empty value for [name]
 /// (case-insensitive).

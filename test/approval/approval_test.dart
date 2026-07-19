@@ -134,6 +134,14 @@ void main() {
       expect(tool.tier, ApprovalTier.read);
     });
 
+    test('transcribe_audio is read-tier', () {
+      final tool = transcribeAudioTool(
+        MemoryExecutionEnv(),
+        const TranscribeAudioConfig(apiKey: 'key'),
+      );
+      expect(tool.tier, ApprovalTier.read);
+    });
+
     test('custom tools default to exec (safe default)', () {
       final tool = AgentTool(
         name: 'custom',

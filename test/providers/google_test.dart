@@ -819,6 +819,88 @@ void main() {
       },
     );
 
+    test(
+      'non-vision model gets explicit placeholders instead of images',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+            200,
+          );
+        });
+
+        final textOnlyModel = Model(
+          id: 'gemini-text-only',
+          api: 'google-generative-ai',
+          provider: 'google',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          contextWindow: 1000000,
+          maxTokens: 8192,
+        );
+        final context = Context(
+          messages: [
+            ToolResultMessage(
+              toolCallId: 'call_1',
+              toolName: 'screenshot',
+              content: const [
+                TextContent(text: 'done'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            ),
+            UserMessage(
+              content: const [
+                TextContent(text: 'look:'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        );
+
+        final stream = streamGoogle(
+          textOnlyModel,
+          context,
+          const GoogleOptions(apiKey: 'test-key'),
+          client,
+        );
+        await stream.result;
+
+        final contents = capturedBody!['contents'] as List;
+        // Tool result: image replaced with the explicit tool placeholder;
+        // no trailing image user turn is emitted.
+        expect(contents[0], {
+          'role': 'user',
+          'parts': [
+            {
+              'functionResponse': {
+                'name': 'screenshot',
+                'response': {
+                  'output':
+                      'done\n(tool image omitted: model does not support '
+                      'images)',
+                },
+              },
+            },
+          ],
+        });
+        // User message: consecutive images collapse into ONE placeholder.
+        expect(contents[1], {
+          'role': 'user',
+          'parts': [
+            {'text': 'look:'},
+            {'text': '(image omitted: model does not support images)'},
+          ],
+        });
+        expect(contents, hasLength(2));
+      },
+    );
+
     test('consecutive tool results merge into one user turn', () async {
       Map<String, dynamic>? capturedBody;
       final client = http_testing.MockClient.streaming((request, body) async {

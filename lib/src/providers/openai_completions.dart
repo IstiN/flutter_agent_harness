@@ -592,7 +592,7 @@ List<Map<String, dynamic>> _convertMessages(
     params.add({'role': 'system', 'content': context.systemPrompt});
   }
 
-  final messages = context.messages;
+  final messages = downgradeUnsupportedImages(context.messages, model);
   for (var i = 0; i < messages.length; i++) {
     final message = messages[i];
     if (message is UserMessage) {
