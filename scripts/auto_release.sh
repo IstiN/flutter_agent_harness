@@ -17,6 +17,23 @@ set -euo pipefail
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+# Coalescing guards: pub.dev rate-limits publishes (~12/day), so releases are
+# capped at one per 2h; runs with nothing new since the last tag are skipped.
+git fetch origin main --tags --quiet
+last_tag=$(git describe --tags --abbrev=0 origin/main 2>/dev/null || true)
+if [ -n "$last_tag" ]; then
+  pending=$(git rev-list --count "$last_tag..origin/main")
+  if [ "$pending" -eq 0 ]; then
+    echo "Auto-release: nothing new since $last_tag, skipping."
+    exit 0
+  fi
+  tag_age=$(( $(date +%s) - $(git log -1 --format=%ct "$last_tag") ))
+  if [ "$tag_age" -lt 7200 ]; then
+    echo "Auto-release: coalesced — $last_tag is ${tag_age}s old (<2h); $pending commit(s) pending. Next eligible push or the 2h cron will release them."
+    exit 0
+  fi
+fi
+
 for attempt in 1 2 3; do
   git fetch origin main
   git reset --hard origin/main
