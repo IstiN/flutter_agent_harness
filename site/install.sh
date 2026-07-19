@@ -17,10 +17,10 @@
 # outside the Dart pub cache, and never reads or writes your API keys.
 #
 # Run it:
-#   curl -fsSL https://istin.github.io/flutter_agent_harness/install.sh | sh
+#   curl -fsSL https://fa1.dev/install.sh | sh
 #
 # Or inspect it first:
-#   curl -fsSL https://istin.github.io/flutter_agent_harness/install.sh -o install.sh
+#   curl -fsSL https://fa1.dev/install.sh -o install.sh
 #   less install.sh
 #   sh install.sh
 
@@ -49,7 +49,7 @@ if ! command -v dart >/dev/null 2>&1; then
   say ""
   say "Then re-run this installer:"
   say ""
-  say "    curl -fsSL https://istin.github.io/flutter_agent_harness/install.sh | sh"
+  say "    curl -fsSL https://fa1.dev/install.sh | sh"
   say ""
   exit 1
 fi

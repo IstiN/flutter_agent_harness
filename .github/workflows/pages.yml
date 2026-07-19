@@ -48,7 +48,7 @@ jobs:
         working-directory: example/flutter_example
         run: >-
           flutter build web --release
-          --base-href /flutter_agent_harness/app/
+          --base-href /app/
           --output ../../build/pages/app
 
       - name: Assemble Pages artifact

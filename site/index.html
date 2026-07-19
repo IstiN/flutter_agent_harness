@@ -1,13 +1,21 @@
 <!doctype html>
 <html lang="en">
 <head>
+<!-- Google tag (gtag.js). Replace G-XXXXXXXXXX with your GA4 Measurement ID. -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX');
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fa — one agent harness, every device | Flutter Agent Harness</title>
 <meta name="description" content="Fa (Flutter Agent Harness): a Dart/Flutter coding agent with a real sandbox shell, git, and interpreters — running on iOS, Android, web, desktop, and CLI. Try it live in your browser with your own API key.">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="theme-color" content="#070a10">
-<link rel="canonical" href="https://istin.github.io/flutter_agent_harness/">
+<link rel="canonical" href="https://fa1.dev/">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 
 <!-- Open Graph -->
@@ -15,8 +23,8 @@
 <meta property="og:site_name" content="flutter_agent_harness">
 <meta property="og:title" content="Fa — one agent harness, every device">
 <meta property="og:description" content="A coding agent with a real tool loop — sandboxed shell, git, python3 & sqlite in-browser, sessions and compaction. Try it live with your own API key.">
-<meta property="og:url" content="https://istin.github.io/flutter_agent_harness/">
-<meta property="og:image" content="https://istin.github.io/flutter_agent_harness/og-image.png">
+<meta property="og:url" content="https://fa1.dev/">
+<meta property="og:image" content="https://fa1.dev/og-image.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -26,7 +34,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Fa — one agent harness, every device">
 <meta name="twitter:description" content="A coding agent with a real tool loop — sandboxed shell, git, python3 & sqlite in-browser. Try it live with your own API key.">
-<meta name="twitter:image" content="https://istin.github.io/flutter_agent_harness/og-image.png">
+<meta name="twitter:image" content="https://fa1.dev/og-image.png">
 <meta name="twitter:image:alt" content="Fa — one agent harness, every device. Live coding-agent demo in the browser.">
 
 <link rel="stylesheet" href="styles.css">
@@ -38,7 +46,7 @@
   "name": "flutter_agent_harness",
   "alternateName": "Fa",
   "description": "Cross-platform AI agent harness for Dart and Flutter: streaming provider adapters, agent loop with tools, sandboxed shell, git, session persistence, and context compaction. Runs on iOS, Android, web, desktop, and CLI.",
-  "url": "https://istin.github.io/flutter_agent_harness/",
+  "url": "https://fa1.dev/",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "iOS, Android, Web, macOS, Windows, Linux",
   "license": "https://opensource.org/licenses/MIT",
@@ -120,7 +128,7 @@
     <div class="frame">
       <div class="frame-bar" aria-hidden="true">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="frame-url">istin.github.io/flutter_agent_harness/app/</span>
+        <span class="frame-url">fa1.dev/app/</span>
         <a class="frame-open" href="./app/" target="_blank" rel="noopener">Open full screen ↗</a>
       </div>
       <iframe src="./app/" title="Fa agent — live web demo" loading="lazy"></iframe>
@@ -148,7 +156,7 @@
         <span class="term-title">sh</span>
         <button class="copy-btn" type="button" data-copy-target="install-oneliner">Copy</button>
       </div>
-      <pre class="term-body"><code class="cmd" id="install-oneliner">curl -fsSL https://istin.github.io/flutter_agent_harness/install.sh | sh</code></pre>
+      <pre class="term-body"><code class="cmd" id="install-oneliner">curl -fsSL https://fa1.dev/install.sh | sh</code></pre>
     </div>
     <div class="grid grid-3 install-alts">
       <article class="card">
