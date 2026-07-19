@@ -13,6 +13,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_gemma/core/di/service_registry.dart';
+import 'package:flutter_gemma/core/services/model_repository.dart'
+    as model_repository;
 import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart';
 
@@ -32,14 +35,17 @@ GemmaEngineApi createGemmaService() => GemmaService.instance;
 /// [loadModel] creates the in-memory [InferenceModel]; [chatStream] opens a
 /// fresh `openChat` per turn.
 ///
-/// Web specifics: the plugin is initialized with
-/// `WebStorageMode.streaming`, so the download streams into the browser's
-/// OPFS storage (Gemma 4 E2B/E4B exceed Chrome's ~2 GB single-blob limit)
-/// and the `@litert-lm/core` engine consumes it as a `ReadableStream`. The
-/// plugin's web URL registry is in-memory only, so [loadModel] re-runs the
-/// idempotent install on web: after a page reload this re-registers the
-/// `opfs://` source from the OPFS cache without a download (and without the
-/// HuggingFace token, which is never persisted).
+/// Web specifics: web downloads the preset's `-web.litertlm` build
+/// ([GemmaModelPreset.webUrl]) — the mobile build's section layout crashes
+/// `@litert-lm/core` ("Streaming kTfLiteEmbedder models is not supported
+/// yet"). The plugin is initialized with `WebStorageMode.streaming`, so the
+/// download streams into the browser's OPFS storage (Gemma 4 E2B/E4B exceed
+/// Chrome's ~2 GB single-blob limit) and the `@litert-lm/core` engine
+/// consumes it as a `ReadableStream`. The plugin's web URL registry is
+/// in-memory only, so [loadModel] re-runs the idempotent install on web:
+/// after a page reload this re-registers the `opfs://` source from the OPFS
+/// cache without a download (and without the HuggingFace token, which is
+/// never persisted).
 final class GemmaService implements GemmaEngineApi {
   GemmaService._();
 
@@ -90,7 +96,7 @@ final class GemmaService implements GemmaEngineApi {
   Future<bool> isModelInstalled(GemmaModelPreset preset) async {
     _requireAvailable();
     await _ensureInitialized();
-    return FlutterGemma.isModelInstalled(preset.filename);
+    return FlutterGemma.isModelInstalled(preset.filenameFor(isWeb: kIsWeb));
   }
 
   @override
@@ -105,11 +111,16 @@ final class GemmaService implements GemmaEngineApi {
         : huggingFaceToken;
     // install() is idempotent: with the bundle already on disk it skips the
     // download and only re-marks the model active. That makes it double as
-    // the model-switch path when both presets are installed.
+    // the model-switch path when both presets are installed. The plugin
+    // keys the install under the URL's basename — on web that is the
+    // distinct `-web.litertlm` name, so a stale mobile-named OPFS entry is
+    // never mistaken for this install.
     await FlutterGemma.installModel(
       modelType: ModelType.gemma4,
       fileType: ModelFileType.litertlm,
-    ).fromNetwork(preset.url, token: token).withProgress((progress) {
+    ).fromNetwork(preset.urlFor(isWeb: kIsWeb), token: token).withProgress((
+      progress,
+    ) {
       _progress.add(
         GemmaProgress(
           fraction: progress / 100,
@@ -249,6 +260,46 @@ final class GemmaService implements GemmaEngineApi {
     _model = null;
     _loadedPreset = null;
     if (model != null) await model.close();
+  }
+
+  @override
+  Future<List<GemmaInstalledModel>> installedModels() async {
+    _requireAvailable();
+    await _ensureInitialized();
+    final repository = ServiceRegistry.instance.modelRepository;
+    return [
+      for (final model in await repository.listInstalled())
+        if (model.type == model_repository.ModelType.inference)
+          GemmaInstalledModel(filename: model.id, sizeBytes: model.sizeBytes),
+    ];
+  }
+
+  @override
+  Future<void> uninstall(String filename) async {
+    _requireAvailable();
+    await _ensureInitialized();
+    // Deleting the loaded/active model: close it and clear the plugin's
+    // persisted active identity first, so a later getActiveModel cannot
+    // resurrect a spec whose files are gone. On web after a page reload
+    // `_loadedPreset` is null but the persisted identity survives, hence
+    // the manager check in addition to the in-memory one.
+    final loaded = _loadedPreset;
+    if (loaded != null && loaded.filenameFor(isWeb: kIsWeb) == filename) {
+      await unload();
+    }
+    final manager = FlutterGemmaPlugin.instance.modelManager;
+    await manager.ensureInitialized();
+    if (manager.activeInferenceModel?.name == _baseName(filename)) {
+      await FlutterGemma.clearActiveInferenceIdentity();
+    }
+    await FlutterGemma.uninstallModel(filename);
+  }
+
+  /// The plugin's active-spec name for [filename] — the file name minus its
+  /// extension (mirrors the installer's `FileNameUtils.getBaseName`).
+  static String _baseName(String filename) {
+    final dot = filename.lastIndexOf('.');
+    return dot == -1 ? filename : filename.substring(0, dot);
   }
 
   /// Maps a serialized OpenAI tool entry to the plugin's [Tool].
