@@ -139,7 +139,8 @@ class AgentService extends ChangeNotifier {
     ExecutionEnv? env,
   }) async {
     final resolvedEnv = env ?? await createPlatformEnv();
-    final secrets = await createSecretsStore().readAll();
+    final secretsStore = createSecretsStore();
+    final secrets = await secretsStore.readAll();
     final redactor = SecretRedactor.fromSecrets(secrets);
     return AgentService._withEnv(
       env: secrets.isEmpty
@@ -147,6 +148,7 @@ class AgentService extends ChangeNotifier {
           : SecretsExecutionEnv(resolvedEnv, secrets),
       config: config,
       redactor: redactor,
+      webSearchConfig: WebSearchConfig(secrets: secretsStore),
     );
   }
 
@@ -154,6 +156,7 @@ class AgentService extends ChangeNotifier {
     required this.env,
     required AgentConfig config,
     SecretRedactor? redactor,
+    WebSearchConfig? webSearchConfig,
   }) : sessionsRoot = '${env.cwd}/sessions',
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
     _providerKind = config.providerKind;
@@ -169,7 +172,7 @@ class AgentService extends ChangeNotifier {
       systemPrompt: _effectiveSystemPrompt(config, redactor),
       streamFunction: _streamFunctionFor(config),
       toolRegistry: ToolRegistry([
-        ...builtinTools(env),
+        ...builtinTools(env, webSearch: webSearchConfig),
         askTool(callback: _answerAskQuestions),
       ]),
     );

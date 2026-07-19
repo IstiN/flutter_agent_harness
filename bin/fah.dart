@@ -350,10 +350,20 @@ Future<void> main(List<String> args) async {
     'ANTHROPIC_API_KEY',
     'GOOGLE_API_KEY',
     'VISION_API_KEY',
+    'BRAVE_API_KEY',
+    'TAVILY_API_KEY',
   ]) {
     final value = Platform.environment[name];
     if (value != null) redactor.register(name, value);
   }
+
+  // Web search works out of the box via keyless DuckDuckGo; keyed providers
+  // (Brave, Tavily) join the chain when their API key is in the environment.
+  final webSearchSecrets = InMemorySecretsStore({
+    for (final name in const ['BRAVE_API_KEY', 'TAVILY_API_KEY'])
+      if (Platform.environment[name] case final value? when value.isNotEmpty)
+        name: value,
+  });
 
   late final Future<void> Function() persistConfig;
 
@@ -387,6 +397,7 @@ Future<void> main(List<String> args) async {
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
       visionConfig: visionConfig,
+      webSearchConfig: WebSearchConfig(secrets: webSearchSecrets),
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,
