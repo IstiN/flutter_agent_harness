@@ -64,23 +64,23 @@ void main() {
   group('WebLlmCacheSection', () {
     testWidgets('lists cached models with their sizes', (tester) async {
       final engine = _FakeEngine({
-        'SmolLM2-135M-Instruct-q0f16-MLC': const WebLlmCacheInfo(
+        'SmolLM2-1.7B-Instruct-q4f16_1-MLC': const WebLlmCacheInfo(
           cached: true,
           bytes: 800 * 1024 * 1024,
         ),
-        'Qwen3-0.6B-q4f16_1-MLC': const WebLlmCacheInfo(cached: true),
+        'Qwen3-4B-q4f16_1-MLC': const WebLlmCacheInfo(cached: true),
       });
       await _pumpSection(tester, engine);
       await tester.pumpAndSettle();
 
       expect(find.text('Downloaded models'), findsOneWidget);
-      expect(find.text('SmolLM2 135M'), findsOneWidget);
-      expect(find.text('Qwen3 0.6B'), findsOneWidget);
+      expect(find.text('SmolLM2 1.7B'), findsOneWidget);
+      expect(find.text('Qwen3 4B'), findsOneWidget);
       // Known byte count is formatted; unknown falls back to the size label.
       expect(find.textContaining('800 MB cached'), findsOneWidget);
-      expect(find.text('~750 MB'), findsOneWidget);
+      expect(find.text('~2.8 GB'), findsOneWidget);
       // Uncached presets are not listed.
-      expect(find.text('Qwen3 4B'), findsNothing);
+      expect(find.text('Llama 3.2 3B'), findsNothing);
     });
 
     testWidgets('shows an empty message when nothing is cached', (
@@ -110,11 +110,11 @@ void main() {
       tester,
     ) async {
       final engine = _FakeEngine({
-        'SmolLM2-135M-Instruct-q0f16-MLC': const WebLlmCacheInfo(
+        'SmolLM2-1.7B-Instruct-q4f16_1-MLC': const WebLlmCacheInfo(
           cached: true,
           bytes: 1000,
         ),
-        'Qwen3-0.6B-q4f16_1-MLC': const WebLlmCacheInfo(cached: true),
+        'Qwen3-4B-q4f16_1-MLC': const WebLlmCacheInfo(cached: true),
       });
       await _pumpSection(tester, engine);
       await tester.pumpAndSettle();
@@ -122,21 +122,21 @@ void main() {
       await tester.tap(find.byIcon(Icons.delete_outline).first);
       await tester.pumpAndSettle();
       // Confirm dialog names the model.
-      expect(find.text('Delete SmolLM2 135M?'), findsOneWidget);
+      expect(find.text('Delete SmolLM2 1.7B?'), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
       await tester.pumpAndSettle();
 
-      expect(engine.deleted, ['SmolLM2-135M-Instruct-q0f16-MLC']);
-      expect(find.text('SmolLM2 135M'), findsNothing);
-      expect(find.text('Qwen3 0.6B'), findsOneWidget);
-      expect(find.text('Deleted SmolLM2 135M.'), findsOneWidget);
+      expect(engine.deleted, ['SmolLM2-1.7B-Instruct-q4f16_1-MLC']);
+      expect(find.text('SmolLM2 1.7B'), findsNothing);
+      expect(find.text('Qwen3 4B'), findsOneWidget);
+      expect(find.text('Deleted SmolLM2 1.7B.'), findsOneWidget);
     });
 
     testWidgets('deleting the loaded model resets the loaded state and says '
         'so', (tester) async {
       final engine = _FakeEngine({
-        'Qwen3-0.6B-q4f16_1-MLC': const WebLlmCacheInfo(cached: true),
-      })..loadedId = 'Qwen3-0.6B-q4f16_1-MLC';
+        'Qwen3-4B-q4f16_1-MLC': const WebLlmCacheInfo(cached: true),
+      })..loadedId = 'Qwen3-4B-q4f16_1-MLC';
       await _pumpSection(tester, engine);
       await tester.pumpAndSettle();
 
@@ -156,7 +156,7 @@ void main() {
       tester,
     ) async {
       final engine = _FakeEngine({
-        'Qwen3-0.6B-q4f16_1-MLC': const WebLlmCacheInfo(cached: true),
+        'Qwen3-4B-q4f16_1-MLC': const WebLlmCacheInfo(cached: true),
       });
       await _pumpSection(tester, engine);
       await tester.pumpAndSettle();
@@ -167,7 +167,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(engine.deleted, isEmpty);
-      expect(find.text('Qwen3 0.6B'), findsOneWidget);
+      expect(find.text('Qwen3 4B'), findsOneWidget);
     });
   });
 }

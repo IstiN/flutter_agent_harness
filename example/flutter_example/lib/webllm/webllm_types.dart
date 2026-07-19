@@ -71,20 +71,6 @@ final class WebLlmModelPreset {
 const webLlmModelPresets = <WebLlmModelPreset>[
   // === SmolLM2 ===
   WebLlmModelPreset(
-    id: 'SmolLM2-135M-Instruct-q0f16-MLC',
-    displayName: 'SmolLM2 135M',
-    sizeLabel: '~270 MB',
-    temperature: 1,
-    topP: 1,
-  ),
-  WebLlmModelPreset(
-    id: 'SmolLM2-360M-Instruct-q0f16-MLC',
-    displayName: 'SmolLM2 360M',
-    sizeLabel: '~720 MB',
-    temperature: 1,
-    topP: 1,
-  ),
-  WebLlmModelPreset(
     id: 'SmolLM2-1.7B-Instruct-q4f16_1-MLC',
     displayName: 'SmolLM2 1.7B',
     sizeLabel: '~1.8 GB',
@@ -93,20 +79,6 @@ const webLlmModelPresets = <WebLlmModelPreset>[
   ),
 
   // === Qwen 2.5 ===
-  WebLlmModelPreset(
-    id: 'Qwen2.5-0.5B-Instruct-q0f16-MLC',
-    displayName: 'Qwen2.5 0.5B',
-    sizeLabel: '~1 GB',
-    temperature: 0.7,
-    topP: 0.8,
-  ),
-  WebLlmModelPreset(
-    id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',
-    displayName: 'Qwen2.5 1.5B',
-    sizeLabel: '~1 GB',
-    temperature: 0.7,
-    topP: 0.8,
-  ),
   WebLlmModelPreset(
     id: 'Qwen2.5-3B-Instruct-q4f16_1-MLC',
     displayName: 'Qwen2.5 3B',
@@ -124,14 +96,6 @@ const webLlmModelPresets = <WebLlmModelPreset>[
 
   // === Qwen 2.5 Coder ===
   WebLlmModelPreset(
-    id: 'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC',
-    displayName: 'Qwen2.5-Coder 1.5B',
-    sizeLabel: '~900 MB',
-    temperature: 0.7,
-    topP: 0.8,
-    isCoder: true,
-  ),
-  WebLlmModelPreset(
     id: 'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC',
     displayName: 'Qwen2.5-Coder 3B',
     sizeLabel: '~1.8 GB',
@@ -142,20 +106,6 @@ const webLlmModelPresets = <WebLlmModelPreset>[
 
   // === Qwen 3 ===
   WebLlmModelPreset(
-    id: 'Qwen3-0.6B-q4f16_1-MLC',
-    displayName: 'Qwen3 0.6B',
-    sizeLabel: '~750 MB',
-    temperature: 0.7,
-    topP: 0.8,
-  ),
-  WebLlmModelPreset(
-    id: 'Qwen3-1.7B-q4f16_1-MLC',
-    displayName: 'Qwen3 1.7B',
-    sizeLabel: '~1.4 GB',
-    temperature: 0.7,
-    topP: 0.8,
-  ),
-  WebLlmModelPreset(
     id: 'Qwen3-4B-q4f16_1-MLC',
     displayName: 'Qwen3 4B',
     sizeLabel: '~2.8 GB',
@@ -164,20 +114,6 @@ const webLlmModelPresets = <WebLlmModelPreset>[
   ),
 
   // === Qwen 3.5 ===
-  WebLlmModelPreset(
-    id: 'Qwen3.5-0.8B-q4f16_1-MLC',
-    displayName: 'Qwen3.5 0.8B',
-    sizeLabel: '~450 MB',
-    temperature: 0.7,
-    topP: 0.8,
-  ),
-  WebLlmModelPreset(
-    id: 'Qwen3.5-2B-q4f16_1-MLC',
-    displayName: 'Qwen3.5 2B',
-    sizeLabel: '~1.1 GB',
-    temperature: 0.7,
-    topP: 0.8,
-  ),
   WebLlmModelPreset(
     id: 'Qwen3.5-4B-q4f16_1-MLC',
     displayName: 'Qwen3.5 4B',
@@ -218,28 +154,8 @@ const webLlmModelPresets = <WebLlmModelPreset>[
     temperature: 0.7,
     topP: 0.95,
   ),
-  WebLlmModelPreset(
-    id: 'gemma-2-2b-it-q4f16_1-MLC-1k',
-    displayName: 'Gemma 2 2B (1k)',
-    sizeLabel: '~1.2 GB',
-    contextWindow: 1024,
-    temperature: 0.7,
-    topP: 0.95,
-  ),
 
   // === Llama 3.2 ===
-  WebLlmModelPreset(
-    id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
-    displayName: 'Llama 3.2 1B',
-    sizeLabel: '~770 MB',
-    temperature: 0.6,
-  ),
-  WebLlmModelPreset(
-    id: 'Llama-3.2-1B-Instruct-q4f32_1-MLC',
-    displayName: 'Llama 3.2 1B (f32)',
-    sizeLabel: '~1.4 GB',
-    temperature: 0.6,
-  ),
   WebLlmModelPreset(
     id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
     displayName: 'Llama 3.2 3B',
