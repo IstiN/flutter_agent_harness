@@ -3,9 +3,14 @@ import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/widgets.dart';
 
+import 'html_preview_document.dart';
+
 /// Browser HTML preview: an `<iframe>` fed the file's markup via `srcdoc`,
 /// registered as a platform view. Selected when `dart.library.html` is
 /// available (see the conditional import in `file_preview.dart`).
+///
+/// The markup is pre-processed by [lightCanvasDocument] so unstyled pages
+/// stay readable against the app's dark theme.
 ///
 /// The `sandbox` attribute keeps the previewed document contained: scripts
 /// may run so pages render close to a browser, but the frame cannot
@@ -31,7 +36,7 @@ class _HtmlFilePreviewState extends State<HtmlFilePreview> {
     ..style.width = '100%'
     ..style.height = '100%'
     ..setAttribute('sandbox', 'allow-scripts')
-    ..srcdoc = widget.html;
+    ..srcdoc = lightCanvasDocument(widget.html);
 
   @override
   void initState() {
@@ -46,7 +51,7 @@ class _HtmlFilePreviewState extends State<HtmlFilePreview> {
   void didUpdateWidget(HtmlFilePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.html != widget.html) {
-      _iframe.srcdoc = widget.html;
+      _iframe.srcdoc = lightCanvasDocument(widget.html);
     }
   }
 

@@ -432,6 +432,277 @@ void main() {
           .toList();
       expect(assistantContents, ['response', 'response']);
     });
+
+    test('stageAttachment writes into uploads/ and returns the env-relative '
+        'path', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+
+      final path = await service.stageAttachment(
+        name: 'report.pdf',
+        bytes: Uint8List.fromList([1, 2, 3]),
+      );
+
+      expect(path, 'uploads/report.pdf');
+      expect((await env.readBinaryFile('uploads/report.pdf')).getOrThrow(), [
+        1,
+        2,
+        3,
+      ]);
+    });
+
+    test('stageAttachment de-duplicates the file name on collision', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+
+      final first = await service.stageAttachment(
+        name: 'report.pdf',
+        bytes: Uint8List.fromList([1]),
+      );
+      final second = await service.stageAttachment(
+        name: 'report.pdf',
+        bytes: Uint8List.fromList([2]),
+      );
+      final third = await service.stageAttachment(
+        name: 'report.pdf',
+        bytes: Uint8List.fromList([3]),
+      );
+
+      expect(first, 'uploads/report.pdf');
+      expect(second, 'uploads/report-1.pdf');
+      expect(third, 'uploads/report-2.pdf');
+      // Nothing was overwritten: each copy kept its own content.
+      expect((await env.readBinaryFile('uploads/report.pdf')).getOrThrow(), [
+        1,
+      ]);
+      expect((await env.readBinaryFile('uploads/report-1.pdf')).getOrThrow(), [
+        2,
+      ]);
+    });
+
+    test('stageAttachment flattens browser-supplied subdirectories', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+
+      final path = await service.stageAttachment(
+        name: 'photos/2026/cat.jpg',
+        bytes: Uint8List.fromList([1]),
+      );
+
+      expect(path, 'uploads/cat.jpg');
+    });
+
+    test('stageAttachment rejects names with nothing usable left', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+
+      await expectLater(
+        service.stageAttachment(name: '../../..', bytes: Uint8List(0)),
+        throwsStateError,
+      );
+    });
+
+    test(
+      'sendAttachments references the staged paths before the typed text',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('ok')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendAttachments(
+          attachments: [
+            (
+              path: 'uploads/notes.txt',
+              bytes: Uint8List.fromList('hi'.codeUnits),
+              mimeType: 'application/octet-stream',
+            ),
+          ],
+          text: 'summarize it',
+        );
+        await service.waitForIdle();
+
+        expect(service.messages[0].role, 'user');
+        expect(
+          service.messages[0].content,
+          '[attached file: uploads/notes.txt — read it with your tools]\n'
+          'summarize it',
+        );
+        expect(service.messages[0].imageBytes, isNull);
+      },
+    );
+
+    test('sendAttachments inlines images for hosted providers', () async {
+      Context? captured;
+      AssistantMessageEventStream capturing(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        captured = context;
+        return _singleTextResponse('ok')(
+          model,
+          context,
+          cancelToken: cancelToken,
+        );
+      }
+
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(capturing),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+      expect(service.inlinesImageAttachments, isTrue);
+
+      await service.sendAttachments(
+        attachments: [
+          (
+            path: 'uploads/pic.png',
+            bytes: Uint8List.fromList([1, 2, 3]),
+            mimeType: 'image/png',
+          ),
+        ],
+      );
+      await service.waitForIdle();
+
+      expect(service.messages[0].imageBytes, isNotNull);
+      final userMessage = captured!.messages.whereType<UserMessage>().last;
+      final blocks = userMessage.content as List<ContentBlock>;
+      final images = blocks.whereType<ImageContent>().toList();
+      expect(images, hasLength(1));
+      expect(images.single.mimeType, 'image/png');
+      expect(
+        blocks.whereType<TextContent>().single.text,
+        contains('[attached file: uploads/pic.png'),
+      );
+    });
+
+    test('sendAttachments sends paths only to on-device providers', () async {
+      Context? captured;
+      AssistantMessageEventStream capturing(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        captured = context;
+        return _singleTextResponse('ok')(
+          model,
+          context,
+          cancelToken: cancelToken,
+        );
+      }
+
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: Agent(
+          model: Model(
+            id: 'on-device-model',
+            api: 'webllm',
+            provider: 'webllm',
+            baseUrl: '',
+            contextWindow: 4096,
+            maxTokens: 1024,
+          ),
+          systemPrompt: 'You are fah.',
+          streamFunction: capturing,
+          toolRegistry: ToolRegistry(const []),
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+      expect(service.inlinesImageAttachments, isFalse);
+
+      await service.sendAttachments(
+        attachments: [
+          (
+            path: 'uploads/pic.png',
+            bytes: Uint8List.fromList([1, 2, 3]),
+            mimeType: 'image/png',
+          ),
+        ],
+      );
+      await service.waitForIdle();
+
+      // Text-only on-device backends get the path, never ImageContent.
+      expect(service.messages[0].imageBytes, isNull);
+      expect(
+        service.messages[0].content,
+        contains('[attached file: uploads/pic.png'),
+      );
+      final userMessage = captured!.messages.whereType<UserMessage>().last;
+      // Text-only backends go through prompt(): the user message is plain
+      // text, so no ImageContent block can ride along.
+      expect(userMessage.content, isA<String>());
+    });
+
+    test('deleteSession removes a persisted non-active session', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+      await service.sendText('first');
+      await service.waitForIdle();
+      final stored = (await service.listSessions()).single;
+
+      await service.reset();
+      expect((await service.listSessions()), hasLength(2));
+
+      await service.deleteSession(stored);
+
+      final remaining = await service.listSessions();
+      expect(remaining, hasLength(1));
+      expect(remaining.single.id, isNot(stored.id));
+      expect(service.currentSessionId, isNot(stored.id));
+    });
+
+    test('deleteSession on the active session starts a fresh one', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+      await service.sendText('hi');
+      await service.waitForIdle();
+      final active = (await service.listSessions()).single;
+      expect(service.currentSessionId, active.id);
+      expect(service.messages, hasLength(2));
+
+      await service.deleteSession(active);
+
+      expect(service.messages, isEmpty);
+      expect(service.currentSessionId, isNot(active.id));
+      // The fresh session replaces the deleted one on disk.
+      final remaining = await service.listSessions();
+      expect(remaining, hasLength(1));
+      expect(remaining.single.id, service.currentSessionId);
+    });
   });
 }
 

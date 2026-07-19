@@ -13,6 +13,7 @@ import 'secrets_store.dart';
 import 'transformers_js/transformers_js_service.dart';
 import 'transformers_js/transformers_js_stream_function.dart';
 import 'transformers_js/transformers_js_types.dart';
+import 'upload.dart';
 import 'webllm/webllm_service.dart';
 import 'webllm/webllm_stream_function.dart';
 import 'webllm/webllm_types.dart';
@@ -92,6 +93,12 @@ final class AgentConfig {
     maxTokens: maxTokens,
   );
 }
+
+/// A chat attachment already staged in the sandbox (see
+/// [AgentService.stageAttachment]): [path] is the env-relative path the
+/// outgoing message references; image attachments ([mimeType] is `image/*`)
+/// additionally ride along inline for hosted providers.
+typedef StagedAttachment = ({String path, Uint8List bytes, String mimeType});
 
 /// Wraps an [Agent] for the Flutter chat UI.
 ///
@@ -279,6 +286,107 @@ class AgentService extends ChangeNotifier {
     _runWithTimeout(_agent.prompt(text));
   }
 
+  /// Directory (relative to [env]'s working directory) where chat
+  /// attachments are staged before the outgoing message references them.
+  static const String uploadsDir = 'uploads';
+
+  /// Whether the active provider accepts inline image content: hosted
+  /// providers do; the on-device text-only backends (WebLLM, Gemma,
+  /// transformers.js) get file paths only, never [ImageContent].
+  bool get inlinesImageAttachments => !_isOnDeviceKind(providerKind);
+
+  /// Stages a chat attachment into [uploadsDir] inside the sandbox,
+  /// creating the directory and de-duplicating the file name on collision
+  /// (`report.pdf` → `report-1.pdf` → …). Returns the env-relative path
+  /// (`uploads/report.pdf`) the outgoing message should reference.
+  ///
+  /// Throws [StateError] with a readable message when nothing was written —
+  /// callers must surface it (a snackbar), never fail silently.
+  Future<String> stageAttachment({
+    required String name,
+    required Uint8List bytes,
+  }) async {
+    // A picked name can carry browser-supplied subdirectories
+    // (webkitRelativePath); chat attachments flatten into uploads/.
+    final base = sanitizeUploadName(name).split('/').last;
+    if (base.isEmpty) {
+      throw StateError('"$name" has no usable file name.');
+    }
+    final dirResult = await env.createDir(uploadsDir);
+    if (dirResult.isErr) {
+      throw StateError(
+        'Could not create $uploadsDir: ${dirResult.errorOrNull!.message}',
+      );
+    }
+    var candidate = '$uploadsDir/$base';
+    for (var n = 1; (await env.exists(candidate)).valueOrNull ?? false; n++) {
+      candidate = '$uploadsDir/${_dedupeName(base, n)}';
+    }
+    final writeResult = await env.writeBinaryFile(candidate, bytes);
+    if (writeResult.isErr) {
+      throw StateError(
+        'Could not store $base: ${writeResult.errorOrNull!.message}',
+      );
+    }
+    return candidate;
+  }
+
+  /// `name.ext` → `name-1.ext` for n = 1; names without an extension get
+  /// the suffix appended whole.
+  static String _dedupeName(String name, int n) {
+    final dot = name.lastIndexOf('.');
+    if (dot <= 0) return '$name-$n';
+    return '${name.substring(0, dot)}-$n${name.substring(dot)}';
+  }
+
+  /// Sends a user message referencing files staged via [stageAttachment]:
+  /// the text names each sandbox path so the agent reads the file with its
+  /// tools, followed by the user's typed text. Image attachments are
+  /// additionally inlined as [ImageContent] when the active provider is a
+  /// hosted one ([inlinesImageAttachments]); on-device text-only backends
+  /// receive the paths only.
+  Future<void> sendAttachments({
+    required List<StagedAttachment> attachments,
+    String text = '',
+  }) async {
+    if (attachments.isEmpty) return sendText(text);
+    final fullText = [
+      for (final attachment in attachments)
+        '[attached file: ${attachment.path} — read it with your tools]',
+      if (text.trim().isNotEmpty) text.trim(),
+    ].join('\n');
+    final images = [
+      for (final attachment in attachments)
+        if (attachment.mimeType.startsWith('image/')) attachment,
+    ];
+    final inline = images.isNotEmpty && inlinesImageAttachments;
+    _addUserMessage(
+      text: fullText,
+      imageBytes: inline ? images.first.bytes : null,
+      mimeType: inline ? images.first.mimeType : null,
+    );
+    _clearError();
+    if (!inline) {
+      _runWithTimeout(_agent.prompt(fullText));
+      return;
+    }
+    _runWithTimeout(
+      _agent.promptMessage(
+        UserMessage(
+          content: [
+            TextContent(text: fullText),
+            for (final image in images)
+              ImageContent(
+                data: base64Encode(image.bytes),
+                mimeType: image.mimeType,
+              ),
+          ],
+          timestamp: DateTime.now(),
+        ),
+      ),
+    );
+  }
+
   /// Sends a user message with an attached image.
   Future<void> sendImage({
     required Uint8List bytes,
@@ -396,6 +504,20 @@ class AgentService extends ChangeNotifier {
       ..clear()
       ..addAll(contextMessages.map(_toChatMessage));
     notifyListeners();
+  }
+
+  /// Deletes a persisted session. Deleting the ACTIVE session starts a new
+  /// empty one, so the chat never points at a removed file.
+  Future<void> deleteSession(SessionMetadata metadata) async {
+    final isActive = metadata.id == _sessionId;
+    if (isActive) {
+      // Stop any in-flight run and let its persistence settle before the
+      // session file disappears underneath it.
+      abort();
+      await waitForIdle();
+    }
+    await _repo.delete(metadata);
+    if (isActive) await reset();
   }
 
   /// Projects a persisted context [Message] back into the UI transcript.

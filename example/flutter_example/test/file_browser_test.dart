@@ -185,11 +185,14 @@ final class _FakePicker implements UploadPicker {
   _FakePicker(this.files);
 
   List<UploadFile> files;
+  Object? error;
   int calls = 0;
 
   @override
   Future<List<UploadFile>> pick() async {
     calls++;
+    final failure = error;
+    if (failure != null) throw failure;
     return files;
   }
 }
@@ -665,11 +668,60 @@ void main() {
       expect(_selectableText('hello notes'), findsOneWidget);
     });
 
-    testWidgets('attach sheet uploads arbitrary files into the sandbox root', (
-      tester,
-    ) async {
+    testWidgets('attach sheet holds picked files in the composer; sending '
+        'stages them into uploads/ and references the path', (tester) async {
       final env = await _seededEnv();
       final picker = _FakePicker([_uploadFile('chat.txt', 'via chat')]);
+      final service = _fakeService(env);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(service: service, uploadPicker: picker),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Attach file'));
+      await tester.pumpAndSettle();
+
+      expect(picker.calls, 1);
+      // The file waits in the composer as a pending chip; nothing is
+      // written to the sandbox before the message goes out.
+      expect(find.text('chat.txt'), findsOneWidget);
+      expect((await env.exists('uploads/chat.txt')).getOrThrow(), isFalse);
+
+      await tester.enterText(find.byType(TextField), 'look at this');
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip('Send'));
+        // The send button fires _send unawaited (stage → prompt); poll the
+        // transcript until the assistant turn lands on the real event loop.
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (service.messages.length < 2) {
+          if (DateTime.now().isAfter(deadline)) {
+            fail('timed out waiting for the assistant turn');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pumpAndSettle();
+
+      expect(
+        (await env.readTextFile('uploads/chat.txt')).getOrThrow(),
+        'via chat',
+      );
+      expect(service.messages.first.role, 'user');
+      expect(
+        service.messages.first.content,
+        contains('[attached file: uploads/chat.txt — read it with your tools]'),
+      );
+    });
+
+    testWidgets('a picker failure surfaces a snackbar instead of dying '
+        'silently', (tester) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker(const [])
+        ..error = StateError('Could not read broken.bin');
       await tester.pumpWidget(
         MaterialApp(
           home: ChatScreen(service: _fakeService(env), uploadPicker: picker),
@@ -679,12 +731,12 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.add));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Upload to files'));
+      await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
 
       expect(picker.calls, 1);
-      expect((await env.readTextFile('chat.txt')).getOrThrow(), 'via chat');
-      expect(find.textContaining('Uploaded 1 file'), findsOneWidget);
+      expect(find.textContaining('Upload failed'), findsOneWidget);
+      expect(find.textContaining('broken.bin'), findsOneWidget);
     });
   });
 }

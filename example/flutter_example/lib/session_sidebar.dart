@@ -88,6 +88,50 @@ class _SessionSidebarState extends State<SessionSidebar> {
     await _reload();
   }
 
+  /// Per-row delete, behind a confirmation dialog. Deleting the active
+  /// session resets the chat to a fresh session (see
+  /// [AgentService.deleteSession]); the narrow drawer closes itself in that
+  /// case because the chat content was replaced.
+  Future<void> _delete(SessionMetadata session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete session?'),
+        content: const Text('This removes the saved session permanently.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final wasActive = session.id == _service.currentSessionId;
+    try {
+      await _service.deleteSession(session);
+    } on Object catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Could not delete session: $e'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (wasActive) widget.onAction?.call();
+    await _reload();
+  }
+
   Future<void> _switchModel() async {
     await showDialog<void>(
       context: context,
@@ -284,6 +328,11 @@ class _SessionSidebarState extends State<SessionSidebar> {
         model.isNotEmpty ? model : 'session ${session.id.substring(0, 8)}',
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.bodySmall?.copyWith(color: FahPalette.dim),
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.delete_outline, size: 18),
+        tooltip: 'Delete session',
+        onPressed: () => _delete(session),
       ),
       onTap: () => _open(session),
     );

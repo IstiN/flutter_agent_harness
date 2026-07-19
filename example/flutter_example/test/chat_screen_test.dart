@@ -184,6 +184,51 @@ void main() {
       expect(service.messages[1].content, 'ok');
     });
 
+    testWidgets('wide: deleting a session from the sidebar asks for '
+        'confirmation; deleting the active one resets the chat', (
+      tester,
+    ) async {
+      _useWideSurface(tester);
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env);
+      await service.initialize();
+      // The agent loop consumes its event stream on the real event loop,
+      // which the widget test's fake zone only drives inside runAsync.
+      await tester.runAsync(() async {
+        await service.sendText('first question');
+        await service.waitForIdle();
+      });
+      final active = (await service.listSessions()).single;
+
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(service: service)));
+      await tester.pumpAndSettle();
+      expect(_sidebarListTiles(), findsOneWidget);
+      expect(service.messages, hasLength(2));
+
+      // The row's delete affordance asks first; cancelling keeps the row.
+      await tester.tap(find.byTooltip('Delete session'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete session?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(_sidebarListTiles(), findsOneWidget);
+      expect((await service.listSessions()), hasLength(1));
+
+      // Confirming deletes the ACTIVE session: the chat resets to a fresh
+      // session, which takes the deleted row's place in the list.
+      await tester.tap(find.byTooltip('Delete session'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(service.messages, isEmpty);
+      expect(service.currentSessionId, isNot(active.id));
+      final sessions = await service.listSessions();
+      expect(sessions, hasLength(1));
+      expect(sessions.single.id, service.currentSessionId);
+      expect(_sidebarListTiles(), findsOneWidget);
+    });
+
     testWidgets('narrow: menu icon opens the sessions drawer', (tester) async {
       tester.view.devicePixelRatio = 1.0;
       tester.view.physicalSize = const Size(500, 900);
