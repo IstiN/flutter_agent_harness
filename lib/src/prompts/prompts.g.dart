@@ -33,6 +33,22 @@ const updateSummarizationPrompt =
 const turnPrefixSummarizationPrompt =
     'This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.\n\nSummarize the prefix to provide context for the retained suffix:\n\n## Original Request\n[What did the user ask for in this turn?]\n\n## Early Progress\n- [Key decisions and work done in the prefix]\n\n## Context for Suffix\n- [Information needed to understand the retained recent work]\n\nBe concise. Focus on what\'s needed to understand the kept suffix.';
 
+/// Structured summary instructions for the branch abandoned during session-tree
+/// navigation, ported verbatim from oh-my-pi's branch-summary compaction
+/// prompt.
+///
+/// Source: `prompts/compaction/branch_summary.md`.
+const branchSummaryPrompt =
+    'You MUST create a structured summary of the conversation branch for context when returning.\n\nYou MUST use EXACT format:\n\n## Goal\n\n[What is the user trying to accomplish in this branch?]\n\n## Constraints & Preferences\n- [Constraints, preferences, requirements mentioned]\n- [(none) if none mentioned]\n\n## Progress\n\n### Done\n- [x] [Completed tasks/changes]\n\n### In Progress\n- [ ] [Work started but not finished]\n\n### Blocked\n- [Issues preventing progress]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale]\n\n## Next Steps\n1. [What should happen next to continue]\n\nSections MUST be kept concise. You MUST preserve exact file paths, function names, error messages.';
+
+/// Fixed preamble prepended to LLM-generated branch summaries so the model
+/// knows the text describes an abandoned conversation branch, ported verbatim
+/// from oh-my-pi's branch-summary preamble.
+///
+/// Source: `prompts/compaction/branch_summary_preamble.md`.
+const branchSummaryPreamble =
+    'The user explored a different conversation branch before returning here.\nSummary of that exploration:';
+
 /// System prompt template for the fah CLI default coding mode.
 ///
 /// Source: `prompts/cli/mode_code.md`.
@@ -72,6 +88,22 @@ const editToolDescriptionPrompt =
 /// Source: `prompts/tools/ask.md`.
 const askToolDescriptionPrompt =
     'Ask the user one or more structured questions when you need clarification or a decision during task execution.\n\n<conditions>\n- Multiple approaches exist with significantly different tradeoffs the user should weigh\n</conditions>\n\n<instruction>\n- Use `questions` for multiple related questions instead of asking one at a time\n- Use `recommended` (0-based option index or exact option label) to mark the default; the UI badges it as "Recommended"\n- Set `multiSelect: true` on a question to allow multiple selections\n- Use short option labels; put explanatory tradeoffs in an option\'s `description` instead of merging them into the label\n- Omit `options` when the answer is free-form text\n</instruction>\n\n<caution>\n- Provide 2-5 concise, distinct options per question\n</caution>\n\n<critical>\n- **Default to action.** Resolve ambiguity yourself using repo conventions, existing patterns, and reasonable defaults. Exhaust existing sources (code, configs, docs, history) before asking. Only ask when options have materially different tradeoffs the user must decide.\n- **If multiple choices are acceptable**, pick the most conservative/standard option and proceed; state the choice.\n- **Do NOT include an "Other" option** — the UI always offers free-text input alongside your options.\n</critical>';
+
+/// Description of the checkpoint tool that marks the current conversation state
+/// before exploratory work so a later rewind can collapse the detour into a
+/// concise report, ported from oh-my-pi's checkpoint tool prompt.
+///
+/// Source: `prompts/tools/checkpoint.md`.
+const checkpointToolDescriptionPrompt =
+    'Creates a context checkpoint before exploratory work so you can later rewind and keep only a concise report.\n\nUse this when you need to investigate with many intermediate tool calls (read/grep/glob/etc.) and want to minimize context cost afterward.\n\nRules:\n- You MUST call `rewind` before finishing after starting a checkpoint.\n- You NEVER call `checkpoint` while another checkpoint is active.\n\nTypical flow:\n1. `checkpoint(goal: …)`\n2. Perform exploratory work\n3. `rewind(report: …)` with concise findings\n\nAfter rewind, intermediate checkpoint messages are removed from active context and replaced by the report. The dropped history stays in the session tree; nothing is lost.';
+
+/// Description of the rewind tool that ends an active checkpoint by pruning the
+/// exploratory context and retaining the agent's report verbatim, ported from
+/// oh-my-pi's rewind tool prompt.
+///
+/// Source: `prompts/tools/rewind.md`.
+const rewindToolDescriptionPrompt =
+    'End an active checkpoint. Rewind context to it, replacing intermediate exploration with your report.\n\nCall immediately after `checkpoint`-started investigative work.\n\nRequirements:\n- `report` MUST be concise, factual, and actionable.\n- Include key findings, decisions, and any unresolved risks.\n- AVOID raw scratch logs unless essential.\n- You MUST call this before finishing if a checkpoint is active.\n\nBehavior:\n- If no checkpoint is active, this tool errors. If the checkpoint already rewound, continue from the retained report instead of retrying.\n- On success, the session rewinds, keeps your report as retained context, and closes the checkpoint.\n- A successful rewind is final for that checkpoint; repeat calls error.';
 
 /// Tools section appended to the system prompt by the prompt-based tool-calling
 /// wrapper; lists the available tools and specifies the fenced

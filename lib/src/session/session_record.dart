@@ -210,6 +210,13 @@ sealed class SessionRecord {
         customType: json['customType'] as String? ?? '',
         data: json['data'],
       ),
+      'checkpoint' => CheckpointRecord(
+        id: id,
+        parentId: parentId as String?,
+        timestamp: timestamp,
+        messageCount: json['messageCount'] as int? ?? 0,
+        goal: json['goal'] as String?,
+      ),
       'custom_message' => CustomMessageRecord(
         id: id,
         parentId: parentId as String?,
@@ -430,6 +437,42 @@ final class BranchSummaryRecord extends SessionRecord {
     'summary': summary,
     if (details != null) 'details': details,
     if (fromHook != null) 'fromHook': fromHook,
+  };
+}
+
+/// Marks a self-service context checkpoint created by the `checkpoint` tool
+/// so a later `rewind` can collapse the exploratory detour into a report.
+///
+/// Ported from oh-my-pi's checkpoint feature (`packages/coding-agent/src/
+/// tools/checkpoint.ts`), where the mark is in-memory only; here the mark is
+/// a tree record so it survives in the session log. The record anchors the
+/// branch point: [messageCount] is the in-memory transcript length at the
+/// mark (AFTER the checkpoint tool result was appended, omp semantics), and
+/// the record's own [id] is the session-tree anchor the rewind navigates
+/// back to. The record itself projects to nothing in model context.
+final class CheckpointRecord extends SessionRecord {
+  /// Creates a [CheckpointRecord].
+  const CheckpointRecord({
+    required super.id,
+    required super.parentId,
+    required super.timestamp,
+    required this.messageCount,
+    this.goal,
+  });
+
+  /// In-memory message count at the checkpoint (the rewind prune anchor).
+  final int messageCount;
+
+  /// Optional investigation goal text given by the model.
+  final String? goal;
+
+  @override
+  String get type => 'checkpoint';
+
+  @override
+  Map<String, dynamic> payloadJson() => {
+    'messageCount': messageCount,
+    if (goal != null) 'goal': goal,
   };
 }
 
