@@ -284,4 +284,10 @@
 - feat(example): WebLLM presets refresh — Qwen3.5 + Qwen2.5-Coder (web-llm 0.2.84)
 - feat(example): visible app name is Fa (assistant label, AppBar, transcript, system prompt)
 
+## 0.1.31
+
+- feat(tools): hashline edit format with content-hash anchors (omp port)
+- feat(core): approval tiers with per-tool policy, bash interceptor, CLI/app prompt UIs
+- feat(example): model lineup — drop <1.5GB presets, add Gemma 4 E4B ONNX (~5.2GB)
+
 ## Unreleased
