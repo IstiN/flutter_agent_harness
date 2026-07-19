@@ -10,6 +10,14 @@
 /// hit first), and the same continuation notices so the model knows how to
 /// page through truncated output.
 ///
+/// The `edit` tool additionally ports oh-my-pi's hashline patch language
+/// (`packages/hashline`): the model may pass a `patch` with `[path#TAG]`
+/// section headers and `SWAP`/`DEL`/`INS` ops anchored on line numbers from
+/// a hashline-mode `read`; a stale tag is rejected before any write. The
+/// `read` tool's `hashline` parameter emits the numbered, tag-carrying
+/// output those anchors cite, and both tools share one session
+/// [HashlineSnapshotStore] (see [builtinTools]).
+///
 /// Deliberate divergences from the TypeScript originals:
 ///
 /// - No image support in [readFileTool]: the [FileSystem] abstraction is
@@ -20,6 +28,10 @@
 ///   deferred.
 /// - [writeFileTool] reports UTF-8 bytes (pi reports `String.length`, which
 ///   is UTF-16 code units mislabeled as bytes).
+/// - The hashline port covers the line-range ops only (`SWAP`/`DEL`/`INS.*`);
+///   omp's tree-sitter block ops (`SWAP.BLK`/`DEL.BLK`/`INS.BLK.POST`), file
+///   ops (`REM`/`MV`), boundary-repair leniency, and diff-based stale-anchor
+///   auto-remap are skipped (see `lib/src/hashline/`).
 library;
 
 import 'dart:convert';
@@ -31,7 +43,10 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../approval/bash_interceptor.dart';
+import '../cancel_token.dart';
 import '../env/execution_env.dart';
+import '../hashline/hashline.dart';
+import '../prompts/prompts.g.dart';
 import '../types.dart';
 
 /// Default line limit for tool output truncation (pi's `DEFAULT_MAX_LINES`).
@@ -48,11 +63,21 @@ const _maxTimeoutMs = 2147483647;
 
 /// Creates the four built-in tools ([readFileTool], [writeFileTool],
 /// [listDirTool], [shellTool]) bound to [env].
-List<AgentTool> builtinTools(ExecutionEnv env) {
+///
+/// [snapshots] is the session-scoped hashline snapshot store shared by the
+/// `read` and `edit` tools: hashline-mode reads mint the content tags that
+/// hashline edit patches cite, and edits mint fresh tags for follow-ups.
+/// Defaults to a fresh store — one per [builtinTools] call, i.e. one per
+/// agent session.
+List<AgentTool> builtinTools(
+  ExecutionEnv env, {
+  HashlineSnapshotStore? snapshots,
+}) {
+  final store = snapshots ?? HashlineSnapshotStore();
   return [
-    readFileTool(env),
+    readFileTool(env, snapshots: store),
     writeFileTool(env),
-    editFileTool(env),
+    editFileTool(env, snapshots: store),
     listDirTool(env),
     shellTool(env),
   ];
@@ -299,7 +324,17 @@ ImageFormat? _detectImageFormat(Uint8List bytes) {
 /// (1-indexed) and `limit`, truncating text output to [defaultToolMaxLines]
 /// lines or [defaultToolMaxBytes] bytes with an actionable continuation notice.
 /// Images are decoded, optionally resized, and returned as base64 content.
-AgentTool readFileTool(ExecutionEnv env) {
+///
+/// With `hashline: true` (omp's hashline display mode), text output lines are
+/// prefixed with their 1-indexed line number (`N:text`) and the output is
+/// preceded by a `[path#TAG]` header carrying the whole-file content-hash
+/// tag; the full file text plus the displayed line range are recorded in
+/// [snapshots] so `edit` patches can anchor against them. Default is `false`
+/// (omp defaults it on; we keep the legacy plain output as the default so
+/// existing read consumers are unaffected — the `edit` tool description
+/// tells the model to opt in when it intends to edit by anchors).
+AgentTool readFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
+  final store = snapshots ?? HashlineSnapshotStore();
   return AgentTool(
     name: 'read',
     label: 'read',
@@ -308,7 +343,9 @@ AgentTool readFileTool(ExecutionEnv env) {
         'Read the contents of a text file or image. Text output is truncated '
         'to $defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
         '(whichever is hit first). Use offset/limit for large text files. '
-        'Images are returned as base64 content.',
+        'Images are returned as base64 content. Set hashline=true to prefix '
+        'lines with line numbers and a [path#TAG] content-hash header for '
+        'anchoring hashline edit patches.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -324,6 +361,13 @@ AgentTool readFileTool(ExecutionEnv env) {
           'type': 'integer',
           'description': 'Maximum number of lines to read',
         },
+        'hashline': {
+          'type': 'boolean',
+          'description':
+              'Prefix each line with its line number and prepend a '
+              '[path#TAG] content-hash header for anchoring hashline edit '
+              'patches (default: false)',
+        },
       },
       'required': ['path'],
     },
@@ -332,6 +376,7 @@ AgentTool readFileTool(ExecutionEnv env) {
       final path = arguments['path'] as String;
       final offset = (arguments['offset'] as num?)?.toInt();
       final limit = (arguments['limit'] as num?)?.toInt();
+      final hashlineMode = (arguments['hashline'] as bool?) ?? false;
 
       final binaryRead = await env.readBinaryFile(path);
       if (binaryRead.isErr) throw StateError('${binaryRead.errorOrNull}');
@@ -361,7 +406,8 @@ AgentTool readFileTool(ExecutionEnv env) {
       if (read.isErr) throw StateError('${read.errorOrNull}');
       cancelToken?.throwIfCancelled();
 
-      final allLines = read.valueOrNull!.split('\n');
+      final rawContent = read.valueOrNull!;
+      final allLines = rawContent.split('\n');
       final totalFileLines = allLines.length;
       final startLine = offset != null && offset > 1 ? offset - 1 : 0;
       final startLineDisplay = startLine + 1;
@@ -383,7 +429,10 @@ AgentTool readFileTool(ExecutionEnv env) {
         selectedContent = allLines.sublist(startLine).join('\n');
       }
 
-      final truncation = _truncateHead(selectedContent);
+      final displayContent = hashlineMode
+          ? formatNumberedLines(selectedContent, startLineDisplay)
+          : selectedContent;
+      final truncation = _truncateHead(displayContent);
       String outputText;
       if (truncation.firstLineExceedsLimit) {
         outputText =
@@ -415,6 +464,21 @@ AgentTool readFileTool(ExecutionEnv env) {
             'Use offset=$nextOffset to continue.]';
       } else {
         outputText = truncation.content;
+      }
+
+      if (hashlineMode) {
+        // Record the FULL normalized file text (the tag is a whole-file
+        // content hash) plus the 1-indexed lines actually displayed, so a
+        // later edit patch validates the tag and the seen-line guard knows
+        // which lines the model was shown.
+        final normalized = normalizeToLF(stripBom(rawContent).text);
+        final canonical = (await env.absolutePath(path)).valueOrNull ?? path;
+        final lastDisplayed = startLineDisplay + truncation.outputLines - 1;
+        final seenLines = [
+          for (var line = startLineDisplay; line <= lastDisplayed; line++) line,
+        ];
+        final tag = store.record(canonical, normalized, seenLines);
+        outputText = '${formatHashlineHeader(path, tag)}\n$outputText';
       }
       return ToolExecutionResult.text(outputText);
     },
@@ -463,83 +527,171 @@ AgentTool writeFileTool(ExecutionEnv env) {
 }
 
 // ---------------------------------------------------------------------------
-// edit (search & replace with a uniqueness guarantee)
+// edit (exact-match replace, or hashline patch with content-hash anchors)
 // ---------------------------------------------------------------------------
 
-/// Creates the `edit` tool: replaces an exact text occurrence in a file.
+/// Creates the `edit` tool: edits a file in one of two modes.
 ///
-/// The replacement only happens when `oldText` occurs exactly once — this is
-/// the cheap, model-friendly way to make precise code edits without
-/// rewriting whole files (mirrors pi's `edit` and Claude Code's
-/// `str_replace` tools).
-AgentTool editFileTool(ExecutionEnv env) {
+/// Legacy exact-match mode (`path` + `oldText` + `newText`): the replacement
+/// only happens when `oldText` occurs exactly once — the cheap, model-friendly
+/// way to make precise code edits without rewriting whole files (mirrors pi's
+/// `edit` and Claude Code's `str_replace` tools).
+///
+/// Hashline mode (`patch`): a hashline patch with `[path#TAG]` section
+/// headers and `SWAP`/`DEL`/`INS` ops on 1-indexed line anchors, ported from
+/// oh-my-pi `packages/hashline`. The tag is a whole-file content hash minted
+/// by a hashline-mode `read` (or a previous edit response); a stale tag is
+/// rejected BEFORE any write with a diagnostic naming the drifted lines, so
+/// a mistargeted edit can never silently corrupt the file.
+///
+/// [snapshots] is the session snapshot store binding tags to file content;
+/// share it with the `read` tool (via [builtinTools]) so read-minted tags
+/// validate here.
+AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
+  final store = snapshots ?? HashlineSnapshotStore();
   return AgentTool(
     name: 'edit',
     label: 'edit',
     tier: ApprovalTier.write,
-    description:
-        'Edit a file by replacing an exact text occurrence. oldText must '
-        'match exactly (including indentation and newlines) and occur exactly '
-        'once in the file. Prefer this over write for small, precise changes '
-        'to existing files; read the file first to get the exact text.',
+    description: editToolDescriptionPrompt,
     parameters: const {
       'type': 'object',
       'properties': {
         'path': {
           'type': 'string',
-          'description': 'Path to the file to edit (relative or absolute)',
+          'description':
+              'Path to the file to edit (relative or absolute). Required '
+              'for exact-match mode; optional in hashline mode (the patch '
+              'header carries its own [path#TAG]).',
         },
         'oldText': {
           'type': 'string',
           'description':
-              'Exact text to replace. Must occur exactly once in the file.',
+              'Exact-match mode: exact text to replace. Must occur exactly '
+              'once in the file.',
         },
         'newText': {
           'type': 'string',
-          'description': 'Replacement text (may be empty to delete oldText)',
+          'description':
+              'Exact-match mode: replacement text (may be empty to delete '
+              'oldText).',
+        },
+        'patch': {
+          'type': 'string',
+          'description':
+              'Hashline mode: a hashline patch — [path#TAG] section '
+              'header(s) followed by SWAP/DEL/INS ops anchored on line '
+              'numbers from a hashline-mode read.',
         },
       },
-      'required': ['path', 'oldText', 'newText'],
     },
     execute: (arguments, cancelToken, onUpdate) async {
       cancelToken?.throwIfCancelled();
-      final path = arguments['path'] as String;
-      final oldText = arguments['oldText'] as String;
-      final newText = arguments['newText'] as String;
+      final path = arguments['path'] as String?;
+      final oldText = arguments['oldText'] as String?;
+      final newText = arguments['newText'] as String?;
+      final patch = arguments['patch'] as String?;
 
-      if (oldText.isEmpty) {
-        throw StateError('oldText must not be empty');
+      if (patch != null) {
+        if (oldText != null || newText != null) {
+          throw StateError(
+            'Provide either patch (hashline mode) or oldText/newText '
+            '(exact-match mode), not both.',
+          );
+        }
+        return _executeHashlineEdit(env, store, path, patch, cancelToken);
       }
-
-      final read = await env.readTextFile(path);
-      if (read.isErr) throw StateError('${read.errorOrNull}');
-      cancelToken?.throwIfCancelled();
-      final content = read.valueOrNull!;
-
-      final occurrences = _countOccurrences(content, oldText);
-      if (occurrences == 0) {
+      if (path == null || oldText == null || newText == null) {
         throw StateError(
-          'No exact match found in $path. oldText must match the file '
-          'contents byte-for-byte (check whitespace and newlines with read).',
+          'Missing arguments: provide either patch (hashline mode) or '
+          'path + oldText + newText (exact-match mode).',
         );
       }
-      if (occurrences > 1) {
-        throw StateError(
-          'oldText occurs $occurrences times in $path and is ambiguous. '
-          'Include more surrounding context so it matches exactly once.',
-        );
-      }
-
-      final updated = content.replaceFirst(oldText, newText);
-      final written = await env.writeFile(path, updated);
-      if (written.isErr) throw StateError('${written.errorOrNull}');
-
-      return ToolExecutionResult.text(
-        'Edited $path: replaced ${_byteLength(oldText)} bytes with '
-        '${_byteLength(newText)} bytes.',
-      );
+      return _executeExactMatchEdit(env, path, oldText, newText, cancelToken);
     },
   );
+}
+
+Future<ToolExecutionResult> _executeExactMatchEdit(
+  ExecutionEnv env,
+  String path,
+  String oldText,
+  String newText,
+  CancelToken? cancelToken,
+) async {
+  if (oldText.isEmpty) {
+    throw StateError('oldText must not be empty');
+  }
+
+  final read = await env.readTextFile(path);
+  if (read.isErr) throw StateError('${read.errorOrNull}');
+  cancelToken?.throwIfCancelled();
+  final content = read.valueOrNull!;
+
+  final occurrences = _countOccurrences(content, oldText);
+  if (occurrences == 0) {
+    throw StateError(
+      'No exact match found in $path. oldText must match the file '
+      'contents byte-for-byte (check whitespace and newlines with read).',
+    );
+  }
+  if (occurrences > 1) {
+    throw StateError(
+      'oldText occurs $occurrences times in $path and is ambiguous. '
+      'Include more surrounding context so it matches exactly once.',
+    );
+  }
+
+  final updated = content.replaceFirst(oldText, newText);
+  final written = await env.writeFile(path, updated);
+  if (written.isErr) throw StateError('${written.errorOrNull}');
+
+  return ToolExecutionResult.text(
+    'Edited $path: replaced ${_byteLength(oldText)} bytes with '
+    '${_byteLength(newText)} bytes.',
+  );
+}
+
+/// Runs one hashline-mode edit: parses [patchText], applies it all-or-
+/// nothing via [HashlinePatcher], and renders the post-edit `[path#TAG]`
+/// header(s) the model anchors its next edit on (omp's edit response).
+Future<ToolExecutionResult> _executeHashlineEdit(
+  ExecutionEnv env,
+  HashlineSnapshotStore store,
+  String? path,
+  String patchText,
+  CancelToken? cancelToken,
+) async {
+  final patch = HashlinePatch.parse(patchText, fallbackPath: path);
+  if (patch.sections.isEmpty) {
+    throw StateError('No hashline sections found in patch input.');
+  }
+  final patcher = HashlinePatcher(env: env, snapshots: store);
+  final result = await patcher.apply(patch);
+  cancelToken?.throwIfCancelled();
+
+  // Single-section no-op: the body rows matched the file byte-for-byte —
+  // surface omp's soft diagnostic so the model re-reads instead of widening
+  // the payload (multi-section no-ops already threw inside `apply`).
+  if (result.sections.length == 1 &&
+      result.sections[0].op == HashlineSectionOp.noop) {
+    return ToolExecutionResult.text(
+      noChangeDiagnostic(result.sections[0].path),
+    );
+  }
+
+  final parts = <String>[];
+  for (final section in result.sections) {
+    final buffer = StringBuffer(section.header);
+    if (section.firstChangedLine != null) {
+      buffer.write('\nFirst change at line ${section.firstChangedLine}.');
+    }
+    if (section.warnings.isNotEmpty) {
+      buffer.write('\n\nWarnings:\n${section.warnings.join('\n')}');
+    }
+    parts.add(buffer.toString());
+  }
+  return ToolExecutionResult.text(parts.join('\n\n'));
 }
 
 int _countOccurrences(String haystack, String needle) {

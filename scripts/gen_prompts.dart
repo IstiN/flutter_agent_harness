@@ -102,6 +102,10 @@ const rootSpecs = <PromptSpec>[
     constName: 'inspectImageVisionSystemPrompt',
   ),
   PromptSpec(
+    source: 'prompts/tools/edit.md',
+    constName: 'editToolDescriptionPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/tools/tool_calling.md',
     constName: 'toolCallingInstructionsPrompt',
     requiredToken: '{{tools}}',

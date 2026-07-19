@@ -12,6 +12,18 @@ Conventions for AI agents and contributors working in this repository.
   `beforeToolCall` phase via `attachApproval` (composes with user hooks,
   approval runs first); the prompt UI is an injectable `ApprovalPrompt`
   callback (null callback + prompt policy = deny).
+- `lib/src/hashline/` — the hashline patch language (ported from oh-my-pi
+  `packages/hashline`): `[path#TAG]` section headers with a 4-hex whole-file
+  content hash (xxHash32, ported in `xxhash32.dart`), `SWAP`/`DEL`/`INS.*`
+  line-range ops, the per-session `HashlineSnapshotStore`, and the
+  all-or-nothing `HashlinePatcher` over `ExecutionEnv`. Stale tags reject
+  before any write. omp's tree-sitter block ops (`*.BLK`), file ops
+  (`REM`/`MV`), boundary-repair leniency, and diff-based stale-anchor
+  auto-remap are deliberately not ported. Wired into the built-in tools in
+  `lib/src/tools/builtin_tools.dart`: `edit` accepts a `patch` argument
+  (hashline mode) next to legacy `oldText`/`newText`, and `read` gains a
+  `hashline` flag emitting numbered lines + the tag header; both share one
+  session snapshot store via `builtinTools`.
 - `bin/fah.dart` — the `fah`/`fa` CLI executable.
 - `example/flutter_example/` — Flutter chat example (mobile/web sandbox).
 - `site/` — static GitHub Pages landing (hand-rolled HTML/CSS/JS, no build
