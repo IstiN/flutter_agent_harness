@@ -82,6 +82,63 @@ StreamFunction _errorStream(String errorMessage) {
   };
 }
 
+/// First call fails the way a provider 400/403 does — ONE terminal
+/// [ErrorEvent], never a throw (the adapters' errors-as-events contract) —
+/// and every later call answers with [thenText].
+StreamFunction _providerErrorThen(String errorMessage, String thenText) {
+  var callCount = 0;
+  return (model, context, {cancelToken}) {
+    callCount++;
+    final stream = AssistantMessageEventStream();
+    if (callCount == 1) {
+      final message = AssistantMessage(
+        content: const [],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: Usage.zero,
+        stopReason: StopReason.error,
+        errorMessage: errorMessage,
+        timestamp: DateTime.now(),
+      );
+      stream.push(ErrorEvent(reason: StopReason.error, error: message));
+    } else {
+      final message = AssistantMessage(
+        content: [TextContent(text: thenText)],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.now(),
+      );
+      stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    }
+    stream.end();
+    return stream;
+  };
+}
+
+/// A completed turn with no content at all — small on-device models do
+/// this occasionally.
+StreamFunction _emptyResponse() {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final message = AssistantMessage(
+      content: const [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.now(),
+    );
+    stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    stream.end();
+    return stream;
+  };
+}
+
 StreamFunction _toolThenText(String toolOutput, String finalText) {
   var callCount = 0;
   return (model, context, {cancelToken}) {
@@ -194,6 +251,127 @@ void main() {
       await service.waitForIdle();
 
       expect(service.error, contains('something broke'));
+    });
+
+    test('a provider error settles the run once: banner shown, send '
+        're-enabled, the next message works', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(
+          _providerErrorThen('400: bad request', 'recovered'),
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('boom');
+      await service.waitForIdle();
+
+      // Exactly one failed assistant turn (no duplicated failure events),
+      // the banner carries the provider's message, and the run state has
+      // settled so the composer is unblocked.
+      expect(
+        service.messages.where((m) => m.role == 'assistant'),
+        hasLength(1),
+      );
+      expect(service.error, contains('400: bad request'));
+      expect(service.isStreaming, isFalse);
+
+      await service.sendText('again');
+      await service.waitForIdle();
+      expect(service.messages.last.role, 'assistant');
+      expect(service.messages.last.content, 'recovered');
+    });
+
+    test('a prompt refused because a run is active lands in the banner, '
+        'not the console', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      final first = service.sendText('one');
+      // The second send hits Agent.prompt's synchronous "already
+      // processing" refusal. The composer calls send unawaited, so a
+      // synchronous escape would surface as an unhandled async error (the
+      // "Uncaught Error" storm); it must become the error banner instead.
+      await service.sendText('two');
+      expect(service.error, contains('already processing'));
+
+      await first;
+      await service.waitForIdle();
+      // The first run completed undisturbed.
+      expect(service.isStreaming, isFalse);
+      expect(
+        service.messages.where((m) => m.role == 'assistant'),
+        hasLength(1),
+      );
+    });
+
+    test('a failing session append neither duplicates failure events nor '
+        'blocks the UI', () async {
+      final env = _FailingSessionAppendEnv(MemoryExecutionEnv());
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('hello back')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('hello');
+      await service.waitForIdle();
+
+      // The run itself succeeded; persistence is best effort. A throwing
+      // session append must not re-enter the agent's failure path (that
+      // duplicated the failure events and escaped the run as an unhandled
+      // error).
+      expect(
+        service.messages.where((m) => m.role == 'assistant'),
+        hasLength(1),
+      );
+      expect(service.messages.last.content, 'hello back');
+      expect(service.error, isNull);
+      expect(service.isStreaming, isFalse);
+    });
+
+    test('a completed turn with no text shows the empty-response '
+        'placeholder', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_emptyResponse()),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('hi');
+      await service.waitForIdle();
+
+      // A blank bubble looks like a UI bug; the placeholder marks the turn.
+      expect(service.messages.last.role, 'assistant');
+      expect(service.messages.last.content, emptyResponsePlaceholder);
+      expect(service.error, isNull);
+    });
+
+    test('a failed turn shows the error, never the empty-response '
+        'placeholder', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_errorStream('provider exploded')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('boom');
+      await service.waitForIdle();
+
+      expect(service.messages.last.content, isNot(emptyResponsePlaceholder));
+      expect(service.error, contains('provider exploded'));
     });
 
     test('tool calls and results are surfaced as distinct messages', () async {
@@ -598,6 +776,88 @@ void main() {
       );
     });
 
+    test(
+      'sendAttachments never inlines SVG, even for hosted providers',
+      () async {
+        Context? captured;
+        AssistantMessageEventStream capturing(
+          Model model,
+          Context context, {
+          CancelToken? cancelToken,
+        }) {
+          captured = context;
+          return _singleTextResponse('ok')(
+            model,
+            context,
+            cancelToken: cancelToken,
+          );
+        }
+
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(capturing),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+        expect(service.inlinesImageAttachments, isTrue);
+
+        await service.sendAttachments(
+          attachments: [
+            (
+              path: 'uploads/icon.svg',
+              bytes: Uint8List.fromList('<svg/>'.codeUnits),
+              mimeType: 'image/svg+xml',
+            ),
+            (
+              path: 'uploads/pic.png',
+              bytes: Uint8List.fromList([1, 2, 3]),
+              mimeType: 'image/png',
+            ),
+          ],
+        );
+        await service.waitForIdle();
+
+        final userMessage = captured!.messages.whereType<UserMessage>().last;
+        final blocks = userMessage.content as List<ContentBlock>;
+        final images = blocks.whereType<ImageContent>().toList();
+        // Only the decodable raster image rides inline; the SVG is a path
+        // reference in the text.
+        expect(images, hasLength(1));
+        expect(images.single.mimeType, 'image/png');
+        final text = blocks.whereType<TextContent>().single.text;
+        expect(text, contains('[attached file: uploads/icon.svg'));
+        expect(text, contains('[attached file: uploads/pic.png'));
+        // The UI thumbnail comes from the PNG, never from the SVG bytes.
+        expect(service.messages[0].imageBytes, [1, 2, 3]);
+      },
+    );
+
+    test(
+      'discardStagedAttachment removes files inside uploads/ only',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('ok')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+
+        final staged = await service.stageAttachment(
+          name: 'scratch.txt',
+          bytes: Uint8List.fromList([1]),
+        );
+        await env.writeFile('keep.txt', 'stay');
+
+        await service.discardStagedAttachment(staged);
+        await service.discardStagedAttachment('keep.txt');
+
+        expect((await env.exists(staged)).getOrThrow(), isFalse);
+        // Paths outside uploads/ are never touched.
+        expect((await env.exists('keep.txt')).getOrThrow(), isTrue);
+      },
+    );
+
     test('sendAttachments sends paths only to on-device providers', () async {
       Context? captured;
       AssistantMessageEventStream capturing(
@@ -766,4 +1026,96 @@ Future<String> _readAllFiles(ExecutionEnv env, String path) async {
     }
   }
   return buffer.toString();
+}
+
+/// An [ExecutionEnv] delegating everything to an inner instance except
+/// [appendFile] under the sessions root, which fails — simulating a broken
+/// session store (disk full, quota exceeded) so the run-state tests can
+/// prove a persistence failure never cascades into the agent's failure
+/// path.
+final class _FailingSessionAppendEnv implements ExecutionEnv {
+  _FailingSessionAppendEnv(this._inner);
+
+  final ExecutionEnv _inner;
+
+  @override
+  String get cwd => _inner.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _inner.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _inner.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _inner.readTextFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _inner.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _inner.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _inner.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _inner.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) {
+    if (path.contains('sessions')) {
+      return Future.value(
+        Err(
+          FileError(
+            FileErrorCode.unknown,
+            'simulated session-store failure',
+            path: path,
+          ),
+        ),
+      );
+    }
+    return _inner.appendFile(path, content);
+  }
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _inner.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _inner.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _inner.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _inner.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _inner.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _inner.exec(command, options: options);
 }

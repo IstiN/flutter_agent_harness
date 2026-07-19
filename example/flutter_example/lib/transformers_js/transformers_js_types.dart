@@ -66,6 +66,7 @@ final class TransformersJsModelPreset {
     required this.displayName,
     required this.sizeLabel,
     required this.dtype,
+    required this.downloadSizes,
     this.contextWindow = 4096,
     this.supportsVision = false,
   });
@@ -82,9 +83,33 @@ final class TransformersJsModelPreset {
 
   /// Per-component dtype selection (the `dtype` option of
   /// `from_pretrained`), e.g. `{embed_tokens: q4f16, decoder_model_merged:
-  /// q4f16, vision_encoder: q4f16}`. The keys name ONNX component files in
-  /// the repo; only the listed components download.
+  /// q4f16, vision_encoder: q4f16, audio_encoder: q4f16}`.
+  ///
+  /// The map MUST cover every component the model class instantiates:
+  /// transformers.js resolves a missing component to the device default
+  /// (fp32) and downloads that instead — with `audio_encoder` absent this
+  /// pulled the 1.18 GB fp32 audio encoder the app never uses. The audio
+  /// session itself cannot be excluded: `Gemma4ForConditionalGeneration` is
+  /// registered as an image+audio→text model type whose session list always
+  /// includes `audio_encoder` (no `from_pretrained` option filters
+  /// components, and no other registered class loads this repo's vision
+  /// encoder with the right inputs). Pinning `audio_encoder` to q4f16 bounds
+  /// the dead weight to 0.17 GB — the smallest audio variant in the repo.
   final Map<String, String> dtype;
+
+  /// Expected download size in bytes per repo-relative file
+  /// (`onnx/embed_tokens_q4f16.onnx_data` → 1590689792), taken from the
+  /// HuggingFace API for the revision this preset targets.
+  ///
+  /// Doubles as the download ALLOWLIST: the load helper
+  /// (`transformers_js_helpers.js`) wraps `env.fetch` while loading and
+  /// rejects any repo URL outside this key set, so no file outside the
+  /// requested dtype set (no fp32 variants, no other quantizations) can
+  /// download. The smooth aggregate progress bar
+  /// ([TransformersJsProgressAggregator]) uses the byte values as per-file
+  /// weights. Sizes are informational — a repo-side re-upload shifts bytes,
+  /// not correctness (fractions clamp at 100%).
+  final Map<String, int> downloadSizes;
 
   /// Context window reported to the agent loop (drives overflow/compaction
   /// heuristics). Kept small: on-device KV-cache memory scales with the
@@ -103,18 +128,39 @@ final class TransformersJsModelPreset {
 /// Starts with a single preset: the public `onnx-community` ONNX export of
 /// Gemma 4 E2B (the model the webml-community/Gemma-4-WebGPU space runs).
 /// q4f16 weights: decoder 1.52 GB + embed tokens 1.59 GB + vision encoder
-/// 0.10 GB ≈ 3.2 GB, downloaded from HuggingFace on first use and cached by
-/// the browser. The repo also ships an audio encoder (0.17 GB, q4f16) —
-/// not loaded: the app has no audio input UI.
+/// 0.10 GB + audio encoder 0.17 GB ≈ 3.4 GB, downloaded from HuggingFace on
+/// first use and cached by the browser. The audio encoder is dead weight —
+/// the app has no audio input UI — but transformers.js always instantiates
+/// it for this model class; q4f16 is the smallest variant (see
+/// [TransformersJsModelPreset.dtype]).
 const transformersJsModelPresets = <TransformersJsModelPreset>[
   TransformersJsModelPreset(
     id: 'onnx-community/gemma-4-E2B-it-ONNX',
     displayName: 'Gemma 4 E2B (ONNX)',
-    sizeLabel: '~3.2 GB',
+    sizeLabel: '~3.4 GB',
     dtype: {
       'embed_tokens': 'q4f16',
       'decoder_model_merged': 'q4f16',
       'vision_encoder': 'q4f16',
+      'audio_encoder': 'q4f16',
+    },
+    // Byte sizes from the HuggingFace paths-info API (rev main, 2026-07).
+    downloadSizes: {
+      'config.json': 5549,
+      'generation_config.json': 238,
+      'preprocessor_config.json': 43,
+      'processor_config.json': 1689,
+      'tokenizer_config.json': 18807,
+      'tokenizer.json': 19439251,
+      'chat_template.jinja': 16317,
+      'onnx/embed_tokens_q4f16.onnx': 5621,
+      'onnx/embed_tokens_q4f16.onnx_data': 1590689792,
+      'onnx/decoder_model_merged_q4f16.onnx': 673231,
+      'onnx/decoder_model_merged_q4f16.onnx_data': 1519700992,
+      'onnx/vision_encoder_q4f16.onnx': 189124,
+      'onnx/vision_encoder_q4f16.onnx_data': 99189440,
+      'onnx/audio_encoder_q4f16.onnx': 260446,
+      'onnx/audio_encoder_q4f16.onnx_data': 171258112,
     },
     supportsVision: true,
   ),
@@ -161,6 +207,96 @@ final class TransformersJsProgress {
   final String text;
 }
 
+/// One raw per-file progress event forwarded by the JS load helper (see
+/// `transformers_js_helpers.js`) — the transformers.js download events
+/// (`initiate` / `progress` / `done` / `ready`) reduced to plain values
+/// that cross the js_interop boundary as JSON.
+typedef TransformersJsDownloadEvent = ({
+  String status,
+  String? file,
+  int? loaded,
+  int? total,
+});
+
+/// Aggregates raw per-file download events into a SMOOTH overall progress
+/// report for the settings form's progress bar.
+///
+/// The library's own events are per file (fraction resets per file — the
+/// "flickering bar" bug), so this aggregator weights each file by its
+/// expected byte size ([TransformersJsModelPreset.downloadSizes]) and sums
+/// completed + in-flight fractions across files. The reported fraction is
+/// monotonic: it never moves backwards, even when events arrive out of
+/// order or a file restarts. Pure Dart so host tests can drive it.
+final class TransformersJsProgressAggregator {
+  /// Creates an aggregator over [expectedFiles] (repo-relative path →
+  /// expected bytes, see [TransformersJsModelPreset.downloadSizes]).
+  TransformersJsProgressAggregator(Map<String, int> expectedFiles)
+    : _expected = Map.unmodifiable(expectedFiles),
+      _totalBytes = expectedFiles.values.fold(0, (sum, n) => sum + n);
+
+  final Map<String, int> _expected;
+  final int _totalBytes;
+  final Map<String, int> _loaded = {};
+  double _maxFraction = 0;
+  String? _currentFile;
+
+  /// Total expected bytes across all tracked files.
+  int get totalBytes => _totalBytes;
+
+  /// Feeds one raw [event]; returns the aggregate report. Events for files
+  /// outside the expected set (none should pass the fetch allowlist) update
+  /// the status line only, never the fraction.
+  TransformersJsProgress update(TransformersJsDownloadEvent event) {
+    final file = event.file;
+    if (file != null) {
+      final expected = _expected[file];
+      if (expected != null) {
+        switch (event.status) {
+          case 'initiate':
+            _loaded.putIfAbsent(file, () => 0);
+          case 'progress':
+            _loaded[file] = (event.loaded ?? _loaded[file] ?? 0).clamp(
+              0,
+              expected,
+            );
+          case 'done':
+            _loaded[file] = expected;
+        }
+      }
+      _currentFile = file.split('/').last;
+    }
+
+    var fraction = switch (event.status) {
+      'ready' => 1.0,
+      _ => _overallFraction(),
+    };
+    // Monotonic: the bar never moves backwards.
+    if (fraction < _maxFraction) {
+      fraction = _maxFraction;
+    } else {
+      _maxFraction = fraction;
+    }
+
+    final percent = (fraction * 100).floor();
+    final text = switch (event.status) {
+      'ready' => 'Model ready',
+      'prepare' => 'Preparing model download…',
+      _ when _currentFile != null => 'Downloading $_currentFile — $percent%',
+      _ => 'Downloading model weights — $percent%',
+    };
+    return TransformersJsProgress(fraction: fraction, text: text);
+  }
+
+  double _overallFraction() {
+    if (_totalBytes <= 0) return 0;
+    var loaded = 0;
+    for (final entry in _expected.entries) {
+      loaded += (_loaded[entry.key] ?? 0).clamp(0, entry.value);
+    }
+    return loaded / _totalBytes;
+  }
+}
+
 /// The engine surface the transformers.js stream function and the settings
 /// form talk to. The web build implements it over `@huggingface/transformers`
 /// (loaded from CDN by `web/index.html`); host platforms get a stub that
@@ -203,6 +339,16 @@ abstract interface class TransformersJsEngineApi {
   /// Interrupts any in-flight generation (maps to
   /// `InterruptableStoppingCriteria.interrupt`).
   Future<void> interrupt();
+
+  /// Drops the loaded model so the next [loadModel] re-initializes from
+  /// the cached weights.
+  ///
+  /// Called after a generation failure: ONNX Runtime errors (e.g. the
+  /// WebGPU `mapAsync ... invalid Buffer` OrtRun failure an undecodable
+  /// image input causes) can poison the session, and retrying against the
+  /// same instance inherits the broken state. Weights stay in CacheStorage,
+  /// so recovery pays shader compilation, not the multi-GB download.
+  Future<void> unloadModel();
 
   /// CacheStorage report for [modelId]'s downloaded weights, or `null` when
   /// the cache cannot be queried (non-web platforms, blocked storage).

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
@@ -56,6 +58,18 @@ Finder _sidebarListTiles() => find.descendant(
 );
 
 void main() {
+  group('chatImageMessageSource', () {
+    test('web rides a data: URI — no dart:io temp file (regression: '
+        'getTemporaryDirectory threw on every chat sync on web)', () async {
+      final source = await chatImageMessageSource(
+        3,
+        Uint8List.fromList([1, 2, 3]),
+        isWeb: true,
+      );
+      expect(source, 'data:image/png;base64,AQID');
+    });
+  });
+
   group('ChatScreen side panels', () {
     testWidgets('wide: left sidebar and right files panel toggle '
         'independently', (tester) async {

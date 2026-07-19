@@ -39,6 +39,9 @@ final class _FakeEngine implements TransformersJsEngineApi {
   Future<void> interrupt() async {}
 
   @override
+  Future<void> unloadModel() async {}
+
+  @override
   Future<TransformersJsCacheInfo?> modelCacheInfo(String modelId) async =>
       cache[modelId];
 

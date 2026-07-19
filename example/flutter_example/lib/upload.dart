@@ -18,6 +18,40 @@ abstract interface class UploadPicker {
   Future<List<UploadFile>> pick();
 }
 
+/// The image MIME types that may be inlined as image content (chat
+/// attachments for hosted vision providers, and the on-device
+/// transformers.js vision path).
+///
+/// Deliberately an ALLOWLIST, not `mimeType.startsWith('image/')`: SVG is
+/// markup (`image/svg+xml`), not a raster image — inlining it feeds
+/// undecodable bytes to image decoders (and, on-device, to ONNX Runtime's
+/// `RawImage`, which poisons the WebGPU session). Only formats every
+/// consumer can actually decode qualify.
+const kInlineImageMimeTypes = {
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+};
+
+/// Whether [mimeType] is an inline-able raster image type (see
+/// [kInlineImageMimeTypes]). SVG and any other `image/*` type are NOT —
+/// they travel as plain file references.
+bool isInlineImageMimeType(String mimeType) =>
+    kInlineImageMimeTypes.contains(mimeType.toLowerCase());
+
+/// Guesses a MIME type from a file [name]'s extension; anything
+/// unrecognized (including `.svg`) is `application/octet-stream`, which
+/// never inlines as an image.
+String mimeTypeForUploadName(String name) {
+  final lower = name.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'application/octet-stream';
+}
+
 /// Maximum total bytes accepted in one upload batch: 25 MB.
 ///
 /// The whole sandbox FS is snapshotted into IndexedDB as base64-in-JSON on

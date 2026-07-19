@@ -49,9 +49,14 @@
 
   // Downloads (or loads from CacheStorage) and instantiates the model.
   // dtypeJson is a JSON-encoded per-component dtype map
-  // ({embed_tokens: 'q4f16', ...}); onProgress(fraction|null, text) reports
-  // download progress (fraction in 0..1 when known). Resolves to the model id.
-  window.transformersJsLoad = (modelId, dtypeJson, onProgress) => {
+  // ({embed_tokens: 'q4f16', ..., audio_encoder: 'q4f16'}); allowlistJson is
+  // a JSON-encoded list of repo-relative file paths allowed to download —
+  // while loading, env.fetch is wrapped to REJECT any repo URL outside the
+  // list, so files outside the requested dtype set (fp32 variants, other
+  // quantizations) can never download. onProgress(eventJson) receives one
+  // JSON-encoded raw event per update ({status, file, loaded, total});
+  // smoothing/aggregation happens Dart-side. Resolves to the model id.
+  window.transformersJsLoad = (modelId, dtypeJson, allowlistJson, onProgress) => {
     if (state.model && state.modelId === modelId) {
       return Promise.resolve(modelId);
     }
@@ -72,17 +77,57 @@
     }
     const tjs = library();
     const dtype = JSON.parse(dtypeJson);
-    const report = (fraction, text) => {
+    const allowlist = new Set(JSON.parse(allowlistJson || '[]'));
+    const report = (status, file, loaded, total) => {
       try {
-        onProgress && onProgress(fraction, text);
+        onProgress && onProgress(JSON.stringify({ status, file, loaded, total }));
       } catch (_) {
         /* progress reporting is best effort */
       }
     };
+
+    // Per-file download allowlist: transformers.js resolves a component
+    // MISSING from the dtype map to fp32 and instantiates every component
+    // of the model type — without this guard a dtype-map mistake silently
+    // downloads gigabytes of the wrong files (the fp32 audio encoder was
+    // 1.18 GB). Any repo URL outside the allowlist fails the load loudly
+    // instead. Non-repo URLs (CDN, wasm runtimes) always pass.
+    const originalFetch = tjs.env && tjs.env.fetch;
+    const installFetchAllowlist = () => {
+      if (typeof originalFetch !== 'function' || !tjs.env) return;
+      tjs.env.fetch = (url, options) => {
+        const u = String(url);
+        if (u.includes(modelId)) {
+          const path = u.split('?')[0];
+          let allowed = false;
+          for (const f of allowlist) {
+            if (path.endsWith('/' + f)) {
+              allowed = true;
+              break;
+            }
+          }
+          if (!allowed) {
+            return Promise.reject(
+              new Error(
+                'Blocked a download outside the selected model files: ' + u
+              )
+            );
+          }
+        }
+        return originalFetch(url, options);
+      };
+    };
+    const restoreFetch = () => {
+      if (tjs.env && typeof originalFetch === 'function') {
+        tjs.env.fetch = originalFetch;
+      }
+    };
+
     state.loadingId = modelId;
     state.loadPromise = (async () => {
+      installFetchAllowlist();
       try {
-        report(null, 'Preparing model download…');
+        report('prepare', null, null, null);
         const [processor, model] = await Promise.all([
           tjs.AutoProcessor.from_pretrained(modelId),
           tjs.Gemma4ForConditionalGeneration.from_pretrained(modelId, {
@@ -90,19 +135,17 @@
             device: 'webgpu',
             progress_callback: (e) => {
               if (!e || !e.status) return;
-              if (e.status === 'progress_total') {
-                // Library reports 0..100 across all files in flight.
-                report(
-                  typeof e.progress === 'number' ? e.progress / 100 : null,
-                  'Downloading model weights…'
-                );
-              } else if (e.status === 'progress' && e.file) {
-                report(null, 'Downloading ' + e.file);
+              if (e.status === 'progress' && e.file) {
+                report('progress', e.file, e.loaded || 0, e.total || 0);
               } else if (e.status === 'initiate' && e.file) {
-                report(null, 'Starting download: ' + e.file);
+                report('initiate', e.file, 0, 0);
+              } else if (e.status === 'done' && e.file) {
+                report('done', e.file, null, null);
               } else if (e.status === 'ready') {
-                report(1, 'Model ready');
+                report('ready', null, null, null);
               }
+              // 'progress_total' and other aggregate events are ignored:
+              // aggregation is the Dart side's job (smooth, monotonic).
             },
           }),
         ]);
@@ -110,13 +153,14 @@
         state.model = model;
         state.modelId = modelId;
         state.criteria = new tjs.InterruptableStoppingCriteria();
-        report(1, 'Model ready');
+        report('ready', null, null, null);
         return modelId;
       } catch (e) {
         // Drop partial state so the next attempt starts fresh.
         reset();
         throw e;
       } finally {
+        restoreFetch();
         state.loadPromise = null;
         state.loadingId = null;
       }
@@ -214,6 +258,19 @@
         }
         onDone && onDone(reason);
       } catch (e) {
+        // A failed generate can leave the ONNX Runtime session poisoned
+        // (e.g. the WebGPU "mapAsync ... invalid Buffer" OrtRun error an
+        // undecodable image input triggers). Drop the model so the next
+        // turn reloads from CacheStorage instead of inheriting the broken
+        // state; the Dart side mirrors this via unloadModel().
+        try {
+          if (state.model && typeof state.model.dispose === 'function') {
+            state.model.dispose();
+          }
+        } catch (_) {
+          /* disposal is best effort */
+        }
+        reset();
         onError && onError(String((e && e.message) || e));
       }
     };

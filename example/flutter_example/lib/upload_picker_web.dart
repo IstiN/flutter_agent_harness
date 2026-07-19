@@ -34,8 +34,12 @@ final class WebUploadPicker implements UploadPicker {
 
     final picked = <UploadFile>[];
     for (final file in input.files ?? const <html.File>[]) {
+      // webkitRelativePath is the empty string (not null) on plain
+      // non-directory picks per spec — treat empty as absent so the file
+      // name is used; an empty name would be silently dropped downstream.
+      final relative = file.relativePath;
       picked.add((
-        name: file.relativePath ?? file.name,
+        name: relative != null && relative.isNotEmpty ? relative : file.name,
         bytes: await readFileFully(file),
       ));
     }

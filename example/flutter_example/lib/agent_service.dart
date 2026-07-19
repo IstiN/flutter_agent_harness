@@ -95,10 +95,17 @@ final class AgentConfig {
   );
 }
 
+/// Shown in place of an assistant bubble when a completed turn produced
+/// neither text nor tool calls — a small on-device model occasionally
+/// returns an empty completion, and a blank bubble looks like a UI bug.
+/// UI-only: the persisted session message keeps its real (empty) content.
+const emptyResponsePlaceholder = '(empty response — try again)';
+
 /// A chat attachment already staged in the sandbox (see
 /// [AgentService.stageAttachment]): [path] is the env-relative path the
-/// outgoing message references; image attachments ([mimeType] is `image/*`)
-/// additionally ride along inline for hosted providers.
+/// outgoing message references; raster image attachments (see
+/// [isInlineImageMimeType] — PNG/JPEG/GIF/WebP, never SVG) additionally
+/// ride along inline for hosted providers.
 typedef StagedAttachment = ({String path, Uint8List bytes, String mimeType});
 
 /// Wraps an [Agent] for the Flutter chat UI.
@@ -307,7 +314,7 @@ class AgentService extends ChangeNotifier {
     if (text.trim().isEmpty) return;
     _addUserMessage(text: text);
     _clearError();
-    _runWithTimeout(_agent.prompt(text));
+    _runWithTimeout(() => _agent.prompt(text));
   }
 
   /// Directory (relative to [env]'s working directory) where chat
@@ -363,12 +370,26 @@ class AgentService extends ChangeNotifier {
     return '${name.substring(0, dot)}-$n${name.substring(dot)}';
   }
 
+  /// Best-effort delete of a file staged via [stageAttachment] — used when
+  /// a pending attachment chip is removed before sending. Only paths inside
+  /// [uploadsDir] qualify; failures are ignored (the file is small and the
+  /// sandbox is ephemeral).
+  Future<void> discardStagedAttachment(String path) async {
+    if (!path.startsWith('$uploadsDir/')) return;
+    try {
+      await env.remove(path);
+    } on Object {
+      // Best effort: a leftover file in uploads/ is harmless.
+    }
+  }
+
   /// Sends a user message referencing files staged via [stageAttachment]:
   /// the text names each sandbox path so the agent reads the file with its
-  /// tools, followed by the user's typed text. Image attachments are
-  /// additionally inlined as [ImageContent] when the active provider is a
-  /// hosted one ([inlinesImageAttachments]); on-device text-only backends
-  /// receive the paths only.
+  /// tools, followed by the user's typed text. Raster image attachments
+  /// ([isInlineImageMimeType]) are additionally inlined as [ImageContent]
+  /// when the active provider is a hosted one ([inlinesImageAttachments]);
+  /// SVG and other non-decodable types always travel as path references
+  /// only, and on-device text-only backends receive the paths only.
   Future<void> sendAttachments({
     required List<StagedAttachment> attachments,
     String text = '',
@@ -381,7 +402,7 @@ class AgentService extends ChangeNotifier {
     ].join('\n');
     final images = [
       for (final attachment in attachments)
-        if (attachment.mimeType.startsWith('image/')) attachment,
+        if (isInlineImageMimeType(attachment.mimeType)) attachment,
     ];
     final inline = images.isNotEmpty && inlinesImageAttachments;
     _addUserMessage(
@@ -391,11 +412,11 @@ class AgentService extends ChangeNotifier {
     );
     _clearError();
     if (!inline) {
-      _runWithTimeout(_agent.prompt(fullText));
+      _runWithTimeout(() => _agent.prompt(fullText));
       return;
     }
     _runWithTimeout(
-      _agent.promptMessage(
+      () => _agent.promptMessage(
         UserMessage(
           content: [
             TextContent(text: fullText),
@@ -424,13 +445,30 @@ class AgentService extends ChangeNotifier {
       ImageContent(data: base64Encode(bytes), mimeType: mimeType),
     ];
     _runWithTimeout(
-      _agent.promptMessage(
+      () => _agent.promptMessage(
         UserMessage(content: content, timestamp: DateTime.now()),
       ),
     );
   }
 
-  void _runWithTimeout(Future<void> run) {
+  /// Starts one agent run and settles the UI state no matter how it ends.
+  ///
+  /// [startRun] is invoked LAZILY inside a try/catch: `Agent.prompt*` throws
+  /// synchronously when a run is already active, and the composer calls the
+  /// send methods unawaited — a synchronous escape would surface as an
+  /// unhandled async error in the console (the "Uncaught Error" storm after
+  /// a provider failure) instead of the error banner. Timeouts and async
+  /// failures land in `catchError`, which always re-enables the UI.
+  void _runWithTimeout(Future<void> Function() startRun) {
+    final Future<void> run;
+    try {
+      run = startRun();
+    } on Object catch (e) {
+      isStreaming = false;
+      error = e is StateError ? e.message : e.toString();
+      notifyListeners();
+      return;
+    }
     run
         .timeout(
           _responseTimeout,
@@ -664,7 +702,16 @@ class AgentService extends ChangeNotifier {
         isStreaming = false;
         _currentAssistantMessage = null;
         notifyListeners();
-        await _persist();
+        // Session persistence is best effort: a failed append must not
+        // propagate back into the agent's event plumbing (a throwing
+        // listener re-enters the loop's failure path, duplicates the
+        // failure events, and escapes the run as an unhandled error).
+        try {
+          await _persist();
+        } on Object {
+          // The transcript stays in memory; the next run retries the
+          // missed appends (see _persistedCount).
+        }
       default:
     }
   }
@@ -681,10 +728,19 @@ class AgentService extends ChangeNotifier {
   }
 
   void _finalizeAssistant(AssistantMessage message) {
-    final text = message.content
+    var text = message.content
         .whereType<TextContent>()
         .map((b) => b.text)
         .join();
+    final hasToolCalls = message.content.any((block) => block is ToolCall);
+    if (text.trim().isEmpty &&
+        !hasToolCalls &&
+        message.stopReason != StopReason.error &&
+        message.stopReason != StopReason.aborted) {
+      // A completed turn with neither text nor tool calls (small on-device
+      // models do this) must not render as a blank bubble.
+      text = emptyResponsePlaceholder;
+    }
     final target = _currentAssistantMessage;
     if (target == null) {
       messages.add(FahChatMessage(role: 'assistant', content: text));

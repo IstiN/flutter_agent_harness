@@ -81,19 +81,16 @@ final class TransformersJsService implements TransformersJsEngineApi {
     }
     await _ensureLibrary();
     if (loadedModelId == preset.id) return;
+    final aggregator = TransformersJsProgressAggregator(preset.downloadSizes);
     try {
       await transformersJsLoad(
         preset.id.toJS,
         jsonEncode(preset.dtype).toJS,
-        ((JSNumber? fraction, JSString text) {
-          if (!_progressController.isClosed) {
-            _progressController.add(
-              TransformersJsProgress(
-                fraction: fraction?.toDartDouble,
-                text: text.toDart,
-              ),
-            );
-          }
+        jsonEncode(preset.downloadSizes.keys.toList()).toJS,
+        ((JSString eventJson) {
+          if (_progressController.isClosed) return;
+          final event = _decodeDownloadEvent(eventJson.toDart);
+          _progressController.add(aggregator.update(event));
         }).toJS,
       ).toDart;
       loadedModelId = preset.id;
@@ -155,6 +152,19 @@ final class TransformersJsService implements TransformersJsEngineApi {
   }
 
   @override
+  Future<void> unloadModel() async {
+    // The JS helper drops its own state on a generation error already;
+    // mirror that here (and cover any failure path that did not go through
+    // the helper's reset) so Dart and JS never disagree on what's loaded.
+    loadedModelId = null;
+    try {
+      transformersJsUnload();
+    } catch (_) {
+      // Unloading with nothing loaded is a no-op JS-side; best effort.
+    }
+  }
+
+  @override
   Future<TransformersJsCacheInfo?> modelCacheInfo(String modelId) async {
     try {
       final info =
@@ -186,4 +196,26 @@ final class TransformersJsService implements TransformersJsEngineApi {
 String _jsErrorText(Object error) {
   final text = error.toString();
   return text.length > 300 ? '${text.substring(0, 300)}…' : text;
+}
+
+/// Decodes one JSON progress event from the JS load helper into a
+/// [TransformersJsDownloadEvent]; malformed payloads degrade to a
+/// status-only event (progress reporting must never break a load).
+TransformersJsDownloadEvent _decodeDownloadEvent(String json) {
+  try {
+    final decoded = jsonDecode(json);
+    if (decoded is Map<String, dynamic>) {
+      int? asInt(Object? value) =>
+          value is num ? value.round() : int.tryParse('$value');
+      return (
+        status: '${decoded['status'] ?? ''}',
+        file: decoded['file'] as String?,
+        loaded: asInt(decoded['loaded']),
+        total: asInt(decoded['total']),
+      );
+    }
+  } on Object {
+    // Fall through to the status-only default.
+  }
+  return (status: '', file: null, loaded: null, total: null);
 }

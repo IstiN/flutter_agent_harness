@@ -246,11 +246,11 @@ class _FileBrowserState extends State<FileBrowser> {
     }
 
     var written = 0;
-    var failed = 0;
+    final failed = <String>[];
     for (final file in picked) {
       final name = sanitizeUploadName(file.name);
       if (name.isEmpty) {
-        failed++;
+        failed.add(file.name.isEmpty ? '(empty file name)' : file.name);
         continue;
       }
       final result = await widget.env.writeBinaryFile(
@@ -260,14 +260,15 @@ class _FileBrowserState extends State<FileBrowser> {
       if (result.isOk) {
         written++;
       } else {
-        failed++;
+        failed.add(name);
       }
     }
     if (!mounted) return;
     if (written > 0) await _load();
+    // Failures stay visible: which files, not just how many.
     _showSnack(
       'Uploaded $written file${written == 1 ? '' : 's'}'
-      '${failed > 0 ? ', $failed failed' : ''}',
+      '${failed.isNotEmpty ? ', ${failed.length} failed: ${failed.join(', ')}' : ''}',
     );
   }
 
