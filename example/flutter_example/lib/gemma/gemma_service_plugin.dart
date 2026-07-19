@@ -5,8 +5,11 @@
 /// The real on-device Gemma engine, backed by the `flutter_gemma` plugin
 /// (LiteRT-LM `.litertlm` engine). Compiles on IO platforms (FFI engine) and
 /// on web (`@litert-lm/core` via `flutter_gemma_litertlm`'s conditional
-/// export); desktop builds get `gemma_service_stub.dart` instead. Host tests
-/// inject fakes and never touch this implementation.
+/// export), but reports unavailable on web — the web on-device Gemma path
+/// moved to the transformers.js provider (`lib/transformers_js/`) because
+/// `@litert-lm/core` 0.12.1 crashes on the `-web.litertlm` builds (see
+/// [gemmaProviderVisible]). Desktop builds get `gemma_service_stub.dart`
+/// instead. Host tests inject fakes and never touch this implementation.
 library;
 
 import 'dart:async';

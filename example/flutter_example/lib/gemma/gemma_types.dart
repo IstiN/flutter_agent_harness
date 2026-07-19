@@ -18,28 +18,35 @@ import 'package:flutter/foundation.dart';
 const gemmaProviderKind = 'gemma';
 
 /// Shown when the Gemma provider is used on an unsupported platform. The
-/// provider runs on web (`@litert-lm/core`) and on iOS/Android (FFI);
-/// desktop builds hide it — the plugin's desktop path needs extra native
-/// packaging that this app does not do (see the flutter_gemma README's
-/// macOS section).
+/// provider runs on iOS/Android (FFI) only: the web on-device Gemma path
+/// moved to the transformers.js provider (`lib/transformers_js/`) because
+/// the pinned `@litert-lm/core` (0.12.1) crashes creating the GPU executor
+/// for the `-web.litertlm` builds; desktop builds hide it — the plugin's
+/// desktop path needs extra native packaging that this app does not do (see
+/// the flutter_gemma README's macOS section).
 const gemmaUnsupportedPlatformMessage =
-    'On-device inference (Gemma 4) is not available in the desktop builds '
-    'of this app. Pick a hosted provider here — or use the web build '
-    '(Chrome/Edge) or the iOS/Android app, which run Gemma 4 on-device.';
+    'On-device inference (Gemma 4) is not available in this build of the '
+    'app. Pick a hosted provider here — or use the web build (Chrome/Edge), '
+    'which runs Gemma 4 on-device via transformers.js, or the iOS/Android '
+    'app, which runs it via flutter_gemma.';
 
 /// Whether the Gemma provider appears in the settings provider picker.
-/// Pure function so widget/unit tests can exercise the web and desktop
+/// Pure function so widget/unit tests can exercise the mobile and desktop
 /// cases without a device; the app reads [gemmaProviderSupported].
+///
+/// iOS/Android only: on web the provider is replaced by the transformers.js
+/// one ([transformersJsProviderVisible] in `lib/transformers_js/`) — the
+/// flutter_gemma web engine (`@litert-lm/core`) is abandoned there.
 bool gemmaProviderVisible({
   required bool isWeb,
   required TargetPlatform platform,
 }) {
-  if (isWeb) return true;
+  if (isWeb) return false;
   return platform == TargetPlatform.iOS || platform == TargetPlatform.android;
 }
 
-/// Whether the Gemma provider is offered on this platform (web and
-/// iOS/Android; hidden on desktop).
+/// Whether the Gemma provider is offered on this platform (iOS/Android;
+/// hidden on web — replaced by transformers.js — and on desktop).
 bool get gemmaProviderSupported =>
     gemmaProviderVisible(isWeb: kIsWeb, platform: defaultTargetPlatform);
 
@@ -235,12 +242,13 @@ final class GemmaInstalledModel {
 }
 
 /// The engine surface the Gemma stream function and the settings form talk
-/// to. The web and iOS/Android builds implement it over the `flutter_gemma`
-/// plugin; desktop gets a stub that reports unavailable, and tests inject
-/// fakes.
+/// to. The iOS/Android builds implement it over the `flutter_gemma` plugin
+/// (the web build compiles the same implementation but reports unavailable —
+/// the web on-device Gemma path is `lib/transformers_js/`); desktop gets a
+/// stub that reports unavailable, and tests inject fakes.
 abstract interface class GemmaEngineApi {
-  /// Whether on-device inference can run on this platform (web and
-  /// iOS/Android; desktop reports unavailable).
+  /// Whether on-device inference can run on this platform (iOS/Android;
+  /// web and desktop report unavailable).
   bool get isAvailable;
 
   /// The preset id currently loaded in the engine, if any.

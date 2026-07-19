@@ -18,3 +18,12 @@ const sandboxSystemPrompt =
 /// Source: `example/flutter_example/prompts/webllm_no_tools_note.md`.
 const webLlmNoToolsNote =
     'IMPORTANT: this conversation runs on-device (WebLLM) with NO tools registered — no shell, no file access. Do not emit tool calls, function calls, or shell/file actions; there is nothing to execute them. Answer in plain text only.';
+
+/// Note appended to the transformers.js (on-device Gemma) system prompt when
+/// the agent's tool registry is empty: the prompt-tools wrapper is a
+/// passthrough without tools, so the model must be told plainly that it cannot
+/// call any.
+///
+/// Source: `example/flutter_example/prompts/transformers_js_no_tools_note.md`.
+const transformersJsNoToolsNote =
+    'IMPORTANT: this conversation runs on-device (Gemma via transformers.js) with NO tools registered — no shell, no file access. Do not emit tool calls, function calls, or shell/file actions; there is nothing to execute them. Answer in plain text only.';

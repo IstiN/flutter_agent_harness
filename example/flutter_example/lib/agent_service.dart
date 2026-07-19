@@ -10,6 +10,9 @@ import 'gemma/gemma_stream_function.dart';
 import 'gemma/gemma_types.dart';
 import 'prompts.g.dart';
 import 'secrets_store.dart';
+import 'transformers_js/transformers_js_service.dart';
+import 'transformers_js/transformers_js_stream_function.dart';
+import 'transformers_js/transformers_js_types.dart';
 import 'webllm/webllm_service.dart';
 import 'webllm/webllm_stream_function.dart';
 import 'webllm/webllm_types.dart';
@@ -54,8 +57,9 @@ final class AgentConfig {
   });
 
   /// Provider adapter kind: `openai-completions`, `anthropic`, `google`,
-  /// `webllm` (on-device, web-only — see `lib/webllm/`), or `gemma`
-  /// (on-device, web + iOS/Android — see `lib/gemma/`).
+  /// `webllm` (on-device, web — see `lib/webllm/`), `gemma` (on-device,
+  /// iOS/Android — see `lib/gemma/`), or `transformers_js` (on-device, web —
+  /// see `lib/transformers_js/`).
   final String providerKind;
 
   /// Model id passed to the provider.
@@ -139,9 +143,9 @@ class AgentService extends ChangeNotifier {
     _providerKind = config.providerKind;
     _redactor = redactor;
     _responseTimeout = _isOnDeviceKind(config.providerKind)
-        // First on-device generation compiles WebGPU shaders (WebLLM) or
-        // loads multi-GB weights into memory (Gemma), which can take
-        // minutes; hosted providers keep the tight timeout.
+        // First on-device generation compiles WebGPU shaders (WebLLM,
+        // transformers.js) or loads multi-GB weights into memory (Gemma),
+        // which can take minutes; hosted providers keep the tight timeout.
         ? const Duration(minutes: 10)
         : const Duration(seconds: 90);
     _agent = Agent(
@@ -154,19 +158,25 @@ class AgentService extends ChangeNotifier {
     _agent.subscribe(_onAgentEvent);
   }
 
-  /// Whether [providerKind] is an on-device backend (WebLLM or Gemma),
-  /// which needs the relaxed response timeout.
+  /// Whether [providerKind] is an on-device backend (WebLLM, Gemma, or
+  /// transformers.js), which needs the relaxed response timeout.
   static bool _isOnDeviceKind(String providerKind) =>
-      providerKind == webLlmProviderKind || providerKind == gemmaProviderKind;
+      providerKind == webLlmProviderKind ||
+      providerKind == gemmaProviderKind ||
+      providerKind == transformersJsProviderKind;
 
   /// Picks the stream function for [config]'s backend: the on-device
-  /// bridges for `webllm`/`gemma`, the HTTP adapters otherwise.
+  /// bridges for `webllm`/`gemma`/`transformers_js`, the HTTP adapters
+  /// otherwise.
   static StreamFunction _streamFunctionFor(AgentConfig config) {
     if (config.providerKind == webLlmProviderKind) {
       return webLlmStreamFunction(createWebLlmService());
     }
     if (config.providerKind == gemmaProviderKind) {
       return gemmaStreamFunction(createGemmaService());
+    }
+    if (config.providerKind == transformersJsProviderKind) {
+      return transformersJsStreamFunction(createTransformersJsService());
     }
     return providerStreamFunction(config.providerKind, config.apiKey);
   }
@@ -194,8 +204,8 @@ class AgentService extends ChangeNotifier {
   late final Agent _agent;
 
   /// Response deadline for one agent run; 10 minutes for the on-device
-  /// providers (WebLLM's first run compiles WebGPU shaders; Gemma loads
-  /// multi-GB weights), 90 s otherwise.
+  /// providers (WebLLM's and transformers.js's first run compiles WebGPU
+  /// shaders; Gemma loads multi-GB weights), 90 s otherwise.
   /// Reassigned by [reconfigure] when the backend kind changes.
   late Duration _responseTimeout;
   final JsonlSessionRepo _repo;

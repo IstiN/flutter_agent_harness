@@ -222,8 +222,8 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
     final theme = Theme.of(context);
     if (!_engine.isAvailable) {
       return Text(
-        'On-device (Gemma) models are available in the web and iOS/Android '
-        'builds only.',
+        'On-device (Gemma) models are available in the iOS/Android builds '
+        'only (on web the transformers.js provider covers on-device Gemma).',
         style: theme.textTheme.bodySmall,
       );
     }

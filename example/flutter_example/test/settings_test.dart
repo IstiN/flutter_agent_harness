@@ -8,6 +8,7 @@ import 'package:flutter_agent_example/gemma/gemma_types.dart';
 import 'package:flutter_agent_example/main.dart';
 import 'package:flutter_agent_example/provider_registry.dart';
 import 'package:flutter_agent_example/settings.dart';
+import 'package:flutter_agent_example/transformers_js/transformers_js_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -83,6 +84,8 @@ Future<void> _pumpForm(
   ProviderRegistry registry, {
   Future<void> Function(AgentConfig config)? onConnect,
   GemmaEngineApi? gemmaEngine,
+  TransformersJsEngineApi? transformersJsEngine,
+  bool? isWeb,
 }) {
   return tester.pumpWidget(
     MaterialApp(
@@ -91,12 +94,73 @@ Future<void> _pumpForm(
           child: AgentSettingsForm(
             registry: registry,
             gemmaEngine: gemmaEngine,
+            transformersJsEngine: transformersJsEngine,
+            isWeb: isWeb,
             onConnect: onConnect ?? (_) async {},
           ),
         ),
       ),
     ),
   );
+}
+
+/// Fake [TransformersJsEngineApi] for the settings form: records load calls,
+/// emits scripted progress reports, and can hold the load open (to assert
+/// mid-download UI) or fail it.
+final class FakeTransformersJsEngine implements TransformersJsEngineApi {
+  var available = true;
+  Object? loadError;
+
+  /// Standard (async) broadcast, like the real engine: progress lands on a
+  /// later microtask, so tests pump to let it render.
+  final progress = StreamController<TransformersJsProgress>.broadcast();
+
+  TransformersJsModelPreset? loadedPreset;
+
+  /// While non-null and incomplete, `loadModel` awaits it after emitting
+  /// [pendingProgress].
+  Completer<void>? loadGate;
+
+  /// Emitted by `loadModel` before the gate.
+  TransformersJsProgress? pendingProgress;
+
+  @override
+  bool get isAvailable => available;
+
+  @override
+  String? get loadedModelId => loadedPreset?.id;
+
+  @override
+  Stream<TransformersJsProgress> get progressEvents => progress.stream;
+
+  @override
+  Future<void> loadModel(TransformersJsModelPreset preset) async {
+    final error = loadError;
+    if (error != null) throw error;
+    final pending = pendingProgress;
+    if (pending != null) progress.add(pending);
+    final gate = loadGate;
+    if (gate != null) await gate.future;
+    loadedPreset = preset;
+  }
+
+  @override
+  Future<void Function()> chatStream({
+    required List<TransformersJsChatMessage> messages,
+    required void Function(String chunk) onChunk,
+    void Function(String finishReason)? onDone,
+    void Function(String message)? onError,
+    int? maxTokens,
+  }) async => () {};
+
+  @override
+  Future<void> interrupt() async {}
+
+  @override
+  Future<TransformersJsCacheInfo?> modelCacheInfo(String modelId) async => null;
+
+  @override
+  Future<void> deleteCachedModel(String modelId) async {}
 }
 
 /// Fake [GemmaEngineApi] for the settings form: records install/load calls,
@@ -537,9 +601,8 @@ void main() {
       setPlatform(null);
     });
 
-    testWidgets('is hidden on desktop (web shows it via kIsWeb)', (
-      tester,
-    ) async {
+    testWidgets('is hidden on desktop (and on web, where transformers.js '
+        'replaces it)', (tester) async {
       setPlatform(TargetPlatform.macOS);
       await tester.pumpWidget(const MyApp());
 
@@ -548,6 +611,8 @@ void main() {
       expect(find.text('On-device (Gemma)'), findsNothing);
       // WebLLM stays offered everywhere (its stub reports unavailable).
       expect(find.text('On-device (WebLLM)'), findsOneWidget);
+      // The transformers.js provider is web-only: hidden on desktop.
+      expect(find.text('On-device (Gemma, transformers.js)'), findsNothing);
       await tester.tap(find.text('OpenRouter').last);
       await tester.pumpAndSettle();
       setPlatform(null);
@@ -636,20 +701,153 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.textContaining('not available in the desktop builds'),
+        find.textContaining('not available in this build'),
         findsOneWidget,
       );
       setPlatform(null);
     });
   });
 
+  group('On-device (Gemma, transformers.js) provider', () {
+    // The provider is web-only; host widget tests exercise the web case
+    // through the form's isWeb seam (kIsWeb is a compile-time constant).
+    testWidgets('is visible on web, where flutter_gemma is hidden', (
+      tester,
+    ) async {
+      await _pumpForm(tester, ProviderRegistry.inMemory(), isWeb: true);
+
+      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.pumpAndSettle();
+      expect(find.text('On-device (Gemma, transformers.js)'), findsOneWidget);
+      expect(find.text('On-device (Gemma)'), findsNothing);
+      expect(find.text('On-device (WebLLM)'), findsOneWidget);
+      await tester.tap(find.text('OpenRouter').last);
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('is hidden on mobile (flutter_gemma shown instead)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(const MyApp());
+
+      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.pumpAndSettle();
+      expect(find.text('On-device (Gemma, transformers.js)'), findsNothing);
+      expect(find.text('On-device (Gemma)'), findsOneWidget);
+      await tester.tap(find.text('OpenRouter').last);
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('shows the model picker with vision/tools badges and the '
+        'public-repo note', (tester) async {
+      await _pumpForm(tester, ProviderRegistry.inMemory(), isWeb: true);
+
+      await _selectProvider(tester, 'On-device (Gemma, transformers.js)');
+
+      // The key/model/URL fields are replaced by the on-device model picker;
+      // no HuggingFace token field (the ONNX repo is public).
+      expect(find.text('API key'), findsNothing);
+      expect(find.text('Base URL'), findsNothing);
+      expect(find.text('HuggingFace token (optional)'), findsNothing);
+      expect(find.text('On-device model'), findsOneWidget);
+      expect(find.textContaining('Gemma 4 E2B (ONNX)'), findsOneWidget);
+      expect(find.textContaining('~3.2 GB'), findsOneWidget);
+      expect(find.text('vision'), findsOneWidget);
+      expect(find.text('tools via prompt'), findsOneWidget);
+      expect(
+        find.textContaining('Runs fully offline after download'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('no token'), findsOneWidget);
+    });
+
+    testWidgets('connect loads with progress and hands over the '
+        'transformers_js config', (tester) async {
+      final engine = FakeTransformersJsEngine()
+        ..pendingProgress = const TransformersJsProgress(
+          fraction: 0.4,
+          text: 'Downloading model weights…',
+        )
+        ..loadGate = Completer<void>();
+      AgentConfig? connected;
+      await _pumpForm(
+        tester,
+        ProviderRegistry.inMemory(),
+        transformersJsEngine: engine,
+        isWeb: true,
+        onConnect: (config) async => connected = config,
+      );
+
+      await _selectProvider(tester, 'On-device (Gemma, transformers.js)');
+      await tester.ensureVisible(find.text('Start chat'));
+      await tester.tap(find.text('Start chat'));
+      // Let the connect flow reach the (held) load and render progress.
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Downloading model weights…'), findsOneWidget);
+      final bar = tester.widget<LinearProgressIndicator>(
+        find.byType(LinearProgressIndicator),
+      );
+      expect(bar.value, 0.4);
+      expect(connected, isNull);
+
+      engine.loadGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(engine.loadedPreset?.id, transformersJsModelPresets.first.id);
+      expect(connected?.providerKind, transformersJsProviderKind);
+      expect(connected?.modelId, transformersJsModelPresets.first.id);
+      expect(connected?.baseUrl, isEmpty);
+      expect(connected?.apiKey, isEmpty);
+      expect(
+        connected?.contextWindow,
+        transformersJsModelPresets.first.contextWindow,
+      );
+      expect(connected?.maxTokens, 1024);
+      // Progress UI is cleared once the connect flow finishes.
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+    });
+
+    testWidgets('a failed load surfaces the engine error', (tester) async {
+      final engine = FakeTransformersJsEngine()
+        ..loadError = StateError(
+          'This browser has no WebGPU support, which on-device inference '
+          'needs.',
+        );
+      await _pumpForm(
+        tester,
+        ProviderRegistry.inMemory(),
+        transformersJsEngine: engine,
+        isWeb: true,
+      );
+
+      await _selectProvider(tester, 'On-device (Gemma, transformers.js)');
+      await _tapConnect(tester, 'Start chat');
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('no WebGPU support'), findsOneWidget);
+      expect(engine.loadedPreset, isNull);
+    });
+  });
+
+  group('transformersJsProviderVisible', () {
+    test('web only', () {
+      expect(transformersJsProviderVisible(isWeb: true), isTrue);
+      expect(transformersJsProviderVisible(isWeb: false), isFalse);
+    });
+  });
+
   group('gemmaProviderVisible', () {
-    test('iOS/Android and web, never desktop', () {
+    test('iOS/Android only — web is served by the transformers.js provider, '
+        'desktop by neither', () {
       for (final platform in TargetPlatform.values) {
         expect(
           gemmaProviderVisible(isWeb: true, platform: platform),
-          isTrue,
-          reason: 'web shows the Gemma provider (litert-lm web engine)',
+          isFalse,
+          reason:
+              'web replaced flutter_gemma with the transformers.js '
+              'provider (litert-lm web engine abandoned)',
         );
       }
       expect(
