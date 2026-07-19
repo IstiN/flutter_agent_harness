@@ -270,4 +270,9 @@
 - feat(example): transformers.js Gemma provider on web (ONNX q4f16, tools via prompt wrapper)
 - feat(brand): rename visible brand to Fa + app favicon matches the site
 
+## 0.1.28
+
+- feat(example): central sandbox command registry drives the Fa system prompt
+- fix(example): web upload fix + chat uploads→uploads/ + light HTML preview + session delete
+
 ## Unreleased
