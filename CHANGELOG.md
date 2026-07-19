@@ -261,4 +261,8 @@
 
 - ci: coalesce auto-releases to <=1 per 2h + scheduled catch-up
 
+## 0.1.26
+
+- fix(example): Gemma web uses -web.litertlm builds + Gemma cache management in settings
+
 ## Unreleased
