@@ -253,4 +253,8 @@
 
 - feat(example): markdown/HTML file previews + auto-refresh on agent file mutations
 
+## 0.1.24
+
+- feat(example): brand app icon for all platforms (gradient >_ mark)
+
 ## Unreleased
