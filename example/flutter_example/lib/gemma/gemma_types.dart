@@ -49,6 +49,10 @@ bool get gemmaProviderSupported =>
 /// E2B/E4B exceed Chrome's ~2 GB single-blob limit); on mobile they live in
 /// the app's on-device storage. The token sentence is identical on both so
 /// the form's privacy story stays uniform.
+///
+/// The web variant also says the model is text-only there: the pinned
+/// `@litert-lm/core` (0.12.1) drops image/audio inputs, so advertising
+/// multimodal would be dishonest UI.
 String gemmaStorageNote({
   required bool isWeb,
   required GemmaModelPreset preset,
@@ -56,8 +60,10 @@ String gemmaStorageNote({
   const tokenNote =
       'the token is used for the download only and is never persisted';
   return isWeb
-      ? 'Runs fully offline after download · downloads ${preset.sizeLabel} '
-            'once, cached by the browser (OPFS) · $tokenNote'
+      ? 'Runs fully offline after download · downloads '
+            '${preset.sizeLabelFor(isWeb: true)} once, cached by the browser '
+            '(OPFS) · text-only on web (the web engine drops image/audio '
+            'inputs) · $tokenNote'
       : 'Runs fully offline after download · weights stay on the device · '
             '$tokenNote';
 }
@@ -82,8 +88,10 @@ final class GemmaModelPreset {
     required this.id,
     required this.displayName,
     required this.url,
+    this.webUrl,
     required this.filename,
     required this.sizeLabel,
+    this.webSizeLabel,
     this.contextWindow = 4096,
     this.temperature = 1,
     this.topK = 64,
@@ -96,15 +104,28 @@ final class GemmaModelPreset {
   /// Human-readable name shown in the model picker.
   final String displayName;
 
-  /// Download URL of the `.litertlm` bundle (HuggingFace `resolve/main`).
+  /// Download URL of the mobile/desktop `.litertlm` bundle (HuggingFace
+  /// `resolve/main`).
   final String url;
 
-  /// File name the plugin installs the model under (its model id for
-  /// `FlutterGemma.isModelInstalled` / `uninstallModel`).
+  /// Web-specific download URL — the `-web.litertlm` build of the same
+  /// model. The mobile build's section layout is rejected by the web engine
+  /// ("Streaming kTfLiteEmbedder models is not supported yet" —
+  /// `@litert-lm/core`'s legacy EngineImpl), so web must download this
+  /// build instead; same HuggingFace repo, different file.
+  final String? webUrl;
+
+  /// File name the plugin installs the model under on mobile (its model id
+  /// for `FlutterGemma.isModelInstalled` / `uninstallModel`). On web the id
+  /// differs — see [filenameFor].
   final String filename;
 
-  /// Approximate download size, e.g. `~2.4 GB`.
+  /// Approximate download size of the mobile build, e.g. `~2.4 GB`.
   final String sizeLabel;
+
+  /// Approximate download size of the [webUrl] build when it differs
+  /// meaningfully from [sizeLabel].
+  final String? webSizeLabel;
 
   /// Context window (`maxTokens` in the plugin's vocabulary — the KV-cache
   /// budget shared by input and output). 4096 matches the plugin's own
@@ -116,13 +137,38 @@ final class GemmaModelPreset {
   final double temperature;
   final int topK;
   final double topP;
+
+  /// The download URL for the platform: [webUrl] on web when set, [url]
+  /// otherwise.
+  String urlFor({required bool isWeb}) =>
+      isWeb && webUrl != null ? webUrl! : url;
+
+  /// The model id the plugin installs this preset under on the platform.
+  /// The plugin derives the id from the download URL's basename, so on web
+  /// (downloading the `-web.litertlm` build via [webUrl]) the id is the web
+  /// file name, not [filename]. This matters for the installed-check: the
+  /// mobile bytes must not satisfy the web build's cache check (they are
+  /// the wrong layout and would crash the engine on load).
+  String filenameFor({required bool isWeb}) {
+    if (isWeb && webUrl != null) {
+      return Uri.parse(webUrl!).pathSegments.last;
+    }
+    return filename;
+  }
+
+  /// Approximate download size for the platform (the `-web.litertlm` builds
+  /// are smaller than the mobile ones).
+  String sizeLabelFor({required bool isWeb}) =>
+      isWeb && webSizeLabel != null ? webSizeLabel! : sizeLabel;
 }
 
 /// The on-device Gemma 4 models offered by the example app.
 ///
 /// Both are `ModelType.gemma4` (native function-call tokens) LiteRT-LM
 /// builds; E2B is the default (fits in 4 GB phones with the
-/// increased-memory entitlement).
+/// increased-memory entitlement). Web downloads the `-web.litertlm` build
+/// (see [GemmaModelPreset.webUrl]); the web sizes below were HEAD-checked
+/// against HuggingFace (E2B ≈ 1.87 GiB, E4B ≈ 2.77 GiB).
 const gemmaModelPresets = <GemmaModelPreset>[
   GemmaModelPreset(
     id: 'gemma-4-E2B-it',
@@ -130,8 +176,12 @@ const gemmaModelPresets = <GemmaModelPreset>[
     url:
         'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/'
         'resolve/main/gemma-4-E2B-it.litertlm',
+    webUrl:
+        'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/'
+        'resolve/main/gemma-4-E2B-it-web.litertlm',
     filename: 'gemma-4-E2B-it.litertlm',
     sizeLabel: '~2.4 GB',
+    webSizeLabel: '~1.9 GB',
   ),
   GemmaModelPreset(
     id: 'gemma-4-E4B-it',
@@ -139,8 +189,12 @@ const gemmaModelPresets = <GemmaModelPreset>[
     url:
         'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/'
         'resolve/main/gemma-4-E4B-it.litertlm',
+    webUrl:
+        'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/'
+        'resolve/main/gemma-4-E4B-it-web.litertlm',
     filename: 'gemma-4-E4B-it.litertlm',
     sizeLabel: '~4.3 GB',
+    webSizeLabel: '~2.8 GB',
   ),
 ];
 
@@ -164,6 +218,20 @@ final class GemmaProgress {
 
   /// Human-readable status line.
   final String text;
+}
+
+/// One model file present in the plugin's model repository (web: OPFS;
+/// mobile: app storage), as reported by the settings cache section's scan.
+final class GemmaInstalledModel {
+  /// Creates an installed-model entry.
+  const GemmaInstalledModel({required this.filename, this.sizeBytes});
+
+  /// The repository id — the download URL's basename (see
+  /// [GemmaModelPreset.filenameFor]).
+  final String filename;
+
+  /// Recorded byte size, when the repository stored one.
+  final int? sizeBytes;
 }
 
 /// The engine surface the Gemma stream function and the settings form talk
@@ -237,4 +305,16 @@ abstract interface class GemmaEngineApi {
 
   /// Unloads the current model from memory (weights stay on disk).
   Future<void> unload();
+
+  /// Every model file in the plugin's repository, with recorded sizes.
+  /// Includes stale entries installed under another platform's file name
+  /// (e.g. a mobile-named build left in the browser's OPFS), which the
+  /// settings cache section surfaces as deletable orphans.
+  Future<List<GemmaInstalledModel>> installedModels();
+
+  /// Deletes the model installed under [filename] — repository metadata and
+  /// files. When [filename] is the active model, the in-memory model is
+  /// closed and the plugin's persisted active identity cleared first, so a
+  /// later load cannot resurrect a spec whose files are gone.
+  Future<void> uninstall(String filename);
 }

@@ -54,4 +54,11 @@ final class GemmaService implements GemmaEngineApi {
 
   @override
   Future<void> unload() async {}
+
+  @override
+  Future<List<GemmaInstalledModel>> installedModels() async => const [];
+
+  @override
+  Future<void> uninstall(String filename) =>
+      Future.error(StateError(gemmaUnsupportedPlatformMessage));
 }

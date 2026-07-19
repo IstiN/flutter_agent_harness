@@ -96,6 +96,12 @@ final class FakeGemmaEngine implements GemmaEngineApi {
 
   @override
   Future<void> unload() async {}
+
+  @override
+  Future<List<GemmaInstalledModel>> installedModels() async => const [];
+
+  @override
+  Future<void> uninstall(String filename) async {}
 }
 
 Model _model([String? id]) => Model(

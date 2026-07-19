@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'agent_service.dart';
+import 'gemma/gemma_cache_section.dart';
 import 'gemma/gemma_service.dart';
 import 'gemma/gemma_types.dart';
 import 'provider_registry.dart';
@@ -749,7 +750,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               DropdownMenuItem(
                 value: preset,
                 child: Text(
-                  '${preset.displayName} · ${preset.sizeLabel}',
+                  '${preset.displayName} · '
+                  '${preset.sizeLabelFor(isWeb: kIsWeb)}',
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -1002,8 +1004,8 @@ class SettingsDialog extends StatelessWidget {
   /// the platform singleton.
   final WebLlmEngineApi? webLlmEngine;
 
-  /// Engine override for the on-device Gemma provider (tests); defaults to
-  /// the platform singleton.
+  /// Engine override for the on-device Gemma provider and its cache section
+  /// (tests); defaults to the platform singleton.
   final GemmaEngineApi? gemmaEngine;
 
   @override
@@ -1030,6 +1032,8 @@ class SettingsDialog extends StatelessWidget {
               const Divider(),
               const SizedBox(height: 8),
               WebLlmCacheSection(engine: webLlmEngine),
+              const SizedBox(height: 16),
+              GemmaCacheSection(engine: gemmaEngine),
             ],
           ),
         ),

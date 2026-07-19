@@ -170,6 +170,12 @@ final class FakeGemmaEngine implements GemmaEngineApi {
 
   @override
   Future<void> unload() async {}
+
+  @override
+  Future<List<GemmaInstalledModel>> installedModels() async => const [];
+
+  @override
+  Future<void> uninstall(String filename) async {}
 }
 
 void main() {
@@ -676,22 +682,26 @@ void main() {
         expect(
           gemmaStorageNote(isWeb: true, preset: e2b),
           allOf([
-            contains('downloads ~2.4 GB once'),
+            // The web download is the (smaller) `-web.litertlm` build.
+            contains('downloads ~1.9 GB once'),
             contains('cached by the browser (OPFS)'),
             contains('Runs fully offline after download'),
+            // Honest about the web engine dropping image/audio inputs.
+            contains('text-only on web'),
             contains('never persisted'),
           ]),
         );
         final e4b = gemmaModelPresets.last;
         expect(
           gemmaStorageNote(isWeb: true, preset: e4b),
-          contains('downloads ~4.3 GB once'),
+          contains('downloads ~2.8 GB once'),
         );
         expect(
           gemmaStorageNote(isWeb: false, preset: e2b),
           allOf([
             contains('weights stay on the device'),
             isNot(contains('OPFS')),
+            isNot(contains('text-only')),
             contains('never persisted'),
           ]),
         );
