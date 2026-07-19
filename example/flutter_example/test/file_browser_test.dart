@@ -30,6 +30,11 @@ Future<MemoryExecutionEnv> _seededEnv() async {
   await env.createDir('zzz_dir');
   await env.writeFile('zzz_dir/inner.txt', 'inner content');
   await env.writeFile('notes.txt', 'hello notes');
+  await env.writeFile(
+    'readme.md',
+    '# Title\n\nSome **bold** text\n\n- one\n- two\n',
+  );
+  await env.writeFile('page.html', '<h1>Hi</h1><p>para</p>');
   await env.writeBinaryFile('logo.png', Uint8List.fromList(_pngBytes));
   await env.writeBinaryFile('blob.bin', Uint8List.fromList([0, 1, 2, 3]));
   await env.createDir('empty_dir');
@@ -42,6 +47,15 @@ Widget _wrap(Widget child) {
 
 Finder _selectableText(String text) => find.byWidgetPredicate(
   (widget) => widget is SelectableText && widget.data == text,
+);
+
+/// Finds a `SelectableText.rich` (how flutter_markdown renders selectable
+/// blocks) whose span renders exactly [plainText].
+Finder _selectableRichText(String plainText) => find.byWidgetPredicate(
+  (widget) =>
+      widget is SelectableText &&
+      widget.textSpan != null &&
+      widget.textSpan!.toPlainText() == plainText,
 );
 
 List<String> _listedNames(WidgetTester tester) {
@@ -89,6 +103,83 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
+const _testModel = Model(
+  id: 'test-model',
+  api: 'test-api',
+  provider: 'test',
+  baseUrl: 'https://example.com',
+  contextWindow: 100000,
+  maxTokens: 4096,
+);
+
+AssistantMessage _assistant({
+  List<ContentBlock> content = const [],
+  StopReason stopReason = StopReason.stop,
+}) {
+  return AssistantMessage(
+    content: content,
+    api: _testModel.api,
+    provider: _testModel.provider,
+    model: _testModel.id,
+    usage: Usage.zero,
+    stopReason: stopReason,
+    timestamp: DateTime.now(),
+  );
+}
+
+/// A scripted turn: stream start, text delta, done.
+List<AssistantMessageEvent> _textTurn(String text) {
+  final empty = _assistant();
+  final partial = _assistant(content: [TextContent(text: text)]);
+  return [
+    StartEvent(partial: empty),
+    TextStartEvent(contentIndex: 0, partial: empty),
+    TextDeltaEvent(contentIndex: 0, delta: text, partial: partial),
+    DoneEvent(reason: StopReason.stop, message: partial),
+  ];
+}
+
+/// A scripted turn that ends with tool calls.
+List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
+  final empty = _assistant();
+  final partial = _assistant(content: calls, stopReason: StopReason.toolUse);
+  final events = <AssistantMessageEvent>[StartEvent(partial: empty)];
+  for (var i = 0; i < calls.length; i++) {
+    events
+      ..add(ToolCallStartEvent(contentIndex: i, partial: empty))
+      ..add(
+        ToolCallEndEvent(contentIndex: i, toolCall: calls[i], partial: partial),
+      );
+  }
+  events.add(DoneEvent(reason: StopReason.toolUse, message: partial));
+  return events;
+}
+
+/// A service whose agent runs the REAL builtin tools against [env], fed by
+/// a scripted stream that replays whole turns and then ends.
+AgentService _toolService(
+  ExecutionEnv env,
+  List<List<AssistantMessageEvent>> turns,
+) {
+  return AgentService(
+    agent: Agent(
+      model: _testModel,
+      systemPrompt: 'You are fah.',
+      streamFunction: (model, context, {cancelToken}) {
+        final stream = AssistantMessageEventStream();
+        for (final event in turns.removeAt(0)) {
+          stream.push(event);
+        }
+        stream.end();
+        return stream;
+      },
+      toolRegistry: ToolRegistry(builtinTools(env)),
+    ),
+    env: env,
+    sessionsRoot: '/sessions',
+  );
+}
+
 /// Fake [UploadPicker] returning canned files without a platform dialog.
 final class _FakePicker implements UploadPicker {
   _FakePicker(this.files);
@@ -122,6 +213,8 @@ void main() {
         'blob.bin',
         'logo.png',
         'notes.txt',
+        'page.html',
+        'readme.md',
       ]);
     });
 
@@ -322,6 +415,202 @@ void main() {
       expect(sanitizeUploadName('..'), isEmpty);
       expect(sanitizeUploadName(r'a\b\c.txt'), 'a/b/c.txt');
       expect(sanitizeUploadName('./dot/./file.txt'), 'dot/file.txt');
+    });
+  });
+
+  group('FileBrowser rich previews', () {
+    testWidgets('markdown renders formatted; Source shows the raw file', (
+      tester,
+    ) async {
+      const raw = '# Title\n\nSome **bold** text\n\n- one\n- two\n';
+      final env = await _seededEnv();
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('readme.md'));
+      await tester.pumpAndSettle();
+
+      // Default pane is the formatted preview: the heading is an
+      // h1-styled selectable rich text, not the raw '# Title' source.
+      final context = tester.element(find.byType(FilePreviewView));
+      final theme = Theme.of(context);
+      final heading = tester.widget<SelectableText>(
+        _selectableRichText('Title'),
+      );
+      expect(
+        heading.textSpan!.style?.fontSize,
+        theme.textTheme.headlineSmall?.fontSize,
+      );
+      expect(
+        heading.textSpan!.style?.fontSize,
+        greaterThan(theme.textTheme.bodyMedium!.fontSize!),
+      );
+
+      // Bold renders as a bold span inside the paragraph, no asterisks.
+      final paragraph = tester.widget<SelectableText>(
+        _selectableRichText('Some bold text'),
+      );
+      final spans = paragraph.textSpan!.children!.whereType<TextSpan>();
+      final bold = spans.singleWhere((span) => span.text == 'bold');
+      expect(bold.style?.fontWeight, FontWeight.bold);
+
+      // Raw markdown is nowhere until Source is selected.
+      expect(_selectableText(raw), findsNothing);
+      await tester.tap(find.text('Source'));
+      await tester.pumpAndSettle();
+      expect(_selectableText(raw), findsOneWidget);
+      expect(_selectableRichText('Title'), findsNothing);
+
+      await tester.tap(find.text('Preview'));
+      await tester.pumpAndSettle();
+      expect(_selectableRichText('Title'), findsOneWidget);
+    });
+
+    testWidgets('html preview renders via the injected builder; Source shows '
+        'raw markup', (tester) async {
+      const raw = '<h1>Hi</h1><p>para</p>';
+      final env = await _seededEnv();
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            // The host test runner has no webview platform implementation,
+            // so a fake stands in for the real HtmlFilePreview and records
+            // the markup it was asked to render. The real webview is
+            // exercised on device; the web iframe path is covered by
+            // `flutter build web` compiling html_preview_web.dart.
+            htmlPreviewBuilder: (context, html) => ColoredBox(
+              color: const Color(0xFF112233),
+              child: Center(child: Text('webview: $html')),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('page.html'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('webview: $raw'), findsOneWidget);
+
+      await tester.tap(find.text('Source'));
+      await tester.pumpAndSettle();
+      expect(_selectableText(raw), findsOneWidget);
+      expect(find.text('webview: $raw'), findsNothing);
+
+      await tester.tap(find.text('Preview'));
+      await tester.pumpAndSettle();
+      expect(find.text('webview: $raw'), findsOneWidget);
+    });
+  });
+
+  group('FileBrowser fsRevision auto-refresh', () {
+    testWidgets('a write tool result bumps fsRevision and refreshes the '
+        'current listing', (tester) async {
+      final env = await _seededEnv();
+      final service = _toolService(env, [
+        _toolTurn([
+          const ToolCall(
+            id: 'c1',
+            name: 'write',
+            arguments: {'path': 'agent.md', 'content': '# by agent'},
+          ),
+        ]),
+        _textTurn('done'),
+      ]);
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, fsRevision: service.fsRevision)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('agent.md'), findsNothing);
+
+      // runAsync: the agent loop consumes a real event stream, which the
+      // widget test's fake-async zone would starve.
+      await tester.runAsync(() async {
+        await service.sendText('go');
+        await service.waitForIdle();
+      });
+      await tester.pumpAndSettle();
+
+      expect(service.fsRevision.value, 1);
+      expect(find.text('agent.md'), findsOneWidget);
+    });
+
+    testWidgets('an open preview reloads when the agent rewrites the viewed '
+        'file', (tester) async {
+      final env = await _seededEnv();
+      final service = _toolService(env, [
+        _toolTurn([
+          const ToolCall(
+            id: 'c1',
+            name: 'write',
+            arguments: {'path': 'notes.txt', 'content': 'changed by agent'},
+          ),
+        ]),
+        _textTurn('done'),
+      ]);
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, fsRevision: service.fsRevision)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('notes.txt'));
+      await tester.pumpAndSettle();
+      expect(_selectableText('hello notes'), findsOneWidget);
+
+      // runAsync: the agent loop consumes a real event stream, which the
+      // widget test's fake-async zone would starve.
+      await tester.runAsync(() async {
+        await service.sendText('go');
+        await service.waitForIdle();
+      });
+      await tester.pumpAndSettle();
+
+      expect(_selectableText('changed by agent'), findsOneWidget);
+    });
+
+    test(
+      'a bash tool result bumps fsRevision even when the shell errors',
+      () async {
+        // MemoryExecutionEnv has no shell, so bash returns an error result;
+        // a partially-run command could still have mutated files, so the
+        // bump fires on any bash completion.
+        final env = await _seededEnv();
+        final service = _toolService(env, [
+          _toolTurn([
+            const ToolCall(
+              id: 'c1',
+              name: 'bash',
+              arguments: {'command': 'echo hi'},
+            ),
+          ]),
+          _textTurn('done'),
+        ]);
+
+        await service.sendText('go');
+        await service.waitForIdle();
+
+        expect(service.fsRevision.value, 1);
+      },
+    );
+
+    test('a read-only tool result does not bump fsRevision', () async {
+      final env = await _seededEnv();
+      final service = _toolService(env, [
+        _toolTurn([
+          const ToolCall(
+            id: 'c1',
+            name: 'read',
+            arguments: {'path': 'notes.txt'},
+          ),
+        ]),
+        _textTurn('done'),
+      ]);
+
+      await service.sendText('go');
+      await service.waitForIdle();
+
+      expect(service.fsRevision.value, 0);
     });
   });
 

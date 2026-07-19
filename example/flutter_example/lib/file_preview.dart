@@ -1,8 +1,12 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+
+import 'html_preview_stub.dart' if (dart.library.html) 'html_preview_web.dart';
+import 'markdown_style.dart';
 
 /// Files larger than this are never loaded for preview (4 MB).
 const int kPreviewReadCapBytes = 4 * 1024 * 1024;
@@ -11,6 +15,15 @@ const int kPreviewReadCapBytes = 4 * 1024 * 1024;
 const int kTextPreviewCapChars = 512 * 1024;
 
 const _kImageExtensions = {'.png', '.jpg', '.jpeg', '.gif', '.webp'};
+const _kMarkdownExtensions = {'.md', '.markdown'};
+const _kHtmlExtensions = {'.html', '.htm'};
+
+/// Builds the in-app rendering surface for an HTML file's [html] markup.
+///
+/// Defaults to the platform [HtmlFilePreview] (webview on mobile/desktop,
+/// sandboxed iframe on web); tests inject a fake because the webview
+/// plugin has no platform implementation on the host test runner.
+typedef HtmlPreviewBuilder = Widget Function(BuildContext context, String html);
 
 /// Formats a byte count as a short human-readable string.
 String formatFileSize(int bytes) {
@@ -26,6 +39,14 @@ String formatFileSize(int bytes) {
 String fileExtension(String name) {
   final dot = name.lastIndexOf('.');
   return dot <= 0 ? '' : name.substring(dot).toLowerCase();
+}
+
+/// Rich rendering offered for [name]'s extension, if any.
+_RichKind _richKindFor(String name) {
+  final ext = fileExtension(name);
+  if (_kMarkdownExtensions.contains(ext)) return _RichKind.markdown;
+  if (_kHtmlExtensions.contains(ext)) return _RichKind.html;
+  return _RichKind.none;
 }
 
 /// Magic-byte sniff for the image formats we preview.
@@ -61,12 +82,30 @@ bool _looksBinary(Uint8List bytes) {
 
 enum _PreviewState { loading, text, image, info, error }
 
+/// Rich rendering available for a text file beyond the raw source view.
+enum _RichKind {
+  /// Plain text: source view only, no toggle.
+  none,
+
+  /// Markdown: rendered via `flutter_markdown` with the app's stylesheet.
+  markdown,
+
+  /// HTML: rendered via the platform [HtmlFilePreview].
+  html,
+}
+
+/// Which pane of a rich text preview is shown.
+enum _TextViewMode { preview, source }
+
 /// Read-only preview of a single file in an [ExecutionEnv].
 ///
 /// Text files render as scrollable monospace (truncated past
-/// [kTextPreviewCapChars]); images (by extension and magic bytes) render via
-/// [Image.memory]; anything else shows an info placeholder. Used embedded in
-/// the wide-layout file panel and inside [FilePreviewScreen] on narrow
+/// [kTextPreviewCapChars]); Markdown (`.md`/`.markdown`) and HTML
+/// (`.html`/`.htm`) files additionally get a Preview|Source toggle — the
+/// preview renders formatted Markdown or the page itself, the source is
+/// the monospace view. Images (by extension and magic bytes) render via
+/// [Image.memory]; anything else shows an info placeholder. Used embedded
+/// in the wide-layout file panel and inside [FilePreviewScreen] on narrow
 /// layouts.
 class FilePreviewView extends StatefulWidget {
   const FilePreviewView({
@@ -74,6 +113,7 @@ class FilePreviewView extends StatefulWidget {
     required this.env,
     required this.path,
     required this.name,
+    this.htmlPreviewBuilder,
   });
 
   /// The environment to read the file from.
@@ -84,6 +124,10 @@ class FilePreviewView extends StatefulWidget {
 
   /// Display name (basename) of the file.
   final String name;
+
+  /// Override for the HTML rendering surface; tests inject a fake because
+  /// the webview plugin has no platform implementation on the host.
+  final HtmlPreviewBuilder? htmlPreviewBuilder;
 
   @override
   State<FilePreviewView> createState() => _FilePreviewViewState();
@@ -96,6 +140,12 @@ class _FilePreviewViewState extends State<FilePreviewView> {
   Uint8List? _imageBytes;
   int _size = 0;
   String? _message;
+
+  /// Rich rendering available for the loaded text file (by extension).
+  _RichKind _richKind = _RichKind.none;
+
+  /// Which pane is shown when [_richKind] offers a rendered preview.
+  _TextViewMode _viewMode = _TextViewMode.preview;
 
   @override
   void initState() {
@@ -145,6 +195,7 @@ class _FilePreviewViewState extends State<FilePreviewView> {
       setState(() {
         _text = text;
         _truncated = truncated;
+        _richKind = _richKindFor(widget.name);
         _state = _PreviewState.text;
       });
     } on Object catch (e) {
@@ -196,33 +247,96 @@ class _FilePreviewViewState extends State<FilePreviewView> {
           ),
         ),
       ),
-      _PreviewState.text => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_truncated)
-            Container(
-              color: theme.colorScheme.surfaceContainerHighest,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Text(
-                'Showing the first ${formatFileSize(kTextPreviewCapChars)} — truncated',
-                style: theme.textTheme.labelSmall,
-              ),
-            ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(12),
-              child: SelectableText(
-                _text!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
-                  fontFamilyFallback: const ['Courier', 'monospace'],
-                ),
+      _PreviewState.text => _buildTextPreview(theme),
+    };
+  }
+
+  /// Text preview: raw monospace source, plus a Preview|Source toggle and
+  /// a rendered pane for Markdown/HTML files.
+  Widget _buildTextPreview(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_richKind != _RichKind.none)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: SegmentedButton<_TextViewMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: _TextViewMode.preview,
+                    label: Text('Preview'),
+                  ),
+                  ButtonSegment(
+                    value: _TextViewMode.source,
+                    label: Text('Source'),
+                  ),
+                ],
+                selected: {_viewMode},
+                onSelectionChanged: (selection) =>
+                    setState(() => _viewMode = selection.first),
               ),
             ),
           ),
-        ],
+        if (_truncated)
+          Container(
+            color: theme.colorScheme.surfaceContainerHighest,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Text(
+              'Showing the first ${formatFileSize(kTextPreviewCapChars)} — truncated',
+              style: theme.textTheme.labelSmall,
+            ),
+          ),
+        Expanded(
+          child: _showSource
+              ? _buildSourceView(theme)
+              : _buildRichPreview(theme),
+        ),
+      ],
+    );
+  }
+
+  bool get _showSource =>
+      _richKind == _RichKind.none || _viewMode == _TextViewMode.source;
+
+  /// The rendered pane for Markdown/HTML files.
+  Widget _buildRichPreview(ThemeData theme) {
+    return switch (_richKind) {
+      _RichKind.markdown => SingleChildScrollView(
+        padding: const EdgeInsets.all(12),
+        child: MarkdownBody(
+          data: _text!,
+          selectable: true,
+          styleSheet: fahMarkdownStyleSheet(theme),
+        ),
       ),
+      _RichKind.html => _buildHtmlPreview(context),
+      _RichKind.none => _buildSourceView(
+        theme,
+      ), // unreachable, keeps switch total
     };
+  }
+
+  Widget _buildHtmlPreview(BuildContext context) {
+    final builder =
+        widget.htmlPreviewBuilder ??
+        (context, html) => HtmlFilePreview(html: html);
+    return builder(context, _text!);
+  }
+
+  /// The raw monospace view used for plain text and the Source pane.
+  Widget _buildSourceView(ThemeData theme) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: SelectableText(
+        _text!,
+        style: theme.textTheme.bodySmall?.copyWith(
+          fontFamily: 'monospace',
+          fontFamilyFallback: const ['Courier', 'monospace'],
+        ),
+      ),
+    );
   }
 }
 
@@ -272,12 +386,18 @@ class _CenteredMessage extends StatelessWidget {
 
 /// Full-screen wrapper around [FilePreviewView], pushed as a route on narrow
 /// layouts.
+///
+/// When [fsRevision] is provided, the preview reloads itself whenever the
+/// revision changes (the agent may have mutated the viewed file) — the new
+/// [ValueKey] forces a fresh [FilePreviewView] that re-reads the file.
 class FilePreviewScreen extends StatelessWidget {
   const FilePreviewScreen({
     super.key,
     required this.env,
     required this.path,
     required this.name,
+    this.htmlPreviewBuilder,
+    this.fsRevision,
   });
 
   /// The environment to read the file from.
@@ -289,13 +409,36 @@ class FilePreviewScreen extends StatelessWidget {
   /// Display name (basename) of the file.
   final String name;
 
+  /// Override for the HTML rendering surface; tests inject a fake because
+  /// the webview plugin has no platform implementation on the host.
+  final HtmlPreviewBuilder? htmlPreviewBuilder;
+
+  /// Agent filesystem revision (see `AgentService.fsRevision`); bumps
+  /// reload the viewed file. `null` disables auto-reload.
+  final ValueListenable<int>? fsRevision;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(name, overflow: TextOverflow.ellipsis)),
       body: SafeArea(
-        child: FilePreviewView(env: env, path: path, name: name),
+        child: fsRevision == null
+            ? _preview(0)
+            : ValueListenableBuilder<int>(
+                valueListenable: fsRevision!,
+                builder: (context, revision, _) => _preview(revision),
+              ),
       ),
+    );
+  }
+
+  Widget _preview(int revision) {
+    return FilePreviewView(
+      key: ValueKey('$path#$revision'),
+      env: env,
+      path: path,
+      name: name,
+      htmlPreviewBuilder: htmlPreviewBuilder,
     );
   }
 }
