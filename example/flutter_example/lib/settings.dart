@@ -793,6 +793,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
                       ),
                     ),
                     const SizedBox(width: 8),
+                    if (preset.isCoder) ...[
+                      const _CoderBadge(),
+                      const SizedBox(width: 4),
+                    ],
                     const _ToolsBadge(),
                   ],
                 ),
@@ -1265,6 +1269,30 @@ class _ToolsBadge extends StatelessWidget {
         'tools via prompt',
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onPrimaryContainer,
+        ),
+      ),
+    );
+  }
+}
+
+/// The small "coder" chip shown next to WebLLM presets that are
+/// code-specialized ([WebLlmModelPreset.isCoder], the Qwen2.5-Coder family).
+class _CoderBadge extends StatelessWidget {
+  const _CoderBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        'coder',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSecondaryContainer,
         ),
       ),
     );
