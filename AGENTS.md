@@ -12,6 +12,11 @@ Conventions for AI agents and contributors working in this repository.
   `app/` inside the Pages artifact (never committed) and deploys on pushes
   touching `site/`, `example/`, `lib/`, or `vendor/`.
 - `prompts/` — all LLM prompts as Markdown (see below); `test/` mirrors `lib/`.
+- `example/flutter_example/lib/sandbox_registry.dart` — the central registry
+  of sandbox shell commands per platform (web/mobile/desktop). The shells
+  resolve against its name sets, and the Fa system prompt's `{{commands}}`
+  placeholder is rendered from it (`AgentService`). Never list commands in
+  prompt text or UI by hand.
 - `scripts/` — codegen and quality-gate scripts.
 
 ## Hard architecture rules

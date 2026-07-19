@@ -113,6 +113,7 @@ const exampleSpecs = <PromptSpec>[
   PromptSpec(
     source: 'example/flutter_example/prompts/sandbox_system.md',
     constName: 'sandboxSystemPrompt',
+    requiredToken: '{{commands}}',
   ),
   PromptSpec(
     source: 'example/flutter_example/prompts/webllm_no_tools_note.md',

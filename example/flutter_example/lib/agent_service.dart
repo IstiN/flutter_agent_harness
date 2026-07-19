@@ -9,6 +9,7 @@ import 'gemma/gemma_service.dart';
 import 'gemma/gemma_stream_function.dart';
 import 'gemma/gemma_types.dart';
 import 'prompts.g.dart';
+import 'sandbox_registry.dart';
 import 'secrets_store.dart';
 import 'transformers_js/transformers_js_service.dart';
 import 'transformers_js/transformers_js_stream_function.dart';
@@ -189,17 +190,40 @@ class AgentService extends ChangeNotifier {
   }
 
   /// The system prompt plus a secret-name hint (names only, never values).
+  ///
+  /// The `{{commands}}` placeholder is filled from the central sandbox
+  /// registry ([formatSandboxCommandSection]) for the current platform, so
+  /// the model sees exactly the shell commands that exist here.
   static String _effectiveSystemPrompt(
     AgentConfig config,
     SecretRedactor? redactor,
   ) {
-    final base = config.systemPrompt ?? sandboxSystemPrompt;
+    final base = (config.systemPrompt ?? sandboxSystemPrompt).replaceAll(
+      '{{commands}}',
+      formatSandboxCommandSection(_sandboxPlatform),
+    );
     final names = redactor?.names ?? const <String>[];
     if (names.isEmpty) return base;
     return '$base\n\nAvailable secret env vars: ${names.join(', ')} — '
         'reference them as \$NAME in shell commands; never ask the user for '
         'their values and never print them.';
   }
+
+  /// The platform whose commands the system prompt advertises, decided with
+  /// the same signal [createPlatformEnv] uses to pick the [ExecutionEnv]:
+  /// web → mobile → desktop.
+  static SandboxPlatform get _sandboxPlatform => isWebPlatform
+      ? SandboxPlatform.web
+      : isMobile
+      ? SandboxPlatform.mobile
+      : SandboxPlatform.desktop;
+
+  /// Exposes [_effectiveSystemPrompt] to tests.
+  @visibleForTesting
+  static String effectiveSystemPromptForTest(
+    AgentConfig config,
+    SecretRedactor? redactor,
+  ) => _effectiveSystemPrompt(config, redactor);
 
   /// Composes redaction hooks onto the agent so secret values never reach
   /// the model, the transcript, or the session files.

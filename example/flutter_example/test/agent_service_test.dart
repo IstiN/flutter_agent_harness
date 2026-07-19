@@ -704,6 +704,53 @@ void main() {
       expect(remaining.single.id, service.currentSessionId);
     });
   });
+
+  group('system prompt assembly', () {
+    AgentConfig config({String? systemPrompt}) => AgentConfig(
+      providerKind: 'openai-completions',
+      modelId: 'test-model',
+      baseUrl: 'https://example.com',
+      apiKey: 'sk-test',
+      systemPrompt: systemPrompt,
+    );
+
+    test('substitutes the registry command section for the host platform', () {
+      // Host tests run through the io env factory (not web, not mobile), so
+      // the advertised platform is desktop.
+      final prompt = AgentService.effectiveSystemPromptForTest(config(), null);
+      expect(prompt, isNot(contains('{{commands}}')));
+      expect(prompt, contains('host machine'));
+      // The rest of the sandbox prompt survives intact.
+      expect(prompt, contains('File tools'));
+      expect(prompt, contains('You are fah'));
+    });
+
+    test('secret names suffix still appends after the command section', () {
+      // Values below the redactor's 8-char minimum are ignored.
+      final redactor = SecretRedactor.fromSecrets(const {
+        'MY_TOKEN': 'supersecretvalue',
+      });
+      final prompt = AgentService.effectiveSystemPromptForTest(
+        config(),
+        redactor,
+      );
+      expect(prompt, contains('Available secret env vars: MY_TOKEN'));
+      expect(
+        prompt.indexOf('host machine'),
+        lessThan(prompt.indexOf('Available secret env vars')),
+      );
+    });
+
+    test('a custom system prompt gets the placeholder substituted too', () {
+      final prompt = AgentService.effectiveSystemPromptForTest(
+        config(systemPrompt: 'Custom base.\n{{commands}}'),
+        null,
+      );
+      expect(prompt, isNot(contains('{{commands}}')));
+      expect(prompt, contains('Custom base.'));
+      expect(prompt, contains('host machine'));
+    });
+  });
 }
 
 /// Concatenates the text of every file under [path] (recursive), used to
