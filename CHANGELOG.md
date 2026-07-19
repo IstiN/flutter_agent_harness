@@ -257,4 +257,8 @@
 
 - feat(example): brand app icon for all platforms (gradient >_ mark)
 
+## 0.1.25
+
+- ci: coalesce auto-releases to <=1 per 2h + scheduled catch-up
+
 ## Unreleased
