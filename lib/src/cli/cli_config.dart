@@ -1,5 +1,5 @@
-/// CLI user preferences: last model, provider, base URL, mode, and approval
-/// policy.
+/// CLI user preferences: last model, provider, base URL, mode, approval
+/// policy, and (optionally) model roles with fallback chains.
 ///
 /// Stored in `~/.fah/config.yaml` so the terminal REPL remembers choices
 /// between runs.
@@ -8,6 +8,9 @@ library;
 import 'dart:io';
 
 import 'package:yaml/yaml.dart';
+
+import '../exceptions.dart';
+import '../model_roles/model_roles.dart';
 
 /// Persisted CLI configuration.
 final class CliConfig {
@@ -18,6 +21,7 @@ final class CliConfig {
     this.mode = 'code',
     this.approvalMode = 'yolo',
     this.allowedTools = const [],
+    this.modelRoles,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -31,6 +35,11 @@ final class CliConfig {
         final YamlList list => [for (final entry in list) '$entry'],
         _ => const [],
       },
+      // The roles section is parsed strictly: schema errors throw
+      // [ConfigException] instead of silently resetting to defaults.
+      modelRoles: map['roles'] == null && map['modelOverrides'] == null
+          ? null
+          : ModelRolesConfig.fromYaml(map),
     );
   }
 
@@ -47,6 +56,11 @@ final class CliConfig {
   /// prompt answer), persisted across runs.
   final List<String> allowedTools;
 
+  /// Optional model roles: role → fallback chains, path-scoped overrides,
+  /// and the retry policy (`roles:` / `modelOverrides:` / `retry:` yaml
+  /// sections). `null` keeps the legacy single provider/model behavior.
+  final ModelRolesConfig? modelRoles;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -62,6 +76,8 @@ final class CliConfig {
         buffer.write('  - $tool\n');
       }
     }
+    final roles = modelRoles;
+    if (roles != null) buffer.write(roles.toYaml());
     return buffer.toString();
   }
 }
@@ -76,7 +92,9 @@ String? homeDirectory() {
 
 /// Loads [CliConfig] from `~/.fah/config.yaml`.
 ///
-/// Returns defaults when the file is missing or unreadable.
+/// Returns defaults when the file is missing or unreadable. A syntactically
+/// valid file whose model-roles section is invalid throws [ConfigException]
+/// (bad roles must surface, never silently vanish).
 CliConfig loadCliConfig(String homeDir) {
   final file = File('$homeDir/.fah/config.yaml');
   if (!file.existsSync()) return CliConfig();
@@ -84,6 +102,8 @@ CliConfig loadCliConfig(String homeDir) {
     final content = file.readAsStringSync();
     final doc = loadYaml(content);
     if (doc is YamlMap) return CliConfig.fromYaml(doc);
+  } on ConfigException {
+    rethrow;
   } on Object {
     // Ignore corrupt config and fall back to defaults.
   }
