@@ -34,6 +34,7 @@ final class WebLlmModelPreset {
     this.contextWindow = 2048,
     this.temperature = 0.7,
     this.topP = 0.9,
+    this.isCoder = false,
   });
 
   /// The prebuilt model id passed to `MLCEngine.reload`.
@@ -54,13 +55,19 @@ final class WebLlmModelPreset {
 
   /// Top-p sampling sent in the reload chat config.
   final double topP;
+
+  /// Whether the model is code-specialized (the Qwen2.5-Coder family); the
+  /// settings picker shows a "coder" badge next to these presets.
+  final bool isCoder;
 }
 
 /// The on-device models offered by the example app, grouped by family.
 ///
-/// Mirrors the flutter_agent_memory demo list exactly (ids from the WebLLM
-/// prebuilt list; sizes are approximate download weights, cached by the
-/// browser after the first load).
+/// The 22 flutter_agent_memory demo presets (relative order preserved,
+/// ids from the WebLLM prebuilt list), plus the Qwen2.5-Coder and Qwen3.5
+/// families added later from the same list (ids and wasm libs verified
+/// against `@mlc-ai/web-llm@0.2.84`). Sizes are approximate download
+/// weights, cached by the browser after the first load.
 const webLlmModelPresets = <WebLlmModelPreset>[
   // === SmolLM2 ===
   WebLlmModelPreset(
@@ -115,6 +122,24 @@ const webLlmModelPresets = <WebLlmModelPreset>[
     topP: 0.8,
   ),
 
+  // === Qwen 2.5 Coder ===
+  WebLlmModelPreset(
+    id: 'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC',
+    displayName: 'Qwen2.5-Coder 1.5B',
+    sizeLabel: '~900 MB',
+    temperature: 0.7,
+    topP: 0.8,
+    isCoder: true,
+  ),
+  WebLlmModelPreset(
+    id: 'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC',
+    displayName: 'Qwen2.5-Coder 3B',
+    sizeLabel: '~1.8 GB',
+    temperature: 0.7,
+    topP: 0.8,
+    isCoder: true,
+  ),
+
   // === Qwen 3 ===
   WebLlmModelPreset(
     id: 'Qwen3-0.6B-q4f16_1-MLC',
@@ -134,6 +159,29 @@ const webLlmModelPresets = <WebLlmModelPreset>[
     id: 'Qwen3-4B-q4f16_1-MLC',
     displayName: 'Qwen3 4B',
     sizeLabel: '~2.8 GB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+
+  // === Qwen 3.5 ===
+  WebLlmModelPreset(
+    id: 'Qwen3.5-0.8B-q4f16_1-MLC',
+    displayName: 'Qwen3.5 0.8B',
+    sizeLabel: '~450 MB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+  WebLlmModelPreset(
+    id: 'Qwen3.5-2B-q4f16_1-MLC',
+    displayName: 'Qwen3.5 2B',
+    sizeLabel: '~1.1 GB',
+    temperature: 0.7,
+    topP: 0.8,
+  ),
+  WebLlmModelPreset(
+    id: 'Qwen3.5-4B-q4f16_1-MLC',
+    displayName: 'Qwen3.5 4B',
+    sizeLabel: '~2.4 GB',
     temperature: 0.7,
     topP: 0.8,
   ),

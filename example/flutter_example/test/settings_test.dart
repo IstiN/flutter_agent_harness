@@ -9,6 +9,7 @@ import 'package:flutter_agent_example/main.dart';
 import 'package:flutter_agent_example/provider_registry.dart';
 import 'package:flutter_agent_example/settings.dart';
 import 'package:flutter_agent_example/transformers_js/transformers_js_types.dart';
+import 'package:flutter_agent_example/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -336,6 +337,10 @@ void main() {
       expect(find.text('Base URL'), findsNothing);
       expect(find.text('On-device model'), findsOneWidget);
       expect(find.textContaining('SmolLM2 135M'), findsOneWidget);
+      // Every WebLLM preset row carries the prompt-tools badge; the selected
+      // preset is not a coder model, so no "coder" badge.
+      expect(find.text('tools via prompt'), findsOneWidget);
+      expect(find.text('coder'), findsNothing);
       expect(
         find.textContaining('Runs fully offline after download'),
         findsOneWidget,
@@ -372,6 +377,66 @@ void main() {
       await _selectProvider(tester, 'Ollama');
 
       expect(_field(tester, 'Model id').controller!.text, 'my-own-model');
+    });
+  });
+
+  group('WebLLM model presets', () {
+    test('keeps the original 22 and adds Qwen3.5 + Qwen2.5-Coder', () {
+      // 22 flutter_agent_memory presets + 2 Qwen2.5-Coder + 3 Qwen3.5.
+      expect(webLlmModelPresets, hasLength(27));
+      // The default selection (first entry) is unchanged.
+      expect(webLlmModelPresets.first.id, 'SmolLM2-135M-Instruct-q0f16-MLC');
+      const newIds = [
+        'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC',
+        'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC',
+        'Qwen3.5-0.8B-q4f16_1-MLC',
+        'Qwen3.5-2B-q4f16_1-MLC',
+        'Qwen3.5-4B-q4f16_1-MLC',
+      ];
+      for (final id in newIds) {
+        expect(findWebLlmPreset(id), isNotNull, reason: id);
+      }
+    });
+
+    test('groups new families smallest-first next to their base family', () {
+      final ids = webLlmModelPresets.map((p) => p.id).toList();
+      // Qwen2.5-Coder sits between Qwen2.5 and Qwen3, ascending by size.
+      expect(
+        ids.indexOf('Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC'),
+        greaterThan(ids.indexOf('Qwen2.5-7B-Instruct-q4f16_1-MLC')),
+      );
+      expect(
+        ids.indexOf('Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC'),
+        lessThan(ids.indexOf('Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC')),
+      );
+      expect(
+        ids.indexOf('Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC'),
+        lessThan(ids.indexOf('Qwen3-0.6B-q4f16_1-MLC')),
+      );
+      // Qwen3.5 sits between Qwen3 and Phi, ascending by size.
+      expect(
+        ids.indexOf('Qwen3.5-0.8B-q4f16_1-MLC'),
+        greaterThan(ids.indexOf('Qwen3-4B-q4f16_1-MLC')),
+      );
+      expect(
+        ids.indexOf('Qwen3.5-0.8B-q4f16_1-MLC'),
+        lessThan(ids.indexOf('Qwen3.5-2B-q4f16_1-MLC')),
+      );
+      expect(
+        ids.indexOf('Qwen3.5-2B-q4f16_1-MLC'),
+        lessThan(ids.indexOf('Qwen3.5-4B-q4f16_1-MLC')),
+      );
+      expect(
+        ids.indexOf('Qwen3.5-4B-q4f16_1-MLC'),
+        lessThan(ids.indexOf('Phi-3.5-mini-instruct-q4f16_1-MLC')),
+      );
+    });
+
+    test('flags exactly the Qwen2.5-Coder presets as coder', () {
+      expect(webLlmModelPresets.where((p) => p.isCoder).map((p) => p.id), [
+        'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC',
+        'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC',
+      ]);
     });
   });
 
