@@ -624,4 +624,90 @@ void main() {
     final entries = await sessionEntries();
     expect(entries.whereType<CompactionRecord>(), isEmpty);
   });
+
+  test('registers the checkpoint and rewind tools', () {
+    final fake = _FakeStreamFunction([]);
+    final cli = cliFor(fake.call);
+    final names = cli.agent.state.tools.map((t) => t.name);
+    expect(names, containsAll(['checkpoint', 'rewind']));
+  });
+
+  test(
+    'checkpoint/rewind flow prunes context and preserves the tree',
+    () async {
+      await env.writeFile('notes.txt', 'data');
+      const report = 'FINDINGS: notes.txt holds data.';
+      final fake = _FakeStreamFunction([
+        _toolTurn([
+          ToolCall(
+            id: 'c1',
+            name: 'checkpoint',
+            arguments: const {'goal': 'probe notes'},
+          ),
+        ]),
+        _toolTurn([
+          ToolCall(
+            id: 'c2',
+            name: 'read',
+            arguments: const {'path': 'notes.txt'},
+          ),
+        ]),
+        _toolTurn([
+          ToolCall(
+            id: 'c3',
+            name: 'rewind',
+            arguments: const {'report': report},
+          ),
+        ]),
+        _textTurn('wrapping up'),
+      ]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('go');
+      await _waitFor(() => fake.calls == 4 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      // Live context: checkpoint prefix + verbatim report + final answer.
+      final messages = cli.agent.state.messages;
+      expect(messages, hasLength(5));
+      expect((messages[3] as UserMessage).content, report);
+
+      // The session tree carries the mark, the branch summary, the hidden
+      // rewind report, and the abandoned detour.
+      final entries = await sessionEntries();
+      expect(entries.whereType<CheckpointRecord>(), hasLength(1));
+      final branchSummary = entries.whereType<BranchSummaryRecord>().single;
+      expect(branchSummary.summary, report);
+      final rewindReport = entries.whereType<CustomMessageRecord>().single;
+      expect(rewindReport.customType, 'rewind-report');
+      expect(rewindReport.content, report);
+      final readResult = entries
+          .whereType<MessageRecord>()
+          .map((e) => e.message)
+          .whereType<ToolResultMessage>()
+          .firstWhere((m) => m.toolName == 'read');
+      expect(readResult.isError, isFalse);
+      expect(io.out.toString(), contains('[rewind] done'));
+    },
+  );
+
+  test('/reset clears the active checkpoint', () async {
+    final fake = _FakeStreamFunction([
+      _toolTurn([ToolCall(id: 'c1', name: 'checkpoint', arguments: const {})]),
+      _textTurn('ok'),
+    ]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    expect(cli.checkpoints.activeCheckpoint, isNotNull);
+    io.sendLine('/reset');
+    await _waitFor(() => io.out.toString().contains('new session started'));
+    expect(cli.checkpoints.activeCheckpoint, isNull);
+    io.sendLine('/exit');
+    await run;
+  });
 }

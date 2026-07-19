@@ -83,6 +83,14 @@ const rootSpecs = <PromptSpec>[
     constName: 'turnPrefixSummarizationPrompt',
   ),
   PromptSpec(
+    source: 'prompts/compaction/branch_summary.md',
+    constName: 'branchSummaryPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/compaction/branch_summary_preamble.md',
+    constName: 'branchSummaryPreamble',
+  ),
+  PromptSpec(
     source: 'prompts/cli/mode_code.md',
     constName: 'cliCodeModePrompt',
     requiredToken: '{{cwd}}',
@@ -108,6 +116,14 @@ const rootSpecs = <PromptSpec>[
   PromptSpec(
     source: 'prompts/tools/ask.md',
     constName: 'askToolDescriptionPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/tools/checkpoint.md',
+    constName: 'checkpointToolDescriptionPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/tools/rewind.md',
+    constName: 'rewindToolDescriptionPrompt',
   ),
   PromptSpec(
     source: 'prompts/tools/tool_calling.md',

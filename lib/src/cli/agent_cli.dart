@@ -37,6 +37,7 @@ import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../tools/ask_tool.dart';
 import '../tools/builtin_tools.dart';
+import '../tools/checkpoint_tool.dart';
 import '../tools/inspect_image.dart';
 import '../plugins/plugin.dart';
 import '../types.dart';
@@ -226,19 +227,20 @@ class AgentCli {
       _pluginSlashCommands.addAll(context.slashCommands);
     }
 
+    _toolRegistry = ToolRegistry([
+      ...builtinTools(config.env, webSearch: config.webSearchConfig),
+      // Non-interactive input (piped) gets a null ask callback: ask calls
+      // then fail with a "host cannot answer" error result (safe default).
+      askTool(callback: io.isInteractive ? _answerAskQuestions : null),
+      if (config.visionConfig != null)
+        inspectImageTool(config.env, config.visionConfig!),
+      ...pluginTools,
+    ]);
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
       streamFunction: _streamFunction,
-      toolRegistry: ToolRegistry([
-        ...builtinTools(config.env, webSearch: config.webSearchConfig),
-        // Non-interactive input (piped) gets a null ask callback: ask calls
-        // then fail with a "host cannot answer" error result (safe default).
-        askTool(callback: io.isInteractive ? _answerAskQuestions : null),
-        if (config.visionConfig != null)
-          inspectImageTool(config.env, config.visionConfig!),
-        ...pluginTools,
-      ]),
+      toolRegistry: _toolRegistry,
     );
     _approval = ApprovalManager(
       mode: config.approvalMode,
@@ -248,6 +250,22 @@ class AgentCli {
       prompt: io.isInteractive ? _promptForApproval : null,
     );
     attachApproval(_agent, _approval);
+    _checkpoints = CheckpointRewindController(
+      agent: _agent,
+      sink: CheckpointSessionSink(
+        session: () => _session,
+        persistedMessageCount: () => _persistedCount,
+        persistMessage: _persistOneMessage,
+      ),
+      // The rewind prunes the transcript after persisting the detour itself;
+      // realign the batch-persistence cursor with the pruned count.
+      onRewindApplied: (messageCount) => _persistedCount = messageCount,
+    );
+    // Register after agent construction (the controller needs the agent);
+    // the registry's executor consults the live registry, while the agent's
+    // tool list was seeded at construction and needs the explicit update.
+    _toolRegistry.registerAll(_checkpoints.tools);
+    _agent.state.tools = _toolRegistry.tools;
     _agent.subscribe(_onAgentEvent);
   }
 
@@ -264,6 +282,10 @@ class AgentCli {
   /// the session always-allow set (`/approval`, `/allow`).
   ApprovalManager get approval => _approval;
 
+  /// The checkpoint/rewind controller: its `checkpoint` and `rewind` tools
+  /// are registered on the agent, and it applies rewinds at turn end.
+  CheckpointRewindController get checkpoints => _checkpoints;
+
   /// The static configuration.
   final AgentCliConfig config;
 
@@ -276,6 +298,8 @@ class AgentCli {
   final StreamFunction _streamFunction;
   late final Agent _agent;
   late final ApprovalManager _approval;
+  late final ToolRegistry _toolRegistry;
+  late final CheckpointRewindController _checkpoints;
   final _usage = UsageAccumulator();
   late final _repo = JsonlSessionRepo(
     fs: config.env,
@@ -420,6 +444,17 @@ class AgentCli {
     _persistedCount = messages.length;
   }
 
+  /// Persists one in-memory [message] at the session leaf on demand (the
+  /// checkpoint/rewind controller's sink), keeping [_persistedCount] aligned
+  /// so the run-end batch persistence skips it. Returns the new record id.
+  Future<String> _persistOneMessage(Message message) async {
+    final session = _session;
+    if (session == null) return '';
+    final id = await session.appendMessage(message);
+    _persistedCount++;
+    return id;
+  }
+
   Future<void> _maybeAutoCompact() async {
     final messages = _agent.state.messages;
     if (messages.isEmpty) return;
@@ -474,6 +509,7 @@ class AgentCli {
         await _switchModel(rest);
       case '/reset':
         _agent.reset();
+        _checkpoints.clear();
         _session = await _createSession();
         _persistedCount = 0;
         io.writeln('new session started');

@@ -214,6 +214,21 @@ final class Session {
     );
   }
 
+  /// Appends a checkpoint mark for the `checkpoint`/`rewind` tools. Returns
+  /// the new record id — the rewind uses it as the session-tree branch anchor.
+  /// See [CheckpointRecord].
+  Future<String> appendCheckpoint({required int messageCount, String? goal}) {
+    return _append(
+      (id, parentId) => CheckpointRecord(
+        id: id,
+        parentId: parentId,
+        timestamp: DateTime.now(),
+        messageCount: messageCount,
+        goal: goal,
+      ),
+    );
+  }
+
   /// Appends an application-defined record that projects into model context
   /// as a user message. [content] is a [String] or a `List<ContentBlock>`.
   /// Returns the new record id.

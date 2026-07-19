@@ -149,6 +149,36 @@ void main() {
       expect(restored.summary, 'branch summary');
     });
 
+    test('CheckpointRecord', () {
+      final restored =
+          roundTrip(
+                CheckpointRecord(
+                  id: 'e7a',
+                  parentId: 'e7',
+                  timestamp: ts,
+                  messageCount: 42,
+                  goal: 'probe the cache',
+                ),
+              )
+              as CheckpointRecord;
+      expect(restored.type, 'checkpoint');
+      expect(restored.messageCount, 42);
+      expect(restored.goal, 'probe the cache');
+    });
+
+    test('CheckpointRecord omits a null goal', () {
+      final record = CheckpointRecord(
+        id: 'e7b',
+        parentId: null,
+        timestamp: ts,
+        messageCount: 7,
+      );
+      final json = record.toJson();
+      expect(json.containsKey('goal'), isFalse);
+      final restored = roundTrip(record) as CheckpointRecord;
+      expect(restored.goal, isNull);
+    });
+
     test('CustomRecord', () {
       final restored =
           roundTrip(
