@@ -265,4 +265,9 @@
 
 - fix(example): Gemma web uses -web.litertlm builds + Gemma cache management in settings
 
+## 0.1.27
+
+- feat(example): transformers.js Gemma provider on web (ONNX q4f16, tools via prompt wrapper)
+- feat(brand): rename visible brand to Fa + app favicon matches the site
+
 ## Unreleased
