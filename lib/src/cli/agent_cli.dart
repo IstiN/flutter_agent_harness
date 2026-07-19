@@ -39,6 +39,7 @@ import '../tools/ask_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
 import '../tools/inspect_image.dart';
+import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
 import '../plugins/plugin.dart';
 import '../types.dart';
@@ -84,6 +85,7 @@ final class AgentCliConfig {
     this.visionConfig,
     this.transcribeConfig,
     this.webSearchConfig,
+    this.sqliteEngine,
     this.plugins = const [],
     this.pluginConfig = const {},
     this.promptTemplateDirs = const [],
@@ -159,6 +161,11 @@ final class AgentCliConfig {
   /// works with all defaults, keyed providers read their API keys from the
   /// config's [SecretsStore].
   final WebSearchConfig? webSearchConfig;
+
+  /// Optional SQLite engine enabling `read` targets like `data.db:table`.
+  /// Pass the FFI-backed engine from `lib/io.dart` on native hosts; leave
+  /// null on web (SQLite reads then return a clean "not supported" note).
+  final SqliteEngine? sqliteEngine;
 
   /// Plugins to register at startup.
   final List<FahPlugin> plugins;
@@ -242,6 +249,7 @@ class AgentCli {
         config.env,
         webSearch: config.webSearchConfig,
         model: () => _agent.state.model,
+        sqlite: config.sqliteEngine,
       ),
       // Non-interactive input (piped) gets a null ask callback: ask calls
       // then fail with a "host cannot answer" error result (safe default).

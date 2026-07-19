@@ -51,6 +51,29 @@ Conventions for AI agents and contributors working in this repository.
   (hashline mode) next to legacy `oldText`/`newText`, and `read` gains a
   `hashline` flag emitting numbered lines + the tag header; both share one
   session snapshot store via `builtinTools`.
+- `lib/src/tools/read_selector.dart` — the `read` tool's trailing-selector
+  grammar (ported from oh-my-pi `path-utils.ts`/`read.ts`): `:N`/`:A-B`/
+  `:A+C` line ranges (`..` alias, `L` prefixes), comma-merged multi-ranges,
+  and `:raw` (verbatim: no line numbers/hashline header/notices), compound
+  in either order. `offset`/`limit` args map onto the same pipeline and must
+  not be combined with a selector; a literal file named e.g. `test:1-2`
+  wins over the selector (`splitPathAndSelPreferringLiteral`). omp's
+  `:conflicts` selector and the 1+3 context-line expansion are not ported.
+- `lib/src/tools/archive_reader.dart` — archive inner-path reads for `read`
+  (`archive.zip:inner/entry`, also `.tar`, `.tar.gz`/`.tgz`) on
+  `package:archive` (pure Dart). Whole-archive decode in memory (256 MiB
+  cap, 64 MiB per member); listings, member reads through the shared text
+  pipeline, binary members yield a note. omp's JVM/Android zip aliases are
+  not recognized.
+- `lib/src/tools/sqlite/` — SQLite targets for `read` (ported from omp's
+  `sqlite-reader.ts`): `db.sqlite`, `:table` (schema+samples), `:table:key`
+  (PK/rowid), `:table?limit/offset/order/where`, and `?q=SELECT` raw,
+  rendered as width-capped ASCII tables. `sqlite_reader.dart` is pure Dart
+  behind the `SqliteEngine` interface (detection by extension + existence;
+  omp's magic-header sniff is skipped to keep reads lazy); the FFI engine
+  (`sqlite3_engine.dart`, `package:sqlite3`) is exported only from
+  `lib/io.dart` and passed via `builtinTools(env, sqlite: ...)` — hosts
+  without it (web) get a clean "not supported" note.
 - `bin/fah.dart` — the `fah`/`fa` CLI executable.
 - `lib/src/web_search/` — the `web_search`/`web_fetch` tools (ported from
   oh-my-pi `packages/coding-agent/src/web/`): `web_search` walks a provider

@@ -114,6 +114,11 @@ const rootSpecs = <PromptSpec>[
     constName: 'editToolDescriptionPrompt',
   ),
   PromptSpec(
+    source: 'prompts/tools/read.md',
+    constName: 'readToolDescriptionPrompt',
+    requiredToken: '{{maxLines}}',
+  ),
+  PromptSpec(
     source: 'prompts/tools/ask.md',
     constName: 'askToolDescriptionPrompt',
   ),

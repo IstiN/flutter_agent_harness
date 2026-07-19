@@ -439,6 +439,7 @@ Future<void> main(List<String> args) async {
       visionConfig: visionConfig,
       transcribeConfig: transcribeConfig,
       webSearchConfig: WebSearchConfig(secrets: webSearchSecrets),
+      sqliteEngine: const Sqlite3Engine(),
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,
