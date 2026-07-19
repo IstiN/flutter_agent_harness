@@ -248,6 +248,23 @@ void main() {
     expect(names, contains('inspect_image'));
   });
 
+  test('registers transcribe_audio tool when transcribeConfig is provided', () {
+    final fake = _FakeStreamFunction([]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: _model,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        transcribeConfig: const TranscribeAudioConfig(apiKey: 'transcribe-key'),
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    final names = cli.agent.state.tools.map((t) => t.name);
+    expect(names, contains('transcribe_audio'));
+  });
+
   test('streams assistant text live and persists the session', () async {
     final fake = _FakeStreamFunction([_textTurn('Hello world')]);
     final cli = cliFor(fake.call);

@@ -39,8 +39,11 @@ Options:
   --vision-model <id>       Enable inspect_image tool using this vision model
                             (e.g. gpt-4o, openai/gpt-4o)
   --vision-base-url <url>   Override the vision provider base URL
+  --transcribe-model <id>   Enable transcribe_audio tool using this
+                            transcription model (default: whisper-1)
+  --transcribe-base-url <url>  Override the transcription endpoint base URL
   --plugin <name>          Enable a built-in plugin (repeatable). Built-ins:
-                            inspect_image
+                            inspect_image, transcribe_audio
   --prompt-template-dir <path>  Add a prompt template directory (repeatable)
   --mode <name>           Initial mode: code | architect | review
   --cwd <dir>               Working directory (default: current directory)
@@ -53,6 +56,7 @@ Environment:
   ANTHROPIC_API_KEY         API key for --provider anthropic
   GOOGLE_API_KEY            API key for --provider google
   VISION_API_KEY            API key for --vision-model (defaults to main key)
+  TRANSCRIBE_API_KEY        API key for --transcribe-model (defaults to main key)
 
 Configuration:
   .fah/packages.yaml        Plugin configuration (see docs).
@@ -70,6 +74,8 @@ final class _Args {
     this.baseUrl,
     this.visionModel,
     this.visionBaseUrl,
+    this.transcribeModel,
+    this.transcribeBaseUrl,
     this.plugins = const [],
     this.promptTemplateDirs = const [],
     this.mode,
@@ -82,6 +88,8 @@ final class _Args {
   final String? baseUrl;
   final String? visionModel;
   final String? visionBaseUrl;
+  final String? transcribeModel;
+  final String? transcribeBaseUrl;
   final List<String> plugins;
   final List<String> promptTemplateDirs;
   final String? mode;
@@ -101,6 +109,8 @@ _Args _parseArgs(List<String> args) {
   String? baseUrl;
   String? visionModel;
   String? visionBaseUrl;
+  String? transcribeModel;
+  String? transcribeBaseUrl;
   final plugins = <String>[];
   final promptTemplateDirs = <String>[];
   String? mode;
@@ -135,6 +145,12 @@ _Args _parseArgs(List<String> args) {
       case '--vision-base-url':
         visionBaseUrl = valueFor(i, '--vision-base-url');
         i++;
+      case '--transcribe-model':
+        transcribeModel = valueFor(i, '--transcribe-model');
+        i++;
+      case '--transcribe-base-url':
+        transcribeBaseUrl = valueFor(i, '--transcribe-base-url');
+        i++;
       case '--plugin':
         plugins.add(valueFor(i, '--plugin'));
         i++;
@@ -163,6 +179,8 @@ _Args _parseArgs(List<String> args) {
     baseUrl: baseUrl,
     visionModel: visionModel,
     visionBaseUrl: visionBaseUrl,
+    transcribeModel: transcribeModel,
+    transcribeBaseUrl: transcribeBaseUrl,
     plugins: plugins,
     promptTemplateDirs: promptTemplateDirs,
     mode: mode,
@@ -172,6 +190,10 @@ _Args _parseArgs(List<String> args) {
 }
 
 Model _buildModel(_Args args) {
+  // The built-in defaults (claude-sonnet-4-5, gemini-2.5-pro,
+  // anthropic/claude-sonnet-4) are all vision-capable; declaring `image`
+  // input keeps images flowing for them, while a [Model] built without it
+  // (text-only) gets explicit image-omitted placeholders at request time.
   return switch (args.provider) {
     'anthropic' => Model(
       id: args.model ?? 'claude-sonnet-4-5',
@@ -180,6 +202,7 @@ Model _buildModel(_Args args) {
       provider: 'anthropic',
       baseUrl: args.baseUrl ?? 'https://api.anthropic.com',
       reasoning: true,
+      input: const ['text', 'image'],
       contextWindow: 200000,
       maxTokens: 8192,
     ),
@@ -191,6 +214,7 @@ Model _buildModel(_Args args) {
       baseUrl:
           args.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta',
       reasoning: true,
+      input: const ['text', 'image'],
       contextWindow: 1000000,
       maxTokens: 8192,
     ),
@@ -201,6 +225,7 @@ Model _buildModel(_Args args) {
       provider: args.baseUrl == null ? 'openrouter' : 'openai',
       baseUrl: args.baseUrl ?? 'https://openrouter.ai/api/v1',
       reasoning: true,
+      input: const ['text', 'image'],
       contextWindow: 200000,
       maxTokens: 8192,
     ),
@@ -213,6 +238,7 @@ String _resolveApiKey(String provider, {String? fallback}) {
     'anthropic' => env['ANTHROPIC_API_KEY'],
     'google' => env['GOOGLE_API_KEY'],
     'vision' => env['VISION_API_KEY'] ?? fallback,
+    'transcribe' => env['TRANSCRIBE_API_KEY'] ?? fallback,
     _ => env['OPENROUTER_API_KEY'] ?? env['OPENAI_API_KEY'],
   };
   if (key == null || key.isEmpty) {
@@ -220,6 +246,7 @@ String _resolveApiKey(String provider, {String? fallback}) {
       'anthropic' => 'ANTHROPIC_API_KEY',
       'google' => 'GOOGLE_API_KEY',
       'vision' => 'VISION_API_KEY',
+      'transcribe' => 'TRANSCRIBE_API_KEY',
       _ => 'OPENROUTER_API_KEY',
     };
     _fail('missing API key: set $name in the environment');
@@ -231,6 +258,7 @@ String _resolveApiKey(String provider, {String? fallback}) {
 FahPlugin? _builtInPlugin(String name) {
   return switch (name) {
     'inspect_image' => const InspectImagePlugin(),
+    'transcribe_audio' => const TranscribeAudioPlugin(),
     _ => null,
   };
 }
@@ -327,6 +355,8 @@ Future<void> main(List<String> args) async {
     baseUrl: baseUrl,
     visionModel: parsed.visionModel,
     visionBaseUrl: parsed.visionBaseUrl,
+    transcribeModel: parsed.transcribeModel,
+    transcribeBaseUrl: parsed.transcribeBaseUrl,
     plugins: parsed.plugins,
     promptTemplateDirs: parsed.promptTemplateDirs,
     mode: mode,
@@ -350,6 +380,7 @@ Future<void> main(List<String> args) async {
     'ANTHROPIC_API_KEY',
     'GOOGLE_API_KEY',
     'VISION_API_KEY',
+    'TRANSCRIBE_API_KEY',
     'BRAVE_API_KEY',
     'TAVILY_API_KEY',
   ]) {
@@ -376,6 +407,15 @@ Future<void> main(List<String> args) async {
     );
   }
 
+  TranscribeAudioConfig? transcribeConfig;
+  if (effective.transcribeModel != null) {
+    transcribeConfig = TranscribeAudioConfig(
+      modelId: effective.transcribeModel!,
+      apiKey: _resolveApiKey('transcribe', fallback: apiKey),
+      baseUrl: effective.transcribeBaseUrl,
+    );
+  }
+
   final resolved = _resolvePlugins(effective, cwd);
 
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
@@ -397,6 +437,7 @@ Future<void> main(List<String> args) async {
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
       visionConfig: visionConfig,
+      transcribeConfig: transcribeConfig,
       webSearchConfig: WebSearchConfig(secrets: webSearchSecrets),
       plugins: resolved.plugins,
       pluginConfig: resolved.config,

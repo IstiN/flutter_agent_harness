@@ -20,8 +20,10 @@
 ///
 /// Deliberate divergences from the TypeScript originals:
 ///
-/// - No image support in [readFileTool]: the [FileSystem] abstraction is
-///   text-only, so image reads are deferred until binary reads land.
+/// - [readFileTool] image support runs in-process on `package:image` instead
+///   of pi's Photon/WASM worker; the pipeline matches pi's
+///   `utils/image-process.ts` (EXIF orientation baking, pass-through within
+///   limits, PNG-then-JPEG byte-budget ladder at 4.5MB base64).
 /// - The `bash` tool does not spill truncated output to a temp file (pi's
 ///   `fullOutputPath`); the truncation notice omits the path. Streaming
 ///   `onUpdate` partials and pi's `commandPrefix`/spawn hooks are also
@@ -46,6 +48,7 @@ import '../approval/bash_interceptor.dart';
 import '../cancel_token.dart';
 import '../env/execution_env.dart';
 import '../hashline/hashline.dart';
+import '../model.dart';
 import '../prompts/prompts.g.dart';
 import '../types.dart';
 import '../web_search/web_search.dart';
@@ -74,14 +77,17 @@ const _maxTimeoutMs = 2147483647;
 /// When [webSearch] is provided, the `web_search` and `web_fetch` tools are
 /// registered with it (provider chain resolved from the config; keyless
 /// DuckDuckGo works with all defaults).
+///
+/// [model] is forwarded to [readFileTool] for the non-vision image note.
 List<AgentTool> builtinTools(
   ExecutionEnv env, {
   HashlineSnapshotStore? snapshots,
   WebSearchConfig? webSearch,
+  Model? Function()? model,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return [
-    readFileTool(env, snapshots: store),
+    readFileTool(env, snapshots: store, model: model),
     writeFileTool(env),
     editFileTool(env, snapshots: store),
     listDirTool(env),
@@ -225,7 +231,17 @@ _Truncation _truncateTail(
 // Image handling for the read tool
 // ---------------------------------------------------------------------------
 
+/// Maximum width/height for inline images (pi's `maxWidth`/`maxHeight`).
 const _defaultImageMaxDimension = 2000;
+
+/// Base64 payload budget for inline images: 4.5MB of base64 (== `4.5 * 1024 *
+/// 1024`), providing headroom below Anthropic's 5MB inline limit (pi's
+/// `DEFAULT_MAX_BYTES`).
+const _defaultImageMaxBase64Bytes = 4718592;
+
+/// JPEG quality ladder tried after PNG at each size step (pi's `qualitySteps`
+/// with the default `jpegQuality` 80).
+const _imageJpegQualitySteps = [80, 85, 70, 55, 40];
 
 const _supportedImageFormats = {
   ImageFormat.png,
@@ -233,6 +249,15 @@ const _supportedImageFormats = {
   ImageFormat.gif,
   ImageFormat.webp,
   ImageFormat.bmp,
+};
+
+/// Formats providers accept inline; other decodable formats (BMP) are
+/// converted first (pi's `normalizeSupportedImageMimeType`).
+const _inlineImageFormats = {
+  ImageFormat.png,
+  ImageFormat.jpg,
+  ImageFormat.gif,
+  ImageFormat.webp,
 };
 
 String? _mimeTypeForImageFormat(ImageFormat format) {
@@ -246,16 +271,9 @@ String? _mimeTypeForImageFormat(ImageFormat format) {
   };
 }
 
-Uint8List _encodeImage(Image image, ImageFormat format) {
-  return switch (format) {
-    ImageFormat.png => encodePng(image),
-    ImageFormat.jpg => encodeJpg(image),
-    ImageFormat.gif => encodeGif(image),
-    ImageFormat.webp => encodeWebP(image),
-    ImageFormat.bmp => encodeBmp(image),
-    _ => encodePng(image),
-  };
-}
+/// Encoded size of [bytes] as base64 text (pi compares the UTF-8 byte length
+/// of the base64 string, which equals its character length).
+int _base64Length(Uint8List bytes) => ((bytes.length + 2) ~/ 3) * 4;
 
 ({
   String mimeType,
@@ -265,56 +283,165 @@ Uint8List _encodeImage(Image image, ImageFormat format) {
   bool resized,
   int outputWidth,
   int outputHeight,
+  String? convertedFrom,
 })
 _processImage(
   Uint8List bytes,
   ImageFormat format, {
   int maxDimension = _defaultImageMaxDimension,
+  int maxBase64Bytes = _defaultImageMaxBase64Bytes,
 }) {
-  final image = decodeImage(bytes);
-  if (image == null) {
+  // Normalize (pi's `normalizeImage`): formats providers do not accept inline
+  // (BMP) decode and convert to PNG first; EXIF orientation is baked in.
+  var inputBytes = bytes;
+  var inputFormat = format;
+  String? convertedFrom;
+  if (!_inlineImageFormats.contains(format)) {
+    final source = decodeImage(bytes);
+    if (source == null) {
+      throw StateError('Could not decode image');
+    }
+    inputBytes = encodePng(bakeOrientation(source));
+    inputFormat = ImageFormat.png;
+    convertedFrom = _mimeTypeForImageFormat(format);
+  }
+  return _resizeInlineImage(
+    inputBytes,
+    inputFormat,
+    convertedFrom: convertedFrom,
+    maxDimension: maxDimension,
+    maxBase64Bytes: maxBase64Bytes,
+  );
+}
+
+/// Fits an inline-format image within the dimension and base64 byte limits.
+///
+/// Ported from pi's `resizeImageInProcess` (`utils/image-resize-core.ts`):
+/// EXIF orientation is baked before measuring; images already within ALL
+/// limits pass through with their ORIGINAL bytes untouched; otherwise each
+/// size step tries PNG, then JPEG at decreasing quality
+/// ([_imageJpegQualitySteps]), shrinking dimensions by 0.75 until a candidate
+/// fits the byte budget.
+({
+  String mimeType,
+  String base64,
+  int width,
+  int height,
+  bool resized,
+  int outputWidth,
+  int outputHeight,
+  String? convertedFrom,
+})
+_resizeInlineImage(
+  Uint8List bytes,
+  ImageFormat format, {
+  required String? convertedFrom,
+  required int maxDimension,
+  required int maxBase64Bytes,
+}) {
+  final decoded = decodeImage(bytes);
+  if (decoded == null) {
     throw StateError('Could not decode image');
   }
+  // Bake EXIF orientation before measuring/resizing so the model sees the
+  // image as displayed (pi's `applyExifOrientation`).
+  final image =
+      decoded.exif.imageIfd.hasOrientation &&
+          decoded.exif.imageIfd.orientation != 1
+      ? bakeOrientation(decoded)
+      : decoded;
   final width = image.width;
   final height = image.height;
-  var outputWidth = width;
-  var outputHeight = height;
-  var resized = false;
-  Image output = image;
 
+  // Pass-through: within the dimension AND byte limits, keep the original
+  // bytes untouched (no re-encode).
+  if (width <= maxDimension &&
+      height <= maxDimension &&
+      _base64Length(bytes) < maxBase64Bytes) {
+    return (
+      mimeType: _mimeTypeForImageFormat(format) ?? 'image/png',
+      base64: base64Encode(bytes),
+      width: width,
+      height: height,
+      resized: false,
+      outputWidth: width,
+      outputHeight: height,
+      convertedFrom: convertedFrom,
+    );
+  }
+
+  var targetWidth = width;
+  var targetHeight = height;
   if (width > maxDimension || height > maxDimension) {
     if (width >= height) {
-      outputWidth = maxDimension;
-      outputHeight = (height * maxDimension / width).round();
+      targetWidth = maxDimension;
+      targetHeight = (height * maxDimension / width).round();
     } else {
-      outputHeight = maxDimension;
-      outputWidth = (width * maxDimension / height).round();
+      targetHeight = maxDimension;
+      targetWidth = (width * maxDimension / height).round();
     }
-    output = copyResize(
-      image,
-      width: outputWidth,
-      height: outputHeight,
-      interpolation: Interpolation.cubic,
-    );
-    resized = true;
   }
 
-  final outputFormat = format == ImageFormat.bmp ? ImageFormat.jpg : format;
-  final encoded = _encodeImage(output, outputFormat);
-  final mimeType = _mimeTypeForImageFormat(outputFormat);
-  if (mimeType == null) {
-    throw StateError('Unsupported image format: $outputFormat');
+  var currentWidth = targetWidth;
+  var currentHeight = targetHeight;
+  while (true) {
+    final candidate = currentWidth == width && currentHeight == height
+        ? image
+        : copyResize(
+            image,
+            width: currentWidth,
+            height: currentHeight,
+            interpolation: Interpolation.cubic,
+          );
+    final png = encodePng(candidate);
+    if (_base64Length(png) < maxBase64Bytes) {
+      return (
+        mimeType: 'image/png',
+        base64: base64Encode(png),
+        width: width,
+        height: height,
+        resized: true,
+        outputWidth: currentWidth,
+        outputHeight: currentHeight,
+        convertedFrom: convertedFrom,
+      );
+    }
+    var accepted = false;
+    String? jpegBase64;
+    for (final quality in _imageJpegQualitySteps) {
+      final jpeg = encodeJpg(candidate, quality: quality);
+      if (_base64Length(jpeg) < maxBase64Bytes) {
+        jpegBase64 = base64Encode(jpeg);
+        accepted = true;
+        break;
+      }
+    }
+    if (accepted) {
+      return (
+        mimeType: 'image/jpeg',
+        base64: jpegBase64!,
+        width: width,
+        height: height,
+        resized: true,
+        outputWidth: currentWidth,
+        outputHeight: currentHeight,
+        convertedFrom: convertedFrom,
+      );
+    }
+
+    if (currentWidth == 1 && currentHeight == 1) {
+      break;
+    }
+    final nextWidth = currentWidth == 1 ? 1 : currentWidth * 3 ~/ 4;
+    final nextHeight = currentHeight == 1 ? 1 : currentHeight * 3 ~/ 4;
+    if (nextWidth == currentWidth && nextHeight == currentHeight) {
+      break;
+    }
+    currentWidth = nextWidth;
+    currentHeight = nextHeight;
   }
 
-  return (
-    mimeType: mimeType,
-    base64: base64Encode(encoded),
-    width: width,
-    height: height,
-    resized: resized,
-    outputWidth: outputWidth,
-    outputHeight: outputHeight,
-  );
+  throw StateError('Could not resize image below the inline image size limit');
 }
 
 ImageFormat? _detectImageFormat(Uint8List bytes) {
@@ -333,7 +460,8 @@ ImageFormat? _detectImageFormat(Uint8List bytes) {
 /// Creates the `read` tool: reads a text file or image with optional `offset`
 /// (1-indexed) and `limit`, truncating text output to [defaultToolMaxLines]
 /// lines or [defaultToolMaxBytes] bytes with an actionable continuation notice.
-/// Images are decoded, optionally resized, and returned as base64 content.
+/// Images are decoded, optionally resized to the inline dimension/byte limits,
+/// and returned as base64 content.
 ///
 /// With `hashline: true` (omp's hashline display mode), text output lines are
 /// prefixed with their 1-indexed line number (`N:text`) and the output is
@@ -343,7 +471,16 @@ ImageFormat? _detectImageFormat(Uint8List bytes) {
 /// (omp defaults it on; we keep the legacy plain output as the default so
 /// existing read consumers are unaffected — the `edit` tool description
 /// tells the model to opt in when it intends to edit by anchors).
-AgentTool readFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
+///
+/// When [model] is provided, image results carry an extra note when the
+/// current model has no `image` input (pi's `getNonVisionImageNote`); the
+/// image itself stays in the result — providers substitute an explicit
+/// placeholder at request time (see `downgradeUnsupportedImages`).
+AgentTool readFileTool(
+  ExecutionEnv env, {
+  HashlineSnapshotStore? snapshots,
+  Model? Function()? model,
+}) {
   final store = snapshots ?? HashlineSnapshotStore();
   return AgentTool(
     name: 'read',
@@ -404,6 +541,31 @@ AgentTool readFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
           );
         }
         note.write(']');
+        // pi's `conversionHint`.
+        final convertedFrom = processed.convertedFrom;
+        if (convertedFrom != null && convertedFrom != processed.mimeType) {
+          note.write(
+            '\n[Image converted from $convertedFrom to ${processed.mimeType}.]',
+          );
+        }
+        // pi's `formatDimensionNote`: coordinate-mapping hint after resize.
+        if (processed.resized) {
+          final scale = processed.width / processed.outputWidth;
+          note.write(
+            '\n[Image: original ${processed.width}x${processed.height}, '
+            'displayed at ${processed.outputWidth}x${processed.outputHeight}. '
+            'Multiply coordinates by ${scale.toStringAsFixed(2)} to map to '
+            'original image.]',
+          );
+        }
+        // pi's `getNonVisionImageNote`.
+        final currentModel = model?.call();
+        if (currentModel != null && !currentModel.input.contains('image')) {
+          note.write(
+            '\n[Current model does not support images. The image will be '
+            'omitted from this request.]',
+          );
+        }
         return ToolExecutionResult(
           content: [
             TextContent(text: note.toString()),

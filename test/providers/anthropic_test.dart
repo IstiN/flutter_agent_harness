@@ -76,6 +76,7 @@ final testModel = Model(
   api: 'anthropic-messages',
   provider: 'anthropic',
   baseUrl: 'https://api.anthropic.com',
+  input: const ['text', 'image'],
   contextWindow: 200000,
   maxTokens: 8192,
   cost: const ModelCost(input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75),
@@ -87,6 +88,7 @@ final reasoningModel = Model(
   provider: 'anthropic',
   baseUrl: 'https://api.anthropic.com',
   reasoning: true,
+  input: const ['text', 'image'],
   contextWindow: 200000,
   maxTokens: 64000,
 );
@@ -1090,6 +1092,78 @@ void main() {
         },
       ]);
     });
+
+    test(
+      'non-vision model gets explicit placeholders instead of images',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([messageStart(), messageStop]))),
+            200,
+          );
+        });
+
+        final textOnlyModel = Model(
+          id: 'claude-text-only',
+          api: 'anthropic-messages',
+          provider: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          contextWindow: 200000,
+          maxTokens: 8192,
+        );
+        final context = Context(
+          messages: [
+            ToolResultMessage(
+              toolCallId: 'toolu_1',
+              toolName: 'screenshot',
+              content: const [
+                TextContent(text: 'done'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            ),
+            UserMessage(
+              content: const [
+                TextContent(text: 'look at these:'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        );
+
+        final stream = streamAnthropic(
+          textOnlyModel,
+          context,
+          const AnthropicOptions(apiKey: 'test-key'),
+          client,
+        );
+        await stream.result;
+
+        final messages = capturedBody!['messages'] as List;
+        // Tool result: image replaced with the explicit tool placeholder.
+        final toolResult = (messages[0]['content'] as List).first;
+        expect(
+          toolResult['content'],
+          'done\n(tool image omitted: model does not support images)',
+        );
+        // User message: consecutive images collapse into ONE placeholder
+        // (the trailing cache_control is Anthropic's cache breakpoint).
+        final userBlocks = messages[1]['content'] as List;
+        expect(userBlocks, hasLength(2));
+        expect(userBlocks[0], {'type': 'text', 'text': 'look at these:'});
+        expect(userBlocks[1]['type'], 'text');
+        expect(
+          userBlocks[1]['text'],
+          '(image omitted: model does not support images)',
+        );
+      },
+    );
 
     test('sends thinking config for reasoning models', () async {
       Map<String, dynamic>? capturedBody;

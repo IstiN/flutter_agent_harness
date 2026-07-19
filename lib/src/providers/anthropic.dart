@@ -580,7 +580,7 @@ Map<String, dynamic> _buildParams(
   final params = <String, dynamic>{
     'model': model.id,
     'messages': _convertMessages(
-      context.messages,
+      downgradeUnsupportedImages(context.messages, model),
       cacheControl: cacheControl,
       allowEmptySignature: compat.allowEmptySignature,
     ),
@@ -641,8 +641,9 @@ Map<String, dynamic> _buildParams(
 /// Normalize tool call IDs to match Anthropic's required pattern and length.
 ///
 /// Ported from pi's `normalizeToolCallId`. pi applies it inside
-/// `transformMessages`; since message transformation is not ported yet, the
-/// normalization is applied at conversion time instead (same net effect).
+/// `transformMessages`; the image-downgrade half of that pre-pass is ported
+/// ([downgradeUnsupportedImages] runs in [_buildParams]), while id
+/// normalization is still applied at conversion time (same net effect).
 String _normalizeToolCallId(String id) {
   final sanitized = id.replaceAll(RegExp('[^a-zA-Z0-9_-]'), '_');
   return sanitized.length > 64 ? sanitized.substring(0, 64) : sanitized;

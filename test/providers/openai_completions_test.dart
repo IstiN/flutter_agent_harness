@@ -40,6 +40,7 @@ final testModel = Model(
   api: 'openai-completions',
   provider: 'openai',
   baseUrl: 'https://api.openai.com/v1',
+  input: const ['text', 'image'],
   contextWindow: 128000,
   maxTokens: 16384,
   cost: const ModelCost(input: 0.15, output: 0.6, cacheRead: 0.075),
@@ -885,6 +886,79 @@ void main() {
             'strict': false,
           },
         ]);
+      },
+    );
+
+    test(
+      'non-vision model gets explicit placeholders instead of images',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
+
+        final textOnlyModel = Model(
+          id: 'gpt-text-only',
+          api: 'openai-completions',
+          provider: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          contextWindow: 128000,
+          maxTokens: 16384,
+        );
+        final context = Context(
+          messages: [
+            ToolResultMessage(
+              toolCallId: 'call_1',
+              toolName: 'screenshot',
+              content: const [
+                TextContent(text: 'done'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            ),
+            UserMessage(
+              content: const [
+                TextContent(text: 'look:'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        );
+
+        final stream = streamOpenAICompletions(
+          textOnlyModel,
+          context,
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+        await stream.result;
+
+        final messages = capturedBody!['messages'] as List;
+        // Tool result: image replaced with the explicit tool placeholder;
+        // no trailing "Attached image(s)" user turn is emitted.
+        expect(messages[0], {
+          'role': 'tool',
+          'content':
+              'done\n(tool image omitted: model does not support images)',
+          'tool_call_id': 'call_1',
+        });
+        // User message: consecutive images collapse into ONE placeholder.
+        expect(messages[1], {
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': 'look:'},
+            {
+              'type': 'text',
+              'text': '(image omitted: model does not support images)',
+            },
+          ],
+        });
+        expect(messages, hasLength(2));
       },
     );
 

@@ -959,6 +959,21 @@ void main() {
       return Uint8List.fromList(encodePng(img));
     }
 
+    /// Deterministic noise: barely compressible, so the PNG blows past the
+    /// 4.5MB base64 budget even after the dimension clamp.
+    Uint8List makeNoisyPng(int width, int height) {
+      final img = Image(width: width, height: height);
+      var seed = 42;
+      for (final pixel in img) {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        pixel
+          ..r = seed & 0xFF
+          ..g = (seed >> 8) & 0xFF
+          ..b = (seed >> 16) & 0xFF;
+      }
+      return Uint8List.fromList(encodePng(img));
+    }
+
     test('returns ImageContent for a PNG and resizes large images', () async {
       await env.writeBinaryFile('/work/huge.png', makePng(3000, 2000));
       final tool = registry.lookup('read')!;
@@ -973,8 +988,45 @@ void main() {
       expect(base64Decode(images.first.data), isNotEmpty);
     });
 
+    test('resize hint carries the coordinate scale factor', () async {
+      await env.writeBinaryFile('/work/huge.png', makePng(3000, 2000));
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute({'path': '/work/huge.png'}, null, null);
+      final note = _text(result);
+      expect(
+        note,
+        contains(
+          '[Image: original 3000x2000, displayed at 2000x1333. '
+          'Multiply coordinates by 1.50 to map to original image.]',
+        ),
+      );
+    });
+
+    test('huge noisy PNG is degraded below the 4.5MB base64 budget', () async {
+      final noisy = makeNoisyPng(2100, 1600);
+      // Sanity: the fixture itself exceeds the budget.
+      expect(base64Encode(noisy).length, greaterThan(4718592));
+      await env.writeBinaryFile('/work/noisy.png', noisy);
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute(
+        {'path': '/work/noisy.png'},
+        null,
+        null,
+      );
+      final images = result.content.whereType<ImageContent>().toList();
+      expect(images, hasLength(1));
+      expect(images.first.data.length, lessThan(4718592));
+      final note = _text(result);
+      expect(note, contains('Multiply coordinates by'));
+      // The payload still decodes, at or below the dimension clamp.
+      final decoded = decodeImage(base64Decode(images.first.data))!;
+      expect(decoded.width, lessThanOrEqualTo(2000));
+      expect(decoded.height, lessThanOrEqualTo(2000));
+    });
+
     test('returns ImageContent unchanged for a small image', () async {
-      await env.writeBinaryFile('/work/small.png', makePng(100, 50));
+      final png = makePng(100, 50);
+      await env.writeBinaryFile('/work/small.png', png);
       final tool = registry.lookup('read')!;
       final result = await tool.execute(
         {'path': '/work/small.png'},
@@ -987,6 +1039,120 @@ void main() {
       final images = result.content.whereType<ImageContent>().toList();
       expect(images, hasLength(1));
       expect(images.first.mimeType, 'image/png');
+      // Pass-through: the original bytes are sent untouched.
+      expect(images.first.data, base64Encode(png));
+    });
+
+    test('passes small JPEG and GIF originals through untouched', () async {
+      final jpg = Uint8List.fromList(encodeJpg(Image(width: 80, height: 60)));
+      final gif = Uint8List.fromList(encodeGif(Image(width: 40, height: 30)));
+      await env.writeBinaryFile('/work/small.jpg', jpg);
+      await env.writeBinaryFile('/work/small.gif', gif);
+      final tool = registry.lookup('read')!;
+
+      final jpgResult = await tool.execute(
+        {'path': '/work/small.jpg'},
+        null,
+        null,
+      );
+      final jpgImage = jpgResult.content.whereType<ImageContent>().single;
+      expect(jpgImage.mimeType, 'image/jpeg');
+      expect(jpgImage.data, base64Encode(jpg));
+
+      final gifResult = await tool.execute(
+        {'path': '/work/small.gif'},
+        null,
+        null,
+      );
+      final gifImage = gifResult.content.whereType<ImageContent>().single;
+      expect(gifImage.mimeType, 'image/gif');
+      expect(gifImage.data, base64Encode(gif));
+    });
+
+    test('bakes EXIF orientation before measuring and resizing', () async {
+      // Stored as 200x3000 (WxH) with orientation 6 (rotate 90° CW for
+      // display): the displayed image is 3000x200.
+      final stored = Image(width: 200, height: 3000)
+        ..exif.imageIfd.orientation = 6;
+      await env.writeBinaryFile(
+        '/work/rotated.jpg',
+        Uint8List.fromList(encodeJpg(stored, quality: 80)),
+      );
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute(
+        {'path': '/work/rotated.jpg'},
+        null,
+        null,
+      );
+      final note = _text(result);
+      // Dims are reported AFTER orientation baking (a 133x2000 portrait
+      // resize would mean the flag was ignored).
+      expect(note, contains('3000x200'));
+      expect(note, contains('resized to 2000x133'));
+    });
+
+    test('converts BMP to an inline format with a conversion hint', () async {
+      final bmp = Uint8List.fromList(encodeBmp(Image(width: 30, height: 20)));
+      await env.writeBinaryFile('/work/pic.bmp', bmp);
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute({'path': '/work/pic.bmp'}, null, null);
+      final note = _text(result);
+      expect(note, contains('[Image converted from image/bmp to image/png.]'));
+      expect(note, isNot(contains('resized')));
+      final images = result.content.whereType<ImageContent>().toList();
+      expect(images, hasLength(1));
+      expect(images.first.mimeType, 'image/png');
+      final decoded = decodeImage(base64Decode(images.first.data))!;
+      expect(decoded.width, 30);
+      expect(decoded.height, 20);
+    });
+
+    test('adds a non-vision note when the model cannot take images', () async {
+      await env.writeBinaryFile('/work/small.png', makePng(10, 10));
+      final textOnly = Model(
+        id: 'text-only',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        contextWindow: 128000,
+        maxTokens: 4096,
+      );
+      final tool = readFileTool(env, model: () => textOnly);
+      final result = await tool.execute(
+        {'path': '/work/small.png'},
+        null,
+        null,
+      );
+      expect(
+        _text(result),
+        contains(
+          '[Current model does not support images. The image will be '
+          'omitted from this request.]',
+        ),
+      );
+      // The image itself stays in the result; providers substitute an
+      // explicit placeholder at request time.
+      expect(result.content.whereType<ImageContent>(), hasLength(1));
+    });
+
+    test('omits the non-vision note for vision-capable models', () async {
+      await env.writeBinaryFile('/work/small.png', makePng(10, 10));
+      final vision = Model(
+        id: 'gpt-4o',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        input: const ['text', 'image'],
+        contextWindow: 128000,
+        maxTokens: 4096,
+      );
+      final tool = readFileTool(env, model: () => vision);
+      final result = await tool.execute(
+        {'path': '/work/small.png'},
+        null,
+        null,
+      );
+      expect(_text(result), isNot(contains('does not support images')));
     });
 
     test('empty files are treated as text, not images', () async {

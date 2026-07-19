@@ -619,14 +619,15 @@ String? _retainThoughtSignature(String? existing, String? incoming) {
 
 /// Converts internal messages to Gemini `Content[]` format.
 ///
-/// Ported from pi's `convertMessages` (minus the `transformMessages`
-/// pre-pass, which is not ported yet).
+/// Ported from pi's `convertMessages`. The image-downgrade half of pi's
+/// `transformMessages` pre-pass runs first via [downgradeUnsupportedImages];
+/// the tool-call-id normalization half still happens at conversion time.
 List<Map<String, dynamic>> _convertMessages(Model model, Context context) {
   final contents = <Map<String, dynamic>>[];
   final includeId = _requiresToolCallId(model.id);
   String normalizeId(String id) => includeId ? _normalizeToolCallId(id) : id;
 
-  for (final message in context.messages) {
+  for (final message in downgradeUnsupportedImages(context.messages, model)) {
     if (message is UserMessage) {
       final content = message.content;
       if (content is String) {
