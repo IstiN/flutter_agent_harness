@@ -1,10 +1,10 @@
-/* fah landing — terminal demo reel + scroll reveal. No dependencies. */
+/* Fa landing — terminal demo reel + scroll reveal. No dependencies. */
 (function () {
   'use strict';
 
   /* ── Terminal demo reel ───────────────────────────────────────────── */
   var script = [
-    { cls: 'cmd', text: 'fah "summarize the changelog for v0.1.4"', type: true },
+    { cls: 'cmd', text: 'fa "summarize the changelog for v0.1.4"', type: true },
     { cls: 'tool', text: '▸ bash    curl -sL …/CHANGELOG.md -o /tmp/cl.md', delay: 550 },
     { cls: 'tool', text: '▸ bash    rg -n "^## \\[0\\.1\\.4\\]" /tmp/cl.md', delay: 750 },
     { cls: 'tool', text: '▸ bash    python3 /tmp/summarize.py', delay: 750 },
