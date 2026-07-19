@@ -1,6 +1,6 @@
-# flutter_agent_harness (fah)
+# Fa (Flutter Agent Harness)
 
-> One agent harness, every device. fah is an open-source coding agent for Dart and
+> One agent harness, every device. Fa is an open-source coding agent for Dart and
 > Flutter with a real tool loop: a sandboxed shell (curl, wget, jq, yq, rg, sed,
 > awk, find, xargs, diff/patch, tar/zip), git over HTTP and SSH, python3 and
 > sqlite3 running in the browser, secrets redaction, a file browser, and a
@@ -9,7 +9,7 @@
 
 ## Live demo
 
-- [Try fah in your browser](https://istin.github.io/flutter_agent_harness/app/):
+- [Try Fa in your browser](https://istin.github.io/flutter_agent_harness/app/):
   bring your own key (BYOK). Keys are held in memory only — never persisted —
   and calls go directly from the visitor's browser to the LLM provider.
 

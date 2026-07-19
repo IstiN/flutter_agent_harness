@@ -1,11 +1,11 @@
 {
-    "name": "flutter_agent_example",
-    "short_name": "flutter_agent_example",
+    "name": "Fa",
+    "short_name": "Fa",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#070a10",
     "theme_color": "#070a10",
-    "description": "A new Flutter project.",
+    "description": "Fa — Flutter Agent Harness: coding agent in your browser.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
