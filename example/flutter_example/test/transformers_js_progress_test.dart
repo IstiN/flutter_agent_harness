@@ -110,7 +110,9 @@ void main() {
     });
 
     test('the preset download sizes aggregate to the advertised ~3.4 GB', () {
-      final preset = transformersJsModelPresets.single;
+      final preset = transformersJsModelPresets.firstWhere(
+        (p) => p.id == 'onnx-community/gemma-4-E2B-it-ONNX',
+      );
       final total = preset.downloadSizes.values.fold<int>(
         0,
         (sum, n) => sum + n,

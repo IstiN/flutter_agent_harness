@@ -336,7 +336,7 @@ void main() {
       expect(find.text('API key'), findsNothing);
       expect(find.text('Base URL'), findsNothing);
       expect(find.text('On-device model'), findsOneWidget);
-      expect(find.textContaining('SmolLM2 135M'), findsOneWidget);
+      expect(find.textContaining('SmolLM2 1.7B'), findsOneWidget);
       // Every WebLLM preset row carries the prompt-tools badge; the selected
       // preset is not a coder model, so no "coder" badge.
       expect(find.text('tools via prompt'), findsOneWidget);
@@ -381,50 +381,52 @@ void main() {
   });
 
   group('WebLLM model presets', () {
-    test('keeps the original 22 and adds Qwen3.5 + Qwen2.5-Coder', () {
-      // 22 flutter_agent_memory presets + 2 Qwen2.5-Coder + 3 Qwen3.5.
-      expect(webLlmModelPresets, hasLength(27));
-      // The default selection (first entry) is unchanged.
-      expect(webLlmModelPresets.first.id, 'SmolLM2-135M-Instruct-q0f16-MLC');
-      const newIds = [
-        'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC',
-        'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC',
+    test('drops everything below ~1.5 GB (too weak for agent work)', () {
+      // 15 presets ≥ ~1.5 GB download, smallest first.
+      expect(webLlmModelPresets, hasLength(15));
+      expect(webLlmModelPresets.first.id, 'SmolLM2-1.7B-Instruct-q4f16_1-MLC');
+      const droppedIds = [
+        'SmolLM2-135M-Instruct-q0f16-MLC',
+        'SmolLM2-360M-Instruct-q0f16-MLC',
+        'Qwen3-0.6B-q4f16_1-MLC',
+        'Qwen3-1.7B-q4f16_1-MLC',
         'Qwen3.5-0.8B-q4f16_1-MLC',
         'Qwen3.5-2B-q4f16_1-MLC',
-        'Qwen3.5-4B-q4f16_1-MLC',
+        'Qwen2.5-0.5B-Instruct-q0f16-MLC',
+        'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',
+        'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC',
+        'Llama-3.2-1B-Instruct-q4f16_1-MLC',
+        'Llama-3.2-1B-Instruct-q4f32_1-MLC',
+        'gemma-2-2b-it-q4f16_1-MLC-1k',
       ];
-      for (final id in newIds) {
+      for (final id in droppedIds) {
+        expect(findWebLlmPreset(id), isNull, reason: id);
+      }
+      const keptIds = [
+        'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC',
+        'Qwen3.5-4B-q4f16_1-MLC',
+        'Qwen3-4B-q4f16_1-MLC',
+      ];
+      for (final id in keptIds) {
         expect(findWebLlmPreset(id), isNotNull, reason: id);
       }
     });
 
     test('groups new families smallest-first next to their base family', () {
       final ids = webLlmModelPresets.map((p) => p.id).toList();
-      // Qwen2.5-Coder sits between Qwen2.5 and Qwen3, ascending by size.
+      // Qwen2.5-Coder sits between Qwen2.5 and Qwen3.
       expect(
-        ids.indexOf('Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC'),
+        ids.indexOf('Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC'),
         greaterThan(ids.indexOf('Qwen2.5-7B-Instruct-q4f16_1-MLC')),
       );
       expect(
-        ids.indexOf('Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC'),
-        lessThan(ids.indexOf('Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC')),
-      );
-      expect(
         ids.indexOf('Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC'),
-        lessThan(ids.indexOf('Qwen3-0.6B-q4f16_1-MLC')),
+        lessThan(ids.indexOf('Qwen3-4B-q4f16_1-MLC')),
       );
-      // Qwen3.5 sits between Qwen3 and Phi, ascending by size.
+      // Qwen3.5 sits between Qwen3 and Phi.
       expect(
-        ids.indexOf('Qwen3.5-0.8B-q4f16_1-MLC'),
+        ids.indexOf('Qwen3.5-4B-q4f16_1-MLC'),
         greaterThan(ids.indexOf('Qwen3-4B-q4f16_1-MLC')),
-      );
-      expect(
-        ids.indexOf('Qwen3.5-0.8B-q4f16_1-MLC'),
-        lessThan(ids.indexOf('Qwen3.5-2B-q4f16_1-MLC')),
-      );
-      expect(
-        ids.indexOf('Qwen3.5-2B-q4f16_1-MLC'),
-        lessThan(ids.indexOf('Qwen3.5-4B-q4f16_1-MLC')),
       );
       expect(
         ids.indexOf('Qwen3.5-4B-q4f16_1-MLC'),
@@ -434,7 +436,6 @@ void main() {
 
     test('flags exactly the Qwen2.5-Coder presets as coder', () {
       expect(webLlmModelPresets.where((p) => p.isCoder).map((p) => p.id), [
-        'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC',
         'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC',
       ]);
     });

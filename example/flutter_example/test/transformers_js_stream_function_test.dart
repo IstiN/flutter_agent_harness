@@ -696,7 +696,9 @@ void main() {
 
   group('transformersJsModelPresets', () {
     test('ships the Gemma 4 E2B ONNX preset (text + vision, q4f16)', () {
-      final preset = transformersJsModelPresets.single;
+      final preset = transformersJsModelPresets.firstWhere(
+        (p) => p.id == 'onnx-community/gemma-4-E2B-it-ONNX',
+      );
       expect(preset.id, 'onnx-community/gemma-4-E2B-it-ONNX');
       expect(preset.displayName, contains('Gemma 4 E2B'));
       expect(preset.sizeLabel, '~3.4 GB');
@@ -717,7 +719,9 @@ void main() {
     });
 
     test('the download allowlist covers exactly the requested dtype set', () {
-      final preset = transformersJsModelPresets.single;
+      final preset = transformersJsModelPresets.firstWhere(
+        (p) => p.id == 'onnx-community/gemma-4-E2B-it-ONNX',
+      );
       final files = preset.downloadSizes.keys.toList();
       // The needed q4f16 files: text (embed + decoder), vision, the
       // unavoidable minimal audio session, and the config/tokenizer files.

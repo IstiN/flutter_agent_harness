@@ -164,6 +164,37 @@ const transformersJsModelPresets = <TransformersJsModelPreset>[
     },
     supportsVision: true,
   ),
+  TransformersJsModelPreset(
+    id: 'onnx-community/gemma-4-E4B-it-ONNX',
+    displayName: 'Gemma 4 E4B (ONNX)',
+    sizeLabel: '~5.2 GB',
+    dtype: {
+      'embed_tokens': 'q4f16',
+      'decoder_model_merged': 'q4f16',
+      'vision_encoder': 'q4f16',
+      'audio_encoder': 'q4f16',
+    },
+    // Byte sizes from the HuggingFace paths-info API (rev main, 2026-07).
+    downloadSizes: {
+      'config.json': 5741,
+      'generation_config.json': 238,
+      'preprocessor_config.json': 43,
+      'processor_config.json': 1689,
+      'tokenizer_config.json': 18807,
+      'tokenizer.json': 19439251,
+      'chat_template.jinja': 16317,
+      'onnx/embed_tokens_q4f16.onnx': 5619,
+      'onnx/embed_tokens_q4f16.onnx_data': 2017460224,
+      'onnx/decoder_model_merged_q4f16.onnx': 850610,
+      'onnx/decoder_model_merged_q4f16.onnx_data': 2074847232,
+      'onnx/decoder_model_merged_q4f16.onnx_data_1': 812318720,
+      'onnx/vision_encoder_q4f16.onnx': 189126,
+      'onnx/vision_encoder_q4f16.onnx_data': 100762304,
+      'onnx/audio_encoder_q4f16.onnx': 260446,
+      'onnx/audio_encoder_q4f16.onnx_data': 172167424,
+    },
+    supportsVision: true,
+  ),
 ];
 
 /// Looks up a preset by [id]; `null` when the id is not one of
