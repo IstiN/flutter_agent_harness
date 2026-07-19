@@ -28,11 +28,8 @@ import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../env/execution_env.dart';
-import '../exceptions.dart';
 import '../model.dart';
-import '../providers/anthropic.dart';
-import '../providers/google.dart';
-import '../providers/openai_completions.dart';
+import '../model_roles/model_roles.dart';
 import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../tools/ask_tool.dart';
@@ -46,6 +43,8 @@ import '../types.dart';
 import '../usage_summary.dart';
 import '../web_search/web_search.dart';
 import 'prompt_templates.dart';
+
+export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
 /// Terminal IO abstracted for testability.
 ///
@@ -92,6 +91,7 @@ final class AgentCliConfig {
     this.initialMode = 'code',
     this.approvalMode = ApprovalMode.yolo,
     this.alwaysAllowTools = const {},
+    this.modelRolesResolver,
     this.onModelChanged,
     this.onModeChanged,
     this.onApprovalChanged,
@@ -112,6 +112,13 @@ final class AgentCliConfig {
   /// answers), persisted by the embedding executable.
   final Set<String> alwaysAllowTools;
 
+  /// Optional model-roles resolver (roles/fallback chains/key rotation from
+  /// the CLI config). When set and its `default` role resolves, the agent
+  /// runs through the resolver's fallback stream instead of the plain
+  /// [providerKind]/[apiKey] wiring, compaction summarizes through the
+  /// `smol` role, and `/model` renders the roles overview.
+  final ModelRolesResolver? modelRolesResolver;
+
   /// Called when the user switches the active model via `/model`.
   final void Function(Model model)? onModelChanged;
 
@@ -127,7 +134,8 @@ final class AgentCliConfig {
   final Model model;
 
   /// API key for the provider. Only used when no [StreamFunction] override
-  /// is injected into [AgentCli].
+  /// is injected into [AgentCli] and no [modelRolesResolver] covers the
+  /// default role.
   final String apiKey;
 
   /// Execution environment backing the built-in tools and session storage.
@@ -174,31 +182,6 @@ final class AgentCliConfig {
   final Map<String, dynamic> pluginConfig;
 }
 
-/// Builds the [StreamFunction] for a provider [kind] (`openai-completions`,
-/// `anthropic`, `google`) with a static [apiKey]. Throws [ConfigException]
-/// for unknown kinds.
-StreamFunction providerStreamFunction(String kind, String apiKey) {
-  return switch (kind) {
-    'openai-completions' =>
-      (model, context, {cancelToken}) => streamOpenAICompletions(
-        model,
-        context,
-        OpenAICompletionsOptions(apiKey: apiKey, cancelToken: cancelToken),
-      ),
-    'anthropic' => (model, context, {cancelToken}) => streamAnthropic(
-      model,
-      context,
-      AnthropicOptions(apiKey: apiKey, cancelToken: cancelToken),
-    ),
-    'google' => (model, context, {cancelToken}) => streamGoogle(
-      model,
-      context,
-      GoogleOptions(apiKey: apiKey, cancelToken: cancelToken),
-    ),
-    _ => throw ConfigException('Unknown provider kind: $kind'),
-  };
-}
-
 /// The default system prompt for the CLI agent.
 String defaultAgentCliSystemPrompt(String cwd) =>
     defaultAgentMode(cwd).systemPrompt;
@@ -227,10 +210,7 @@ class AgentCli {
     required this.io,
     StreamFunction? streamFunction,
     this.prompt = 'fah> ',
-  }) : _streamFunction =
-           streamFunction ??
-           providerStreamFunction(config.providerKind, config.apiKey),
-       _modes = builtInAgentModes(config.env.cwd) {
+  }) : _modes = builtInAgentModes(config.env.cwd) {
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     final pluginTools = <AgentTool>[];
     for (final plugin in config.plugins) {
@@ -260,12 +240,27 @@ class AgentCli {
         transcribeAudioTool(config.env, config.transcribeConfig!),
       ...pluginTools,
     ]);
+    _streamFunction =
+        streamFunction ??
+        providerStreamFunction(config.providerKind, config.apiKey);
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
       streamFunction: _streamFunction,
       toolRegistry: _toolRegistry,
     );
+    // Model roles: when the default role resolves, the agent runs through
+    // the resolver's fallback stream (rotation/failover per provider call).
+    // A resolver without a default role leaves the legacy wiring in place
+    // and only serves auxiliary roles (e.g. smol for compaction).
+    final rolesResolver = config.modelRolesResolver;
+    if (rolesResolver != null) {
+      rolesResolver.onNotice = _onRolesNotice;
+      if (rolesResolver.resolveRole(defaultModelRole) != null) {
+        rolesResolver.applyToAgent(_agent);
+        _streamFunction = _agent.streamFunction;
+      }
+    }
     _approval = ApprovalManager(
       mode: config.approvalMode,
       alwaysAllow: config.alwaysAllowTools,
@@ -319,7 +314,9 @@ class AgentCli {
   /// The input prompt written when the agent is idle.
   final String prompt;
 
-  final StreamFunction _streamFunction;
+  /// The provider stream backing runs and (legacy) compaction. Mutable:
+  /// model-roles wiring and `/model` switches replace it.
+  late StreamFunction _streamFunction;
   late final Agent _agent;
   late final ApprovalManager _approval;
   late final ToolRegistry _toolRegistry;
@@ -497,10 +494,14 @@ class AgentCli {
     final session = _session;
     if (session == null) return;
     try {
+      // Cheap summaries: when model roles are configured, compaction
+      // resolves through the `smol` role (falling back to the default chain
+      // when smol is unset, per role inheritance).
+      final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
       final manager = CompactionManager(
         summarize: streamFunctionSummarizer(
-          _streamFunction,
-          _agent.state.model,
+          smol?.stream ?? _streamFunction,
+          smol?.model ?? _agent.state.model,
         ),
       );
       final record = await manager.compactSession(session);
@@ -792,8 +793,32 @@ class AgentCli {
 
   Future<void> _switchModel(String modelId) async {
     final current = _agent.state.model;
+    final rolesResolver = config.modelRolesResolver;
     if (modelId.isEmpty) {
       io.writeln('model: ${current.id} (${current.api})');
+      if (rolesResolver != null) io.writeln(rolesResolver.describeRoles());
+      return;
+    }
+    if (rolesResolver != null) {
+      // Roles mode: pin the default role to the requested model id on the
+      // current provider (a single-entry chain for this session).
+      rolesResolver.setDefaultChain([
+        ModelRef(
+          provider: current.provider,
+          modelId: modelId,
+          baseUrl: current.baseUrl,
+          contextWindow: current.contextWindow,
+          maxTokens: current.maxTokens,
+        ),
+      ]);
+      rolesResolver.applyToAgent(_agent);
+      _streamFunction = _agent.streamFunction;
+      await _session?.appendModelChange(
+        provider: current.provider,
+        modelId: modelId,
+      );
+      io.writeln('switched model to $modelId');
+      config.onModelChanged?.call(_agent.state.model);
       return;
     }
     _agent.state.model = Model(
@@ -818,13 +843,22 @@ class AgentCli {
     config.onModelChanged?.call(_agent.state.model);
   }
 
+  /// Renders the model-roles no-silent-degrade note: every retry, key
+  /// rotation, and chain failover is announced inline, and the display
+  /// model tracks the active chain entry.
+  void _onRolesNotice(FallbackNotice notice) {
+    io.writeln('[roles] ${notice.describe()}');
+    final resolved = config.modelRolesResolver?.resolveRole(defaultModelRole);
+    if (resolved != null) _agent.state.model = resolved.model;
+  }
+
   void _printHelp() {
     io.writeln('commands:');
     io.writeln('  /exit              quit');
     io.writeln('  /reset             start a new session');
     io.writeln('  /compact           summarize history to free context');
     io.writeln('  /stats             show token and cost totals');
-    io.writeln('  /model <id>        show or switch the model');
+    io.writeln('  /model <id>        show model/roles, or switch the model');
     io.writeln('  /mode [name]       show or switch the active mode');
     io.writeln(
       '  /approval [mode]   show or set tool approval (always-ask|write|yolo)',

@@ -60,6 +60,11 @@ Environment:
 
 Configuration:
   .fah/packages.yaml        Plugin configuration (see docs).
+  ~/.fah/config.yaml        Preferences; an optional `roles:` section pins
+                            model roles (default/smol/slow/plan) to ordered
+                            fallback chains, with `modelOverrides:` for
+                            path-scoped chains. Key rotation stacks
+                            _2.._N suffixes (OPENROUTER_API_KEY_2, ...).
 
 Defaults per provider:
   openai-completions    anthropic/claude-sonnet-4 @ https://openrouter.ai/api/v1
@@ -190,57 +195,26 @@ _Args _parseArgs(List<String> args) {
 }
 
 Model _buildModel(_Args args) {
-  // The built-in defaults (claude-sonnet-4-5, gemini-2.5-pro,
-  // anthropic/claude-sonnet-4) are all vision-capable; declaring `image`
-  // input keeps images flowing for them, while a [Model] built without it
-  // (text-only) gets explicit image-omitted placeholders at request time.
-  return switch (args.provider) {
-    'anthropic' => Model(
-      id: args.model ?? 'claude-sonnet-4-5',
-      name: args.model ?? 'claude-sonnet-4-5',
-      api: 'anthropic-messages',
-      provider: 'anthropic',
-      baseUrl: args.baseUrl ?? 'https://api.anthropic.com',
-      reasoning: true,
-      input: const ['text', 'image'],
-      contextWindow: 200000,
-      maxTokens: 8192,
-    ),
-    'google' => Model(
-      id: args.model ?? 'gemini-2.5-pro',
-      name: args.model ?? 'gemini-2.5-pro',
-      api: 'google-generative-ai',
-      provider: 'google',
-      baseUrl:
-          args.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta',
-      reasoning: true,
-      input: const ['text', 'image'],
-      contextWindow: 1000000,
-      maxTokens: 8192,
-    ),
-    _ => Model(
-      id: args.model ?? 'anthropic/claude-sonnet-4',
-      name: args.model ?? 'anthropic/claude-sonnet-4',
-      api: 'openai-completions',
-      provider: args.baseUrl == null ? 'openrouter' : 'openai',
-      baseUrl: args.baseUrl ?? 'https://openrouter.ai/api/v1',
-      reasoning: true,
-      input: const ['text', 'image'],
-      contextWindow: 200000,
-      maxTokens: 8192,
-    ),
+  return buildCliDefaultModel(
+    args.provider,
+    modelId: args.model,
+    baseUrl: args.baseUrl,
+  );
+}
+
+String? _optionalApiKey(String provider) {
+  final env = Platform.environment;
+  return switch (provider) {
+    'anthropic' => env['ANTHROPIC_API_KEY'],
+    'google' => env['GOOGLE_API_KEY'],
+    'vision' => env['VISION_API_KEY'],
+    'transcribe' => env['TRANSCRIBE_API_KEY'],
+    _ => env['OPENROUTER_API_KEY'] ?? env['OPENAI_API_KEY'],
   };
 }
 
 String _resolveApiKey(String provider, {String? fallback}) {
-  final env = Platform.environment;
-  final key = switch (provider) {
-    'anthropic' => env['ANTHROPIC_API_KEY'],
-    'google' => env['GOOGLE_API_KEY'],
-    'vision' => env['VISION_API_KEY'] ?? fallback,
-    'transcribe' => env['TRANSCRIBE_API_KEY'] ?? fallback,
-    _ => env['OPENROUTER_API_KEY'] ?? env['OPENAI_API_KEY'],
-  };
+  final key = _optionalApiKey(provider) ?? fallback;
   if (key == null || key.isEmpty) {
     final name = switch (provider) {
       'anthropic' => 'ANTHROPIC_API_KEY',
@@ -252,6 +226,34 @@ String _resolveApiKey(String provider, {String? fallback}) {
     _fail('missing API key: set $name in the environment');
   }
   return key;
+}
+
+/// Collects the secrets snapshot for the model-roles resolver: every
+/// provider catalog env name plus its rotation stack (`NAME`, `NAME_2`,
+/// `NAME_3`, ...), plus any base name referenced by an explicit
+/// `apiKeyName` in the roles config.
+Map<String, String> _collectRoleSecrets(ModelRolesConfig rolesConfig) {
+  final baseNames = <String>{
+    for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
+    for (final chain in rolesConfig.roles.values)
+      for (final ref in chain)
+        if (ref.apiKeyName != null) ref.apiKeyName!,
+    for (final override in rolesConfig.pathOverrides)
+      for (final chain in override.roles.values)
+        for (final ref in chain)
+          if (ref.apiKeyName != null) ref.apiKeyName!,
+  };
+  final secrets = <String, String>{};
+  final env = Platform.environment;
+  for (final base in baseNames) {
+    final suffix = RegExp('^${RegExp.escape(base)}_\\d+\$');
+    for (final entry in env.entries) {
+      if (entry.key == base || suffix.hasMatch(entry.key)) {
+        if (entry.value.isNotEmpty) secrets[entry.key] = entry.value;
+      }
+    }
+  }
+  return secrets;
 }
 
 /// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
@@ -342,7 +344,12 @@ Future<void> main(List<String> args) async {
   if (home == null || home.isEmpty) {
     _fail('cannot resolve home directory; pass --session-root');
   }
-  final saved = loadCliConfig(home);
+  late final CliConfig saved;
+  try {
+    saved = loadCliConfig(home);
+  } on ConfigException catch (error) {
+    _fail('invalid ~/.fah/config.yaml: ${error.message}');
+  }
 
   final provider = parsed.provider;
   final modelId = parsed.model ?? saved.modelId;
@@ -365,9 +372,35 @@ Future<void> main(List<String> args) async {
   );
 
   final model = _buildModel(effective);
-  final apiKey = _resolveApiKey(provider);
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
+
+  // Model roles (optional): when ~/.fah/config.yaml declares a `roles:`
+  // section, runs resolve through the default role's fallback chain with
+  // key rotation. The legacy single provider/model path stays the fallback
+  // when no default role resolves.
+  final rolesConfig = saved.modelRoles;
+  final roleSecrets = rolesConfig == null
+      ? const <String, String>{}
+      : _collectRoleSecrets(rolesConfig);
+  ModelRolesResolver? rolesResolver;
+  var defaultRoleResolved = false;
+  if (rolesConfig != null) {
+    rolesResolver = ModelRolesResolver(
+      config: rolesConfig,
+      secrets: roleSecrets,
+      cwd: cwd,
+      homeDir: home,
+    );
+    try {
+      defaultRoleResolved = rolesResolver.resolveRole(defaultModelRole) != null;
+    } on ConfigException catch (error) {
+      _fail('invalid model roles config: ${error.message}');
+    }
+  }
+  final apiKey = defaultRoleResolved
+      ? (_optionalApiKey(provider) ?? '')
+      : _resolveApiKey(provider);
 
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the
@@ -386,6 +419,10 @@ Future<void> main(List<String> args) async {
   ]) {
     final value = Platform.environment[name];
     if (value != null) redactor.register(name, value);
+  }
+  // Rotation stacks collected for the roles resolver are redacted too.
+  for (final entry in roleSecrets.entries) {
+    redactor.register(entry.key, entry.value);
   }
 
   // Web search works out of the box via keyless DuckDuckGo; keyed providers
@@ -447,6 +484,7 @@ Future<void> main(List<String> args) async {
       approvalMode:
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
+      modelRolesResolver: rolesResolver,
       onModelChanged: (_) async => persistConfig(),
       onModeChanged: (_) async => persistConfig(),
       onApprovalChanged: () async => persistConfig(),
@@ -465,6 +503,9 @@ Future<void> main(List<String> args) async {
         mode: cli.currentMode.name,
         approvalMode: cli.approval.mode.label,
         allowedTools: cli.approval.alwaysAllowedTools,
+        // Roles are static per session except for a `/model` switch, which
+        // re-pins the default chain on the resolver.
+        modelRoles: rolesResolver?.config ?? saved.modelRoles,
       ),
     );
   };

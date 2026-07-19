@@ -28,6 +28,7 @@ export 'src/event_stream.dart';
 export 'src/exceptions.dart';
 export 'src/hashline/hashline.dart';
 export 'src/model.dart';
+export 'src/model_roles/model_roles.dart';
 export 'src/overflow.dart';
 export 'src/providers/anthropic.dart';
 export 'src/providers/google.dart';

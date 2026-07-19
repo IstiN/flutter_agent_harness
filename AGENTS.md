@@ -74,6 +74,22 @@ Conventions for AI agents and contributors working in this repository.
   (`sqlite3_engine.dart`, `package:sqlite3`) is exported only from
   `lib/io.dart` and passed via `builtinTools(env, sqlite: ...)` — hosts
   without it (web) get a clean "not supported" note.
+- `lib/src/model_roles/` — intent-based model roles (`default`/`smol`/
+  `slow`/`plan`, exact omp names) with ordered fallback chains, key
+  rotation, and path-scoped overrides (ported, reduced, from oh-my-pi's
+  model-resolver/model-roles + non-compaction-retry-policy):
+  `roles_config.dart` (`ModelRolesConfig`/`ModelRef`/retry policy/yaml),
+  `key_rotation.dart` (`ApiKeyRing`: round-robin over stacked keys
+  `NAME`/`NAME_2`/… with per-key backoff and session affinity),
+  `fallback_stream.dart` (`FallbackStreamFunction`: mid-turn take-over on
+  429/quota — rotate keys free, same-entry backoff retries, then next chain
+  entry; every step announced via `FallbackNotice`, never silent; context
+  overflow stays with compaction), `provider_catalog.dart` (provider table
+  + `providerStreamFunction`), `model_resolver.dart` (`ModelRolesResolver`:
+  applies a role to an `Agent` per run, `smol` for compaction summaries,
+  skipped-uncredentialed-entry reporting). Config lives in the
+  `roles:`/`modelOverrides:`/`retry:` sections of `~/.fah/config.yaml`
+  (invalid roles schema throws `ConfigException`, never silently resets).
 - `bin/fah.dart` — the `fah`/`fa` CLI executable.
 - `lib/src/web_search/` — the `web_search`/`web_fetch` tools (ported from
   oh-my-pi `packages/coding-agent/src/web/`): `web_search` walks a provider
