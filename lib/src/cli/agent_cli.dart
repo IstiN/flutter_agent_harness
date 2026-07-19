@@ -39,6 +39,7 @@ import '../tools/inspect_image.dart';
 import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
 import '../plugins/plugin.dart';
+import '../ttsr/ttsr.dart';
 import '../types.dart';
 import '../usage_summary.dart';
 import '../web_search/web_search.dart';
@@ -92,6 +93,7 @@ final class AgentCliConfig {
     this.approvalMode = ApprovalMode.yolo,
     this.alwaysAllowTools = const {},
     this.modelRolesResolver,
+    this.ttsr,
     this.onModelChanged,
     this.onModeChanged,
     this.onApprovalChanged,
@@ -118,6 +120,11 @@ final class AgentCliConfig {
   /// [providerKind]/[apiKey] wiring, compaction summarizes through the
   /// `smol` role, and `/model` renders the roles overview.
   final ModelRolesResolver? modelRolesResolver;
+
+  /// Optional TTSR configuration (stream rules from the CLI config and the
+  /// project rules file). When set and enabled, a [TtsrController] watches
+  /// the agent's streams and drives abort/inject/retry on rule matches.
+  final TtsrConfig? ttsr;
 
   /// Called when the user switches the active model via `/model`.
   final void Function(Model model)? onModelChanged;
@@ -286,6 +293,33 @@ class AgentCli {
     _toolRegistry.registerAll(_checkpoints.tools);
     _agent.state.tools = _toolRegistry.tools;
     _agent.subscribe(_onAgentEvent);
+    final ttsrConfig = config.ttsr;
+    if (ttsrConfig != null && ttsrConfig.settings.enabled) {
+      final manager = TtsrManager(settings: ttsrConfig.settings);
+      for (final rule in ttsrConfig.rules) {
+        manager.addRule(rule);
+      }
+      for (final warning in manager.warnings) {
+        io.writeln('[ttsr] $warning');
+      }
+      if (manager.hasRules()) {
+        _ttsr = TtsrController(
+          agent: _agent,
+          manager: manager,
+          sink: TtsrSessionSink(
+            session: () => _session,
+            persistedMessageCount: () => _persistedCount,
+            persistMessage: _persistOneMessage,
+            persistInjection: _persistTtsrInjection,
+          ),
+          onTriggered: (rules) => io.writeln(
+            '[ttsr] rule violation: '
+            '${rules.map((rule) => rule.name).join(', ')} — retrying',
+          ),
+          onWarning: (message) => io.writeln('[ttsr] $message'),
+        );
+      }
+    }
   }
 
   /// The active mode.
@@ -305,6 +339,9 @@ class AgentCli {
   /// are registered on the agent, and it applies rewinds at turn end.
   CheckpointRewindController get checkpoints => _checkpoints;
 
+  /// The TTSR controller, when stream rules are configured ([AgentCliConfig.ttsr]).
+  TtsrController? get ttsr => _ttsr;
+
   /// The static configuration.
   final AgentCliConfig config;
 
@@ -321,6 +358,7 @@ class AgentCli {
   late final ApprovalManager _approval;
   late final ToolRegistry _toolRegistry;
   late final CheckpointRewindController _checkpoints;
+  TtsrController? _ttsr;
   final _usage = UsageAccumulator();
   late final _repo = JsonlSessionRepo(
     fs: config.env,
@@ -451,6 +489,9 @@ class AgentCli {
   }
 
   Future<void> _afterRun() async {
+    // A TTSR abort/inject/retry chain may still be in flight when the
+    // aborted run settles; persist only once the whole chain completed.
+    await _ttsr?.settled;
     await _persistMessages();
     await _maybeAutoCompact();
   }
@@ -474,6 +515,31 @@ class AgentCli {
     final id = await session.appendMessage(message);
     _persistedCount++;
     return id;
+  }
+
+  /// Persists a TTSR injection at the session leaf (the TTSR controller's
+  /// sink): the reminder as a hidden `ttsr-injection` custom message (it
+  /// projects into context as a user message and survives compaction) plus a
+  /// `ttsr_injection` record of the rule names for session restore. Bumps
+  /// [_persistedCount] by one — the in-memory injection message then counts
+  /// as persisted.
+  Future<void> _persistTtsrInjection(
+    String content,
+    List<String> ruleNames,
+  ) async {
+    final session = _session;
+    if (session == null) return;
+    await session.appendCustomMessageEntry(
+      customType: ttsrInjectionCustomType,
+      content: content,
+      display: false,
+      details: {'rules': ruleNames},
+    );
+    await session.appendCustomEntry(
+      customType: ttsrInjectionRecordType,
+      data: {'rules': ruleNames},
+    );
+    _persistedCount++;
   }
 
   Future<void> _maybeAutoCompact() async {
@@ -535,6 +601,7 @@ class AgentCli {
       case '/reset':
         _agent.reset();
         _checkpoints.clear();
+        _ttsr?.reset();
         _session = await _createSession();
         _persistedCount = 0;
         io.writeln('new session started');
@@ -915,7 +982,12 @@ class AgentCli {
             case StopReason.error:
               io.writeln('error: ${message.errorMessage ?? 'unknown error'}');
             case StopReason.aborted:
-              io.writeln('aborted: ${message.errorMessage ?? 'aborted'}');
+              // A TTSR abort is a rule trigger, not a failure — the
+              // controller already announced it (omp renders a
+              // notification instead of the aborted stop reason).
+              if (!(_ttsr?.isAbortPending ?? false)) {
+                io.writeln('aborted: ${message.errorMessage ?? 'aborted'}');
+              }
             default:
           }
         }

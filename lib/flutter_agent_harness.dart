@@ -48,6 +48,7 @@ export 'src/tools/inspect_image.dart';
 export 'src/tools/read_selector.dart';
 export 'src/tools/sqlite/sqlite_reader.dart';
 export 'src/tools/transcribe_audio.dart';
+export 'src/ttsr/ttsr.dart';
 export 'src/plugins/plugin.dart';
 export 'src/plugins/inspect_image_plugin.dart';
 export 'src/plugins/transcribe_audio_plugin.dart';

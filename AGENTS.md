@@ -90,6 +90,28 @@ Conventions for AI agents and contributors working in this repository.
   skipped-uncredentialed-entry reporting). Config lives in the
   `roles:`/`modelOverrides:`/`retry:` sections of `~/.fah/config.yaml`
   (invalid roles schema throws `ConfigException`, never silently resets).
+- `lib/src/ttsr/` — time-traveling stream rules (ported from oh-my-pi's
+  TTSR, regex conditions only — no ast-grep/globs/interruptMode): user or
+  project rules carry regex patterns matched against streaming
+  text/thinking/tool-call deltas (`TtsrManager`: cumulative per-stream
+  buffers, full rescan per delta so patterns split across chunks still
+  match). On a match the `TtsrController` (subscribed to agent events,
+  omp's `AgentSession` role) aborts the generation mid-stream, drops or
+  keeps the partial per `contextMode`, injects the rule bodies as a hidden
+  `<system-interrupt>` reminder user message (`prompts/ttsr/interrupt.md`),
+  and retries with `Agent.continueRun` after `retryDelay` (omp's 50ms).
+  Injections persist through the host-provided `TtsrSessionSink` as a
+  `ttsr-injection` custom message (projects into context, survives
+  compaction) plus a `ttsr_injection` record of rule names
+  (`readPersistedTtsrInjections` → `restoreInjected` on resume). Guards:
+  once-per-session repeat policy (omp default; `after-gap` optional) and a
+  `maxInjectionsPerTurn` chain cap (ours, not omp's). Config: the `ttsr:`
+  section of `~/.fah/config.yaml` (settings + rules; invalid schema throws
+  `ConfigException`) merged with project rules from `.fah/rules.yaml`
+  (project first, name clashes first-win); programmatic hosts instantiate
+  `TtsrManager` + `TtsrController` directly. The CLI wires it next to the
+  checkpoint controller, awaits `TtsrController.settled` before run-end
+  persistence, and `/reset` clears it.
 - `bin/fah.dart` — the `fah`/`fa` CLI executable.
 - `lib/src/web_search/` — the `web_search`/`web_fetch` tools (ported from
   oh-my-pi `packages/coding-agent/src/web/`): `web_search` walks a provider

@@ -11,6 +11,7 @@ import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../model_roles/model_roles.dart';
+import '../ttsr/ttsr.dart';
 
 /// Persisted CLI configuration.
 final class CliConfig {
@@ -22,6 +23,7 @@ final class CliConfig {
     this.approvalMode = 'yolo',
     this.allowedTools = const [],
     this.modelRoles,
+    this.ttsr,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -40,6 +42,10 @@ final class CliConfig {
       modelRoles: map['roles'] == null && map['modelOverrides'] == null
           ? null
           : ModelRolesConfig.fromYaml(map),
+      // The ttsr section is parsed strictly too (bad rules must surface).
+      ttsr: map['ttsr'] == null
+          ? null
+          : TtsrConfig.fromYaml(map['ttsr'], sourcePath: '~/.fah/config.yaml'),
     );
   }
 
@@ -61,6 +67,10 @@ final class CliConfig {
   /// sections). `null` keeps the legacy single provider/model behavior.
   final ModelRolesConfig? modelRoles;
 
+  /// Optional TTSR stream rules (`ttsr:` yaml section). `null` disables
+  /// stream-rule monitoring.
+  final TtsrConfig? ttsr;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -78,6 +88,8 @@ final class CliConfig {
     }
     final roles = modelRoles;
     if (roles != null) buffer.write(roles.toYaml());
+    final ttsrConfig = ttsr;
+    if (ttsrConfig != null) buffer.write(ttsrConfig.toYaml());
     return buffer.toString();
   }
 }
