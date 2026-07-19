@@ -9,14 +9,14 @@
 
 ## Live demo
 
-- [Try Fa in your browser](https://istin.github.io/flutter_agent_harness/app/):
+- [Try Fa in your browser](https://fa1.dev/app/):
   bring your own key (BYOK). Keys are held in memory only — never persisted —
   and calls go directly from the visitor's browser to the LLM provider.
 
 ## Install
 
 - CLI (macOS, Windows, Linux; requires the Dart SDK, bundled with Flutter):
-  `curl -fsSL https://istin.github.io/flutter_agent_harness/install.sh | sh`
+  `curl -fsSL https://fa1.dev/install.sh | sh`
   or `dart pub global activate flutter_agent_harness`. Both provide the `fah`
   and `fa` executables. Set a provider API key (e.g. OPENROUTER_API_KEY),
   then run `fah`.

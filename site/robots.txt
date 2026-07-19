@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://istin.github.io/flutter_agent_harness/sitemap.xml
+Sitemap: https://fa1.dev/sitemap.xml
