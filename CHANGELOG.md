@@ -295,4 +295,10 @@
 
 - feat(tools): web_search with provider chain (DDG keyless first, Brave/Tavily behind secrets) + web_fetch markdown extraction with a pub.dev site handler
 
+## 0.1.33
+
+- feat(tools): read selector grammar (:A-B, :A+C, multi-range, :raw) + zip inner paths + SQLite reads
+- feat(tools): image read parity with pi (byte cap, pass-through, EXIF, placeholders) + transcribe_audio tool
+- feat(site): set GA4 measurement ID
+
 ## Unreleased
