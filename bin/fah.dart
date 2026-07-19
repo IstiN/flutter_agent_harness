@@ -60,11 +60,15 @@ Environment:
 
 Configuration:
   .fah/packages.yaml        Plugin configuration (see docs).
+  .fah/rules.yaml           Project TTSR stream rules (see docs).
   ~/.fah/config.yaml        Preferences; an optional `roles:` section pins
                             model roles (default/smol/slow/plan) to ordered
                             fallback chains, with `modelOverrides:` for
                             path-scoped chains. Key rotation stacks
                             _2.._N suffixes (OPENROUTER_API_KEY_2, ...).
+                            An optional `ttsr:` section configures TTSR
+                            stream rules (abort/inject/retry on regex
+                            matches in the streaming output).
 
 Defaults per provider:
   openai-completions    anthropic/claude-sonnet-4 @ https://openrouter.ai/api/v1
@@ -281,6 +285,35 @@ Map<String, dynamic> _loadPackagesConfig(String cwd) {
   }
 }
 
+/// Loads project-level TTSR rules from `.fah/rules.yaml` when it exists
+/// (omp's project rule locations, reduced: one file, rules only — TTSR
+/// settings stay in `~/.fah/config.yaml`). Returns null when absent.
+List<TtsrRule>? _loadProjectTtsrRules(String cwd) {
+  final file = File('$cwd/.fah/rules.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = yaml.loadYaml(file.readAsStringSync());
+    return TtsrConfig.rulesFromYaml(doc, sourcePath: '.fah/rules.yaml');
+  } on ConfigException catch (error) {
+    _fail('invalid .fah/rules.yaml: ${error.message}');
+  } on Object catch (error) {
+    _fail('failed to parse .fah/rules.yaml: $error');
+  }
+}
+
+/// Merges user-level TTSR config (`~/.fah/config.yaml`) with project rules:
+/// project rules register first and win name clashes (the manager dedupes
+/// by name, first wins). Settings come from the user config.
+TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
+  final projectRules = _loadProjectTtsrRules(cwd) ?? const <TtsrRule>[];
+  final user = saved.ttsr;
+  if (projectRules.isEmpty) return user;
+  return TtsrConfig(
+    settings: user?.settings ?? TtsrSettings.defaultSettings,
+    rules: [...projectRules, ...user?.rules ?? const <TtsrRule>[]],
+  );
+}
+
 ({List<FahPlugin> plugins, Map<String, dynamic> config}) _resolvePlugins(
   _Args args,
   String cwd,
@@ -485,6 +518,9 @@ Future<void> main(List<String> args) async {
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
       modelRolesResolver: rolesResolver,
+      // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
+      // with project rules (.fah/rules.yaml), project first.
+      ttsr: _resolveTtsr(saved, cwd),
       onModelChanged: (_) async => persistConfig(),
       onModeChanged: (_) async => persistConfig(),
       onApprovalChanged: () async => persistConfig(),
@@ -506,6 +542,9 @@ Future<void> main(List<String> args) async {
         // Roles are static per session except for a `/model` switch, which
         // re-pins the default chain on the resolver.
         modelRoles: rolesResolver?.config ?? saved.modelRoles,
+        // TTSR rules are static per session; keep the loaded config so
+        // saving doesn't drop the section.
+        ttsr: saved.ttsr,
       ),
     );
   };

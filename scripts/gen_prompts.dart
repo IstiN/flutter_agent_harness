@@ -135,6 +135,11 @@ const rootSpecs = <PromptSpec>[
     constName: 'toolCallingInstructionsPrompt',
     requiredToken: '{{tools}}',
   ),
+  PromptSpec(
+    source: 'prompts/ttsr/interrupt.md',
+    constName: 'ttsrInterruptPrompt',
+    requiredToken: '{{content}}',
+  ),
 ];
 
 /// The example app prompts, emitted into [exampleOutputPath] in this order.

@@ -132,5 +132,54 @@ roles:
         );
       },
     );
+
+    test('loads without ttsr when the section is absent', () {
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.ttsr, isNull);
+    });
+
+    test('round-trips the ttsr section', () async {
+      final ttsr = TtsrConfig.fromYaml(
+        loadYaml('''
+contextMode: keep
+rules:
+  - name: no-console
+    pattern: "console\\\\.log\\\\("
+    body: Do not use console.log.
+    scope: [text, tool:edit]
+'''),
+        sourcePath: '~/.fah/config.yaml',
+      );
+      await saveCliConfig(tmp.path, CliConfig(ttsr: ttsr));
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.modelId, 'openai/gpt-4o-mini'); // legacy fields intact
+      final loadedTtsr = loaded.ttsr!;
+      expect(loadedTtsr.settings.contextMode, TtsrContextMode.keep);
+      expect(loadedTtsr.rules.single.name, 'no-console');
+      expect(loadedTtsr.rules.single.patterns, [r'console\.log\(']);
+      expect(loadedTtsr.rules.single.scope.toolNames, {'edit'});
+      // Full yaml fidelity: emitting again reproduces the same document.
+      expect(loaded.toYaml(), CliConfig(ttsr: ttsr).toYaml());
+    });
+
+    test('surfaces an invalid ttsr section instead of dropping it', () async {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('''
+provider: anthropic
+ttsr:
+  contextMode: sideways
+''');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('ttsr.contextMode'),
+          ),
+        ),
+      );
+    });
   });
 }
