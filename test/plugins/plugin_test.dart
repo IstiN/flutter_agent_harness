@@ -144,6 +144,9 @@ class FakeCliIO implements CliIO {
   final out = StringBuffer();
 
   @override
+  bool get isInteractive => true;
+
+  @override
   Stream<String> get lines => _lines.stream;
 
   @override

@@ -398,6 +398,8 @@ void main() {
         env: env,
         sessionsRoot: '/sessions',
       );
+      // This test exercises message surfacing, not approval: run unattended.
+      service.approval.mode = ApprovalMode.yolo;
       await service.initialize();
 
       await service.sendText('call echo');
@@ -479,6 +481,8 @@ void main() {
         sessionsRoot: '/sessions',
         redactor: SecretRedactor.fromSecrets(secrets),
       );
+      // This test exercises secret redaction, not approval: run unattended.
+      service.approval.mode = ApprovalMode.yolo;
       await service.initialize();
       await service.sendText('echo the token');
       await service.waitForIdle();

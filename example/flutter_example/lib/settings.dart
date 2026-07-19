@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'agent_service.dart';
+import 'approval_ui.dart';
 import 'gemma/gemma_cache_section.dart';
 import 'gemma/gemma_service.dart';
 import 'gemma/gemma_types.dart';
@@ -1218,6 +1219,10 @@ class SettingsDialog extends StatelessWidget {
                   if (context.mounted) Navigator.of(context).pop();
                 },
               ),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 8),
+              ApprovalModeSelector(service: service),
               const SizedBox(height: 16),
               const Divider(),
               const SizedBox(height: 8),

@@ -64,8 +64,19 @@ Flags: `--model <id>`, `--provider openai-completions|anthropic|google`,
 
 Slash commands inside the REPL: `/exit`, `/reset` (new session), `/compact`
 (summarize history now), `/stats` (token/cost totals), `/model <id>` (show or
-switch model), `/help`. While a run is streaming, typed input is steered into
-the agent; Ctrl-C aborts the run (Ctrl-C at the idle prompt exits).
+switch model), `/approval [always-ask|write|yolo]` (tool approval mode),
+`/allow [tool]` (always-allow a tool), `/help`. While a run is streaming,
+typed input is steered into the agent; Ctrl-C aborts the run (Ctrl-C at the
+idle prompt exits).
+
+Tool calls pass an approval gate (`lib/src/approval/`): every tool has a
+capability tier (read/write/exec; exec for undeclared custom tools), the
+session mode decides what runs unattended, and per-tool overrides plus a
+critical-pattern interceptor for `bash` (e.g. `rm -rf /`, fork bombs,
+`curl … | sh`) can force a prompt — even in `yolo`. The prompt UI is an
+injectable callback; piped (non-interactive) input denies prompt-policy
+calls with a reason. Mode and always-allowed tools persist in
+`~/.fah/config.yaml`.
 
 The CLI core (`AgentCli` + `CliIO`) is pure Dart and lives in
 `lib/src/cli/agent_cli.dart`; only `bin/fah.dart` and `lib/io.dart` touch

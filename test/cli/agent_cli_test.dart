@@ -141,6 +141,10 @@ class FakeCliIO implements CliIO {
   final _interrupts = StreamController<void>.broadcast();
   final out = StringBuffer();
 
+  /// Tests flip this to exercise the non-interactive approval path.
+  @override
+  bool isInteractive = true;
+
   @override
   Stream<String> get lines => _lines.stream;
 

@@ -29,6 +29,8 @@ import 'package:image/image.dart';
 
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
+import '../approval/approval.dart';
+import '../approval/bash_interceptor.dart';
 import '../env/execution_env.dart';
 import '../types.dart';
 
@@ -301,6 +303,7 @@ AgentTool readFileTool(ExecutionEnv env) {
   return AgentTool(
     name: 'read',
     label: 'read',
+    tier: ApprovalTier.read,
     description:
         'Read the contents of a text file or image. Text output is truncated '
         'to $defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
@@ -428,6 +431,7 @@ AgentTool writeFileTool(ExecutionEnv env) {
   return AgentTool(
     name: 'write',
     label: 'write',
+    tier: ApprovalTier.write,
     description:
         'Write content to a file, creating parent directories as needed. '
         'Overwrites the file if it already exists.',
@@ -472,6 +476,7 @@ AgentTool editFileTool(ExecutionEnv env) {
   return AgentTool(
     name: 'edit',
     label: 'edit',
+    tier: ApprovalTier.write,
     description:
         'Edit a file by replacing an exact text occurrence. oldText must '
         'match exactly (including indentation and newlines) and occur exactly '
@@ -559,6 +564,7 @@ AgentTool listDirTool(ExecutionEnv env) {
   return AgentTool(
     name: 'ls',
     label: 'ls',
+    tier: ApprovalTier.read,
     description:
         'List directory contents. Returns entries sorted alphabetically, '
         "with '/' suffix for directories. Output is truncated to "
@@ -664,8 +670,9 @@ String _appendStatus(String text, String status) {
 /// tool result, pi semantics).
 AgentTool shellTool(ExecutionEnv env) {
   return AgentTool(
-    name: 'bash',
+    name: bashToolName,
     label: 'bash',
+    tier: ApprovalTier.exec,
     description:
         'Execute a bash command in the current working directory. Returns '
         'stdout and stderr. Output is truncated to the last '

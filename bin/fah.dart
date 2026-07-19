@@ -301,6 +301,11 @@ final class _TerminalCliIO implements CliIO {
 
   @override
   void writeln(String text) => stdout.writeln(text);
+
+  /// Piped input (no terminal) means no human can answer approval prompts:
+  /// the CLI then denies prompt-policy tool calls with a reason.
+  @override
+  bool get isInteractive => stdin.hasTerminal;
 }
 
 Future<void> main(List<String> args) async {
@@ -386,8 +391,12 @@ Future<void> main(List<String> args) async {
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,
       initialMode: effective.mode!,
+      approvalMode:
+          approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
+      alwaysAllowTools: saved.allowedTools.toSet(),
       onModelChanged: (_) async => persistConfig(),
       onModeChanged: (_) async => persistConfig(),
+      onApprovalChanged: () async => persistConfig(),
     ),
     io: io,
   );
@@ -401,6 +410,8 @@ Future<void> main(List<String> args) async {
         modelId: cli.agent.state.model.id,
         baseUrl: cli.agent.state.model.baseUrl,
         mode: cli.currentMode.name,
+        approvalMode: cli.approval.mode.label,
+        allowedTools: cli.approval.alwaysAllowedTools,
       ),
     );
   };

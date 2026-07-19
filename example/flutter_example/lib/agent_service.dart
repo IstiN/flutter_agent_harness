@@ -124,6 +124,7 @@ class AgentService extends ChangeNotifier {
     _providerKind = _agent.state.model.provider;
     _redactor = redactor;
     _attachRedactor(redactor);
+    _attachApproval();
     _agent.subscribe(_onAgentEvent);
   }
 
@@ -170,6 +171,7 @@ class AgentService extends ChangeNotifier {
       toolRegistry: ToolRegistry(builtinTools(env)),
     );
     _attachRedactor(redactor);
+    _attachApproval();
     _agent.subscribe(_onAgentEvent);
   }
 
@@ -237,6 +239,36 @@ class AgentService extends ChangeNotifier {
   void _attachRedactor(SecretRedactor? redactor) {
     if (redactor == null || redactor.isEmpty) return;
     attachSecretRedactor(_agent, redactor);
+  }
+
+  /// Attaches the approval gate. The prompt surface is [approvalPromptHandler]
+  /// — installed by the chat screen, which owns a [BuildContext]; until then
+  /// (and whenever it is unset) prompt-policy calls are denied, the safe
+  /// default for a sandbox.
+  void _attachApproval() {
+    approval.prompt = (request) {
+      final handler = approvalPromptHandler;
+      if (handler == null) return ApprovalDecision.deny;
+      return handler(request);
+    };
+    attachApproval(_agent, approval);
+  }
+
+  /// The approval gate attached to the agent. Default mode is
+  /// [ApprovalMode.write] — read-only tools run freely, mutating and shell
+  /// tools prompt — switchable at runtime via [setApprovalMode] (settings
+  /// dialog) and persisted nowhere (session-scoped).
+  final ApprovalManager approval = ApprovalManager(mode: ApprovalMode.write);
+
+  /// UI hook rendering the approval prompt (the chat screen installs a
+  /// Material dialog). `null` → prompt-policy calls are denied.
+  ApprovalPrompt? approvalPromptHandler;
+
+  /// Switches the approval mode (settings dialog's mode selector).
+  void setApprovalMode(ApprovalMode mode) {
+    if (approval.mode == mode) return;
+    approval.mode = mode;
+    notifyListeners();
   }
 
   late final Agent _agent;
