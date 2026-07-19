@@ -73,6 +73,10 @@ dependencies:
   shared_preferences_web: ^2.4.3
   shared_preferences_platform_interface: ^2.4.1
 
+  # In-app HTML file preview on mobile/desktop (web uses an iframe instead —
+  # see lib/html_preview_web.dart).
+  webview_flutter: ^4.14.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

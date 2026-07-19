@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import 'agent_service.dart';
 import 'app_theme.dart';
 import 'file_browser.dart';
+import 'markdown_style.dart';
 import 'provider_registry.dart';
 import 'session_sidebar.dart';
 import 'settings.dart';
@@ -456,21 +457,7 @@ class _ChatScreenState extends State<ChatScreen> {
     required bool isSentByMe,
     MessageGroupStatus? groupStatus,
   }) {
-    final theme = Theme.of(context);
-    final styleSheet = MarkdownStyleSheet.fromTheme(theme).copyWith(
-      p: theme.textTheme.bodyMedium,
-      a: const TextStyle(color: FahPalette.teal),
-      code: FahPalette.mono().copyWith(backgroundColor: FahPalette.codeBg),
-      codeblockDecoration: BoxDecoration(
-        color: FahPalette.panelAlt,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: FahPalette.border),
-      ),
-      codeblockPadding: const EdgeInsets.all(10),
-      blockquoteDecoration: const BoxDecoration(
-        border: Border(left: BorderSide(color: FahPalette.indigo, width: 3)),
-      ),
-    );
+    final styleSheet = fahMarkdownStyleSheet(Theme.of(context));
 
     return Container(
       constraints: const BoxConstraints(maxWidth: 560),
@@ -783,6 +770,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: FileBrowser(
                   env: widget.service.env,
                   inlinePreview: false,
+                  fsRevision: widget.service.fsRevision,
                 ),
               ),
             ),
@@ -804,7 +792,10 @@ class _ChatScreenState extends State<ChatScreen> {
             const VerticalDivider(width: 1),
             SizedBox(
               width: kFileBrowserPanelWidth,
-              child: FileBrowser(env: widget.service.env),
+              child: FileBrowser(
+                env: widget.service.env,
+                fsRevision: widget.service.fsRevision,
+              ),
             ),
           ],
         ],

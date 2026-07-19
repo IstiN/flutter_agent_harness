@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -21,6 +22,11 @@ const double kFileBrowserPanelWidth = 300;
 /// currently viewed folder, so they land in the same sandbox filesystem the
 /// agent's tools see.
 ///
+/// When [fsRevision] is provided (see `AgentService.fsRevision`), every
+/// bump refreshes the current directory listing and reloads the open
+/// preview — that is how the browser learns the agent changed files,
+/// without polling.
+///
 /// Typed against the [ExecutionEnv] abstraction only, so a cloud-backed env
 /// can drop in later without UI changes. Navigation uses paths relative to
 /// the env's working directory (never [FileInfo.path]): relative paths
@@ -34,6 +40,8 @@ class FileBrowser extends StatefulWidget {
     this.inlinePreview = true,
     this.uploadPicker,
     this.maxUploadBatchBytes = kMaxUploadBatchBytes,
+    this.fsRevision,
+    this.htmlPreviewBuilder,
   });
 
   /// The environment whose filesystem is browsed — the same instance the
@@ -52,6 +60,14 @@ class FileBrowser extends StatefulWidget {
   /// with a message before anything is written.
   final int maxUploadBatchBytes;
 
+  /// Agent filesystem revision: every bump reloads the listing and the open
+  /// preview. `null` disables auto-refresh (manual refresh still works).
+  final ValueListenable<int>? fsRevision;
+
+  /// Override for the HTML rendering surface; tests inject a fake because
+  /// the webview plugin has no platform implementation on the host.
+  final HtmlPreviewBuilder? htmlPreviewBuilder;
+
   @override
   State<FileBrowser> createState() => _FileBrowserState();
 }
@@ -67,6 +83,10 @@ class _FileBrowserState extends State<FileBrowser> {
   /// Inline preview target, when [FileBrowser.inlinePreview] is on.
   ({String path, String name})? _preview;
 
+  /// Counter folded into the inline preview's key: bumping it forces the
+  /// preview to re-read its file (agent-side mutation hook).
+  int _previewRevision = 0;
+
   /// Resolved picker: the injected one, else the platform default (`null`
   /// off the web, which hides the upload button).
   late final UploadPicker? _picker =
@@ -75,6 +95,31 @@ class _FileBrowserState extends State<FileBrowser> {
   @override
   void initState() {
     super.initState();
+    widget.fsRevision?.addListener(_onFsRevision);
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(FileBrowser oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fsRevision != widget.fsRevision) {
+      oldWidget.fsRevision?.removeListener(_onFsRevision);
+      widget.fsRevision?.addListener(_onFsRevision);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.fsRevision?.removeListener(_onFsRevision);
+    super.dispose();
+  }
+
+  /// Agent-side filesystem change ("hook"): reload the listing and force
+  /// the open preview to re-read its file. Conservative — a bump does not
+  /// say which file changed (`bash` can touch anything), and one extra
+  /// listDir/read is cheap.
+  void _onFsRevision() {
+    if (_preview != null) _previewRevision++;
     _load();
   }
 
@@ -157,8 +202,13 @@ class _FileBrowserState extends State<FileBrowser> {
     } else {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) =>
-              FilePreviewScreen(env: widget.env, path: path, name: info.name),
+          builder: (_) => FilePreviewScreen(
+            env: widget.env,
+            path: path,
+            name: info.name,
+            htmlPreviewBuilder: widget.htmlPreviewBuilder,
+            fsRevision: widget.fsRevision,
+          ),
         ),
       );
     }
@@ -342,10 +392,11 @@ class _FileBrowserState extends State<FileBrowser> {
           const Divider(height: 1),
           Expanded(
             child: FilePreviewView(
-              key: ValueKey(preview.path),
+              key: ValueKey('${preview.path}#$_previewRevision'),
               env: widget.env,
               path: preview.path,
               name: preview.name,
+              htmlPreviewBuilder: widget.htmlPreviewBuilder,
             ),
           ),
         ],

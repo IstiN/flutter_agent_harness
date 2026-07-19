@@ -225,6 +225,19 @@ class AgentService extends ChangeNotifier {
   bool isStreaming = false;
   String? error;
 
+  /// Builtin tools whose completion may mean the sandbox filesystem changed
+  /// (the actual tool names in `builtinTools`: `write`, `edit`, `bash`).
+  /// `bash` is included because a shell command can touch arbitrary files;
+  /// failed results still bump — a partially-run command may have mutated
+  /// files before failing.
+  static const _kMutatingToolNames = {'write', 'edit', 'bash'};
+
+  /// Filesystem revision: bumped whenever a mutating tool
+  /// ([_kMutatingToolNames]) finishes, so UI watching the sandbox (the file
+  /// browser) can auto-refresh instead of polling. Listeners must tolerate
+  /// false positives — a bump does not prove a specific file changed.
+  final ValueNotifier<int> fsRevision = ValueNotifier<int>(0);
+
   Session? _session;
   String? _sessionId;
   int _persistedCount = 0;
@@ -296,6 +309,12 @@ class AgentService extends ChangeNotifier {
 
   /// Aborts the current run, if any.
   void abort() => _agent.abort();
+
+  @override
+  void dispose() {
+    fsRevision.dispose();
+    super.dispose();
+  }
 
   /// Waits until the agent becomes idle.
   Future<void> waitForIdle() => _agent.waitForIdle();
@@ -468,6 +487,10 @@ class AgentService extends ChangeNotifier {
         :final result,
         :final isError,
       ):
+        if (_kMutatingToolNames.contains(toolName)) {
+          // "Hook" for file-watching UI: the agent may have changed files.
+          fsRevision.value++;
+        }
         final text = result.content
             .whereType<TextContent>()
             .map((b) => b.text)
