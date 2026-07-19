@@ -25,6 +25,7 @@ export 'src/env/memory_execution_env.dart';
 export 'src/env/secrets_execution_env.dart';
 export 'src/event_stream.dart';
 export 'src/exceptions.dart';
+export 'src/hashline/hashline.dart';
 export 'src/model.dart';
 export 'src/overflow.dart';
 export 'src/providers/anthropic.dart';

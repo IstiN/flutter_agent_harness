@@ -327,6 +327,420 @@ void main() {
     });
   });
 
+  group('readFileTool hashline mode', () {
+    late MemoryExecutionEnv env;
+    late HashlineSnapshotStore store;
+    late AgentTool tool;
+
+    setUp(() async {
+      env = MemoryExecutionEnv(cwd: '/work');
+      store = HashlineSnapshotStore();
+      tool = readFileTool(env, snapshots: store);
+      await env.writeFile('notes.txt', 'one\ntwo\nthree\n');
+    });
+
+    test('prefixes lines and prepends the [path#TAG] header', () async {
+      final result = await tool.execute(
+        {'path': 'notes.txt', 'hashline': true},
+        null,
+        null,
+      );
+      final tag = computeFileHash('one\ntwo\nthree\n');
+      expect(_text(result), '[notes.txt#$tag]\n1:one\n2:two\n3:three\n4:');
+    });
+
+    test('legacy output is unchanged when the flag is off', () async {
+      final result = await tool.execute({'path': 'notes.txt'}, null, null);
+      expect(_text(result), 'one\ntwo\nthree\n');
+      expect(store.head('/work/notes.txt'), isNull);
+    });
+
+    test('records the full file text plus displayed lines', () async {
+      await tool.execute(
+        {'path': 'notes.txt', 'hashline': true, 'offset': 2, 'limit': 2},
+        null,
+        null,
+      );
+      final snapshot = store.head('/work/notes.txt');
+      expect(snapshot, isNotNull);
+      expect(snapshot!.text, 'one\ntwo\nthree\n');
+      expect(snapshot.seenLines, {2, 3});
+    });
+
+    test('offset/limit numbering stays 1-indexed to the file', () async {
+      final result = await tool.execute(
+        {'path': 'notes.txt', 'hashline': true, 'offset': 2, 'limit': 2},
+        null,
+        null,
+      );
+      expect(_text(result), contains('2:two\n3:three'));
+    });
+
+    test('a full read marks every line as seen', () async {
+      await tool.execute({'path': 'notes.txt', 'hashline': true}, null, null);
+      expect(store.head('/work/notes.txt')!.seenLines, {1, 2, 3, 4});
+    });
+
+    test('re-reading identical content fuses onto one tag', () async {
+      final first = await tool.execute(
+        {'path': 'notes.txt', 'hashline': true, 'limit': 1},
+        null,
+        null,
+      );
+      final second = await tool.execute(
+        {'path': 'notes.txt', 'hashline': true, 'offset': 2},
+        null,
+        null,
+      );
+      final headerLine = _text(first).split('\n').first;
+      expect(_text(second).split('\n').first, headerLine);
+      expect(store.head('/work/notes.txt')!.seenLines, {1, 2, 3, 4});
+    });
+  });
+
+  group('editFileTool hashline mode', () {
+    late MemoryExecutionEnv env;
+    late HashlineSnapshotStore store;
+    late AgentTool readTool;
+    late AgentTool editTool;
+
+    setUp(() async {
+      env = MemoryExecutionEnv(cwd: '/work');
+      store = HashlineSnapshotStore();
+      readTool = readFileTool(env, snapshots: store);
+      editTool = editFileTool(env, snapshots: store);
+      await env.writeFile('main.dart', 'void main() {\n  print("hello");\n}\n');
+    });
+
+    /// Reads [path] in hashline mode and returns the `[path#TAG]` header the
+    /// model would cite.
+    Future<String> readHeader(String path) async {
+      final result = await readTool.execute(
+        {'path': path, 'hashline': true},
+        null,
+        null,
+      );
+      return _text(result).split('\n').first;
+    }
+
+    test('applies a patch and answers with the fresh header', () async {
+      final header = await readHeader('main.dart');
+      final result = await editTool.execute(
+        {'patch': '$header\nSWAP 2.=2:\n+  print("world");'},
+        null,
+        null,
+      );
+      expect(_text(result), startsWith('[main.dart#'));
+      expect(_text(result), contains('First change at line 2.'));
+      expect(
+        (await env.readTextFile('main.dart')).valueOrNull,
+        'void main() {\n  print("world");\n}\n',
+      );
+    });
+
+    test(
+      'the response tag chains into the next edit without a re-read',
+      () async {
+        final header = await readHeader('main.dart');
+        final first = await editTool.execute(
+          {'patch': '$header\nSWAP 2.=2:\n+  print("a");'},
+          null,
+          null,
+        );
+        final secondHeader = _text(first).split('\n').first;
+        final second = await editTool.execute(
+          {'patch': '$secondHeader\nINS.TAIL:\n+// done'},
+          null,
+          null,
+        );
+        expect(_text(second), startsWith('[main.dart#'));
+        expect(
+          (await env.readTextFile('main.dart')).valueOrNull,
+          'void main() {\n  print("a");\n}\n// done\n',
+        );
+      },
+    );
+
+    test('path is optional in hashline mode (header carries it)', () async {
+      final header = await readHeader('main.dart');
+      expect(
+        editTool.execute({'patch': '$header\nDEL 1'}, null, null),
+        completes,
+      );
+    });
+
+    test('rejects mixed patch + oldText/newText arguments', () {
+      expect(
+        editTool.execute(
+          {
+            'path': 'main.dart',
+            'patch': '[main.dart#1A2B]\nDEL 1',
+            'oldText': 'a',
+            'newText': 'b',
+          },
+          null,
+          null,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('not both'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects calls with neither mode fully specified', () {
+      expect(
+        editTool.execute({'path': 'main.dart'}, null, null),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('Missing arguments'),
+          ),
+        ),
+      );
+      expect(
+        editTool.execute({'path': 'main.dart', 'oldText': 'a'}, null, null),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('a stale tag rejects the edit with drift context', () async {
+      final header = await readHeader('main.dart');
+      await env.writeFile('main.dart', 'void main() {\n  print("drift");\n}\n');
+      expect(
+        editTool.execute({'patch': '$header\nDEL 2'}, null, null),
+        throwsA(
+          isA<HashlineMismatchError>().having(
+            (e) => e.toString(),
+            'message',
+            allOf(
+              contains('file changed between read and edit'),
+              contains('*2:  print("drift");'),
+            ),
+          ),
+        ),
+      );
+      // Nothing was written by the rejected edit.
+      expect(
+        (await env.readTextFile('main.dart')).valueOrNull,
+        'void main() {\n  print("drift");\n}\n',
+      );
+    });
+
+    test('a byte-identical body returns the no-change diagnostic', () async {
+      final header = await readHeader('main.dart');
+      final result = await editTool.execute(
+        {'patch': '$header\nSWAP 2.=2:\n+  print("hello");'},
+        null,
+        null,
+      );
+      expect(_text(result), contains('produced no change'));
+      expect(
+        (await env.readTextFile('main.dart')).valueOrNull,
+        'void main() {\n  print("hello");\n}\n',
+      );
+    });
+
+    test('unsupported ops surface a focused error', () {
+      expect(
+        editTool.execute({'patch': '[main.dart#1A2B]\nREM'}, null, null),
+        throwsA(
+          isA<HashlineFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('not supported'),
+          ),
+        ),
+      );
+    });
+
+    test('malformed patches surface a parse error', () {
+      expect(
+        editTool.execute({'patch': 'DEL 1'}, null, null),
+        throwsA(isA<HashlineFormatException>()),
+      );
+    });
+
+    test('multi-section patches apply all-or-nothing', () async {
+      await env.writeFile('other.dart', 'one\ntwo\n');
+      final headerA = await readHeader('main.dart');
+      final headerB = await readHeader('other.dart');
+      final result = await editTool.execute(
+        {'patch': '$headerA\nDEL 1\n$headerB\nSWAP 1.=1:\n+ONE'},
+        null,
+        null,
+      );
+      expect(_text(result), contains('[main.dart#'));
+      expect(_text(result), contains('[other.dart#'));
+      expect(
+        (await env.readTextFile('main.dart')).valueOrNull,
+        '  print("hello");\n}\n',
+      );
+      expect((await env.readTextFile('other.dart')).valueOrNull, 'ONE\ntwo\n');
+    });
+
+    test(
+      'edits on lines a partial read never displayed are rejected',
+      () async {
+        await readTool.execute(
+          {'path': 'main.dart', 'hashline': true, 'limit': 1},
+          null,
+          null,
+        );
+        final header = await readHeader('main.dart');
+        // Re-read only line 1 so lines 2+ are unseen under the CURRENT tag...
+        // (the full readHeader above re-fused; craft the seen set directly.)
+        final tag = header.substring(
+          header.indexOf('#') + 1,
+          header.indexOf(']'),
+        );
+        store.head('/work/main.dart')!.seenLines!
+          ..clear()
+          ..add(1);
+        expect(
+          editTool.execute({'patch': '[main.dart#$tag]\nDEL 3'}, null, null),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('never displayed'),
+            ),
+          ),
+        );
+      },
+    );
+  });
+
+  group('hashline round-trip', () {
+    late MemoryExecutionEnv env;
+    late List<AgentTool> tools;
+
+    setUp(() {
+      env = MemoryExecutionEnv(cwd: '/work');
+      tools = builtinTools(env);
+    });
+
+    AgentTool toolNamed(String name) => tools.firstWhere((t) => t.name == name);
+
+    test('read with hashes → edit by anchors → content correct', () async {
+      await env.writeFile(
+        'greet.py',
+        'def greet(name):\n'
+            '    msg = "Hello, " + name\n'
+            '    print(msg)\n'
+            'greet("world")\n',
+      );
+      final read = toolNamed('read');
+      final edit = toolNamed('edit');
+
+      final readResult = await read.execute(
+        {'path': 'greet.py', 'hashline': true},
+        null,
+        null,
+      );
+      final output = _text(readResult);
+      final header = output.split('\n').first;
+      expect(header, matches(RegExp(r'^\[greet\.py#[0-9A-F]{4}\]$')));
+      expect(output, contains('2:    msg = "Hello, " + name'));
+
+      // The model anchors on the numbered lines it just saw.
+      final editResult = await edit.execute(
+        {
+          'patch':
+              '$header\n'
+              'INS.POST 1:\n'
+              '+    if not name: name = "stranger"\n'
+              'SWAP 2.=2:\n'
+              '+    greeting = "Hi"\n'
+              '+    msg = f"{greeting}, {name}"\n'
+              'DEL 4',
+        },
+        null,
+        null,
+      );
+      expect(_text(editResult), startsWith('[greet.py#'));
+      expect(
+        (await env.readTextFile('greet.py')).valueOrNull,
+        'def greet(name):\n'
+        '    if not name: name = "stranger"\n'
+        '    greeting = "Hi"\n'
+        '    msg = f"{greeting}, {name}"\n'
+        '    print(msg)\n',
+      );
+    });
+
+    test(
+      'external drift between read and edit reports the stale lines',
+      () async {
+        await env.writeFile('doc.md', 'alpha\nbeta\ngamma\n');
+        final read = toolNamed('read');
+        final edit = toolNamed('edit');
+        final readResult = await read.execute(
+          {'path': 'doc.md', 'hashline': true},
+          null,
+          null,
+        );
+        final header = _text(readResult).split('\n').first;
+
+        await env.writeFile('doc.md', 'alpha\nCHANGED\ngamma\n');
+        expect(
+          edit.execute({'patch': '$header\nSWAP 2.=2:\n+BETA'}, null, null),
+          throwsA(
+            isA<HashlineMismatchError>().having(
+              (e) => e.toString(),
+              'message',
+              allOf(
+                contains('file changed between read and edit'),
+                contains('*2:CHANGED'),
+              ),
+            ),
+          ),
+        );
+        expect(
+          (await env.readTextFile('doc.md')).valueOrNull,
+          'alpha\nCHANGED\ngamma\n',
+        );
+      },
+    );
+
+    test(
+      'the tools created by builtinTools share one snapshot store',
+      () async {
+        await env.writeFile('a.txt', 'x\ny\n');
+        final read = toolNamed('read');
+        final edit = toolNamed('edit');
+        final readResult = await read.execute(
+          {'path': 'a.txt', 'hashline': true},
+          null,
+          null,
+        );
+        final header = _text(readResult).split('\n').first;
+        // If read and edit did not share a store, this anchored edit would
+        // still pass the content check — so verify the store path too: a
+        // second tag for DIFFERENT content minted by edit must be resolvable.
+        final editResult = await edit.execute(
+          {'patch': '$header\nSWAP 1.=1:\n+X'},
+          null,
+          null,
+        );
+        final newHeader = _text(editResult).split('\n').first;
+        expect(newHeader, isNot(header));
+        // Chained edit against the edit-minted tag works out of the box.
+        final second = await edit.execute(
+          {'patch': '$newHeader\nDEL 2'},
+          null,
+          null,
+        );
+        expect(_text(second), startsWith('[a.txt#'));
+        expect((await env.readTextFile('a.txt')).valueOrNull, 'X\n');
+      },
+    );
+  });
+
   group('listDirTool', () {
     late MemoryExecutionEnv env;
     late AgentTool tool;
