@@ -29,6 +29,7 @@ final class FakeTransformersJsEngine implements TransformersJsEngineApi {
   List<TransformersJsChatMessage>? lastMessages;
   int? lastMaxTokens;
   var interruptCount = 0;
+  var unloadCount = 0;
   var jsStreamCancelled = false;
 
   @override
@@ -72,6 +73,12 @@ final class FakeTransformersJsEngine implements TransformersJsEngineApi {
   @override
   Future<void> interrupt() async {
     interruptCount++;
+  }
+
+  @override
+  Future<void> unloadModel() async {
+    unloadCount++;
+    loadedPreset = null;
   }
 
   @override
@@ -246,6 +253,46 @@ void main() {
       expect(events.whereType<DoneEvent>(), isEmpty);
     });
 
+    test('an OrtRun-style engine error resets the engine so the next turn '
+        'reloads', () async {
+      final engine = FakeTransformersJsEngine()
+        ..streamErrorMessage =
+            'Error: OrtRun failed: mapAsync ... invalid Buffer';
+      final events = await streamTransformersJs(
+        engine,
+        _model(),
+        _context(),
+      ).toList();
+
+      expect(events.whereType<ErrorEvent>(), hasLength(1));
+      expect(engine.unloadCount, 1);
+      expect(engine.loadedPreset, isNull);
+    });
+
+    test('a clean turn does not reset the engine', () async {
+      final engine = FakeTransformersJsEngine()..chunks = ['ok'];
+      await streamTransformersJs(engine, _model(), _context()).toList();
+      expect(engine.unloadCount, 0);
+      expect(engine.loadedPreset, isNotNull);
+    });
+
+    test('a load failure does not double-reset the engine', () async {
+      final engine = FakeTransformersJsEngine()
+        ..loadError = StateError('no WebGPU');
+      await streamTransformersJs(engine, _model(), _context()).toList();
+      expect(engine.unloadCount, 0);
+    });
+
+    test('an unknown preset id does not reset a healthy engine', () async {
+      final engine = FakeTransformersJsEngine();
+      await streamTransformersJs(
+        engine,
+        _model('not-a-preset'),
+        _context(),
+      ).toList();
+      expect(engine.unloadCount, 0);
+    });
+
     test('cancel mid-stream interrupts the engine and ends aborted', () async {
       final engine = FakeTransformersJsEngine()
         ..chunks = ['partial']
@@ -271,6 +318,8 @@ void main() {
       expect(_partialText(error.error), 'partial');
       expect(engine.interruptCount, 1);
       expect(engine.jsStreamCancelled, isTrue);
+      // A deliberate abort is not a session poisoning: no engine reset.
+      expect(engine.unloadCount, 0);
       expect(events.whereType<DoneEvent>(), isEmpty);
     });
 
@@ -560,6 +609,54 @@ void main() {
       expect(messages.last.content, isNot(contains('omitted')));
     });
 
+    test('an SVG is never forwarded to the vision encoder', () {
+      final messages = convertTransformersJsMessages(
+        _context(
+          messages: [
+            UserMessage(
+              content: [
+                const TextContent(text: 'what is this?'),
+                const ImageContent(data: 'PHN2Zz4=', mimeType: 'image/svg+xml'),
+              ],
+              timestamp: DateTime.now(),
+            ),
+          ],
+        ),
+        supportsVision: true,
+      );
+      expect(messages.last.role, 'user');
+      // The SVG degrades to an omission note; RawImage never sees it.
+      expect(messages.last.images, isEmpty);
+      expect(messages.last.content, contains('what is this?'));
+      expect(messages.last.content, contains('omitted'));
+      expect(messages.last.content, contains('not decodable'));
+    });
+
+    test('decodable images pass while undecodable ones drop from the same '
+        'message', () {
+      final messages = convertTransformersJsMessages(
+        _context(
+          messages: [
+            UserMessage(
+              content: [
+                const ImageContent(data: 'AAAA', mimeType: 'image/png'),
+                const ImageContent(data: 'PHN2Zz4=', mimeType: 'image/svg+xml'),
+                const ImageContent(data: 'Qk0=', mimeType: 'image/bmp'),
+                const ImageContent(data: 'R0lG', mimeType: 'image/gif'),
+              ],
+              timestamp: DateTime.now(),
+            ),
+          ],
+        ),
+        supportsVision: true,
+      );
+      expect(messages.last.images, [
+        'data:image/png;base64,AAAA',
+        'data:image/gif;base64,R0lG',
+      ]);
+      expect(messages.last.content, contains('omitted'));
+    });
+
     test('images degrade to an omission note when vision is unsupported', () {
       final messages = convertTransformersJsMessages(
         _context(
@@ -602,17 +699,72 @@ void main() {
       final preset = transformersJsModelPresets.single;
       expect(preset.id, 'onnx-community/gemma-4-E2B-it-ONNX');
       expect(preset.displayName, contains('Gemma 4 E2B'));
-      expect(preset.sizeLabel, '~3.2 GB');
+      expect(preset.sizeLabel, '~3.4 GB');
       expect(preset.supportsVision, isTrue);
-      // Text components plus the vision encoder; no audio encoder (the app
-      // has no audio input UI).
+      // Every component the model class instantiates is pinned: text plus
+      // the vision encoder, and the audio encoder at its SMALLEST dtype —
+      // transformers.js always constructs an audio session for this model
+      // class, and an unpinned component falls back to the 1.18 GB fp32
+      // file.
       expect(preset.dtype, {
         'embed_tokens': 'q4f16',
         'decoder_model_merged': 'q4f16',
         'vision_encoder': 'q4f16',
+        'audio_encoder': 'q4f16',
       });
       expect(findTransformersJsPreset(preset.id), same(preset));
       expect(findTransformersJsPreset('nope'), isNull);
+    });
+
+    test('the download allowlist covers exactly the requested dtype set', () {
+      final preset = transformersJsModelPresets.single;
+      final files = preset.downloadSizes.keys.toList();
+      // The needed q4f16 files: text (embed + decoder), vision, the
+      // unavoidable minimal audio session, and the config/tokenizer files.
+      expect(
+        files,
+        containsAll([
+          'onnx/embed_tokens_q4f16.onnx',
+          'onnx/embed_tokens_q4f16.onnx_data',
+          'onnx/decoder_model_merged_q4f16.onnx',
+          'onnx/decoder_model_merged_q4f16.onnx_data',
+          'onnx/vision_encoder_q4f16.onnx',
+          'onnx/vision_encoder_q4f16.onnx_data',
+          'onnx/audio_encoder_q4f16.onnx',
+          'onnx/audio_encoder_q4f16.onnx_data',
+          'config.json',
+          'tokenizer.json',
+        ]),
+      );
+      // Nothing outside the requested dtype set: no fp32 (suffix-less)
+      // files — the 1.18 GB fp32 audio encoder first among them — and no
+      // other quantizations.
+      for (final file in files) {
+        expect(file, isNot(endsWith('.onnx_data_1')));
+        expect(file, isNot(contains('_fp16.')));
+        expect(file, isNot(contains('_fp16_')), reason: file);
+        expect(file, isNot(contains('_quantized.')), reason: file);
+        expect(file, isNot(contains('_q4.')), reason: file);
+      }
+      expect(files, isNot(contains('onnx/audio_encoder.onnx')));
+      expect(files, isNot(contains('onnx/audio_encoder.onnx_data')));
+      // The headline sizes the progress UX advertises.
+      expect(
+        preset.downloadSizes['onnx/embed_tokens_q4f16.onnx_data'],
+        1590689792,
+      );
+      expect(
+        preset.downloadSizes['onnx/decoder_model_merged_q4f16.onnx_data'],
+        1519700992,
+      );
+      expect(
+        preset.downloadSizes['onnx/vision_encoder_q4f16.onnx_data'],
+        99189440,
+      );
+      expect(
+        preset.downloadSizes['onnx/audio_encoder_q4f16.onnx_data'],
+        171258112,
+      );
     });
   });
 }

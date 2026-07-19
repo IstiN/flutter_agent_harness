@@ -43,6 +43,9 @@ final class TransformersJsService implements TransformersJsEngineApi {
   Future<void> interrupt() async {}
 
   @override
+  Future<void> unloadModel() async {}
+
+  @override
   Future<TransformersJsCacheInfo?> modelCacheInfo(String modelId) async => null;
 
   @override

@@ -36,6 +36,7 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import '../prompts.g.dart';
+import '../upload.dart';
 import 'transformers_js_types.dart';
 
 /// Builds a [StreamFunction] that runs inference through [service], with
@@ -78,6 +79,9 @@ Future<void> _runTransformersJs(
   final text = StringBuffer();
   var stopReason = StopReason.stop;
   String? errorMessage;
+  // Set once the engine has loaded the model: only then can a failure be
+  // an ORT session poisoning that requires an engine reset.
+  var engineEngaged = false;
 
   // Partial-first invariant: every event carries a freshly built snapshot of
   // the message with ALL content accumulated so far (mirrors
@@ -108,6 +112,7 @@ Future<void> _runTransformersJs(
     // settings form pre-loads, so this is normally instant). A cancel during
     // the wait takes effect right after.
     await service.loadModel(preset);
+    engineEngaged = true;
     cancelToken?.throwIfCancelled();
 
     eventStream.push(StartEvent(partial: snapshot()));
@@ -193,6 +198,17 @@ Future<void> _runTransformersJs(
     errorMessage = aborted
         ? 'Request was aborted'
         : _formatTransformersJsError(error);
+    if (!aborted && engineEngaged) {
+      // A failed generate can leave the ORT session poisoned (the WebGPU
+      // invalid-buffer OrtRun error an undecodable image input causes):
+      // drop the engine so the NEXT message reloads from the cached
+      // weights instead of inheriting the broken state. Best effort.
+      try {
+        await service.unloadModel();
+      } on Object {
+        // Recovery must never mask the original error.
+      }
+    }
     eventStream.push(ErrorEvent(reason: stopReason, error: snapshot()));
   } finally {
     eventStream.end();
@@ -208,8 +224,11 @@ Future<void> _runTransformersJs(
 ///   wrapper has already appended the tool instructions to `systemPrompt`
 ///   upstream.)
 /// - User text passes through; image blocks become `data:` URIs on the
-///   message's `images` when [supportsVision] (the engine feeds them to the
-///   vision encoder), or degrade to an omission note otherwise.
+///   message's `images` when [supportsVision] AND the MIME type is one the
+///   on-device stack can actually decode ([isInlineImageMimeType]: PNG,
+///   JPEG, GIF, WebP). Everything else — SVG first among them — degrades to
+///   an omission note: feeding undecodable bytes to `RawImage` kills the
+///   ONNX Runtime WebGPU session (`mapAsync ... invalid Buffer`).
 /// - Assistant text passes through; thinking blocks are dropped; historical
 ///   tool calls become a `[tool call: ...]` text line so role alternation is
 ///   preserved.
@@ -247,14 +266,23 @@ List<TransformersJsChatMessage> convertTransformersJsMessages(
               if (block is TextContent && block.text.trim().isNotEmpty)
                 block.text,
           ];
-          final images = <String>[
+          final imageBlocks = blocks.whereType<ImageContent>().toList();
+          final decodable = <ImageContent>[
             if (supportsVision)
-              for (final block in blocks)
-                if (block is ImageContent)
-                  'data:${block.mimeType};base64,${block.data}',
+              for (final block in imageBlocks)
+                if (isInlineImageMimeType(block.mimeType)) block,
           ];
-          if (!supportsVision && blocks.any((block) => block is ImageContent)) {
-            parts.add('(attached image omitted: this model is text-only)');
+          final images = <String>[
+            for (final block in decodable)
+              'data:${block.mimeType};base64,${block.data}',
+          ];
+          final omitted = imageBlocks.length - decodable.length;
+          if (omitted > 0) {
+            parts.add(
+              supportsVision
+                  ? '(attached image omitted: format not decodable on-device)'
+                  : '(attached image omitted: this model is text-only)',
+            );
           }
           if (parts.isNotEmpty || images.isNotEmpty) {
             messages.add((

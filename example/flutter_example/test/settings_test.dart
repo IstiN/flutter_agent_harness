@@ -157,6 +157,9 @@ final class FakeTransformersJsEngine implements TransformersJsEngineApi {
   Future<void> interrupt() async {}
 
   @override
+  Future<void> unloadModel() async {}
+
+  @override
   Future<TransformersJsCacheInfo?> modelCacheInfo(String modelId) async => null;
 
   @override
@@ -751,7 +754,7 @@ void main() {
       expect(find.text('HuggingFace token (optional)'), findsNothing);
       expect(find.text('On-device model'), findsOneWidget);
       expect(find.textContaining('Gemma 4 E2B (ONNX)'), findsOneWidget);
-      expect(find.textContaining('~3.2 GB'), findsOneWidget);
+      expect(find.textContaining('~3.4 GB'), findsOneWidget);
       expect(find.text('vision'), findsOneWidget);
       expect(find.text('tools via prompt'), findsOneWidget);
       expect(

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_chat_core/flutter_chat_core.dart';
@@ -13,6 +15,7 @@ import 'package:path_provider/path_provider.dart';
 import 'agent_service.dart';
 import 'app_theme.dart';
 import 'file_browser.dart';
+import 'file_preview.dart';
 import 'markdown_style.dart';
 import 'provider_registry.dart';
 import 'session_sidebar.dart';
@@ -53,6 +56,28 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+/// The `source` for an attached-image chat message.
+///
+/// On IO platforms the bytes land in a temp file. The web has no `dart:io`
+/// filesystem (`getTemporaryDirectory` throws there — and the resulting
+/// unhandled error used to repeat on every chat sync), so the bytes ride
+/// inside a `data:` URI instead.
+Future<String> chatImageMessageSource(
+  int index,
+  Uint8List bytes, {
+  required bool isWeb,
+}) async {
+  if (isWeb) {
+    return 'data:image/png;base64,${base64Encode(bytes)}';
+  }
+  final tmp = await getTemporaryDirectory();
+  final file = File('${tmp.path}/fah_chat_image_$index.png');
+  if (!file.existsSync() || file.lengthSync() != bytes.length) {
+    await file.writeAsBytes(bytes);
+  }
+  return file.path;
+}
+
 class _ChatScreenState extends State<ChatScreen> {
   late final InMemoryChatController _chatController;
   final _textController = TextEditingController();
@@ -62,10 +87,12 @@ class _ChatScreenState extends State<ChatScreen> {
   final _tool = const User(id: 'tool', name: 'tool');
   final _system = const User(id: 'system', name: 'system');
 
-  /// Files attached in the composer but not sent yet. On send they are
-  /// staged into the sandbox `uploads/` folder (see
-  /// [AgentService.stageAttachment]) and the message references their paths.
-  final List<({String name, Uint8List bytes, String mimeType})>
+  /// Files attached in the composer but not sent yet. They are staged into
+  /// the sandbox `uploads/` folder at PICK time (see
+  /// [AgentService.stageAttachment]) — attaching never sends anything by
+  /// itself; on send the message references the staged [path]s plus the
+  /// typed text.
+  final List<({String name, String path, Uint8List bytes, String mimeType})>
   _pendingAttachments = [];
 
   List<Message> _lastSynced = [];
@@ -189,6 +216,12 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       _lastSynced = newList;
+    } on Object catch (e, stack) {
+      // _syncMessages runs from a Timer callback: an escape here is an
+      // unhandled async error that repeats on every service notification
+      // (the "Uncaught Error" console storm). Log it and leave
+      // _lastSynced stale so the next notification retries the sync.
+      debugPrint('chat sync failed: $e\n$stack');
     } finally {
       _isSyncing = false;
     }
@@ -217,7 +250,11 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (chat.role) {
       case 'user':
         if (chat.imageBytes != null) {
-          final path = await _writeImageFile(index, chat.imageBytes!);
+          final path = await chatImageMessageSource(
+            index,
+            chat.imageBytes!,
+            isWeb: kIsWeb,
+          );
           return Message.image(
             id: id,
             authorId: 'user',
@@ -262,15 +299,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<String> _writeImageFile(int index, Uint8List bytes) async {
-    final tmp = await getTemporaryDirectory();
-    final file = File('${tmp.path}/fah_chat_image_$index.png');
-    if (!file.existsSync() || file.lengthSync() != bytes.length) {
-      await file.writeAsBytes(bytes);
-    }
-    return file.path;
-  }
-
   Future<User?> _resolveUser(UserID id) async {
     return switch (id) {
       'user' => _user,
@@ -286,28 +314,43 @@ class _ChatScreenState extends State<ChatScreen> {
     final picked = await picker.pickImage(source: source);
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
-    setState(() {
-      _pendingAttachments.add((
-        name: picked.name,
-        bytes: bytes,
-        mimeType: _mimeFromName(picked.name),
-      ));
-    });
+    await _stagePending(picked.name, bytes);
   }
 
-  /// Guesses a MIME type from the file extension; anything unrecognized is
-  /// `application/octet-stream` (never inlined as an image).
-  String _mimeFromName(String name) {
-    final lower = name.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-    if (lower.endsWith('.gif')) return 'image/gif';
-    if (lower.endsWith('.webp')) return 'image/webp';
-    return 'application/octet-stream';
+  /// Stages one picked file into `uploads/` right away and adds a pending
+  /// chip for it. Failures surface as a snackbar — nothing is staged and
+  /// nothing is sent.
+  Future<void> _stagePending(String name, Uint8List bytes) async {
+    final clean = sanitizeUploadName(name).split('/').last;
+    if (clean.isEmpty) {
+      _showSnack('Could not attach "$name": no usable file name.');
+      return;
+    }
+    try {
+      final path = await widget.service.stageAttachment(
+        name: clean,
+        bytes: bytes,
+      );
+      if (!mounted) return;
+      setState(() {
+        _pendingAttachments.add((
+          name: clean,
+          path: path,
+          bytes: bytes,
+          mimeType: mimeTypeForUploadName(clean),
+        ));
+      });
+    } on Object catch (e) {
+      if (mounted) _showSnack('Could not attach $clean: $e');
+    }
   }
 
   void _removePendingAttachment(int index) {
+    final removed = _pendingAttachments[index];
     setState(() => _pendingAttachments.removeAt(index));
+    // The file was staged at pick time; removing the chip drops it again
+    // (best effort — a leftover in uploads/ is harmless).
+    unawaited(widget.service.discardStagedAttachment(removed.path));
   }
 
   /// Copies the whole session transcript to the clipboard as plain text.
@@ -354,42 +397,40 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _pendingAttachments.clear());
     _textController.clear();
 
-    if (pending.isEmpty) {
-      await widget.service.sendText(trimmed);
-      return;
-    }
-
-    // Stage every attachment into <cwd>/uploads/ first; the outgoing
-    // message references the sandbox paths so the agent reads the files
-    // with its tools (see AgentService.sendAttachments).
-    final staged = <StagedAttachment>[];
     try {
-      for (final attachment in pending) {
-        staged.add((
-          path: await widget.service.stageAttachment(
-            name: attachment.name,
-            bytes: attachment.bytes,
-          ),
-          bytes: attachment.bytes,
-          mimeType: attachment.mimeType,
-        ));
+      if (pending.isEmpty) {
+        await widget.service.sendText(trimmed);
+        return;
       }
+
+      // Attachments were staged into <cwd>/uploads/ at pick time; the
+      // outgoing message references the sandbox paths so the agent reads the
+      // files with its tools (see AgentService.sendAttachments).
+      await widget.service.sendAttachments(
+        attachments: [
+          for (final attachment in pending)
+            (
+              path: attachment.path,
+              bytes: attachment.bytes,
+              mimeType: attachment.mimeType,
+            ),
+        ],
+        text: trimmed,
+      );
     } on Object catch (e) {
-      // Staging failed: hand the attachments and the typed text back so
-      // nothing the user composed is lost, and say why.
+      // The send itself failed before the run started: hand the chips and
+      // the typed text back so nothing the user composed is lost.
       if (mounted) {
         setState(() => _pendingAttachments.addAll(pending));
         _textController.text = trimmed;
-        _showSnack('Upload failed: $e');
+        _showSnack('Could not send: $e');
       }
-      return;
     }
-    await widget.service.sendAttachments(attachments: staged, text: trimmed);
   }
 
-  /// Picks arbitrary files and holds them as pending attachments (web only;
-  /// elsewhere the picker is `null`). They land in the sandbox `uploads/`
-  /// folder when the message is sent (see [_send]).
+  /// Picks arbitrary files and stages them as pending attachments (web
+  /// only; elsewhere the picker is `null`). Staging happens immediately —
+  /// the chips wait in the composer until the user sends (see [_send]).
   Future<void> _attachFiles() async {
     final picker = _uploadPicker;
     if (picker == null) return;
@@ -408,17 +449,9 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    setState(() {
-      for (final file in picked) {
-        final name = sanitizeUploadName(file.name);
-        if (name.isEmpty) continue;
-        _pendingAttachments.add((
-          name: name,
-          bytes: file.bytes,
-          mimeType: _mimeFromName(name),
-        ));
-      }
-    });
+    for (final file in picked) {
+      await _stagePending(file.name, file.bytes);
+    }
   }
 
   void _showSnack(String message) {
@@ -569,11 +602,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// One pending attachment in the composer: a thumbnail for images, an
-  /// icon + name chip otherwise, each with a remove affordance.
+  /// One pending attachment in the composer: a thumbnail for decodable
+  /// raster images, an icon + name + size chip otherwise (SVG previews stay
+  /// generic — see [isInlineImageMimeType]), each with a remove affordance.
   Widget _buildPendingAttachmentChip(int index) {
     final attachment = _pendingAttachments[index];
-    final isImage = attachment.mimeType.startsWith('image/');
+    final isImage = isInlineImageMimeType(attachment.mimeType);
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -592,15 +626,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 height: 48,
                 width: 48,
                 fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) =>
+                    const Icon(Icons.broken_image_outlined, size: 24),
               ),
             )
           else ...[
             const Icon(Icons.insert_drive_file_outlined, size: 18),
             const SizedBox(width: 6),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 160),
+              constraints: const BoxConstraints(maxWidth: 200),
               child: Text(
-                attachment.name.split('/').last,
+                '${attachment.name.split('/').last} · '
+                '${formatFileSize(attachment.bytes.length)}',
                 overflow: TextOverflow.ellipsis,
               ),
             ),

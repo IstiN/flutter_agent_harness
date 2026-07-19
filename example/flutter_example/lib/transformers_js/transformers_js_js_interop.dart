@@ -38,14 +38,19 @@ bool transformersJsLibraryAvailable() => _transformersJs != null;
 bool transformersJsWebGpuAvailable() => _navigatorGpu != null;
 
 /// Helper from `web/transformers_js_helpers.js`: downloads and instantiates
-/// the model ([modelId], [dtypeJson] a JSON-encoded per-component dtype map)
-/// with WebGPU, reporting `{fraction, text}` progress JSON through
-/// [onProgress]. Resolves when the model is ready; rejects with a
-/// user-readable error.
+/// the model ([modelId], [dtypeJson] a JSON-encoded per-component dtype map,
+/// [allowlistJson] a JSON-encoded list of repo-relative file paths allowed
+/// to download) with WebGPU. While loading, the helper wraps the library's
+/// `env.fetch` and rejects any repo URL outside the allowlist, so no file
+/// outside the requested dtype set can download. [onProgress] receives one
+/// JSON-encoded raw event per update (`{status, file, loaded, total}`) —
+/// aggregation happens Dart-side ([TransformersJsProgressAggregator]).
+/// Resolves when the model is ready; rejects with a user-readable error.
 @JS('transformersJsLoad')
 external JSPromise transformersJsLoad(
   JSString modelId,
   JSString dtypeJson,
+  JSString allowlistJson,
   JSFunction onProgress,
 );
 

@@ -200,6 +200,30 @@ final class _FakePicker implements UploadPicker {
 UploadFile _uploadFile(String name, String content) =>
     (name: name, bytes: Uint8List.fromList(content.codeUnits));
 
+/// A service whose [AgentService.sendAttachments] fails, so the composer
+/// must hand the pending chips and the typed text back to the user.
+final class _ThrowingSendService extends AgentService {
+  _ThrowingSendService(ExecutionEnv env)
+    : super(
+        agent: Agent(
+          model: _testModel,
+          systemPrompt: 'You are fah.',
+          streamFunction: _singleTextResponse('ok'),
+          toolRegistry: ToolRegistry(const []),
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+
+  @override
+  Future<void> sendAttachments({
+    required List<StagedAttachment> attachments,
+    String text = '',
+  }) {
+    throw StateError('simulated send failure');
+  }
+}
+
 void main() {
   group('FileBrowser', () {
     testWidgets('lists directories first, then files, both sorted', (
@@ -363,6 +387,49 @@ void main() {
 
       expect((await env.readTextFile('root.txt')).getOrThrow(), 'at root');
       expect(find.text('root.txt'), findsOneWidget);
+    });
+
+    testWidgets('an SVG uploads like any other file (regression: file-tree '
+        'SVG upload)', (tester) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([
+        _uploadFile('icon.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>'),
+      ]);
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, uploadPicker: picker)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Upload files here'));
+      await tester.pumpAndSettle();
+
+      expect(picker.calls, 1);
+      expect(find.text('Uploaded 1 file'), findsOneWidget);
+      expect(
+        (await env.readTextFile('icon.svg')).getOrThrow(),
+        '<svg xmlns="http://www.w3.org/2000/svg"/>',
+      );
+      expect(find.text('icon.svg'), findsOneWidget);
+    });
+
+    testWidgets('files with no usable name fail loudly, with the name in '
+        'the snackbar', (tester) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([
+        _uploadFile('..', 'traversal'),
+        _uploadFile('ok.txt', 'fine'),
+      ]);
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, uploadPicker: picker)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Upload files here'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Uploaded 1 file'), findsOneWidget);
+      expect(find.textContaining('1 failed: ..'), findsOneWidget);
+      expect((await env.readTextFile('ok.txt')).getOrThrow(), 'fine');
     });
 
     testWidgets('an oversized batch is refused before anything is written', (
@@ -668,8 +735,9 @@ void main() {
       expect(_selectableText('hello notes'), findsOneWidget);
     });
 
-    testWidgets('attach sheet holds picked files in the composer; sending '
-        'stages them into uploads/ and references the path', (tester) async {
+    testWidgets('attach sheet stages picked files into uploads/ at once and '
+        'holds a pending chip; sending references the path without '
+        'auto-sending', (tester) async {
       final env = await _seededEnv();
       final picker = _FakePicker([_uploadFile('chat.txt', 'via chat')]);
       final service = _fakeService(env);
@@ -686,16 +754,20 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(picker.calls, 1);
-      // The file waits in the composer as a pending chip; nothing is
-      // written to the sandbox before the message goes out.
-      expect(find.text('chat.txt'), findsOneWidget);
-      expect((await env.exists('uploads/chat.txt')).getOrThrow(), isFalse);
+      // The file is staged into uploads/ IMMEDIATELY and waits as a
+      // pending chip — nothing is sent to the model on attach.
+      expect(find.textContaining('chat.txt'), findsOneWidget);
+      expect(
+        (await env.readTextFile('uploads/chat.txt')).getOrThrow(),
+        'via chat',
+      );
+      expect(service.messages, isEmpty);
 
       await tester.enterText(find.byType(TextField), 'look at this');
       await tester.runAsync(() async {
         await tester.tap(find.byTooltip('Send'));
-        // The send button fires _send unawaited (stage → prompt); poll the
-        // transcript until the assistant turn lands on the real event loop.
+        // The send button fires _send unawaited; poll the transcript until
+        // the assistant turn lands on the real event loop.
         final deadline = DateTime.now().add(const Duration(seconds: 10));
         while (service.messages.length < 2) {
           if (DateTime.now().isAfter(deadline)) {
@@ -706,14 +778,125 @@ void main() {
       });
       await tester.pumpAndSettle();
 
-      expect(
-        (await env.readTextFile('uploads/chat.txt')).getOrThrow(),
-        'via chat',
-      );
       expect(service.messages.first.role, 'user');
       expect(
         service.messages.first.content,
         contains('[attached file: uploads/chat.txt — read it with your tools]'),
+      );
+      expect(service.messages.first.content, contains('look at this'));
+      // The chip row cleared after sending.
+      expect(find.byTooltip('Remove attachment'), findsNothing);
+    });
+
+    testWidgets('a pending chip is removable before sending; the staged '
+        'file goes with it', (tester) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([
+        _uploadFile('one.txt', 'first'),
+        _uploadFile('two.txt', 'second'),
+      ]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(service: _fakeService(env), uploadPicker: picker),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Attach file'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Remove attachment'), findsNWidgets(2));
+      expect((await env.exists('uploads/one.txt')).getOrThrow(), isTrue);
+      expect((await env.exists('uploads/two.txt')).getOrThrow(), isTrue);
+
+      await tester.tap(find.byTooltip('Remove attachment').first);
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Remove attachment'), findsOneWidget);
+      expect(find.textContaining('two.txt'), findsOneWidget);
+      // The removed chip's staged file is discarded; the other stays.
+      expect((await env.exists('uploads/one.txt')).getOrThrow(), isFalse);
+      expect((await env.exists('uploads/two.txt')).getOrThrow(), isTrue);
+    });
+
+    testWidgets('attaching an SVG stages it as a plain file reference, '
+        'never an inline image', (tester) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([
+        _uploadFile('icon.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>'),
+      ]);
+      final service = _fakeService(env);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(service: service, uploadPicker: picker),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Attach file'));
+      await tester.pumpAndSettle();
+
+      // Generic chip (no Image.memory thumbnail), staged file present.
+      expect(find.textContaining('icon.svg'), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+      expect((await env.exists('uploads/icon.svg')).getOrThrow(), isTrue);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip('Send'));
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (service.messages.length < 2) {
+          if (DateTime.now().isAfter(deadline)) {
+            fail('timed out waiting for the assistant turn');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pumpAndSettle();
+
+      // Sent as a path reference with no inline image bytes.
+      expect(service.messages.first.imageBytes, isNull);
+      expect(
+        service.messages.first.content,
+        contains('[attached file: uploads/icon.svg — read it with your tools]'),
+      );
+    });
+
+    testWidgets('a failed send restores the pending chips and the typed '
+        'text', (tester) async {
+      final env = await _seededEnv();
+      final picker = _FakePicker([_uploadFile('chat.txt', 'via chat')]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(
+            service: _ThrowingSendService(env),
+            uploadPicker: picker,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Attach file'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Remove attachment'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'look at this');
+      await tester.tap(find.byTooltip('Send'));
+      await tester.pumpAndSettle();
+
+      // The send failed: the chip and the typed text are handed back, with
+      // a snackbar saying why — nothing the user composed is lost.
+      expect(find.byTooltip('Remove attachment'), findsOneWidget);
+      expect(find.textContaining('chat.txt'), findsWidgets);
+      expect(find.textContaining('Could not send'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'look at this',
       );
     });
 
