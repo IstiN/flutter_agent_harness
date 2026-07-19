@@ -46,3 +46,4 @@ export 'src/plugins/inspect_image_plugin.dart';
 export 'src/prompt_tools/prompt_tools.dart';
 export 'src/types.dart';
 export 'src/usage_summary.dart';
+export 'src/web_search/web_search.dart';

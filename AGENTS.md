@@ -33,6 +33,15 @@ Conventions for AI agents and contributors working in this repository.
   `hashline` flag emitting numbered lines + the tag header; both share one
   session snapshot store via `builtinTools`.
 - `bin/fah.dart` — the `fah`/`fa` CLI executable.
+- `lib/src/web_search/` — the `web_search`/`web_fetch` tools (ported from
+  oh-my-pi `packages/coding-agent/src/web/`): `web_search` walks a provider
+  chain (keyless DuckDuckGo HTML first, keyed Brave/Tavily when their key is
+  in the `SecretsStore`), falling through on failure; `web_fetch` renders
+  pages as markdown via site handlers behind one `WebSiteHandler` interface
+  (pub.dev shipped; GitHub/arXiv follow-ups) with a hand-rolled generic
+  HTML→markdown converter (link anchors preserved, boilerplate stripped).
+  All HTTP goes through an injectable `package:http` client; both tools
+  register via `builtinTools(env, webSearch: WebSearchConfig(...))`.
 - `example/flutter_example/` — Flutter chat example (mobile/web sandbox).
 - `site/` — static GitHub Pages landing (hand-rolled HTML/CSS/JS, no build
   step). `.github/workflows/pages.yml` builds the Flutter web demo into

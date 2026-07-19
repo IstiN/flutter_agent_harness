@@ -48,6 +48,7 @@ import '../env/execution_env.dart';
 import '../hashline/hashline.dart';
 import '../prompts/prompts.g.dart';
 import '../types.dart';
+import '../web_search/web_search.dart';
 
 /// Default line limit for tool output truncation (pi's `DEFAULT_MAX_LINES`).
 const defaultToolMaxLines = 2000;
@@ -69,9 +70,14 @@ const _maxTimeoutMs = 2147483647;
 /// hashline edit patches cite, and edits mint fresh tags for follow-ups.
 /// Defaults to a fresh store — one per [builtinTools] call, i.e. one per
 /// agent session.
+///
+/// When [webSearch] is provided, the `web_search` and `web_fetch` tools are
+/// registered with it (provider chain resolved from the config; keyless
+/// DuckDuckGo works with all defaults).
 List<AgentTool> builtinTools(
   ExecutionEnv env, {
   HashlineSnapshotStore? snapshots,
+  WebSearchConfig? webSearch,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return [
@@ -80,6 +86,10 @@ List<AgentTool> builtinTools(
     editFileTool(env, snapshots: store),
     listDirTool(env),
     shellTool(env),
+    if (webSearch != null) ...[
+      webSearchTool(config: webSearch),
+      webFetchTool(config: webSearch),
+    ],
   ];
 }
 

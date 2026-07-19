@@ -41,6 +41,7 @@ import '../tools/inspect_image.dart';
 import '../plugins/plugin.dart';
 import '../types.dart';
 import '../usage_summary.dart';
+import '../web_search/web_search.dart';
 import 'prompt_templates.dart';
 
 /// Terminal IO abstracted for testability.
@@ -79,6 +80,7 @@ final class AgentCliConfig {
     this.providerKind = 'openai-completions',
     this.systemPrompt,
     this.visionConfig,
+    this.webSearchConfig,
     this.plugins = const [],
     this.pluginConfig = const {},
     this.promptTemplateDirs = const [],
@@ -140,6 +142,12 @@ final class AgentCliConfig {
   ///
   /// Prefer using the `inspect_image` plugin via [plugins] / [pluginConfig].
   final InspectImageConfig? visionConfig;
+
+  /// Optional web search configuration. When provided, `web_search` and
+  /// `web_fetch` are registered (see [builtinTools]); keyless DuckDuckGo
+  /// works with all defaults, keyed providers read their API keys from the
+  /// config's [SecretsStore].
+  final WebSearchConfig? webSearchConfig;
 
   /// Plugins to register at startup.
   final List<FahPlugin> plugins;
@@ -223,7 +231,7 @@ class AgentCli {
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
       streamFunction: _streamFunction,
       toolRegistry: ToolRegistry([
-        ...builtinTools(config.env),
+        ...builtinTools(config.env, webSearch: config.webSearchConfig),
         // Non-interactive input (piped) gets a null ask callback: ask calls
         // then fail with a "host cannot answer" error result (safe default).
         askTool(callback: io.isInteractive ? _answerAskQuestions : null),
