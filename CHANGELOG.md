@@ -249,4 +249,8 @@
 
 - refactor(example): WebLLM goes chat-only + universal prompt-tools wrapper
 
+## 0.1.23
+
+- feat(example): markdown/HTML file previews + auto-refresh on agent file mutations
+
 ## Unreleased
