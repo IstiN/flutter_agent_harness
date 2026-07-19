@@ -290,6 +290,9 @@
 - feat(core): approval tiers with per-tool policy, bash interceptor, CLI/app prompt UIs
 - feat(example): model lineup — drop <1.5GB presets, add Gemma 4 E4B ONNX (~5.2GB)
 
-## Unreleased
+## 0.1.32
+
 
 - feat(tools): web_search with provider chain (DDG keyless first, Brave/Tavily behind secrets) + web_fetch markdown extraction with a pub.dev site handler
+
+## Unreleased
