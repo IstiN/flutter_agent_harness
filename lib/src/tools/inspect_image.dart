@@ -15,6 +15,7 @@ import 'package:http/http.dart' as http;
 
 import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
+import '../approval/approval.dart';
 import '../context.dart';
 import '../env/execution_env.dart';
 import '../event_stream.dart';
@@ -148,6 +149,7 @@ AgentTool inspectImageTool(ExecutionEnv env, InspectImageConfig config) {
   return AgentTool(
     name: 'inspect_image',
     label: 'inspect_image',
+    tier: ApprovalTier.read,
     description:
         'Analyze a local image file using a dedicated vision-capable model. '
         'Returns a text description; the image itself does not enter the main '

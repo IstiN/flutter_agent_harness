@@ -6,6 +6,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show ApprovalDecision, ApprovalRequest;
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -14,6 +16,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'agent_service.dart';
 import 'app_theme.dart';
+import 'approval_ui.dart';
 import 'file_browser.dart';
 import 'file_preview.dart';
 import 'markdown_style.dart';
@@ -141,7 +144,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _isStreaming = widget.service.isStreaming;
     _error = widget.service.error;
     widget.service.addListener(_onServiceChanged);
+    // This screen renders approval prompts as Material dialogs; clearing the
+    // handler on dispose restores the deny-by-default for headless runs.
+    widget.service.approvalPromptHandler = _handleApprovalPrompt;
     _syncMessages();
+  }
+
+  Future<ApprovalDecision> _handleApprovalPrompt(ApprovalRequest request) {
+    if (!mounted) return Future.value(ApprovalDecision.deny);
+    return showApprovalPrompt(context, request);
   }
 
   @override
@@ -149,6 +160,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _syncDebounce?.cancel();
     _textController.dispose();
     widget.service.removeListener(_onServiceChanged);
+    if (widget.service.approvalPromptHandler == _handleApprovalPrompt) {
+      widget.service.approvalPromptHandler = null;
+    }
     _chatController.dispose();
     super.dispose();
   }

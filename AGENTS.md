@@ -5,6 +5,13 @@ Conventions for AI agents and contributors working in this repository.
 ## Project layout
 
 - `lib/` — the `flutter_agent_harness` package (pure Dart core).
+- `lib/src/approval/` — the tool approval gate: capability tiers
+  (read/write/exec, exec for undeclared tools) on `AgentTool`, session modes
+  (always-ask/write/yolo), per-tool allow/deny/prompt overrides, and the
+  critical-pattern `bash` interceptor. Wired into the agent's
+  `beforeToolCall` phase via `attachApproval` (composes with user hooks,
+  approval runs first); the prompt UI is an injectable `ApprovalPrompt`
+  callback (null callback + prompt policy = deny).
 - `bin/fah.dart` — the `fah`/`fa` CLI executable.
 - `example/flutter_example/` — Flutter chat example (mobile/web sandbox).
 - `site/` — static GitHub Pages landing (hand-rolled HTML/CSS/JS, no build

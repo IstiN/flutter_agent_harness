@@ -1,4 +1,5 @@
-/// CLI user preferences: last model, provider, base URL, and mode.
+/// CLI user preferences: last model, provider, base URL, mode, and approval
+/// policy.
 ///
 /// Stored in `~/.fah/config.yaml` so the terminal REPL remembers choices
 /// between runs.
@@ -15,6 +16,8 @@ final class CliConfig {
     this.modelId = 'openai/gpt-4o-mini',
     this.baseUrl = 'https://openrouter.ai/api/v1',
     this.mode = 'code',
+    this.approvalMode = 'yolo',
+    this.allowedTools = const [],
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -23,6 +26,11 @@ final class CliConfig {
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
       baseUrl: map['baseUrl'] as String? ?? 'https://openrouter.ai/api/v1',
       mode: map['mode'] as String? ?? 'code',
+      approvalMode: map['approvalMode'] as String? ?? 'yolo',
+      allowedTools: switch (map['allowedTools']) {
+        final YamlList list => [for (final entry in list) '$entry'],
+        _ => const [],
+      },
     );
   }
 
@@ -31,11 +39,30 @@ final class CliConfig {
   final String baseUrl;
   final String mode;
 
+  /// Approval mode label (`always-ask`, `write`, `yolo`); parsed with
+  /// `approvalModeFromLabel` from `lib/src/approval/`.
+  final String approvalMode;
+
+  /// Tools the user always-allowed (via `/allow` or an "approve always"
+  /// prompt answer), persisted across runs.
+  final List<String> allowedTools;
+
   String toYaml() {
-    return 'provider: $providerKind\n'
-        'model: $modelId\n'
-        'baseUrl: $baseUrl\n'
-        'mode: $mode\n';
+    final buffer = StringBuffer()
+      ..write('provider: $providerKind\n')
+      ..write('model: $modelId\n')
+      ..write('baseUrl: $baseUrl\n')
+      ..write('mode: $mode\n')
+      ..write('approvalMode: $approvalMode\n');
+    if (allowedTools.isEmpty) {
+      buffer.write('allowedTools: []\n');
+    } else {
+      buffer.write('allowedTools:\n');
+      for (final tool in allowedTools) {
+        buffer.write('  - $tool\n');
+      }
+    }
+    return buffer.toString();
   }
 }
 

@@ -21,6 +21,8 @@ import '../agent/agent.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/tool_registry.dart';
+import '../approval/approval.dart';
+import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
@@ -57,6 +59,12 @@ abstract interface class CliIO {
 
   /// Writes [text] followed by a newline.
   void writeln(String text);
+
+  /// Whether a human is present to answer approval prompts (a real terminal,
+  /// not piped input). When false, the CLI installs no approval prompt
+  /// callback, so prompt-policy tool calls are denied with a reason — the
+  /// safe non-interactive default.
+  bool get isInteractive;
 }
 
 /// Static configuration for an [AgentCli] session.
@@ -74,8 +82,11 @@ final class AgentCliConfig {
     this.pluginConfig = const {},
     this.promptTemplateDirs = const [],
     this.initialMode = 'code',
+    this.approvalMode = ApprovalMode.yolo,
+    this.alwaysAllowTools = const {},
     this.onModelChanged,
     this.onModeChanged,
+    this.onApprovalChanged,
   });
 
   /// Directories to scan for `/name` prompt templates (`.md` files).
@@ -84,12 +95,25 @@ final class AgentCliConfig {
   /// Initial mode name (`code`, `architect`, `review`).
   final String initialMode;
 
+  /// Initial approval mode (`/approval` switches it at runtime). Defaults to
+  /// [ApprovalMode.yolo] — pre-approval-model CLI behavior — while critical
+  /// `bash` patterns still prompt (or are denied when non-interactive).
+  final ApprovalMode approvalMode;
+
+  /// Tools always-allowed from previous sessions (`/allow`, "approve always"
+  /// answers), persisted by the embedding executable.
+  final Set<String> alwaysAllowTools;
+
   /// Called when the user switches the active model via `/model`.
   final void Function(Model model)? onModelChanged;
 
   /// Called when the user switches the active mode via `/mode`, `/code`,
   /// `/architect`, or `/review`.
   final void Function(String mode)? onModeChanged;
+
+  /// Called when the approval state changes (`/approval`, `/allow`, or an
+  /// "approve always" prompt answer) so the executable can persist it.
+  final void Function()? onApprovalChanged;
 
   /// The model to run. `/model <id>` swaps the id at runtime.
   final Model model;
@@ -204,6 +228,14 @@ class AgentCli {
         ...pluginTools,
       ]),
     );
+    _approval = ApprovalManager(
+      mode: config.approvalMode,
+      alwaysAllow: config.alwaysAllowTools,
+      // Non-interactive input (piped) gets no prompt callback: prompt-policy
+      // calls are then denied with a "no approval UI" reason (safe default).
+      prompt: io.isInteractive ? _promptForApproval : null,
+    );
+    attachApproval(_agent, _approval);
     _agent.subscribe(_onAgentEvent);
   }
 
@@ -216,6 +248,10 @@ class AgentCli {
   /// The underlying [Agent] driving the session.
   Agent get agent => _agent;
 
+  /// The approval gate attached to the agent: mode, per-tool overrides, and
+  /// the session always-allow set (`/approval`, `/allow`).
+  ApprovalManager get approval => _approval;
+
   /// The static configuration.
   final AgentCliConfig config;
 
@@ -227,6 +263,7 @@ class AgentCli {
 
   final StreamFunction _streamFunction;
   late final Agent _agent;
+  late final ApprovalManager _approval;
   final _usage = UsageAccumulator();
   late final _repo = JsonlSessionRepo(
     fs: config.env,
@@ -237,6 +274,11 @@ class AgentCli {
   var _streamedText = false;
   var _exited = false;
   Future<void> _settled = Future<void>.value();
+
+  /// The pending approval-prompt answer, if a tool call is waiting on the
+  /// user. While set, [_handleLine] routes typed lines here instead of
+  /// steering them into the agent.
+  Completer<String>? _pendingApprovalAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
   final Map<String, AgentMode> _modes;
   late AgentMode _currentMode;
@@ -271,6 +313,10 @@ class AgentCli {
         if (!isBusy) io.write(prompt);
       }
     } finally {
+      // Input ended (EOF) or the REPL is shutting down: never leave a tool
+      // call waiting on an answer that cannot arrive.
+      _pendingApprovalAnswer?.complete('n');
+      _pendingApprovalAnswer = null;
       await interruptSub.cancel();
       await _settled;
     }
@@ -298,6 +344,13 @@ class AgentCli {
   Future<void> _handleLine(String line) async {
     final trimmed = line.trim();
     if (trimmed.isEmpty) return;
+    // A tool call waiting on an approval decision owns the next input line;
+    // it must not be steered into the agent as a user message.
+    final pendingApproval = _pendingApprovalAnswer;
+    if (pendingApproval != null && !pendingApproval.isCompleted) {
+      pendingApproval.complete(trimmed);
+      return;
+    }
     if (isBusy) {
       // While a run streams, typed input steers the agent (pi semantics).
       _agent.steer(UserMessage.text(line));
@@ -401,6 +454,10 @@ class AgentCli {
         await _compact('[compacted]');
       case '/mode':
         await _handleMode(rest);
+      case '/approval':
+        _handleApprovalMode(rest);
+      case '/allow':
+        _handleAllow(rest);
       case '/code' || '/architect' || '/review':
         await _switchMode(command.substring(1));
       default:
@@ -425,6 +482,82 @@ class AgentCli {
       return;
     }
     await _switchMode(rest);
+  }
+
+  /// Renders the terminal approval prompt (y/n/a) and waits for the answer,
+  /// which [_handleLine] routes into [_pendingApprovalAnswer]. A Ctrl-C
+  /// interrupt while waiting answers "no" so the run can unwind.
+  Future<ApprovalDecision> _promptForApproval(ApprovalRequest request) async {
+    // Tool calls prepare sequentially (even in parallel batches), so at most
+    // one prompt is pending; complete a stray one defensively.
+    _pendingApprovalAnswer?.complete('n');
+    final pending = Completer<String>();
+    _pendingApprovalAnswer = pending;
+    io.writeln('[approval] ${request.reason}');
+    io.writeln(
+      '[approval] tool: ${request.toolName} (${request.tier.name} tier) — '
+      '${_formatArgs(request.arguments)}',
+    );
+    io.writeln(
+      '[approval] allow? [y]es once / [n]o / [a]lways for '
+      '"${request.toolName}"',
+    );
+    final interruptSub = io.interrupts.listen((_) {
+      if (!pending.isCompleted) pending.complete('n');
+    });
+    final answer = await pending.future;
+    await interruptSub.cancel();
+    if (identical(_pendingApprovalAnswer, pending)) {
+      _pendingApprovalAnswer = null;
+    }
+    final decision = switch (answer.toLowerCase()) {
+      'y' || 'yes' => ApprovalDecision.approveOnce,
+      'a' || 'always' => ApprovalDecision.approveAlways,
+      _ => ApprovalDecision.deny,
+    };
+    if (decision == ApprovalDecision.approveAlways) {
+      config.onApprovalChanged?.call();
+    }
+    return decision;
+  }
+
+  void _handleApprovalMode(String rest) {
+    if (rest.isEmpty) {
+      io.writeln('approval mode: ${_approval.mode.label}');
+      io.writeln('approval modes: always-ask, write, yolo');
+      final allowed = _approval.alwaysAllowedTools;
+      io.writeln(
+        'always-allowed tools: ${allowed.isEmpty ? '(none)' : allowed.join(', ')}',
+      );
+      return;
+    }
+    final mode = approvalModeFromLabel(rest);
+    if (mode == null) {
+      io.writeln('unknown approval mode: $rest (want always-ask|write|yolo)');
+      return;
+    }
+    _approval.mode = mode;
+    io.writeln('approval mode set to ${mode.label}');
+    config.onApprovalChanged?.call();
+  }
+
+  void _handleAllow(String rest) {
+    if (rest.isEmpty) {
+      final allowed = _approval.alwaysAllowedTools;
+      io.writeln(
+        'always-allowed tools: ${allowed.isEmpty ? '(none)' : allowed.join(', ')}',
+      );
+      return;
+    }
+    final name = rest.split(RegExp(r'\s+')).first;
+    final known = _agent.state.tools.any((tool) => tool.name == name);
+    if (!known) {
+      io.writeln('unknown tool: $name');
+      return;
+    }
+    _approval.allowAlways(name);
+    io.writeln('"$name" always allowed (persisted)');
+    config.onApprovalChanged?.call();
   }
 
   Future<void> _switchMode(String name) async {
@@ -475,6 +608,10 @@ class AgentCli {
     io.writeln('  /stats             show token and cost totals');
     io.writeln('  /model <id>        show or switch the model');
     io.writeln('  /mode [name]       show or switch the active mode');
+    io.writeln(
+      '  /approval [mode]   show or set tool approval (always-ask|write|yolo)',
+    );
+    io.writeln('  /allow [tool]      always-allow a tool (or list them)');
     io.writeln('  /code              switch to coding mode');
     io.writeln('  /architect         switch to architect mode');
     io.writeln('  /review            switch to review mode');

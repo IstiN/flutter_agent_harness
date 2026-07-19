@@ -161,7 +161,7 @@ AgentService _toolService(
   ExecutionEnv env,
   List<List<AssistantMessageEvent>> turns,
 ) {
-  return AgentService(
+  final service = AgentService(
     agent: Agent(
       model: _testModel,
       systemPrompt: 'You are fah.',
@@ -178,6 +178,9 @@ AgentService _toolService(
     env: env,
     sessionsRoot: '/sessions',
   );
+  // These tests exercise fs-refresh, not approval: run tools unattended.
+  service.approval.mode = ApprovalMode.yolo;
+  return service;
 }
 
 /// Fake [UploadPicker] returning canned files without a platform dialog.

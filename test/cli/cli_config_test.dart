@@ -45,5 +45,29 @@ void main() {
       final loaded = loadCliConfig(tmp.path);
       expect(loaded.modelId, 'openai/gpt-4o-mini');
     });
+
+    test('approval settings default when absent from the file', () {
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.approvalMode, 'yolo');
+      expect(loaded.allowedTools, isEmpty);
+    });
+
+    test('round-trips approval settings', () async {
+      final original = CliConfig(
+        approvalMode: 'write',
+        allowedTools: const ['bash', 'write'],
+      );
+      await saveCliConfig(tmp.path, original);
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.approvalMode, 'write');
+      expect(loaded.allowedTools, ['bash', 'write']);
+    });
+
+    test('round-trips an empty always-allow set', () async {
+      await saveCliConfig(tmp.path, CliConfig(approvalMode: 'always-ask'));
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.approvalMode, 'always-ask');
+      expect(loaded.allowedTools, isEmpty);
+    });
   });
 }

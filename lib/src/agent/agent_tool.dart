@@ -18,6 +18,7 @@ library;
 
 import 'dart:async';
 
+import '../approval/approval.dart';
 import '../cancel_token.dart';
 import '../context.dart';
 import 'agent_loop.dart';
@@ -53,10 +54,18 @@ final class AgentTool extends Tool {
     required this.execute,
     this.executionMode,
     this.label,
+    this.tier = ApprovalTier.exec,
   });
 
   /// Executes one tool call with validated arguments. See [AgentToolExecute].
   final AgentToolExecute execute;
+
+  /// Capability tier consulted by the approval gate (see
+  /// `lib/src/approval/`): read-only tools declare [ApprovalTier.read],
+  /// workspace-mutating tools [ApprovalTier.write], and code-executing tools
+  /// [ApprovalTier.exec]. The default — [ApprovalTier.exec] — is the safe
+  /// choice for unknown custom tools (omp semantics).
+  final ApprovalTier tier;
 
   /// Per-tool execution mode override (ported from pi):
   /// [ToolExecutionMode.sequential] forces the whole tool-call batch that
