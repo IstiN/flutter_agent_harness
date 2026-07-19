@@ -40,7 +40,7 @@ class ChatScreen extends StatefulWidget {
 
   final AgentService service;
 
-  /// File chooser behind the attach sheet's "Upload to files" entry.
+  /// File chooser behind the attach sheet's "Attach file" entry.
   /// Defaults to the platform picker (`null` off the web → the entry is
   /// hidden); tests inject a fake.
   final UploadPicker? uploadPicker;
@@ -62,8 +62,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final _tool = const User(id: 'tool', name: 'tool');
   final _system = const User(id: 'system', name: 'system');
 
-  Uint8List? _pendingImage;
-  String? _pendingImageMime;
+  /// Files attached in the composer but not sent yet. On send they are
+  /// staged into the sandbox `uploads/` folder (see
+  /// [AgentService.stageAttachment]) and the message references their paths.
+  final List<({String name, Uint8List bytes, String mimeType})>
+  _pendingAttachments = [];
 
   List<Message> _lastSynced = [];
   Timer? _syncDebounce;
@@ -77,7 +80,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
 
-  /// Arbitrary-file picker for the attach sheet's "Upload to files" entry;
+  /// Arbitrary-file picker for the attach sheet's "Attach file" entry;
   /// `null` off the web, which hides the entry.
   late final UploadPicker? _uploadPicker =
       widget.uploadPicker ?? createUploadPicker();
@@ -283,27 +286,28 @@ class _ChatScreenState extends State<ChatScreen> {
     final picked = await picker.pickImage(source: source);
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
-    final mime = _mimeFromName(picked.name);
     setState(() {
-      _pendingImage = bytes;
-      _pendingImageMime = mime;
+      _pendingAttachments.add((
+        name: picked.name,
+        bytes: bytes,
+        mimeType: _mimeFromName(picked.name),
+      ));
     });
   }
 
+  /// Guesses a MIME type from the file extension; anything unrecognized is
+  /// `application/octet-stream` (never inlined as an image).
   String _mimeFromName(String name) {
     final lower = name.toLowerCase();
     if (lower.endsWith('.png')) return 'image/png';
     if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
     if (lower.endsWith('.gif')) return 'image/gif';
     if (lower.endsWith('.webp')) return 'image/webp';
-    return 'image/jpeg';
+    return 'application/octet-stream';
   }
 
-  void _clearPendingImage() {
-    setState(() {
-      _pendingImage = null;
-      _pendingImageMime = null;
-    });
+  void _removePendingAttachment(int index) {
+    setState(() => _pendingAttachments.removeAt(index));
   }
 
   /// Copies the whole session transcript to the clipboard as plain text.
@@ -345,26 +349,48 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _send(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty && _pendingImage == null) return;
-    final image = _pendingImage;
-    final mime = _pendingImageMime;
-    _clearPendingImage();
+    if (trimmed.isEmpty && _pendingAttachments.isEmpty) return;
+    final pending = List.of(_pendingAttachments);
+    setState(() => _pendingAttachments.clear());
     _textController.clear();
 
-    if (image != null) {
-      await widget.service.sendImage(
-        bytes: image,
-        mimeType: mime ?? 'image/jpeg',
-        text: trimmed,
-      );
-    } else {
+    if (pending.isEmpty) {
       await widget.service.sendText(trimmed);
+      return;
     }
+
+    // Stage every attachment into <cwd>/uploads/ first; the outgoing
+    // message references the sandbox paths so the agent reads the files
+    // with its tools (see AgentService.sendAttachments).
+    final staged = <StagedAttachment>[];
+    try {
+      for (final attachment in pending) {
+        staged.add((
+          path: await widget.service.stageAttachment(
+            name: attachment.name,
+            bytes: attachment.bytes,
+          ),
+          bytes: attachment.bytes,
+          mimeType: attachment.mimeType,
+        ));
+      }
+    } on Object catch (e) {
+      // Staging failed: hand the attachments and the typed text back so
+      // nothing the user composed is lost, and say why.
+      if (mounted) {
+        setState(() => _pendingAttachments.addAll(pending));
+        _textController.text = trimmed;
+        _showSnack('Upload failed: $e');
+      }
+      return;
+    }
+    await widget.service.sendAttachments(attachments: staged, text: trimmed);
   }
 
-  /// Picks arbitrary files and writes them into the sandbox root, so the
-  /// agent can work with them (web only; elsewhere the picker is `null`).
-  Future<void> _uploadToSandbox() async {
+  /// Picks arbitrary files and holds them as pending attachments (web only;
+  /// elsewhere the picker is `null`). They land in the sandbox `uploads/`
+  /// folder when the message is sent (see [_send]).
+  Future<void> _attachFiles() async {
     final picker = _uploadPicker;
     if (picker == null) return;
     final List<UploadFile> picked;
@@ -382,26 +408,17 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    var written = 0;
-    var failed = 0;
-    for (final file in picked) {
-      final name = sanitizeUploadName(file.name);
-      if (name.isEmpty) {
-        failed++;
-        continue;
+    setState(() {
+      for (final file in picked) {
+        final name = sanitizeUploadName(file.name);
+        if (name.isEmpty) continue;
+        _pendingAttachments.add((
+          name: name,
+          bytes: file.bytes,
+          mimeType: _mimeFromName(name),
+        ));
       }
-      final result = await widget.service.env.writeBinaryFile(name, file.bytes);
-      if (result.isOk) {
-        written++;
-      } else {
-        failed++;
-      }
-    }
-    if (!mounted) return;
-    _showSnack(
-      'Uploaded $written file${written == 1 ? '' : 's'} to the sandbox'
-      '${failed > 0 ? ', $failed failed' : ''}',
-    );
+    });
   }
 
   void _showSnack(String message) {
@@ -438,10 +455,10 @@ class _ChatScreenState extends State<ChatScreen> {
             if (_uploadPicker != null)
               ListTile(
                 leading: const Icon(Icons.upload_file),
-                title: const Text('Upload to files'),
+                title: const Text('Attach file'),
                 onTap: () {
                   Navigator.of(context).pop();
-                  _uploadToSandbox();
+                  _attachFiles();
                 },
               ),
           ],
@@ -552,6 +569,52 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// One pending attachment in the composer: a thumbnail for images, an
+  /// icon + name chip otherwise, each with a remove affordance.
+  Widget _buildPendingAttachmentChip(int index) {
+    final attachment = _pendingAttachments[index];
+    final isImage = attachment.mimeType.startsWith('image/');
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: FahPalette.panel,
+        border: Border.all(color: FahPalette.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isImage)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.memory(
+                attachment.bytes,
+                height: 48,
+                width: 48,
+                fit: BoxFit.cover,
+              ),
+            )
+          else ...[
+            const Icon(Icons.insert_drive_file_outlined, size: 18),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 160),
+              child: Text(
+                attachment.name.split('/').last,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: 'Remove attachment',
+            onPressed: () => _removePendingAttachment(index),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildComposer(BuildContext context) {
     final theme = Theme.of(context);
 
@@ -565,26 +628,19 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_pendingImage != null)
+            if (_pendingAttachments.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                child: Row(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.memory(
-                        _pendingImage!,
-                        height: 64,
-                        width: 64,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: _clearPendingImage,
-                    ),
-                  ],
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (var i = 0; i < _pendingAttachments.length; i++)
+                        _buildPendingAttachmentChip(i),
+                    ],
+                  ),
                 ),
               ),
             if (_isStreaming)

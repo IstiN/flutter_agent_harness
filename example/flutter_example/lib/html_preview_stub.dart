@@ -1,12 +1,18 @@
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'html_preview_document.dart';
+
 /// Mobile/desktop HTML preview: a [WebViewWidget] fed the file's markup.
 ///
 /// Selected unless `dart.library.html` is available (see the conditional
-/// import in `file_preview.dart`). The webview plugin needs a registered
-/// platform implementation, which host widget tests do not have — tests
-/// inject a fake `HtmlPreviewBuilder` instead of constructing this widget.
+/// import in `file_preview.dart`). The markup is pre-processed by
+/// [lightCanvasDocument] so unstyled pages stay readable against the app's
+/// dark theme.
+///
+/// The webview plugin needs a registered platform implementation, which
+/// host widget tests do not have — tests inject a fake
+/// `HtmlPreviewBuilder` instead of constructing this widget.
 class HtmlFilePreview extends StatefulWidget {
   const HtmlFilePreview({super.key, required this.html});
 
@@ -36,13 +42,13 @@ class _HtmlFilePreviewState extends State<HtmlFilePreview> {
         },
       ),
     )
-    ..loadHtmlString(widget.html);
+    ..loadHtmlString(lightCanvasDocument(widget.html));
 
   @override
   void didUpdateWidget(HtmlFilePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.html != widget.html) {
-      _controller.loadHtmlString(widget.html);
+      _controller.loadHtmlString(lightCanvasDocument(widget.html));
     }
   }
 

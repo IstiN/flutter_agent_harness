@@ -14,23 +14,56 @@ final class WebUploadPicker implements UploadPicker {
   @override
   Future<List<UploadFile>> pick() async {
     final input = html.FileUploadInputElement()..multiple = true;
+    // Listen before clicking so no event can slip through. Cancelling the
+    // dialog fires `cancel` (not `change`) on the input — without the race
+    // below a cancelled pick would hang the caller forever. dart:html has
+    // no typed `onCancel` for file inputs, so subscribe to the raw event.
+    final selection = Completer<bool>();
+    final subscriptions = <StreamSubscription<Object?>>[
+      input.onChange.listen((_) => selection.complete(true)),
+      const html.EventStreamProvider<html.Event>(
+        'cancel',
+      ).forTarget(input).listen((_) => selection.complete(false)),
+    ];
     input.click();
-    await input.onChange.first;
+    final hasSelection = await selection.future;
+    for (final subscription in subscriptions) {
+      await subscription.cancel();
+    }
+    if (!hasSelection) return const [];
+
     final picked = <UploadFile>[];
     for (final file in input.files ?? const <html.File>[]) {
       picked.add((
         name: file.relativePath ?? file.name,
-        bytes: await _readAll(file),
+        bytes: await readFileFully(file),
       ));
     }
     return picked;
   }
 
-  Future<Uint8List> _readAll(html.File file) {
+  /// Reads [file] fully into memory; rejects when the read fails so the
+  /// caller surfaces the error instead of hanging silently.
+  static Future<Uint8List> readFileFully(html.File file) {
     final completer = Completer<Uint8List>();
     final reader = html.FileReader();
     reader.onLoad.first.then((_) {
-      completer.complete((reader.result as ByteBuffer).asUint8List());
+      try {
+        // Since the SDK unified FileReader.result across the web compilers,
+        // readAsArrayBuffer hands back a Uint8List view; older SDKs returned
+        // the raw ByteBuffer. Accept both — and never leave the completer
+        // hanging on a surprise, which is what killed uploads silently.
+        completer.complete(switch (reader.result) {
+          final Uint8List bytes => bytes,
+          final ByteBuffer buffer => buffer.asUint8List(),
+          final other => throw StateError(
+            'Could not read ${file.name}: unexpected result type '
+            '${other.runtimeType}',
+          ),
+        });
+      } on Object catch (e) {
+        completer.completeError(e);
+      }
     });
     reader.onError.first.then((_) {
       completer.completeError(StateError('Could not read ${file.name}'));
