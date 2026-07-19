@@ -83,7 +83,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _textController = TextEditingController();
 
   final _user = const User(id: 'user', name: 'Me');
-  final _assistant = const User(id: 'assistant', name: 'fah');
+  final _assistant = const User(id: 'assistant', name: 'Fa');
   final _tool = const User(id: 'tool', name: 'tool');
   final _system = const User(id: 'system', name: 'system');
 
@@ -359,7 +359,7 @@ class _ChatScreenState extends State<ChatScreen> {
     for (final m in widget.service.messages) {
       final header = switch (m.role) {
         'user' => '## You',
-        'assistant' => '## fah',
+        'assistant' => '## Fa',
         'tool' => '## tool (${m.toolName ?? 'call'})',
         _ => '## ${m.role}',
       };
@@ -814,7 +814,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: () => _openSidebar(context),
           ),
         ),
-        title: const Text('fah'),
+        title: const Text('Fa'),
         actions: [
           if (_isStreaming)
             IconButton(

@@ -982,7 +982,7 @@ void main() {
       expect(prompt, contains('host machine'));
       // The rest of the sandbox prompt survives intact.
       expect(prompt, contains('File tools'));
-      expect(prompt, contains('You are fah'));
+      expect(prompt, contains('You are Fa'));
     });
 
     test('secret names suffix still appends after the command section', () {
