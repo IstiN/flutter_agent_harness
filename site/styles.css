@@ -89,16 +89,18 @@ a:hover { text-decoration: underline; }
   position: sticky;
   top: 0;
   z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 28px;
-  max-width: var(--max);
-  margin: 0 auto;
-  padding: 14px 24px;
   background: rgba(7, 10, 16, 0.72);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid rgba(28, 38, 55, 0.7);
+}
+.nav-inner {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
 }
 .brand { display: flex; align-items: baseline; gap: 9px; color: var(--text); }
 .brand:hover { text-decoration: none; }
@@ -421,7 +423,7 @@ section {
   .grid, .grid-3 { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 640px) {
-  .nav { flex-wrap: wrap; gap: 10px 18px; padding: 12px 18px; }
+  .nav-inner { flex-wrap: wrap; gap: 10px 18px; padding: 12px 18px; }
   .brand-sub { display: none; }
   .nav-links { margin-left: 0; order: 3; width: 100%; }
   .nav-ext { margin-left: auto; }
