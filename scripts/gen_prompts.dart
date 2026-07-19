@@ -106,6 +106,10 @@ const rootSpecs = <PromptSpec>[
     constName: 'editToolDescriptionPrompt',
   ),
   PromptSpec(
+    source: 'prompts/tools/ask.md',
+    constName: 'askToolDescriptionPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/tools/tool_calling.md',
     constName: 'toolCallingInstructionsPrompt',
     requiredToken: '{{tools}}',

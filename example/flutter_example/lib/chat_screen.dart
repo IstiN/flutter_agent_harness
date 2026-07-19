@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show ApprovalDecision, ApprovalRequest;
+    show ApprovalDecision, ApprovalRequest, AskAnswer, AskQuestion;
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import 'agent_service.dart';
 import 'app_theme.dart';
 import 'approval_ui.dart';
+import 'ask_ui.dart';
 import 'file_browser.dart';
 import 'file_preview.dart';
 import 'markdown_style.dart';
@@ -147,12 +148,20 @@ class _ChatScreenState extends State<ChatScreen> {
     // This screen renders approval prompts as Material dialogs; clearing the
     // handler on dispose restores the deny-by-default for headless runs.
     widget.service.approvalPromptHandler = _handleApprovalPrompt;
+    // Same pattern for the ask tool: this screen renders the questions as a
+    // modal bottom sheet; without a handler, ask calls resolve as cancelled.
+    widget.service.askHandler = _handleAskQuestions;
     _syncMessages();
   }
 
   Future<ApprovalDecision> _handleApprovalPrompt(ApprovalRequest request) {
     if (!mounted) return Future.value(ApprovalDecision.deny);
     return showApprovalPrompt(context, request);
+  }
+
+  Future<List<AskAnswer>?> _handleAskQuestions(List<AskQuestion> questions) {
+    if (!mounted) return Future.value(null);
+    return showAskSheet(context, questions);
   }
 
   @override
@@ -162,6 +171,9 @@ class _ChatScreenState extends State<ChatScreen> {
     widget.service.removeListener(_onServiceChanged);
     if (widget.service.approvalPromptHandler == _handleApprovalPrompt) {
       widget.service.approvalPromptHandler = null;
+    }
+    if (widget.service.askHandler == _handleAskQuestions) {
+      widget.service.askHandler = null;
     }
     _chatController.dispose();
     super.dispose();

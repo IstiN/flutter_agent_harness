@@ -168,7 +168,10 @@ class AgentService extends ChangeNotifier {
       model: config.toModel(),
       systemPrompt: _effectiveSystemPrompt(config, redactor),
       streamFunction: _streamFunctionFor(config),
-      toolRegistry: ToolRegistry(builtinTools(env)),
+      toolRegistry: ToolRegistry([
+        ...builtinTools(env),
+        askTool(callback: _answerAskQuestions),
+      ]),
     );
     _attachRedactor(redactor);
     _attachApproval();
@@ -263,6 +266,24 @@ class AgentService extends ChangeNotifier {
   /// UI hook rendering the approval prompt (the chat screen installs a
   /// Material dialog). `null` → prompt-policy calls are denied.
   ApprovalPrompt? approvalPromptHandler;
+
+  /// UI hook rendering the ask tool's questions (the chat screen installs a
+  /// Material bottom sheet). `null` → ask calls resolve as cancelled, the
+  /// safe headless default.
+  AskCallback? askHandler;
+
+  /// Routes the ask tool's questions to the installed [askHandler].
+  Future<List<AskAnswer>?> _answerAskQuestions(
+    List<AskQuestion> questions,
+  ) async {
+    final handler = askHandler;
+    if (handler == null) return null;
+    return handler(questions);
+  }
+
+  /// Exposes the agent's registered tools to tests (ask-tool wiring checks).
+  @visibleForTesting
+  List<Tool> get toolsForTest => _agent.state.tools;
 
   /// Switches the approval mode (settings dialog's mode selector).
   void setApprovalMode(ApprovalMode mode) {

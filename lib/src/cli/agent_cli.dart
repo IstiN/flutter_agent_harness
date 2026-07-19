@@ -35,6 +35,7 @@ import '../providers/google.dart';
 import '../providers/openai_completions.dart';
 import '../session/session_repo.dart';
 import '../session/session_tree.dart';
+import '../tools/ask_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/inspect_image.dart';
 import '../plugins/plugin.dart';
@@ -223,6 +224,9 @@ class AgentCli {
       streamFunction: _streamFunction,
       toolRegistry: ToolRegistry([
         ...builtinTools(config.env),
+        // Non-interactive input (piped) gets a null ask callback: ask calls
+        // then fail with a "host cannot answer" error result (safe default).
+        askTool(callback: io.isInteractive ? _answerAskQuestions : null),
         if (config.visionConfig != null)
           inspectImageTool(config.env, config.visionConfig!),
         ...pluginTools,
@@ -279,6 +283,12 @@ class AgentCli {
   /// user. While set, [_handleLine] routes typed lines here instead of
   /// steering them into the agent.
   Completer<String>? _pendingApprovalAnswer;
+
+  /// The pending ask-menu input line, if an `ask` tool call is waiting on
+  /// the user. Unlike the approval prompt, EMPTY lines are routed here too:
+  /// empty input is the menu's free-text affordance. Completes with `null`
+  /// on cancel (Ctrl-C, input shutdown).
+  Completer<String?>? _pendingAskAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
   final Map<String, AgentMode> _modes;
   late AgentMode _currentMode;
@@ -317,6 +327,8 @@ class AgentCli {
       // call waiting on an answer that cannot arrive.
       _pendingApprovalAnswer?.complete('n');
       _pendingApprovalAnswer = null;
+      _pendingAskAnswer?.complete(null);
+      _pendingAskAnswer = null;
       await interruptSub.cancel();
       await _settled;
     }
@@ -343,6 +355,13 @@ class AgentCli {
 
   Future<void> _handleLine(String line) async {
     final trimmed = line.trim();
+    // An ask question waiting for input owns the next line — including
+    // empty ones (empty input switches the menu to free-text entry).
+    final pendingAsk = _pendingAskAnswer;
+    if (pendingAsk != null && !pendingAsk.isCompleted) {
+      pendingAsk.complete(trimmed);
+      return;
+    }
     if (trimmed.isEmpty) return;
     // A tool call waiting on an approval decision owns the next input line;
     // it must not be steered into the agent as a user message.
@@ -519,6 +538,137 @@ class AgentCli {
       config.onApprovalChanged?.call();
     }
     return decision;
+  }
+
+  /// Reads one input line for the ask menu. Resolves to `null` on cancel
+  /// (Ctrl-C interrupt or input shutdown), which the menu maps to "ask
+  /// cancelled by user".
+  Future<String?> _nextAskLine() async {
+    // Ask forces its tool batch to sequential execution, so at most one
+    // prompt is pending; complete a stray one defensively as cancelled.
+    final stray = _pendingAskAnswer;
+    if (stray != null && !stray.isCompleted) stray.complete(null);
+    final pending = Completer<String?>();
+    _pendingAskAnswer = pending;
+    final interruptSub = io.interrupts.listen((_) {
+      if (!pending.isCompleted) pending.complete(null);
+    });
+    final line = await pending.future;
+    await interruptSub.cancel();
+    if (identical(_pendingAskAnswer, pending)) {
+      _pendingAskAnswer = null;
+    }
+    return line;
+  }
+
+  /// The stdin ask surface: walks [questions] one at a time and returns one
+  /// answer per question, or `null` when the user cancels.
+  Future<List<AskAnswer>?> _answerAskQuestions(
+    List<AskQuestion> questions,
+  ) async {
+    final answers = <AskAnswer>[];
+    for (var i = 0; i < questions.length; i++) {
+      final answer = await _askOneQuestion(questions[i], i, questions.length);
+      if (answer == null) return null;
+      answers.add(answer);
+    }
+    return answers;
+  }
+
+  /// Renders one question as a numbered menu (+ "(Recommended)" marker) and
+  /// reads the answer: a number selects an option, `m` opens the
+  /// multi-select toggle (multiSelect questions only), empty input switches
+  /// to free-text entry, any other non-number text is taken as the free-text
+  /// answer directly, and `!` cancels the whole ask.
+  Future<AskAnswer?> _askOneQuestion(
+    AskQuestion question,
+    int index,
+    int total,
+  ) async {
+    final progress = total > 1 ? ' (${index + 1}/$total)' : '';
+    io.writeln('[ask] ${question.question}$progress');
+    for (var i = 0; i < question.options.length; i++) {
+      final option = question.options[i];
+      final description = option.description?.trim();
+      final suffix = question.recommended == i ? ' (Recommended)' : '';
+      io.writeln(
+        '[ask]   ${i + 1}) ${option.label}'
+        '${description == null || description.isEmpty ? '' : ' — $description'}'
+        '$suffix',
+      );
+    }
+    if (question.options.isEmpty) {
+      io.writeln('[ask] type your answer (empty = cancel):');
+      final text = await _nextAskLine();
+      if (text == null || text.isEmpty) return null;
+      return AskAnswer.text(text);
+    }
+    final multiHint = question.multiSelect ? ', m = multi-select' : '';
+    io.writeln(
+      '[ask] 1-${question.options.length} = select$multiHint, '
+      'empty = your own answer, ! = cancel',
+    );
+    while (true) {
+      final line = await _nextAskLine();
+      if (line == null || line == '!') return null;
+      if (line.isEmpty) return _readFreeTextAnswer();
+      if (question.multiSelect && line.toLowerCase() == 'm') {
+        return _askMultiSelect(question);
+      }
+      final number = int.tryParse(line);
+      if (number == null) return AskAnswer.text(line);
+      if (number >= 1 && number <= question.options.length) {
+        return AskAnswer.selection([question.options[number - 1].label]);
+      }
+      io.writeln('[ask] no option $number — try again');
+    }
+  }
+
+  /// The multi-select toggle loop: numbers toggle options, `d` (or empty
+  /// input) confirms — falling back to free-text entry when nothing is
+  /// selected — and `!` cancels.
+  Future<AskAnswer?> _askMultiSelect(AskQuestion question) async {
+    final selected = <int>{};
+    while (true) {
+      final picked = selected.isEmpty
+          ? '-'
+          : (selected.toList()..sort()).map((i) => '${i + 1}').join(', ');
+      io.writeln(
+        '[ask] multi-select: numbers toggle, d = done, ! = cancel '
+        '(selected: $picked)',
+      );
+      final line = await _nextAskLine();
+      if (line == null || line == '!') return null;
+      if (line.isEmpty || line.toLowerCase() == 'd') {
+        if (selected.isNotEmpty) {
+          return AskAnswer.selection([
+            for (final i in selected.toList()..sort())
+              question.options[i].label,
+          ]);
+        }
+        return _readFreeTextAnswer();
+      }
+      var invalid = false;
+      for (final part in line.split(RegExp(r'[\s,]+'))) {
+        final number = int.tryParse(part);
+        if (number == null || number < 1 || number > question.options.length) {
+          invalid = true;
+          break;
+        }
+        if (!selected.remove(number - 1)) selected.add(number - 1);
+      }
+      if (invalid) {
+        io.writeln('[ask] invalid selection "$line" — try again');
+      }
+    }
+  }
+
+  /// Free-text entry for the ask menu; an empty line cancels the whole ask.
+  Future<AskAnswer?> _readFreeTextAnswer() async {
+    io.writeln('[ask] type your answer (empty = cancel):');
+    final text = await _nextAskLine();
+    if (text == null || text.isEmpty) return null;
+    return AskAnswer.text(text);
   }
 
   void _handleApprovalMode(String rest) {

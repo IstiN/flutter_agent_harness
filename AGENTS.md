@@ -12,6 +12,14 @@ Conventions for AI agents and contributors working in this repository.
   `beforeToolCall` phase via `attachApproval` (composes with user hooks,
   approval runs first); the prompt UI is an injectable `ApprovalPrompt`
   callback (null callback + prompt policy = deny).
+- `lib/src/tools/ask_tool.dart` — the `ask` tool (ported from oh-my-pi):
+  structured mid-turn questions (labeled options, optional multi-select and
+  a recommended index/label) answered by the host through an injectable
+  `AskCallback` (same host-callback pattern as `ApprovalPrompt`). A null
+  callback yields an error result ("host cannot answer"); a cancelled dialog
+  yields a plain "ask cancelled by user" result. The CLI renders a stdin
+  menu, the example app a modal bottom sheet (`ask_ui.dart`); both register
+  the tool next to `builtinTools`.
 - `lib/src/hashline/` — the hashline patch language (ported from oh-my-pi
   `packages/hashline`): `[path#TAG]` section headers with a 4-hex whole-file
   content hash (xxHash32, ported in `xxhash32.dart`), `SWAP`/`DEL`/`INS.*`
