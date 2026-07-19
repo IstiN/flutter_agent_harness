@@ -275,4 +275,8 @@
 - feat(example): central sandbox command registry drives the Fa system prompt
 - fix(example): web upload fix + chat uploads→uploads/ + light HTML preview + session delete
 
+## 0.1.29
+
+- fix(example): transformers.js download filter+progress, SVG/upload/attach UX, provider-error robustness
+
 ## Unreleased
