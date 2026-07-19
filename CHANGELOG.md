@@ -279,4 +279,9 @@
 
 - fix(example): transformers.js download filter+progress, SVG/upload/attach UX, provider-error robustness
 
+## 0.1.30
+
+- feat(example): WebLLM presets refresh — Qwen3.5 + Qwen2.5-Coder (web-llm 0.2.84)
+- feat(example): visible app name is Fa (assistant label, AppBar, transcript, system prompt)
+
 ## Unreleased
