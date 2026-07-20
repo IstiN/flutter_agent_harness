@@ -16,6 +16,7 @@ export 'src/approval/approval_hook.dart';
 export 'src/approval/bash_interceptor.dart';
 export 'src/cancel_token.dart';
 export 'src/cli/agent_cli.dart';
+export 'src/cli/cli_args.dart';
 export 'src/cli/prompt_templates.dart';
 export 'src/compaction/branch_summarization.dart';
 export 'src/compaction/compaction.dart';

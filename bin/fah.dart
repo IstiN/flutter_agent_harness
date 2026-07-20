@@ -6,7 +6,13 @@
 /// ```sh
 /// dart run bin/fah.dart [--model <id>] [--provider <kind>] [--base-url <url>]
 ///                       [--cwd <dir>] [--session-root <dir>]
+/// dart run bin/fah.dart [options] "summarize the changelog"   # headless
+/// dart run bin/fah.dart [options] notes.md "summarize this"   # file prompt
 /// ```
+///
+/// With no prompt arguments the CLI starts an interactive REPL; with `-p`/
+/// `--prompt` or positional arguments it runs a single headless prompt and
+/// exits (response on stdout, diagnostics on stderr).
 ///
 /// API keys come from the environment: `OPENROUTER_API_KEY` (fallback
 /// `OPENAI_API_KEY`) for the default `openai-completions` provider,
@@ -29,9 +35,30 @@ const _version = '0.1.0';
 const _usage = '''
 fah — flutter_agent_harness CLI agent
 
-Usage: dart run bin/fah.dart [options]
+Usage: dart run bin/fah.dart [options] [prompt ...]
+       dart run bin/fah.dart [options] -p "<prompt>"
+
+Headless mode:
+  With a prompt (positional arguments joined with spaces, or -p/--prompt)
+  the CLI runs a single non-interactive prompt and exits: the response
+  streams to stdout, tool indicators and notices go to stderr (stdout stays
+  pipeable), nothing is ever prompted interactively, and the session
+  persists like a normal REPL run. Exit codes: 0 ok, 1 provider error,
+  130 aborted (Ctrl-C).
+  A first positional naming an EXISTING file is used as the prompt source:
+  text files (.md, .markdown, .txt) are inlined as the prompt; any other
+  (binary) file is attached as a path reference for the agent's tools —
+  with any trailing text appended as the instruction. A path that does not
+  exist is treated as plain prompt text (a sentence may contain slashes).
+
+Examples:
+  dart run bin/fah.dart "summarize the changelog"
+  dart run bin/fah.dart -p "fix the typos in README.md"
+  dart run bin/fah.dart CHANGELOG.md "summarize this"
+  dart run bin/fah.dart screenshot.png "describe it"
 
 Options:
+  -p, --prompt <text>       Run a single headless prompt and exit
   --model <id>              Model id (default per provider, see below)
   --provider <kind>         openai-completions | anthropic | google
                             (default: openai-completions, via OpenRouter)
@@ -76,129 +103,23 @@ Defaults per provider:
   google                gemini-2.5-pro @ https://generativelanguage.googleapis.com/v1beta
 ''';
 
-final class _Args {
-  _Args({
-    this.model,
-    this.provider = 'openai-completions',
-    this.baseUrl,
-    this.visionModel,
-    this.visionBaseUrl,
-    this.transcribeModel,
-    this.transcribeBaseUrl,
-    this.plugins = const [],
-    this.promptTemplateDirs = const [],
-    this.mode,
-    this.cwd,
-    this.sessionRoot,
-  });
-
-  final String? model;
-  final String provider;
-  final String? baseUrl;
-  final String? visionModel;
-  final String? visionBaseUrl;
-  final String? transcribeModel;
-  final String? transcribeBaseUrl;
-  final List<String> plugins;
-  final List<String> promptTemplateDirs;
-  final String? mode;
-  final String? cwd;
-  final String? sessionRoot;
-}
-
 Never _fail(String message) {
   stderr.writeln('fah: $message');
   stderr.writeln('Run with --help for usage.');
   exit(64);
 }
 
-_Args _parseArgs(List<String> args) {
-  String? model;
-  var provider = 'openai-completions';
-  String? baseUrl;
-  String? visionModel;
-  String? visionBaseUrl;
-  String? transcribeModel;
-  String? transcribeBaseUrl;
-  final plugins = <String>[];
-  final promptTemplateDirs = <String>[];
-  String? mode;
-  String? cwd;
-  String? sessionRoot;
-
-  String valueFor(int index, String flag) {
-    if (index + 1 >= args.length) _fail('$flag requires a value');
-    return args[index + 1];
-  }
-
-  for (var i = 0; i < args.length; i++) {
-    switch (args[i]) {
-      case '--help' || '-h':
-        stdout.write(_usage);
-        exit(0);
-      case '--version':
-        stdout.writeln('fah $_version');
-        exit(0);
-      case '--model':
-        model = valueFor(i, '--model');
-        i++;
-      case '--provider':
-        provider = valueFor(i, '--provider');
-        i++;
-      case '--base-url':
-        baseUrl = valueFor(i, '--base-url');
-        i++;
-      case '--vision-model':
-        visionModel = valueFor(i, '--vision-model');
-        i++;
-      case '--vision-base-url':
-        visionBaseUrl = valueFor(i, '--vision-base-url');
-        i++;
-      case '--transcribe-model':
-        transcribeModel = valueFor(i, '--transcribe-model');
-        i++;
-      case '--transcribe-base-url':
-        transcribeBaseUrl = valueFor(i, '--transcribe-base-url');
-        i++;
-      case '--plugin':
-        plugins.add(valueFor(i, '--plugin'));
-        i++;
-      case '--prompt-template-dir':
-        promptTemplateDirs.add(valueFor(i, '--prompt-template-dir'));
-        i++;
-      case '--mode':
-        mode = valueFor(i, '--mode');
-        i++;
-      case '--cwd':
-        cwd = valueFor(i, '--cwd');
-        i++;
-      case '--session-root':
-        sessionRoot = valueFor(i, '--session-root');
-        i++;
-      default:
-        _fail('unknown argument: ${args[i]}');
-    }
-  }
-  if (!const {'openai-completions', 'anthropic', 'google'}.contains(provider)) {
-    _fail('unknown provider: $provider');
-  }
-  return _Args(
-    model: model,
-    provider: provider,
-    baseUrl: baseUrl,
-    visionModel: visionModel,
-    visionBaseUrl: visionBaseUrl,
-    transcribeModel: transcribeModel,
-    transcribeBaseUrl: transcribeBaseUrl,
-    plugins: plugins,
-    promptTemplateDirs: promptTemplateDirs,
-    mode: mode,
-    cwd: cwd,
-    sessionRoot: sessionRoot,
-  );
+Never _exitWithUsage() {
+  stdout.write(_usage);
+  exit(0);
 }
 
-Model _buildModel(_Args args) {
+Never _exitWithVersion() {
+  stdout.writeln('fah $_version');
+  exit(0);
+}
+
+Model _buildModel(CliArgs args) {
   return buildCliDefaultModel(
     args.provider,
     modelId: args.model,
@@ -315,7 +236,7 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
 }
 
 ({List<FahPlugin> plugins, Map<String, dynamic> config}) _resolvePlugins(
-  _Args args,
+  CliArgs args,
   String cwd,
 ) {
   final config = _loadPackagesConfig(cwd);
@@ -345,16 +266,24 @@ String _homeDir() {
 
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
 /// broadcast interrupt channel fed by the SIGINT handler in `main`.
+///
+/// In [headless] mode diagnostics ([writeln]) go to stderr so stdout carries
+/// only the assistant text, input is never read, and the CLI is never
+/// interactive (approval/ask prompts resolve non-interactively).
 final class _TerminalCliIO implements CliIO {
-  _TerminalCliIO();
+  _TerminalCliIO({this.headless = false});
+
+  /// Whether the CLI runs a single headless prompt.
+  final bool headless;
 
   final _interrupts = StreamController<void>.broadcast();
 
   void fireInterrupt() => _interrupts.add(null);
 
   @override
-  Stream<String> get lines =>
-      stdin.transform(utf8.decoder).transform(const LineSplitter());
+  Stream<String> get lines => headless
+      ? const Stream<String>.empty()
+      : stdin.transform(utf8.decoder).transform(const LineSplitter());
 
   @override
   Stream<void> get interrupts => _interrupts.stream;
@@ -363,16 +292,36 @@ final class _TerminalCliIO implements CliIO {
   void write(String text) => stdout.write(text);
 
   @override
-  void writeln(String text) => stdout.writeln(text);
+  void writeln(String text) =>
+      headless ? stderr.writeln(text) : stdout.writeln(text);
 
   /// Piped input (no terminal) means no human can answer approval prompts:
-  /// the CLI then denies prompt-policy tool calls with a reason.
+  /// the CLI then denies prompt-policy tool calls with a reason. Headless
+  /// mode is never interactive, terminal or not.
   @override
-  bool get isInteractive => stdin.hasTerminal;
+  bool get isInteractive => !headless && stdin.hasTerminal;
 }
 
 Future<void> main(List<String> args) async {
-  final parsed = _parseArgs(args);
+  late final CliArgs parsed;
+  try {
+    parsed = switch (parseCliArgs(args)) {
+      CliArgsHelp() => _exitWithUsage(),
+      CliArgsVersion() => _exitWithVersion(),
+      final CliArgs cliArgs => cliArgs,
+    };
+  } on CliArgsException catch (error) {
+    _fail(error.message);
+  }
+
+  // Headless prompt resolution: -p verbatim; a first positional naming an
+  // existing file inlines text files (.md/.markdown/.txt) or attaches other
+  // files as a path reference; anything else is plain prompt text.
+  final headlessPrompt = resolveHeadlessPrompt(
+    prompt: parsed.prompt,
+    positionals: parsed.positionals,
+  );
+
   final home = homeDirectory();
   if (home == null || home.isEmpty) {
     _fail('cannot resolve home directory; pass --session-root');
@@ -389,7 +338,7 @@ Future<void> main(List<String> args) async {
   final baseUrl = parsed.baseUrl ?? saved.baseUrl;
   final mode = parsed.mode ?? saved.mode;
 
-  final effective = _Args(
+  final effective = CliArgs(
     model: modelId,
     provider: provider,
     baseUrl: baseUrl,
@@ -498,7 +447,7 @@ Future<void> main(List<String> args) async {
     ...effective.promptTemplateDirs,
   ];
 
-  final io = _TerminalCliIO();
+  final io = _TerminalCliIO(headless: headlessPrompt != null);
   final cli = AgentCli(
     config: AgentCliConfig(
       model: model,
@@ -562,10 +511,22 @@ Future<void> main(List<String> args) async {
     if (cli.isBusy) {
       io.fireInterrupt();
     } else {
-      stdout.writeln();
+      // Idle Ctrl-C exits 130; the cosmetic newline stays off stdout in
+      // headless mode so a pipe never sees it.
+      if (headlessPrompt == null) stdout.writeln();
       exit(130);
     }
   });
+
+  if (headlessPrompt != null) {
+    final int code;
+    try {
+      code = await cli.runHeadless(headlessPrompt);
+    } finally {
+      await sigintSub.cancel();
+    }
+    exit(code);
+  }
 
   try {
     await cli.run();
