@@ -18,6 +18,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../agent/agent.dart';
+import 'key_event.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/tool_registry.dart';
@@ -46,6 +47,7 @@ import '../types.dart';
 import '../usage_summary.dart';
 import '../web_search/web_search.dart';
 import 'prompt_templates.dart';
+import 'tui_repl.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
@@ -66,6 +68,15 @@ abstract interface class CliIO {
 
   /// Cancel signals (Ctrl-C). Each event aborts the current run.
   Stream<void> get interrupts;
+
+  /// Raw key events when the terminal is in raw mode. Non-raw hosts (tests,
+  /// headless, web) provide an empty stream.
+  Stream<KeyEvent> get keys;
+
+  /// Whether the underlying terminal supports raw-mode character input with
+  /// ANSI escape sequences. True for dart:io terminals; false for tests and
+  /// headless runs.
+  bool get supportsRawMode;
 
   /// Writes [text] without a trailing newline (streaming deltas).
   void write(String text);
@@ -258,21 +269,27 @@ final class _PluginIO implements PluginIO {
 /// Minimal ANSI styling helper. When [enabled] is false all methods return
 /// the input unchanged, which keeps tests deterministic and avoids escape
 /// sequences in headless / piped output.
-final class _Style {
+final class _Style implements TuiStyle {
   _Style({required this.enabled});
   final bool enabled;
 
   String _wrap(String text, String code) =>
       enabled ? '\x1B[${code}m$text\x1B[0m' : text;
 
+  @override
   String bold(String text) => _wrap(text, '1');
+  @override
   String dim(String text) => _wrap(text, '2');
   String italic(String text) => _wrap(text, '3');
   String underline(String text) => _wrap(text, '4');
+  @override
   String cyan(String text) => _wrap(text, '36');
+  @override
   String green(String text) => _wrap(text, '32');
+  @override
   String yellow(String text) => _wrap(text, '33');
   String red(String text) => _wrap(text, '31');
+  @override
   String magenta(String text) => _wrap(text, '35');
 }
 
@@ -288,7 +305,10 @@ class AgentCli {
     StreamFunction? streamFunction,
     this.prompt = 'fa> ',
     bool useColor = false,
+    bool useTui = false,
+    this._version = '0.0.0',
   }) : _style = _Style(enabled: useColor),
+       _useTui = useTui && io.supportsRawMode,
        _modes = builtInAgentModes(
          config.env.cwd,
          overrides: config.promptOverrides,
@@ -437,6 +457,8 @@ class AgentCli {
   late final CheckpointRewindController _checkpoints;
   TtsrController? _ttsr;
   final _Style _style;
+  final bool _useTui;
+  final String _version;
 
   /// Whether the default role resolved and drives the agent (roles mode).
   /// The banner's key-status line reads env var names from the live model's
@@ -479,6 +501,32 @@ class AgentCli {
     return const {};
   }
 
+  /// Merges multiple streams into one broadcast stream.
+  static Stream<T> _mergeStreams<T>(List<Stream<T>> streams) {
+    final controller = StreamController<T>.broadcast();
+    final subscriptions = <StreamSubscription<T>>[];
+    var doneCount = 0;
+    void onDone() {
+      if (++doneCount >= streams.length) {
+        controller.close();
+      }
+    }
+
+    for (final stream in streams) {
+      subscriptions.add(
+        stream.listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: onDone,
+        ),
+      );
+    }
+    controller.onCancel = () async {
+      await Future.wait(subscriptions.map((s) => s.cancel()));
+    };
+    return controller.stream;
+  }
+
   /// Whether a run is currently streaming.
   bool get isBusy => _agent.state.isStreaming;
 
@@ -494,11 +542,15 @@ class AgentCli {
     });
     try {
       await _printBanner();
-      _writeIdlePrompt();
-      await for (final line in io.lines) {
-        await _handleLine(line);
-        if (_exited) break;
-        if (!isBusy) _writeIdlePrompt();
+      if (_useTui) {
+        await _runTuiRepl();
+      } else {
+        _writeIdlePrompt();
+        await for (final line in io.lines) {
+          await _handleLine(line);
+          if (_exited) break;
+          if (!isBusy) _writeIdlePrompt();
+        }
       }
     } finally {
       // Input ended (EOF) or the REPL is shutting down: never leave a tool
@@ -510,6 +562,69 @@ class AgentCli {
       await interruptSub.cancel();
       await _settled;
     }
+  }
+
+  Future<void> _runTuiRepl() async {
+    final repl = TuiRepl(
+      write: io.write,
+      writeln: io.writeln,
+      prompt: prompt,
+      statusLine: _statusLine,
+      style: _style,
+      buildSlashMenu: _buildSlashMenu,
+      buildModelMenu: _buildModelMenu,
+      onSubmit: _handleLine,
+      onModelSelected: _tuiSelectModel,
+      onInterrupt: () {
+        if (isBusy) _agent.abort();
+      },
+      isExited: () => _exited,
+    );
+
+    // Merge typed lines (e.g. pasted multi-line input from a non-raw source)
+    // and raw keys into one stream. The repl treats strings as full lines and
+    // KeyEvents as raw keystrokes.
+    final input = _mergeStreams<dynamic>([io.lines, io.keys]);
+    await repl.run(input);
+  }
+
+  List<MenuItem> _buildSlashMenu(String prefix) {
+    final lower = prefix.toLowerCase();
+    final items = <MenuItem>[];
+    for (final entry in _slashCommands.entries) {
+      if (entry.key.toLowerCase().contains(lower) ||
+          entry.value.toLowerCase().contains(lower)) {
+        items.add(
+          MenuItem(key: entry.key, label: entry.key, description: entry.value),
+        );
+      }
+    }
+    for (final entry in _pluginSlashCommands.entries) {
+      if (entry.key.toLowerCase().contains(lower)) {
+        items.add(MenuItem(key: entry.key, label: entry.key));
+      }
+    }
+    for (final t in _templates) {
+      final name = '/${t.name}';
+      if (name.toLowerCase().contains(lower)) {
+        items.add(
+          MenuItem(key: name, label: name, description: t.argumentHint ?? ''),
+        );
+      }
+    }
+    return items;
+  }
+
+  List<MenuItem> _buildModelMenu() {
+    final models = _listModelsForMenu();
+    return [
+      for (var i = 0; i < models.length; i++)
+        MenuItem(key: models[i], label: '${i + 1}) ${models[i]}'),
+    ];
+  }
+
+  Future<void> _tuiSelectModel(String modelId) async {
+    await _handleModelCommand(modelId);
   }
 
   Future<Session> _createSession() {
@@ -562,8 +677,7 @@ class AgentCli {
   Future<void> _printBanner() async {
     final model = _agent.state.model;
     final metadata = await _session!.getMetadata();
-    const version = '0.1.0';
-    io.writeln(_style.bold(_style.cyan('fa v$version')));
+    io.writeln(_style.bold(_style.cyan('fa v$_version')));
     io.writeln(
       _style.dim('escape interrupt · ctrl+c clear/exit · / commands · ! bash'),
     );
@@ -1068,6 +1182,9 @@ class AgentCli {
     io.writeln('use /model <n> or /model <id> to switch');
   }
 
+  /// Returns the full list of known model ids for the active provider.
+  List<String> _listModelsForMenu() => _modelCandidates('');
+
   /// Returns known model ids for the active provider, filtered by an optional
   /// lowercase substring.
   List<String> _modelCandidates([String filter = '']) {
@@ -1091,8 +1208,8 @@ class AgentCli {
       return;
     }
     final number = int.tryParse(trimmed);
-    final lastList = _lastModelList;
-    if (number != null && lastList != null) {
+    final lastList = _lastModelList ?? _listModelsForMenu();
+    if (number != null) {
       if (number < 1 || number > lastList.length) {
         io.writeln('invalid selection: $number (1-${lastList.length})');
         return;

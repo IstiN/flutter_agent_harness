@@ -181,6 +181,7 @@ class _FakeShell implements Shell {
 class FakeCliIO implements CliIO {
   final _lines = StreamController<String>();
   final _interrupts = StreamController<void>.broadcast();
+  final _keys = StreamController<KeyEvent>.broadcast();
   final out = StringBuffer();
 
   /// Tests flip this to exercise the non-interactive approval path.
@@ -194,6 +195,12 @@ class FakeCliIO implements CliIO {
   Stream<void> get interrupts => _interrupts.stream;
 
   @override
+  Stream<KeyEvent> get keys => _keys.stream;
+
+  @override
+  bool get supportsRawMode => true;
+
+  @override
   void write(String text) => out.write(text);
 
   @override
@@ -201,12 +208,15 @@ class FakeCliIO implements CliIO {
 
   void sendLine(String line) => _lines.add(line);
 
+  void sendKey(KeyEvent key) => _keys.add(key);
+
   void interrupt() => _interrupts.add(null);
 
   Future<void> close() async {
     // The close future only completes once a listener received the done
     // event; tests that never ran the CLI have no listener, so don't await.
     unawaited(_lines.close());
+    unawaited(_keys.close());
     await _interrupts.close();
   }
 }
