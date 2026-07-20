@@ -18,6 +18,16 @@ final class FakeTransformersJsEngine implements TransformersJsEngineApi {
   /// When set, `chatStream` reports this via `onError` instead of chunks.
   String? streamErrorMessage;
 
+  /// Per-call script for `chatStream`: each call consumes the head — a null
+  /// entry streams [chunks] normally, a string entry reports it via
+  /// `onError`. Once empty, calls fall back to [streamErrorMessage].
+  final List<String?> streamErrorScript = [];
+
+  /// When true, an errored `chatStream` call delivers [chunks] BEFORE
+  /// reporting the error (a mid-stream crash); when false, the call errors
+  /// without any output.
+  bool deliverChunksBeforeError = false;
+
   /// When set, `loadModel` throws this.
   Object? loadError;
 
@@ -28,6 +38,8 @@ final class FakeTransformersJsEngine implements TransformersJsEngineApi {
   TransformersJsModelPreset? loadedPreset;
   List<TransformersJsChatMessage>? lastMessages;
   int? lastMaxTokens;
+  var loadCallCount = 0;
+  var chatCallCount = 0;
   var interruptCount = 0;
   var unloadCount = 0;
   var jsStreamCancelled = false;
@@ -43,6 +55,7 @@ final class FakeTransformersJsEngine implements TransformersJsEngineApi {
 
   @override
   Future<void> loadModel(TransformersJsModelPreset preset) async {
+    loadCallCount++;
     final error = loadError;
     if (error != null) throw error;
     loadedPreset = preset;
@@ -56,10 +69,18 @@ final class FakeTransformersJsEngine implements TransformersJsEngineApi {
     void Function(String message)? onError,
     int? maxTokens,
   }) async {
+    chatCallCount++;
     lastMessages = messages;
     lastMaxTokens = maxTokens;
-    final streamError = streamErrorMessage;
+    final streamError = streamErrorScript.isNotEmpty
+        ? streamErrorScript.removeAt(0)
+        : streamErrorMessage;
     if (streamError != null) {
+      if (deliverChunksBeforeError) {
+        for (final chunk in chunks) {
+          onChunk(chunk);
+        }
+      }
       onError?.call(streamError);
     } else {
       for (final chunk in chunks) {
@@ -131,6 +152,15 @@ AssistantMessage _assistant(List<ContentBlock> content) => AssistantMessage(
 
 String _partialText(AssistantMessage message) =>
     message.content.whereType<TextContent>().map((block) => block.text).join();
+
+/// The exact raw dump from the user-reported WebGPU crash: ORT's run failure
+/// cascading into the invalid-buffer mapAsync error (the GPU buffer died
+/// "due to a previous error" — the real crash happened earlier).
+const _ortRunDump =
+    'failed to call OrtRun(). ERROR_CODE: 1, ... '
+    'onnxruntime::webgpu::BufferManager::Download ... '
+    "Failed to execute 'mapAsync' on 'GPUBuffer': "
+    '[invalid Buffer (unlabeled)] is invalid due to a previous error.';
 
 void main() {
   group('streamTransformersJs event mapping', () {
@@ -239,8 +269,33 @@ void main() {
       },
     );
 
-    test('mid-stream engine error ends in an ErrorEvent', () async {
-      final engine = FakeTransformersJsEngine()..streamErrorMessage = 'boom';
+    test('a GPU crash before any text reloads the engine and retries once, '
+        'transparently', () async {
+      final engine = FakeTransformersJsEngine()
+        ..streamErrorScript.addAll([_ortRunDump, null])
+        ..chunks = ['recovered'];
+      final events = await streamTransformersJs(
+        engine,
+        _model(),
+        _context(),
+      ).toList();
+
+      // The retry is invisible in the event protocol: a normal stream.
+      final done = events.whereType<DoneEvent>().single;
+      expect(done.reason, StopReason.stop);
+      expect(_partialText(done.message), 'recovered');
+      expect(events.whereType<ErrorEvent>(), isEmpty);
+      // Exactly one engine reset + reload happened behind the recovery.
+      expect(engine.unloadCount, 1);
+      expect(engine.loadCallCount, 2);
+      expect(engine.chatCallCount, 2);
+      expect(engine.loadedPreset, isNotNull);
+    });
+
+    test('a repeated GPU crash stops after one recovery (no reload loop) and '
+        'surfaces the readable message', () async {
+      final engine = FakeTransformersJsEngine()
+        ..streamErrorMessage = _ortRunDump;
       final events = await streamTransformersJs(
         engine,
         _model(),
@@ -249,24 +304,64 @@ void main() {
 
       final error = events.whereType<ErrorEvent>().single;
       expect(error.reason, StopReason.error);
-      expect(error.error.errorMessage, 'boom');
-      expect(events.whereType<DoneEvent>(), isEmpty);
+      // The user sees the readable text, never the raw native dump.
+      expect(error.error.errorMessage, transformersJsGpuCrashMessage);
+      expect(error.error.errorMessage, isNot(contains('OrtRun')));
+      expect(error.error.errorMessage, isNot(contains('mapAsync')));
+      // ONE recovery: initial load + one reload, one reset per failure —
+      // then the counter stops the loop instead of reloading forever.
+      expect(engine.loadCallCount, 2);
+      expect(engine.chatCallCount, 2);
+      expect(engine.unloadCount, 2);
+      // The engine is left unloaded so the NEXT message reloads fresh.
+      expect(engine.loadedPreset, isNull);
     });
 
-    test('an OrtRun-style engine error resets the engine so the next turn '
-        'reloads', () async {
+    test(
+      'a non-GPU engine error does not retry and passes through raw',
+      () async {
+        final engine = FakeTransformersJsEngine()..streamErrorMessage = 'boom';
+        final events = await streamTransformersJs(
+          engine,
+          _model(),
+          _context(),
+        ).toList();
+
+        final error = events.whereType<ErrorEvent>().single;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, 'boom');
+        // No recovery attempt for a deterministic (non-GPU-class) failure —
+        // but the engine is still reset so the next turn reloads.
+        expect(engine.loadCallCount, 1);
+        expect(engine.chatCallCount, 1);
+        expect(engine.unloadCount, 1);
+        expect(engine.loadedPreset, isNull);
+        expect(events.whereType<DoneEvent>(), isEmpty);
+      },
+    );
+
+    test('a GPU crash after streamed text does not retry (the partial answer '
+        'is already out)', () async {
       final engine = FakeTransformersJsEngine()
-        ..streamErrorMessage =
-            'Error: OrtRun failed: mapAsync ... invalid Buffer';
+        ..chunks = ['partial']
+        ..deliverChunksBeforeError = true
+        ..streamErrorMessage = _ortRunDump;
       final events = await streamTransformersJs(
         engine,
         _model(),
         _context(),
       ).toList();
 
-      expect(events.whereType<ErrorEvent>(), hasLength(1));
+      final error = events.whereType<ErrorEvent>().single;
+      expect(error.reason, StopReason.error);
+      expect(error.error.errorMessage, transformersJsGpuCrashMessage);
+      // Text streamed before the crash is preserved on the final message.
+      expect(_partialText(error.error), 'partial');
+      // No retry: the deltas were already pushed, a retry would duplicate.
+      expect(engine.loadCallCount, 1);
+      expect(engine.chatCallCount, 1);
       expect(engine.unloadCount, 1);
-      expect(engine.loadedPreset, isNull);
+      expect(events.whereType<DoneEvent>(), isEmpty);
     });
 
     test('a clean turn does not reset the engine', () async {
@@ -694,6 +789,55 @@ void main() {
     });
   });
 
+  group('transformersJsGpuCrash error mapping', () {
+    test('the exact user-reported dump is GPU-crash class and maps to the '
+        'readable message', () {
+      expect(isTransformersJsGpuCrash(_ortRunDump), isTrue);
+      expect(
+        formatTransformersJsErrorForUser(_ortRunDump),
+        transformersJsGpuCrashMessage,
+      );
+    });
+
+    test('the GPU-crash family matches (case-insensitive)', () {
+      for (final raw in [
+        _ortRunDump,
+        'Error: OrtRun failed',
+        'failed to call OrtRun(). ERROR_CODE: 1',
+        "Failed to execute 'mapAsync' on 'GPUBuffer'",
+        '[invalid Buffer] is invalid due to a previous error',
+        'GPUDevice lost: reason=unknown',
+        'DXGI_ERROR_DEVICE_REMOVED',
+        'RangeError: Out of memory',
+        'OUT OF MEMORY allocating buffer',
+      ]) {
+        expect(isTransformersJsGpuCrash(raw), isTrue, reason: raw);
+        expect(
+          formatTransformersJsErrorForUser(raw),
+          transformersJsGpuCrashMessage,
+          reason: raw,
+        );
+      }
+    });
+
+    test('ordinary engine errors are not GPU-crash class and pass through '
+        'unchanged', () {
+      for (final raw in [
+        'boom',
+        'This browser has no WebGPU support, which on-device inference '
+            'needs.',
+        'No on-device model loaded. Call loadModel() first.',
+        'The on-device runtime (@huggingface/transformers) did not load '
+            'from the CDN.',
+        'Unknown transformers.js model preset: nope',
+        'input is not valid: chat template failed',
+      ]) {
+        expect(isTransformersJsGpuCrash(raw), isFalse, reason: raw);
+        expect(formatTransformersJsErrorForUser(raw), raw, reason: raw);
+      }
+    });
+  });
+
   group('transformersJsModelPresets', () {
     test('ships the Gemma 4 E2B ONNX preset (text + vision, q4f16)', () {
       final preset = transformersJsModelPresets.firstWhere(
@@ -716,6 +860,13 @@ void main() {
       });
       expect(findTransformersJsPreset(preset.id), same(preset));
       expect(findTransformersJsPreset('nope'), isNull);
+    });
+
+    test('both presets default to a 2048-token context window (KV memory '
+        'headroom on shared-memory GPUs)', () {
+      for (final preset in transformersJsModelPresets) {
+        expect(preset.contextWindow, 2048, reason: preset.id);
+      }
     });
 
     test('the download allowlist covers exactly the requested dtype set', () {

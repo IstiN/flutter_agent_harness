@@ -67,7 +67,7 @@ final class TransformersJsModelPreset {
     required this.sizeLabel,
     required this.dtype,
     required this.downloadSizes,
-    this.contextWindow = 4096,
+    this.contextWindow = 2048,
     this.supportsVision = false,
   });
 
@@ -113,7 +113,10 @@ final class TransformersJsModelPreset {
 
   /// Context window reported to the agent loop (drives overflow/compaction
   /// heuristics). Kept small: on-device KV-cache memory scales with the
-  /// window, and the demo's turns are short.
+  /// window (the weights alone are gigabytes, and every token of window is
+  /// more f16 KV the WebGPU device must hold next to them — the difference
+  /// between fitting and a lost GPU device on shared-memory laptops), and
+  /// the demo's turns are short.
   final int contextWindow;
 
   /// Whether the preset loads a vision encoder and accepts image inputs.
