@@ -221,14 +221,14 @@ progress_bar 15
 # ── 2. Activate package from pub.dev (15–90%) ────────────────────────────────
 clear_bar
 if dart pub global list 2>/dev/null | grep -q "^${PACKAGE} "; then
-  ACTIVATE_LOG="$(mktemp /tmp/fah-install-XXXXXX.log)"
+  ACTIVATE_LOG="$(mktemp /tmp/fah-install-XXXXXX)"
   if ! run_with_progress "dart pub global activate ${PACKAGE} >\"${ACTIVATE_LOG}\" 2>&1" "Updating ${PACKAGE} from pub.dev…" 20 90; then
     err "dart pub global activate failed. Log:"
     cat "${ACTIVATE_LOG}" >&2
     exit 1
   fi
 else
-  ACTIVATE_LOG="$(mktemp /tmp/fah-install-XXXXXX.log)"
+  ACTIVATE_LOG="$(mktemp /tmp/fah-install-XXXXXX)"
   if ! run_with_progress "dart pub global activate ${PACKAGE} >\"${ACTIVATE_LOG}\" 2>&1" "Installing ${PACKAGE} from pub.dev…" 20 90; then
     err "dart pub global activate failed. Log:"
     cat "${ACTIVATE_LOG}" >&2
