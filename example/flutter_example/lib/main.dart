@@ -28,9 +28,9 @@ Future<void> main() async {
   try {
     await setUpWasmRuntime();
   } on Object {
-    // Wasm runtime setup is best-effort. On platforms where the native wasm
-    // bindings are unavailable (e.g. iOS) the app should still start so the
-    // chat UI and other providers remain usable.
+    // Wasm runtime setup is best-effort. If the native bindings are
+    // unavailable the app should still start so the chat UI and other
+    // providers remain usable.
   }
   try {
     await dotenv.load(fileName: '.env');

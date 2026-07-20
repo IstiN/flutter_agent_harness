@@ -30,9 +30,9 @@ enum SandboxPlatform {
   /// sandboxed host directory.
   android,
 
-  /// iOS: a plain `LocalExecutionEnv` with no WASM shell. File tools work,
-  /// but shell commands are unavailable, so the advertised command list is
-  /// empty.
+  /// iOS: the `WasiSandboxShell` running WASI modules rooted at a sandboxed
+  /// host directory (the wasm_run library is statically linked into the app
+  /// binary — see `setUpWasmRuntime`).
   ios,
 
   /// macOS/Linux/Windows: the host shell via `LocalExecutionEnv` — every
