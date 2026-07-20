@@ -58,6 +58,7 @@ say ""
 say "  Fa installer — flutter_agent_harness CLI"
 say ""
 
+
 # ── 0. Platform check ────────────────────────────────────────────────────────
 # This script is for Unix-like shells. Native Windows users should use the
 # PowerShell installer instead. Git Bash / MSYS / Cygwin can run this script,
@@ -220,3 +221,4 @@ say ""
 say "  Docs:    https://github.com/IstiN/flutter_agent_harness"
 say "  Package: https://pub.dev/packages/flutter_agent_harness"
 say ""
+

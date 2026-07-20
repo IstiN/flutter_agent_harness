@@ -44,16 +44,7 @@ err() {
 }
 
 # ── Banner ───────────────────────────────────────────────────────────────────
-say ""
-say "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
-say "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"
-say "  █████╗  ███████║█████╗   ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║██║"
-say "  ██╔══╝  ██╔══██║╚════╝   ██║   ╚════╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
-say "  ██║     ██║  ██║         ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗"
-say "  ╚═╝     ╚═╝  ╚═╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"
-say ""
-say "  Fa installer — flutter_agent_harness CLI"
-say ""
+{{BANNER}}
 
 # ── 0. Platform check ────────────────────────────────────────────────────────
 # This script is for Unix-like shells. Native Windows users should use the
@@ -193,27 +184,4 @@ else
 fi
 
 # ── 6. Done ──────────────────────────────────────────────────────────────────
-say ""
-ok "Installation complete."
-say ""
-say "  Configure a provider and API key interactively:"
-say ""
-say "    curl -fsSL https://fa1.dev/setup.sh | sh"
-say ""
-say "  Or set an environment variable manually:"
-say ""
-say "    export OPENROUTER_API_KEY=<your-key>   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
-say ""
-say "  Then start the agent:"
-say ""
-say "    fa"
-say ""
-say "  Or run a single headless task:"
-say ""
-say "    fa \"summarize CHANGELOG.md\""
-say ""
-say "  (the legacy command 'fah' also works)"
-say ""
-say "  Docs:    https://github.com/IstiN/flutter_agent_harness"
-say "  Package: https://pub.dev/packages/flutter_agent_harness"
-say ""
+{{SETUP_RECIPE}}

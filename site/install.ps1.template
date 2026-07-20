@@ -32,16 +32,7 @@ function Write-Warn($msg) { Write-Host "! $msg" -ForegroundColor Yellow }
 function Write-Err($msg) { Write-Host "✘ $msg" -ForegroundColor Red }
 
 # ── Banner ───────────────────────────────────────────────────────────────────
-Write-Host ""
-Write-Host "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
-Write-Host "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"
-Write-Host "  █████╗  ███████║█████╗   ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║██║"
-Write-Host "  ██╔══╝  ██╔══██║╚════╝   ██║   ╚════╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
-Write-Host "  ██║     ██║  ██║         ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗"
-Write-Host "  ╚═╝     ╚═╝  ╚═╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"
-Write-Host ""
-Write-Host "  Fa installer — flutter_agent_harness CLI (Windows)"
-Write-Host ""
+{{BANNER}}
 
 # ── 1. Detect platform ───────────────────────────────────────────────────────
 $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "ia32" }
@@ -52,22 +43,16 @@ if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq 
 $assetName = "fa-windows-$arch.exe"
 
 # ── 2. Resolve install directory ─────────────────────────────────────────────
+# DMTools-style: keep every binary in a dedicated bin directory and prepend
+# that directory to the user PATH. This guarantees the command is available
+# immediately after installation in the current PowerShell session.
 $installDir = Join-Path $env:LOCALAPPDATA "Fa"
-$oldBin = Join-Path $installDir "bin"
-# Prefer a directory that is already on PATH.
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$pathParts = $userPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-$existingDir = $pathParts | Where-Object { $_ -like "*\Fa\bin" -or $_ -like "*\.local\bin" } | Select-Object -First 1
-if ($existingDir) {
-    $installDir = Split-Path $existingDir
-} elseif ($oldBin -in $pathParts) {
-    $installDir = $oldBin
-}
+$binDir = Join-Path $installDir "bin"
 
-if (-not (Test-Path $installDir)) {
-    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+if (-not (Test-Path $binDir)) {
+    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 }
-$target = Join-Path $installDir "$BinaryName.exe"
+$target = Join-Path $binDir "$BinaryName.exe"
 
 # ── 3. Resolve download URL ──────────────────────────────────────────────────
 $downloadUrl = "https://github.com/$Repo/releases/latest/download/$assetName"
@@ -101,59 +86,34 @@ try {
     & dart pub global activate flutter_agent_harness
     $pubCacheBin = if ($env:PUB_CACHE_BIN) { $env:PUB_CACHE_BIN } else { Join-Path $env:LOCALAPPDATA "Pub\Cache\bin" }
     if (-not (Test-Path $pubCacheBin)) { $pubCacheBin = Join-Path $env:APPDATA "Pub\Cache\bin" }
-    $installDir = $pubCacheBin
-    $target = Join-Path $installDir "$BinaryName.bat"
+    $binDir = $pubCacheBin
+    $target = Join-Path $binDir "$BinaryName.bat"
 }
 
-# ── 5. Ensure install directory is on the user PATH ──────────────────────────
-if ($installDir -notin $pathParts) {
-    Write-Info "Adding $installDir to your user PATH"
-    $newPath = ($pathParts + $installDir) -join ';'
+# ── 5. Ensure the bin directory is on the user PATH ──────────────────────────
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathParts = $userPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+if ($binDir -notin $pathParts) {
+    Write-Info "Adding $binDir to your user PATH"
+    $newPath = "$binDir;$userPath"
     [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
 }
 
-# Refresh PATH in the current session.
-$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-$processPaths = $env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-if ($installDir -notin $processPaths) {
-    $env:Path = ($processPaths + $installDir) -join ';'
-}
+# Refresh PATH in the current session so `fa` works immediately.
+$env:Path = "$binDir;" + [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 
 $faCmd = Get-Command fa -ErrorAction SilentlyContinue
 if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
 if ($faCmd) {
     Write-Ok "'fa' is on PATH ($($faCmd.Source))."
 } else {
-    Write-Warn "'fa' is not on PATH yet. The executable lives in $installDir"
+    Write-Warn "'fa' is not on PATH yet. The executable lives in $binDir"
     Write-Host ""
     Write-Warn "Open a new PowerShell window, or run this in the current one:"
     Write-Host ""
-    Write-Host "    `$env:Path = `$env:Path + ';$installDir'"
+    Write-Host "    `$env:Path = `$env:Path + ';$binDir'"
     Write-Host ""
 }
 
 # ── 6. Done ──────────────────────────────────────────────────────────────────
-Write-Host ""
-Write-Ok "Installation complete."
-Write-Host ""
-Write-Host "  Configure a provider and API key interactively:"
-Write-Host ""
-Write-Host "    irm https://fa1.dev/setup.ps1 | iex"
-Write-Host ""
-Write-Host "  Or set an environment variable manually:"
-Write-Host ""
-Write-Host "    `$env:OPENROUTER_API_KEY = '<your-key>'   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
-Write-Host ""
-Write-Host "  Then start the agent:"
-Write-Host ""
-Write-Host "    fa"
-Write-Host ""
-Write-Host "  Or run a single headless task:"
-Write-Host ""
-Write-Host "    fa `"summarize CHANGELOG.md`""
-Write-Host ""
-Write-Host "  (the legacy command 'fah' also works)"
-Write-Host ""
-Write-Host "  Docs:    https://github.com/IstiN/flutter_agent_harness"
-Write-Host "  Package: https://pub.dev/packages/flutter_agent_harness"
-Write-Host ""
+{{SETUP_RECIPE}}
