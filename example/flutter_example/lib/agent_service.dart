@@ -167,6 +167,9 @@ class AgentService extends ChangeNotifier {
         // which can take minutes; hosted providers keep the tight timeout.
         ? const Duration(minutes: 10)
         : const Duration(seconds: 90);
+    // On-device backends have small context windows; keep only the core
+    // coding tools so the tool-instruction block stays small.
+    final isOnDevice = _isOnDeviceKind(config.providerKind);
     _agent = Agent(
       model: config.toModel(),
       systemPrompt: _effectiveSystemPrompt(config, redactor),
@@ -174,7 +177,7 @@ class AgentService extends ChangeNotifier {
       toolRegistry: ToolRegistry([
         ...builtinTools(
           env,
-          webSearch: webSearchConfig,
+          webSearch: isOnDevice ? null : webSearchConfig,
           model: () => _agent.state.model,
         ),
         askTool(callback: _answerAskQuestions),

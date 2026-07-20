@@ -273,6 +273,38 @@ void main() {
         expect(section, contains('2. write: Write a file to disk.'));
       },
     );
+
+    test('slim mode shortens tool descriptions and strips schema metadata', () {
+      const tools = [_readTool, _writeTool];
+      final full = promptToolInstructions(tools);
+      final slim = promptToolInstructions(tools, slim: true);
+
+      expect(slim, startsWith('## Available tools'));
+      expect(slim, contains('1. read: Read a file from disk.'));
+      expect(slim, contains('2. write: Write a file to disk.'));
+      // Schema descriptions are stripped in slim mode.
+      expect(slim, isNot(contains('"description":"File path."')));
+      expect(full, contains('"description":"File path."'));
+      // Slim section is meaningfully smaller.
+      expect(slim.length, lessThan(full.length));
+    });
+
+    test('slim mode is wired through PromptToolOptions', () async {
+      final inner = _FakeChatStream(const ['ok']);
+      final wrapped = promptToolStreamFunction(
+        inner.call,
+        options: const PromptToolOptions(slim: true),
+      );
+      await _run(
+        wrapped,
+        _context(systemPrompt: 'Base.', tools: const [_readTool]),
+      );
+
+      final prompt = inner.contexts.single.systemPrompt!;
+      expect(prompt, startsWith('Base.\n\n'));
+      expect(prompt, contains('## Available tools'));
+      expect(prompt, isNot(contains('"description":"File path."')));
+    });
   });
 
   group('parsing', () {
