@@ -171,14 +171,14 @@ void main() {
     );
     final run = cli.run();
 
-    await _waitFor(() => io.out.toString().contains('Type /help'));
+    await _waitFor(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
 
     final output = io.out.toString();
     // The resolved provider is anthropic; the flag provider kind
     // (openai-completions) must not leak into the key status.
-    expect(output, contains('model: claude-a (anthropic-messages)'));
+    expect(output, contains('claude-a (anthropic-messages)'));
     expect(output, contains('endpoint: https://api.anthropic.com'));
     expect(output, contains('key: no key set (want ANTHROPIC_API_KEY)'));
   });

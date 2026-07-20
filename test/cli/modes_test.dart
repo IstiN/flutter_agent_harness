@@ -136,7 +136,7 @@ void main() {
       expect(capturedPrompt, equals('Explain recursion like I am five.'));
     });
 
-    test('unknown slash command still prints error', () async {
+    test('unknown slash command shows a filtered command menu', () async {
       final cli = cliFactory();
       final run = cli.run();
       io.sendLine('/unknown');

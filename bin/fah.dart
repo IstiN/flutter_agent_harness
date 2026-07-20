@@ -422,6 +422,7 @@ Future<void> main(List<String> args) async {
 
   final io = _TerminalCliIO(headless: headlessPrompt != null);
   final cli = AgentCli(
+    useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     config: AgentCliConfig(
       model: model,
       apiKey: apiKey,
