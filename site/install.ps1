@@ -94,12 +94,25 @@ if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
 if ($faCmd) {
     Write-Ok "'fa' is on PATH ($($faCmd.Source))."
 } else {
-    Write-Warn "'fa' is not on PATH yet. The executable lives in $pubCacheBin"
-    Write-Host ""
-    Write-Warn "Open a new PowerShell window, or run this in the current one:"
-    Write-Host ""
-    Write-Host "    `$env:Path = `$env:Path + ';$pubCacheBin'"
-    Write-Host ""
+    # The registry refresh can occasionally lag; make sure the current process
+    # PATH contains the pub cache bin so the command is available immediately.
+    $processPaths = $env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    if ($pubCacheBin -notin $processPaths) {
+        $env:Path = ($processPaths + $pubCacheBin) -join ';'
+    }
+
+    $faCmd = Get-Command fa -ErrorAction SilentlyContinue
+    if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
+    if ($faCmd) {
+        Write-Ok "'fa' is now available on PATH ($($faCmd.Source))."
+    } else {
+        Write-Warn "'fa' is not on PATH yet. The executable lives in $pubCacheBin"
+        Write-Host ""
+        Write-Warn "Open a new PowerShell window, or run this in the current one:"
+        Write-Host ""
+        Write-Host "    `$env:Path = `$env:Path + ';$pubCacheBin'"
+        Write-Host ""
+    }
 }
 
 # ── 4. Done ──────────────────────────────────────────────────────────────────
