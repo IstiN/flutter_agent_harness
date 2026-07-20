@@ -592,10 +592,12 @@ class AgentCli {
       isExited: () => _exited,
     );
 
-    // Merge typed lines (e.g. pasted multi-line input from a non-raw source)
-    // and raw keys into one stream. The repl treats strings as full lines and
-    // KeyEvents as raw keystrokes.
-    final input = _mergeStreams<dynamic>([io.lines, io.keys]);
+    // In raw mode stdin can only have one listener, so drive the REPL from
+    // key events only. For non-raw hosts (tests, headless, embedded panels)
+    // keys is empty and we fall back to typed lines.
+    final input = io.supportsRawMode
+        ? io.keys
+        : _mergeStreams<dynamic>([io.lines, io.keys]);
     await repl.run(input);
   }
 
