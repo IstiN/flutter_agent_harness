@@ -324,7 +324,7 @@ void main() {
     final output = io.out.toString();
     expect(output, contains('model: test-model (test-api)'));
     expect(output, contains('cwd: /work'));
-    expect(output, contains('fah> '));
+    expect(output, contains('fa> '));
     expect(output, contains('Hello world'));
     expect(output, contains('bye'));
 

@@ -34,7 +34,7 @@ import 'package:yaml/yaml.dart' as yaml;
 const _version = '0.1.0';
 
 Never _fail(String message) {
-  stderr.writeln('fah: $message');
+  stderr.writeln('fa: $message');
   stderr.writeln('Run with --help for usage.');
   exit(64);
 }
@@ -45,7 +45,7 @@ Never _exitWithUsage() {
 }
 
 Never _exitWithVersion() {
-  stdout.writeln('fah $_version');
+  stdout.writeln('fa $_version');
   exit(0);
 }
 

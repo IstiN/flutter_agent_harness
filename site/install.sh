@@ -238,27 +238,45 @@ fi
 
 # ── 3. PATH check ────────────────────────────────────────────────────────────
 clear_bar
-if command -v fah >/dev/null 2>&1; then
-  ok "'fah' is on PATH ($(command -v fah))."
+if command -v fa >/dev/null 2>&1 || command -v fah >/dev/null 2>&1; then
+  ok "'fa' is on PATH ($(command -v fa 2>/dev/null || command -v fah))."
 else
-  warn "'fah' is not on PATH yet. The executables live in ${PUB_CACHE_BIN}"
+  warn "'fa' is not on PATH yet. The executables live in ${PUB_CACHE_BIN}"
   say ""
+
+  shell_rc=""
   case "${SHELL:-}" in
-    */fish)
-      say "  Add it with:  fish_add_path ${PUB_CACHE_BIN}"
-      ;;
-    *)
-      say "  Add this line to your shell startup file, or run it now:"
+    */zsh)  shell_rc="$HOME/.zshrc" ;;
+    */bash) shell_rc="$HOME/.bashrc" ;;
+    */fish) shell_rc="$HOME/.config/fish/config.fish" ;;
+  esac
+
+  if [[ -n $shell_rc ]]; then
+    add_path="n"
+    ask_yn add_path "Add ${PUB_CACHE_BIN} to ${shell_rc}?" "y"
+    if [[ $add_path == "y" ]]; then
+      mkdir -p "$(dirname "$shell_rc")"
+      # Avoid duplicating the same PATH entry.
+      if [[ -f $shell_rc ]] && grep -qF "${PUB_CACHE_BIN}" "$shell_rc" 2>/dev/null; then
+        ok "${PUB_CACHE_BIN} is already referenced in ${shell_rc}"
+      else
+        printf "\n# Fa CLI PATH\nexport PATH=\"$PATH:%s\"\n" "${PUB_CACHE_BIN}" >> "$shell_rc"
+        ok "Added ${PUB_CACHE_BIN} to ${shell_rc}"
+      fi
+      ok "Reload your shell or run: source ${shell_rc}"
+    else
+      say ""
+      say "  Add this to your shell startup file, or run it now:"
       say ""
       printf '    export PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}"
       say ""
-      case "${SHELL:-}" in
-        */zsh)  say "  (startup file: ~/.zshrc)" ;;
-        */bash) say "  (startup file: ~/.bashrc, or ~/.bash_profile on macOS)" ;;
-      esac
-      ;;
-  esac
-  say ""
+    fi
+  else
+    say "  Add this to your shell startup file, or run it now:"
+    say ""
+    printf '    export PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}"
+    say ""
+  fi
 fi
 
 # ── 4. Interactive configuration ─────────────────────────────────────────────
@@ -273,7 +291,7 @@ if [[ ! -e /dev/tty ]] || [[ ! -t 2 ]]; then
   say ""
   say "  Then run:"
   say ""
-  say "    fah"
+  say "    fa"
   say ""
   exit 0
 fi
@@ -283,7 +301,7 @@ if [[ -f $FAH_CONFIG_FILE ]]; then
   ask_yn reconfigure "A config already exists at ${FAH_CONFIG_FILE}. Reconfigure?" "n"
   if [[ $reconfigure != "y" ]]; then
     clear_bar
-    ok "Kept existing config. Run 'fah' to start."
+    ok "Kept existing config. Run 'fa' to start."
     exit 0
   fi
 fi
@@ -517,11 +535,13 @@ ok "Installation and configuration complete."
 say ""
 say "  Start the agent:"
 say ""
-say "    fah"
+say "    fa"
 say ""
 say "  Or run a single headless task:"
 say ""
-say "    fah \"summarize CHANGELOG.md\""
+say "    fa \"summarize CHANGELOG.md\""
+say ""
+say "  (the legacy command 'fah' also works)"
 say ""
 say "  Docs:    https://github.com/IstiN/flutter_agent_harness"
 say "  Package: https://pub.dev/packages/flutter_agent_harness"

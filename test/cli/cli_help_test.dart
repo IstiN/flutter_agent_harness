@@ -126,7 +126,7 @@ void main() {
     test('renders the version in the header line', () {
       expect(
         helpText,
-        contains('fah — flutter_agent_harness CLI agent v0.0.0-test'),
+        contains('fa — flutter_agent_harness CLI agent v0.0.0-test'),
       );
     });
 

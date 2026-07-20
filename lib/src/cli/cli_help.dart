@@ -1,4 +1,4 @@
-/// The `fah --help` text: a complete, grouped reference of every invocation
+/// The `fa --help` text: a complete, grouped reference of every invocation
 /// shape, flag, provider, config section, and REPL command the CLI actually
 /// supports. Plain grep-friendly text (like git help); kept in pure Dart so
 /// tests can guard that it stays in sync with the flags `parseCliArgs`
@@ -8,19 +8,19 @@
 /// live under `prompts/` (see AGENTS.md).
 library;
 
-/// The full `--help` output printed by the `fah` executable. [version] is
+/// The full `--help` output printed by the `fa` executable. [version] is
 /// threaded through from the executable (`_version` in `bin/fah.dart`) — the
 /// single source of truth shared with `--version` — and rendered in the
 /// header line.
 String cliHelpText(String version) =>
     '''
-fah — flutter_agent_harness CLI agent v$version
+fa — flutter_agent_harness CLI agent v$version
 
 USAGE
-  fah [options]                          interactive REPL
-  fah [options] "fix the tests"          headless: run one prompt and exit
-  fah [options] -p "fix the tests"       headless, prompt used verbatim
-  fah [options] notes.md "summarize"     headless, existing file as prompt source
+  fa [options]                          interactive REPL
+  fa [options] "fix the tests"          headless: run one prompt and exit
+  fa [options] -p "fix the tests"       headless, prompt used verbatim
+  fa [options] notes.md "summarize"     headless, existing file as prompt source
 
 INVOCATION
   Interactive REPL: no prompt arguments. Type a message to run the agent;
