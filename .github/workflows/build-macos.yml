@@ -1,0 +1,485 @@
+name: Build macOS Release (Fa)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.0.2) or "auto" to increment patch'
+        required: false
+        default: 'auto'
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  version:
+    name: Derive version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Derive build version
+        id: version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          INPUT="${{ inputs.version }}"
+          if [ -z "$INPUT" ] || [ "$INPUT" = "auto" ]; then
+            LATEST=$(gh release list --limit 10 --json tagName \
+              --jq '[.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | first | .tagName' 2>/dev/null || echo "")
+            if [ -z "$LATEST" ]; then
+              TAG="v0.0.1"
+              echo "No previous release found — starting at $TAG"
+            else
+              MAJOR=$(echo "$LATEST" | sed 's/v\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)/\1/')
+              MINOR=$(echo "$LATEST" | sed 's/v\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)/\2/')
+              PATCH=$(echo "$LATEST" | sed 's/v\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)/\3/')
+              PATCH=$((PATCH + 1))
+              TAG="v${MAJOR}.${MINOR}.${PATCH}"
+              echo "Previous release: $LATEST → auto-increment to $TAG"
+            fi
+          else
+            TAG="$INPUT"
+            [[ "$TAG" != v* ]] && TAG="v$TAG"
+            echo "Using manual version: $TAG"
+          fi
+          VERSION_CLEAN="${TAG#v}"
+          echo "version=$VERSION_CLEAN" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+  build-macos:
+    name: Build macOS ${{ matrix.arch }}
+    needs: version
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    permissions:
+      contents: write
+    env:
+      # Workaround: force .NET (used by the runner) to use SocketsHttpHandler
+      # instead of Apple's SSL APIs, avoiding "bad certificate format" errors
+      # caused by corporate Zscaler/MDM certificates in the system keychain.
+      DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER: "0"
+
+    steps:
+      # ── Prepare persistent local git mirrors ────────────────────────────────
+      - name: Update local git mirrors
+        run: |
+          set -euo pipefail
+
+          MIRROR_BASE="$HOME/actions-runner-yoloit/mirror"
+          mkdir -p "$MIRROR_BASE"
+
+          update_mirror() {
+            local url="$1"
+            local mirror="$2"
+            local extra_args="${3:-}"
+            if [ ! -d "$mirror" ]; then
+              echo "Creating mirror: $mirror"
+              if [ -n "$extra_args" ]; then
+                # --mirror conflicts with --single-branch/--branch; use --bare
+                # for branch-specific mirrors (e.g. flutter_code_editor).
+                git clone --bare $extra_args "$url" "$mirror"
+              else
+                git clone --mirror "$url" "$mirror"
+              fi
+            else
+              echo "Updating mirror: $mirror"
+              if ! git -C "$mirror" fetch origin 2>/dev/null; then
+                echo "Fetch failed — recreating mirror: $mirror"
+                rm -rf "$mirror"
+                if [ -n "$extra_args" ]; then
+                  git clone --bare $extra_args "$url" "$mirror"
+                else
+                  git clone --mirror "$url" "$mirror"
+                fi
+              fi
+            fi
+          }
+
+          update_mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR_BASE/flutter_agent_harness.git"
+
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout repository from local mirrors
+        run: |
+          set -euo pipefail
+
+          MIRROR_BASE="$HOME/actions-runner-yoloit/mirror"
+          MAIN_MIRROR="$MIRROR_BASE/flutter_agent_harness.git"
+          ARCH="${{ matrix.arch }}"
+          BUILD_CACHE_DIR="$HOME/actions-runner-yoloit/build-cache/macos-$ARCH"
+
+          echo "HOME=$HOME"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "MAIN_MIRROR=$MAIN_MIRROR"
+          echo "ARCH=$ARCH"
+
+          if [ -d "$GITHUB_WORKSPACE/build/macos" ]; then
+            echo "Preserving existing macOS build cache for $ARCH..."
+            rm -rf "$BUILD_CACHE_DIR"
+            mkdir -p "$BUILD_CACHE_DIR"
+            mv "$GITHUB_WORKSPACE/build/macos" "$BUILD_CACHE_DIR/"
+          fi
+
+          cd /tmp
+          rm -rf "$GITHUB_WORKSPACE"
+          mkdir -p "$GITHUB_WORKSPACE"
+
+          echo "Cloning main repo with mirror reference..."
+          git clone --reference "$MAIN_MIRROR" --depth=1 \
+            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
+
+          cd "$GITHUB_WORKSPACE"
+
+          # Allow local file-protocol clones used by the submodule mirrors.
+          git config --global protocol.file.allow always
+          git config submodule.third_party/flutter_local_models.url \
+            "file://$MIRROR_BASE/flutter_local_models.git"
+          git config submodule.packages/xterm.url \
+            "file://$MIRROR_BASE/xterm.git"
+
+          git submodule update --init --recursive --depth=1 --jobs=8
+          echo "Submodules initialized:"
+          git submodule status
+
+          if [ -d "$BUILD_CACHE_DIR/macos" ]; then
+            echo "Restoring macOS build cache for $ARCH..."
+            mkdir -p build
+            mv "$BUILD_CACHE_DIR/macos" build/
+          fi
+
+      - name: Setup Flutter environment
+        run: |
+          for candidate in "$HOME/development/flutter/bin" "$HOME/.local/flutter/bin" "/Users/Uladzimir_Klyshevich/development/flutter/bin"; do
+            if [ -x "$candidate/flutter" ]; then
+              echo "$candidate" >> $GITHUB_PATH
+              export PATH="$candidate:$PATH"
+              echo "Found Flutter at: $candidate"
+              break
+            fi
+          done
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          export PATH="/opt/homebrew/bin:$PATH"
+          flutter --version
+          dart --version
+
+      - name: Install Rust toolchain
+        run: |
+          if command -v rustup &> /dev/null; then
+            echo "Rust already installed"
+            rustup show
+          else
+            echo "Installing Rust..."
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source "$HOME/.cargo/env"
+          fi
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          rustup --version
+          cargo --version
+
+      - name: Install Flutter dependencies
+        run: |
+          flutter pub get
+          echo "=== Dependency versions ==="
+          flutter pub deps --style=compact
+
+      - name: Generate build info
+        run: |
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          SUBMODULES=$(git submodule status --recursive | tr '\n' ';')
+
+          printf '%s\n' \
+            '// Generated build info — CI overwrites this file before compilation.' \
+            '// ignore_for_file: constant_identifier_names' \
+            '' \
+            "const String kBuildGitCommit = '${GIT_COMMIT}';" \
+            "const String kBuildGitBranch = '${GIT_BRANCH}';" \
+            "const String kBuildSubmodules = '${SUBMODULES}';" \
+            > lib/core/services/build_info.dart
+
+          echo "Build info generated:"
+          cat lib/core/services/build_info.dart
+
+      - name: Import macOS signing certificate
+        id: signing
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE_P12_BASE64" ]; then
+            echo "⚠️  No signing certificate found — building unsigned (development only)"
+            echo "signed=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Signing certificate found — importing..."
+            security delete-keychain build.keychain 2>/dev/null || true
+            security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+            security default-keychain -s build.keychain
+            security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+            security set-keychain-settings -t 3600 -u build.keychain
+            security list-keychains -d user -s build.keychain ~/Library/Keychains/login.keychain-db
+
+            echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > certificate.p12
+            security import certificate.p12 -k build.keychain \
+              -P "$MACOS_CERTIFICATE_PASSWORD" \
+              -T /usr/bin/codesign \
+              -T /usr/bin/productbuild
+            security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+            echo "signed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build macOS release (${{ matrix.arch }})
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          ARCH="${{ matrix.arch }}"
+          echo "Building for architecture: $ARCH"
+          cd example/flutter_example
+          FLUTTER_XCODE_ARCHS="$ARCH" flutter build macos --release \
+            --build-name=$BUILD_VERSION \
+            --build-number=$BUILD_NUMBER
+          MAIN_BIN=$(find build/macos/Build/Products/Release/Fa.app -name "Fa" -type f | head -1)
+          echo "=== Binary architecture verification ==="
+          echo "Binary path: $MAIN_BIN"
+          file "$MAIN_BIN"
+          lipo -info "$MAIN_BIN"
+          echo "=== End binary verification ==="
+
+      - name: Package as DMG
+        id: package
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+          MACOS_CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          ARCH="${{ matrix.arch }}"
+          APP_PATH="example/flutter_example/build/macos/Build/Products/Release/Fa.app"
+          DMG_NAME="fa-macos-${ARCH}-${VERSION}.dmg"
+
+          rm -f fa-macos-*.dmg tmp-fa.dmg
+          rm -rf dmg-staging
+
+          echo "Packaging: $APP_PATH → $DMG_NAME (arch: $ARCH)"
+
+          if [ "$SIGNED" = "true" ] && [ -n "$MACOS_CERTIFICATE_ID" ]; then
+            echo "Signing .app bundle..."
+
+            RESVG_BIN="$APP_PATH/Contents/Resources/resvg"
+            if [ -f "$RESVG_BIN" ]; then
+              echo "Stripping extended attributes from resvg..."
+              xattr -cr "$RESVG_BIN" 2>/dev/null || true
+              echo "Signing resvg binary..."
+              codesign --force --sign "$MACOS_CERTIFICATE_ID" \
+                --options runtime \
+                --timestamp \
+                "$RESVG_BIN"
+            fi
+
+            find "$APP_PATH" -type f \( -perm +111 -o -name '*.dylib' \) | while read -r bin; do
+              if codesign -dv "$bin" 2>/dev/null | grep -q "$MACOS_CERTIFICATE_ID"; then
+                continue
+              fi
+              echo "Signing nested binary: $bin"
+              codesign --force --sign "$MACOS_CERTIFICATE_ID" \
+                --options runtime \
+                --timestamp \
+                "$bin" 2>/dev/null || true
+            done
+
+            codesign_app() {
+              codesign --force --deep --sign "$MACOS_CERTIFICATE_ID" \
+                --options runtime \
+                --timestamp \
+                --entitlements macos/Runner/Release.entitlements \
+                "$APP_PATH"
+            }
+
+            for attempt in 1 2 3 4 5; do
+              if codesign_app; then
+                break
+              fi
+              if [ "$attempt" = "5" ]; then
+                echo "codesign failed after $attempt attempts"
+                exit 1
+              fi
+              sleep_seconds=$((attempt * 30))
+              echo "codesign failed, retrying in ${sleep_seconds}s (attempt $attempt/5)..."
+              sleep "$sleep_seconds"
+            done
+
+            echo "Verifying code signature..."
+            codesign -vv --deep --strict "$APP_PATH"
+            spctl -a -vv "$APP_PATH" 2>/dev/null || true
+          fi
+
+          DMG_STAGING="dmg-staging"
+          rm -rf "$DMG_STAGING"
+          mkdir "$DMG_STAGING"
+          cp -R "$APP_PATH" "$DMG_STAGING/"
+          ln -s /Applications "$DMG_STAGING/Applications"
+
+          TMP_DMG="tmp-fa.dmg"
+          hdiutil create \
+            -volname "Fa $VERSION" \
+            -srcfolder "$DMG_STAGING" \
+            -ov \
+            -format UDRW \
+            "$TMP_DMG"
+
+          hdiutil convert "$TMP_DMG" -format UDZO -o "$DMG_NAME"
+          rm -f "$TMP_DMG"
+          rm -rf "$DMG_STAGING"
+
+          echo "dmg_name=$DMG_NAME" >> $GITHUB_OUTPUT
+
+          ZIP_NAME="fa-macos-${ARCH}-${VERSION}-mac.zip"
+          echo "Packaging ZIP for auto-update: $ZIP_NAME"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
+          SHA512=$(openssl dgst -sha512 -binary "$ZIP_NAME" | openssl base64 -A)
+          SIZE=$(stat -f%z "$ZIP_NAME")
+          MANIFEST_ARCH="$ARCH"
+          if [ "$MANIFEST_ARCH" = "x86_64" ]; then
+            MANIFEST_ARCH="x64"
+          fi
+          MANIFEST_NAME="latest-mac-${MANIFEST_ARCH}.yml"
+          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          printf '%s\n' \
+            "version: ${VERSION}" \
+            "files:" \
+            "  - url: ${ZIP_NAME}" \
+            "    sha512: ${SHA512}" \
+            "    size: ${SIZE}" \
+            "    arch: ${MANIFEST_ARCH}" \
+            "path: ${ZIP_NAME}" \
+            "sha512: ${SHA512}" \
+            "releaseDate: '${RELEASE_DATE}'" \
+            > "$MANIFEST_NAME"
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
+          echo "manifest_name=$MANIFEST_NAME" >> $GITHUB_OUTPUT
+
+      - name: Notarize DMG
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
+          MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+          MACOS_NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
+          DMG_NAME: ${{ steps.package.outputs.dmg_name }}
+        run: |
+          if [ -z "$MACOS_NOTARIZE_APPLE_ID" ]; then
+            echo "⚠️  Notarization secrets not set — skipping notarization"
+            exit 0
+          fi
+          echo "Submitting for notarization..."
+          xcrun notarytool submit "$DMG_NAME" \
+            --apple-id "$MACOS_NOTARIZE_APPLE_ID" \
+            --team-id "$MACOS_NOTARIZE_TEAM_ID" \
+            --password "$MACOS_NOTARIZE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG_NAME"
+          echo "✅ Notarization complete"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: YoLoIT-macos-${{ matrix.arch }}
+          path: |
+            ${{ steps.package.outputs.dmg_name }}
+            ${{ steps.package.outputs.zip_name }}
+            ${{ steps.package.outputs.manifest_name }}
+          retention-days: 14
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain build.keychain 2>/dev/null || true
+          rm -f certificate.p12
+
+  release-macos:
+    name: Create macOS GitHub Release
+    needs: [version, build-macos]
+    runs-on: ubuntu-latest
+    if: inputs.create_release == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download DMG artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dmgs
+          pattern: Fa-macos-*
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: ls -laR dmgs/
+
+      - name: Merge macOS auto-update manifest
+        run: |
+          python3 -m pip install --user pyyaml
+          chmod +x scripts/merge-mac-update-manifest.sh
+          scripts/merge-mac-update-manifest.sh dmgs dmgs/latest-mac.yml
+          cat dmgs/latest-mac.yml
+
+      - name: Create or update GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          DMGS=$(ls dmgs/*.dmg 2>/dev/null || true)
+          ZIPS=$(ls dmgs/*-mac.zip 2>/dev/null || true)
+          MANIFEST="dmgs/latest-mac.yml"
+          echo "DMGs to upload: $DMGS"
+          echo "ZIPs to upload: $ZIPS"
+
+          STABLE_COPIES=()
+          for zip in $ZIPS; do
+            base=$(basename "$zip")
+            if [[ "$base" == *arm64* ]]; then
+              cp "$zip" "dmgs/fa-macos-arm64-mac.zip"
+              STABLE_COPIES+=("dmgs/fa-macos-arm64-mac.zip")
+            elif [[ "$base" == *x86_64* ]]; then
+              cp "$zip" "dmgs/fa-macos-x64-mac.zip"
+              STABLE_COPIES+=("dmgs/fa-macos-x64-mac.zip")
+            fi
+          done
+
+          ASSETS=($DMGS $ZIPS $MANIFEST "${STABLE_COPIES[@]}")
+
+          if gh release view "$RELEASE_TAG" --repo ${{ github.repository }} &>/dev/null; then
+            echo "Release $RELEASE_TAG already exists — uploading macOS assets..."
+            for asset in "${ASSETS[@]}"; do
+              gh release upload "$RELEASE_TAG" "$asset" --clobber --repo ${{ github.repository }}
+            done
+            echo "✅ Uploaded macOS assets to existing release $RELEASE_TAG"
+          else
+            printf 'Fa %s run #%s\n\n## Installation\n- **macOS**: Download the DMG for your architecture (`arm64` for Apple Silicon, `x86_64` for Intel) and drag Fa.app to Applications. In-app updates use the ZIP + latest-mac.yml feed.\n- **Linux**: Download tar.gz, extract and run the `bundle/fa` binary.\n- **Windows**: Download zip, extract and run `fa.exe`.\n' \
+              "$RELEASE_TAG" "${{ github.run_number }}" > release-notes.md
+
+            gh release create "$RELEASE_TAG" \
+              --repo ${{ github.repository }} \
+              --title "Fa $RELEASE_TAG" \
+              --notes-file release-notes.md \
+              --latest \
+              "${ASSETS[@]}"
+            echo "✅ Created release $RELEASE_TAG with macOS assets"
+          fi
