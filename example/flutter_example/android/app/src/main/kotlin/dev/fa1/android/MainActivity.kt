@@ -1,4 +1,4 @@
-package com.example.flutter_agent_example
+package dev.fa1.android
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -1,3 +1,5 @@
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/app_theme.dart';
@@ -15,8 +17,14 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'wasm_setup_stub.dart' if (dart.library.io) 'wasm_setup_io.dart';
 
+import 'firebase_options.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final options = DefaultFirebaseOptions.currentPlatform;
+  if (!options.apiKey.startsWith('YOUR_')) {
+    await Firebase.initializeApp(options: options);
+  }
   await setUpWasmRuntime();
   try {
     await dotenv.load(fileName: '.env');
@@ -30,8 +38,16 @@ Future<void> main() async {
   final env = await createPlatformEnv();
   final registry = await ProviderRegistry.load(env);
   final lastConnection = await LastConnectionStore.load(env);
+  final analytics = Firebase.apps.isNotEmpty
+      ? FirebaseAnalytics.instance
+      : null;
   runApp(
-    MyApp(env: env, registry: registry, lastConnectionStore: lastConnection),
+    MyApp(
+      env: env,
+      registry: registry,
+      lastConnectionStore: lastConnection,
+      analytics: analytics,
+    ),
   );
 }
 
@@ -44,6 +60,7 @@ class MyApp extends StatelessWidget {
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
+    this.analytics,
   });
 
   /// The shared execution env; `null` lets [AgentService.create] build the
@@ -64,11 +81,18 @@ class MyApp extends StatelessWidget {
   final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
 
+  /// Firebase Analytics instance; null when Firebase is not initialized
+  /// (e.g., tests or placeholder firebase_options.dart).
+  final FirebaseAnalytics? analytics;
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'fah',
+      title: 'Fa',
       theme: buildFahTheme(),
+      navigatorObservers: analytics != null
+          ? [FirebaseAnalyticsObserver(analytics: analytics!)]
+          : const <NavigatorObserver>[],
       home: SetupScreen(
         env: env,
         registry: registry,

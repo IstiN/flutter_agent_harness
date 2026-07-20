@@ -10,6 +10,7 @@ pubspec.lock
 .idea/
 .vscode/
 .DS_Store
+.repro/
 
 # Vendor dependencies (local wasm_run fork) - keep source, ignore build artifacts
 vendor/**/target/

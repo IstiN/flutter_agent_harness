@@ -7,6 +7,9 @@ import 'package:test/test.dart';
 /// AND to `cliHelpText`.
 void main() {
   group('cliHelpText', () {
+    // Rendered once with a fixed test version for the keyword guards; the
+    // real version is threaded through from the executable's `_version`.
+    final helpText = cliHelpText('0.0.0-test');
     // Every flag accepted by parseCliArgs (see lib/src/cli/cli_args.dart).
     const flags = [
       '--help',
@@ -31,7 +34,7 @@ void main() {
     ];
     for (final flag in flags) {
       test('mentions flag $flag', () {
-        expect(cliHelpText, contains(flag));
+        expect(helpText, contains(flag));
       });
     }
 
@@ -116,20 +119,27 @@ void main() {
     ];
     for (final keyword in keywords) {
       test('mentions $keyword', () {
-        expect(cliHelpText, contains(keyword));
+        expect(helpText, contains(keyword));
       });
     }
 
+    test('renders the version in the header line', () {
+      expect(
+        helpText,
+        contains('fah — flutter_agent_harness CLI agent v0.0.0-test'),
+      );
+    });
+
     test('documents the flag > config > built-in resolution order', () {
       expect(
-        cliHelpText,
+        helpText,
         contains('--system-prompt[-file] flag > config prompts: override'),
       );
     });
 
     test('lists the overridable prompt names from the registry', () {
       for (final name in overridablePromptNames.keys) {
-        expect(cliHelpText, contains(name), reason: 'missing prompt $name');
+        expect(helpText, contains(name), reason: 'missing prompt $name');
       }
     });
   });
