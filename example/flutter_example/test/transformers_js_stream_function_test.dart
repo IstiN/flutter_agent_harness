@@ -364,6 +364,115 @@ void main() {
       expect(events.whereType<DoneEvent>(), isEmpty);
     });
 
+    test('a mid-stream crash resets the engine once and the NEXT turn '
+        'reloads and streams fine', () async {
+      final engine = FakeTransformersJsEngine()
+        ..chunks = ['partial']
+        ..deliverChunksBeforeError = true
+        ..streamErrorScript.add(_ortRunDump);
+
+      final crashed = await streamTransformersJs(
+        engine,
+        _model(),
+        _context(),
+      ).toList();
+      expect(crashed.whereType<ErrorEvent>().single.reason, StopReason.error);
+      // ONE reset for the one failure; the engine is left unloaded.
+      expect(engine.unloadCount, 1);
+      expect(engine.chatCallCount, 1);
+      expect(engine.loadedPreset, isNull);
+
+      // The next message is a fresh turn: the engine reloads (from the
+      // cached weights, no re-download — the JS helper's reset never
+      // touches CacheStorage) and generation succeeds.
+      engine
+        ..chunks = ['answer']
+        ..deliverChunksBeforeError = false;
+      final recovered = await streamTransformersJs(
+        engine,
+        _model(),
+        _context(),
+      ).toList();
+
+      final done = recovered.whereType<DoneEvent>().single;
+      expect(done.reason, StopReason.stop);
+      expect(_partialText(done.message), 'answer');
+      expect(recovered.whereType<ErrorEvent>(), isEmpty);
+      expect(engine.loadCallCount, 2);
+      expect(engine.chatCallCount, 2);
+      // A clean second turn resets nothing further.
+      expect(engine.unloadCount, 1);
+      expect(engine.loadedPreset, isNotNull);
+    });
+
+    test('an unrecovered crash leaves the next turn a FRESH recovery budget '
+        '(per-turn counter)', () async {
+      // Turn 1: every call crashes — the one allowed retry fails too.
+      final engine = FakeTransformersJsEngine()
+        ..streamErrorMessage = _ortRunDump;
+      final crashed = await streamTransformersJs(
+        engine,
+        _model(),
+        _context(),
+      ).toList();
+      expect(
+        crashed.whereType<ErrorEvent>().single.error.errorMessage,
+        transformersJsGpuCrashMessage,
+      );
+      expect(engine.loadCallCount, 2);
+      expect(engine.chatCallCount, 2);
+      expect(engine.unloadCount, 2);
+      expect(engine.loadedPreset, isNull);
+
+      // Turn 2: the first call crashes once more, then the engine would
+      // work — a turn-scoped counter must allow this turn its own retry
+      // instead of refusing (or looping) on a shared one.
+      engine
+        ..streamErrorMessage = null
+        ..streamErrorScript.addAll([_ortRunDump, null])
+        ..chunks = ['back'];
+      final recovered = await streamTransformersJs(
+        engine,
+        _model(),
+        _context(),
+      ).toList();
+
+      final done = recovered.whereType<DoneEvent>().single;
+      expect(_partialText(done.message), 'back');
+      expect(recovered.whereType<ErrorEvent>(), isEmpty);
+      // Turn 2 added exactly one load+chat pair for the failed attempt and
+      // one for the successful retry, with one reset in between.
+      expect(engine.loadCallCount, 4);
+      expect(engine.chatCallCount, 4);
+      expect(engine.unloadCount, 3);
+    });
+
+    test(
+      'crashes on every turn stay bounded (no reload loop across turns)',
+      () async {
+        final engine = FakeTransformersJsEngine()
+          ..streamErrorMessage = _ortRunDump;
+
+        for (var turn = 0; turn < 3; turn++) {
+          final events = await streamTransformersJs(
+            engine,
+            _model(),
+            _context(),
+          ).toList();
+          final error = events.whereType<ErrorEvent>().single;
+          expect(error.error.errorMessage, transformersJsGpuCrashMessage);
+        }
+
+        // Per turn: ONE initial attempt + ONE recovery retry, one reset per
+        // failure (the retry's reset comes from the terminal fail path) —
+        // three turns of permanent crashes cost 6 loads/chats/resets total,
+        // never an unbounded reload loop.
+        expect(engine.loadCallCount, 6);
+        expect(engine.chatCallCount, 6);
+        expect(engine.unloadCount, 6);
+      },
+    );
+
     test('a clean turn does not reset the engine', () async {
       final engine = FakeTransformersJsEngine()..chunks = ['ok'];
       await streamTransformersJs(engine, _model(), _context()).toList();
@@ -806,7 +915,10 @@ void main() {
         'failed to call OrtRun(). ERROR_CODE: 1',
         "Failed to execute 'mapAsync' on 'GPUBuffer'",
         '[invalid Buffer] is invalid due to a previous error',
+        'onnxruntime::webgpu::BufferManager::Download failed',
         'GPUDevice lost: reason=unknown',
+        'The GPU device was lost.',
+        'webgpu device_lost: reason=unknown',
         'DXGI_ERROR_DEVICE_REMOVED',
         'RangeError: Out of memory',
         'OUT OF MEMORY allocating buffer',
