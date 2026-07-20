@@ -476,10 +476,14 @@ void main() {
         'https://acme.example/v1',
       );
       await tester.enterText(_editorField('Model id'), 'acme-1');
+      // The key stays empty: the editor marks it optional and a keyless
+      // provider saves fine (local servers need no key).
+      expect(_editorField('API key (optional)'), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
       expect(registry.providers, hasLength(1));
+      expect(registry.keyFor(registry.providers.single.id), isNull);
       // The new provider is selected and prefills the connection fields.
       expect(find.text('Acme'), findsOneWidget);
       expect(
@@ -529,8 +533,11 @@ void main() {
       );
 
       await _selectProvider(tester, 'Acme');
+      // Custom providers mark the key optional (local servers need none).
+      expect(find.text('API key (optional)'), findsOneWidget);
+      expect(find.textContaining('local servers'), findsOneWidget);
       await tester.enterText(
-        find.widgetWithText(TextField, 'API key'),
+        find.widgetWithText(TextField, 'API key (optional)'),
         'sk-acme',
       );
       await _tapConnect(tester, 'Start chat');
@@ -543,7 +550,78 @@ void main() {
       // Re-picking the provider prefills the remembered key.
       await _selectProvider(tester, 'Ollama');
       await _selectProvider(tester, 'Acme');
-      expect(_field(tester, 'API key').controller!.text, 'sk-acme');
+      expect(_field(tester, 'API key (optional)').controller!.text, 'sk-acme');
+    });
+
+    testWidgets('the custom preset connects without an API key', (
+      tester,
+    ) async {
+      AgentConfig? connected;
+      await _pumpForm(
+        tester,
+        ProviderRegistry.inMemory(),
+        onConnect: (config) async => connected = config,
+      );
+
+      await _selectProvider(tester, 'Custom');
+      // The key field turns optional for custom endpoints (local servers).
+      expect(find.text('API key'), findsNothing);
+      expect(find.text('API key (optional)'), findsOneWidget);
+      expect(find.textContaining('local servers'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Base URL'),
+        'http://localhost:8080/v1',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'llama3',
+      );
+      await _tapConnect(tester, 'Start chat');
+      await tester.pumpAndSettle();
+
+      expect(find.text('API key is required'), findsNothing);
+      expect(connected?.apiKey, isEmpty);
+      expect(connected?.baseUrl, 'http://localhost:8080/v1');
+      expect(connected?.modelId, 'llama3');
+    });
+
+    testWidgets('a saved provider connects without an API key', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'Local',
+        baseUrl: 'http://localhost:8080/v1',
+        modelId: 'llama3',
+      );
+      AgentConfig? connected;
+      await _pumpForm(
+        tester,
+        registry,
+        onConnect: (config) async => connected = config,
+      );
+
+      await _selectProvider(tester, 'Local');
+      expect(find.text('API key (optional)'), findsOneWidget);
+      await _tapConnect(tester, 'Start chat');
+      await tester.pumpAndSettle();
+
+      expect(find.text('API key is required'), findsNothing);
+      expect(connected?.apiKey, isEmpty);
+      expect(connected?.baseUrl, 'http://localhost:8080/v1');
+      // No session key remembered for a keyless connect.
+      expect(registry.keyFor(provider.id), isNull);
+    });
+
+    testWidgets('hosted presets still require an API key', (tester) async {
+      await _pumpForm(tester, ProviderRegistry.inMemory());
+
+      // Ollama Cloud is hosted (ollama.com) — keyless must not pass.
+      await _selectProvider(tester, 'Ollama');
+      expect(find.text('API key'), findsOneWidget);
+      await _tapConnect(tester, 'Start chat');
+      await tester.pump();
+
+      expect(find.text('API key is required'), findsOneWidget);
     });
 
     testWidgets('editing a provider updates the saved definition', (

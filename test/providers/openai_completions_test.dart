@@ -726,20 +726,67 @@ void main() {
       expect(capturedHeaders!.containsKey('x-model'), isFalse);
     });
 
-    test('missing API key becomes an error event', () async {
-      final client = sseClient(okSse);
+    test('missing API key sends no Authorization header', () async {
+      Map<String, String>? capturedHeaders;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        capturedHeaders = request.headers;
+        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+      });
+
       final stream = streamOpenAICompletions(
         testModel,
         simpleContext(),
         const OpenAICompletionsOptions(),
         client,
       );
+      await stream.result;
 
-      final events = await stream.toList();
-      final error = events.last as ErrorEvent;
-      expect(error.reason, StopReason.error);
-      expect(error.error.errorMessage, contains('No API key'));
+      // Keyless local servers (llama.cpp, Ollama, LM Studio) must not get a
+      // bogus `Bearer ` header — some reject it.
+      expect(capturedHeaders!.containsKey('authorization'), isFalse);
+      expect(capturedHeaders!['content-type'], 'application/json');
     });
+
+    test('empty API key sends no Authorization header', () async {
+      Map<String, String>? capturedHeaders;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        capturedHeaders = request.headers;
+        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+      });
+
+      final stream = streamOpenAICompletions(
+        testModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: ''),
+        client,
+      );
+      await stream.result;
+
+      expect(capturedHeaders!.containsKey('authorization'), isFalse);
+    });
+
+    test(
+      'an explicit authorization header applies without an API key',
+      () async {
+        Map<String, String>? capturedHeaders;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedHeaders = request.headers;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(
+            headers: {'authorization': 'Bearer explicit'},
+          ),
+          client,
+        );
+        await stream.result;
+
+        expect(capturedHeaders!['authorization'], 'Bearer explicit');
+      },
+    );
 
     test(
       'builds the request payload from context, tools, and options',

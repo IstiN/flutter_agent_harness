@@ -532,7 +532,10 @@ class AgentCli {
   /// The banner's key-status line: the name of the env var supplying the
   /// provider key (never the value), or a "no key set" warning when the
   /// provider expects a key the host does not have. Null when the provider
-  /// declares no key env vars (custom/test providers) — no warning then.
+  /// declares no key env vars (custom/test providers) — no warning then —
+  /// and null for a custom endpoint (base URL other than the catalog
+  /// default), which may legitimately run keyless (local llama.cpp/Ollama/
+  /// LM Studio servers).
   ///
   /// Legacy mode reads the names by provider KIND, matching the executable's
   /// key lookup: `openai-completions` accepts OPENROUTER_API_KEY/
@@ -540,14 +543,16 @@ class AgentCli {
   /// flips to `openai`. Roles mode keys per resolved chain entry, so the
   /// live model's provider names are the right ones there.
   String? _keyStatusLine(Model model) {
-    final names = catalogProvider(
+    final spec = catalogProvider(
       _rolesDriven ? model.provider : config.providerKind,
-    )?.apiKeyEnvNames;
+    );
+    final names = spec?.apiKeyEnvNames;
     if (names == null || names.isEmpty) return null;
     final set = names
         .where((name) => config.envVarIsSet?.call(name) ?? false)
         .firstOrNull;
     if (set != null) return 'key: $set';
+    if (spec != null && model.baseUrl != spec.defaultBaseUrl) return null;
     return 'key: no key set (want ${names.first})';
   }
 

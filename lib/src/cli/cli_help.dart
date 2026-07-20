@@ -86,7 +86,8 @@ PROVIDERS AND API KEYS
   Custom endpoints: --provider openai-completions --base-url <url> talks to
   any OpenAI-compatible server — a local Ollama (http://localhost:11434/v1),
   Ollama Cloud (https://ollama.com/v1), vLLM, etc. Pick the model with
-  --model.
+  --model. The API key is optional there: local servers (llama.cpp, Ollama,
+  LM Studio) need none, and no Authorization header is sent without one.
 
   Vision: VISION_API_KEY for --vision-model (defaults to the main key).
   Transcription: TRANSCRIBE_API_KEY for --transcribe-model (defaults to the
