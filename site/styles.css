@@ -278,7 +278,8 @@ section {
 .fineprint { margin-top: 14px; color: var(--dim); font-size: 0.88rem; }
 
 /* ── Install ─────────────────────────────────────────────────────────── */
-.install-term { margin-top: 30px; }
+.install-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; margin-top: 30px; }
+.install-term { margin-top: 0; }
 .install-term .term-body { min-height: 0; padding: 16px 20px; font-size: 0.92rem; }
 .term-bar .copy-btn { margin-left: auto; }
 .copy-btn {

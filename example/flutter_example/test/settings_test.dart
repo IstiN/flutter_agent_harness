@@ -683,7 +683,7 @@ void main() {
   });
 
   group('Chat screen settings gear', () {
-    testWidgets('opens the settings dialog with the cache section', (
+    testWidgets('opens the settings screen with the cache section', (
       tester,
     ) async {
       final service = _fakeService();
@@ -708,7 +708,7 @@ void main() {
       );
     });
 
-    testWidgets('dialog validates the key without touching the network', (
+    testWidgets('screen validates the key without touching the network', (
       tester,
     ) async {
       final service = _fakeService();

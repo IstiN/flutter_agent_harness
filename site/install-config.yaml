@@ -1,0 +1,90 @@
+# Single source of truth for the interactive CLI installer menus.
+# Edit this file, then regenerate the installer scripts:
+#   dart run scripts/gen_installers.dart
+#
+# The generated files are committed so that curl|sh / irm|iex work without
+# requiring Dart on the user's machine.
+
+providers:
+  - id: openrouter
+    name: OpenRouter
+    note: one key, many models
+    kind: openai-completions
+    key_var: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    recommended: true
+    models:
+      - id: anthropic/claude-sonnet-4
+        label: anthropic/claude-sonnet-4
+        recommended: true
+      - id: openai/gpt-4o-mini
+      - id: google/gemini-2.5-pro
+      - id: anthropic/claude-opus-4
+      - id: openai/gpt-4.1-mini
+
+  - id: anthropic
+    name: Anthropic
+    note: Claude
+    kind: anthropic
+    key_var: ANTHROPIC_API_KEY
+    base_url: https://api.anthropic.com
+    models:
+      - id: claude-sonnet-4-5
+        label: claude-sonnet-4-5
+        recommended: true
+      - id: claude-opus-4
+      - id: claude-haiku-4
+
+  - id: google
+    name: Google
+    note: Gemini
+    kind: google
+    key_var: GOOGLE_API_KEY
+    base_url: https://generativelanguage.googleapis.com/v1beta
+    models:
+      - id: gemini-2.5-pro
+        recommended: true
+      - id: gemini-2.0-flash
+
+  - id: openai
+    name: OpenAI
+    note: GPT
+    kind: openai-completions
+    key_var: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+    models:
+      - id: gpt-4o-mini
+        recommended: true
+      - id: gpt-4o
+      - id: gpt-4.1-mini
+
+  - id: custom
+    name: Custom
+    note: any OpenAI-compatible endpoint
+    kind: openai-completions
+    key_var: OPENAI_API_KEY
+    custom: true
+
+modes:
+  - id: code
+    name: code
+    note: edit/run code
+    default: true
+  - id: architect
+    name: architect
+    note: plan and review
+  - id: review
+    name: review
+    note: audit and suggest
+
+approval_modes:
+  - id: yolo
+    name: yolo
+    note: run safe tools unattended
+    default: true
+  - id: write
+    name: write
+    note: prompt before writes/executes
+  - id: always-ask
+    name: always-ask
+    note: prompt before every tool call

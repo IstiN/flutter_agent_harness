@@ -416,12 +416,13 @@ class _ChatScreenState extends State<ChatScreen> {
   /// this screen's service in place (see [AgentService.reconfigure]) — the
   /// visible transcript survives the backend switch.
   Future<void> _openSettings() async {
-    await showDialog<void>(
-      context: context,
-      builder: (_) => SettingsDialog(
-        service: widget.service,
-        registry: widget.registry,
-        lastConnectionStore: widget.lastConnectionStore,
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(
+          service: widget.service,
+          registry: widget.registry,
+          lastConnectionStore: widget.lastConnectionStore,
+        ),
       ),
     );
   }
@@ -733,6 +734,48 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: FahPalette.dim,
                       ),
                     ),
+                  ],
+                ),
+              ),
+            if (widget.service.pendingSteerTexts.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final pending in widget.service.pendingSteerTexts)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: FahPalette.userBubble.withValues(alpha: 0.6),
+                          border: Border.all(
+                            color: FahPalette.userBubbleBorder,
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                pending,
+                                style: theme.textTheme.bodyMedium,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.schedule,
+                              size: 16,
+                              color: FahPalette.dim,
+                            ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ),

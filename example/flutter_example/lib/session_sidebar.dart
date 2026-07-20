@@ -15,7 +15,7 @@ const double kSessionSidebarWidth = 280;
 /// The left sidebar of the chat screen.
 ///
 /// Top: the active model/provider card — tapping it opens the
-/// [SettingsDialog], and applying reconfigures the service mid-chat (the
+/// [SettingsScreen], and applying reconfigures the service mid-chat (the
 /// transcript survives, see [AgentService.reconfigure]). Below: the persisted
 /// sessions (newest first) with a "New session" action; tapping a session
 /// loads it into the chat (see [AgentService.loadSession]).
@@ -39,11 +39,11 @@ class SessionSidebar extends StatefulWidget {
   /// new session started) — the narrow drawer uses it to close itself.
   final VoidCallback? onAction;
 
-  /// The custom-provider registry handed to the [SettingsDialog] opened from
+  /// The custom-provider registry handed to the [SettingsScreen] opened from
   /// the model card; `null` falls back to an in-memory one (tests).
   final ProviderRegistry? registry;
 
-  /// The last-connection store handed to the [SettingsDialog]: applies
+  /// The last-connection store handed to the [SettingsScreen]: applies
   /// update it (see [LastConnectionStore]); `null` skips prefill and
   /// persistence (tests).
   final LastConnectionStore? lastConnectionStore;
@@ -140,12 +140,13 @@ class _SessionSidebarState extends State<SessionSidebar> {
   }
 
   Future<void> _switchModel() async {
-    await showDialog<void>(
-      context: context,
-      builder: (_) => SettingsDialog(
-        service: _service,
-        registry: widget.registry,
-        lastConnectionStore: widget.lastConnectionStore,
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(
+          service: _service,
+          registry: widget.registry,
+          lastConnectionStore: widget.lastConnectionStore,
+        ),
       ),
     );
   }

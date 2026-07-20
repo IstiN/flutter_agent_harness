@@ -333,6 +333,12 @@ class AgentService extends ChangeNotifier {
   final ExecutionEnv env;
 
   final List<FahChatMessage> messages = [];
+
+  /// User messages typed while the agent is still streaming. They are queued
+  /// via [Agent.steer] and injected at the next turn boundary; the UI shows
+  /// them above the composer as "pending" until the run picks them up.
+  final List<String> pendingSteerTexts = [];
+
   bool isStreaming = false;
   String? error;
 
@@ -372,12 +378,21 @@ class AgentService extends ChangeNotifier {
     _sessionId = (await session.getMetadata()).id;
   }
 
-  /// Sends a plain-text user message.
+  /// Sends a plain-text user message. While the agent is already running the
+  /// message is queued as a steering message and the UI shows it as pending
+  /// until the next turn picks it up.
   Future<void> sendText(String text) async {
-    if (text.trim().isEmpty) return;
-    _addUserMessage(text: text);
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
     _clearError();
-    _runWithTimeout(() => _agent.prompt(text));
+    if (_agent.state.isStreaming) {
+      _agent.steer(UserMessage.text(trimmed));
+      pendingSteerTexts.add(trimmed);
+      notifyListeners();
+      return;
+    }
+    _addUserMessage(text: trimmed);
+    _runWithTimeout(() => _agent.prompt(trimmed));
   }
 
   /// Directory (relative to [env]'s working directory) where chat
@@ -468,12 +483,32 @@ class AgentService extends ChangeNotifier {
         if (isInlineImageMimeType(attachment.mimeType)) attachment,
     ];
     final inline = images.isNotEmpty && inlinesImageAttachments;
+    _clearError();
+    if (_agent.state.isStreaming) {
+      _agent.steer(
+        inline
+            ? UserMessage(
+                content: [
+                  TextContent(text: fullText),
+                  for (final image in images)
+                    ImageContent(
+                      data: base64Encode(image.bytes),
+                      mimeType: image.mimeType,
+                    ),
+                ],
+                timestamp: DateTime.now(),
+              )
+            : UserMessage.text(fullText),
+      );
+      pendingSteerTexts.add(fullText);
+      notifyListeners();
+      return;
+    }
     _addUserMessage(
       text: fullText,
       imageBytes: inline ? images.first.bytes : null,
       mimeType: inline ? images.first.mimeType : null,
     );
-    _clearError();
     if (!inline) {
       _runWithTimeout(() => _agent.prompt(fullText));
       return;
@@ -501,17 +536,20 @@ class AgentService extends ChangeNotifier {
     required String mimeType,
     String text = '',
   }) async {
-    _addUserMessage(text: text, imageBytes: bytes, mimeType: mimeType);
     _clearError();
     final content = <ContentBlock>[
       if (text.isNotEmpty) TextContent(text: text),
       ImageContent(data: base64Encode(bytes), mimeType: mimeType),
     ];
-    _runWithTimeout(
-      () => _agent.promptMessage(
-        UserMessage(content: content, timestamp: DateTime.now()),
-      ),
-    );
+    final message = UserMessage(content: content, timestamp: DateTime.now());
+    if (_agent.state.isStreaming) {
+      _agent.steer(message);
+      pendingSteerTexts.add(text.isEmpty ? '[image]' : text);
+      notifyListeners();
+      return;
+    }
+    _addUserMessage(text: text, imageBytes: bytes, mimeType: mimeType);
+    _runWithTimeout(() => _agent.promptMessage(message));
   }
 
   /// Starts one agent run and settles the UI state no matter how it ends.
@@ -709,6 +747,7 @@ class AgentService extends ChangeNotifier {
       case AgentStartEvent():
         isStreaming = true;
         _currentAssistantMessage = null;
+        pendingSteerTexts.clear();
         notifyListeners();
       case MessageUpdateEvent(:final assistantMessageEvent):
         if (assistantMessageEvent is TextDeltaEvent) {
@@ -776,6 +815,13 @@ class AgentService extends ChangeNotifier {
           // missed appends (see _persistedCount).
         }
         await _maybeAutoCompact();
+        // If the user queued steering/follow-up messages while the run was
+        // active, kick off the next run automatically. Defer to the next
+        // event-loop tick so the current run's lifecycle finishes first
+        // (_activeRun is still non-null while this listener runs).
+        if (_agent.hasQueuedMessages()) {
+          Future(() => _runWithTimeout(() => _agent.continueRun()));
+        }
       default:
     }
   }

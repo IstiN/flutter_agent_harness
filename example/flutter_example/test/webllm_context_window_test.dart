@@ -100,11 +100,12 @@ void main() {
       expect(system, contains('You are Fa'));
       expect(system, contains('## Available tools'));
 
-      // Measured ~3.9k heuristic tokens (~3.3k engine tokens) with the
-      // 8-tool set; the envelope trips if prompt growth ever approaches the
-      // preset window instead of silently re-breaking on-device chat.
+      // Measured ~1.5k heuristic tokens (~1.3k engine tokens) with the
+      // current slim 8-tool set; the envelope trips if prompt growth ever
+      // approaches the preset window instead of silently re-breaking
+      // on-device chat.
       final tokens = _estimateTokens(system);
-      expect(tokens, greaterThan(3000), reason: 'tool block missing?');
+      expect(tokens, greaterThan(1200), reason: 'tool block missing?');
       expect(tokens, lessThanOrEqualTo(4200), reason: 'prompt grew too large');
     });
 
