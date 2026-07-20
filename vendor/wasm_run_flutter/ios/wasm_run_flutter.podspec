@@ -21,6 +21,12 @@ Pod::Spec.new do |s|
   s.public_header_files = 'Classes/**/*.h'
   s.vendored_frameworks = vendored_framework
 
+  # Force-load the static library so FFI symbols are exported into the app
+  # binary and reachable via DynamicLibrary.executable() on iOS.
+  s.pod_target_xcconfig = {
+    'OTHER_LDFLAGS' => '-force_load "$(PODS_XCFRAMEWORKS_BUILD_DIR)/wasm_run_flutter/libwasm_run_dart.a"'
+  }
+
   s.ios.deployment_target = '11.0'
   s.osx.deployment_target = '10.13'
 end
