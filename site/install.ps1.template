@@ -69,31 +69,24 @@ if (-not (Test-Path $installDir)) {
 }
 $target = Join-Path $installDir "$BinaryName.exe"
 
-# ── 3. Download latest release metadata ──────────────────────────────────────
-Write-Info "Resolving latest release..."
-try {
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing -MaximumRedirection 5
-    $version = $release.tag_name
-    $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-} catch {
-    $asset = $null
-}
+# ── 3. Resolve download URL ──────────────────────────────────────────────────
+$downloadUrl = "https://github.com/$Repo/releases/latest/download/$assetName"
 
 # ── 4. Install binary (or fall back to Dart) ─────────────────────────────────
-if ($asset) {
-    Write-Info "Downloading Fa $version for windows-$arch..."
-    try {
-        $progressPreference = 'silentlyContinue'
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $target -UseBasicParsing
-        $progressPreference = 'Continue'
-        Write-Ok "Downloaded $target"
-    } catch {
-        Write-Err "Failed to download binary: $_"
-        exit 1
+Write-Info "Downloading Fa for windows-$arch..."
+try {
+    $progressPreference = 'silentlyContinue'
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $target -UseBasicParsing -MaximumRedirection 5
+    $progressPreference = 'Continue'
+    Write-Ok "Downloaded $target"
+} catch {
+    # A 404 usually means no binary was published for this platform yet.
+    $status = $_.Exception.Response.StatusCode.value__
+    if ($status -eq 404) {
+        Write-Warn "No prebuilt binary found for windows-$arch. Falling back to Dart pub global activate."
+    } else {
+        Write-Warn "Binary download failed (HTTP $status). Falling back to Dart pub global activate."
     }
-} else {
-    # No binary for this platform — fall back to Dart-based installation.
-    Write-Warn "No prebuilt binary found for windows-$arch. Falling back to Dart pub global activate."
     $dart = Get-Command dart -ErrorAction SilentlyContinue
     if (-not $dart) {
         Write-Err "the Dart SDK ('dart') is not on your PATH, and no prebuilt binary is available for windows-$arch."
