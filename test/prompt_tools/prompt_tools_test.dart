@@ -254,6 +254,25 @@ void main() {
       expect(message.stopReason, StopReason.toolUse);
       expect(events.whereType<ToolCallEndEvent>(), hasLength(1));
     });
+
+    test(
+      'promptToolInstructions returns exactly the appended section',
+      () async {
+        // Hosts sizing a context window count the wrapper's bytes through
+        // promptToolInstructions; it must be byte-identical to what the
+        // wrapper appends to the system prompt.
+        const tools = [_readTool, _writeTool];
+        final inner = _FakeChatStream(const ['ok']);
+        final wrapped = promptToolStreamFunction(inner.call);
+        await _run(wrapped, _context(systemPrompt: 'Base.', tools: tools));
+
+        final section = promptToolInstructions(tools);
+        expect(inner.contexts.single.systemPrompt, 'Base.\n\n$section');
+        expect(section, startsWith('## Available tools'));
+        expect(section, contains('1. read: Read a file from disk.'));
+        expect(section, contains('2. write: Write a file to disk.'));
+      },
+    );
   });
 
   group('parsing', () {
