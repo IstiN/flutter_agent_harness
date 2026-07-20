@@ -74,6 +74,31 @@ Conventions for AI agents and contributors working in this repository.
   (`sqlite3_engine.dart`, `package:sqlite3`) is exported only from
   `lib/io.dart` and passed via `builtinTools(env, sqlite: ...)` — hosts
   without it (web) get a clean "not supported" note.
+- `lib/src/lsp/` — the `lsp` tool (diagnostics/definition/references/rename,
+  ported reduced from oh-my-pi `packages/coding-agent/src/lsp/`): a
+  pure-Dart LSP JSON-RPC client (`lsp_client.dart` — initialize handshake,
+  didOpen/didChange/didClose with version tracking, publishDiagnostics
+  cache, server-request replies; omp's write queue, `$/progress` tracking,
+  lspmux, and rust-analyzer polling are not ported) over an abstract
+  `LspTransport` (`lsp_transport.dart`); `lsp_framing.dart` ports the
+  Content-Length framer with junk-header resync. `lsp_config.dart` keeps
+  the extension→server map in omp's `defaults.json` shape (built-in:
+  `.dart` → `dart language-server --protocol=lsp`; projects merge
+  `.fah/lsp.json` field-wise, JSON only — omp's YAML/user/plugin sources
+  are not ported) and resolves workspace roots by walking root markers.
+  `lsp_manager.dart` owns the lifecycle: lazy start per server:root, idle
+  shutdown (default 5 min, omp disables it), crash drop + respawn bounded
+  by quick-crash counting and a 3-minute init-failure backoff.
+  `lsp_edits.dart` applies rename WorkspaceEdits through the ExecutionEnv
+  all-or-nothing (validate + version-guard + in-memory apply of every file
+  before any write), so barrel files and imports update atomically;
+  resource ops (create/rename/delete) are reported-skipped, not applied.
+  The `dart:io` process transport (`io_lsp_transport.dart`) is exported
+  only from `lib/io.dart`; the tool registers via
+  `builtinTools(env, lsp: LspToolConfig(...))` on process-capable hosts
+  (the CLI passes `ioLspTransportFactory` + the host pid), web leaves it
+  out. Ops take 1-indexed `line`/`character`; a missing server binary or
+  unmatched extension yields a clean text result, never a crash.
 - `lib/src/model_roles/` — intent-based model roles (`default`/`smol`/
   `slow`/`plan`, exact omp names) with ordered fallback chains, key
   rotation, and path-scoped overrides (ported, reduced, from oh-my-pi's
