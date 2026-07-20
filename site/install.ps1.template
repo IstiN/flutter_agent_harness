@@ -3,7 +3,7 @@
 #                   irm https://fa1.dev/install.ps1 | iex
 #
 # From Windows Command Prompt (cmd.exe) use the wrapper instead:
-#   curl -fsSL https://fa1.dev/install.bat -o install.bat && install.bat
+#   curl -fsSL "https://fa1.dev/install.bat" -o install.bat && install.bat
 #
 # What it does:
 #   1. Detects OS architecture.

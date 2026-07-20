@@ -24,7 +24,10 @@ Pod::Spec.new do |s|
   # Force-load the static library so FFI symbols are exported into the app
   # binary and reachable via DynamicLibrary.executable() on iOS.
   s.pod_target_xcconfig = {
-    'OTHER_LDFLAGS' => '-force_load "$(PODS_XCFRAMEWORKS_BUILD_DIR)/wasm_run_flutter/libwasm_run_dart.a"'
+    'OTHER_LDFLAGS' => '-all_load'
+  }
+  s.user_target_xcconfig = {
+    'OTHER_LDFLAGS' => '-all_load'
   }
 
   s.ios.deployment_target = '11.0'

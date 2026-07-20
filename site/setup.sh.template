@@ -3,7 +3,7 @@
 #              Run this after `install.sh` to pick a provider, model, API key,
 #              mode and approval policy.
 #
-#                curl -fsSL https://fa1.dev/setup.sh | sh
+#                curl -fsSL "https://fa1.dev/setup.sh" | sh
 #
 # What it does:
 #   1. Verifies `fa` is installed.
@@ -126,11 +126,11 @@ if ! command -v fa >/dev/null 2>&1 && ! command -v fah >/dev/null 2>&1; then
   say ""
   say "  Run the installer first:"
   say ""
-  say "    curl -fsSL https://fa1.dev/install.sh | sh"
+  say "    curl -fsSL \"https://fa1.dev/install.sh\" | sh"
   say ""
   say "  Then reload your shell (or open a new terminal) and run this wizard again:"
   say ""
-  say "    curl -fsSL https://fa1.dev/setup.sh | sh"
+  say "    curl -fsSL \"https://fa1.dev/setup.sh\" | sh"
   say ""
   exit 1
 fi

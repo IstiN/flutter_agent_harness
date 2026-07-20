@@ -9,7 +9,7 @@
 ::   4. Falls back to `dart pub global activate` if no binary is available.
 ::
 :: Run from cmd:
-::   curl -fsSL https://fa1.dev/install.bat -o install.bat && install.bat
+::   curl -fsSL "https://fa1.dev/install.bat" -o install.bat && install.bat
 ::
 :: Or directly from PowerShell:
 ::   irm https://fa1.dev/install.ps1 | iex

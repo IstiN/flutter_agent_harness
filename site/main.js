@@ -123,11 +123,11 @@
 
   // Install method dropdown
   var installCommands = {
-    'sh-install': { title: 'macOS / Linux / WSL — install Fa', cmd: 'curl -fsSL https://fa1.dev/install.sh?v=2 | sh' },
-    'sh-setup': { title: 'macOS / Linux / WSL — Fa setup wizard', cmd: 'curl -fsSL https://fa1.dev/setup.sh?v=2 | sh' },
-    'ps-install': { title: 'Windows PowerShell — install Fa', cmd: 'irm https://fa1.dev/install.ps1?v=2 | iex' },
-    'ps-setup': { title: 'Windows PowerShell — Fa setup wizard', cmd: 'irm https://fa1.dev/setup.ps1?v=2 | iex' },
-    'cmd-install': { title: 'Windows Command Prompt — install Fa', cmd: 'curl -fsSL https://fa1.dev/install.bat?v=2 -o install.bat && install.bat' },
+    'sh-install': { title: 'macOS / Linux / WSL — install Fa', cmd: 'curl -fsSL "https://fa1.dev/install.sh?v=2" | sh' },
+    'sh-setup': { title: 'macOS / Linux / WSL — Fa setup wizard', cmd: 'curl -fsSL "https://fa1.dev/setup.sh?v=2" | sh' },
+    'ps-install': { title: 'Windows PowerShell — install Fa', cmd: 'irm "https://fa1.dev/install.ps1?v=2" | iex' },
+    'ps-setup': { title: 'Windows PowerShell — Fa setup wizard', cmd: 'irm "https://fa1.dev/setup.ps1?v=2" | iex' },
+    'cmd-install': { title: 'Windows Command Prompt — install Fa', cmd: 'curl -fsSL "https://fa1.dev/install.bat?v=2" -o install.bat && install.bat' },
     'pub': { title: 'pub.dev direct', cmd: 'dart pub global activate flutter_agent_harness' }
   };
   var installSelect = document.getElementById('install-method');
