@@ -322,8 +322,8 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('model: test-model (test-api)'));
-    expect(output, contains('cwd: /work'));
+    expect(output, contains('test-model (test-api)'));
+    expect(output, contains('/work'));
     expect(output, contains('fa> '));
     expect(output, contains('Hello world'));
     expect(output, contains('bye'));
@@ -350,7 +350,7 @@ void main() {
     );
     final run = cli.run();
 
-    await _waitFor(() => io.out.toString().contains('Type /help'));
+    await _waitFor(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
 
@@ -370,7 +370,7 @@ void main() {
     );
     final run = cli.run();
 
-    await _waitFor(() => io.out.toString().contains('Type /help'));
+    await _waitFor(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
 
@@ -385,7 +385,7 @@ void main() {
     final cli = cliFor(fake.call, providerKind: 'test-kind');
     final run = cli.run();
 
-    await _waitFor(() => io.out.toString().contains('Type /help'));
+    await _waitFor(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
 
@@ -405,7 +405,7 @@ void main() {
       );
       final run = cli.run();
 
-      await _waitFor(() => io.out.toString().contains('Type /help'));
+      await _waitFor(() => io.out.toString().contains('[Model]'));
       io.sendLine('/exit');
       await run;
 
@@ -427,7 +427,7 @@ void main() {
     );
     final run = cli.run();
 
-    await _waitFor(() => io.out.toString().contains('Type /help'));
+    await _waitFor(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
 
@@ -671,7 +671,7 @@ void main() {
     }
   });
 
-  test('unknown slash commands print an error', () async {
+  test('unknown slash commands show a filtered command menu', () async {
     final fake = _FakeStreamFunction([]);
     final cli = cliFor(fake.call);
     final run = cli.run();
@@ -1063,6 +1063,6 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('fah · test-model · 15tok · \$0.0010 · turn 1'));
+    expect(output, contains('/work · 15tok · \$0.0010 · turn 1 · test-model'));
   });
 }

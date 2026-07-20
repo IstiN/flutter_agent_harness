@@ -255,6 +255,27 @@ final class _PluginIO implements PluginIO {
   void writeln(String text) => _io.writeln(text);
 }
 
+/// Minimal ANSI styling helper. When [enabled] is false all methods return
+/// the input unchanged, which keeps tests deterministic and avoids escape
+/// sequences in headless / piped output.
+final class _Style {
+  _Style({required this.enabled});
+  final bool enabled;
+
+  String _wrap(String text, String code) =>
+      enabled ? '\x1B[${code}m$text\x1B[0m' : text;
+
+  String bold(String text) => _wrap(text, '1');
+  String dim(String text) => _wrap(text, '2');
+  String italic(String text) => _wrap(text, '3');
+  String underline(String text) => _wrap(text, '4');
+  String cyan(String text) => _wrap(text, '36');
+  String green(String text) => _wrap(text, '32');
+  String yellow(String text) => _wrap(text, '33');
+  String red(String text) => _wrap(text, '31');
+  String magenta(String text) => _wrap(text, '35');
+}
+
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
 class AgentCli {
@@ -266,7 +287,9 @@ class AgentCli {
     required this.io,
     StreamFunction? streamFunction,
     this.prompt = 'fa> ',
-  }) : _modes = builtInAgentModes(
+    bool useColor = false,
+  }) : _style = _Style(enabled: useColor),
+       _modes = builtInAgentModes(
          config.env.cwd,
          overrides: config.promptOverrides,
        ) {
@@ -413,6 +436,7 @@ class AgentCli {
   late final ToolRegistry _toolRegistry;
   late final CheckpointRewindController _checkpoints;
   TtsrController? _ttsr;
+  final _Style _style;
 
   /// Whether the default role resolved and drives the agent (roles mode).
   /// The banner's key-status line reads env var names from the live model's
@@ -538,14 +562,24 @@ class AgentCli {
   Future<void> _printBanner() async {
     final model = _agent.state.model;
     final metadata = await _session!.getMetadata();
-    io.writeln('fah — flutter_agent_harness CLI');
-    io.writeln('model: ${model.id} (${model.api})');
-    io.writeln('endpoint: ${model.baseUrl}');
+    const version = '0.1.0';
+    io.writeln(_style.bold(_style.cyan('fa v$version')));
+    io.writeln(
+      _style.dim('escape interrupt · ctrl+c clear/exit · / commands · ! bash'),
+    );
+    io.writeln(_style.dim('Press /help to show full commands and resources.'));
+    io.writeln('');
+    io.writeln(_style.bold('[Context]'));
+    io.writeln('  ${config.env.cwd}');
+    io.writeln('');
+    io.writeln(_style.bold('[Model]'));
+    io.writeln('  ${model.id} (${model.api})');
+    io.writeln('  endpoint: ${model.baseUrl}');
     final keyStatus = _keyStatusLine(model);
-    if (keyStatus != null) io.writeln(keyStatus);
-    io.writeln('cwd: ${config.env.cwd}');
-    io.writeln('session: ${metadata.path}');
-    io.writeln('Type /help for commands.');
+    if (keyStatus != null) io.writeln('  $keyStatus');
+    io.writeln('');
+    io.writeln(_style.bold('[Session]'));
+    io.writeln('  ${metadata.path}');
   }
 
   /// The banner's key-status line: the name of the env var supplying the
@@ -746,7 +780,7 @@ class AgentCli {
         io.writeln('bye');
         _exited = true;
       case '/help':
-        _printHelp();
+        _printHelp(filter: rest);
       case '/stats':
         _printStats();
       case '/model':
@@ -779,9 +813,14 @@ class AgentCli {
         final expanded = expandPromptTemplate(trimmed, _templates);
         if (expanded != trimmed) {
           _startRun(expanded);
-        } else {
-          io.writeln('unknown command: $command (try /help)');
+          return;
         }
+        // Unknown slash command: treat it as a filter for the command menu.
+        if (trimmed.startsWith('/') && trimmed.length > 1) {
+          _printSlashMenu(trimmed);
+          return;
+        }
+        io.writeln('unknown command: $command (try /help)');
     }
   }
 
@@ -1144,62 +1183,98 @@ class AgentCli {
     }
   }
 
-  /// A compact status line shown above every idle prompt: model, tokens,
+  /// A compact status bar shown above every idle prompt: cwd, model, tokens,
   /// cost, and turn count.
   String _statusLine() {
     final model = _agent.state.model.id;
     final total = _usage.total;
     final tokens = total.totalTokens;
     final cost = total.cost.total.toStringAsFixed(4);
-    return 'fah · $model · ${tokens}tok · \$$cost · turn ${_usage.turns}';
+    final cwd = config.env.cwd;
+    return '$cwd · ${tokens}tok · \$$cost · turn ${_usage.turns} · $model';
   }
 
-  /// Prints the status line and the input prompt. Used whenever the REPL
-  /// becomes idle after a command or a run.
+  /// Prints a divider, the status bar, and the input prompt. Used whenever the
+  /// REPL becomes idle after a command or a run.
   void _writeIdlePrompt() {
     if (!_exited) {
-      io.writeln(_statusLine());
-      io.write(prompt);
+      io.writeln(_style.dim('─' * 60));
+      io.writeln(_style.dim(_statusLine()));
+      io.write(_style.bold(_style.cyan(prompt)));
     }
   }
 
-  void _printHelp() {
-    io.writeln('commands:');
-    io.writeln('  /exit              quit');
-    io.writeln('  /reset             start a new session');
-    io.writeln('  /compact           summarize history to free context');
-    io.writeln('  /stats             show token and cost totals');
-    io.writeln('  /model [id|?|N]    show, pick, or switch the active model');
-    io.writeln(
-      '  /models [filter]   list known models for the current provider',
-    );
-    io.writeln('  /mode [name]       show or switch the active mode');
-    io.writeln(
-      '  /approval [mode]   show or set tool approval (always-ask|write|yolo)',
-    );
-    io.writeln('  /allow [tool]      always-allow a tool (or list them)');
-    io.writeln('  /code              switch to coding mode');
-    io.writeln('  /architect         switch to architect mode');
-    io.writeln('  /review            switch to review mode');
-    io.writeln('  /help              this help');
-    io.writeln('  !<command>         run a shell command directly');
-    io.writeln(
-      'While a run is streaming, typed input steers the agent; '
-      'Ctrl-C aborts the run.',
-    );
-    if (_pluginSlashCommands.isNotEmpty) {
-      io.writeln('plugin commands:');
+  static const _slashCommands = <String, String>{
+    '/exit': 'quit',
+    '/reset': 'start a new session',
+    '/compact': 'summarize history to free context',
+    '/stats': 'show token and cost totals',
+    '/model': '<provider/model> — select model (opens selector)',
+    '/models': '[filter] — list known models for the current provider',
+    '/mode': '[name] — show or switch the active mode',
+    '/approval': '[mode] — show or set tool approval',
+    '/allow': '[tool] — always-allow a tool (or list them)',
+    '/code': 'switch to coding mode',
+    '/architect': 'switch to architect mode',
+    '/review': 'switch to review mode',
+    '/help': 'this help',
+    '!': '<command> — run a shell command directly',
+  };
+
+  void _printHelp({String filter = ''}) {
+    final lower = filter.toLowerCase();
+    final entries = _slashCommands.entries
+        .where(
+          (e) =>
+              e.key.toLowerCase().contains(lower) ||
+              e.value.toLowerCase().contains(lower),
+        )
+        .toList();
+    if (entries.isEmpty) {
+      if (filter.isNotEmpty) {
+        io.writeln('unknown command: /$filter (try /help)');
+      } else {
+        io.writeln('no commands match "$filter"');
+      }
+      return;
+    }
+    if (filter.isEmpty) {
+      io.writeln(_style.bold('[Commands]'));
+    } else {
+      io.writeln(_style.bold('[Commands matching "$filter"]'));
+    }
+    for (final entry in entries) {
+      final name = entry.key.padRight(18);
+      io.writeln('  ${_style.cyan(name)} ${entry.value}');
+    }
+    if (_pluginSlashCommands.isNotEmpty && filter.isEmpty) {
+      io.writeln('');
+      io.writeln(_style.bold('[Plugin commands]'));
       for (final entry in _pluginSlashCommands.entries) {
-        io.writeln('  ${entry.key}');
+        io.writeln('  ${_style.cyan(entry.key)}');
       }
     }
-    if (_templates.isNotEmpty) {
-      io.writeln('prompt templates:');
+    if (_templates.isNotEmpty && filter.isEmpty) {
+      io.writeln('');
+      io.writeln(_style.bold('[Prompt templates]'));
       for (final t in _templates) {
         final hint = t.argumentHint ?? '';
-        io.writeln('  /${t.name} $hint');
+        io.writeln('  ${_style.cyan('/${t.name}')} $hint');
       }
     }
+    if (filter.isEmpty) {
+      io.writeln('');
+      io.writeln(
+        _style.dim(
+          'While a run streams, type to steer the agent; Ctrl-C aborts.',
+        ),
+      );
+    }
+  }
+
+  void _printSlashMenu(String prefix) {
+    final filter = prefix.substring(1);
+    _printHelp(filter: filter);
   }
 
   void _printStats() {
