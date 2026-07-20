@@ -156,6 +156,27 @@ class _GatedShell implements Shell {
   }
 }
 
+/// A [Shell] that echoes the command and returns canned output.
+class _FakeShell implements Shell {
+  _FakeShell({this.stdout = '', this.stderr = '', this.exitCode = 0});
+
+  final String stdout;
+  final String stderr;
+  final int exitCode;
+  final commands = <String>[];
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    commands.add(command);
+    return Ok(
+      ShellExecResult(stdout: stdout, stderr: stderr, exitCode: exitCode),
+    );
+  }
+}
+
 /// In-memory [CliIO]: scripted input lines, captured output.
 class FakeCliIO implements CliIO {
   final _lines = StreamController<String>();
@@ -939,5 +960,109 @@ void main() {
     expect(cli.checkpoints.activeCheckpoint, isNull);
     io.sendLine('/exit');
     await run;
+  });
+
+  test(
+    '! command runs a shell command and prints stdout/stderr/exit code',
+    () async {
+      final shell = _FakeShell(stdout: 'hello\n', stderr: 'oops', exitCode: 2);
+      final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final fake = _FakeStreamFunction([]);
+      final cli = cliFor(fake.call, envOverride: shellEnv);
+      final run = cli.run();
+
+      io.sendLine('!echo hi');
+      await _waitFor(() => io.out.toString().contains('exit code: 2'));
+      io.sendLine('/exit');
+      await run;
+
+      expect(shell.commands, ['echo hi']);
+      final output = io.out.toString();
+      expect(output, contains('hello'));
+      expect(output, contains('oops'));
+      expect(output, contains('exit code: 2'));
+    },
+  );
+
+  test('/models lists known models for the active provider', () async {
+    final fake = _FakeStreamFunction([]);
+    final cli = cliFor(
+      fake.call,
+      model: _cloudModel,
+      providerKind: 'anthropic',
+    );
+    final run = cli.run();
+
+    io.sendLine('/models');
+    await _waitFor(() => io.out.toString().contains('claude-sonnet-4-5'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('models for anthropic:'));
+    expect(output, contains('1) claude-sonnet-4-5'));
+    expect(output, contains('use /model <n> or /model <id> to switch'));
+  });
+
+  test('/models filters known models by substring', () async {
+    final fake = _FakeStreamFunction([]);
+    final cli = cliFor(
+      fake.call,
+      model: _cloudModel,
+      providerKind: 'anthropic',
+    );
+    final run = cli.run();
+
+    io.sendLine('/models opus');
+    await _waitFor(() => io.out.toString().contains('claude-opus-4'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('1) claude-opus-4'));
+    expect(output, isNot(contains('claude-haiku-4')));
+  });
+
+  test('/model picker lets the user switch by number', () async {
+    final fake = _FakeStreamFunction([]);
+    final cli = cliFor(
+      fake.call,
+      model: _cloudModel,
+      providerKind: 'anthropic',
+    );
+    final run = cli.run();
+
+    io.sendLine('/model ?');
+    await _waitFor(() => io.out.toString().contains('use /model <n>'));
+    io.sendLine('/model 2');
+    await _waitFor(
+      () => io.out.toString().contains('switched model to claude-opus-4'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    expect(cli.agent.state.model.id, 'claude-opus-4');
+  });
+
+  test('status line is printed before idle prompts after a run', () async {
+    const usage = Usage(
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: UsageCost(input: 0.0006, output: 0.0004, total: 0.001),
+    );
+    final fake = _FakeStreamFunction([_textTurn('hi', usage: usage)]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('q');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('fah · test-model · 15tok · \$0.0010 · turn 1'));
   });
 }

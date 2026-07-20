@@ -227,6 +227,21 @@ final class AgentCliConfig {
 String defaultAgentCliSystemPrompt(String cwd) =>
     defaultAgentMode(cwd).systemPrompt;
 
+/// Known model ids shown by `/models` and the `/model` picker. Maps the
+/// provider name stored on the active [Model] to a short, useful subset.
+const _knownModels = <String, List<String>>{
+  'openrouter': [
+    'anthropic/claude-sonnet-4',
+    'openai/gpt-4o-mini',
+    'google/gemini-2.5-pro',
+    'anthropic/claude-opus-4',
+    'openai/gpt-4.1-mini',
+  ],
+  'anthropic': ['claude-sonnet-4-5', 'claude-opus-4', 'claude-haiku-4'],
+  'google': ['gemini-2.5-pro', 'gemini-2.0-flash'],
+  'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+};
+
 /// Adapts [CliIO] to the [PluginIO] surface exposed to plugins.
 final class _PluginIO implements PluginIO {
   _PluginIO(this._io);
@@ -429,6 +444,10 @@ class AgentCli {
   late AgentMode _currentMode;
   List<PromptTemplate> _templates = [];
 
+  /// Model ids shown by the most recent `/model` picker, so `/model N` can
+  /// select by number without retyping the full id.
+  List<String>? _lastModelList;
+
   Map<String, dynamic> _pluginConfig(String name) {
     final raw = config.pluginConfig[name];
     if (raw is Map<String, dynamic>) return raw;
@@ -451,11 +470,11 @@ class AgentCli {
     });
     try {
       await _printBanner();
-      io.write(prompt);
+      _writeIdlePrompt();
       await for (final line in io.lines) {
         await _handleLine(line);
         if (_exited) break;
-        if (!isBusy) io.write(prompt);
+        if (!isBusy) _writeIdlePrompt();
       }
     } finally {
       // Input ended (EOF) or the REPL is shutting down: never leave a tool
@@ -593,7 +612,9 @@ class AgentCli {
       return;
     }
     await _settled;
-    if (trimmed.startsWith('/')) {
+    if (trimmed.startsWith('!')) {
+      await _runShellCommand(trimmed.substring(1));
+    } else if (trimmed.startsWith('/')) {
       await _handleCommand(trimmed);
     } else {
       _startRun(line);
@@ -609,7 +630,7 @@ class AgentCli {
     _settled = settled;
     unawaited(
       settled.then((_) {
-        if (!_exited) io.write(prompt);
+        if (!_exited) _writeIdlePrompt();
       }),
     );
   }
@@ -729,7 +750,9 @@ class AgentCli {
       case '/stats':
         _printStats();
       case '/model':
-        await _switchModel(rest);
+        await _handleModelCommand(rest);
+      case '/models':
+        _listModels(rest);
       case '/reset':
         _agent.reset();
         _checkpoints.clear();
@@ -990,6 +1013,57 @@ class AgentCli {
     config.onModeChanged?.call(mode.name);
   }
 
+  /// Lists the known models for the active provider, optionally filtered by
+  /// [filter]. The output is numbered so `/model N` can pick one.
+  void _listModels(String filter) {
+    final candidates = _modelCandidates(filter);
+    if (candidates.isEmpty) {
+      io.writeln('no known models for provider ${_agent.state.model.provider}');
+      return;
+    }
+    io.writeln('models for ${_agent.state.model.provider}:');
+    for (var i = 0; i < candidates.length; i++) {
+      io.writeln('  ${i + 1}) ${candidates[i]}');
+    }
+    _lastModelList = candidates;
+    io.writeln('use /model <n> or /model <id> to switch');
+  }
+
+  /// Returns known model ids for the active provider, filtered by an optional
+  /// lowercase substring.
+  List<String> _modelCandidates([String filter = '']) {
+    final provider = _agent.state.model.provider;
+    final all = _knownModels[provider] ?? const <String>[];
+    if (filter.isEmpty) return all.toList();
+    final lower = filter.toLowerCase();
+    return all.where((id) => id.toLowerCase().contains(lower)).toList();
+  }
+
+  Future<void> _handleModelCommand(String rest) async {
+    final trimmed = rest.trim();
+    if (trimmed == '?') {
+      _listModels('');
+      return;
+    }
+    if (trimmed.isEmpty) {
+      // Bare `/model` keeps the original behavior: print the active model
+      // and, when model roles are configured, the roles overview.
+      await _switchModel('');
+      return;
+    }
+    final number = int.tryParse(trimmed);
+    final lastList = _lastModelList;
+    if (number != null && lastList != null) {
+      if (number < 1 || number > lastList.length) {
+        io.writeln('invalid selection: $number (1-${lastList.length})');
+        return;
+      }
+      await _switchModel(lastList[number - 1]);
+      return;
+    }
+    await _switchModel(trimmed);
+  }
+
   Future<void> _switchModel(String modelId) async {
     final current = _agent.state.model;
     final rolesResolver = config.modelRolesResolver;
@@ -1051,13 +1125,54 @@ class AgentCli {
     if (resolved != null) _agent.state.model = resolved.model;
   }
 
+  /// Runs a raw shell command prefixed with `!` through [config.env] and
+  /// prints its stdout/stderr/exit code directly.
+  Future<void> _runShellCommand(String command) async {
+    final result = await config.env.exec(command);
+    switch (result) {
+      case Ok(:final value):
+        if (value.stdout.isNotEmpty) {
+          io.write(value.stdout);
+          if (!value.stdout.endsWith('\n')) io.write('\n');
+        }
+        if (value.stderr.isNotEmpty) io.writeln(value.stderr);
+        if (value.exitCode != 0) {
+          io.writeln('exit code: ${value.exitCode}');
+        }
+      case Err(:final error):
+        io.writeln('shell error: ${error.message}');
+    }
+  }
+
+  /// A compact status line shown above every idle prompt: model, tokens,
+  /// cost, and turn count.
+  String _statusLine() {
+    final model = _agent.state.model.id;
+    final total = _usage.total;
+    final tokens = total.totalTokens;
+    final cost = total.cost.total.toStringAsFixed(4);
+    return 'fah · $model · ${tokens}tok · \$$cost · turn ${_usage.turns}';
+  }
+
+  /// Prints the status line and the input prompt. Used whenever the REPL
+  /// becomes idle after a command or a run.
+  void _writeIdlePrompt() {
+    if (!_exited) {
+      io.writeln(_statusLine());
+      io.write(prompt);
+    }
+  }
+
   void _printHelp() {
     io.writeln('commands:');
     io.writeln('  /exit              quit');
     io.writeln('  /reset             start a new session');
     io.writeln('  /compact           summarize history to free context');
     io.writeln('  /stats             show token and cost totals');
-    io.writeln('  /model <id>        show model/roles, or switch the model');
+    io.writeln('  /model [id|?|N]    show, pick, or switch the active model');
+    io.writeln(
+      '  /models [filter]   list known models for the current provider',
+    );
     io.writeln('  /mode [name]       show or switch the active mode');
     io.writeln(
       '  /approval [mode]   show or set tool approval (always-ask|write|yolo)',
@@ -1067,6 +1182,7 @@ class AgentCli {
     io.writeln('  /architect         switch to architect mode');
     io.writeln('  /review            switch to review mode');
     io.writeln('  /help              this help');
+    io.writeln('  !<command>         run a shell command directly');
     io.writeln(
       'While a run is streaming, typed input steers the agent; '
       'Ctrl-C aborts the run.',

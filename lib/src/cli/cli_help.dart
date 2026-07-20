@@ -227,7 +227,8 @@ REPL COMMANDS
   /reset             start a new session
   /compact           summarize history to free context
   /stats             show token and cost totals
-  /model <id>        show model/roles, or switch the model
+  /model [id|?|N]    show model/roles, pick from known models, or switch
+  /models [filter]   list known models for the current provider
   /mode [name]       show or switch the active mode
   /approval [mode]   show or set tool approval (always-ask|write|yolo)
   /allow [tool]      always-allow a tool (or list them)
@@ -235,6 +236,7 @@ REPL COMMANDS
   /architect         switch to architect mode
   /review            switch to review mode
   /help              in-REPL command summary
+  !<command>         run a shell command directly
   /<template> args   expand a prompt template (see PROMPTS)
   While a run is streaming, typed input steers the agent; Ctrl-C aborts.
 
