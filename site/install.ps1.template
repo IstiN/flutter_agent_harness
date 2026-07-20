@@ -92,18 +92,22 @@ if ($faCmd) {
     Write-Ok "'fa' is on PATH ($($faCmd.Source))."
 } else {
     Write-Warn "'fa' is not on PATH yet. The executable lives in $pubCacheBin"
-    Write-Host "  You may need to open a new PowerShell window after this installer finishes."
+    Write-Host ""
+    Write-Warn "Open a new PowerShell window, or run this in the current one:"
+    Write-Host ""
+    Write-Host "    `$env:Path = `$env:Path + ';$pubCacheBin'"
+    Write-Host ""
 }
 
 # ── 4. Done ──────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Ok "Installation complete."
 Write-Host ""
-Write-Host "  To configure a provider and API key interactively, run:"
+Write-Host "  Configure a provider and API key interactively:"
 Write-Host ""
 Write-Host "    irm https://fa1.dev/setup.ps1 | iex"
 Write-Host ""
-Write-Host "  Or configure manually by setting an environment variable:"
+Write-Host "  Or set an environment variable manually:"
 Write-Host ""
 Write-Host "    `$env:OPENROUTER_API_KEY = '<your-key>'   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
 Write-Host ""

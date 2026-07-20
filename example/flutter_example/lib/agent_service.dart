@@ -233,11 +233,13 @@ class AgentService extends ChangeNotifier {
 
   /// The platform whose commands the system prompt advertises, decided with
   /// the same signal [createPlatformEnv] uses to pick the [ExecutionEnv]:
-  /// web → mobile → desktop.
+  /// web → android / ios → desktop.
   static SandboxPlatform get _sandboxPlatform => isWebPlatform
       ? SandboxPlatform.web
-      : isMobile
-      ? SandboxPlatform.mobile
+      : isAndroidPlatform
+      ? SandboxPlatform.android
+      : isIosPlatform
+      ? SandboxPlatform.ios
       : SandboxPlatform.desktop;
 
   /// Exposes [_effectiveSystemPrompt] to tests.

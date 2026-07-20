@@ -15,9 +15,9 @@ void main() {
       }
     });
 
-    test('mobile advertises qjs, sqlite3, ssh and lua but not node', () {
+    test('android advertises qjs, sqlite3, ssh and lua but not node', () {
       final names = sandboxCommandsFor(
-        SandboxPlatform.mobile,
+        SandboxPlatform.android,
       ).map((c) => c.name).toSet();
       expect(
         names,
@@ -36,13 +36,18 @@ void main() {
       expect(names, isNot(contains('node')));
     });
 
+    test('ios advertises no shell commands', () {
+      expect(sandboxCommandsFor(SandboxPlatform.ios), isEmpty);
+      expect(sandboxCommandNamesFor(SandboxPlatform.ios), isEmpty);
+    });
+
     test('desktop has no fixed list (host shell)', () {
       expect(sandboxCommandsFor(SandboxPlatform.desktop), isEmpty);
       expect(sandboxCommandNamesFor(SandboxPlatform.desktop), isEmpty);
     });
 
     test('every advertised command resolves in the ground-truth name set', () {
-      for (final platform in [SandboxPlatform.web, SandboxPlatform.mobile]) {
+      for (final platform in [SandboxPlatform.web, SandboxPlatform.android]) {
         final names = sandboxCommandNamesFor(platform);
         for (final command in sandboxCommandsFor(platform)) {
           expect(
@@ -77,16 +82,23 @@ void main() {
       expect(webShellCommandNames, containsAll(['ssh', 'scp', 'sftp', 'lua']));
     });
 
-    test('mobile is the union of coreutils applets, builtins, and modules', () {
-      expect(sandboxCommandNamesFor(SandboxPlatform.mobile), {
-        ...mobileCoreutilsApplets,
-        ...mobileBuiltinCommands,
-        ...mobileModuleCommands,
-      });
-      expect(
-        sandboxCommandNamesFor(SandboxPlatform.mobile),
-        containsAll(['ls', 'qjs', 'js', 'lua', 'sqlite3', 'ssh', 'python3']),
-      );
+    test(
+      'android is the union of coreutils applets, builtins, and modules',
+      () {
+        expect(sandboxCommandNamesFor(SandboxPlatform.android), {
+          ...mobileCoreutilsApplets,
+          ...mobileBuiltinCommands,
+          ...mobileModuleCommands,
+        });
+        expect(
+          sandboxCommandNamesFor(SandboxPlatform.android),
+          containsAll(['ls', 'qjs', 'js', 'lua', 'sqlite3', 'ssh', 'python3']),
+        );
+      },
+    );
+
+    test('ios has no resolvable shell commands', () {
+      expect(sandboxCommandNamesFor(SandboxPlatform.ios), isEmpty);
     });
   });
 
@@ -114,16 +126,26 @@ void main() {
       }
     });
 
-    test('mobile lists ssh/lua and the anti-node/anti-apt guidance', () {
-      final section = formatSandboxCommandSection(SandboxPlatform.mobile);
+    test('android lists ssh/lua and the anti-node/anti-apt guidance', () {
+      final section = formatSandboxCommandSection(SandboxPlatform.android);
       expect(section, contains('ssh/scp/sftp — remote access'));
       expect(section, contains('lua — Lua 5.1 interpreter'));
       expect(section, contains('CPython 3.14'));
       expect(section, contains('qjs/js'));
       expect(section, contains('NO node'));
       expect(section, contains('apt-get'));
-      // No browser-only limitations on mobile.
+      // No browser-only limitations on Android.
       expect(section, isNot(contains('CORS')));
+    });
+
+    test('ios reports that shell commands are unavailable', () {
+      final section = formatSandboxCommandSection(SandboxPlatform.ios);
+      expect(section, contains('not available'));
+      expect(section, contains('iOS'));
+      expect(section, contains('File tools'));
+      expect(section, isNot(contains('lua')));
+      expect(section, isNot(contains('qjs')));
+      expect(section, isNot(contains('core utilities:')));
     });
 
     test('desktop describes the host shell instead of a command list', () {

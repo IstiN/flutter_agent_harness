@@ -297,6 +297,56 @@ section {
 .copy-btn:hover { color: var(--text); border-color: var(--accent); }
 .copy-btn.copied { color: var(--accent); border-color: var(--accent); }
 .install-alts { margin-top: 18px; }
+
+.install-picker {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px 18px;
+  align-items: center;
+  margin-top: 30px;
+  padding: 20px;
+  background: rgba(148, 163, 184, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.install-label {
+  color: var(--dim);
+  font-size: 0.88rem;
+}
+.install-select-wrap {
+  position: relative;
+}
+.install-select-wrap::after {
+  content: '▾';
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--dim);
+  pointer-events: none;
+}
+.install-select {
+  width: 100%;
+  appearance: none;
+  background: var(--card);
+  border: 1px solid var(--border-bright);
+  border-radius: 10px;
+  padding: 11px 38px 11px 14px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.install-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.install-command {
+  grid-column: 1 / -1;
+}
+@media (max-width: 560px) {
+  .install-picker { grid-template-columns: 1fr; }
+}
 .cmdline {
   display: flex;
   align-items: flex-start;
