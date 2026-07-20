@@ -1,113 +1,493 @@
-#!/bin/sh
-# install.sh — one-line installer for the fah CLI (flutter_agent_harness).
+#!/usr/bin/env bash
+# install.sh — interactive one-line installer for the Fa CLI
+#              (flutter_agent_harness). Works when piped:
+#                curl -fsSL https://fa1.dev/install.sh | sh
 #
 # What it does:
-#   1. Checks that the Dart SDK (`dart`) is on PATH — fah is distributed
-#      through pub.dev, so the SDK is required. If missing, it points you to
-#      the install docs and exits.
-#   2. Runs `dart pub global activate flutter_agent_harness`, which installs
-#      (or updates to) the latest published version. The package provides the
-#      `fah` and `fa` executables in ~/.pub-cache/bin.
-#   3. Verifies `fah` ended up on PATH; if not, prints the PATH line to add
-#      for your shell.
-#   4. Prints next steps: set a provider API key, then run `fah`.
+#   1. Checks that the Dart SDK (`dart`) is on PATH.
+#   2. Installs (or updates) `flutter_agent_harness` from pub.dev with a
+#      progress bar and step percentages.
+#   3. Interactively picks a provider + model (or lets you enter a custom
+#      OpenAI-compatible endpoint).
+#   4. Collects the API key and writes an initial ~/.fah/config.yaml.
+#   5. Optionally persists the API key in your shell startup file.
+#   6. Verifies `fah` is on PATH and prints next steps.
 #
-# Safe to re-run: `pub global activate` is idempotent — re-running simply
-# reinstalls the latest version. The script uses no sudo, touches nothing
-# outside the Dart pub cache, and never reads or writes your API keys.
-#
-# Run it:
-#   curl -fsSL https://fa1.dev/install.sh | sh
-#
-# Or inspect it first:
-#   curl -fsSL https://fa1.dev/install.sh -o install.sh
-#   less install.sh
-#   sh install.sh
+# Non-interactive fallback: if stdin is not a terminal, the installer still
+# activates the package and prints a concise setup recipe.
 
-set -eu
+set -euo pipefail
 
 PACKAGE="flutter_agent_harness"
 PUB_CACHE_BIN="${PUB_CACHE_BIN:-$HOME/.pub-cache/bin}"
+FAH_CONFIG_DIR="$HOME/.fah"
+FAH_CONFIG_FILE="$FAH_CONFIG_DIR/config.yaml"
 
+# ── TTY handling ─────────────────────────────────────────────────────────────
+# When run as `curl ... | sh` stdin is the script pipe, so interactive prompts
+# read from the controlling terminal instead.
+if [[ -t 0 ]]; then
+  FAH_TTY="/dev/stdin"
+else
+  FAH_TTY="/dev/tty"
+fi
+
+# ── Output helpers ───────────────────────────────────────────────────────────
 say() {
   printf '%s\n' "$*"
 }
 
-say ""
-say "fah installer — flutter_agent_harness CLI"
-say "------------------------------------------"
+info() {
+  printf '\033[1;34m→\033[0m %s\n' "$*"
+}
 
-# ── 1. Dart SDK ─────────────────────────────────────────────────────────────
+ok() {
+  printf '\033[1;32m✔\033[0m %s\n' "$*"
+}
+
+warn() {
+  printf '\033[1;33m!\033[0m %s\n' "$*" >&2
+}
+
+err() {
+  printf '\033[1;31m✘\033[0m %s\n' "$*" >&2
+}
+
+progress_bar() {
+  local percent="$1" width=30 filled empty i
+  filled=$(( percent * width / 100 ))
+  empty=$(( width - filled ))
+  printf '\r['
+  for (( i = 0; i < filled; i++ )); do printf '#'; done
+  for (( i = 0; i < empty; i++ )); do printf '·'; done
+  printf '] %3d%%' "$percent"
+}
+
+clear_bar() {
+  printf '\r%*s\r' 40 ''
+}
+
+# run_with_progress(cmd, label, start%, end%)
+# Runs cmd in the background while animating a progress bar between start/end.
+# When cmd finishes, jumps to 100%.
+run_with_progress() {
+  local cmd="$1" label="$2" start="$3" end="$4"
+  local progress=$start step pid
+
+  step=$(( (end - start) * 2 ))  # tenths of a percent per 50ms
+  [[ $step -lt 1 ]] && step=1
+
+  info "$label"
+  eval "$cmd" &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null; do
+    progress=$(( progress + step ))
+    if [[ $progress -ge $end ]]; then
+      progress=$end
+      step=0
+    fi
+    progress_bar "$progress"
+    sleep 0.05
+  done
+
+  wait "$pid"
+  local rc=$?
+  progress_bar 100
+  printf '\n'
+  return $rc
+}
+
+# ── Interactive helpers ──────────────────────────────────────────────────────
+prompt() {
+  local text="$1"
+  printf '\033[1m%s\033[0m ' "$text" > /dev/tty
+}
+
+ask() {
+  local var="$1" text="$2" default="${3:-}"
+  while true; do
+    if [[ -n $default ]]; then
+      prompt "$text [$default]"
+    else
+      prompt "$text"
+    fi
+    local value
+    if ! read -r value < "$FAH_TTY" 2>/dev/tty; then
+      # EOF / no TTY: return the default so callers can fall back.
+      printf -v "$var" '%s' "$default"
+      return 1
+    fi
+    if [[ -z $value && -n $default ]]; then
+      value=$default
+    fi
+    printf -v "$var" '%s' "$value"
+    return 0
+  done
+}
+
+ask_hidden() {
+  local var="$1" text="$2"
+  prompt "$text"
+  local value
+  if ! read -rs value < "$FAH_TTY" 2>/dev/tty; then
+    printf -v "$var" ''
+    return 1
+  fi
+  printf '\n' > /dev/tty
+  printf -v "$var" '%s' "$value"
+  return 0
+}
+
+ask_yn() {
+  local var="$1" text="$2" default="${3:-y}"
+  local answer
+  while true; do
+    if [[ $default == "y" ]]; then
+      prompt "$text [Y/n]"
+    else
+      prompt "$text [y/N]"
+    fi
+    if ! read -r answer < "$FAH_TTY" 2>/dev/tty; then
+      printf -v "$var" '%s' "$default"
+      return 1
+    fi
+    answer=${answer:-$default}
+    case "$answer" in
+      [Yy]|"" ) printf -v "$var" 'y'; return 0 ;;
+      [Nn]    ) printf -v "$var" 'n'; return 0 ;;
+    esac
+    warn "please answer y or n"
+  done
+}
+
+# ── Banner ───────────────────────────────────────────────────────────────────
+say ""
+say "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
+say "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"
+say "  █████╗  ███████║█████╗   ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║██║"
+say "  ██╔══╝  ██╔══██║╚════╝   ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
+say "  ██║     ██║  ██║         ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗"
+say "  ╚═╝     ╚═╝  ╚═╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"
+say ""
+say "  Fa installer — flutter_agent_harness CLI"
+say ""
+
+# ── 1. Dart SDK check (0–15%) ────────────────────────────────────────────────
+progress_bar 0
 if ! command -v dart >/dev/null 2>&1; then
+  clear_bar
+  err "the Dart SDK ('dart') is not on your PATH."
   say ""
-  say "Error: the Dart SDK ('dart') is not on your PATH."
-  say ""
-  say "fah is distributed via pub.dev and needs the Dart SDK, which is bundled"
-  say "with Flutter. Install it from:"
+  say "  Fa is distributed via pub.dev and needs the Dart SDK, bundled with Flutter:"
   say ""
   say "    https://docs.flutter.dev/get-started/install"
   say ""
-  say "Then re-run this installer:"
+  say "  Then re-run:"
   say ""
   say "    curl -fsSL https://fa1.dev/install.sh | sh"
   say ""
   exit 1
 fi
+progress_bar 15
 
-say "Found $(dart --version 2>&1)"
-
-# ── 2. Activate the package (idempotent — re-run updates to latest) ─────────
+# ── 2. Activate package from pub.dev (15–90%) ────────────────────────────────
+clear_bar
 if dart pub global list 2>/dev/null | grep -q "^${PACKAGE} "; then
-  say "Updating ${PACKAGE} to the latest version from pub.dev..."
+  ACTIVATE_LOG="$(mktemp /tmp/fah-install-XXXXXX.log)"
+  if ! run_with_progress "dart pub global activate ${PACKAGE} >\"${ACTIVATE_LOG}\" 2>&1" "Updating ${PACKAGE} from pub.dev…" 20 90; then
+    err "dart pub global activate failed. Log:"
+    cat "${ACTIVATE_LOG}" >&2
+    exit 1
+  fi
 else
-  say "Installing ${PACKAGE} from pub.dev..."
+  ACTIVATE_LOG="$(mktemp /tmp/fah-install-XXXXXX.log)"
+  if ! run_with_progress "dart pub global activate ${PACKAGE} >\"${ACTIVATE_LOG}\" 2>&1" "Installing ${PACKAGE} from pub.dev…" 20 90; then
+    err "dart pub global activate failed. Log:"
+    cat "${ACTIVATE_LOG}" >&2
+    exit 1
+  fi
 fi
-dart pub global activate "${PACKAGE}"
 
-# ── 3. PATH check ───────────────────────────────────────────────────────────
-say ""
+# ── 3. PATH check ────────────────────────────────────────────────────────────
+clear_bar
 if command -v fah >/dev/null 2>&1; then
-  say "OK: 'fah' is on your PATH ($(command -v fah))."
+  ok "'fah' is on PATH ($(command -v fah))."
 else
-  say "Note: 'fah' is not on your PATH yet. The executables live in:"
-  say ""
-  say "    ${PUB_CACHE_BIN}"
+  warn "'fah' is not on PATH yet. The executables live in ${PUB_CACHE_BIN}"
   say ""
   case "${SHELL:-}" in
     */fish)
-      say "Add it with (fish persists this automatically):"
-      say ""
-      say "    fish_add_path ${PUB_CACHE_BIN}"
+      say "  Add it with:  fish_add_path ${PUB_CACHE_BIN}"
       ;;
     *)
-      say "Add this line to your shell's startup file, or run it now:"
+      say "  Add this line to your shell startup file, or run it now:"
       say ""
-      say "    export PATH=\"\$PATH:${PUB_CACHE_BIN}\""
+      printf '    export PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}"
       say ""
       case "${SHELL:-}" in
-        */zsh)  say "(startup file: ~/.zshrc)" ;;
-        */bash) say "(startup file: ~/.bashrc, or ~/.bash_profile on macOS)" ;;
-        *)      ;;
+        */zsh)  say "  (startup file: ~/.zshrc)" ;;
+        */bash) say "  (startup file: ~/.bashrc, or ~/.bash_profile on macOS)" ;;
       esac
       ;;
   esac
+  say ""
 fi
 
-# ── 4. Next steps ───────────────────────────────────────────────────────────
+# ── 4. Interactive configuration ─────────────────────────────────────────────
+# If the installer was piped and no TTY is available, skip interactive config.
+if [[ ! -e /dev/tty ]] || [[ ! -t 2 ]]; then
+  clear_bar
+  info "Non-interactive install complete."
+  say ""
+  say "  To finish setup, pick a provider and model, then set an API key:"
+  say ""
+  say "    export OPENROUTER_API_KEY=<your-key>   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
+  say ""
+  say "  Then run:"
+  say ""
+  say "    fah"
+  say ""
+  exit 0
+fi
+
+if [[ -f $FAH_CONFIG_FILE ]]; then
+  reconfigure="n"
+  ask_yn reconfigure "A config already exists at ${FAH_CONFIG_FILE}. Reconfigure?" "n"
+  if [[ $reconfigure != "y" ]]; then
+    clear_bar
+    ok "Kept existing config. Run 'fah' to start."
+    exit 0
+  fi
+fi
+
 say ""
-say "Next steps:"
+info "Let's configure your default provider and model."
 say ""
-say "  1. Give fah a provider API key, e.g. OpenRouter:"
+
+# Provider menu
+say "  1) OpenRouter   — one key, many models (recommended)"
+say "  2) Anthropic    — Claude"
+say "  3) Google       — Gemini"
+say "  4) OpenAI       — GPT"
+say "  5) Custom       — any OpenAI-compatible endpoint"
 say ""
-say "       export OPENROUTER_API_KEY=<your-key>"
+provider_choice=""
+while true; do
+  ask provider_choice "Pick a provider [1-5]" "1"
+  case "$provider_choice" in
+    1|openrouter) provider="openrouter"; provider_kind="openai-completions"; break ;;
+    2|anthropic)  provider="anthropic"; provider_kind="anthropic"; break ;;
+    3|google)     provider="google"; provider_kind="google"; break ;;
+    4|openai)     provider="openai"; provider_kind="openai-completions"; break ;;
+    5|custom)     provider="custom"; provider_kind="openai-completions"; break ;;
+    *) warn "enter 1, 2, 3, 4, or 5" ;;
+  esac
+done
+
+# Model selection
+model=""
+base_url=""
+case "$provider" in
+  openrouter)
+    say ""
+    say "  OpenRouter models:"
+    say "    1) anthropic/claude-sonnet-4   (recommended)"
+    say "    2) openai/gpt-4o-mini"
+    say "    3) google/gemini-2.5-pro"
+    say "    4) anthropic/claude-opus-4"
+    say "    5) openai/gpt-4.1-mini"
+    say "    6) other — enter model id manually"
+    while true; do
+      ask model "Pick a model" "1"
+      case "$model" in
+        1) model="anthropic/claude-sonnet-4"; break ;;
+        2) model="openai/gpt-4o-mini"; break ;;
+        3) model="google/gemini-2.5-pro"; break ;;
+        4) model="anthropic/claude-opus-4"; break ;;
+        5) model="openai/gpt-4.1-mini"; break ;;
+        6) ask model "Enter the OpenRouter model id"; break ;;
+        *) warn "enter 1-6" ;;
+      esac
+    done
+    base_url="https://openrouter.ai/api/v1"
+    key_var="OPENROUTER_API_KEY"
+    ;;
+  anthropic)
+    say ""
+    say "  Anthropic models:"
+    say "    1) claude-sonnet-4-5   (recommended)"
+    say "    2) claude-opus-4"
+    say "    3) claude-haiku-4"
+    say "    4) other — enter model id manually"
+    while true; do
+      ask model "Pick a model" "1"
+      case "$model" in
+        1) model="claude-sonnet-4-5"; break ;;
+        2) model="claude-opus-4"; break ;;
+        3) model="claude-haiku-4"; break ;;
+        4) ask model "Enter the Anthropic model id"; break ;;
+        *) warn "enter 1-4" ;;
+      esac
+    done
+    base_url="https://api.anthropic.com"
+    key_var="ANTHROPIC_API_KEY"
+    ;;
+  google)
+    say ""
+    say "  Google models:"
+    say "    1) gemini-2.5-pro   (recommended)"
+    say "    2) gemini-2.0-flash"
+    say "    3) other — enter model id manually"
+    while true; do
+      ask model "Pick a model" "1"
+      case "$model" in
+        1) model="gemini-2.5-pro"; break ;;
+        2) model="gemini-2.0-flash"; break ;;
+        3) ask model "Enter the Google model id"; break ;;
+        *) warn "enter 1-3" ;;
+      esac
+    done
+    base_url="https://generativelanguage.googleapis.com/v1beta"
+    key_var="GOOGLE_API_KEY"
+    ;;
+  openai)
+    say ""
+    say "  OpenAI models:"
+    say "    1) gpt-4o-mini   (recommended)"
+    say "    2) gpt-4o"
+    say "    3) gpt-4.1-mini"
+    say "    4) other — enter model id manually"
+    while true; do
+      ask model "Pick a model" "1"
+      case "$model" in
+        1) model="gpt-4o-mini"; break ;;
+        2) model="gpt-4o"; break ;;
+        3) model="gpt-4.1-mini"; break ;;
+        4) ask model "Enter the OpenAI model id"; break ;;
+        *) warn "enter 1-4" ;;
+      esac
+    done
+    base_url="https://api.openai.com/v1"
+    key_var="OPENAI_API_KEY"
+    ;;
+  custom)
+    say ""
+    ask base_url "Custom base URL (e.g. http://localhost:11434/v1)"
+    ask model "Model id on that endpoint"
+    key_var="OPENAI_API_KEY"
+    ;;
+esac
+
+# API key
 say ""
-say "     (OpenAI-compatible, Anthropic, and Google keys work too —"
-say "      see the README for the variable names.)"
+api_key=""
+if [[ $provider == "custom" ]]; then
+  ask_yn needs_key "Does this endpoint require an API key?" "n"
+  if [[ $needs_key == "y" ]]; then
+    ask_hidden api_key "Paste your API key"
+  fi
+else
+  ask_hidden api_key "Paste your ${key_var}"
+fi
+
+# Mode selection
 say ""
-say "  2. Start the agent:"
+say "  Agent modes:"
+say "    1) code      — edit/run code (default)"
+say "    2) architect — plan and review"
+say "    3) review    — audit and suggest"
+mode=""
+while true; do
+  ask mode "Pick a mode" "1"
+  case "$mode" in
+    1|code) mode="code"; break ;;
+    2|architect) mode="architect"; break ;;
+    3|review) mode="review"; break ;;
+    *) warn "enter 1, 2, or 3" ;;
+  esac
+done
+
+# Approval mode
 say ""
-say "       fah"
+say "  Tool approval:"
+say "    1) yolo        — run safe tools unattended (default)"
+say "    2) write       — prompt before writes/executes"
+say "    3) always-ask  — prompt before every tool call"
+approval=""
+while true; do
+  ask approval "Pick an approval mode" "1"
+  case "$approval" in
+    1|yolo) approval="yolo"; break ;;
+    2|write) approval="write"; break ;;
+    3|"always-ask") approval="always-ask"; break ;;
+    *) warn "enter 1, 2, or 3" ;;
+  esac
+done
+
+# Write config.yaml
+mkdir -p "$FAH_CONFIG_DIR"
+cat > "$FAH_CONFIG_FILE" <<EOF
+provider: ${provider_kind}
+model: ${model}
+baseUrl: ${base_url}
+mode: ${mode}
+approvalMode: ${approval}
+allowedTools: []
+EOF
+ok "Wrote ${FAH_CONFIG_FILE}"
+
+# Persist API key in shell startup file
+if [[ -n $api_key ]]; then
+  say ""
+  shell_rc=""
+  case "${SHELL:-}" in
+    */zsh)  shell_rc="$HOME/.zshrc" ;;
+    */bash) shell_rc="$HOME/.bashrc" ;;
+    */fish) shell_rc="$HOME/.config/fish/config.fish" ;;
+  esac
+
+  if [[ -n $shell_rc ]]; then
+    persist="n"
+    ask_yn persist "Add ${key_var} to ${shell_rc}? (we never log the value)" "y"
+    if [[ $persist == "y" ]]; then
+      # Avoid duplicating the export line.
+      if [[ -f $shell_rc ]] && grep -qF "export ${key_var}=" "$shell_rc" 2>/dev/null; then
+        # Replace existing line in-place.
+        sed -i.bak "s|^export ${key_var}=.*|export ${key_var}='${api_key}'|" "$shell_rc" && rm -f "${shell_rc}.bak"
+      else
+        printf "\n# Fa CLI API key\nexport %s='%s'\n" "$key_var" "$api_key" >> "$shell_rc"
+      fi
+      ok "Saved ${key_var} to ${shell_rc}"
+      ok "Reload your shell or run: source ${shell_rc}"
+    else
+      say ""
+      say "  Add this to your environment manually:"
+      say ""
+      say "    export ${key_var}=<your-key>"
+      say ""
+    fi
+  else
+    say ""
+    say "  Add this to your environment manually:"
+    say ""
+    say "    export ${key_var}=<your-key>"
+    say ""
+  fi
+fi
+
+# ── 5. Done ──────────────────────────────────────────────────────────────────
 say ""
-say "Docs:    https://github.com/IstiN/flutter_agent_harness"
-say "Package: https://pub.dev/packages/flutter_agent_harness"
+ok "Installation and configuration complete."
+say ""
+say "  Start the agent:"
+say ""
+say "    fah"
+say ""
+say "  Or run a single headless task:"
+say ""
+say "    fah \"summarize CHANGELOG.md\""
+say ""
+say "  Docs:    https://github.com/IstiN/flutter_agent_harness"
+say "  Package: https://pub.dev/packages/flutter_agent_harness"
 say ""
