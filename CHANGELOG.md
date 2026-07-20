@@ -301,4 +301,10 @@
 - feat(tools): image read parity with pi (byte cap, pass-through, EXIF, placeholders) + transcribe_audio tool
 - feat(site): set GA4 measurement ID
 
+## 0.1.34
+
+- feat(tools): task tool — parallel subagents with schema-validated results (omp port)
+- feat(agent): TTSR stream rules — abort, inject, retry mid-generation (omp port)
+- feat(providers): model roles (default/smol/slow/plan) with fallback chains, key rotation, path overrides
+
 ## Unreleased
