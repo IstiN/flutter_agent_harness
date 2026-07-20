@@ -26,8 +26,8 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
     final sandbox = Directory('${appDir.path}/fah_sandbox');
     await sandbox.create(recursive: true);
 
-    // On iOS the WASM shell uses the statically linked wasm_run library
-    // (DynamicLibrary.executable); no download or `uname` is needed.
+    // Both Android and iOS run the WASI sandbox shell; on iOS the wasm_run
+    // library is statically linked into the app binary (see setUpWasmRuntime).
     final shell = await WasiSandboxShell.load(
       workingDirectory: '/',
       sandboxHostPath: sandbox.path,
@@ -48,8 +48,8 @@ bool get isMobile => Platform.isAndroid || Platform.isIOS;
 /// `true` when running on Android (the WASM shell sandbox works there).
 bool get isAndroidPlatform => Platform.isAndroid;
 
-/// `true` when running on iOS (no WASM shell sandbox; shell commands are
-/// unavailable).
+/// `true` when running on iOS (the WASM shell sandbox works there via the
+/// statically linked wasm_run library).
 bool get isIosPlatform => Platform.isIOS;
 
 /// `true` when running on the web.

@@ -42,15 +42,6 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
-
-    # Force-load the wasm_run static library so its FFI symbols are exported
-    # into the app binary and reachable via DynamicLibrary.executable().
-    if target.name == 'wasm_run_flutter'
-      puts "Applying force_load to wasm_run_flutter"
-      target.build_configurations.each do |config|
-        config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -force_load "$(PODS_XCFRAMEWORKS_BUILD_DIR)/wasm_run_flutter/libwasm_run_dart.a"'
-      end
-    end
   end
 
   # The vendored WasmRun.xcframework only ships an arm64 simulator slice.
