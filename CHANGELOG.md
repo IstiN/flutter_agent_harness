@@ -352,4 +352,19 @@
 - fix(example): render user messages through the harness loop
 - fix(site): mktemp compatibility on macOS
 
+## 0.1.40
+
+- fix(vendor): force-load wasm_run static lib via podspec and refresh Podfile.lock
+- refactor(site): centralize installer banner/recipe in install-config.yaml and use DMTools-style Windows PATH
+- fix(vendor): apply iOS wasm_run_flutter static-library linker flags in Podfile
+- feat(cli): numbered line-mode slash menu and guard TUI to interactive TTYs
+- fix(vendor): iOS wasm_run_flutter static library fallback
+- fix(install): use github releases/latest/download direct URLs, avoid API rate limits
+- feat(ci): build native fa binaries for win/mac/linux and download them in installers
+- feat(ios): enable WASM shell via statically linked executable
+- fix(site): repair install dropdown visibility and bust cache; make CLI raw-mode fallback graceful
+- feat(cli): add named session management via --session and /session commands
+- feat(cli): raw-mode TUI with slash menu, model picker, and dynamic version
+- feat(site): add Windows cmd.exe installer wrapper (install.bat)
+
 ## Unreleased
