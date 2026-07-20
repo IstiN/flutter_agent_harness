@@ -37,10 +37,18 @@ void main() {
   final providers = config['providers'] as YamlList;
   final modes = config['modes'] as YamlList;
   final approvalModes = config['approval_modes'] as YamlList;
+  final installConfig = config['install'] as YamlMap;
+
+  final shBanner = _shBanner(installConfig);
+  final psBanner = _psBanner(installConfig);
+  final shRecipe = _shSetupRecipe(installConfig);
+  final psRecipe = _psSetupRecipe(installConfig);
 
   final sh = File(_shTemplatePath)
       .readAsStringSync()
       .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
+      .replaceFirst('{{BANNER}}', shBanner)
+      .replaceFirst('{{SETUP_RECIPE}}', shRecipe)
       .replaceFirst('{{PROVIDER_MENU}}', _shProviderMenu(providers))
       .replaceFirst('{{PROVIDER_CASES}}', _shProviderCases(providers))
       .replaceFirst('{{MODE_MENU}}', _shModeMenu(modes))
@@ -51,6 +59,8 @@ void main() {
   final ps = File(_psTemplatePath)
       .readAsStringSync()
       .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
+      .replaceFirst('{{BANNER}}', psBanner)
+      .replaceFirst('{{SETUP_RECIPE}}', psRecipe)
       .replaceFirst('{{PROVIDER_MENU}}', _psProviderMenu(providers))
       .replaceFirst('{{PROVIDER_SWITCH}}', _psProviderSwitch(providers))
       .replaceFirst('{{MODE_MENU}}', _psModeMenu(modes))
@@ -386,5 +396,107 @@ String _psApprovalSwitch(YamlList approvalModes) {
     b.writeln('    "^(${i + 1}|${a['id']})\$" { \$approval = "${a['id']}" }');
   }
   b.writeln(r'}');
+  return b.toString();
+}
+
+// ── Shared installer banner / setup recipe ──────────────────────────────────
+
+String _shBanner(YamlMap install) {
+  final b = StringBuffer();
+  b.writeln(r'say ""');
+  for (final line in install['banner'] as YamlList) {
+    b.writeln('say "$line"');
+  }
+  b.writeln(r'say ""');
+  b.writeln('say "  ${install['tagline']}"');
+  b.writeln(r'say ""');
+  return b.toString();
+}
+
+String _psBanner(YamlMap install) {
+  final b = StringBuffer();
+  b.writeln(r'Write-Host ""');
+  for (final line in install['banner'] as YamlList) {
+    b.writeln('Write-Host "$line"');
+  }
+  b.writeln(r'Write-Host ""');
+  b.writeln('Write-Host "  ${install['tagline']}"');
+  b.writeln(r'Write-Host ""');
+  return b.toString();
+}
+
+String _shSetupRecipe(YamlMap install) {
+  final setupUrl = install['setup_url_sh'] as String;
+  final vars = (install['key_env_vars'] as YamlList).cast<String>();
+  final docsUrl = install['docs_url'] as String;
+  final packageUrl = install['package_url'] as String;
+  final task = install['example_task'] as String;
+  final firstVar = vars.first;
+  final restVars = vars.skip(1).join(' / ');
+
+  final b = StringBuffer();
+  b.writeln(r'say ""');
+  b.writeln(r'ok "Installation complete."');
+  b.writeln(r'say ""');
+  b.writeln(r'say "  Configure a provider and API key interactively:"');
+  b.writeln(r'say ""');
+  b.writeln('say "    curl -fsSL $setupUrl | sh"');
+  b.writeln(r'say ""');
+  b.writeln(r'say "  Or set an environment variable manually:"');
+  b.writeln(r'say ""');
+  b.writeln('say "    export $firstVar=<your-key>   # or $restVars"');
+  b.writeln(r'say ""');
+  b.writeln(r'say "  Then start the agent:"');
+  b.writeln(r'say ""');
+  b.writeln(r'say "    fa"');
+  b.writeln(r'say ""');
+  b.writeln(r'say "  Or run a single headless task:"');
+  b.writeln(r'say ""');
+  b.writeln('say "    fa \\"$task\\""');
+  b.writeln(r'say ""');
+  b.writeln("say \"  (the legacy command 'fah' also works)\"");
+  b.writeln(r'say ""');
+  b.writeln('say "  Docs:    $docsUrl"');
+  b.writeln('say "  Package: $packageUrl"');
+  b.writeln(r'say ""');
+  return b.toString();
+}
+
+String _psSetupRecipe(YamlMap install) {
+  final setupUrl = install['setup_url_ps'] as String;
+  final vars = (install['key_env_vars'] as YamlList).cast<String>();
+  final docsUrl = install['docs_url'] as String;
+  final packageUrl = install['package_url'] as String;
+  final task = install['example_task'] as String;
+  final firstVar = vars.first;
+  final restVars = vars.skip(1).join(' / ');
+
+  final b = StringBuffer();
+  b.writeln(r'Write-Host ""');
+  b.writeln(r'Write-Ok "Installation complete."');
+  b.writeln(r'Write-Host ""');
+  b.writeln(r'Write-Host "  Configure a provider and API key interactively:"');
+  b.writeln(r'Write-Host ""');
+  b.writeln('Write-Host "    irm $setupUrl | iex"');
+  b.writeln(r'Write-Host ""');
+  b.writeln(r'Write-Host "  Or set an environment variable manually:"');
+  b.writeln(r'Write-Host ""');
+  b.writeln(
+    "Write-Host \"    `\$env:$firstVar = '<your-key>'   # or $restVars\"",
+  );
+  b.writeln(r'Write-Host ""');
+  b.writeln(r'Write-Host "  Then start the agent:"');
+  b.writeln(r'Write-Host ""');
+  b.writeln(r'Write-Host "    fa"');
+  b.writeln(r'Write-Host ""');
+  b.writeln(r'Write-Host "  Or run a single headless task:"');
+  b.writeln(r'Write-Host ""');
+  b.writeln('Write-Host "    fa `"$task`""');
+  b.writeln(r'Write-Host ""');
+  b.writeln("Write-Host \"  (the legacy command 'fah' also works)\"");
+  b.writeln(r'Write-Host ""');
+  b.writeln('Write-Host "  Docs:    $docsUrl"');
+  b.writeln('Write-Host "  Package: $packageUrl"');
+  b.writeln(r'Write-Host ""');
   return b.toString();
 }
