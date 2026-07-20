@@ -52,6 +52,13 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
 /// `true` when running on a mobile OS that needs the WASM shell sandbox.
 bool get isMobile => Platform.isAndroid || Platform.isIOS;
 
+/// `true` when running on Android (the WASM shell sandbox works there).
+bool get isAndroidPlatform => Platform.isAndroid;
+
+/// `true` when running on iOS (no WASM shell sandbox; shell commands are
+/// unavailable).
+bool get isIosPlatform => Platform.isIOS;
+
 /// `true` when running on the web.
 bool get isWebPlatform => false;
 

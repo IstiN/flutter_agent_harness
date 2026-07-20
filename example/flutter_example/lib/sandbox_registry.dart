@@ -9,7 +9,7 @@
 ///
 /// - The shells themselves resolve commands against the ground-truth name
 ///   sets below: the web `MemoryShell` uses [webShellCommandNames]; the
-///   mobile `WasiSandboxShell` uses [mobileCoreutilsApplets],
+///   Android `WasiSandboxShell` uses [mobileCoreutilsApplets],
 ///   [mobileBuiltinCommands], and [mobileModuleCommands]. A command added to
 ///   a set becomes runnable — and advertiseable — from one place.
 /// - The Fa system prompt renders [formatSandboxCommandSection] into the
@@ -26,9 +26,14 @@ enum SandboxPlatform {
   /// Browser: the pure-Dart `MemoryShell` over an in-memory filesystem.
   web,
 
-  /// iOS/Android: the `WasiSandboxShell` running WASI modules rooted at a
+  /// Android: the `WasiSandboxShell` running WASI modules rooted at a
   /// sandboxed host directory.
-  mobile,
+  android,
+
+  /// iOS: a plain `LocalExecutionEnv` with no WASM shell. File tools work,
+  /// but shell commands are unavailable, so the advertised command list is
+  /// empty.
+  ios,
 
   /// macOS/Linux/Windows: the host shell via `LocalExecutionEnv` — every
   /// tool installed on the machine is available, so there is no fixed list.
@@ -137,7 +142,7 @@ const Set<String> webShellCommandNames = {
   '[',
 };
 
-/// Applets exported by the mobile `coreutils.wasm` multicall binary.
+/// Applets exported by the Android `coreutils.wasm` multicall binary.
 const Set<String> mobileCoreutilsApplets = {
   'arch',
   'b2sum',
@@ -283,14 +288,17 @@ const Set<String> mobileModuleCommands = {
 ///
 /// Desktop returns the empty set: it uses the host shell, so the command set
 /// is unbounded (whatever is installed on the machine).
+/// iOS also returns the empty set: there is no WASM shell, so no shell
+/// command resolves at runtime.
 Set<String> sandboxCommandNamesFor(SandboxPlatform platform) =>
     switch (platform) {
       SandboxPlatform.web => webShellCommandNames,
-      SandboxPlatform.mobile => {
+      SandboxPlatform.android => {
         ...mobileCoreutilsApplets,
         ...mobileBuiltinCommands,
         ...mobileModuleCommands,
       },
+      SandboxPlatform.ios => const {},
       SandboxPlatform.desktop => const {},
     };
 
@@ -298,7 +306,7 @@ Set<String> sandboxCommandNamesFor(SandboxPlatform platform) =>
 // Advertised commands (rendered into the Fa system prompt)
 // ---------------------------------------------------------------------------
 
-// Shared entries, identical on web and mobile.
+// Shared entries, identical on web and Android.
 const _curl = SandboxCommand('curl', 'HTTP(S) requests and downloads');
 const _wget = SandboxCommand('wget', 'HTTP(S) requests and downloads');
 const _nslookup = SandboxCommand('nslookup', 'DNS lookup (over HTTPS)');
@@ -349,10 +357,12 @@ const _js = SandboxCommand(
 /// must resolve there, but the long tail of POSIX utilities is summarized by
 /// the section's `core utilities:` line instead of individual bullets.
 /// Desktop returns the empty list — the host shell has no fixed set.
+/// iOS returns the empty list — shell commands are unavailable there.
 List<SandboxCommand> sandboxCommandsFor(SandboxPlatform platform) =>
     switch (platform) {
       SandboxPlatform.web => _webCommands,
-      SandboxPlatform.mobile => _mobileCommands,
+      SandboxPlatform.android => _androidCommands,
+      SandboxPlatform.ios => const [],
       SandboxPlatform.desktop => const [],
     };
 
@@ -408,7 +418,7 @@ const _webCommands = <SandboxCommand>[
   _js,
 ];
 
-const _mobileCommands = <SandboxCommand>[
+const _androidCommands = <SandboxCommand>[
   SandboxCommand(
     'git',
     'local and remote: clone/fetch/push over HTTPS and SSH',
@@ -431,7 +441,7 @@ const _mobileCommands = <SandboxCommand>[
   _patch,
   _tar,
   // The gzip.wasm module handles both directions via -d; there is no
-  // separate gunzip applet on mobile.
+  // separate gunzip applet on Android.
   SandboxCommand('gzip', 'gzip compression (-d to decompress)'),
   _zip,
   _unzip,
@@ -517,6 +527,14 @@ String formatSandboxCommandSection(SandboxPlatform platform) {
           .toList()
         ..sort();
 
+  if (platform == SandboxPlatform.ios) {
+    return '- Shell: shell commands are **not available** on iOS because the '
+        'WASM sandbox cannot load. File tools (read, write, edit, ls) still '
+        'work.\n'
+        '- cd and exported variables do **not** persist; there is no shell '
+        'process.';
+  }
+
   final buffer = StringBuffer()
     ..writeln(
       '- Shell (sandboxed — ONLY the commands below exist; anything else '
@@ -554,7 +572,9 @@ String _notAvailable(SandboxPlatform platform) {
     SandboxPlatform.web =>
       '$noNode, make, gcc/cc, ssh/scp/sftp (browsers cannot open raw TCP '
           'connections), lua, remote git (blocked by CORS). $noPackages',
-    SandboxPlatform.mobile => '$noNode, make, gcc/cc. $noPackages',
+    SandboxPlatform.android => '$noNode, make, gcc/cc. $noPackages',
+    SandboxPlatform.ios =>
+      'All shell commands are unavailable on iOS. Use file tools only.',
     SandboxPlatform.desktop => '',
   };
 }

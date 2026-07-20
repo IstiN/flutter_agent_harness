@@ -120,4 +120,24 @@
       });
     });
   });
+
+  // Install method dropdown
+  var installCommands = {
+    'sh-install': { title: 'macOS / Linux / WSL — install', cmd: 'curl -fsSL https://fa1.dev/install.sh | sh' },
+    'sh-setup': { title: 'macOS / Linux / WSL — setup wizard', cmd: 'curl -fsSL https://fa1.dev/setup.sh | sh' },
+    'ps-install': { title: 'Windows PowerShell — install', cmd: 'irm https://fa1.dev/install.ps1 | iex' },
+    'ps-setup': { title: 'Windows PowerShell — setup wizard', cmd: 'irm https://fa1.dev/setup.ps1 | iex' },
+    'pub': { title: 'pub.dev direct', cmd: 'dart pub global activate flutter_agent_harness' }
+  };
+  var installSelect = document.getElementById('install-method');
+  var installTitle = document.getElementById('install-command-title');
+  var installText = document.getElementById('install-command-text');
+  if (installSelect && installTitle && installText) {
+    installSelect.addEventListener('change', function () {
+      var choice = installCommands[installSelect.value];
+      if (!choice) { return; }
+      installTitle.textContent = choice.title;
+      installText.textContent = choice.cmd;
+    });
+  }
 })();
