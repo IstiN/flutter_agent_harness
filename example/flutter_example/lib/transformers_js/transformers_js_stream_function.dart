@@ -423,8 +423,9 @@ const _maxRecoveryAttemptsPerTurn = 1;
 /// Whether [message] is the raw dump of a GPU-crash-class engine failure:
 /// ORT's `OrtRun` errors, the `mapAsync ... invalid Buffer` cascade a lost
 /// or errored WebGPU device produces (the buffer dies "due to a previous
-/// error" — the crash itself happened earlier), device-lost reports, and
-/// outright out-of-memory failures.
+/// error" — the crash itself happened earlier), the
+/// `onnxruntime::webgpu::BufferManager` failures that cascade from it,
+/// device-lost reports, and outright out-of-memory failures.
 ///
 /// This class gets the automatic reload + retry ([_maxRecoveryAttemptsPerTurn])
 /// and maps to [transformersJsGpuCrashMessage] for the user instead of the
@@ -435,8 +436,8 @@ bool isTransformersJsGpuCrash(String message) =>
     _gpuCrashPattern.hasMatch(message);
 
 final _gpuCrashPattern = RegExp(
-  'ortrun|mapasync|invalid buffer|gpubuffer|device lost|device_removed|'
-  'out of memory',
+  'ortrun|mapasync|invalid buffer|gpubuffer|buffermanager|device lost|'
+  'device was lost|device_lost|device_removed|out of memory',
   caseSensitive: false,
 );
 
