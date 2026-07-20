@@ -2,7 +2,7 @@ name: flutter_agent_harness
 description: >-
   Cross-platform AI agent harness for Dart and Flutter: streaming provider
   adapters, agent loop with tools, session persistence, context compaction.
-version: 0.1.40
+version: 0.1.41
 repository: https://github.com/IstiN/flutter_agent_harness
 issue_tracker: https://github.com/IstiN/flutter_agent_harness/issues
 topics:
