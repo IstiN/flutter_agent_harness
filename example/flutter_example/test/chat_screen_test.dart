@@ -5,6 +5,7 @@ import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
 import 'package:flutter_agent_example/file_browser.dart';
 import 'package:flutter_agent_example/session_sidebar.dart';
+import 'package:flutter_agent_example/settings.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -264,7 +265,8 @@ void main() {
     });
 
     testWidgets(
-      'narrow: settings dialog fits a phone screen without overflow',
+      'narrow: settings screen opens from the gear and fits a phone screen '
+      'without overflow',
       (tester) async {
         tester.view.devicePixelRatio = 1.0;
         tester.view.physicalSize = const Size(390, 844);
@@ -280,8 +282,9 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.text('Settings'), findsOneWidget);
-        expect(find.byType(AlertDialog), findsOneWidget);
-        // A RenderFlex overflow or the old fixed 440px width would throw here.
+        expect(find.byType(SettingsScreen), findsOneWidget);
+        expect(find.byType(AlertDialog), findsNothing);
+        // A RenderFlex overflow would throw here.
         expect(tester.takeException(), isNull);
       },
     );

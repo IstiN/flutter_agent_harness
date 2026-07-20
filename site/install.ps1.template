@@ -1,0 +1,212 @@
+# install.ps1 — interactive one-line installer for the Fa CLI on Windows.
+#                 Works when piped:
+#                   irm https://fa1.dev/install.ps1 | iex
+#
+# What it does:
+#   1. Checks that the Dart SDK (dart.exe) is on PATH.
+#   2. Installs (or updates) flutter_agent_harness from pub.dev.
+#   3. Ensures the pub cache bin directory is on the user PATH.
+#   4. Interactively picks a provider + model (or a custom endpoint).
+#   5. Collects the API key and writes an initial ~\.fah\config.yaml.
+#   6. Persists the API key as a user environment variable.
+#   7. Verifies fah is on PATH and prints next steps.
+#
+# Non-interactive fallback: if stdin is redirected, the installer activates the
+# package and prints a concise setup recipe.
+#
+# {{GENERATED_HEADER}}
+
+#Requires -Version 5.1
+$ErrorActionPreference = "Stop"
+
+$Package = "flutter_agent_harness"
+$FahConfigDir = Join-Path $env:USERPROFILE ".fah"
+$FahConfigFile = Join-Path $FahConfigDir "config.yaml"
+
+# ── Output helpers ───────────────────────────────────────────────────────────
+function Write-Info($msg) { Write-Host "→ $msg" -ForegroundColor Cyan }
+function Write-Ok($msg) { Write-Host "✔ $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "! $msg" -ForegroundColor Yellow }
+function Write-Err($msg) { Write-Host "✘ $msg" -ForegroundColor Red }
+
+# ── Banner ───────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
+Write-Host "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"
+Write-Host "  █████╗  ███████║█████╗   ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║██║"
+Write-Host "  ██╔══╝  ██╔══██║╚════╝   ██║   ╚════╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
+Write-Host "  ██║     ██║  ██║         ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗"
+Write-Host "  ╚═╝     ╚═╝  ╚═╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"
+Write-Host ""
+Write-Host "  Fa installer — flutter_agent_harness CLI (Windows)"
+Write-Host ""
+
+# ── 1. Dart SDK check ────────────────────────────────────────────────────────
+$dart = Get-Command dart -ErrorAction SilentlyContinue
+if (-not $dart) {
+    Write-Err "the Dart SDK ('dart') is not on your PATH."
+    Write-Host ""
+    Write-Host "  Fa is distributed via pub.dev and needs the Dart SDK, bundled with Flutter:"
+    Write-Host ""
+    Write-Host "    https://docs.flutter.dev/get-started/install"
+    Write-Host ""
+    Write-Host "  Then re-run:"
+    Write-Host ""
+    Write-Host "    irm https://fa1.dev/install.ps1 | iex"
+    Write-Host ""
+    exit 1
+}
+Write-Ok "Dart SDK found at $($dart.Source)"
+
+# ── 2. Activate package from pub.dev ─────────────────────────────────────────
+Write-Info "Activating $Package from pub.dev..."
+try {
+    & dart pub global activate $Package
+} catch {
+    Write-Err "dart pub global activate failed."
+    exit 1
+}
+
+# ── 3. Ensure pub cache bin is on the user PATH ──────────────────────────────
+$pubCacheBin = $env:PUB_CACHE_BIN
+if (-not $pubCacheBin) {
+    # Dart's default cache location on Windows.
+    $candidate = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
+    if (-not (Test-Path $candidate)) {
+        $candidate = Join-Path $env:APPDATA "Pub\Cache\bin"
+    }
+    $pubCacheBin = $candidate
+}
+
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathParts = $userPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+if ($pubCacheBin -notin $pathParts) {
+    Write-Info "Adding pub cache bin to your user PATH: $pubCacheBin"
+    $newPath = ($pathParts + $pubCacheBin) -join ';'
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    # Also update the current process so the verification below works.
+    $env:Path = ($env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) + $pubCacheBin -join ';'
+}
+
+# Refresh PATH from the registry in this session.
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+
+$fah = Get-Command fah -ErrorAction SilentlyContinue
+if ($fah) {
+    Write-Ok "'fah' is on PATH ($($fah.Source))."
+} else {
+    Write-Warn "'fah' is not on PATH yet. The executable lives in $pubCacheBin"
+    Write-Host "  You may need to open a new PowerShell window after this installer finishes."
+}
+
+# ── 4. Interactive configuration ─────────────────────────────────────────────
+# When invoked as `irm ... | iex`, stdin is the script text — skip prompts.
+if ([System.Console]::IsInputRedirected) {
+    Write-Info "Non-interactive install complete."
+    Write-Host ""
+    Write-Host "  To finish setup, pick a provider and model, then set an API key:"
+    Write-Host ""
+    Write-Host "    `$env:OPENROUTER_API_KEY = '<your-key>'   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
+    Write-Host ""
+    Write-Host "  Then run:"
+    Write-Host ""
+    Write-Host "    fah"
+    Write-Host ""
+    exit 0
+}
+
+if (Test-Path $FahConfigFile) {
+    $reconfigure = Read-Host "A config already exists at $FahConfigFile. Reconfigure? [y/N]"
+    if ($reconfigure -notmatch '^[Yy]') {
+        Write-Ok "Kept existing config. Run 'fah' to start."
+        exit 0
+    }
+}
+
+Write-Host ""
+Write-Info "Let's configure your default provider and model."
+Write-Host ""
+
+function Read-Choice($prompt, $valid) {
+    while ($true) {
+        $value = Read-Host $prompt
+        if ($valid -contains $value) { return $value }
+        Write-Warn "enter one of: $($valid -join ', ')"
+    }
+}
+
+function Read-Secure($prompt) {
+    $secure = Read-Host $prompt -AsSecureString
+    $cred = New-Object System.Net.NetworkCredential("", $secure)
+    return $cred.Password
+}
+
+{{PROVIDER_MENU}}
+
+{{PROVIDER_SWITCH}}
+
+# API key
+Write-Host ""
+$apiKey = ""
+if ($provider -eq "custom") {
+    $needsKey = Read-Host "Does this endpoint require an API key? [y/N]"
+    if ($needsKey -match '^[Yy]') {
+        $apiKey = Read-Secure "Paste your API key"
+    }
+} else {
+    $apiKey = Read-Secure "Paste your $keyVar"
+}
+
+{{MODE_MENU}}
+
+{{MODE_SWITCH}}
+
+{{APPROVAL_MENU}}
+
+{{APPROVAL_SWITCH}}
+
+# Write config.yaml
+New-Item -ItemType Directory -Force -Path $FahConfigDir | Out-Null
+@"
+provider: $providerKind
+model: $model
+baseUrl: $baseUrl
+mode: $mode
+approvalMode: $approval
+allowedTools: []
+"@ | Set-Content -Path $FahConfigFile -Encoding UTF8
+Write-Ok "Wrote $FahConfigFile"
+
+# Persist API key as a user environment variable
+if ($apiKey) {
+    Write-Host ""
+    $persist = Read-Host "Add $keyVar to your user environment variables? [Y/n]"
+    if ($persist -notmatch '^[Nn]') {
+        [Environment]::SetEnvironmentVariable($keyVar, $apiKey, "User")
+        Set-Item "Env:$keyVar" $apiKey
+        Write-Ok "Saved $keyVar to your user environment variables."
+        Write-Host "  Open a new PowerShell window, or run: `$env:$keyVar = '$apiKey'"
+    } else {
+        Write-Host ""
+        Write-Host "  Add this to your environment manually:"
+        Write-Host ""
+        Write-Host "    `$env:$keyVar = '<your-key>'"
+        Write-Host ""
+    }
+}
+
+# ── 5. Done ──────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Ok "Installation and configuration complete."
+Write-Host ""
+Write-Host "  Start the agent:"
+Write-Host ""
+Write-Host "    fah"
+Write-Host ""
+Write-Host "  Or run a single headless task:"
+Write-Host ""
+Write-Host "    fah `"summarize CHANGELOG.md`""
+Write-Host ""
+Write-Host "  Docs:    https://github.com/IstiN/flutter_agent_harness"
+Write-Host "  Package: https://pub.dev/packages/flutter_agent_harness"
+Write-Host ""

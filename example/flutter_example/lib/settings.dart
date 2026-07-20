@@ -122,7 +122,7 @@ enum ProviderPreset {
 }
 
 /// The BYOK connection form shared by the first-run [SetupScreen] and the
-/// in-chat [SettingsDialog].
+/// in-chat [SettingsScreen].
 ///
 /// The provider picker mixes the built-in [ProviderPreset]s with user-added
 /// [CustomProvider]s from [registry]; "Add provider" saves a named
@@ -1412,14 +1412,14 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
   }
 }
 
-/// The gear-icon dialog from the chat screen (also opened from the session
+/// The gear-icon screen from the chat screen (also opened from the session
 /// sidebar's model tile): reconfigure provider/model/key mid-session,
 /// manage saved providers, and manage the on-device model cache.
 /// Applying swaps the backend of [service] via [AgentService.reconfigure] —
 /// the visible transcript, the sandbox filesystem, and the current session
 /// all survive.
-class SettingsDialog extends StatelessWidget {
-  const SettingsDialog({
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({
     super.key,
     required this.service,
     this.registry,
@@ -1453,14 +1453,13 @@ class SettingsDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Settings'),
-      content: SizedBox(
-        width: _dialogContentWidth(context, 440),
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: SafeArea(
         child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
             children: [
               AgentSettingsForm(
                 connectLabel: 'Apply',
@@ -1475,26 +1474,27 @@ class SettingsDialog extends StatelessWidget {
                   if (context.mounted) Navigator.of(context).pop();
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 24),
               const Divider(),
-              const SizedBox(height: 8),
+              const SizedBox(height: 16),
               ApprovalModeSelector(service: service),
-              const SizedBox(height: 16),
+              const SizedBox(height: 24),
               const Divider(),
-              const SizedBox(height: 8),
+              const SizedBox(height: 16),
               WebLlmCacheSection(engine: webLlmEngine),
               // The transformers.js section is web-only (its provider is);
               // the Gemma section hides where its provider is unsupported —
               // on web the litert-lm path is abandoned in favour of
               // transformers.js, on desktop neither exists.
               if (transformersJsProviderSupported) ...[
-                const SizedBox(height: 16),
+                const SizedBox(height: 24),
                 TransformersJsCacheSection(engine: transformersJsEngine),
               ],
               if (gemmaProviderSupported) ...[
-                const SizedBox(height: 16),
+                const SizedBox(height: 24),
                 GemmaCacheSection(engine: gemmaEngine),
               ],
+              const SizedBox(height: 24),
             ],
           ),
         ),

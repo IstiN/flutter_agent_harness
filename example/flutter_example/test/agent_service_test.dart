@@ -288,8 +288,8 @@ void main() {
       expect(service.messages.last.content, 'recovered');
     });
 
-    test('a prompt refused because a run is active lands in the banner, '
-        'not the console', () async {
+    test('a second send while a run is active is queued as a steer and '
+        'processed automatically at the next turn boundary', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(
         agent: _createAgent(_singleTextResponse('ok')),
@@ -299,20 +299,27 @@ void main() {
       await service.initialize();
 
       final first = service.sendText('one');
-      // The second send hits Agent.prompt's synchronous "already
-      // processing" refusal. The composer calls send unawaited, so a
-      // synchronous escape would surface as an unhandled async error (the
-      // "Uncaught Error" storm); it must become the error banner instead.
+      // The second send arrives while the first run is still active. It must
+      // be queued via Agent.steer() instead of throwing, shown as pending in
+      // the UI, and auto-continued once the first run finishes.
       await service.sendText('two');
-      expect(service.error, contains('already processing'));
+      expect(service.error, isNull);
+      expect(service.pendingSteerTexts, contains('two'));
 
       await first;
       await service.waitForIdle();
-      // The first run completed undisturbed.
+
+      // Both runs completed; the queued message is no longer pending.
       expect(service.isStreaming, isFalse);
+      expect(service.pendingSteerTexts, isEmpty);
+      final userContents = service.messages
+          .where((m) => m.role == 'user')
+          .map((m) => m.content)
+          .toList();
+      expect(userContents, ['one', 'two']);
       expect(
         service.messages.where((m) => m.role == 'assistant'),
-        hasLength(1),
+        hasLength(2),
       );
     });
 
