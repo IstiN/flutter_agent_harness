@@ -12,6 +12,27 @@ const _model = Model(
   maxTokens: 4096,
 );
 
+/// A catalog-backed cloud model, for the banner's key-status line.
+const _cloudModel = Model(
+  id: 'claude-sonnet-4-5',
+  api: 'anthropic-messages',
+  provider: 'anthropic',
+  baseUrl: 'https://api.anthropic.com',
+  contextWindow: 200000,
+  maxTokens: 8192,
+);
+
+/// A model on a custom endpoint: the provider flips to `openai` (see
+/// `buildCliDefaultModel`) while the key lookup stays by provider kind.
+const _customEndpointModel = Model(
+  id: 'local-model',
+  api: 'openai-completions',
+  provider: 'openai',
+  baseUrl: 'http://127.0.0.1:8932',
+  contextWindow: 100000,
+  maxTokens: 4096,
+);
+
 AssistantMessage _assistant({
   List<ContentBlock> content = const [],
   StopReason stopReason = StopReason.stop,
@@ -192,6 +213,8 @@ void main() {
     StreamFunction streamFunction, {
     Model model = _model,
     ExecutionEnv? envOverride,
+    bool Function(String name)? envVarIsSet,
+    String? providerKind,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -199,6 +222,8 @@ void main() {
         apiKey: 'test-key',
         env: envOverride ?? env,
         sessionRoot: '/sessions',
+        envVarIsSet: envVarIsSet,
+        providerKind: providerKind ?? 'openai-completions',
       ),
       io: io,
       streamFunction: streamFunction,
@@ -293,6 +318,84 @@ void main() {
       'Hello world',
     );
   });
+
+  test('banner shows the endpoint and the set key env var name', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      model: _cloudModel,
+      providerKind: 'anthropic',
+      envVarIsSet: (name) => name == 'ANTHROPIC_API_KEY',
+    );
+    final run = cli.run();
+
+    await _waitFor(() => io.out.toString().contains('Type /help'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('endpoint: https://api.anthropic.com'));
+    expect(output, contains('key: ANTHROPIC_API_KEY'));
+    expect(output, isNot(contains('no key set')));
+  });
+
+  test('banner warns when no key env var is set for the provider', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      model: _cloudModel,
+      providerKind: 'anthropic',
+      envVarIsSet: (_) => false,
+    );
+    final run = cli.run();
+
+    await _waitFor(() => io.out.toString().contains('Type /help'));
+    io.sendLine('/exit');
+    await run;
+
+    expect(
+      io.out.toString(),
+      contains('key: no key set (want ANTHROPIC_API_KEY)'),
+    );
+  });
+
+  test('banner has no key line for providers without key env vars', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(fake.call, providerKind: 'test-kind');
+    final run = cli.run();
+
+    await _waitFor(() => io.out.toString().contains('Type /help'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('endpoint: https://example.test'));
+    expect(output, isNot(contains('key:')));
+  });
+
+  test(
+    'banner key status tracks the provider kind on custom endpoints',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        model: _customEndpointModel,
+        envVarIsSet: (name) => name == 'OPENROUTER_API_KEY',
+      );
+      final run = cli.run();
+
+      await _waitFor(() => io.out.toString().contains('Type /help'));
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('endpoint: http://127.0.0.1:8932'));
+      // The key lookup is by provider kind (openrouter names), not by the
+      // flipped model provider (openai): no false "no key set" warning.
+      expect(output, contains('key: OPENROUTER_API_KEY'));
+      expect(output, isNot(contains('no key set')));
+    },
+  );
 
   test('renders tool start/end one-liners and stores tool results', () async {
     await env.writeFile('notes.txt', 'data');
@@ -577,6 +680,96 @@ void main() {
     expect(output, contains('[read] error:'));
     expect(output, contains('error: boom'));
     expect(cli.agent.state.model.id, 'test-model');
+  });
+
+  test('connection-refused error appends the endpoint hint (ClientException '
+      'message shape)', () async {
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(
+            stopReason: StopReason.error,
+            errorMessage: 'Connection refused',
+          ),
+        ),
+      ],
+    ]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    expect(
+      io.out.toString(),
+      contains(
+        'error: Connection refused — check the endpoint in '
+        '~/.fah/config.yaml (baseUrl: https://example.test) or pass '
+        '--base-url',
+      ),
+    );
+  });
+
+  test('connection-refused error appends the endpoint hint (SocketException '
+      'toString shape)', () async {
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(
+            stopReason: StopReason.error,
+            errorMessage:
+                'ClientException with SocketException: Connection refused '
+                '(OS Error: Connection refused, errno = 61), address = '
+                '127.0.0.1, port = 8932, '
+                'uri=http://127.0.0.1:8932/v1/chat/completions',
+          ),
+        ),
+      ],
+    ]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    expect(
+      io.out.toString(),
+      contains('check the endpoint in ~/.fah/config.yaml'),
+    );
+  });
+
+  test('non-connection errors get no endpoint hint', () async {
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(
+            stopReason: StopReason.error,
+            errorMessage: '401: Unauthorized',
+          ),
+        ),
+      ],
+    ]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('error: 401: Unauthorized'));
+    expect(output, isNot(contains('check the endpoint')));
   });
 
   test('renders unserializable tool args safely', () async {

@@ -89,6 +89,7 @@ final class AgentCliConfig {
     required this.env,
     required this.sessionRoot,
     this.providerKind = 'openai-completions',
+    this.envVarIsSet,
     this.systemPrompt,
     this.promptOverrides,
     this.visionConfig,
@@ -163,6 +164,12 @@ final class AgentCliConfig {
 
   /// Provider adapter kind: `openai-completions`, `anthropic`, or `google`.
   final String providerKind;
+
+  /// Reports whether an environment variable is set (non-empty) on the
+  /// host. The startup banner uses it to name the provider key env var in
+  /// play — the name only, never the value. Null (tests, web) behaves as
+  /// "unset", so the banner then warns instead of naming a var.
+  final bool Function(String name)? envVarIsSet;
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].
   ///
@@ -297,6 +304,7 @@ class AgentCli {
       if (rolesResolver.resolveRole(defaultModelRole) != null) {
         rolesResolver.applyToAgent(_agent);
         _streamFunction = _agent.streamFunction;
+        _rolesDriven = true;
       }
     }
     _approval = ApprovalManager(
@@ -390,6 +398,11 @@ class AgentCli {
   late final ToolRegistry _toolRegistry;
   late final CheckpointRewindController _checkpoints;
   TtsrController? _ttsr;
+
+  /// Whether the default role resolved and drives the agent (roles mode).
+  /// The banner's key-status line reads env var names from the live model's
+  /// provider then; legacy mode reads them from the provider kind.
+  var _rolesDriven = false;
   final _usage = UsageAccumulator();
   late final _repo = JsonlSessionRepo(
     fs: config.env,
@@ -488,7 +501,7 @@ class AgentCli {
       // auto-compacts — the same end-of-turn sequence as a REPL run.
       await _afterRun();
     } catch (error) {
-      io.writeln('error: $error');
+      io.writeln(_errorLine('$error'));
       return 1;
     } finally {
       await interruptSub.cancel();
@@ -508,9 +521,48 @@ class AgentCli {
     final metadata = await _session!.getMetadata();
     io.writeln('fah — flutter_agent_harness CLI');
     io.writeln('model: ${model.id} (${model.api})');
+    io.writeln('endpoint: ${model.baseUrl}');
+    final keyStatus = _keyStatusLine(model);
+    if (keyStatus != null) io.writeln(keyStatus);
     io.writeln('cwd: ${config.env.cwd}');
     io.writeln('session: ${metadata.path}');
     io.writeln('Type /help for commands.');
+  }
+
+  /// The banner's key-status line: the name of the env var supplying the
+  /// provider key (never the value), or a "no key set" warning when the
+  /// provider expects a key the host does not have. Null when the provider
+  /// declares no key env vars (custom/test providers) — no warning then.
+  ///
+  /// Legacy mode reads the names by provider KIND, matching the executable's
+  /// key lookup: `openai-completions` accepts OPENROUTER_API_KEY/
+  /// OPENAI_API_KEY even on custom endpoints, where the model's provider
+  /// flips to `openai`. Roles mode keys per resolved chain entry, so the
+  /// live model's provider names are the right ones there.
+  String? _keyStatusLine(Model model) {
+    final names = catalogProvider(
+      _rolesDriven ? model.provider : config.providerKind,
+    )?.apiKeyEnvNames;
+    if (names == null || names.isEmpty) return null;
+    final set = names
+        .where((name) => config.envVarIsSet?.call(name) ?? false)
+        .firstOrNull;
+    if (set != null) return 'key: $set';
+    return 'key: no key set (want ${names.first})';
+  }
+
+  /// The `error:` diagnostic line for a failed run. A connection-level
+  /// failure ("Connection refused" — a SocketException, or a package:http
+  /// ClientException wrapping one; the provider adapters reduce both to
+  /// their message string, so detection is textual) appends the endpoint
+  /// hint: the effective base URL from the config or `--base-url` is almost
+  /// always the thing to fix then.
+  String _errorLine(String message) {
+    if (!message.toLowerCase().contains('connection refused')) {
+      return 'error: $message';
+    }
+    return 'error: $message — check the endpoint in ~/.fah/config.yaml '
+        '(baseUrl: ${_agent.state.model.baseUrl}) or pass --base-url';
   }
 
   Future<void> _handleLine(String line) async {
@@ -547,7 +599,7 @@ class AgentCli {
     final settled = _agent.prompt(text).then((_) => _afterRun()).catchError((
       Object error,
     ) {
-      io.writeln('error: $error');
+      io.writeln(_errorLine('$error'));
     });
     _settled = settled;
     unawaited(
@@ -1058,7 +1110,7 @@ class AgentCli {
           }
           switch (message.stopReason) {
             case StopReason.error:
-              io.writeln('error: ${message.errorMessage ?? 'unknown error'}');
+              io.writeln(_errorLine(message.errorMessage ?? 'unknown error'));
             case StopReason.aborted:
               // A TTSR abort is a rule trigger, not a failure — the
               // controller already announced it (omp renders a
