@@ -12,7 +12,8 @@
 ///
 /// With no prompt arguments the CLI starts an interactive REPL; with `-p`/
 /// `--prompt` or positional arguments it runs a single headless prompt and
-/// exits (response on stdout, diagnostics on stderr).
+/// exits (response on stdout, diagnostics on stderr). Run with `--help` for
+/// the full reference (`cliHelpText` in `lib/src/cli/cli_help.dart`).
 ///
 /// API keys come from the environment: `OPENROUTER_API_KEY` (fallback
 /// `OPENAI_API_KEY`) for the default `openai-completions` provider,
@@ -32,77 +33,6 @@ import 'package:yaml/yaml.dart' as yaml;
 
 const _version = '0.1.0';
 
-const _usage = '''
-fah — flutter_agent_harness CLI agent
-
-Usage: dart run bin/fah.dart [options] [prompt ...]
-       dart run bin/fah.dart [options] -p "<prompt>"
-
-Headless mode:
-  With a prompt (positional arguments joined with spaces, or -p/--prompt)
-  the CLI runs a single non-interactive prompt and exits: the response
-  streams to stdout, tool indicators and notices go to stderr (stdout stays
-  pipeable), nothing is ever prompted interactively, and the session
-  persists like a normal REPL run. Exit codes: 0 ok, 1 provider error,
-  130 aborted (Ctrl-C).
-  A first positional naming an EXISTING file is used as the prompt source:
-  text files (.md, .markdown, .txt) are inlined as the prompt; any other
-  (binary) file is attached as a path reference for the agent's tools —
-  with any trailing text appended as the instruction. A path that does not
-  exist is treated as plain prompt text (a sentence may contain slashes).
-
-Examples:
-  dart run bin/fah.dart "summarize the changelog"
-  dart run bin/fah.dart -p "fix the typos in README.md"
-  dart run bin/fah.dart CHANGELOG.md "summarize this"
-  dart run bin/fah.dart screenshot.png "describe it"
-
-Options:
-  -p, --prompt <text>       Run a single headless prompt and exit
-  --model <id>              Model id (default per provider, see below)
-  --provider <kind>         openai-completions | anthropic | google
-                            (default: openai-completions, via OpenRouter)
-  --base-url <url>          Override the provider API base URL
-  --vision-model <id>       Enable inspect_image tool using this vision model
-                            (e.g. gpt-4o, openai/gpt-4o)
-  --vision-base-url <url>   Override the vision provider base URL
-  --transcribe-model <id>   Enable transcribe_audio tool using this
-                            transcription model (default: whisper-1)
-  --transcribe-base-url <url>  Override the transcription endpoint base URL
-  --plugin <name>          Enable a built-in plugin (repeatable). Built-ins:
-                            inspect_image, transcribe_audio
-  --prompt-template-dir <path>  Add a prompt template directory (repeatable)
-  --mode <name>           Initial mode: code | architect | review
-  --cwd <dir>               Working directory (default: current directory)
-  --session-root <dir>      Session storage root (default: ~/.fah/sessions)
-  --help, -h                Show this help
-  --version                 Print the version
-
-Environment:
-  OPENROUTER_API_KEY        API key for openai-completions (or OPENAI_API_KEY)
-  ANTHROPIC_API_KEY         API key for --provider anthropic
-  GOOGLE_API_KEY            API key for --provider google
-  VISION_API_KEY            API key for --vision-model (defaults to main key)
-  TRANSCRIBE_API_KEY        API key for --transcribe-model (defaults to main key)
-
-Configuration:
-  .fah/packages.yaml        Plugin configuration (see docs).
-  .fah/rules.yaml           Project TTSR stream rules (see docs).
-  ~/.fah/config.yaml        Preferences; an optional `roles:` section pins
-                            model roles (default/smol/slow/plan) to ordered
-                            fallback chains, with `modelOverrides:` for
-                            path-scoped chains. Key rotation stacks
-                            _2.._N suffixes (OPENROUTER_API_KEY_2, ...).
-                            An optional `ttsr:` section configures TTSR
-                            stream rules (abort/inject/retry on regex
-                            matches in the streaming output).
-
-Defaults per provider:
-  openai-completions    anthropic/claude-sonnet-4 @ https://openrouter.ai/api/v1
-  anthropic             claude-sonnet-4-5 @ https://api.anthropic.com
-  google                gemini-2.5-pro @ https://generativelanguage.googleapis.com/v1beta
-''';
-
 Never _fail(String message) {
   stderr.writeln('fah: $message');
   stderr.writeln('Run with --help for usage.');
@@ -110,7 +40,7 @@ Never _fail(String message) {
 }
 
 Never _exitWithUsage() {
-  stdout.write(_usage);
+  stdout.write(cliHelpText);
   exit(0);
 }
 
@@ -357,6 +287,39 @@ Future<void> main(List<String> args) async {
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
 
+  // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file
+  // paths resolve against the agent cwd, `~` expands; missing files are a
+  // hard error, never a silent fallback).
+  late final PromptOverrides promptOverrides;
+  try {
+    promptOverrides = resolvePromptOverrides(
+      saved.promptOverrides,
+      homeDir: home,
+      baseDir: cwd,
+    );
+  } on ConfigException catch (error) {
+    _fail('invalid ~/.fah/config.yaml: ${error.message}');
+  }
+
+  // --system-prompt[-file]: a per-invocation system prompt override that
+  // wins over the config prompts: section and the built-in mode prompts.
+  // The flag file resolves like file-as-prompt: relative to the process
+  // working directory, where the user typed the command.
+  var flagSystemPrompt = parsed.systemPrompt;
+  final systemPromptFile = parsed.systemPromptFile;
+  if (systemPromptFile != null) {
+    try {
+      flagSystemPrompt = loadPromptFile(
+        systemPromptFile,
+        homeDir: home,
+        baseDir: Directory.current.path,
+        source: '--system-prompt-file',
+      );
+    } on ConfigException catch (error) {
+      _fail(error.message);
+    }
+  }
+
   // Model roles (optional): when ~/.fah/config.yaml declares a `roles:`
   // section, runs resolve through the default role's fallback chain with
   // key rotation. The legacy single provider/model path stays the fallback
@@ -470,6 +433,8 @@ Future<void> main(List<String> args) async {
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,
       initialMode: effective.mode!,
+      systemPrompt: flagSystemPrompt,
+      promptOverrides: promptOverrides,
       approvalMode:
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
@@ -495,6 +460,9 @@ Future<void> main(List<String> args) async {
         mode: cli.currentMode.name,
         approvalMode: cli.approval.mode.label,
         allowedTools: cli.approval.alwaysAllowedTools,
+        // Prompt overrides are static per session; keep the loaded raw map
+        // so saving doesn't drop the section.
+        promptOverrides: saved.promptOverrides,
         // Roles are static per session except for a `/model` switch, which
         // re-pins the default chain on the resolver.
         modelRoles: rolesResolver?.config ?? saved.modelRoles,

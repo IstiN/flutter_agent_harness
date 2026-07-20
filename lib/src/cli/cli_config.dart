@@ -1,16 +1,19 @@
 /// CLI user preferences: last model, provider, base URL, mode, approval
-/// policy, and (optionally) model roles with fallback chains.
+/// policy, prompt overrides, and (optionally) model roles with fallback
+/// chains.
 ///
 /// Stored in `~/.fah/config.yaml` so the terminal REPL remembers choices
 /// between runs.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../model_roles/model_roles.dart';
+import '../prompts/prompt_overrides.dart';
 import '../ttsr/ttsr.dart';
 
 /// Persisted CLI configuration.
@@ -22,6 +25,7 @@ final class CliConfig {
     this.mode = 'code',
     this.approvalMode = 'yolo',
     this.allowedTools = const [],
+    this.promptOverrides = const {},
     this.modelRoles,
     this.ttsr,
   });
@@ -37,6 +41,9 @@ final class CliConfig {
         final YamlList list => [for (final entry in list) '$entry'],
         _ => const [],
       },
+      // The prompts section is parsed strictly: unknown prompt names throw
+      // [ConfigException] instead of silently doing nothing.
+      promptOverrides: parsePromptOverrideMap(map['prompts']),
       // The roles section is parsed strictly: schema errors throw
       // [ConfigException] instead of silently resetting to defaults.
       modelRoles: map['roles'] == null && map['modelOverrides'] == null
@@ -62,6 +69,13 @@ final class CliConfig {
   /// prompt answer), persisted across runs.
   final List<String> allowedTools;
 
+  /// Raw prompt overrides from the `prompts:` yaml section: prompt name →
+  /// file path or inline text (validated by [parsePromptOverrideMap]). The
+  /// executable resolves it into a `PromptOverrides` via
+  /// `resolvePromptOverrides` (file reads live in `lib/io.dart`); an empty
+  /// map keeps the built-in prompts.
+  final Map<String, String> promptOverrides;
+
   /// Optional model roles: role → fallback chains, path-scoped overrides,
   /// and the retry policy (`roles:` / `modelOverrides:` / `retry:` yaml
   /// sections). `null` keeps the legacy single provider/model behavior.
@@ -84,6 +98,14 @@ final class CliConfig {
       buffer.write('allowedTools:\n');
       for (final tool in allowedTools) {
         buffer.write('  - $tool\n');
+      }
+    }
+    if (promptOverrides.isNotEmpty) {
+      // JSON-quoted values are valid yaml scalars and keep inline multi-line
+      // prompt text round-trippable (same convention as the ttsr section).
+      buffer.write('prompts:\n');
+      for (final entry in promptOverrides.entries) {
+        buffer.write('  ${entry.key}: ${jsonEncode(entry.value)}\n');
       }
     }
     final roles = modelRoles;

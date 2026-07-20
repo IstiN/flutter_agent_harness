@@ -191,6 +191,33 @@ Conventions for AI agents and contributors working in this repository.
   both on stdout interactively and routes `writeln` to stderr in headless
   mode, and headless is never interactive (approval/ask resolve per the
   non-interactive rule, terminal or not).
+- `lib/src/prompts/prompt_overrides.dart` — prompt overrides (pure Dart):
+  the `prompts:` section of `~/.fah/config.yaml` maps prompt names to a
+  file path OR inline text, replacing built-in prompts. Names mirror the
+  `prompts/` tree ids — `system` (alias for `cli/mode_code`), `cli/mode_*`,
+  `compaction/*` (see `overridablePromptNames`). `parsePromptOverrideMap`
+  validates strictly (`ConfigException` on unknown names, non-string
+  values, or the alias pair together); `PromptOverrides` resolves
+  name → text at the consumption points — the CLI modes
+  (`builtInAgentModes(..., overrides:)`, startup + `/mode` switches) and
+  the compaction prompts (`CompactionPrompts.fromOverrides` in
+  `lib/src/compaction/compaction.dart`, threaded through
+  `streamFunctionSummarizer`/`generateSummary`/`CompactionManager`). File
+  reads live in `lib/src/cli/prompt_overrides_io.dart` (`dart:io`, exported
+  only from `lib/io.dart`): a value is a file when it starts with `/`,
+  `~/`, `./`, `../` or ends in `.md`/`.markdown`/`.txt` (`~` expands,
+  relative paths resolve against the agent cwd, frontmatter stripped, a
+  missing file is a hard `ConfigException`); anything else is inline text.
+  The `--system-prompt`/`--system-prompt-file` flags (mutually exclusive)
+  override the system prompt per invocation: flag > config > built-in.
+  `CliConfig.promptOverrides` keeps the raw map (round-tripped verbatim);
+  `AgentCliConfig.promptOverrides` carries the resolved one.
+- `lib/src/cli/cli_help.dart` — the full `fah --help` reference
+  (`cliHelpText`): every flag, provider/key, config section (`roles:`,
+  `modelOverrides:`, `retry:`, `ttsr:`, `prompts:`), approval mode, session
+  feature, tool, and plugin, guarded by `test/cli/cli_help_test.dart` (add
+  new flags/keywords there AND in the text). Terminal output, not an LLM
+  prompt — it is not under `prompts/`.
 - `lib/src/web_search/` — the `web_search`/`web_fetch` tools (ported from
   oh-my-pi `packages/coding-agent/src/web/`): `web_search` walks a provider
   chain (keyless DuckDuckGo HTML first, keyed Brave/Tavily when their key is

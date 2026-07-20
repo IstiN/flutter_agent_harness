@@ -52,6 +52,8 @@ final class CliArgs extends CliArgsResult {
     this.model,
     this.provider = 'openai-completions',
     this.baseUrl,
+    this.systemPrompt,
+    this.systemPromptFile,
     this.visionModel,
     this.visionBaseUrl,
     this.transcribeModel,
@@ -73,6 +75,15 @@ final class CliArgs extends CliArgsResult {
 
   /// `--base-url <url>`.
   final String? baseUrl;
+
+  /// `--system-prompt <text>`: a per-invocation system prompt override, used
+  /// verbatim. Wins over the config `prompts:` section and the built-in mode
+  /// prompts. Mutually exclusive with [systemPromptFile].
+  final String? systemPrompt;
+
+  /// `--system-prompt-file <path>`: a per-invocation system prompt override
+  /// read from a Markdown file. Mutually exclusive with [systemPrompt].
+  final String? systemPromptFile;
 
   /// `--vision-model <id>`.
   final String? visionModel;
@@ -118,11 +129,14 @@ final class CliArgs extends CliArgsResult {
 /// Parses the `fah` argument list.
 ///
 /// Throws [CliArgsException] on unknown flags, missing flag values, an
-/// unknown provider, or `-p`/`--prompt` combined with positional arguments.
+/// unknown provider, `--system-prompt` combined with `--system-prompt-file`,
+/// or `-p`/`--prompt` combined with positional arguments.
 CliArgsResult parseCliArgs(List<String> args) {
   String? model;
   var provider = 'openai-completions';
   String? baseUrl;
+  String? systemPrompt;
+  String? systemPromptFile;
   String? visionModel;
   String? visionBaseUrl;
   String? transcribeModel;
@@ -156,6 +170,12 @@ CliArgsResult parseCliArgs(List<String> args) {
         i++;
       case '--base-url':
         baseUrl = valueFor(i, '--base-url');
+        i++;
+      case '--system-prompt':
+        systemPrompt = valueFor(i, '--system-prompt');
+        i++;
+      case '--system-prompt-file':
+        systemPromptFile = valueFor(i, '--system-prompt-file');
         i++;
       case '--vision-model':
         visionModel = valueFor(i, '--vision-model');
@@ -199,6 +219,11 @@ CliArgsResult parseCliArgs(List<String> args) {
   if (!cliProviderKinds.contains(provider)) {
     throw CliArgsException('unknown provider: $provider');
   }
+  if (systemPrompt != null && systemPromptFile != null) {
+    throw CliArgsException(
+      'cannot combine --system-prompt and --system-prompt-file',
+    );
+  }
   if (prompt != null && positionals.isNotEmpty) {
     throw CliArgsException(
       'cannot combine -p/--prompt with positional prompt arguments',
@@ -208,6 +233,8 @@ CliArgsResult parseCliArgs(List<String> args) {
     model: model,
     provider: provider,
     baseUrl: baseUrl,
+    systemPrompt: systemPrompt,
+    systemPromptFile: systemPromptFile,
     visionModel: visionModel,
     visionBaseUrl: visionBaseUrl,
     transcribeModel: transcribeModel,

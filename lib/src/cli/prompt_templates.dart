@@ -14,6 +14,7 @@ import 'dart:async';
 import 'package:yaml/yaml.dart' as yaml;
 
 import '../env/execution_env.dart';
+import '../prompts/prompt_overrides.dart';
 import '../prompts/prompts.g.dart';
 
 /// A prompt template loaded from a markdown file.
@@ -249,36 +250,65 @@ final class AgentMode {
 /// Substitutes the working directory into a mode prompt template.
 ///
 /// The templates live outside Dart code in `prompts/cli/` (see AGENTS.md) and
-/// carry a `{{cwd}}` placeholder that is replaced here.
+/// carry a `{{cwd}}` placeholder that is replaced here. Prompt overrides go
+/// through the same substitution, so an override file may use `{{cwd}}` too.
 String _modePrompt(String template, String cwd) =>
     template.replaceAll('{{cwd}}', cwd);
 
 /// The default coding-agent mode.
-AgentMode defaultAgentMode(String cwd) => AgentMode(
-  name: 'code',
-  description: 'General coding assistant mode (default).',
-  systemPrompt: _modePrompt(cliCodeModePrompt, cwd),
-);
+///
+/// [overrides] (from the CLI config `prompts:` section) replaces the built-in
+/// prompt when it names this mode.
+AgentMode defaultAgentMode(String cwd, {PromptOverrides? overrides}) =>
+    AgentMode(
+      name: 'code',
+      description: 'General coding assistant mode (default).',
+      systemPrompt: _modePrompt(
+        overrides?.resolve(codeModePromptName, cliCodeModePrompt) ??
+            cliCodeModePrompt,
+        cwd,
+      ),
+    );
 
 /// High-level design and planning mode.
-AgentMode architectMode(String cwd) => AgentMode(
+AgentMode architectMode(String cwd, {PromptOverrides? overrides}) => AgentMode(
   name: 'architect',
   description: 'High-level design, trade-offs, and planning.',
-  systemPrompt: _modePrompt(cliArchitectModePrompt, cwd),
+  systemPrompt: _modePrompt(
+    overrides?.resolve(architectModePromptName, cliArchitectModePrompt) ??
+        cliArchitectModePrompt,
+    cwd,
+  ),
 );
 
 /// Code-review mode.
-AgentMode reviewMode(String cwd) => AgentMode(
+AgentMode reviewMode(String cwd, {PromptOverrides? overrides}) => AgentMode(
   name: 'review',
   description: 'Review code for correctness, security, and maintainability.',
-  systemPrompt: _modePrompt(cliReviewModePrompt, cwd),
+  systemPrompt: _modePrompt(
+    overrides?.resolve(reviewModePromptName, cliReviewModePrompt) ??
+        cliReviewModePrompt,
+    cwd,
+  ),
 );
 
 /// All built-in modes keyed by name.
-Map<String, AgentMode> builtInAgentModes(String cwd) => {
-  defaultAgentMode(cwd).name: defaultAgentMode(cwd),
-  architectMode(cwd).name: architectMode(cwd),
-  reviewMode(cwd).name: reviewMode(cwd),
+Map<String, AgentMode> builtInAgentModes(
+  String cwd, {
+  PromptOverrides? overrides,
+}) => {
+  defaultAgentMode(cwd, overrides: overrides).name: defaultAgentMode(
+    cwd,
+    overrides: overrides,
+  ),
+  architectMode(cwd, overrides: overrides).name: architectMode(
+    cwd,
+    overrides: overrides,
+  ),
+  reviewMode(cwd, overrides: overrides).name: reviewMode(
+    cwd,
+    overrides: overrides,
+  ),
 };
 
 extension _FirstWhereOrNull<T> on Iterable<T> {

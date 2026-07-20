@@ -181,5 +181,74 @@ ttsr:
         ),
       );
     });
+
+    test('loads without prompt overrides when the section is absent', () {
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.promptOverrides, isEmpty);
+    });
+
+    test('round-trips the prompts section', () async {
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(
+          promptOverrides: const {
+            'system': '~/prompts/my_system.md',
+            'cli/mode_review': 'You are a terse reviewer.\nNever refactor.',
+            'compaction/summary': './prompts/sum.md',
+          },
+        ),
+      );
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.modelId, 'openai/gpt-4o-mini'); // legacy fields intact
+      expect(loaded.promptOverrides, {
+        'system': '~/prompts/my_system.md',
+        'cli/mode_review': 'You are a terse reviewer.\nNever refactor.',
+        'compaction/summary': './prompts/sum.md',
+      });
+      // Full yaml fidelity: emitting again reproduces the same document.
+      const raw = {
+        'system': '~/prompts/my_system.md',
+        'cli/mode_review': 'You are a terse reviewer.\nNever refactor.',
+        'compaction/summary': './prompts/sum.md',
+      };
+      expect(loaded.toYaml(), CliConfig(promptOverrides: raw).toYaml());
+    });
+
+    test('parses the prompts section from raw yaml', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('''
+provider: google
+prompts:
+  system: ~/prompts/sys.md
+  cli/mode_review: "You are a terse reviewer."
+''');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.providerKind, 'google');
+      expect(loaded.promptOverrides['system'], '~/prompts/sys.md');
+      expect(
+        loaded.promptOverrides['cli/mode_review'],
+        'You are a terse reviewer.',
+      );
+    });
+
+    test('surfaces an invalid prompts section instead of dropping it', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('''
+prompts:
+  bogus/name: "text"
+''');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown prompt override'),
+          ),
+        ),
+      );
+    });
   });
 }
