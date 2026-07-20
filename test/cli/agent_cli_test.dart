@@ -692,6 +692,24 @@ void main() {
     await run;
   });
 
+  test('bare / shows a numbered command menu in line mode', () async {
+    final fake = _FakeStreamFunction([]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('/');
+    await _waitFor(
+      () => io.out.toString().contains('[Commands]'),
+      reason: 'menu appears',
+    );
+    await _waitFor(() => io.out.toString().contains('1) /exit'));
+    // Pick the exit command by number.
+    io.sendLine('1');
+    await run;
+
+    expect(io.out.toString(), contains('Pick a command'));
+  });
+
   test('providerStreamFunction builds adapters and rejects unknown kinds', () {
     for (final kind in ['openai-completions', 'anthropic', 'google']) {
       expect(providerStreamFunction(kind, 'k'), isA<StreamFunction>());

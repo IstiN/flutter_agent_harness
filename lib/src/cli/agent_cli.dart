@@ -551,7 +551,13 @@ class AgentCli {
         await _runTuiRepl();
       } else {
         _writeIdlePrompt();
-        await for (final line in io.lines) {
+        final lineIterator = StreamIterator<String>(io.lines);
+        while (await lineIterator.moveNext()) {
+          var line = lineIterator.current;
+          if (line.trim() == '/') {
+            final choice = await _showLineModeMenu(lineIterator);
+            if (choice != null) line = choice;
+          }
           await _handleLine(line);
           if (_exited) break;
           if (!isBusy) _writeIdlePrompt();
@@ -1484,6 +1490,34 @@ class AgentCli {
     '/help': 'this help',
     '!': '<command> — run a shell command directly',
   };
+
+  /// Prompt-based slash menu for terminals that cannot enter raw/ANSI mode.
+  /// Shows a numbered list of commands and reads the user's choice from the
+  /// same [lineIterator] that drives the REPL loop.
+  Future<String?> _showLineModeMenu(StreamIterator<String> lineIterator) async {
+    final commands = _slashCommands.entries.toList();
+    io.writeln('');
+    io.writeln(_style.bold('[Commands]'));
+    for (var i = 0; i < commands.length; i++) {
+      final entry = commands[i];
+      io.writeln('  ${i + 1}) ${_style.cyan(entry.key)} ${entry.value}');
+    }
+    io.writeln('');
+    io.write('Pick a command (number or name), or press Enter to cancel: ');
+    if (!await lineIterator.moveNext()) return null;
+    final trimmed = lineIterator.current.trim();
+    if (trimmed.isEmpty) return null;
+    // Numeric choice.
+    final index = int.tryParse(trimmed);
+    if (index != null && index >= 1 && index <= commands.length) {
+      return commands[index - 1].key;
+    }
+    // Name choice; accept with or without leading slash.
+    final name = trimmed.startsWith('/') ? trimmed : '/$trimmed';
+    if (_slashCommands.containsKey(name)) return name;
+    io.writeln('unknown choice: $trimmed');
+    return null;
+  }
 
   void _printHelp({String filter = ''}) {
     final lower = filter.toLowerCase();
