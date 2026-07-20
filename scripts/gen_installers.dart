@@ -14,8 +14,10 @@ import 'package:yaml/yaml.dart';
 const _configPath = 'site/install-config.yaml';
 const _shTemplatePath = 'site/install.sh.template';
 const _psTemplatePath = 'site/install.ps1.template';
+const _batTemplatePath = 'site/install.bat.template';
 const _shOut = 'site/install.sh';
 const _psOut = 'site/install.ps1';
+const _batOut = 'site/install.bat';
 const _shSetupTemplatePath = 'site/setup.sh.template';
 const _psSetupTemplatePath = 'site/setup.ps1.template';
 const _shSetupOut = 'site/setup.sh';
@@ -56,8 +58,14 @@ void main() {
       .replaceFirst('{{APPROVAL_MENU}}', _psApprovalMenu(approvalModes))
       .replaceFirst('{{APPROVAL_SWITCH}}', _psApprovalSwitch(approvalModes));
 
+  final bat = File(_batTemplatePath).readAsStringSync().replaceFirst(
+    ':: {{GENERATED_HEADER}}',
+    _generatedHeader.replaceAll('# ', ':: '),
+  );
+
   File(_shOut).writeAsStringSync(sh);
   File(_psOut).writeAsStringSync(ps);
+  File(_batOut).writeAsStringSync(bat);
 
   final shSetup = File(_shSetupTemplatePath)
       .readAsStringSync()

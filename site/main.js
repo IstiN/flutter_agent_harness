@@ -127,6 +127,7 @@
     'sh-setup': { title: 'macOS / Linux / WSL — Fa setup wizard', cmd: 'curl -fsSL https://fa1.dev/setup.sh | sh' },
     'ps-install': { title: 'Windows PowerShell — install Fa', cmd: 'irm https://fa1.dev/install.ps1 | iex' },
     'ps-setup': { title: 'Windows PowerShell — Fa setup wizard', cmd: 'irm https://fa1.dev/setup.ps1 | iex' },
+    'cmd-install': { title: 'Windows Command Prompt — install Fa', cmd: 'curl -fsSL https://fa1.dev/install.bat -o install.bat && install.bat' },
     'pub': { title: 'pub.dev direct', cmd: 'dart pub global activate flutter_agent_harness' }
   };
   var installSelect = document.getElementById('install-method');
