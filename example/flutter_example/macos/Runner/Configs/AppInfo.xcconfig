@@ -8,7 +8,7 @@
 PRODUCT_NAME = Fa
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.example.flutterAgentExample
+PRODUCT_BUNDLE_IDENTIFIER = dev.fa1.macos
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 fa1.dev. All rights reserved.
