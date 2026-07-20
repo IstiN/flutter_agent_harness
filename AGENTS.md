@@ -185,6 +185,23 @@ Conventions for AI agents and contributors working in this repository.
   resolve against its name sets, and the Fa system prompt's `{{commands}}`
   placeholder is rendered from it (`AgentService`). Never list commands in
   prompt text or UI by hand.
+- `example/flutter_example/lib/last_connection.dart` — the
+  `LastConnectionStore`: persists the last successful connection
+  (provider/model/URL/on-device preset — never API keys) as
+  `last_connection.json` via the shared ExecutionEnv (same pattern as
+  `ProviderRegistry`). Written on every setup-screen connect and
+  settings-dialog apply; read at boot to pre-select the settings form (an
+  on-device model no longer cached/installed falls back to the default
+  preset with a "previously used model was removed" note).
+- `example/flutter_example/lib/downloaded_models_quick_start.dart` — the
+  setup screen's "Downloaded models" section above the connection form:
+  one row per already-cached/installed on-device model (WebLLM +
+  transformers.js CacheStorage, flutter_gemma repository — the same engine
+  cache queries as the settings cache sections, never warming the engines),
+  each with a one-tap "Use" that loads the model and connects immediately.
+  Hidden while scanning and when empty; the Gemma repository scan runs on a
+  state-owned cancellable timer (a wedged plugin must not pin the section or
+  leak a pending timer).
 - `scripts/` — codegen and quality-gate scripts.
 
 ## Hard architecture rules

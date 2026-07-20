@@ -3,6 +3,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
 import 'app_theme.dart';
+import 'last_connection.dart';
 import 'provider_registry.dart';
 import 'settings.dart';
 import 'webllm/webllm_types.dart';
@@ -28,6 +29,7 @@ class SessionSidebar extends StatefulWidget {
     required this.service,
     this.onAction,
     this.registry,
+    this.lastConnectionStore,
   });
 
   /// The chat service backing the model card and the session list.
@@ -40,6 +42,11 @@ class SessionSidebar extends StatefulWidget {
   /// The custom-provider registry handed to the [SettingsDialog] opened from
   /// the model card; `null` falls back to an in-memory one (tests).
   final ProviderRegistry? registry;
+
+  /// The last-connection store handed to the [SettingsDialog]: applies
+  /// update it (see [LastConnectionStore]); `null` skips prefill and
+  /// persistence (tests).
+  final LastConnectionStore? lastConnectionStore;
 
   @override
   State<SessionSidebar> createState() => _SessionSidebarState();
@@ -135,8 +142,11 @@ class _SessionSidebarState extends State<SessionSidebar> {
   Future<void> _switchModel() async {
     await showDialog<void>(
       context: context,
-      builder: (_) =>
-          SettingsDialog(service: _service, registry: widget.registry),
+      builder: (_) => SettingsDialog(
+        service: _service,
+        registry: widget.registry,
+        lastConnectionStore: widget.lastConnectionStore,
+      ),
     );
   }
 

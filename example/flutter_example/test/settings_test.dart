@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
 import 'package:flutter_agent_example/gemma/gemma_types.dart';
+import 'package:flutter_agent_example/last_connection.dart';
 import 'package:flutter_agent_example/main.dart';
 import 'package:flutter_agent_example/provider_registry.dart';
 import 'package:flutter_agent_example/settings.dart';
@@ -624,6 +625,43 @@ void main() {
       await _tapConnect(tester, 'Apply');
 
       expect(find.text('API key is required'), findsOneWidget);
+    });
+
+    testWidgets('applying saves the last connection (never the key)', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final store = await LastConnectionStore.load(env);
+      final service = _fakeService();
+      await service.initialize();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(service: service, lastConnectionStore: store),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+      await _selectProvider(tester, 'Ollama');
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key'),
+        'sk-apply-test',
+      );
+      await _tapConnect(tester, 'Apply');
+      await tester.pumpAndSettle();
+
+      // Dialog closed and the connection was saved.
+      expect(find.text('Settings'), findsNothing);
+      final connection = store.connection;
+      expect(connection, isNotNull);
+      expect(connection!.providerKind, 'openai-completions');
+      expect(connection.modelId, 'gpt-oss:120b');
+      expect(connection.baseUrl, 'https://ollama.com/v1');
+      final raw = (await env.readTextFile(
+        '${env.cwd}/${LastConnectionStore.fileName}',
+      )).valueOrNull!;
+      expect(raw, isNot(contains('sk-apply-test')));
     });
   });
 

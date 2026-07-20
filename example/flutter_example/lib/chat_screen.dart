@@ -20,6 +20,7 @@ import 'approval_ui.dart';
 import 'ask_ui.dart';
 import 'file_browser.dart';
 import 'file_preview.dart';
+import 'last_connection.dart';
 import 'markdown_style.dart';
 import 'provider_registry.dart';
 import 'session_sidebar.dart';
@@ -43,6 +44,7 @@ class ChatScreen extends StatefulWidget {
     required this.service,
     this.uploadPicker,
     this.registry,
+    this.lastConnectionStore,
   });
 
   final AgentService service;
@@ -55,6 +57,11 @@ class ChatScreen extends StatefulWidget {
   /// The custom-provider registry shared with the settings dialog/sidebar;
   /// `null` falls back to an in-memory one inside the form (tests).
   final ProviderRegistry? registry;
+
+  /// The last-connection store handed to the settings dialog/sidebar: their
+  /// applies update it (see [LastConnectionStore]); `null` skips prefill and
+  /// persistence (tests).
+  final LastConnectionStore? lastConnectionStore;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -411,8 +418,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _openSettings() async {
     await showDialog<void>(
       context: context,
-      builder: (_) =>
-          SettingsDialog(service: widget.service, registry: widget.registry),
+      builder: (_) => SettingsDialog(
+        service: widget.service,
+        registry: widget.registry,
+        lastConnectionStore: widget.lastConnectionStore,
+      ),
     );
   }
 
@@ -876,6 +886,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   builder: (drawerContext) => SessionSidebar(
                     service: widget.service,
                     registry: widget.registry,
+                    lastConnectionStore: widget.lastConnectionStore,
                     onAction: () => Scaffold.of(drawerContext).closeDrawer(),
                   ),
                 ),
@@ -902,6 +913,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: SessionSidebar(
                 service: widget.service,
                 registry: widget.registry,
+                lastConnectionStore: widget.lastConnectionStore,
               ),
             ),
             const VerticalDivider(width: 1),
