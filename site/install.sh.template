@@ -58,8 +58,8 @@ clear_bar() {
 
 # Make `fa`/`fah` usable in the current shell session without reloading.
 # When the pub cache bin directory is not on PATH yet (common in curl|sh),
-# create symlinks in a directory that is already on PATH, mirroring the
-# DMTools installer behaviour.
+# create symlinks in a directory that is already on PATH so the command
+# works immediately without requiring a shell restart.
 ensure_fa_in_path() {
   # Already reachable — nothing to do.
   case ":${PATH}:" in

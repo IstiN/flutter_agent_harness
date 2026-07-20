@@ -127,9 +127,7 @@
     'sh-setup': { title: 'macOS / Linux / WSL — Fa setup wizard', cmd: 'curl -fsSL https://fa1.dev/setup.sh | sh' },
     'ps-install': { title: 'Windows PowerShell — install Fa', cmd: 'irm https://fa1.dev/install.ps1 | iex' },
     'ps-setup': { title: 'Windows PowerShell — Fa setup wizard', cmd: 'irm https://fa1.dev/setup.ps1 | iex' },
-    'pub': { title: 'pub.dev direct', cmd: 'dart pub global activate flutter_agent_harness' },
-    'dmtools-sh': { title: 'macOS / Linux / WSL — install DMTools', cmd: 'curl -fsSL https://github.com/epam/dm.ai/releases/latest/download/install.sh | bash' },
-    'dmtools-ps': { title: 'Windows PowerShell — install DMTools', cmd: 'irm https://github.com/epam/dm.ai/releases/latest/download/install.ps1 | iex' }
+    'pub': { title: 'pub.dev direct', cmd: 'dart pub global activate flutter_agent_harness' }
   };
   var installSelect = document.getElementById('install-method');
   var installTitle = document.getElementById('install-command-title');
