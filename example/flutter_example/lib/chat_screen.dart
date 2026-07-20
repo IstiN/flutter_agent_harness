@@ -20,6 +20,7 @@ import 'approval_ui.dart';
 import 'ask_ui.dart';
 import 'file_browser.dart';
 import 'file_preview.dart';
+import 'flutter_session_manager.dart';
 import 'last_connection.dart';
 import 'markdown_style.dart';
 import 'provider_registry.dart';
@@ -34,20 +35,38 @@ import 'upload_picker_stub.dart'
 /// instead of drawers.
 const double _kWideLayoutBreakpoint = 900;
 
-/// A chat UI backed by [AgentService], built on top of `flutter_chat_ui`.
+/// A chat UI backed by [FlutterSessionManager], built on top of
+/// `flutter_chat_ui`.
 ///
 /// Text messages are rendered as Markdown, tool calls/results are shown as
 /// distinct cards, and image attachments are supported.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
-    required this.service,
+    required this.manager,
     this.uploadPicker,
     this.registry,
     this.lastConnectionStore,
   });
 
-  final AgentService service;
+  /// The multi-session manager owning the active [AgentService].
+  final FlutterSessionManager manager;
+
+  /// The active session's widget.service. Convenience accessor so the rest of the
+  /// screen does not need to know about the manager indirection.
+  AgentService get service => manager.active!.service;
+
+  /// The config used to clone a fresh session when the active one is closed
+  /// and none remain. Falls back to the most recent session's config.
+  AgentConfig get _configForNewSession {
+    final config =
+        manager.active?.service.configForClone ??
+        manager.sessions.last.service.configForClone;
+    if (config == null) {
+      throw StateError('No session config available to clone from');
+    }
+    return config;
+  }
 
   /// File chooser behind the attach sheet's "Attach file" entry.
   /// Defaults to the platform picker (`null` off the web → the entry is
@@ -149,8 +168,14 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _chatController = InMemoryChatController();
+    widget.manager.addListener(_onManagerChanged);
+    _subscribeToService();
     _isStreaming = widget.service.isStreaming;
     _error = widget.service.error;
+    _syncMessages();
+  }
+
+  void _subscribeToService() {
     widget.service.addListener(_onServiceChanged);
     // This screen renders approval prompts as Material dialogs; clearing the
     // handler on dispose restores the deny-by-default for headless runs.
@@ -158,7 +183,18 @@ class _ChatScreenState extends State<ChatScreen> {
     // Same pattern for the ask tool: this screen renders the questions as a
     // modal bottom sheet; without a handler, ask calls resolve as cancelled.
     widget.service.askHandler = _handleAskQuestions;
-    _syncMessages();
+  }
+
+  void _unsubscribeFromService() {
+    final active = widget.manager.active;
+    if (active == null) return;
+    active.service.removeListener(_onServiceChanged);
+    if (active.service.approvalPromptHandler == _handleApprovalPrompt) {
+      active.service.approvalPromptHandler = null;
+    }
+    if (active.service.askHandler == _handleAskQuestions) {
+      active.service.askHandler = null;
+    }
   }
 
   Future<ApprovalDecision> _handleApprovalPrompt(ApprovalRequest request) {
@@ -175,15 +211,26 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _syncDebounce?.cancel();
     _textController.dispose();
-    widget.service.removeListener(_onServiceChanged);
-    if (widget.service.approvalPromptHandler == _handleApprovalPrompt) {
-      widget.service.approvalPromptHandler = null;
-    }
-    if (widget.service.askHandler == _handleAskQuestions) {
-      widget.service.askHandler = null;
-    }
+    widget.manager.removeListener(_onManagerChanged);
+    _unsubscribeFromService();
     _chatController.dispose();
     super.dispose();
+  }
+
+  void _onManagerChanged() {
+    if (widget.manager.active == null) {
+      // The active session was closed and none remain: create a fresh one so
+      // the chat never points at a removed session.
+      widget.manager.ensureActiveSession(
+        config: widget._configForNewSession,
+        serviceFactory: () async => widget.service.clone(),
+      );
+      return;
+    }
+    _unsubscribeFromService();
+    _subscribeToService();
+    _syncMessages();
+    if (mounted) setState(() {});
   }
 
   void _onServiceChanged() {
@@ -932,7 +979,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: SafeArea(
                 child: Builder(
                   builder: (drawerContext) => SessionSidebar(
-                    service: widget.service,
+                    manager: widget.manager,
                     registry: widget.registry,
                     lastConnectionStore: widget.lastConnectionStore,
                     onAction: () => Scaffold.of(drawerContext).closeDrawer(),
@@ -959,7 +1006,7 @@ class _ChatScreenState extends State<ChatScreen> {
             SizedBox(
               width: kSessionSidebarWidth,
               child: SessionSidebar(
-                service: widget.service,
+                manager: widget.manager,
                 registry: widget.registry,
                 lastConnectionStore: widget.lastConnectionStore,
               ),

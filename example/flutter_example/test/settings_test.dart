@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
+import 'package:flutter_agent_example/flutter_session_manager.dart';
 import 'package:flutter_agent_example/gemma/gemma_types.dart';
 import 'package:flutter_agent_example/last_connection.dart';
 import 'package:flutter_agent_example/main.dart';
@@ -688,7 +689,11 @@ void main() {
     ) async {
       final service = _fakeService();
       await service.initialize();
-      await tester.pumpWidget(MaterialApp(home: ChatScreen(service: service)));
+      final manager = FlutterSessionManager(
+        env: MemoryExecutionEnv(),
+        sessionsRoot: '/sessions',
+      )..addSession('fake-session', service);
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byIcon(Icons.settings_outlined));
@@ -713,7 +718,11 @@ void main() {
     ) async {
       final service = _fakeService();
       await service.initialize();
-      await tester.pumpWidget(MaterialApp(home: ChatScreen(service: service)));
+      final manager = FlutterSessionManager(
+        env: MemoryExecutionEnv(),
+        sessionsRoot: '/sessions',
+      )..addSession('fake-session', service);
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byIcon(Icons.settings_outlined));
@@ -730,9 +739,11 @@ void main() {
       final store = await LastConnectionStore.load(env);
       final service = _fakeService();
       await service.initialize();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(service: service, lastConnectionStore: store),
+          home: ChatScreen(manager: manager, lastConnectionStore: store),
         ),
       );
       await tester.pumpAndSettle();

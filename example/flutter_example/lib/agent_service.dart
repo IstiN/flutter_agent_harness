@@ -119,6 +119,7 @@ class AgentService extends ChangeNotifier {
     required this.sessionsRoot,
     JsonlSessionRepo? repo,
     SecretRedactor? redactor,
+    this._config,
   }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
     _responseTimeout = const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
@@ -157,7 +158,9 @@ class AgentService extends ChangeNotifier {
     required AgentConfig config,
     SecretRedactor? redactor,
     WebSearchConfig? webSearchConfig,
-  }) : sessionsRoot = '${env.cwd}/sessions',
+    StreamFunction? streamFunction,
+  }) : _config = config,
+       sessionsRoot = '${env.cwd}/sessions',
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
     _providerKind = config.providerKind;
     _redactor = redactor;
@@ -173,7 +176,7 @@ class AgentService extends ChangeNotifier {
     _agent = Agent(
       model: config.toModel(),
       systemPrompt: _effectiveSystemPrompt(config, redactor),
-      streamFunction: _streamFunctionFor(config),
+      streamFunction: streamFunction ?? _streamFunctionFor(config),
       toolRegistry: ToolRegistry([
         ...builtinTools(
           env,
@@ -333,6 +336,12 @@ class AgentService extends ChangeNotifier {
   /// Redactor captured at construction so [reconfigure] can rebuild the
   /// system prompt's secret-name hint.
   SecretRedactor? _redactor;
+
+  /// The config this service was created with, kept so a new session can be
+  /// cloned from it (see [clone]). `null` when the service was built from a
+  /// pre-constructed [Agent] (tests).
+  AgentConfig? get configForClone => _config;
+  final AgentConfig? _config;
 
   /// The execution environment the agent's tools (and session storage) run
   /// against. Exposed so UI affordances — the file browser — show the exact
@@ -629,6 +638,26 @@ class AgentService extends ChangeNotifier {
     } on Object {
       // Session persistence is best effort here.
     }
+  }
+
+  /// Creates a new [AgentService] with the same config and env, for a fresh
+  /// session. The clone shares the [env] and the session repository but owns
+  /// its own [Agent], transcript, and session persistence.
+  AgentService clone() {
+    final config = _config;
+    if (config == null) {
+      throw StateError(
+        'Cannot clone an AgentService built from a pre-constructed Agent',
+      );
+    }
+    // Reuse the current stream function so test doubles keep working; a real
+    // service would recreate it from the provider kind.
+    return AgentService._withEnv(
+      env: env,
+      config: config,
+      redactor: _redactor,
+      streamFunction: _agent.streamFunction,
+    );
   }
 
   /// Lists persisted sessions, newest first (across all provider dirs under

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
 import 'app_theme.dart';
+import 'flutter_session_manager.dart';
 import 'last_connection.dart';
 import 'provider_registry.dart';
 import 'settings.dart';
@@ -16,26 +16,22 @@ const double kSessionSidebarWidth = 280;
 ///
 /// Top: the active model/provider card — tapping it opens the
 /// [SettingsScreen], and applying reconfigures the service mid-chat (the
-/// transcript survives, see [AgentService.reconfigure]). Below: the persisted
+/// transcript survives, see [AgentService.reconfigure]). Below: the active
 /// sessions (newest first) with a "New session" action; tapping a session
-/// loads it into the chat (see [AgentService.loadSession]).
-///
-/// The list reads only JSONL headers via [AgentService.listSessions], so
-/// rows show what the header exposes cheaply: creation time and the model
-/// recorded at session creation.
+/// switches to it without aborting its run.
 class SessionSidebar extends StatefulWidget {
   const SessionSidebar({
     super.key,
-    required this.service,
+    required this.manager,
     this.onAction,
     this.registry,
     this.lastConnectionStore,
   });
 
-  /// The chat service backing the model card and the session list.
-  final AgentService service;
+  /// The multi-session manager backing the model card and the session list.
+  final FlutterSessionManager manager;
 
-  /// Called after an action that replaces the chat content (session loaded,
+  /// Called after an action that replaces the chat content (session switched,
   /// new session started) — the narrow drawer uses it to close itself.
   final VoidCallback? onAction;
 
@@ -54,10 +50,10 @@ class SessionSidebar extends StatefulWidget {
 
 class _SessionSidebarState extends State<SessionSidebar> {
   /// `null` while the first listing is in flight.
-  List<SessionMetadata>? _sessions;
+  List<FlutterManagedSession>? _sessions;
   String? _loadError;
 
-  AgentService get _service => widget.service;
+  FlutterSessionManager get _manager => widget.manager;
 
   @override
   void initState() {
@@ -67,7 +63,7 @@ class _SessionSidebarState extends State<SessionSidebar> {
 
   Future<void> _reload() async {
     try {
-      final sessions = await _service.listSessions();
+      final sessions = _manager.sessions;
       if (!mounted) return;
       setState(() {
         _sessions = sessions;
@@ -80,15 +76,34 @@ class _SessionSidebarState extends State<SessionSidebar> {
   }
 
   Future<void> _newSession() async {
-    await _service.reset();
+    // The manager creates the new AgentService via its factory; the factory
+    // is injected by the chat screen (see ChatScreen).
+    final config = _manager.active!.service.configForClone;
+    if (config == null) {
+      // Pre-constructed Agent (tests): create a fresh AgentService directly.
+      await _manager.createSession(
+        config: AgentConfig(
+          providerKind: _manager.active!.service.providerKind,
+          modelId: _manager.active!.service.modelId,
+          baseUrl: '',
+          apiKey: '',
+        ),
+        serviceFactory: () async => _manager.active!.service.clone(),
+      );
+    } else {
+      await _manager.createSession(
+        config: config,
+        serviceFactory: () async => _manager.active!.service.clone(),
+      );
+    }
     if (!mounted) return;
     widget.onAction?.call();
     await _reload();
   }
 
-  Future<void> _open(SessionMetadata session) async {
-    if (session.id != _service.currentSessionId) {
-      await _service.loadSession(session);
+  Future<void> _open(FlutterManagedSession session) async {
+    if (session.id != _manager.activeId) {
+      _manager.switchTo(session.id);
       if (!mounted) return;
     }
     widget.onAction?.call();
@@ -96,10 +111,9 @@ class _SessionSidebarState extends State<SessionSidebar> {
   }
 
   /// Per-row delete, behind a confirmation dialog. Deleting the active
-  /// session resets the chat to a fresh session (see
-  /// [AgentService.deleteSession]); the narrow drawer closes itself in that
-  /// case because the chat content was replaced.
-  Future<void> _delete(SessionMetadata session) async {
+  /// session switches to the most recent remaining session, or none if the
+  /// manager is empty.
+  Future<void> _delete(FlutterManagedSession session) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -118,9 +132,9 @@ class _SessionSidebarState extends State<SessionSidebar> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final wasActive = session.id == _service.currentSessionId;
+    final wasActive = session.id == _manager.activeId;
     try {
-      await _service.deleteSession(session);
+      await _manager.closeSession(session.id, deleteFile: true);
     } on Object catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -143,7 +157,7 @@ class _SessionSidebarState extends State<SessionSidebar> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SettingsScreen(
-          service: _service,
+          service: _manager.active!.service,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,
         ),
@@ -158,19 +172,6 @@ class _SessionSidebarState extends State<SessionSidebar> {
     webLlmProviderKind => 'On-device (WebLLM)',
     _ => kind,
   };
-
-  static String _formatTimestamp(DateTime createdAt) {
-    final local = createdAt.toLocal();
-    final now = DateTime.now();
-    String two(int value) => value.toString().padLeft(2, '0');
-    final time = '${two(local.hour)}:${two(local.minute)}';
-    final sameDay =
-        local.year == now.year &&
-        local.month == now.month &&
-        local.day == now.day;
-    if (sameDay) return 'Today $time';
-    return '${local.year}-${two(local.month)}-${two(local.day)} $time';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -223,12 +224,21 @@ class _SessionSidebarState extends State<SessionSidebar> {
     );
   }
 
-  /// The current-backend card. Rebuilds on every service notification so a
+  /// The current-backend card. Rebuilds on every manager notification so a
   /// switch applied in the dialog is reflected immediately.
   Widget _buildModelCard(ThemeData theme) {
     return ListenableBuilder(
-      listenable: _service,
+      listenable: _manager,
       builder: (context, _) {
+        final service = _manager.active?.service;
+        if (service == null) {
+          return const Card(
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('No active session'),
+            ),
+          );
+        }
         return Card(
           child: InkWell(
             borderRadius: BorderRadius.circular(14),
@@ -244,12 +254,12 @@ class _SessionSidebarState extends State<SessionSidebar> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _service.modelId,
+                          service.modelId,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.titleSmall,
                         ),
                         Text(
-                          _providerLabel(_service.providerKind),
+                          _providerLabel(service.providerKind),
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: FahPalette.dim,
@@ -319,24 +329,29 @@ class _SessionSidebarState extends State<SessionSidebar> {
     );
   }
 
-  Widget _buildSessionTile(ThemeData theme, SessionMetadata session) {
-    final active = session.id == _service.currentSessionId;
-    final model = (session.metadata?['model'] as String?) ?? '';
+  Widget _buildSessionTile(ThemeData theme, FlutterManagedSession session) {
+    final active = session.id == _manager.activeId;
+    final model = session.service.modelId;
+    final streaming = session.service.isStreaming;
     return ListTile(
       dense: true,
       selected: active,
       selectedTileColor: FahPalette.indigo.withValues(alpha: 0.12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       leading: Icon(
-        active ? Icons.chat_bubble : Icons.chat_bubble_outline,
+        streaming
+            ? Icons.sync
+            : active
+            ? Icons.chat_bubble
+            : Icons.chat_bubble_outline,
         size: 18,
       ),
       title: Text(
-        _formatTimestamp(session.createdAt),
+        'session ${session.id.substring(0, 8)}',
         overflow: TextOverflow.ellipsis,
       ),
       subtitle: Text(
-        model.isNotEmpty ? model : 'session ${session.id.substring(0, 8)}',
+        model.isNotEmpty ? model : 'no model',
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.bodySmall?.copyWith(color: FahPalette.dim),
       ),

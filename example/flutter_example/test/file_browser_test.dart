@@ -5,6 +5,7 @@ import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
 import 'package:flutter_agent_example/file_browser.dart';
 import 'package:flutter_agent_example/file_preview.dart';
+import 'package:flutter_agent_example/flutter_session_manager.dart';
 import 'package:flutter_agent_example/upload.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -101,6 +102,12 @@ AgentService _fakeService(ExecutionEnv env) {
     env: env,
     sessionsRoot: '/sessions',
   );
+}
+
+FlutterSessionManager _fakeManager(ExecutionEnv env) {
+  final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+  manager.addSession('fake-session', _fakeService(env));
+  return manager;
 }
 
 const _testModel = Model(
@@ -697,7 +704,7 @@ void main() {
 
       final env = await _seededEnv();
       await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(service: _fakeService(env))),
+        MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
       );
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
@@ -722,7 +729,7 @@ void main() {
 
       final env = await _seededEnv();
       await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(service: _fakeService(env))),
+        MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
       );
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
@@ -744,9 +751,11 @@ void main() {
       final env = await _seededEnv();
       final picker = _FakePicker([_uploadFile('chat.txt', 'via chat')]);
       final service = _fakeService(env);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(service: service, uploadPicker: picker),
+          home: ChatScreen(manager: manager, uploadPicker: picker),
         ),
       );
       await tester.pumpAndSettle();
@@ -800,7 +809,7 @@ void main() {
       ]);
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(service: _fakeService(env), uploadPicker: picker),
+          home: ChatScreen(manager: _fakeManager(env), uploadPicker: picker),
         ),
       );
       await tester.pumpAndSettle();
@@ -831,9 +840,11 @@ void main() {
         _uploadFile('icon.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>'),
       ]);
       final service = _fakeService(env);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(service: service, uploadPicker: picker),
+          home: ChatScreen(manager: manager, uploadPicker: picker),
         ),
       );
       await tester.pumpAndSettle();
@@ -872,12 +883,11 @@ void main() {
         'text', (tester) async {
       final env = await _seededEnv();
       final picker = _FakePicker([_uploadFile('chat.txt', 'via chat')]);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', _ThrowingSendService(env));
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(
-            service: _ThrowingSendService(env),
-            uploadPicker: picker,
-          ),
+          home: ChatScreen(manager: manager, uploadPicker: picker),
         ),
       );
       await tester.pumpAndSettle();
@@ -910,7 +920,7 @@ void main() {
         ..error = StateError('Could not read broken.bin');
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(service: _fakeService(env), uploadPicker: picker),
+          home: ChatScreen(manager: _fakeManager(env), uploadPicker: picker),
         ),
       );
       await tester.pumpAndSettle();

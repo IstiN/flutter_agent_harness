@@ -40,6 +40,7 @@ export 'src/providers/openai_completions.dart';
 export 'src/secrets/secret_redactor.dart';
 export 'src/secrets/secrets_store.dart';
 export 'src/session/session_record.dart';
+export 'src/session/agent_session_manager.dart';
 export 'src/session/session_repo.dart';
 export 'src/session/session_storage.dart';
 export 'src/session/session_tree.dart';

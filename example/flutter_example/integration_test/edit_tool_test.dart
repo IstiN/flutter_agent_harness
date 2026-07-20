@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
 import 'package:flutter_agent_example/env_factory.dart';
+import 'package:flutter_agent_example/flutter_session_manager.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -85,7 +86,11 @@ void main() {
     );
     await service.initialize();
 
-    await tester.pumpWidget(MaterialApp(home: ChatScreen(service: service)));
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '${env.cwd}/sessions',
+    )..addSession('test-session', service);
+    await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
     await tester.pumpAndSettle();
 
     await service.sendText('change hello to world');

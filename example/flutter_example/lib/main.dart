@@ -6,6 +6,7 @@ import 'package:flutter_agent_example/app_theme.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
 import 'package:flutter_agent_example/downloaded_models_quick_start.dart';
 import 'package:flutter_agent_example/env_factory.dart';
+import 'package:flutter_agent_example/flutter_session_manager.dart';
 import 'package:flutter_agent_example/gemma/gemma_types.dart';
 import 'package:flutter_agent_example/last_connection.dart';
 import 'package:flutter_agent_example/provider_registry.dart';
@@ -148,8 +149,14 @@ class SetupScreen extends StatelessWidget {
   final TransformersJsEngineApi? transformersJsEngine;
 
   Future<void> _connect(BuildContext context, AgentConfig config) async {
-    final service = await AgentService.create(config: config, env: env);
-    await service.initialize();
+    final manager = FlutterSessionManager(
+      env: env ?? await createPlatformEnv(),
+      sessionsRoot: '${(env ?? await createPlatformEnv()).cwd}/sessions',
+    );
+    await manager.createSession(
+      config: config,
+      serviceFactory: () => AgentService.create(config: config, env: env),
+    );
     // Connected — remember where we landed for the next boot (non-secret;
     // the key never reaches the store). Saved before navigation: the push
     // below completes only when the chat screen pops, which may be never.
@@ -158,7 +165,7 @@ class SetupScreen extends StatelessWidget {
     await Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => ChatScreen(
-          service: service,
+          manager: manager,
           registry: registry,
           lastConnectionStore: lastConnectionStore,
         ),
