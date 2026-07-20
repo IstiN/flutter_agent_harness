@@ -36,6 +36,7 @@ import '../cancel_token.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../model.dart';
+import '../prompts/prompt_overrides.dart';
 import '../prompts/prompts.g.dart';
 import '../session/session_record.dart';
 import '../session/session_tree.dart';
@@ -57,6 +58,60 @@ export '../prompts/prompts.g.dart'
 // (see AGENTS.md); the constants are generated into
 // `../prompts/prompts.g.dart` and re-exported here so existing imports keep
 // working.
+
+/// The four summarization prompts used by the compaction pipeline, bundled so
+/// CLI prompt overrides (the `prompts:` config section, see
+/// `lib/src/prompts/prompt_overrides.dart`) can replace them without changing
+/// the pipeline's shape. The defaults are the built-in prompts:
+/// [defaultCompactionPrompts] is byte-identical to the historical constants.
+final class CompactionPrompts {
+  /// Creates a prompt bundle; each field defaults to the built-in prompt.
+  const CompactionPrompts({
+    this.system = summarizationSystemPrompt,
+    this.summary = summarizationPrompt,
+    this.summaryUpdate = updateSummarizationPrompt,
+    this.turnPrefix = turnPrefixSummarizationPrompt,
+  });
+
+  /// Resolves the bundle against CLI prompt [overrides] (names mirror the
+  /// `prompts/compaction/` tree ids). Null or empty overrides yield
+  /// [defaultCompactionPrompts].
+  factory CompactionPrompts.fromOverrides(PromptOverrides? overrides) {
+    if (overrides == null || overrides.isEmpty) {
+      return defaultCompactionPrompts;
+    }
+    return CompactionPrompts(
+      system: overrides.resolve(
+        'compaction/summary_system',
+        summarizationSystemPrompt,
+      ),
+      summary: overrides.resolve('compaction/summary', summarizationPrompt),
+      summaryUpdate: overrides.resolve(
+        'compaction/summary_update',
+        updateSummarizationPrompt,
+      ),
+      turnPrefix: overrides.resolve(
+        'compaction/turn_prefix',
+        turnPrefixSummarizationPrompt,
+      ),
+    );
+  }
+
+  /// System prompt of the summarization LLM call.
+  final String system;
+
+  /// Instructions for the first summary.
+  final String summary;
+
+  /// Instructions for updating a previous summary.
+  final String summaryUpdate;
+
+  /// Instructions for a split-turn prefix summary.
+  final String turnPrefix;
+}
+
+/// The built-in compaction prompts (no overrides).
+const defaultCompactionPrompts = CompactionPrompts();
 
 // ---------------------------------------------------------------------------
 // Conversation serialization (ported from pi's compaction/utils.ts)
@@ -469,20 +524,22 @@ typedef SummarizeFn =
 
 /// Adapts a provider [StreamFunction] into a [SummarizeFn].
 ///
-/// Sends pi's [summarizationSystemPrompt] plus the request prompt as a single
-/// user message and joins the response's text blocks. Error and aborted stop
-/// reasons map to failure results (errors-as-events contract); a throwing
-/// [StreamFunction] is defensive-converted into a failure.
+/// Sends the [CompactionPrompts.system] prompt (the built-in
+/// [summarizationSystemPrompt] unless overridden) plus the request prompt as
+/// a single user message and joins the response's text blocks. Error and
+/// aborted stop reasons map to failure results (errors-as-events contract);
+/// a throwing [StreamFunction] is defensive-converted into a failure.
 SummarizeFn streamFunctionSummarizer(
   StreamFunction streamFunction,
-  Model model,
-) {
+  Model model, {
+  CompactionPrompts prompts = defaultCompactionPrompts,
+}) {
   return (SummarizationRequest request) async {
     try {
       final stream = streamFunction(
         model,
         Context(
-          systemPrompt: summarizationSystemPrompt,
+          systemPrompt: prompts.system,
           messages: [UserMessage.text(request.prompt)],
         ),
         cancelToken: request.cancelToken,
@@ -553,10 +610,11 @@ Future<String> generateSummary(
   String? customInstructions,
   String? previousSummary,
   CancelToken? cancelToken,
+  CompactionPrompts prompts = defaultCompactionPrompts,
 }) {
   var basePrompt = previousSummary != null
-      ? updateSummarizationPrompt
-      : summarizationPrompt;
+      ? prompts.summaryUpdate
+      : prompts.summary;
   if (customInstructions != null) {
     basePrompt = '$basePrompt\n\nAdditional focus: $customInstructions';
   }
@@ -583,10 +641,11 @@ Future<String> _generateTurnPrefixSummary(
   List<Message> messages, {
   required SummarizeFn summarize,
   CancelToken? cancelToken,
+  CompactionPrompts prompts = defaultCompactionPrompts,
 }) {
   final prompt =
       '<conversation>\n${serializeConversation(messages)}\n</conversation>\n\n'
-      '$turnPrefixSummarizationPrompt';
+      '${prompts.turnPrefix}';
   return _runSummarization(
     prompt: prompt,
     summarize: summarize,
@@ -703,6 +762,7 @@ final class CompactionManager {
   const CompactionManager({
     required this.summarize,
     this.settings = defaultCompactionSettings,
+    this.prompts = defaultCompactionPrompts,
   });
 
   /// The summary LLM call used for every summarization.
@@ -710,6 +770,10 @@ final class CompactionManager {
 
   /// Thresholds and retention settings for [compactSession].
   final CompactionSettings settings;
+
+  /// The summarization prompts (built-in unless overridden via the CLI
+  /// config `prompts:` section).
+  final CompactionPrompts prompts;
 
   /// Prepare session branch records for compaction, or return `null` when
   /// compaction is not applicable (empty branch, or the last entry is already
@@ -831,12 +895,14 @@ final class CompactionManager {
               customInstructions: customInstructions,
               previousSummary: preparation.previousSummary,
               cancelToken: cancelToken,
+              prompts: prompts,
             )
           : 'No prior history.';
       final turnPrefix = await _generateTurnPrefixSummary(
         preparation.turnPrefixMessages,
         summarize: summarize,
         cancelToken: cancelToken,
+        prompts: prompts,
       );
       summary =
           '$history\n\n---\n\n**Turn Context (split turn):**\n\n$turnPrefix';
@@ -847,6 +913,7 @@ final class CompactionManager {
         customInstructions: customInstructions,
         previousSummary: preparation.previousSummary,
         cancelToken: cancelToken,
+        prompts: prompts,
       );
     }
 

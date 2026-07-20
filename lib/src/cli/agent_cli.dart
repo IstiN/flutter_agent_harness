@@ -31,6 +31,7 @@ import '../env/execution_env.dart';
 import '../lsp/lsp_tool.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
+import '../prompts/prompt_overrides.dart';
 import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../tools/ask_tool.dart';
@@ -89,6 +90,7 @@ final class AgentCliConfig {
     required this.sessionRoot,
     this.providerKind = 'openai-completions',
     this.systemPrompt,
+    this.promptOverrides,
     this.visionConfig,
     this.transcribeConfig,
     this.webSearchConfig,
@@ -163,7 +165,18 @@ final class AgentCliConfig {
   final String providerKind;
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].
+  ///
+  /// Wins over [promptOverrides] and the active mode's prompt (the
+  /// `--system-prompt`/`--system-prompt-file` flags map here). A `/mode`
+  /// switch replaces it with the mode's prompt.
   final String? systemPrompt;
+
+  /// Prompt overrides from the CLI config `prompts:` section (resolved by
+  /// the executable via `resolvePromptOverrides`). Replaces the mode system
+  /// prompts (`cli/mode_*` names — startup and `/mode` switches) and the
+  /// compaction summarization prompts (`compaction/*` names). Null or empty
+  /// keeps the built-in prompts byte-identical.
+  final PromptOverrides? promptOverrides;
 
   /// Optional vision model configuration. When provided, the `inspect_image`
   /// tool is registered and routes image analysis to a dedicated model.
@@ -231,7 +244,10 @@ class AgentCli {
     required this.io,
     StreamFunction? streamFunction,
     this.prompt = 'fah> ',
-  }) : _modes = builtInAgentModes(config.env.cwd) {
+  }) : _modes = builtInAgentModes(
+         config.env.cwd,
+         overrides: config.promptOverrides,
+       ) {
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     final pluginTools = <AgentTool>[];
     for (final plugin in config.plugins) {
@@ -615,13 +631,19 @@ class AgentCli {
     try {
       // Cheap summaries: when model roles are configured, compaction
       // resolves through the `smol` role (falling back to the default chain
-      // when smol is unset, per role inheritance).
+      // when smol is unset, per role inheritance). The prompts come from the
+      // config `prompts:` overrides when present.
       final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
+      final compactionPrompts = CompactionPrompts.fromOverrides(
+        config.promptOverrides,
+      );
       final manager = CompactionManager(
         summarize: streamFunctionSummarizer(
           smol?.stream ?? _streamFunction,
           smol?.model ?? _agent.state.model,
+          prompts: compactionPrompts,
         ),
+        prompts: compactionPrompts,
       );
       final record = await manager.compactSession(session);
       if (record == null) {

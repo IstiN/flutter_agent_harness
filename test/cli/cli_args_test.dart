@@ -51,6 +51,39 @@ void main() {
       );
     });
 
+    test('--system-prompt sets the verbatim override', () {
+      final args =
+          parseCliArgs(const ['--system-prompt', 'You are terse.']) as CliArgs;
+      expect(args.systemPrompt, 'You are terse.');
+      expect(args.systemPromptFile, isNull);
+    });
+
+    test('--system-prompt-file sets the file path', () {
+      final args =
+          parseCliArgs(const ['--system-prompt-file', '~/prompts/sys.md'])
+              as CliArgs;
+      expect(args.systemPromptFile, '~/prompts/sys.md');
+      expect(args.systemPrompt, isNull);
+    });
+
+    test('--system-prompt combined with --system-prompt-file is an error', () {
+      expect(
+        () => parseCliArgs(const [
+          '--system-prompt',
+          'x',
+          '--system-prompt-file',
+          'sys.md',
+        ]),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('cannot combine --system-prompt and --system-prompt-file'),
+          ),
+        ),
+      );
+    });
+
     test('unknown flag still fails', () {
       expect(
         () => parseCliArgs(const ['--bogus']),
