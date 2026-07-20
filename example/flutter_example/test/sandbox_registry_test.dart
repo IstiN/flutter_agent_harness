@@ -36,9 +36,25 @@ void main() {
       expect(names, isNot(contains('node')));
     });
 
-    test('ios advertises no shell commands', () {
-      expect(sandboxCommandsFor(SandboxPlatform.ios), isEmpty);
-      expect(sandboxCommandNamesFor(SandboxPlatform.ios), isEmpty);
+    test('ios advertises the same shell commands as android', () {
+      final names = sandboxCommandsFor(
+        SandboxPlatform.ios,
+      ).map((c) => c.name).toSet();
+      expect(
+        names,
+        containsAll([
+          'qjs',
+          'js',
+          'sqlite3',
+          'python3',
+          'git',
+          'ssh',
+          'scp',
+          'sftp',
+          'lua',
+        ]),
+      );
+      expect(names, isNot(contains('node')));
     });
 
     test('desktop has no fixed list (host shell)', () {
@@ -47,7 +63,11 @@ void main() {
     });
 
     test('every advertised command resolves in the ground-truth name set', () {
-      for (final platform in [SandboxPlatform.web, SandboxPlatform.android]) {
+      for (final platform in [
+        SandboxPlatform.web,
+        SandboxPlatform.android,
+        SandboxPlatform.ios,
+      ]) {
         final names = sandboxCommandNamesFor(platform);
         for (final command in sandboxCommandsFor(platform)) {
           expect(
@@ -97,8 +117,16 @@ void main() {
       },
     );
 
-    test('ios has no resolvable shell commands', () {
-      expect(sandboxCommandNamesFor(SandboxPlatform.ios), isEmpty);
+    test('ios resolves the same commands as android', () {
+      expect(sandboxCommandNamesFor(SandboxPlatform.ios), {
+        ...mobileCoreutilsApplets,
+        ...mobileBuiltinCommands,
+        ...mobileModuleCommands,
+      });
+      expect(
+        sandboxCommandNamesFor(SandboxPlatform.ios),
+        containsAll(['ls', 'qjs', 'js', 'lua', 'sqlite3', 'ssh', 'python3']),
+      );
     });
   });
 
@@ -138,14 +166,15 @@ void main() {
       expect(section, isNot(contains('CORS')));
     });
 
-    test('ios reports that shell commands are unavailable', () {
+    test('ios lists the same commands as android', () {
       final section = formatSandboxCommandSection(SandboxPlatform.ios);
-      expect(section, contains('not available'));
-      expect(section, contains('iOS'));
-      expect(section, contains('File tools'));
-      expect(section, isNot(contains('lua')));
-      expect(section, isNot(contains('qjs')));
-      expect(section, isNot(contains('core utilities:')));
+      expect(section, contains('ssh/scp/sftp — remote access'));
+      expect(section, contains('lua — Lua 5.1 interpreter'));
+      expect(section, contains('CPython 3.14'));
+      expect(section, contains('qjs/js'));
+      expect(section, contains('NO node'));
+      expect(section, contains('apt-get'));
+      expect(section, isNot(contains('CORS')));
     });
 
     test('desktop describes the host shell instead of a command list', () {

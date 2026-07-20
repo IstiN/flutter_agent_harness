@@ -12,7 +12,7 @@ import 'package:wasm_run_flutter/wasm_run_flutter.dart';
 /// On iOS the vendored wasm_run bindings cannot download a dynamic library
 /// (they would spawn `uname` and fetch a dylib, neither of which is allowed
 /// on iOS). Instead we register the statically linked library directly via
-/// [DynamicLibrary.executable]. On other platforms we use the standard
+/// [DynamicLibrary.process]. On other platforms we use the standard
 /// [WasmRunLibrary.setUp] path.
 Future<void> setUpWasmRuntime() async {
   if (Platform.isIOS) {

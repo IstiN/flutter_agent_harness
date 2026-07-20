@@ -288,17 +288,14 @@ const Set<String> mobileModuleCommands = {
 ///
 /// Desktop returns the empty set: it uses the host shell, so the command set
 /// is unbounded (whatever is installed on the machine).
-/// iOS also returns the empty set: there is no WASM shell, so no shell
-/// command resolves at runtime.
 Set<String> sandboxCommandNamesFor(SandboxPlatform platform) =>
     switch (platform) {
       SandboxPlatform.web => webShellCommandNames,
-      SandboxPlatform.android => {
+      SandboxPlatform.android || SandboxPlatform.ios => {
         ...mobileCoreutilsApplets,
         ...mobileBuiltinCommands,
         ...mobileModuleCommands,
       },
-      SandboxPlatform.ios => const {},
       SandboxPlatform.desktop => const {},
     };
 
@@ -357,12 +354,10 @@ const _js = SandboxCommand(
 /// must resolve there, but the long tail of POSIX utilities is summarized by
 /// the section's `core utilities:` line instead of individual bullets.
 /// Desktop returns the empty list — the host shell has no fixed set.
-/// iOS returns the empty list — shell commands are unavailable there.
 List<SandboxCommand> sandboxCommandsFor(SandboxPlatform platform) =>
     switch (platform) {
       SandboxPlatform.web => _webCommands,
-      SandboxPlatform.android => _androidCommands,
-      SandboxPlatform.ios => const [],
+      SandboxPlatform.android || SandboxPlatform.ios => _androidCommands,
       SandboxPlatform.desktop => const [],
     };
 
@@ -527,14 +522,6 @@ String formatSandboxCommandSection(SandboxPlatform platform) {
           .toList()
         ..sort();
 
-  if (platform == SandboxPlatform.ios) {
-    return '- Shell: shell commands are **not available** on iOS because the '
-        'WASM sandbox cannot load. File tools (read, write, edit, ls) still '
-        'work.\n'
-        '- cd and exported variables do **not** persist; there is no shell '
-        'process.';
-  }
-
   final buffer = StringBuffer()
     ..writeln(
       '- Shell (sandboxed — ONLY the commands below exist; anything else '
@@ -572,9 +559,8 @@ String _notAvailable(SandboxPlatform platform) {
     SandboxPlatform.web =>
       '$noNode, make, gcc/cc, ssh/scp/sftp (browsers cannot open raw TCP '
           'connections), lua, remote git (blocked by CORS). $noPackages',
-    SandboxPlatform.android => '$noNode, make, gcc/cc. $noPackages',
-    SandboxPlatform.ios =>
-      'All shell commands are unavailable on iOS. Use file tools only.',
+    SandboxPlatform.android ||
+    SandboxPlatform.ios => '$noNode, make, gcc/cc. $noPackages',
     SandboxPlatform.desktop => '',
   };
 }
