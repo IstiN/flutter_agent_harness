@@ -312,4 +312,9 @@
 - feat(example): persist last connection + downloaded-models quick start on setup screen
 - feat(tools): lsp tool backed by the Dart analysis server (diagnostics/definition/references/rename)
 
+## 0.1.36
+
+- fix(example): WebLLM context windows sized for the Fa system prompt + compaction scales with model window
+- feat(cli): headless mode — fa "prompt", -p alias, file-as-prompt (md/txt content, binary path ref)
+
 ## Unreleased
