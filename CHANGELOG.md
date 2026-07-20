@@ -307,4 +307,9 @@
 - feat(agent): TTSR stream rules — abort, inject, retry mid-generation (omp port)
 - feat(providers): model roles (default/smol/slow/plan) with fallback chains, key rotation, path overrides
 
+## 0.1.35
+
+- feat(example): persist last connection + downloaded-models quick start on setup screen
+- feat(tools): lsp tool backed by the Dart analysis server (diagnostics/definition/references/rename)
+
 ## Unreleased
