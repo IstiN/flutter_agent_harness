@@ -25,9 +25,9 @@ vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/
 !.env.example
 !.env.sample
 
-# Environment secrets
-.env
-.env.*
-!.env.example
-!.env.sample
+# Firebase configuration files (contain API keys and project IDs).
+# Populate from your own Firebase project download; never commit.
+google-services.json
+GoogleService-Info.plist
+firebase_options.dart
 

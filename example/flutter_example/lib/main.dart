@@ -25,7 +25,13 @@ Future<void> main() async {
   if (!options.apiKey.startsWith('YOUR_')) {
     await Firebase.initializeApp(options: options);
   }
-  await setUpWasmRuntime();
+  try {
+    await setUpWasmRuntime();
+  } on Object {
+    // Wasm runtime setup is best-effort. On platforms where the native wasm
+    // bindings are unavailable (e.g. iOS) the app should still start so the
+    // chat UI and other providers remain usable.
+  }
   try {
     await dotenv.load(fileName: '.env');
   } on Object {

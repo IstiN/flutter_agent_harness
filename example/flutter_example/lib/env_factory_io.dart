@@ -25,6 +25,16 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
   if (Platform.isAndroid || Platform.isIOS) {
     final sandbox = Directory('${appDir.path}/fah_sandbox');
     await sandbox.create(recursive: true);
+
+    // The WASM shell does not work on iOS today: wasm_run's native bindings
+    // assume a desktop environment where they can spawn `uname` and download a
+    // dynamic library. On iOS we fall back to a plain local env; file ops work,
+    // shell commands will return a runtime error, and the rest of the app
+    // (chat, on-device LLMs, etc.) starts normally.
+    if (Platform.isIOS) {
+      return LocalExecutionEnv(cwd: sandbox.path);
+    }
+
     final shell = await WasiSandboxShell.load(
       workingDirectory: '/',
       sandboxHostPath: sandbox.path,
