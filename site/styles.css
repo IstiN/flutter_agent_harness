@@ -328,12 +328,14 @@ section {
 .install-select {
   width: 100%;
   appearance: none;
-  background: var(--card);
+  -webkit-appearance: none;
+  background: var(--panel);
+  background-color: var(--panel);
   border: 1px solid var(--border-bright);
   border-radius: 10px;
   padding: 11px 38px 11px 14px;
   color: var(--text);
-  font-family: var(--font);
+  font-family: var(--sans);
   font-size: 0.95rem;
   cursor: pointer;
 }

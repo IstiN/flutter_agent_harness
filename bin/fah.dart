@@ -224,6 +224,7 @@ final class _TerminalCliIO implements CliIO {
   final _interrupts = StreamController<void>.broadcast();
   StreamController<KeyEvent>? _keyController;
   StreamSubscription<List<int>>? _keySub;
+  var _rawModeOk = true;
 
   void fireInterrupt() => _interrupts.add(null);
 
@@ -259,12 +260,20 @@ final class _TerminalCliIO implements CliIO {
   bool get isInteractive => !headless && stdin.hasTerminal;
 
   @override
-  bool get supportsRawMode => !headless && stdin.hasTerminal;
+  bool get supportsRawMode => !headless && stdin.hasTerminal && _rawModeOk;
 
   void _startRawInput() {
     if (_keySub != null) return;
-    stdin.echoMode = false;
-    stdin.lineMode = false;
+    try {
+      stdin.echoMode = false;
+      stdin.lineMode = false;
+    } on Exception {
+      // Raw mode is not available in this terminal (e.g. embedded panels or
+      // some Windows consoles). Fall back to canonical line input.
+      _rawModeOk = false;
+      _keyController?.close();
+      return;
+    }
     _keySub = stdin.listen(
       _onRawBytes,
       onDone: () => _keyController?.close(),
@@ -577,6 +586,12 @@ Future<void> main(List<String> args) async {
   ];
 
   final io = _TerminalCliIO(headless: headlessPrompt != null);
+  if (io.isInteractive && !io.supportsRawMode) {
+    io.writeln(
+      'note: this terminal does not support raw-mode input; '
+      'interactive slash/model menus are unavailable.',
+    );
+  }
   final cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui: headlessPrompt == null && stdout.supportsAnsiEscapes,
