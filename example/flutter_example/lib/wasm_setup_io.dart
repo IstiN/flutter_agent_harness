@@ -16,8 +16,10 @@ import 'package:wasm_run_flutter/wasm_run_flutter.dart';
 /// [WasmRunLibrary.setUp] path.
 Future<void> setUpWasmRuntime() async {
   if (Platform.isIOS) {
+    // iOS statically links wasm_run into the app binary; DynamicLibrary.process()
+    // exposes its symbols to the FFI lookup.
     try {
-      WasmRunLibrary.set(DynamicLibrary.executable());
+      WasmRunLibrary.set(DynamicLibrary.process());
     } catch (_) {
       // The static library is not linked; WASM features will be unavailable.
     }
