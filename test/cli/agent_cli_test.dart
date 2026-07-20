@@ -397,6 +397,26 @@ void main() {
     },
   );
 
+  test('banner skips the key warning on keyless custom endpoints', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      model: _customEndpointModel,
+      envVarIsSet: (_) => false,
+    );
+    final run = cli.run();
+
+    await _waitFor(() => io.out.toString().contains('Type /help'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('endpoint: http://127.0.0.1:8932'));
+    // Local servers (llama.cpp, Ollama, LM Studio) need no key — warning
+    // about a missing one would be noise.
+    expect(output, isNot(contains('key:')));
+  });
+
   test('renders tool start/end one-liners and stores tool results', () async {
     await env.writeFile('notes.txt', 'data');
     final fake = _FakeStreamFunction([

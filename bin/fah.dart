@@ -343,7 +343,17 @@ Future<void> main(List<String> args) async {
       _fail('invalid model roles config: ${error.message}');
     }
   }
-  final apiKey = defaultRoleResolved
+  // A base URL other than the catalog default (--base-url or config baseUrl)
+  // means a user-configured endpoint: local llama.cpp/Ollama/LM Studio
+  // servers need no key at all, so the key is optional there (the hosted
+  // presets keep requiring one; the config default IS the OpenRouter URL, so
+  // compare values, not nullness). Roles mode already tolerates a missing
+  // key; the openai-completions adapter omits the Authorization header
+  // entirely when the key is empty.
+  final customEndpoint =
+      provider == 'openai-completions' &&
+      baseUrl != providerCatalog['openrouter']!.defaultBaseUrl;
+  final apiKey = defaultRoleResolved || customEndpoint
       ? (_optionalApiKey(provider) ?? '')
       : _resolveApiKey(provider);
 

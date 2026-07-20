@@ -129,7 +129,10 @@ enum ProviderPreset {
 /// OpenAI-compatible endpoint (name, base URL, model id) that persists
 /// across reloads (see [ProviderRegistry]). API keys are never persisted:
 /// for custom providers the key is remembered in memory for the session
-/// only, so a reload requires re-entering it.
+/// only, so a reload requires re-entering it. The key is optional for
+/// custom providers (built-in [ProviderPreset.custom] and saved
+/// [CustomProvider]s) — local llama.cpp/Ollama/LM Studio servers need none;
+/// the hosted presets (OpenRouter, Ollama Cloud) still require one.
 class AgentSettingsForm extends StatefulWidget {
   const AgentSettingsForm({
     super.key,
@@ -599,7 +602,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     final key = _keyController.text.trim();
     final model = _modelController.text.trim();
     final baseUrl = _urlController.text.trim();
-    if (key.isEmpty) {
+    // Custom providers may point at keyless local servers (llama.cpp,
+    // Ollama, LM Studio), so the key is optional for them; the hosted
+    // presets (OpenRouter, Ollama Cloud) keep requiring one.
+    final keyOptional =
+        _selection is CustomProvider || _selection == ProviderPreset.custom;
+    if (key.isEmpty && !keyOptional) {
       setState(() => _error = 'API key is required');
       return;
     }
@@ -819,6 +827,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       // Custom providers share the custom preset's CORS note.
       _ => ProviderPreset.custom.corsNote,
     };
+    // Custom providers may run keyless (local servers); see _connect.
+    final keyOptional =
+        selection is CustomProvider || selection == ProviderPreset.custom;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -886,9 +897,13 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         else ...[
           TextField(
             controller: _keyController,
-            decoration: const InputDecoration(
-              labelText: 'API key',
-              hintText: 'Paste your provider key',
+            decoration: InputDecoration(
+              labelText: keyOptional ? 'API key (optional)' : 'API key',
+              hintText: keyOptional ? null : 'Paste your provider key',
+              helperText: keyOptional
+                  ? 'Leave empty for local servers (llama.cpp, Ollama, '
+                        'LM Studio)'
+                  : null,
             ),
             obscureText: true,
             autocorrect: false,
@@ -1364,6 +1379,9 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
                 controller: _keyController,
                 decoration: const InputDecoration(
                   labelText: 'API key (optional)',
+                  helperText:
+                      'Leave empty for local servers (llama.cpp, Ollama, '
+                      'LM Studio)',
                 ),
                 obscureText: true,
                 autocorrect: false,

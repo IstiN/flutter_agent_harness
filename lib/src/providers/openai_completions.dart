@@ -61,9 +61,11 @@ final class OpenAICompletionsOptions {
   /// depending on [OpenAICompletionsCompat.maxTokensField]).
   final int? maxTokens;
 
-  /// API key sent as `Authorization: Bearer ...`. Falls back to an
-  /// `authorization` entry in [headers] (key then unused), else the stream
-  /// fails with an error event.
+  /// API key sent as `Authorization: Bearer ...`. Empty or absent sends no
+  /// Authorization header at all (keyless local endpoints such as llama.cpp,
+  /// Ollama, or LM Studio; an explicit `authorization` entry in [headers]
+  /// still applies) — an endpoint that requires auth then answers 401,
+  /// surfaced as an error event.
   final String? apiKey;
 
   /// Extra request headers, merged over [Model.headers]; a `null` value
@@ -144,11 +146,6 @@ AssistantMessageEventStream streamOpenAICompletions(
       httpClient,
       ownsClient: client == null,
       body: () async {
-        final apiKey = _getClientApiKey(
-          model.provider,
-          options?.apiKey,
-          options?.headers,
-        );
         final compat = _getCompat(model);
         final params = await applyPayloadHook(
           _buildParams(model, context, options, compat),
@@ -160,7 +157,7 @@ AssistantMessageEventStream streamOpenAICompletions(
 
         final request =
             http.Request('POST', Uri.parse('${model.baseUrl}/chat/completions'))
-              ..headers.addAll(_buildHeaders(model, options, apiKey))
+              ..headers.addAll(_buildHeaders(model, options))
               ..body = jsonEncode(params);
 
         final response = await startProviderResponse(
@@ -444,20 +441,6 @@ String _truncate40(String value) {
   return value.length > 40 ? value.substring(0, 40) : value;
 }
 
-String _getClientApiKey(
-  String provider,
-  String? apiKey,
-  Map<String, String?>? headers,
-) {
-  if (apiKey != null) {
-    return apiKey;
-  }
-  if (hasHeader(headers, 'authorization')) {
-    return 'unused';
-  }
-  throw StateError('No API key for provider: $provider');
-}
-
 bool _hasToolHistory(List<Message> messages) {
   for (final message in messages) {
     if (message is ToolResultMessage) {
@@ -474,10 +457,20 @@ bool _hasToolHistory(List<Message> messages) {
 Map<String, String> _buildHeaders(
   Model model,
   OpenAICompletionsOptions? options,
-  String apiKey,
 ) {
+  final apiKey = options?.apiKey;
   return mergeProviderHeaders(
-    {'content-type': 'application/json', 'authorization': 'Bearer $apiKey'},
+    {
+      'content-type': 'application/json',
+      // An empty/absent key sends NO Authorization header: keyless local
+      // servers (llama.cpp, Ollama, LM Studio) exist, and some reject a
+      // bogus `Bearer ` value. An endpoint that does require auth answers
+      // 401, which surfaces as a normal error event. Hosts can still pass an
+      // explicit `authorization` entry through [Model.headers] or
+      // [OpenAICompletionsOptions.headers].
+      if (apiKey != null && apiKey.isNotEmpty)
+        'authorization': 'Bearer $apiKey',
+    },
     model.headers,
     options?.headers,
   );
