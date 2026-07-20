@@ -127,6 +127,10 @@ const rootSpecs = <PromptSpec>[
     constName: 'checkpointToolDescriptionPrompt',
   ),
   PromptSpec(
+    source: 'prompts/tools/lsp.md',
+    constName: 'lspToolDescriptionPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/tools/rewind.md',
     constName: 'rewindToolDescriptionPrompt',
   ),

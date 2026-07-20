@@ -27,6 +27,7 @@ export 'src/env/secrets_execution_env.dart';
 export 'src/event_stream.dart';
 export 'src/exceptions.dart';
 export 'src/hashline/hashline.dart';
+export 'src/lsp/lsp.dart';
 export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';
 export 'src/overflow.dart';

@@ -48,6 +48,7 @@ import '../approval/bash_interceptor.dart';
 import '../cancel_token.dart';
 import '../env/execution_env.dart';
 import '../hashline/hashline.dart';
+import '../lsp/lsp_tool.dart';
 import '../model.dart';
 import '../prompts/prompts.g.dart';
 import '../types.dart';
@@ -88,6 +89,12 @@ const _maxTimeoutMs = 2147483647;
 /// targets (`data.db:table`); without an engine (e.g. web hosts, where FFI
 /// is unavailable) such reads return a clean "not supported" note.
 ///
+/// When [lsp] is provided, the `lsp` tool is registered (diagnostics /
+/// definition / references / rename backed by a language server). Only
+/// process-capable hosts (CLI/desktop) pass it — the process transport
+/// factory lives in `lib/io.dart`; web/stub construction leaves the tool
+/// out.
+///
 /// [model] is forwarded to [readFileTool] for the non-vision image note.
 List<AgentTool> builtinTools(
   ExecutionEnv env, {
@@ -95,6 +102,7 @@ List<AgentTool> builtinTools(
   WebSearchConfig? webSearch,
   Model? Function()? model,
   SqliteEngine? sqlite,
+  LspToolConfig? lsp,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return [
@@ -103,6 +111,7 @@ List<AgentTool> builtinTools(
     editFileTool(env, snapshots: store),
     listDirTool(env),
     shellTool(env),
+    if (lsp != null) lspTool(env, config: lsp),
     if (webSearch != null) ...[
       webSearchTool(config: webSearch),
       webFetchTool(config: webSearch),

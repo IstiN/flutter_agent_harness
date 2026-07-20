@@ -510,6 +510,13 @@ Future<void> main(List<String> args) async {
       transcribeConfig: transcribeConfig,
       webSearchConfig: WebSearchConfig(secrets: webSearchSecrets),
       sqliteEngine: const Sqlite3Engine(),
+      // The lsp tool: the io-side process transport spawns `dart
+      // language-server` (and any server from .fah/lsp.json); the host pid
+      // lets servers exit when this process dies.
+      lspConfig: LspToolConfig(
+        transportFactory: ioLspTransportFactory,
+        processId: pid,
+      ),
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,

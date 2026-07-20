@@ -28,6 +28,7 @@ import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../env/execution_env.dart';
+import '../lsp/lsp_tool.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
 import '../session/session_repo.dart';
@@ -86,6 +87,7 @@ final class AgentCliConfig {
     this.transcribeConfig,
     this.webSearchConfig,
     this.sqliteEngine,
+    this.lspConfig,
     this.plugins = const [],
     this.pluginConfig = const {},
     this.promptTemplateDirs = const [],
@@ -182,6 +184,12 @@ final class AgentCliConfig {
   /// null on web (SQLite reads then return a clean "not supported" note).
   final SqliteEngine? sqliteEngine;
 
+  /// Optional LSP configuration enabling the `lsp` tool (diagnostics /
+  /// definition / references / rename). Pass a config with the process
+  /// transport factory from `lib/io.dart` on native hosts; leave null on
+  /// web (the tool is not registered).
+  final LspToolConfig? lspConfig;
+
   /// Plugins to register at startup.
   final List<FahPlugin> plugins;
 
@@ -237,6 +245,7 @@ class AgentCli {
         webSearch: config.webSearchConfig,
         model: () => _agent.state.model,
         sqlite: config.sqliteEngine,
+        lsp: config.lspConfig,
       ),
       // Non-interactive input (piped) gets a null ask callback: ask calls
       // then fail with a "host cannot answer" error result (safe default).
