@@ -6,10 +6,13 @@
 #   curl -fsSL https://fa1.dev/install.bat -o install.bat && install.bat
 #
 # What it does:
-#   1. Checks that the Dart SDK (dart.exe) is on PATH.
-#   2. Installs (or updates) flutter_agent_harness from pub.dev.
-#   3. Ensures the pub cache bin directory is on the user PATH.
+#   1. Detects OS architecture.
+#   2. Downloads the matching Fa binary from the latest GitHub Release.
+#   3. Installs it to a directory on the user PATH.
 #   4. Prints a concise setup recipe and exits.
+#
+# Fallback: if the binary is unavailable for this platform, the script falls
+# back to `dart pub global activate`, which requires the Dart SDK.
 #
 # For interactive configuration (provider, model, API key), run:
 #   irm https://fa1.dev/setup.ps1 | iex
@@ -22,7 +25,8 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
-$Package = "flutter_agent_harness"
+$Repo = "IstiN/flutter_agent_harness"
+$BinaryName = "fa"
 
 # ── Output helpers ───────────────────────────────────────────────────────────
 function Write-Info($msg) { Write-Host "→ $msg" -ForegroundColor Cyan }
@@ -42,83 +46,103 @@ Write-Host ""
 Write-Host "  Fa installer — flutter_agent_harness CLI (Windows)"
 Write-Host ""
 
-# ── 1. Dart SDK check ────────────────────────────────────────────────────────
-$dart = Get-Command dart -ErrorAction SilentlyContinue
-if (-not $dart) {
-    Write-Err "the Dart SDK ('dart') is not on your PATH."
-    Write-Host ""
-    Write-Host "  Fa is distributed via pub.dev and needs the Dart SDK, bundled with Flutter:"
-    Write-Host ""
-    Write-Host "    https://docs.flutter.dev/get-started/install"
-    Write-Host ""
-    Write-Host "  Then re-run:"
-    Write-Host ""
-    Write-Host "    irm https://fa1.dev/install.ps1 | iex"
-    Write-Host ""
-    exit 1
+# ── 1. Detect platform ───────────────────────────────────────────────────────
+$arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "ia32" }
+# ARM64 Windows detection via processor architecture.
+if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") {
+    $arch = "arm64"
 }
-Write-Ok "Dart SDK found at $($dart.Source)"
+$assetName = "fa-windows-$arch.exe"
 
-# ── 2. Activate package from pub.dev ─────────────────────────────────────────
-Write-Info "Activating $Package from pub.dev..."
-try {
-    & dart pub global activate $Package
-} catch {
-    Write-Err "dart pub global activate failed."
-    exit 1
-}
-
-# ── 3. Ensure pub cache bin is on the user PATH ──────────────────────────────
-$pubCacheBin = $env:PUB_CACHE_BIN
-if (-not $pubCacheBin) {
-    # Dart's default cache location on Windows.
-    $candidate = Join-Path $env:LOCALAPPDATA "Pub\Cache\bin"
-    if (-not (Test-Path $candidate)) {
-        $candidate = Join-Path $env:APPDATA "Pub\Cache\bin"
-    }
-    $pubCacheBin = $candidate
-}
-
+# ── 2. Resolve install directory ─────────────────────────────────────────────
+$installDir = Join-Path $env:LOCALAPPDATA "Fa"
+$oldBin = Join-Path $installDir "bin"
+# Prefer a directory that is already on PATH.
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $pathParts = $userPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-if ($pubCacheBin -notin $pathParts) {
-    Write-Info "Adding pub cache bin to your user PATH: $pubCacheBin"
-    $newPath = ($pathParts + $pubCacheBin) -join ';'
-    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    # Also update the current process so the verification below works.
-    $env:Path = ($env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) + $pubCacheBin -join ';'
+$existingDir = $pathParts | Where-Object { $_ -like "*\Fa\bin" -or $_ -like "*\.local\bin" } | Select-Object -First 1
+if ($existingDir) {
+    $installDir = Split-Path $existingDir
+} elseif ($oldBin -in $pathParts) {
+    $installDir = $oldBin
 }
 
-# Refresh PATH from the registry in this session.
+if (-not (Test-Path $installDir)) {
+    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+}
+$target = Join-Path $installDir "$BinaryName.exe"
+
+# ── 3. Download latest release metadata ──────────────────────────────────────
+Write-Info "Resolving latest release..."
+try {
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing -MaximumRedirection 5
+    $version = $release.tag_name
+    $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+} catch {
+    $asset = $null
+}
+
+# ── 4. Install binary (or fall back to Dart) ─────────────────────────────────
+if ($asset) {
+    Write-Info "Downloading Fa $version for windows-$arch..."
+    try {
+        $progressPreference = 'silentlyContinue'
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $target -UseBasicParsing
+        $progressPreference = 'Continue'
+        Write-Ok "Downloaded $target"
+    } catch {
+        Write-Err "Failed to download binary: $_"
+        exit 1
+    }
+} else {
+    # No binary for this platform — fall back to Dart-based installation.
+    Write-Warn "No prebuilt binary found for windows-$arch. Falling back to Dart pub global activate."
+    $dart = Get-Command dart -ErrorAction SilentlyContinue
+    if (-not $dart) {
+        Write-Err "the Dart SDK ('dart') is not on your PATH, and no prebuilt binary is available for windows-$arch."
+        Write-Host ""
+        Write-Host "  Install Flutter (includes Dart) from:"
+        Write-Host ""
+        Write-Host "    https://docs.flutter.dev/get-started/install"
+        Write-Host ""
+        exit 1
+    }
+    Write-Info "Activating flutter_agent_harness from pub.dev..."
+    & dart pub global activate flutter_agent_harness
+    $pubCacheBin = if ($env:PUB_CACHE_BIN) { $env:PUB_CACHE_BIN } else { Join-Path $env:LOCALAPPDATA "Pub\Cache\bin" }
+    if (-not (Test-Path $pubCacheBin)) { $pubCacheBin = Join-Path $env:APPDATA "Pub\Cache\bin" }
+    $installDir = $pubCacheBin
+    $target = Join-Path $installDir "$BinaryName.bat"
+}
+
+# ── 5. Ensure install directory is on the user PATH ──────────────────────────
+if ($installDir -notin $pathParts) {
+    Write-Info "Adding $installDir to your user PATH"
+    $newPath = ($pathParts + $installDir) -join ';'
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+}
+
+# Refresh PATH in the current session.
 $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+$processPaths = $env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+if ($installDir -notin $processPaths) {
+    $env:Path = ($processPaths + $installDir) -join ';'
+}
 
 $faCmd = Get-Command fa -ErrorAction SilentlyContinue
 if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
 if ($faCmd) {
     Write-Ok "'fa' is on PATH ($($faCmd.Source))."
 } else {
-    # The registry refresh can occasionally lag; make sure the current process
-    # PATH contains the pub cache bin so the command is available immediately.
-    $processPaths = $env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-    if ($pubCacheBin -notin $processPaths) {
-        $env:Path = ($processPaths + $pubCacheBin) -join ';'
-    }
-
-    $faCmd = Get-Command fa -ErrorAction SilentlyContinue
-    if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
-    if ($faCmd) {
-        Write-Ok "'fa' is now available on PATH ($($faCmd.Source))."
-    } else {
-        Write-Warn "'fa' is not on PATH yet. The executable lives in $pubCacheBin"
-        Write-Host ""
-        Write-Warn "Open a new PowerShell window, or run this in the current one:"
-        Write-Host ""
-        Write-Host "    `$env:Path = `$env:Path + ';$pubCacheBin'"
-        Write-Host ""
-    }
+    Write-Warn "'fa' is not on PATH yet. The executable lives in $installDir"
+    Write-Host ""
+    Write-Warn "Open a new PowerShell window, or run this in the current one:"
+    Write-Host ""
+    Write-Host "    `$env:Path = `$env:Path + ';$installDir'"
+    Write-Host ""
 }
 
-# ── 4. Done ──────────────────────────────────────────────────────────────────
+# ── 6. Done ──────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Ok "Installation complete."
 Write-Host ""

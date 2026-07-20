@@ -4,12 +4,13 @@
 #                curl -fsSL https://fa1.dev/install.sh | sh
 #
 # What it does:
-#   1. Checks that the Dart SDK (`dart`) is on PATH.
-#   2. Installs (or updates) `flutter_agent_harness` from pub.dev with a
-#      progress bar and step percentages.
-#   3. Ensures the pub cache bin directory is on your PATH (auto-adds to the
-#      detected shell startup file).
+#   1. Detects OS and architecture.
+#   2. Downloads the matching Fa binary from the latest GitHub Release.
+#   3. Installs it to a directory on your PATH.
 #   4. Prints a concise setup recipe and exits.
+#
+# Fallback: if the binary is unavailable for this platform, the script falls
+# back to `dart pub global activate`, which requires the Dart SDK.
 #
 # For interactive configuration (provider, model, API key), run:
 #   curl -fsSL https://fa1.dev/setup.sh | sh
@@ -18,8 +19,8 @@
 
 set -euo pipefail
 
-PACKAGE="flutter_agent_harness"
-PUB_CACHE_BIN="${PUB_CACHE_BIN:-$HOME/.pub-cache/bin}"
+REPO="IstiN/flutter_agent_harness"
+BINARY="fa"
 
 # ── Output helpers ───────────────────────────────────────────────────────────
 say() {
@@ -42,107 +43,12 @@ err() {
   printf '\033[1;31m✘\033[0m %s\n' "$*" >&2
 }
 
-progress_bar() {
-  local percent="$1" width=30 filled empty i
-  filled=$(( percent * width / 100 ))
-  empty=$(( width - filled ))
-  printf '\r['
-  for (( i = 0; i < filled; i++ )); do printf '#'; done
-  for (( i = 0; i < empty; i++ )); do printf '·'; done
-  printf '] %3d%%' "$percent"
-}
-
-clear_bar() {
-  printf '\r%*s\r' 40 ''
-}
-
-# Make `fa`/`fah` usable in the current shell session without reloading.
-# When the pub cache bin directory is not on PATH yet (common in curl|sh),
-# create symlinks in a directory that is already on PATH so the command
-# works immediately without requiring a shell restart.
-ensure_fa_in_path() {
-  # Already reachable — nothing to do.
-  case ":${PATH}:" in
-    *:"$PUB_CACHE_BIN":*) return 0 ;;
-  esac
-
-  local candidates=(
-    "$HOME/.local/bin"
-    "$HOME/bin"
-  )
-  local dir=""
-  for candidate in "${candidates[@]}"; do
-    if [[ ":${PATH}:" == *:"$candidate":* ]]; then
-      dir="$candidate"
-      break
-    fi
-  done
-
-  # Fallback: prefer ~/.local/bin even if it is not on PATH yet, so the
-  # startup-file update we made will pick it up in future sessions.
-  if [[ -z $dir ]]; then
-    dir="$HOME/.local/bin"
-  fi
-
-  if ! mkdir -p "$dir" 2>/dev/null; then
-    return 0
-  fi
-
-  if [[ ! -w $dir ]]; then
-    return 0
-  fi
-
-  local linked=0
-  for name in fa fah; do
-    local target="$PUB_CACHE_BIN/$name"
-    local link="$dir/$name"
-    if [[ -f $target ]] && ln -sf "$target" "$link" 2>/dev/null; then
-      linked=$((linked + 1))
-    fi
-  done
-
-  if [[ $linked -gt 0 ]]; then
-    ok "Created symlinks in $dir so 'fa' is available immediately."
-  fi
-}
-
-# run_with_progress(cmd, label, start%, end%)
-# Runs cmd in the background while animating a progress bar between start/end.
-# When cmd finishes, jumps to 100%.
-run_with_progress() {
-  local cmd="$1" label="$2" start="$3" end="$4"
-  local progress=$start step pid
-
-  step=$(( (end - start) * 2 ))  # tenths of a percent per 50ms
-  [[ $step -lt 1 ]] && step=1
-
-  info "$label"
-  eval "$cmd" &
-  pid=$!
-
-  while kill -0 "$pid" 2>/dev/null; do
-    progress=$(( progress + step ))
-    if [[ $progress -ge $end ]]; then
-      progress=$end
-      step=0
-    fi
-    progress_bar "$progress"
-    sleep 0.05
-  done
-
-  wait "$pid"
-  local rc=$?
-  progress_bar 100
-  printf '\n'
-  return $rc
-}
-
 # ── Banner ───────────────────────────────────────────────────────────────────
 say ""
 say "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
 say "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"
 say "  █████╗  ███████║█████╗   ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║██║"
-say "  ██╔══╝  ██╔══██║╚════╝   ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
+say "  ██╔══╝  ██╔══██║╚════╝   ██║   ╚════╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
 say "  ██║     ██║  ██║         ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗"
 say "  ╚═╝     ╚═╝  ╚═╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"
 say ""
@@ -156,63 +62,106 @@ say ""
 # configures the user PATH and environment variables correctly.
 case "${OSTYPE:-}" in
   msys*|cygwin*|mingw*)
-    clear_bar
     warn "you appear to be running in a Bash emulation layer on Windows."
     say ""
     say "  For the best Windows experience, use the PowerShell installer:"
     say ""
     say "    irm https://fa1.dev/install.ps1 | iex"
     say ""
-    say "  Or install directly with the Dart SDK:"
-    say ""
-    say "    dart pub global activate flutter_agent_harness"
-    say ""
     exit 0
     ;;
 esac
 
-# ── 1. Dart SDK check (0–15%) ────────────────────────────────────────────────
-progress_bar 0
-if ! command -v dart >/dev/null 2>&1; then
-  clear_bar
-  err "the Dart SDK ('dart') is not on your PATH."
-  say ""
-  say "  Fa is distributed via pub.dev and needs the Dart SDK, bundled with Flutter:"
-  say ""
-  say "    https://docs.flutter.dev/get-started/install"
-  say ""
-  say "  Then re-run:"
-  say ""
-  say "    curl -fsSL https://fa1.dev/install.sh | sh"
-  say ""
-  exit 1
-fi
-progress_bar 15
-
-# ── 2. Activate package from pub.dev (15–90%) ────────────────────────────────
-clear_bar
-if dart pub global list 2>/dev/null | grep -q "^${PACKAGE} "; then
-  ACTIVATE_LOG="$(mktemp /tmp/fah-install-XXXXXX)"
-  if ! run_with_progress "dart pub global activate ${PACKAGE} >\"${ACTIVATE_LOG}\" 2>&1" "Updating ${PACKAGE} from pub.dev…" 20 90; then
-    err "dart pub global activate failed. Log:"
-    cat "${ACTIVATE_LOG}" >&2
+# ── 1. Detect OS/arch ────────────────────────────────────────────────────────
+os=""
+arch=""
+case "$(uname -s)" in
+  Linux*)     os=linux ;;
+  Darwin*)    os=macos ;;
+  *)
+    err "unsupported OS: $(uname -s)"
     exit 1
+    ;;
+esac
+
+case "$(uname -m)" in
+  x86_64|amd64)  arch=x64 ;;
+  arm64|aarch64) arch=arm64 ;;
+  armv7l)        arch=arm ;;
+  *)
+    err "unsupported architecture: $(uname -m)"
+    exit 1
+    ;;
+esac
+
+asset="fa-${os}-${arch}"
+
+# ── 2. Resolve install directory ─────────────────────────────────────────────
+install_dir="${FA_INSTALL_DIR:-$HOME/.local/bin}"
+# Prefer a directory already on PATH, falling back to ~/.local/bin.
+candidates=("$install_dir" "$HOME/.local/bin" "$HOME/bin")
+install_dir=""
+for candidate in "${candidates[@]}"; do
+  if [[ ":${PATH}:" == *:"$candidate":* ]]; then
+    install_dir="$candidate"
+    break
   fi
+done
+[[ -z $install_dir ]] && install_dir="$HOME/.local/bin"
+
+mkdir -p "$install_dir"
+target="$install_dir/$BINARY"
+
+# ── 3. Resolve latest release and asset ──────────────────────────────────────
+info "Resolving latest release..."
+release_json=""
+if command -v curl >/dev/null 2>&1; then
+  release_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)
+elif command -v wget >/dev/null 2>&1; then
+  release_json=$(wget -qO- "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)
+fi
+
+version=""
+download_url=""
+if [[ -n $release_json ]]; then
+  version=$(printf '%s' "$release_json" | grep -o '"tag_name": *"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)".*/\1/')
+  download_url=$(printf '%s' "$release_json" | grep -o '"browser_download_url": *"[^"]*'"$asset"'"' | head -n1 | sed 's/.*"\([^"]*\)".*/\1/')
+fi
+
+# ── 4. Install binary (or fall back to Dart) ─────────────────────────────────
+if [[ -n $download_url ]]; then
+  info "Downloading Fa $version for ${os}-${arch}..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -fSL --progress-bar "$download_url" -o "$target"
+  else
+    wget --show-progress -qO "$target" "$download_url"
+  fi
+  chmod +x "$target"
+  ok "Installed $target"
 else
-  ACTIVATE_LOG="$(mktemp /tmp/fah-install-XXXXXX)"
-  if ! run_with_progress "dart pub global activate ${PACKAGE} >\"${ACTIVATE_LOG}\" 2>&1" "Installing ${PACKAGE} from pub.dev…" 20 90; then
-    err "dart pub global activate failed. Log:"
-    cat "${ACTIVATE_LOG}" >&2
+  warn "No prebuilt binary found for ${os}-${arch}. Falling back to Dart pub global activate."
+  if ! command -v dart >/dev/null 2>&1; then
+    err "the Dart SDK ('dart') is not on your PATH, and no prebuilt binary is available for ${os}-${arch}."
+    say ""
+    say "  Install Flutter (includes Dart) from:"
+    say ""
+    say "    https://docs.flutter.dev/get-started/install"
+    say ""
     exit 1
   fi
+  PACKAGE="flutter_agent_harness"
+  PUB_CACHE_BIN="${PUB_CACHE_BIN:-$HOME/.pub-cache/bin}"
+  info "Activating $PACKAGE from pub.dev..."
+  dart pub global activate "$PACKAGE"
+  install_dir="$PUB_CACHE_BIN"
+  target="$install_dir/$BINARY"
 fi
 
-# ── 3. PATH check ────────────────────────────────────────────────────────────
-clear_bar
+# ── 5. Ensure install directory is on PATH ───────────────────────────────────
 if command -v fa >/dev/null 2>&1 || command -v fah >/dev/null 2>&1; then
   ok "'fa' is on PATH ($(command -v fa 2>/dev/null || command -v fah))."
 else
-  warn "'fa' is not on PATH yet. The executables live in ${PUB_CACHE_BIN}"
+  warn "'fa' is not on PATH yet. The executable lives in $install_dir"
   say ""
 
   shell_rc=""
@@ -224,16 +173,12 @@ else
 
   if [[ -n $shell_rc ]]; then
     mkdir -p "$(dirname "$shell_rc")"
-    # Avoid duplicating the same PATH entry.
-    if [[ -f $shell_rc ]] && grep -qF "${PUB_CACHE_BIN}" "$shell_rc" 2>/dev/null; then
-      ok "${PUB_CACHE_BIN} is already referenced in ${shell_rc}"
+    if [[ -f $shell_rc ]] && grep -qF "$install_dir" "$shell_rc" 2>/dev/null; then
+      ok "$install_dir is already referenced in $shell_rc"
     else
-      printf '\n# Fa CLI PATH\nexport PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}" >> "$shell_rc"
-      ok "Added ${PUB_CACHE_BIN} to ${shell_rc}"
+      printf '\n# Fa CLI PATH\nexport PATH="$PATH:%s"\n' "$install_dir" >> "$shell_rc"
+      ok "Added $install_dir to $shell_rc"
     fi
-    # Try to make the command available in the current session without
-    # requiring a shell reload (works when ~/.local/bin or ~/bin is on PATH).
-    ensure_fa_in_path
     say ""
     warn "Open a new terminal window/tab, or run this in the current shell:"
     say ""
@@ -241,18 +186,17 @@ else
     say ""
     warn "To use 'fa' right now without reloading, run:"
     say ""
-    printf '    export PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}"
+    printf '    export PATH="$PATH:%s"\n' "$install_dir"
     say ""
   else
-    ensure_fa_in_path
     warn "Add this to your shell startup file (and open a new terminal):"
     say ""
-    printf '    export PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}"
+    printf '    export PATH="$PATH:%s"\n' "$install_dir"
     say ""
   fi
 fi
 
-# ── 4. Done ──────────────────────────────────────────────────────────────────
+# ── 6. Done ──────────────────────────────────────────────────────────────────
 say ""
 ok "Installation complete."
 say ""
