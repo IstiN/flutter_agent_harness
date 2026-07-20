@@ -29,6 +29,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math';
 
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
@@ -231,6 +232,38 @@ final class CompactionSettings {
     required this.reserveTokens,
     required this.keepRecentTokens,
   });
+
+  /// Creates settings scaled to a model's context [window] (in tokens).
+  ///
+  /// pi's fixed defaults ([defaultCompactionSettings]: reserve 16384, keep
+  /// 20000) exceed the whole window of a small on-device model (2048-8192),
+  /// where `shouldCompact` would never (or always) fire. The scaling rule:
+  ///
+  /// - `reserveTokens = min(16384, max(1024, window ~/ 4))` — a quarter of
+  ///   the window, clamped into pi's range, covers the summary prompt and
+  ///   its output;
+  /// - `keepRecentTokens = min(20000, max(2048, window ~/ 2))` — half the
+  ///   window, clamped into pi's range, stays as recent context.
+  ///
+  /// At 128000+ this reproduces pi's defaults exactly. Degenerate small
+  /// windows relax the floors proportionally so the reserve never eats half
+  /// the window and the kept region never eats all of it (below that,
+  /// compaction could not free anything).
+  factory CompactionSettings.forWindow(int window) {
+    var reserveTokens = min(16384, max(1024, window ~/ 4));
+    var keepRecentTokens = min(20000, max(2048, window ~/ 2));
+    if (reserveTokens >= window ~/ 2) {
+      reserveTokens = max(128, window ~/ 4);
+    }
+    if (keepRecentTokens >= window) {
+      keepRecentTokens = max(256, window ~/ 2);
+    }
+    return CompactionSettings(
+      enabled: true,
+      reserveTokens: reserveTokens,
+      keepRecentTokens: keepRecentTokens,
+    );
+  }
 
   /// Enable automatic compaction decisions.
   final bool enabled;

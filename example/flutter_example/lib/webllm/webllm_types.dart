@@ -31,7 +31,7 @@ final class WebLlmModelPreset {
     required this.id,
     required this.displayName,
     required this.sizeLabel,
-    this.contextWindow = 2048,
+    this.contextWindow = 8192,
     this.temperature = 0.7,
     this.topP = 0.9,
     this.isCoder = false,
@@ -46,8 +46,20 @@ final class WebLlmModelPreset {
   /// Approximate download size, e.g. `~750 MB`.
   final String sizeLabel;
 
-  /// Context window requested in the reload chat config. Kept small: on-device
-  /// KV-cache memory scales with the window, and the demo's turns are short.
+  /// Context window requested in the reload chat config.
+  ///
+  /// Sizing rule: every preset requests 8192 tokens. The Fa system prompt
+  /// plus the prompt-tools tool instructions measure ~3.3k engine tokens
+  /// (~4k by the 4-chars/token estimate the compaction trigger uses), so a
+  /// 2048 window failed on the FIRST message and a 4096 window would fail
+  /// within a few turns — 8192 leaves room for the prompt, several turns,
+  /// and the reply, and lets auto-compaction keep a useful recent region
+  /// inside the same window. The trade-off is KV-cache memory, which scales
+  /// with the window: for the 8B-class presets (Llama 3.1 8B, Hermes 8B,
+  /// Qwen2.5 7B; q4f16) 8192 costs up to ~1 GB on top of the ~4.5 GB
+  /// weights (the smaller presets pay far less) — accepted so conversations
+  /// work at all. The old `-1k` MLC variants were dropped: a sub-4096
+  /// window cannot hold the system prompt.
   final int contextWindow;
 
   /// Sampling temperature sent in the reload chat config.
@@ -63,11 +75,14 @@ final class WebLlmModelPreset {
 
 /// The on-device models offered by the example app, grouped by family.
 ///
-/// The 22 flutter_agent_memory demo presets (relative order preserved,
-/// ids from the WebLLM prebuilt list), plus the Qwen2.5-Coder and Qwen3.5
-/// families added later from the same list (ids and wasm libs verified
-/// against `@mlc-ai/web-llm@0.2.84`). Sizes are approximate download
-/// weights, cached by the browser after the first load.
+/// The flutter_agent_memory demo presets (relative order preserved, ids from
+/// the WebLLM prebuilt list, pruned to ≥ ~1.5 GB downloads — weaker models
+/// cannot do agent work — and without the `-1k` window variants), plus the
+/// Qwen2.5-Coder and Qwen3.5 families added later from the same list (ids
+/// and wasm libs verified against `@mlc-ai/web-llm@0.2.84`). Sizes are
+/// approximate download weights, cached by the browser after the first load.
+/// All presets request an 8192-token context window; see
+/// [WebLlmModelPreset.contextWindow] for the sizing rule.
 const webLlmModelPresets = <WebLlmModelPreset>[
   // === SmolLM2 ===
   WebLlmModelPreset(
@@ -131,14 +146,6 @@ const webLlmModelPresets = <WebLlmModelPreset>[
     topP: 1,
   ),
   WebLlmModelPreset(
-    id: 'Phi-3.5-mini-instruct-q4f16_1-MLC-1k',
-    displayName: 'Phi-3.5 mini (1k)',
-    sizeLabel: '~1.6 GB',
-    contextWindow: 1024,
-    temperature: 1,
-    topP: 1,
-  ),
-  WebLlmModelPreset(
     id: 'Phi-4-mini-instruct-q4f16_1-MLC',
     displayName: 'Phi-4 mini',
     sizeLabel: '~2.1 GB',
@@ -164,13 +171,6 @@ const webLlmModelPresets = <WebLlmModelPreset>[
   ),
 
   // === Llama 3.1 ===
-  WebLlmModelPreset(
-    id: 'Llama-3.1-8B-Instruct-q4f16_1-MLC-1k',
-    displayName: 'Llama 3.1 8B (1k)',
-    sizeLabel: '~4.3 GB',
-    contextWindow: 1024,
-    temperature: 0.6,
-  ),
   WebLlmModelPreset(
     id: 'Llama-3.1-8B-Instruct-q4f16_1-MLC',
     displayName: 'Llama 3.1 8B',

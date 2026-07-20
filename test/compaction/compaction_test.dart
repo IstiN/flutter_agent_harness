@@ -59,6 +59,75 @@ void main() {
     });
   });
 
+  group('CompactionSettings.forWindow', () {
+    test('reproduces pi defaults at hosted-model windows', () {
+      for (final window in [100000, 128000, 200000]) {
+        final settings = CompactionSettings.forWindow(window);
+        expect(settings.enabled, isTrue, reason: 'window $window');
+        expect(settings.reserveTokens, 16384, reason: 'window $window');
+        expect(settings.keepRecentTokens, 20000, reason: 'window $window');
+      }
+    });
+
+    test('scales to small on-device windows (quarter reserve, half keep)', () {
+      final s8192 = CompactionSettings.forWindow(8192);
+      expect(s8192.reserveTokens, 2048);
+      expect(s8192.keepRecentTokens, 4096);
+
+      final s4096 = CompactionSettings.forWindow(4096);
+      expect(s4096.reserveTokens, 1024);
+      expect(s4096.keepRecentTokens, 2048);
+
+      final s16384 = CompactionSettings.forWindow(16384);
+      expect(s16384.reserveTokens, 4096);
+      expect(s16384.keepRecentTokens, 8192);
+    });
+
+    test(
+      'degenerate tiny windows: reserve never eats half, keep never all',
+      () {
+        final s2048 = CompactionSettings.forWindow(2048);
+        expect(s2048.reserveTokens, 512);
+        expect(s2048.keepRecentTokens, 1024);
+
+        final s1024 = CompactionSettings.forWindow(1024);
+        expect(s1024.reserveTokens, 256);
+        expect(s1024.keepRecentTokens, 512);
+
+        final s512 = CompactionSettings.forWindow(512);
+        expect(s512.reserveTokens, 128);
+        expect(s512.keepRecentTokens, 256);
+      },
+    );
+
+    test('invariants hold across the whole range', () {
+      for (var window = 512; window <= 200000; window += 512) {
+        final settings = CompactionSettings.forWindow(window);
+        expect(settings.enabled, isTrue, reason: 'window $window');
+        expect(
+          settings.reserveTokens,
+          greaterThan(0),
+          reason: 'window $window',
+        );
+        expect(
+          settings.reserveTokens,
+          lessThan(window ~/ 2),
+          reason: 'window $window: reserve must stay under half the window',
+        );
+        expect(
+          settings.keepRecentTokens,
+          lessThan(window),
+          reason: 'window $window: kept region must leave room to free',
+        );
+        expect(
+          settings.reserveTokens,
+          lessThanOrEqualTo(settings.keepRecentTokens),
+          reason: 'window $window',
+        );
+      }
+    });
+  });
+
   group('findCutPoint', () {
     test('keeps approximately keepRecentTokens, cutting on a user boundary', () {
       // Six messages of 100 tokens each (400 chars / 4).

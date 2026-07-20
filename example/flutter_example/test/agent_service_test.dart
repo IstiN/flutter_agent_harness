@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/memory_shell.dart';
+import 'package:flutter_agent_example/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -177,17 +178,20 @@ StreamFunction _toolThenText(String toolOutput, String finalText) {
 Agent _createAgent(
   StreamFunction streamFunction, {
   List<AgentTool> tools = const [],
+  String provider = 'test',
+  int contextWindow = 100000,
+  String systemPrompt = 'You are fah.',
 }) {
   return Agent(
     model: Model(
       id: 'test-model',
       api: 'test-api',
-      provider: 'test',
+      provider: provider,
       baseUrl: 'https://example.com',
-      contextWindow: 100000,
+      contextWindow: contextWindow,
       maxTokens: 4096,
     ),
-    systemPrompt: 'You are fah.',
+    systemPrompt: systemPrompt,
     streamFunction: streamFunction,
     toolRegistry: ToolRegistry(tools),
   );
@@ -1014,6 +1018,166 @@ void main() {
       expect(prompt, contains('Custom base.'));
       expect(prompt, contains('host machine'));
     });
+  });
+
+  group('auto-compaction', () {
+    test('webllm configs scale settings to the window minus the system '
+        'prompt and tool instructions', () async {
+      final env = MemoryExecutionEnv();
+      final tools = builtinTools(env);
+      final service = AgentService(
+        agent: _createAgent(
+          _singleTextResponse('ok'),
+          tools: tools,
+          provider: webLlmProviderKind,
+          contextWindow: 8192,
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+
+      // The conversation window is the model window minus the system prompt
+      // AND the prompt-tools instruction block the WebLLM stream function
+      // appends — the engine counts all of it.
+      final overhead = estimateTokens(
+        UserMessage.text(
+          'You are fah.\n\n${promptToolInstructions(service.toolsForTest)}',
+        ),
+      );
+      final expected = CompactionSettings.forWindow(8192 - overhead);
+      final settings = service.compactionSettings;
+      expect(settings.enabled, isTrue);
+      expect(settings.reserveTokens, expected.reserveTokens);
+      expect(settings.keepRecentTokens, expected.keepRecentTokens);
+      // The overhead is real: sizing against the bare window would give the
+      // quarter/half of 8192 instead.
+      expect(overhead, greaterThan(1000));
+      expect(settings.reserveTokens, lessThan(8192 ~/ 4));
+    });
+
+    test('hosted configs keep pi defaults (128k window)', () async {
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok'), contextWindow: 128000),
+        env: MemoryExecutionEnv(),
+        sessionsRoot: '/sessions',
+      );
+      expect(service.compactionSettings.reserveTokens, 16384);
+      expect(service.compactionSettings.keepRecentTokens, 20000);
+    });
+
+    test('compacts the transcript once it crosses the scaled threshold, and '
+        'the chat keeps working', () async {
+      // Window 512 (no on-device overhead here): reserve 128, keep 256,
+      // trigger at 384 transcript tokens.
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(
+          _singleTextResponse('reply'),
+          contextWindow: 512,
+          systemPrompt: '',
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      // Three 600-char turns: ~152, ~304, ~456 transcript tokens.
+      await service.sendText('x' * 600);
+      await service.waitForIdle();
+      await service.sendText('y' * 600);
+      await service.waitForIdle();
+      expect(service.messages, hasLength(4));
+
+      await service.sendText('z' * 600);
+      await service.waitForIdle();
+
+      // The first turn was summarized; the kept region starts at turn 2.
+      expect(service.messages, hasLength(5));
+      expect(
+        service.messages.first.content,
+        contains('compacted into the following summary'),
+      );
+      expect(service.messages.first.content, contains('reply'));
+      expect(service.error, isNull);
+
+      // A post-compaction turn runs normally against the rebuilt context.
+      await service.sendText('next');
+      await service.waitForIdle();
+      expect(service.error, isNull);
+      expect(service.messages.last.content, 'reply');
+    });
+
+    test(
+      'does not compact while the whole transcript fits the kept region',
+      () async {
+        // Degenerate window 300: trigger at 172, but the kept region is 256 —
+        // a ~200-token transcript crosses the trigger yet compaction could not
+        // drop anything, so it must not run.
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(
+            _singleTextResponse('reply'),
+            contextWindow: 300,
+            systemPrompt: '',
+          ),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('x' * 800);
+        await service.waitForIdle();
+
+        expect(service.messages, hasLength(2));
+        expect(
+          service.messages.first.content,
+          isNot(contains('compacted into the following summary')),
+        );
+      },
+    );
+
+    test(
+      'a failing summary call leaves the transcript untouched and silent',
+      () async {
+        // Chat answers normally; the compaction summary call (recognizable by
+        // its fixed system prompt) fails — best effort must not surface or
+        // corrupt history.
+        flakySummarizer(
+          Model model,
+          Context context, {
+          CancelToken? cancelToken,
+        }) {
+          if (context.systemPrompt == summarizationSystemPrompt) {
+            return _errorStream('summary backend down')(model, context);
+          }
+          return _singleTextResponse('reply')(model, context);
+        }
+
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(
+            flakySummarizer,
+            contextWindow: 512,
+            systemPrompt: '',
+          ),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        for (final filler in ['x' * 600, 'y' * 600, 'z' * 600]) {
+          await service.sendText(filler);
+          await service.waitForIdle();
+        }
+
+        expect(service.messages, hasLength(6));
+        expect(
+          service.messages.first.content,
+          isNot(contains('compacted into the following summary')),
+        );
+        expect(service.error, isNull);
+      },
+    );
   });
 }
 

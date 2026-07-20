@@ -772,6 +772,7 @@ class AgentService extends ChangeNotifier {
           // The transcript stays in memory; the next run retries the
           // missed appends (see _persistedCount).
         }
+        await _maybeAutoCompact();
       default:
     }
   }
@@ -828,5 +829,87 @@ class AgentService extends ChangeNotifier {
       await session.appendMessage(message);
     }
     _persistedCount = all.length;
+  }
+
+  /// Compaction thresholds for the active model, scaled by
+  /// [CompactionSettings.forWindow] to the conversation window (the model's
+  /// context window minus the system-prompt overhead). pi's fixed defaults
+  /// exceed the whole window of an on-device model, so the same settings
+  /// cannot serve hosted 128k models and 8k WebLLM presets.
+  CompactionSettings get compactionSettings =>
+      CompactionSettings.forWindow(_conversationWindow);
+
+  /// The window left for the conversation after [_systemOverheadTokens];
+  /// `0` when the prompt alone exhausts the model window (compaction then
+  /// has nothing sensible to plan against).
+  int get _conversationWindow {
+    final window = _agent.state.model.contextWindow - _systemOverheadTokens;
+    return window > 0 ? window : 0;
+  }
+
+  /// Estimated tokens the provider counts against the context window on top
+  /// of the transcript: the rendered system prompt plus — for the chat-only
+  /// on-device backends (WebLLM, transformers.js), whose stream functions
+  /// run through the prompt-tools wrapper — the tool instructions appended
+  /// to that prompt. The wrapper's instruction block outweighs the base
+  /// system prompt several times over, so ignoring it would size compaction
+  /// against a window the engine does not actually have.
+  int get _systemOverheadTokens {
+    var system = _agent.state.systemPrompt;
+    if (_providerKind == webLlmProviderKind ||
+        _providerKind == transformersJsProviderKind) {
+      system = '$system\n\n${promptToolInstructions(_agent.state.tools)}';
+    }
+    return estimateTokens(UserMessage.text(system));
+  }
+
+  /// Auto-compaction after each completed run (CLI parity): when the
+  /// estimated transcript crosses the scaled threshold, the oldest history
+  /// is summarized so the next engine call still fits the window. Best
+  /// effort — a failure leaves the history untouched and a later turn
+  /// retries.
+  Future<void> _maybeAutoCompact() async {
+    final conversationWindow = _conversationWindow;
+    if (_session == null || conversationWindow <= 0) return;
+    final settings = compactionSettings;
+    final transcriptTokens = estimateContextTokens(
+      _agent.state.messages,
+    ).tokens;
+    if (!shouldCompact(transcriptTokens, conversationWindow, settings)) {
+      return;
+    }
+    // The whole transcript fits in the kept region: compaction could not
+    // drop anything. (A single oversized message can still overflow the
+    // engine — that surfaces as a readable run error, not a compaction
+    // loop.)
+    if (transcriptTokens <= settings.keepRecentTokens) return;
+    await _compact(settings);
+  }
+
+  Future<void> _compact(CompactionSettings settings) async {
+    final session = _session;
+    if (session == null) return;
+    try {
+      final manager = CompactionManager(
+        summarize: streamFunctionSummarizer(
+          _agent.streamFunction,
+          _agent.state.model,
+        ),
+        settings: settings,
+      );
+      final record = await manager.compactSession(session);
+      if (record == null) return;
+      // Replace the in-memory transcript (and its UI projection) with the
+      // session's compacted context, mirroring loadSession.
+      _agent.state.messages = await session.buildContextMessages();
+      _persistedCount = _agent.state.messages.length;
+      messages
+        ..clear()
+        ..addAll(_agent.state.messages.map(_toChatMessage));
+      notifyListeners();
+    } on Object {
+      // Best effort, like persistence: a failed compaction must not leak
+      // into the agent's event plumbing; the next turn retries.
+    }
   }
 }

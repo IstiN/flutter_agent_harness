@@ -18,6 +18,11 @@ final class FakeWebLlmEngine implements WebLlmEngineApi {
   /// When set, `chatStream` reports this via `onError` instead of chunks.
   String? streamErrorMessage;
 
+  /// When set, `chatStream` itself throws this (the engine's preflight
+  /// rejection — e.g. WebLLM's `ContextWindowSizeExceededError`, raised
+  /// before any streaming starts).
+  Object? chatStreamError;
+
   /// When set, `loadModel` throws this.
   Object? loadError;
 
@@ -57,6 +62,8 @@ final class FakeWebLlmEngine implements WebLlmEngineApi {
   }) async {
     lastMessages = messages;
     lastMaxTokens = maxTokens;
+    final chatError = chatStreamError;
+    if (chatError != null) throw chatError;
     final streamError = streamErrorMessage;
     if (streamError != null) {
       onError?.call(streamError);
@@ -86,7 +93,7 @@ Model _model([String? id]) => Model(
   api: webLlmProviderKind,
   provider: webLlmProviderKind,
   baseUrl: '',
-  contextWindow: 2048,
+  contextWindow: 8192,
   maxTokens: 1024,
 );
 
@@ -231,6 +238,54 @@ void main() {
       final error = events.whereType<ErrorEvent>().single;
       expect(error.reason, StopReason.error);
       expect(error.error.errorMessage, 'boom');
+      expect(events.whereType<DoneEvent>(), isEmpty);
+    });
+
+    test(
+      'a prefill-time context-window rejection ends in a readable ErrorEvent '
+      '(no hang, no retry loop)',
+      () async {
+        // WebLLM raises ContextWindowSizeExceededError when the prompt
+        // tokens exceed the engine window — before any streaming starts,
+        // i.e. chatStream itself throws. It must surface as ONE terminal
+        // ErrorEvent carrying the engine's message.
+        final engine = FakeWebLlmEngine()
+          ..chatStreamError = StateError(
+            'ContextWindowSizeExceededError: Prompt tokens exceed context '
+            'window size: number of prompt tokens: 9000; context window '
+            'size: 8192',
+          );
+        final events = await streamWebLlm(
+          engine,
+          _model(),
+          _context(),
+        ).toList();
+
+        final error = events.whereType<ErrorEvent>().single;
+        expect(error.reason, StopReason.error);
+        expect(
+          error.error.errorMessage,
+          contains('Prompt tokens exceed context window size'),
+        );
+        expect(events.whereType<DoneEvent>(), isEmpty);
+      },
+    );
+
+    test('the prompt-tools wrapper passes a prefill-time rejection through as '
+        'one ErrorEvent', () async {
+      final engine = FakeWebLlmEngine()
+        ..chatStreamError = StateError('ContextWindowSizeExceededError');
+      final events = await webLlmStreamFunction(engine)(
+        _model(),
+        _context(tools: [_bashTool]),
+      ).toList();
+
+      final error = events.whereType<ErrorEvent>().single;
+      expect(error.reason, StopReason.error);
+      expect(
+        error.error.errorMessage,
+        contains('ContextWindowSizeExceededError'),
+      );
       expect(events.whereType<DoneEvent>(), isEmpty);
     });
 

@@ -177,6 +177,17 @@ StreamFunction promptToolStreamFunction(
   };
 }
 
+/// Renders the tool-instruction section [promptToolStreamFunction] appends
+/// to the system prompt when [tools] is non-empty (the
+/// `prompts/tools/tool_calling.md` template with the numbered
+/// name/description/schema list).
+///
+/// Exposed so hosts that size a context window (e.g. compaction thresholds
+/// for small on-device models) can count the wrapper's bytes: the
+/// instructions travel inside the system message and consume real window
+/// tokens — for a full built-in tool set they dwarf the base system prompt.
+String promptToolInstructions(List<Tool> tools) => _buildToolsSection(tools);
+
 /// Appends the tool instructions to the system prompt and re-serializes
 /// tool-shaped history messages as fenced text.
 Context _transformContext(Context context, List<Tool> tools) {

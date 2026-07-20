@@ -383,8 +383,8 @@ void main() {
 
   group('WebLLM model presets', () {
     test('drops everything below ~1.5 GB (too weak for agent work)', () {
-      // 15 presets ≥ ~1.5 GB download, smallest first.
-      expect(webLlmModelPresets, hasLength(15));
+      // 13 presets ≥ ~1.5 GB download, smallest first.
+      expect(webLlmModelPresets, hasLength(13));
       expect(webLlmModelPresets.first.id, 'SmolLM2-1.7B-Instruct-q4f16_1-MLC');
       const droppedIds = [
         'SmolLM2-135M-Instruct-q0f16-MLC',
@@ -399,6 +399,11 @@ void main() {
         'Llama-3.2-1B-Instruct-q4f16_1-MLC',
         'Llama-3.2-1B-Instruct-q4f32_1-MLC',
         'gemma-2-2b-it-q4f16_1-MLC-1k',
+        // The `-1k` window variants: a sub-4096 window cannot hold the Fa
+        // system prompt (~3.3k engine tokens), so they failed on the first
+        // message; their full-window siblings cover the same weights.
+        'Phi-3.5-mini-instruct-q4f16_1-MLC-1k',
+        'Llama-3.1-8B-Instruct-q4f16_1-MLC-1k',
       ];
       for (final id in droppedIds) {
         expect(findWebLlmPreset(id), isNull, reason: id);
@@ -439,6 +444,19 @@ void main() {
       expect(webLlmModelPresets.where((p) => p.isCoder).map((p) => p.id), [
         'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC',
       ]);
+    });
+
+    test('every preset requests an 8192-token window sized for the Fa system '
+        'prompt', () {
+      // The sizing rule (documented on WebLlmModelPreset.contextWindow): the
+      // engine-visible system prompt (sandbox prompt + prompt-tools
+      // instructions) measures ~3.3k engine tokens, so 2048/4096 windows
+      // fail on the first message or within a few turns. One window for
+      // every preset; the `-1k` variants are dropped (above).
+      for (final preset in webLlmModelPresets) {
+        expect(preset.contextWindow, 8192, reason: preset.id);
+        expect(preset.id, isNot(endsWith('-1k')), reason: preset.id);
+      }
     });
   });
 
