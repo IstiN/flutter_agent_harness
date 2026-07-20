@@ -58,9 +58,27 @@ dart run bin/fah.dart --provider anthropic --model claude-sonnet-4-5
 dart run bin/fah.dart --model openai/gpt-4o-mini --cwd . --session-root /tmp/fah
 ```
 
+Headless mode runs a single non-interactive prompt and exits — the response
+streams to stdout, tool indicators and notices go to stderr (stdout stays
+pipeable), nothing is ever prompted interactively, and the session persists
+like a REPL run. Exit codes: 0 ok, 1 provider error, 130 aborted (Ctrl-C).
+A first positional naming an existing file becomes the prompt source: text
+files (`.md`, `.markdown`, `.txt`) are inlined as the prompt; any other
+(binary) file is attached as a path reference for the agent's tools — in
+both cases trailing text appends as the instruction. A path that does not
+exist is treated as plain prompt text.
+
+```bash
+dart run bin/fah.dart "summarize the changelog"      # positional prompt
+dart run bin/fah.dart -p "fix the typos in README.md"  # -p/--prompt alias
+dart run bin/fah.dart CHANGELOG.md "summarize this"  # text file as prompt
+dart run bin/fah.dart screenshot.png "describe it"   # binary → path reference
+dart run bin/fah.dart "summarize the changelog" | pbcopy  # pipes cleanly
+```
+
 Flags: `--model <id>`, `--provider openai-completions|anthropic|google`,
-`--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `--help`,
-`--version`.
+`--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `-p`/`--prompt
+<text>`, `--help`, `--version`.
 
 Slash commands inside the REPL: `/exit`, `/reset` (new session), `/compact`
 (summarize history now), `/stats` (token/cost totals), `/model <id>` (show or

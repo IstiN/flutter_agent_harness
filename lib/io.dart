@@ -6,6 +6,7 @@
 library;
 
 export 'src/cli/cli_config.dart';
+export 'src/cli/headless_prompt.dart';
 export 'src/env/io_execution_env.dart';
 export 'src/lsp/io_lsp_transport.dart';
 export 'src/tools/sqlite/sqlite3_engine.dart';

@@ -164,7 +164,33 @@ Conventions for AI agents and contributors working in this repository.
   (`agent://<id>/findings.0.path`, `?q=`). Guards: a child failure is a
   per-item error entry, never a batch failure; the parent cancel token
   aborts every child and semaphore waiter.
-- `bin/fah.dart` — the `fah`/`fa` CLI executable.
+- `bin/fah.dart` — the `fah`/`fa` CLI executable. Two invocation shapes:
+  interactive REPL (no prompt arguments) and headless mode (`fa "prompt"`,
+  positional arguments joined with spaces, or `-p`/`--prompt <text>` —
+  positional and `-p` together are an error). Argument parsing lives in
+  `lib/src/cli/cli_args.dart` (`parseCliArgs` → `CliArgs`/`CliArgsHelp`/
+  `CliArgsVersion`, `CliArgsException` on invalid input — pure Dart, unit
+  tested; the executable maps it to output/exit codes). A first positional
+  naming an EXISTING file is the prompt source, resolved by
+  `resolveHeadlessPrompt` in `lib/src/cli/headless_prompt.dart` (`dart:io`,
+  exported only from `lib/io.dart`, next to `cli_config.dart`): text files
+  (`.md`/`.markdown`/`.txt`, case-insensitive) are inlined as the prompt,
+  any other file becomes a `[attached file: <abs path> — read it with your
+  tools]` reference, trailing positionals append as the instruction in both
+  cases, an unreadable/undecodable text file falls back to the path
+  reference, and a non-existent path is plain prompt text (never an error).
+  `-p` text is used verbatim (never resolved as a file). Headless runs go
+  through `AgentCli.runHeadless`: no banner/prompt/slash commands, the
+  session persists like a REPL turn (same `_afterRun`: TTSR settle, batch
+  persistence, auto-compaction), exit code 0 ok / 1 provider error / 130
+  aborted (read from the final assistant message's stopReason). The
+  stdout/stderr split is the `CliIO` channel contract: `write` is the
+  primary stream (assistant text — the trailing newline after streamed text
+  is a `write`, never a `writeln`), `writeln` is diagnostics (tool
+  indicators, approval/TTSR/roles notices, errors); the terminal IO merges
+  both on stdout interactively and routes `writeln` to stderr in headless
+  mode, and headless is never interactive (approval/ask resolve per the
+  non-interactive rule, terminal or not).
 - `lib/src/web_search/` — the `web_search`/`web_fetch` tools (ported from
   oh-my-pi `packages/coding-agent/src/web/`): `web_search` walks a provider
   chain (keyless DuckDuckGo HTML first, keyed Brave/Tavily when their key is

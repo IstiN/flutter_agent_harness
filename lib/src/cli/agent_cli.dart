@@ -53,6 +53,12 @@ export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 /// The real implementation (in `bin/fah.dart`) binds [lines] to stdin,
 /// [write]/[writeln] to stdout, and [interrupts] to SIGINT; tests substitute
 /// scripted lines and capture output in memory.
+///
+/// The two output methods are separate channels: [write] carries the primary
+/// stream (assistant text deltas, the input prompt), [writeln] carries
+/// one-line diagnostics (tool indicators, notices, errors). The interactive
+/// terminal merges both on stdout; a headless host routes [writeln] to
+/// stderr so stdout stays pipeable.
 abstract interface class CliIO {
   /// User-typed input lines, without the trailing newline.
   Stream<String> get lines;
@@ -441,6 +447,44 @@ class AgentCli {
         metadata: {'agent': 'fah', 'model': _agent.state.model.id},
       ),
     );
+  }
+
+  /// Runs a single non-interactive prompt (headless mode: `fah "<prompt>"`)
+  /// and returns the process exit code: 0 on success, 1 when the run ends
+  /// with a provider error, 130 when aborted (Ctrl-C via
+  /// [CliIO.interrupts]). Tool errors the agent recovers from still exit 0 —
+  /// the exit code reflects the run's terminal state, like claude/pi.
+  ///
+  /// Unlike [run] there is no banner, no input prompt, no slash-command
+  /// handling, and no steering; the session persists exactly like a REPL
+  /// turn (including auto-compaction). The host's [CliIO] should be
+  /// non-interactive (approval/ask prompts are then denied per the
+  /// non-interactive rule) and route [CliIO.writeln] diagnostics to stderr
+  /// so [CliIO.write] (the assistant text) is the only stdout content.
+  Future<int> runHeadless(String prompt) async {
+    _session = await _createSession();
+    final interruptSub = io.interrupts.listen((_) {
+      if (isBusy) _agent.abort();
+    });
+    try {
+      await _agent.prompt(prompt);
+      // Awaits any in-flight TTSR retry chain, persists the messages, and
+      // auto-compacts — the same end-of-turn sequence as a REPL run.
+      await _afterRun();
+    } catch (error) {
+      io.writeln('error: $error');
+      return 1;
+    } finally {
+      await interruptSub.cancel();
+    }
+    // The exit code reads the final assistant message AFTER _afterRun: a
+    // TTSR abort/retry chain replaces the aborted intermediate message with
+    // the retry's outcome.
+    return switch (_agent.state.messages.lastOrNull) {
+      AssistantMessage(stopReason: StopReason.error) => 1,
+      AssistantMessage(stopReason: StopReason.aborted) => 130,
+      _ => 0,
+    };
   }
 
   Future<void> _printBanner() async {
@@ -984,7 +1028,10 @@ class AgentCli {
       case MessageEndEvent(:final message):
         if (message is AssistantMessage) {
           if (_streamedText) {
-            io.writeln('');
+            // The trailing newline of the streamed text belongs to the
+            // primary channel (write), not to diagnostics (writeln) — a
+            // headless host routes only writeln to stderr.
+            io.write('\n');
             _streamedText = false;
           }
           switch (message.stopReason) {
