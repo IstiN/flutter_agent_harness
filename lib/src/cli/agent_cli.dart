@@ -265,7 +265,7 @@ class AgentCli {
     required this.config,
     required this.io,
     StreamFunction? streamFunction,
-    this.prompt = 'fah> ',
+    this.prompt = 'fa> ',
   }) : _modes = builtInAgentModes(
          config.env.cwd,
          overrides: config.promptOverrides,

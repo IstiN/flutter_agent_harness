@@ -94,11 +94,12 @@ if ($pubCacheBin -notin $pathParts) {
 # Refresh PATH from the registry in this session.
 $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 
-$fah = Get-Command fah -ErrorAction SilentlyContinue
-if ($fah) {
-    Write-Ok "'fah' is on PATH ($($fah.Source))."
+$faCmd = Get-Command fa -ErrorAction SilentlyContinue
+if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
+if ($faCmd) {
+    Write-Ok "'fa' is on PATH ($($faCmd.Source))."
 } else {
-    Write-Warn "'fah' is not on PATH yet. The executable lives in $pubCacheBin"
+    Write-Warn "'fa' is not on PATH yet. The executable lives in $pubCacheBin"
     Write-Host "  You may need to open a new PowerShell window after this installer finishes."
 }
 
@@ -113,7 +114,7 @@ if ([System.Console]::IsInputRedirected) {
     Write-Host ""
     Write-Host "  Then run:"
     Write-Host ""
-    Write-Host "    fah"
+    Write-Host "    fa"
     Write-Host ""
     exit 0
 }
@@ -121,7 +122,7 @@ if ([System.Console]::IsInputRedirected) {
 if (Test-Path $FahConfigFile) {
     $reconfigure = Read-Host "A config already exists at $FahConfigFile. Reconfigure? [y/N]"
     if ($reconfigure -notmatch '^[Yy]') {
-        Write-Ok "Kept existing config. Run 'fah' to start."
+        Write-Ok "Kept existing config. Run 'fa' to start."
         exit 0
     }
 }
@@ -323,11 +324,13 @@ Write-Ok "Installation and configuration complete."
 Write-Host ""
 Write-Host "  Start the agent:"
 Write-Host ""
-Write-Host "    fah"
+Write-Host "    fa"
 Write-Host ""
 Write-Host "  Or run a single headless task:"
 Write-Host ""
-Write-Host "    fah `"summarize CHANGELOG.md`""
+Write-Host "    fa `"summarize CHANGELOG.md`""
+Write-Host ""
+Write-Host "  (the legacy command 'fah' also works)"
 Write-Host ""
 Write-Host "  Docs:    https://github.com/IstiN/flutter_agent_harness"
 Write-Host "  Package: https://pub.dev/packages/flutter_agent_harness"

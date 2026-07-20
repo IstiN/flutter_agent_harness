@@ -203,7 +203,7 @@ void main() {
       expect(cli.ttsr, isNotNull);
 
       unawaited(cli.run());
-      await _waitFor(() => io.out.toString().contains('fah> '));
+      await _waitFor(() => io.out.toString().contains('fa> '));
       io.sendLine('add logging');
       await _waitFor(
         () => io.out.toString().contains('Switched to the logger.'),
@@ -211,7 +211,7 @@ void main() {
       );
       // The prompt reappears only after run-end persistence completed.
       await _waitFor(
-        () => 'fah> '.allMatches(io.out.toString()).length >= 2,
+        () => 'fa> '.allMatches(io.out.toString()).length >= 2,
         reason: 'run settled and persisted',
       );
       expect(fake.calls, 2);

@@ -196,8 +196,8 @@ void main() {
     // Diagnostics carry the tool one-liners.
     expect(io.diag.toString(), contains('[read] path="notes.txt"'));
     expect(io.diag.toString(), contains('[read] done'));
-    expect(io.diag.toString(), isNot(contains('fah — flutter_agent_harness')));
-    expect(io.diag.toString(), isNot(contains('fah> ')));
+    expect(io.diag.toString(), isNot(contains('fa — flutter_agent_harness')));
+    expect(io.diag.toString(), isNot(contains('fa> ')));
 
     // The session persists like a REPL run: user, tool call/result, answer.
     final entries = await sessionEntries();
