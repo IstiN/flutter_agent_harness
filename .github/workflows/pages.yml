@@ -57,6 +57,19 @@ jobs:
           cp -R site/. build/pages/root/
           cp -R build/pages/app build/pages/root/app
 
+      - name: Cache-bust static assets
+        env:
+          BUILD_ID: ${{ github.sha }}
+        run: |
+          # Bust the Flutter demo app's entry scripts so browsers never load a
+          # stale flutter_bootstrap.js / helper bundle after a new deploy.
+          sed -i -E 's|src="([^\"]+)"|src="\1?v='"${BUILD_ID}"'"|g' build/pages/app/index.html
+          # Bust the landing page's own CSS/JS and the demo-app iframe/link.
+          sed -i -E 's|href="styles\.css"|href="styles.css?v='"${BUILD_ID}"'"|g' build/pages/root/index.html
+          sed -i -E 's|src="main\.js" defer|src="main.js?v='"${BUILD_ID}"'" defer|g' build/pages/root/index.html
+          sed -i -E 's|src="\./app/"|src="./app/index.html?v='"${BUILD_ID}"'"|g' build/pages/root/index.html
+          sed -i -E 's|href="\./app/" target="_blank"|href="./app/index.html?v='"${BUILD_ID}"'" target="_blank"|g' build/pages/root/index.html
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/pages/root
