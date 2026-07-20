@@ -1,0 +1,18 @@
+@echo off
+:: install.bat — one-line installer wrapper for the Fa CLI on Windows cmd.exe.
+::
+:: This file is for users running from Command Prompt (cmd.exe). It delegates
+:: to the PowerShell installer, which does the actual work:
+::   1. Checks that the Dart SDK (dart.exe) is on PATH.
+::   2. Installs (or updates) flutter_agent_harness from pub.dev.
+::   3. Ensures the pub cache bin directory is on the user PATH.
+::
+:: Run from cmd:
+::   curl -fsSL https://fa1.dev/install.bat -o install.bat && install.bat
+::
+:: Or directly from PowerShell:
+::   irm https://fa1.dev/install.ps1 | iex
+::
+:: {{GENERATED_HEADER}}
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://fa1.dev/install.ps1 | iex"

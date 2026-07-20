@@ -1,6 +1,9 @@
 # install.ps1 — non-interactive one-line installer for the Fa CLI on Windows.
-#                 Works when piped:
+#                 Works when piped from PowerShell:
 #                   irm https://fa1.dev/install.ps1 | iex
+#
+# From Windows Command Prompt (cmd.exe) use the wrapper instead:
+#   curl -fsSL https://fa1.dev/install.bat -o install.bat && install.bat
 #
 # What it does:
 #   1. Checks that the Dart SDK (dart.exe) is on PATH.
