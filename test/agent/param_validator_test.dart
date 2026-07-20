@@ -668,4 +668,117 @@ void main() {
       expect(result, {'a': null, 'b': null, 'c': null});
     });
   });
+
+  group('validateJsonValue', () {
+    const schema = {
+      'type': 'object',
+      'properties': {
+        'summary': {'type': 'string'},
+        'findings': {
+          'type': 'array',
+          'items': {
+            'type': 'object',
+            'properties': {
+              'path': {'type': 'string'},
+            },
+            'required': ['path'],
+          },
+        },
+      },
+      'required': ['summary', 'findings'],
+    };
+
+    test('returns no violations for a conforming value', () {
+      expect(
+        validateJsonValue(
+          value: {
+            'summary': 's',
+            'findings': [
+              {'path': 'a.dart'},
+            ],
+          },
+          schema: schema,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('reports missing required properties by name', () {
+      expect(validateJsonValue(value: {'findings': []}, schema: schema), [
+        'summary: missing required parameter',
+      ]);
+    });
+
+    test('labels root type mismatches as (root)', () {
+      expect(validateJsonValue(value: 'not an object', schema: schema), [
+        '(root): expected object, got "not an object"',
+      ]);
+    });
+
+    test('reports nested violations with dotted, indexed paths', () {
+      expect(
+        validateJsonValue(
+          value: {
+            'summary': 's',
+            'findings': [{}],
+          },
+          schema: schema,
+        ),
+        ['findings[0].path: missing required parameter'],
+      );
+    });
+
+    test('applies the same coercion rules as tool arguments', () {
+      // 42 coerces to "42" for a string schema — valid, like tool args.
+      expect(
+        validateJsonValue(
+          value: {'summary': 42, 'findings': []},
+          schema: schema,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('enforces enum and union types', () {
+      expect(
+        validateJsonValue(
+          value: {'verdict': 'maybe'},
+          schema: const {
+            'type': 'object',
+            'properties': {
+              'verdict': {
+                'enum': ['correct', 'incorrect'],
+              },
+            },
+          },
+        ),
+        ['verdict: must be one of ["correct","incorrect"], got "maybe"'],
+      );
+      expect(
+        validateJsonValue(
+          value: {'count': '7'},
+          schema: const {
+            'type': 'object',
+            'properties': {
+              'count': {
+                'type': ['integer', 'null'],
+              },
+            },
+          },
+        ),
+        isEmpty,
+      );
+    });
+
+    test('ignores keywords outside the supported subset', () {
+      // `pattern`/`minimum`/`additionalProperties` are not enforced.
+      expect(
+        validateJsonValue(
+          value: {'summary': 'anything goes', 'findings': [], 'extra': 1},
+          schema: schema,
+        ),
+        isEmpty,
+      );
+    });
+  });
 }

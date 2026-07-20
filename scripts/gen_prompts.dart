@@ -136,6 +136,38 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{tools}}',
   ),
   PromptSpec(
+    source: 'prompts/tools/task.md',
+    constName: 'taskToolDescriptionPrompt',
+    requiredToken: '{{agents}}',
+  ),
+  PromptSpec(
+    source: 'prompts/task/agent_task.md',
+    constName: 'taskAgentTaskPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/task/agent_explore.md',
+    constName: 'taskAgentExplorePrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/task/agent_review.md',
+    constName: 'taskAgentReviewPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/task/assignment.md',
+    constName: 'taskAssignmentPrompt',
+    requiredToken: '{{task}}',
+  ),
+  PromptSpec(
+    source: 'prompts/task/schema_output.md',
+    constName: 'taskSchemaOutputPrompt',
+    requiredToken: '{{schema}}',
+  ),
+  PromptSpec(
+    source: 'prompts/task/schema_fix.md',
+    constName: 'taskSchemaFixPrompt',
+    requiredToken: '{{errors}}',
+  ),
+  PromptSpec(
     source: 'prompts/ttsr/interrupt.md',
     constName: 'ttsrInterruptPrompt',
     requiredToken: '{{content}}',
