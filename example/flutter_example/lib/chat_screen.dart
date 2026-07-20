@@ -544,6 +544,11 @@ class _ChatScreenState extends State<ChatScreen> {
     required bool isSentByMe,
     MessageGroupStatus? groupStatus,
   }) {
+    // Empty assistant bubbles (model returned no text) render as nothing —
+    // they would otherwise show as a blank gray rectangle between tool calls.
+    if (message.text.trim().isEmpty && !isSentByMe) {
+      return const SizedBox.shrink();
+    }
     final styleSheet = fahMarkdownStyleSheet(Theme.of(context));
 
     return Container(

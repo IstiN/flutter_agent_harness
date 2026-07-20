@@ -425,6 +425,49 @@ void main() {
       expect(toolMsg.content, contains('echo: hi'));
     });
 
+    test('a tool-only turn leaves no empty assistant bubble', () async {
+      final env = MemoryExecutionEnv();
+      final echoTool = AgentTool(
+        name: 'echo',
+        description: 'Echoes the input back.',
+        parameters: const {
+          'type': 'object',
+          'properties': {
+            'x': {'type': 'string'},
+          },
+          'required': ['x'],
+        },
+        execute: (arguments, cancelToken, onUpdate) async {
+          return ToolExecutionResult.text('echo: ${arguments['x']}');
+        },
+      );
+      final service = AgentService(
+        agent: _createAgent(_toolThenText('echo: hi', ''), tools: [echoTool]),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      service.approval.mode = ApprovalMode.yolo;
+      await service.initialize();
+
+      await service.sendText('call echo');
+      await service.waitForIdle();
+
+      // Tool-only turns leave only the placeholder bubble (hidden by the chat
+      // screen) plus the tool messages — no blank assistant bubble with real
+      // content.
+      final assistantMessages = service.messages
+          .where((m) => m.role == 'assistant')
+          .toList();
+      // One message carries the tool call; the other is the empty-response
+      // placeholder from the final text-less turn.
+      expect(assistantMessages, hasLength(2));
+      expect(
+        assistantMessages.any((m) => m.content == emptyResponsePlaceholder),
+        isTrue,
+      );
+      expect(service.messages.where((m) => m.role == 'tool'), isNotEmpty);
+    });
+
     test('secrets expand inside the shell and are redacted from transcript '
         'and session files', () async {
       const secretValue = 'tok-test-9f8e7d6c5b';
