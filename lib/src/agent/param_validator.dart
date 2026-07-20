@@ -58,6 +58,27 @@ Map<String, dynamic> validateToolArguments({
   return validated;
 }
 
+/// Validates an arbitrary [value] against the same JSON-schema subset
+/// [validateToolArguments] enforces and returns every violation as a
+/// `path.with.dots: message` string (`(root)` for the top level). An empty
+/// result means valid.
+///
+/// This is the output-schema side of the param-validation machinery: tool
+/// arguments are always top-level objects, but subagent output schemas (see
+/// `lib/src/task/`) may constrain any JSON value. The same coercion rules
+/// apply (`"42"` validates against an `integer` schema), and keywords
+/// outside the supported subset are ignored rather than enforced.
+List<String> validateJsonValue({
+  required Object? value,
+  required Map<String, dynamic> schema,
+}) {
+  final errors = <String>[];
+  _validateValue(value, schema, '', errors);
+  return [
+    for (final error in errors) error.startsWith(': ') ? '(root)$error' : error,
+  ];
+}
+
 Map<String, dynamic> _validateObject(
   Map<String, dynamic> arguments,
   Map<String, dynamic> schema,

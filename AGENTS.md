@@ -112,6 +112,33 @@ Conventions for AI agents and contributors working in this repository.
   `TtsrManager` + `TtsrController` directly. The CLI wires it next to the
   checkpoint controller, awaits `TtsrController.settled` before run-end
   persistence, and `/reset` clears it.
+- `lib/src/task/` — the `task` tool: parallel subagents with
+  schema-validated results (ported, reduced, from oh-my-pi
+  `packages/coding-agent/src/task/`). The wire shape is omp's batch form
+  `{context, tasks[]}` plus a per-call `background` flag (omp's
+  `async.enabled` made host-neutral); no flat shape, no `isolated`
+  (copy-based sandboxes are a follow-up). `task_tool.dart` has
+  `taskTool`/`TaskToolConfig` (one per session: the `Semaphore`,
+  `AgentOutputStore`, and `TaskJobManager` are session-scoped through it)
+  and the background job surface — omp injects completions into the parent
+  conversation as async results, here the host wires
+  `TaskJobManager.completions` to do that (CLI wiring is a follow-up).
+  `task_executor.dart` runs each item as a child `Agent` with a restricted
+  tool surface (the registry never hands children `task`: no nesting),
+  resolves cheap models per agent type through `ModelRolesResolver`
+  (`explore`→`smol`, `review`→`slow`, else inherit), and validates
+  `outputSchema` output with the param-validation subset — ONE fix retry,
+  then an error entry (omp's strict outcome; its `schemaMode` split is not
+  ported). `agent_registry.dart` holds the built-in types (`task`, `explore`
+  = omp's read-only `scout`, `review` = omp's `reviewer` made read-only)
+  plus host overrides; filesystem discovery is a follow-up.
+  `output_manager.dart` ports the `AgentOutputManager` id allocator
+  (`Name`, `Name-2`, nested `Parent.Child`), the in-memory session store
+  (on-disk artifacts are a follow-up), and the `agent://` resolver subset:
+  `agent://<id>`, `agent://<id>/<child>`, and dot-path JSON extraction
+  (`agent://<id>/findings.0.path`, `?q=`). Guards: a child failure is a
+  per-item error entry, never a batch failure; the parent cancel token
+  aborts every child and semaphore waiter.
 - `bin/fah.dart` — the `fah`/`fa` CLI executable.
 - `lib/src/web_search/` — the `web_search`/`web_fetch` tools (ported from
   oh-my-pi `packages/coding-agent/src/web/`): `web_search` walks a provider

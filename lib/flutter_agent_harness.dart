@@ -40,6 +40,7 @@ export 'src/session/session_repo.dart';
 export 'src/session/session_storage.dart';
 export 'src/session/session_tree.dart';
 export 'src/sse_decoder.dart';
+export 'src/task/task.dart';
 export 'src/tools/ask_tool.dart';
 export 'src/tools/archive_reader.dart';
 export 'src/tools/builtin_tools.dart';
