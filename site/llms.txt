@@ -16,7 +16,7 @@
 ## Install
 
 - CLI (macOS, Windows, Linux; requires the Dart SDK, bundled with Flutter):
-  `curl -fsSL https://fa1.dev/install.sh | sh`
+  `curl -fsSL "https://fa1.dev/install.sh" | sh`
   or `dart pub global activate flutter_agent_harness`. Both provide the `fah`
   and `fa` executables. Set a provider API key (e.g. OPENROUTER_API_KEY),
   then run `fah`.
