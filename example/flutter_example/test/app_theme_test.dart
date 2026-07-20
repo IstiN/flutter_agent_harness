@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/app_theme.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
+import 'package:flutter_agent_example/flutter_session_manager.dart';
 import 'package:flutter_agent_example/main.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,10 +80,14 @@ void main() {
   testWidgets('chat bubbles use the dark landing palette', (tester) async {
     final service = _fakeService();
     await service.initialize();
+    final manager = FlutterSessionManager(
+      env: MemoryExecutionEnv(),
+      sessionsRoot: '/sessions',
+    )..addSession('fake-session', service);
     await tester.pumpWidget(
       MaterialApp(
         theme: buildFahTheme(),
-        home: ChatScreen(service: service),
+        home: ChatScreen(manager: manager),
       ),
     );
     await tester.pumpAndSettle();

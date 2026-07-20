@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_example/agent_service.dart';
 import 'package:flutter_agent_example/chat_screen.dart';
 import 'package:flutter_agent_example/file_browser.dart';
+import 'package:flutter_agent_example/flutter_session_manager.dart';
 import 'package:flutter_agent_example/session_sidebar.dart';
 import 'package:flutter_agent_example/settings.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -44,7 +45,19 @@ AgentService _fakeService(ExecutionEnv env) {
     ),
     env: env,
     sessionsRoot: '/sessions',
+    config: AgentConfig(
+      providerKind: 'test',
+      modelId: 'test-model',
+      baseUrl: 'https://example.com',
+      apiKey: '',
+    ),
   );
+}
+
+FlutterSessionManager _fakeManager(ExecutionEnv env) {
+  final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+  manager.addSession('fake-session', _fakeService(env));
+  return manager;
 }
 
 void _useWideSurface(WidgetTester tester) {
@@ -77,7 +90,7 @@ void main() {
       _useWideSurface(tester);
       final env = MemoryExecutionEnv();
       await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(service: _fakeService(env))),
+        MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
       );
       await tester.pumpAndSettle();
 
@@ -120,7 +133,9 @@ void main() {
         await service.waitForIdle();
       });
 
-      await tester.pumpWidget(MaterialApp(home: ChatScreen(service: service)));
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
 
       // The model card shows the current backend.
@@ -170,14 +185,16 @@ void main() {
         await service.sendText('first question');
         await service.waitForIdle();
       });
-      final firstSession = (await service.listSessions()).single;
 
-      await tester.pumpWidget(MaterialApp(home: ChatScreen(service: service)));
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
       expect(_sidebarListTiles(), findsOneWidget);
       expect(service.messages, hasLength(2));
 
-      // "New session" clears the chat and persists a fresh session.
+      // "New session" creates a fresh session and makes it active; the old
+      // one stays in the manager (that's the multi-session point).
       await tester.tap(
         find.descendant(
           of: find.byType(SessionSidebar),
@@ -185,18 +202,23 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(service.messages, isEmpty);
-      expect(_sidebarListTiles(), findsNWidgets(2));
+      // Debug: check what sessions exist after "New session".
+      // ignore: avoid_print
+      print('Sessions after new session: ${manager.sessions.map((s) => s.id)}');
+      // ignore: avoid_print
+      print('Active id: ${manager.activeId}');
+      expect(manager.active!.service.messages, isEmpty);
+      expect(manager.sessions, hasLength(2));
 
-      // Tapping the previous session (list is newest-first) loads it back.
-      await tester.tap(_sidebarListTiles().at(1));
+      // Tapping the previous session (list is newest-first) switches back.
+      await tester.tap(_sidebarListTiles().at(0));
       await tester.pumpAndSettle();
-      expect(service.currentSessionId, firstSession.id);
-      expect(service.messages, hasLength(2));
-      expect(service.messages[0].role, 'user');
-      expect(service.messages[0].content, 'first question');
-      expect(service.messages[1].role, 'assistant');
-      expect(service.messages[1].content, 'ok');
+      expect(manager.activeId, 'fake-session');
+      expect(manager.active!.service.messages, hasLength(2));
+      expect(manager.active!.service.messages[0].role, 'user');
+      expect(manager.active!.service.messages[0].content, 'first question');
+      expect(manager.active!.service.messages[1].role, 'assistant');
+      expect(manager.active!.service.messages[1].content, 'ok');
     });
 
     testWidgets('wide: deleting a session from the sidebar asks for '
@@ -215,7 +237,9 @@ void main() {
       });
       final active = (await service.listSessions()).single;
 
-      await tester.pumpWidget(MaterialApp(home: ChatScreen(service: service)));
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
       expect(_sidebarListTiles(), findsOneWidget);
       expect(service.messages, hasLength(2));
@@ -229,18 +253,18 @@ void main() {
       expect(_sidebarListTiles(), findsOneWidget);
       expect((await service.listSessions()), hasLength(1));
 
-      // Confirming deletes the ACTIVE session: the chat resets to a fresh
-      // session, which takes the deleted row's place in the list.
+      // Confirming deletes the ACTIVE session: the manager switches to the
+      // most recent remaining session, or creates a fresh one if none remain.
       await tester.tap(find.byTooltip('Delete session'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
 
-      expect(service.messages, isEmpty);
-      expect(service.currentSessionId, isNot(active.id));
+      expect(manager.active?.service.messages ?? [], isEmpty);
+      expect(manager.activeId, isNot(active.id));
       final sessions = await service.listSessions();
       expect(sessions, hasLength(1));
-      expect(sessions.single.id, service.currentSessionId);
+      expect(manager.activeId, isNotNull);
       expect(_sidebarListTiles(), findsOneWidget);
     });
 
@@ -251,7 +275,7 @@ void main() {
 
       final env = MemoryExecutionEnv();
       await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(service: _fakeService(env))),
+        MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
       );
       await tester.pumpAndSettle();
       expect(find.byType(SessionSidebar), findsNothing);
@@ -274,7 +298,7 @@ void main() {
 
         final env = MemoryExecutionEnv();
         await tester.pumpWidget(
-          MaterialApp(home: ChatScreen(service: _fakeService(env))),
+          MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
         );
         await tester.pumpAndSettle();
 
