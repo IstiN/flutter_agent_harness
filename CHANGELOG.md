@@ -327,4 +327,16 @@
 - feat(example): release prep — Fa branding, icons, bundle IDs, Firebase Analytics
 - feat(cli): prompt overrides (config prompts: + --system-prompt[-file]) and full --help reference
 
+## 0.1.38
+
+- feat(site): Windows PowerShell installer + generated menus from install-config.yaml
+- chore(macos): set bundle identifier to dev.fa1.macos and update copyright
+- fix(site): use correct GA4 measurement ID (G-0Z3SW38FYC) and Fa mobile app label
+- fix(ios): graceful WASM fallback — app starts without wasm shell on iOS
+- feat(prompt-tools): slim on-device system prompt — compact schemas + fewer tools
+- feat(cli): modern TUI pack — ! shell commands, /models filter, status line
+- chore(site): switch GA measurement ID to Firebase web stream
+- feat(cli): interactive installer with progress bar, provider/model picker, and config setup
+- fix(example): readable ONNX/WebGPU crash messages + verified engine recovery
+
 ## Unreleased
