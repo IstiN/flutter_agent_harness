@@ -9,6 +9,7 @@ import 'approval_ui.dart';
 import 'gemma/gemma_cache_section.dart';
 import 'gemma/gemma_service.dart';
 import 'gemma/gemma_types.dart';
+import 'last_connection.dart';
 import 'provider_registry.dart';
 import 'transformers_js/transformers_js_cache_section.dart';
 import 'transformers_js/transformers_js_service.dart';
@@ -135,6 +136,8 @@ class AgentSettingsForm extends StatefulWidget {
     required this.onConnect,
     this.connectLabel = 'Start chat',
     this.registry,
+    this.initialConnection,
+    this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
@@ -151,6 +154,18 @@ class AgentSettingsForm extends StatefulWidget {
   /// The user-added providers shown in the picker. `null` falls back to a
   /// non-persisting in-memory registry (tests, previews).
   final ProviderRegistry? registry;
+
+  /// The last successful connection (see [LastConnectionStore]), pre-selected
+  /// when the form opens. For on-device kinds the stored model is verified
+  /// against the engine's cache/installed state: still present → pre-selected;
+  /// removed meanwhile → the provider stays pre-selected but the model falls
+  /// back to the default preset with a small note. `null` keeps the
+  /// env-based defaults.
+  final LastConnection? initialConnection;
+
+  /// Engine override for the on-device WebLLM provider (tests); defaults to
+  /// the platform singleton.
+  final WebLlmEngineApi? webLlmEngine;
 
   /// Engine override for the on-device Gemma provider (tests); defaults to
   /// the platform singleton.
@@ -201,6 +216,17 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   double? _loadFraction;
   String? _loadStatus;
 
+  /// Note shown when the last connection's on-device model is no longer
+  /// cached/installed (the provider stays pre-selected; the model falls back
+  /// to the default preset). Cleared when the user changes the selection.
+  String? _staleModelNote;
+
+  /// The manual timer bounding the Gemma installed-check in
+  /// [_verifyGemmaInstalled] — cancelled on dispose so a wedged plugin never
+  /// leaves a pending timer behind (`Future.timeout`'s internal timer cannot
+  /// be cancelled).
+  Timer? _gemmaVerifyTimer;
+
   bool _loading = false;
   String? _error;
 
@@ -226,10 +252,15 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _hfTokenController = TextEditingController(
       text: settingsEnv('HUGGINGFACE_TOKEN', ''),
     );
+    // The last connection wins over the env-based defaults; the key field is
+    // never touched (keys are session-only and never persisted).
+    final connection = widget.initialConnection;
+    if (connection != null) _applyLastConnection(connection);
   }
 
   @override
   void dispose() {
+    _gemmaVerifyTimer?.cancel();
     _registry.removeListener(_onRegistryChanged);
     _keyController.dispose();
     _modelController.dispose();
@@ -289,6 +320,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       _modelController.text = preset.defaultModel;
     }
     _lastDefaultModel = preset.defaultModel;
+    _staleModelNote = null;
     _error = null;
   }
 
@@ -298,7 +330,179 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _modelController.text = provider.modelId;
     _keyController.text = _registry.keyFor(provider.id) ?? '';
     _lastDefaultModel = provider.modelId;
+    _staleModelNote = null;
     _error = null;
+  }
+
+  /// Pre-selects the provider/model of the last successful connection (see
+  /// [AgentSettingsForm.initialConnection]). Hosted providers prefill
+  /// model/URL (a saved [CustomProvider] with the same endpoint+model is
+  /// re-selected so its edit/delete affordances appear); on-device kinds
+  /// pre-select the provider and model preset, then verify asynchronously
+  /// that the weights are still cached/installed — a model removed meanwhile
+  /// falls back to the default preset with a note ([_staleModelNote]).
+  void _applyLastConnection(LastConnection connection) {
+    switch (connection.providerKind) {
+      case webLlmProviderKind:
+        final preset = findWebLlmPreset(
+          connection.webllmPresetId ?? connection.modelId,
+        );
+        if (preset == null) return;
+        _selection = ProviderPreset.webllm;
+        _webllmModel = preset;
+        unawaited(_verifyWebLlmCache(preset));
+      case gemmaProviderKind:
+        // The provider is iOS/Android-only — a record written there must not
+        // resurrect it where the picker hides it (a selection outside the
+        // dropdown's items breaks it).
+        if (!gemmaProviderVisible(
+          isWeb: _isWeb,
+          platform: defaultTargetPlatform,
+        )) {
+          return;
+        }
+        final preset = findGemmaPreset(
+          connection.gemmaPresetId ?? connection.modelId,
+        );
+        if (preset == null) return;
+        _selection = ProviderPreset.gemma;
+        _gemmaModel = preset;
+        unawaited(_verifyGemmaInstalled(preset));
+      case transformersJsProviderKind:
+        // Web-only, like the picker entry.
+        if (!transformersJsProviderVisible(isWeb: _isWeb)) return;
+        final preset = findTransformersJsPreset(
+          connection.transformersJsPresetId ?? connection.modelId,
+        );
+        if (preset == null) return;
+        _selection = ProviderPreset.transformersJs;
+        _transformersJsModel = preset;
+        unawaited(_verifyTransformersJsCache(preset));
+      default:
+        final baseUrl = connection.baseUrl;
+        if (baseUrl == null || baseUrl.isEmpty) return;
+        for (final provider in _registry.providers) {
+          if (provider.baseUrl == baseUrl &&
+              provider.modelId == connection.modelId) {
+            // Set fields directly instead of _applyCustomProvider: the key
+            // field keeps its env-seeded value (session keys are empty at
+            // boot anyway — keys are never persisted).
+            _selection = provider;
+            _urlController.text = provider.baseUrl;
+            _modelController.text = provider.modelId;
+            _lastDefaultModel = provider.modelId;
+            return;
+          }
+        }
+        final preset = ProviderPreset.fromBaseUrl(baseUrl);
+        _selection = preset;
+        _urlController.text = baseUrl;
+        _modelController.text = connection.modelId.isNotEmpty
+            ? connection.modelId
+            : preset.defaultModel;
+        _lastDefaultModel = _modelController.text;
+    }
+  }
+
+  /// Falls the pre-selected WebLLM model back to the default preset when its
+  /// weights were deleted from the cache meanwhile. An engine that cannot
+  /// answer (unavailable platform, blocked storage) leaves the selection
+  /// untouched — "unknown" must not cry "removed".
+  Future<void> _verifyWebLlmCache(WebLlmModelPreset preset) async {
+    final engine = widget.webLlmEngine ?? createWebLlmService();
+    if (!engine.isAvailable) return;
+    WebLlmCacheInfo? info;
+    try {
+      info = await engine.modelCacheInfo(preset.id);
+    } on Object {
+      return;
+    }
+    if (info == null || info.cached) return;
+    if (!mounted) return;
+    // The user moved on while the query ran — don't yank their selection.
+    if (_selection != ProviderPreset.webllm || _webllmModel.id != preset.id) {
+      return;
+    }
+    setState(() {
+      _webllmModel = webLlmModelPresets.first;
+      _staleModelNote =
+          'The previously used model (${preset.displayName}) was removed '
+          'from the cache — pick a model to download it again.';
+    });
+  }
+
+  /// The Gemma variant of [_verifyWebLlmCache], over the plugin's installed
+  /// model repository (with the cache section's scan timeout: a hung store
+  /// must not pin the form; the timer is this State's own so dispose can
+  /// cancel it).
+  Future<void> _verifyGemmaInstalled(GemmaModelPreset preset) async {
+    final engine = widget.gemmaEngine ?? createGemmaService();
+    if (!engine.isAvailable) return;
+    var installed = true;
+    try {
+      final completer = Completer<List<GemmaInstalledModel>>();
+      _gemmaVerifyTimer = Timer(const Duration(seconds: 10), () {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            TimeoutException('Gemma repository scan timed out'),
+          );
+        }
+      });
+      unawaited(
+        engine.installedModels().then(
+          (models) {
+            if (!completer.isCompleted) completer.complete(models);
+          },
+          onError: (Object error) {
+            if (!completer.isCompleted) completer.completeError(error);
+          },
+        ),
+      );
+      final models = await completer.future;
+      installed = models.any(
+        (model) => model.filename == preset.filenameFor(isWeb: _isWeb),
+      );
+    } on Object {
+      return;
+    } finally {
+      _gemmaVerifyTimer?.cancel();
+    }
+    if (installed || !mounted) return;
+    if (_selection != ProviderPreset.gemma || _gemmaModel.id != preset.id) {
+      return;
+    }
+    setState(() {
+      _gemmaModel = gemmaModelPresets.first;
+      _staleModelNote =
+          'The previously used model (${preset.displayName}) was removed '
+          'from this device — pick a model to download it again.';
+    });
+  }
+
+  /// The transformers.js variant of [_verifyWebLlmCache].
+  Future<void> _verifyTransformersJsCache(
+    TransformersJsModelPreset preset,
+  ) async {
+    final engine = widget.transformersJsEngine ?? createTransformersJsService();
+    if (!engine.isAvailable) return;
+    TransformersJsCacheInfo? info;
+    try {
+      info = await engine.modelCacheInfo(preset.id);
+    } on Object {
+      return;
+    }
+    if (info == null || info.cached) return;
+    if (!mounted) return;
+    if (_selection != ProviderPreset.transformersJs ||
+        _transformersJsModel.id != preset.id) {
+      return;
+    }
+    setState(() {
+      _transformersJsModel = transformersJsModelPresets.first;
+      _staleModelNote =
+          'The previously used model (${preset.displayName}) was removed '
+          'from the cache — pick a model to download it again.';
+    });
   }
 
   void _selectProvider(Object value) {
@@ -439,7 +643,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// instance — the first chat turn does not pay the load again.
   Future<void> _connectWebLlm() async {
     final preset = _webllmModel;
-    final service = createWebLlmService();
+    final service = widget.webLlmEngine ?? createWebLlmService();
     setState(() {
       _loading = true;
       _error = null;
@@ -747,6 +951,23 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             ],
           ),
         ],
+        if (_staleModelNote != null) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 16,
+                color: theme.colorScheme.tertiary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(_staleModelNote!, style: theme.textTheme.bodySmall),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 16),
         if (_error != null)
           Padding(
@@ -807,7 +1028,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               ? null
               : (preset) {
                   if (preset == null) return;
-                  setState(() => _webllmModel = preset);
+                  setState(() {
+                    _webllmModel = preset;
+                    _staleModelNote = null;
+                  });
                 },
         ),
         const SizedBox(height: 16),
@@ -870,7 +1094,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               ? null
               : (preset) {
                   if (preset == null) return;
-                  setState(() => _gemmaModel = preset);
+                  setState(() {
+                    _gemmaModel = preset;
+                    _staleModelNote = null;
+                  });
                 },
         ),
         const SizedBox(height: 12),
@@ -953,7 +1180,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               ? null
               : (preset) {
                   if (preset == null) return;
-                  setState(() => _transformersJsModel = preset);
+                  setState(() {
+                    _transformersJsModel = preset;
+                    _staleModelNote = null;
+                  });
                 },
         ),
         const SizedBox(height: 16),
@@ -1175,6 +1405,7 @@ class SettingsDialog extends StatelessWidget {
     super.key,
     required this.service,
     this.registry,
+    this.lastConnectionStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -1185,6 +1416,10 @@ class SettingsDialog extends StatelessWidget {
 
   /// The user-added providers shown in the form's picker.
   final ProviderRegistry? registry;
+
+  /// The last-connection store: prefills the form and is updated on every
+  /// successful apply (see [LastConnectionStore]).
+  final LastConnectionStore? lastConnectionStore;
 
   /// Engine override for the downloaded-models section (tests); defaults to
   /// the platform singleton.
@@ -1212,10 +1447,13 @@ class SettingsDialog extends StatelessWidget {
               AgentSettingsForm(
                 connectLabel: 'Apply',
                 registry: registry,
+                initialConnection: lastConnectionStore?.connection,
+                webLlmEngine: webLlmEngine,
                 gemmaEngine: gemmaEngine,
                 transformersJsEngine: transformersJsEngine,
                 onConnect: (config) async {
                   await service.reconfigure(config);
+                  await lastConnectionStore?.saveFromConfig(config);
                   if (context.mounted) Navigator.of(context).pop();
                 },
               ),
