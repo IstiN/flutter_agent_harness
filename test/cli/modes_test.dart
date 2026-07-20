@@ -152,10 +152,16 @@ void main() {
 class _FakeCliIO implements CliIO {
   final _lines = StreamController<String>();
   final _interrupts = StreamController<void>.broadcast();
+  final _keys = StreamController<KeyEvent>.broadcast();
   final out = StringBuffer();
 
   @override
   bool get isInteractive => true;
+  @override
+  Stream<KeyEvent> get keys => _keys.stream;
+
+  @override
+  bool get supportsRawMode => false;
 
   @override
   Stream<String> get lines => _lines.stream;

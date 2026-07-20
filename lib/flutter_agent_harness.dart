@@ -18,6 +18,7 @@ export 'src/cancel_token.dart';
 export 'src/cli/agent_cli.dart';
 export 'src/cli/cli_args.dart';
 export 'src/cli/cli_help.dart';
+export 'src/cli/key_event.dart';
 export 'src/cli/prompt_templates.dart';
 export 'src/compaction/branch_summarization.dart';
 export 'src/compaction/compaction.dart';

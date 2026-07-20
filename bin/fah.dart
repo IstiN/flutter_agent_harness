@@ -31,7 +31,22 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
-const _version = '0.1.0';
+const _fallbackVersion = '0.1.0';
+
+/// Reads the package version from `pubspec.yaml` next to the executable so
+/// `--version` and `--help` stay in sync with releases without hard-coding it.
+String _packageVersion() {
+  try {
+    final scriptPath = Platform.script.toFilePath();
+    final pubspec = File('${File(scriptPath).parent.parent.path}/pubspec.yaml');
+    final doc = yaml.loadYaml(pubspec.readAsStringSync()) as Map;
+    final value = doc['version'];
+    if (value is String && value.isNotEmpty) return value;
+  } on Object {
+    // Fall back to the compile-time constant when the pubspec is unavailable.
+  }
+  return _fallbackVersion;
+}
 
 Never _fail(String message) {
   stderr.writeln('fa: $message');
@@ -39,13 +54,13 @@ Never _fail(String message) {
   exit(64);
 }
 
-Never _exitWithUsage() {
-  stdout.write(cliHelpText(_version));
+Never _exitWithUsage(String version) {
+  stdout.write(cliHelpText(version));
   exit(0);
 }
 
-Never _exitWithVersion() {
-  stdout.writeln('fa $_version');
+Never _exitWithVersion(String version) {
+  stdout.writeln('fa $version');
   exit(0);
 }
 
@@ -207,6 +222,8 @@ final class _TerminalCliIO implements CliIO {
   final bool headless;
 
   final _interrupts = StreamController<void>.broadcast();
+  StreamController<KeyEvent>? _keyController;
+  StreamSubscription<List<int>>? _keySub;
 
   void fireInterrupt() => _interrupts.add(null);
 
@@ -214,6 +231,16 @@ final class _TerminalCliIO implements CliIO {
   Stream<String> get lines => headless
       ? const Stream<String>.empty()
       : stdin.transform(utf8.decoder).transform(const LineSplitter());
+
+  @override
+  Stream<KeyEvent> get keys {
+    if (headless || !supportsRawMode) return const Stream<KeyEvent>.empty();
+    _keyController ??= StreamController<KeyEvent>.broadcast(
+      onListen: _startRawInput,
+      onCancel: _stopRawInput,
+    );
+    return _keyController!.stream;
+  }
 
   @override
   Stream<void> get interrupts => _interrupts.stream;
@@ -230,14 +257,142 @@ final class _TerminalCliIO implements CliIO {
   /// mode is never interactive, terminal or not.
   @override
   bool get isInteractive => !headless && stdin.hasTerminal;
+
+  @override
+  bool get supportsRawMode => !headless && stdin.hasTerminal;
+
+  void _startRawInput() {
+    if (_keySub != null) return;
+    stdin.echoMode = false;
+    stdin.lineMode = false;
+    _keySub = stdin.listen(
+      _onRawBytes,
+      onDone: () => _keyController?.close(),
+      onError: (_) => _keyController?.close(),
+    );
+  }
+
+  void _stopRawInput() {
+    _keySub?.cancel();
+    _keySub = null;
+    try {
+      stdin.echoMode = true;
+      stdin.lineMode = true;
+    } on Exception {
+      // May fail if the process is shutting down; ignore.
+    }
+  }
+
+  /// Restores canonical terminal mode. Called before an idle Ctrl-C exits so
+  /// the shell is not left in raw mode.
+  void resetRawMode() => _stopRawInput();
+
+  void _onRawBytes(List<int> bytes) {
+    final controller = _keyController;
+    if (controller == null || controller.isClosed) return;
+    final events = _decodeKeys(bytes);
+    for (final event in events) {
+      controller.add(event);
+    }
+  }
+
+  /// Decodes raw terminal bytes into [KeyEvent]s. Handles ASCII control
+  /// characters and common ANSI escape sequences for arrow keys, home/end,
+  /// and delete.
+  List<KeyEvent> _decodeKeys(List<int> bytes) {
+    final result = <KeyEvent>[];
+    for (var i = 0; i < bytes.length; i++) {
+      final b = bytes[i];
+      if (b == 0x1b) {
+        // ANSI escape sequence.
+        if (i + 2 < bytes.length && bytes[i + 1] == 0x5b) {
+          final code = bytes[i + 2];
+          switch (code) {
+            case 0x41:
+              result.add(const KeyEvent(type: KeyType.up));
+            case 0x42:
+              result.add(const KeyEvent(type: KeyType.down));
+            case 0x43:
+              result.add(const KeyEvent(type: KeyType.right));
+            case 0x44:
+              result.add(const KeyEvent(type: KeyType.left));
+            case 0x48:
+              result.add(const KeyEvent(type: KeyType.home));
+            case 0x46:
+              result.add(const KeyEvent(type: KeyType.end));
+            case 0x33:
+              if (i + 3 < bytes.length && bytes[i + 3] == 0x7e) {
+                result.add(const KeyEvent(type: KeyType.delete));
+                i += 3;
+                continue;
+              }
+            case 0x31:
+              if (i + 3 < bytes.length && bytes[i + 3] == 0x7e) {
+                result.add(const KeyEvent(type: KeyType.home));
+                i += 3;
+                continue;
+              }
+            case 0x34:
+              if (i + 3 < bytes.length && bytes[i + 3] == 0x7e) {
+                result.add(const KeyEvent(type: KeyType.end));
+                i += 3;
+                continue;
+              }
+            default:
+              result.add(const KeyEvent(type: KeyType.unknown));
+          }
+          i += 2;
+        } else if (i + 1 < bytes.length && bytes[i + 1] == 0x4f) {
+          // SS3 sequences: ESC O H / ESC O F on some terminals.
+          if (i + 2 < bytes.length) {
+            final code = bytes[i + 2];
+            if (code == 0x48) {
+              result.add(const KeyEvent(type: KeyType.home));
+            } else if (code == 0x46) {
+              result.add(const KeyEvent(type: KeyType.end));
+            } else {
+              result.add(const KeyEvent(type: KeyType.unknown));
+            }
+            i += 2;
+          } else {
+            result.add(const KeyEvent(type: KeyType.escape));
+          }
+        } else {
+          result.add(const KeyEvent(type: KeyType.escape));
+        }
+      } else if (b == 0x09) {
+        result.add(const KeyEvent(type: KeyType.tab));
+      } else if (b == 0x0d || b == 0x0a) {
+        result.add(const KeyEvent(type: KeyType.enter));
+      } else if (b == 0x7f) {
+        result.add(const KeyEvent(type: KeyType.backspace));
+      } else if (b == 0x00) {
+        // Ctrl-Space / null byte; ignore.
+      } else if (b < 0x20) {
+        // Ctrl+letter printable-ish range; treat as char for now.
+        result.add(
+          KeyEvent(
+            char: String.fromCharCode(b + 0x40),
+            type: KeyType.char,
+            ctrl: true,
+          ),
+        );
+      } else {
+        result.add(KeyEvent(char: String.fromCharCode(b), type: KeyType.char));
+      }
+    }
+    return result;
+  }
 }
 
 Future<void> main(List<String> args) async {
+  final packageVersion = _packageVersion();
+
   late final CliArgs parsed;
   try {
     parsed = switch (parseCliArgs(args)) {
-      CliArgsHelp() => _exitWithUsage(),
-      CliArgsVersion() => _exitWithVersion(),
+      CliArgsHelp() => _exitWithUsage(packageVersion),
+      CliArgsVersion() => _exitWithVersion(packageVersion),
       final CliArgs cliArgs => cliArgs,
     };
   } on CliArgsException catch (error) {
@@ -423,6 +578,8 @@ Future<void> main(List<String> args) async {
   final io = _TerminalCliIO(headless: headlessPrompt != null);
   final cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
+    useTui: headlessPrompt == null && stdout.supportsAnsiEscapes,
+    version: packageVersion,
     config: AgentCliConfig(
       model: model,
       apiKey: apiKey,
@@ -494,8 +651,12 @@ Future<void> main(List<String> args) async {
       io.fireInterrupt();
     } else {
       // Idle Ctrl-C exits 130; the cosmetic newline stays off stdout in
-      // headless mode so a pipe never sees it.
-      if (headlessPrompt == null) stdout.writeln();
+      // headless mode so a pipe never sees it. Restore canonical mode first
+      // so the shell is not left with raw input disabled.
+      if (headlessPrompt == null) {
+        io.resetRawMode();
+        stdout.writeln();
+      }
       exit(130);
     }
   });

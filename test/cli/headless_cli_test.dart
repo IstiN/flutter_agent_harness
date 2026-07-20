@@ -123,6 +123,12 @@ class _HeadlessFakeCliIO implements CliIO {
   Stream<void> get interrupts => _interrupts.stream;
 
   @override
+  Stream<KeyEvent> get keys => const Stream<KeyEvent>.empty();
+
+  @override
+  bool get supportsRawMode => false;
+
+  @override
   void write(String text) => out.write(text);
 
   @override
