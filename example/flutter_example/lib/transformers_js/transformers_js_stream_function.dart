@@ -56,10 +56,13 @@ import 'transformers_js_types.dart';
 ///
 /// The model id in [Model.id] must be one of [transformersJsModelPresets];
 /// unknown ids produce an [ErrorEvent], never a throw.
+/// On-device models have small context windows, so tool instructions are
+/// emitted in the compact slim format.
 StreamFunction transformersJsStreamFunction(TransformersJsEngineApi service) {
   return promptToolStreamFunction(
     (model, context, {cancelToken}) =>
         streamTransformersJs(service, model, context, cancelToken: cancelToken),
+    options: const PromptToolOptions(slim: true),
   );
 }
 

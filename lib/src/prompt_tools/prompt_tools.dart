@@ -104,6 +104,7 @@ final class PromptToolOptions {
     this.maxBlockSize = 64 * 1024,
     this.injectWhenNoTools = false,
     this.format = PromptToolFormat.fencedJson,
+    this.slim = false,
   });
 
   /// Maximum buffered size in characters of one `tool_call` block body.
@@ -118,6 +119,11 @@ final class PromptToolOptions {
 
   /// The wire format to inject and parse.
   final PromptToolFormat format;
+
+  /// On-device (small-context) mode: shorten each tool description to its
+  /// first line and strip verbose metadata from JSON schemas, shrinking the
+  /// tool-instruction block that is appended to the system prompt.
+  final bool slim;
 }
 
 /// Wraps [inner] with prompt-based tool calling.
@@ -150,7 +156,7 @@ StreamFunction promptToolStreamFunction(
     try {
       innerStream = inner(
         model,
-        _transformContext(context, tools),
+        _transformContext(context, tools, opts.slim),
         cancelToken: cancelToken,
       );
     } catch (error) {
@@ -186,12 +192,14 @@ StreamFunction promptToolStreamFunction(
 /// for small on-device models) can count the wrapper's bytes: the
 /// instructions travel inside the system message and consume real window
 /// tokens — for a full built-in tool set they dwarf the base system prompt.
-String promptToolInstructions(List<Tool> tools) => _buildToolsSection(tools);
+/// Pass [slim] to render the compact on-device variant.
+String promptToolInstructions(List<Tool> tools, {bool slim = false}) =>
+    _buildToolsSection(tools, slim: slim);
 
 /// Appends the tool instructions to the system prompt and re-serializes
 /// tool-shaped history messages as fenced text.
-Context _transformContext(Context context, List<Tool> tools) {
-  final section = _buildToolsSection(tools);
+Context _transformContext(Context context, List<Tool> tools, bool slim) {
+  final section = _buildToolsSection(tools, slim: slim);
   final existing = context.systemPrompt;
   return Context(
     systemPrompt: existing == null || existing.trim().isEmpty
@@ -205,7 +213,7 @@ Context _transformContext(Context context, List<Tool> tools) {
 }
 
 /// Renders the tool instructions template with the numbered tool list.
-String _buildToolsSection(List<Tool> tools) {
+String _buildToolsSection(List<Tool> tools, {required bool slim}) {
   final list = StringBuffer();
   for (var i = 0; i < tools.length; i++) {
     final tool = tools[i];
@@ -214,14 +222,54 @@ String _buildToolsSection(List<Tool> tools) {
       ..write('. ')
       ..write(tool.name)
       ..write(': ')
-      ..writeln(tool.description)
+      ..writeln(_toolDescription(tool, slim))
       ..write('   Parameters: ')
-      ..writeln(jsonEncode(tool.parameters));
+      ..writeln(jsonEncode(_toolSchema(tool.parameters, slim)));
   }
   return toolCallingInstructionsPrompt.replaceAll(
     '{{tools}}',
     list.toString().trimRight(),
   );
+}
+
+/// Returns the full or slimmed description for a tool.
+String _toolDescription(Tool tool, bool slim) {
+  final description = tool.description;
+  if (!slim || description.isEmpty) return description;
+  final firstLine = description.split('\n').first.trim();
+  if (firstLine.isEmpty) return description;
+  return firstLine;
+}
+
+/// Returns the schema as-is or a minified copy with descriptive metadata
+/// stripped for on-device backends.
+Object? _toolSchema(Object? schema, bool slim) {
+  if (!slim) return schema;
+  return _stripSchemaMeta(schema);
+}
+
+/// Recursively removes verbose metadata (`description`, `title`, `default`,
+/// `examples`) from a JSON schema while keeping the structural constraints
+/// (`type`, `properties`, `required`, `items`, `enum`, `anyOf`, etc.).
+Object? _stripSchemaMeta(Object? value) {
+  if (value is Map<String, dynamic>) {
+    final result = <String, dynamic>{};
+    for (final entry in value.entries) {
+      final key = entry.key;
+      if (key == 'description' ||
+          key == 'title' ||
+          key == 'default' ||
+          key == 'examples') {
+        continue;
+      }
+      result[key] = _stripSchemaMeta(entry.value);
+    }
+    return result;
+  }
+  if (value is List<dynamic>) {
+    return value.map(_stripSchemaMeta).toList();
+  }
+  return value;
 }
 
 /// Converts [message] for a prompt-based tool-calling conversation.

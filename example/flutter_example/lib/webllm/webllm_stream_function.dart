@@ -45,10 +45,13 @@ import 'webllm_types.dart';
 ///
 /// The model id in [Model.id] must be one of [webLlmModelPresets]; unknown
 /// ids produce an [ErrorEvent], never a throw.
+/// On-device models have small context windows, so tool instructions are
+/// emitted in the compact slim format.
 StreamFunction webLlmStreamFunction(WebLlmEngineApi service) {
   return promptToolStreamFunction(
     (model, context, {cancelToken}) =>
         streamWebLlm(service, model, context, cancelToken: cancelToken),
+    options: const PromptToolOptions(slim: true),
   );
 }
 
