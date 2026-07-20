@@ -1075,4 +1075,131 @@ void main() {
     final output = io.out.toString();
     expect(output, contains('/work · 15tok · \$0.0010 · turn 1 · test-model'));
   });
+
+  group('session management', () {
+    test('--session creates and resumes a named session', () async {
+      final fake = _FakeStreamFunction([_textTurn('hello')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: _model,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'work',
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+
+      io.sendLine('hi');
+      await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final sessions = await repo.list(cwd: '/work');
+      expect(sessions, hasLength(1));
+      final session = await repo.open(sessions.first);
+      expect(await session.getSessionName(), 'work');
+
+      final io2 = FakeCliIO();
+      addTearDown(io2.close);
+      final fake2 = _FakeStreamFunction([_textTurn('again')]);
+      final cli2 = AgentCli(
+        config: AgentCliConfig(
+          model: _model,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'work',
+        ),
+        io: io2,
+        streamFunction: fake2.call,
+      );
+      final run2 = cli2.run();
+      io2.sendLine('continue');
+      await _waitFor(() => fake2.calls == 1 && !cli2.isBusy);
+      io2.sendLine('/exit');
+      await run2;
+
+      final messages = fake2.contexts.single.messages;
+      expect(messages, hasLength(3));
+      expect(messages[0], isA<UserMessage>());
+      expect(messages[1], isA<AssistantMessage>());
+      expect(messages[2], isA<UserMessage>());
+    });
+
+    test('slash commands create, rename, list, and switch sessions', () async {
+      final fake = _FakeStreamFunction([]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/session-new alpha');
+      await _waitFor(
+        () => io.out.toString().contains("created session 'alpha'"),
+      );
+      io.sendLine('/rename-session beta');
+      await _waitFor(
+        () => io.out.toString().contains("renamed current session to 'beta'"),
+      );
+      io.sendLine('/sessions');
+      await _waitFor(() => io.out.toString().contains('beta'));
+      io.sendLine('/session gamma');
+      await _waitFor(
+        () => io.out.toString().contains("created session 'gamma'"),
+      );
+      io.sendLine('/session');
+      await _waitFor(() => io.out.toString().contains('session: gamma'));
+      io.sendLine('/exit');
+      await run;
+
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final sessions = await repo.list(cwd: '/work');
+      // Startup session + alpha (renamed to beta) + gamma.
+      expect(sessions, hasLength(3));
+      final names = <String?>[];
+      for (final metadata in sessions) {
+        final s = await repo.open(metadata);
+        names.add(await s.getSessionName());
+      }
+      expect(names, containsAll(['beta', 'gamma']));
+    });
+
+    test('headless --session resumes a named session', () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: _model,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'h',
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      expect(await cli.runHeadless('first'), 0);
+
+      final fake2 = _FakeStreamFunction([_textTurn('again')]);
+      final cli2 = AgentCli(
+        config: AgentCliConfig(
+          model: _model,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'h',
+        ),
+        io: io,
+        streamFunction: fake2.call,
+      );
+      expect(await cli2.runHeadless('second'), 0);
+
+      final messages = fake2.contexts.single.messages;
+      expect(messages, hasLength(3));
+      expect(messages[0], isA<UserMessage>());
+      expect(messages[1], isA<AssistantMessage>());
+      expect(messages[2], isA<UserMessage>());
+    });
+  });
 }

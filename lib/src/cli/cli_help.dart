@@ -68,6 +68,7 @@ OPTIONS
   --prompt-template-dir <path> Add a prompt template directory (repeatable)
   --cwd <dir>                  Working directory (default: current directory)
   --session-root <dir>         Session storage root (default: ~/.fah/sessions)
+  --session <name>             Resume or create a named session for this cwd
   --help, -h                   Show this help
   --version                    Print the version
 
@@ -176,7 +177,9 @@ APPROVALS
 SESSIONS AND COMPACTION
   Every run (REPL or headless) appends to a JSONL session under the session
   root (--session-root, default ~/.fah/sessions), laid out per working
-  directory. /reset starts a fresh session; /stats shows token/cost totals.
+  directory. Start with --session <name> or use /session, /session-new,
+  /rename-session, and /sessions to manage named sessions. /reset starts a
+  fresh session; /stats shows token/cost totals.
 
   When the context nears the model's window the history is auto-compacted:
   older messages are summarized (via the smol role when configured) and
@@ -230,6 +233,10 @@ REPL COMMANDS
   /model [id|?|N]    show model/roles, pick from known models, or switch
   /models [filter]   list known models for the current provider
   /mode [name]       show or switch the active mode
+  /session [name]    show current or switch/create a named session
+  /session-new <n>   create a new named session
+  /sessions          list named sessions for the current directory
+  /rename-session <n> rename the current session
   /approval [mode]   show or set tool approval (always-ask|write|yolo)
   /allow [tool]      always-allow a tool (or list them)
   /code              switch to coding mode

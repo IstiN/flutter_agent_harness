@@ -29,6 +29,7 @@ void main() {
       '--mode',
       '--cwd',
       '--session-root',
+      '--session',
       '--prompt',
       '-p',
     ];
@@ -113,6 +114,10 @@ void main() {
       '/exit',
       '/model',
       '/mode',
+      '/session',
+      '/session-new',
+      '/sessions',
+      '/rename-session',
       '/help',
       // Config file.
       '~/.fah/config.yaml',

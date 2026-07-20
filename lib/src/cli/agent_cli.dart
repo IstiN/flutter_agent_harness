@@ -34,6 +34,7 @@ import '../model.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../session/session_repo.dart';
+import '../session/session_storage.dart';
 import '../session/session_tree.dart';
 import '../tools/ask_tool.dart';
 import '../tools/builtin_tools.dart';
@@ -99,6 +100,7 @@ final class AgentCliConfig {
     required this.apiKey,
     required this.env,
     required this.sessionRoot,
+    this.sessionName,
     this.providerKind = 'openai-completions',
     this.envVarIsSet,
     this.systemPrompt,
@@ -172,6 +174,9 @@ final class AgentCliConfig {
 
   /// Root directory for JSONL sessions (cwd-encoded layout, like pi).
   final String sessionRoot;
+
+  /// Optional session name to resume or create on startup.
+  final String? sessionName;
 
   /// Provider adapter kind: `openai-completions`, `anthropic`, or `google`.
   final String providerKind;
@@ -536,7 +541,7 @@ class AgentCli {
       config.env,
       config.promptTemplateDirs,
     );
-    _session = await _createSession();
+    _session = await _initializeSession();
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
     });
@@ -627,13 +632,115 @@ class AgentCli {
     await _handleModelCommand(modelId);
   }
 
-  Future<Session> _createSession() {
-    return _repo.create(
+  Future<Session> _initializeSession() async {
+    final name = config.sessionName?.trim();
+    if (name != null && name.isNotEmpty) {
+      final metadata = await _findSessionByName(name);
+      if (metadata != null) {
+        return _loadSession(metadata);
+      }
+      return _createSession(name: name);
+    }
+    return _createSession();
+  }
+
+  Future<Session> _createSession({String? name}) async {
+    final session = await _repo.create(
       JsonlSessionCreateOptions(
         cwd: config.env.cwd,
         metadata: {'agent': 'fah', 'model': _agent.state.model.id},
       ),
     );
+    if (name != null && name.isNotEmpty) {
+      await session.appendSessionName(name);
+    }
+    return session;
+  }
+
+  Future<SessionMetadata?> _findSessionByName(String name) async {
+    final sessions = await _repo.list(cwd: config.env.cwd);
+    for (final metadata in sessions) {
+      final session = await _repo.open(metadata);
+      final sessionName = await session.getSessionName();
+      if (sessionName != null && sessionName.trim() == name.trim()) {
+        return metadata;
+      }
+    }
+    return null;
+  }
+
+  Future<Session> _loadSession(SessionMetadata metadata) async {
+    final session = await _repo.open(metadata);
+    final messages = await session.buildContextMessages();
+    _agent.state.messages = messages;
+    _persistedCount = messages.length;
+    return session;
+  }
+
+  Future<void> _switchSession(String name) async {
+    final trimmed = name.trim();
+    final metadata = await _findSessionByName(trimmed);
+    if (metadata != null) {
+      _agent.reset();
+      _checkpoints.clear();
+      _ttsr?.reset();
+      _session = await _loadSession(metadata);
+      io.writeln("switched to session '$trimmed'");
+      return;
+    }
+    _agent.reset();
+    _checkpoints.clear();
+    _ttsr?.reset();
+    _session = await _createSession(name: trimmed);
+    _persistedCount = 0;
+    io.writeln("created session '$trimmed'");
+  }
+
+  Future<void> _renameSession(String name) async {
+    final trimmed = name.trim();
+    final session = _session;
+    if (session == null) {
+      io.writeln('no active session');
+      return;
+    }
+    await session.appendSessionName(trimmed);
+    io.writeln("renamed current session to '$trimmed'");
+  }
+
+  Future<void> _listSessions() async {
+    final sessions = await _repo.list(cwd: config.env.cwd);
+    if (sessions.isEmpty) {
+      io.writeln('no sessions for ${config.env.cwd}');
+      return;
+    }
+    final current = await _session?.getMetadata();
+    io.writeln('sessions for ${config.env.cwd}:');
+    for (var i = 0; i < sessions.length; i++) {
+      final metadata = sessions[i];
+      final session = await _repo.open(metadata);
+      final sessionName = await session.getSessionName();
+      final label = sessionName ?? metadata.id;
+      final marker = current?.path == metadata.path ? '*' : ' ';
+      io.writeln(
+        '  $marker${i + 1}) $label  '
+        '${_style.dim(metadata.createdAt.toLocal().toIso8601String())}',
+      );
+    }
+  }
+
+  Future<void> _createNamedSession(String name) async {
+    final trimmed = name.trim();
+    final existing = await _findSessionByName(trimmed);
+    if (existing != null) {
+      io.writeln("session '$trimmed' already exists");
+      return;
+    }
+    _agent.reset();
+    _checkpoints.clear();
+    _ttsr?.reset();
+    _session = await _createSession(name: trimmed);
+    _persistedCount = 0;
+    io.writeln("created session '$trimmed'");
   }
 
   /// Runs a single non-interactive prompt (headless mode: `fah "<prompt>"`)
@@ -649,7 +756,7 @@ class AgentCli {
   /// non-interactive rule) and route [CliIO.writeln] diagnostics to stderr
   /// so [CliIO.write] (the assistant text) is the only stdout content.
   Future<int> runHeadless(String prompt) async {
-    _session = await _createSession();
+    _session = await _initializeSession();
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
     });
@@ -693,6 +800,10 @@ class AgentCli {
     if (keyStatus != null) io.writeln('  $keyStatus');
     io.writeln('');
     io.writeln(_style.bold('[Session]'));
+    final sessionName = await _session?.getSessionName();
+    if (sessionName != null && sessionName.isNotEmpty) {
+      io.writeln('  $sessionName');
+    }
     io.writeln('  ${metadata.path}');
   }
 
@@ -910,6 +1021,22 @@ class AgentCli {
         io.writeln('new session started');
       case '/compact':
         await _compact('[compacted]');
+      case '/sessions':
+        await _listSessions();
+      case '/session':
+        await _handleSessionCommand(rest);
+      case '/session-new':
+        if (rest.trim().isEmpty) {
+          io.writeln('usage: /session-new <name>');
+        } else {
+          await _createNamedSession(rest.trim());
+        }
+      case '/rename-session':
+        if (rest.trim().isEmpty) {
+          io.writeln('usage: /rename-session <name>');
+        } else {
+          await _renameSession(rest.trim());
+        }
       case '/mode':
         await _handleMode(rest);
       case '/approval':
@@ -945,6 +1072,22 @@ class AgentCli {
       return;
     }
     await _switchMode(rest);
+  }
+
+  Future<void> _handleSessionCommand(String rest) async {
+    final trimmed = rest.trim();
+    if (trimmed.isEmpty) {
+      final session = _session;
+      if (session == null) {
+        io.writeln('no active session');
+        return;
+      }
+      final metadata = await session.getMetadata();
+      final name = await session.getSessionName();
+      io.writeln('session: ${name ?? '(unnamed)'}  ${metadata.path}');
+      return;
+    }
+    await _switchSession(trimmed);
   }
 
   /// Renders the terminal approval prompt (y/n/a) and waits for the answer,
@@ -1329,6 +1472,10 @@ class AgentCli {
     '/model': '<provider/model> — select model (opens selector)',
     '/models': '[filter] — list known models for the current provider',
     '/mode': '[name] — show or switch the active mode',
+    '/session': '[name] — show current or switch/create a named session',
+    '/session-new': '<name> — create a new named session',
+    '/sessions': 'list named sessions for the current directory',
+    '/rename-session': '<name> — rename the current session',
     '/approval': '[mode] — show or set tool approval',
     '/allow': '[tool] — always-allow a tool (or list them)',
     '/code': 'switch to coding mode',
