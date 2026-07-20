@@ -8,9 +8,13 @@
 /// live under `prompts/` (see AGENTS.md).
 library;
 
-/// The full `--help` output printed by the `fah` executable.
-const cliHelpText = '''
-fah — flutter_agent_harness CLI agent
+/// The full `--help` output printed by the `fah` executable. [version] is
+/// threaded through from the executable (`_version` in `bin/fah.dart`) — the
+/// single source of truth shared with `--version` — and rendered in the
+/// header line.
+String cliHelpText(String version) =>
+    '''
+fah — flutter_agent_harness CLI agent v$version
 
 USAGE
   fah [options]                          interactive REPL

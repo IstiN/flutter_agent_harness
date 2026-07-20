@@ -77,12 +77,17 @@ dependencies:
   # see lib/html_preview_web.dart).
   webview_flutter: ^4.14.1
 
+  # Firebase: analytics across iOS, Android, macOS, and web.
+  firebase_core: ^3.6.0
+  firebase_analytics: ^11.3.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.0
 
 dependency_overrides:
   freezed_annotation: ^3.1.0
@@ -123,4 +128,21 @@ flutter:
     - assets/wasm/LICENSE.quickjs
     - assets/wasm/LICENSE.lua
     - assets/wasm/ATTRIBUTION.md
+
+flutter_launcher_icons:
+  image_path: "assets/app_icon_source.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  min_sdk_android: 21
+  adaptive_icon_background: "#0b0f16"
+  adaptive_icon_foreground: "assets/app_icon_source.png"
+  macos:
+    generate: true
+  web:
+    generate: false
+  windows:
+    generate: false
+  linux:
+    generate: false
 
