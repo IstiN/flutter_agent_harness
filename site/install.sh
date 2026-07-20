@@ -115,34 +115,30 @@ done
 mkdir -p "$install_dir"
 target="$install_dir/$BINARY"
 
-# ── 3. Resolve latest release and asset ──────────────────────────────────────
-info "Resolving latest release..."
-release_json=""
-if command -v curl >/dev/null 2>&1; then
-  release_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)
-elif command -v wget >/dev/null 2>&1; then
-  release_json=$(wget -qO- "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)
-fi
-
-version=""
-download_url=""
-if [[ -n $release_json ]]; then
-  version=$(printf '%s' "$release_json" | grep -o '"tag_name": *"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)".*/\1/')
-  download_url=$(printf '%s' "$release_json" | grep -o '"browser_download_url": *"[^"]*'"$asset"'"' | head -n1 | sed 's/.*"\([^"]*\)".*/\1/')
-fi
+# ── 3. Resolve download URL ──────────────────────────────────────────────────
+download_url="https://github.com/$REPO/releases/latest/download/$asset"
 
 # ── 4. Install binary (or fall back to Dart) ─────────────────────────────────
-if [[ -n $download_url ]]; then
-  info "Downloading Fa $version for ${os}-${arch}..."
-  if command -v curl >/dev/null 2>&1; then
-    curl -fSL --progress-bar "$download_url" -o "$target"
+info "Downloading Fa for ${os}-${arch}..."
+if command -v curl >/dev/null 2>&1; then
+  if curl -fSL --progress-bar "$download_url" -o "$target" 2>/dev/null; then
+    chmod +x "$target"
+    ok "Installed $target"
   else
-    wget --show-progress -qO "$target" "$download_url"
+    warn "No prebuilt binary found for ${os}-${arch} (or download failed). Falling back to Dart pub global activate."
+    FALLBACK=true
   fi
-  chmod +x "$target"
-  ok "Installed $target"
 else
-  warn "No prebuilt binary found for ${os}-${arch}. Falling back to Dart pub global activate."
+  if wget --show-progress -qO "$target" "$download_url" 2>/dev/null; then
+    chmod +x "$target"
+    ok "Installed $target"
+  else
+    warn "No prebuilt binary found for ${os}-${arch} (or download failed). Falling back to Dart pub global activate."
+    FALLBACK=true
+  fi
+fi
+
+if [[ ${FALLBACK:-} == true ]]; then
   if ! command -v dart >/dev/null 2>&1; then
     err "the Dart SDK ('dart') is not on your PATH, and no prebuilt binary is available for ${os}-${arch}."
     say ""
