@@ -220,9 +220,16 @@ class AgentService extends ChangeNotifier {
     AgentConfig config,
     SecretRedactor? redactor,
   ) {
+    final platform = _sandboxPlatform;
+    final commandSection = formatSandboxCommandSection(platform);
+    debugPrint(
+      '[fah] system prompt platform=$platform, '
+      'commands section ${commandSection.length} chars',
+    );
+    debugPrint('[fah] commands section:\n$commandSection');
     final base = (config.systemPrompt ?? sandboxSystemPrompt).replaceAll(
       '{{commands}}',
-      formatSandboxCommandSection(_sandboxPlatform),
+      commandSection,
     );
     final names = redactor?.names ?? const <String>[];
     if (names.isEmpty) return base;
