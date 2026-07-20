@@ -152,16 +152,17 @@
     <p class="kicker">Install</p>
     <h2>Get the CLI.</h2>
     <p class="section-lede">
-      Fa runs in your terminal on macOS, Windows, and Linux. It needs the
-      Dart SDK (bundled with Flutter) — the installer checks for it,
-      activates the package from <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>,
-      and prints your next steps.
+      Fa runs in your terminal on macOS, Windows, and Linux. The installer is
+      non-interactive: it checks for the Dart SDK, activates the package from
+      <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>,
+      adds the pub cache to your PATH, and exits. Run the separate setup wizard
+      afterward to configure your provider, model, and API key.
     </p>
     <div class="install-tabs">
       <div class="term install-term">
         <div class="term-bar">
           <span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span>
-          <span class="term-title">macOS / Linux / WSL</span>
+          <span class="term-title">macOS / Linux / WSL — install</span>
           <button class="copy-btn" type="button" data-copy-target="install-oneliner">Copy</button>
         </div>
         <pre class="term-body"><code class="cmd" id="install-oneliner">curl -fsSL https://fa1.dev/install.sh | sh</code></pre>
@@ -169,10 +170,26 @@
       <div class="term install-term">
         <div class="term-bar">
           <span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span>
-          <span class="term-title">Windows PowerShell</span>
+          <span class="term-title">Windows PowerShell — install</span>
           <button class="copy-btn" type="button" data-copy-target="install-ps1">Copy</button>
         </div>
         <pre class="term-body"><code class="cmd" id="install-ps1">irm https://fa1.dev/install.ps1 | iex</code></pre>
+      </div>
+      <div class="term install-term">
+        <div class="term-bar">
+          <span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span>
+          <span class="term-title">macOS / Linux / WSL — setup wizard</span>
+          <button class="copy-btn" type="button" data-copy-target="setup-oneliner">Copy</button>
+        </div>
+        <pre class="term-body"><code class="cmd" id="setup-oneliner">curl -fsSL https://fa1.dev/setup.sh | sh</code></pre>
+      </div>
+      <div class="term install-term">
+        <div class="term-bar">
+          <span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span>
+          <span class="term-title">Windows PowerShell — setup wizard</span>
+          <button class="copy-btn" type="button" data-copy-target="setup-ps1">Copy</button>
+        </div>
+        <pre class="term-body"><code class="cmd" id="setup-ps1">irm https://fa1.dev/setup.ps1 | iex</code></pre>
       </div>
     </div>
     <div class="grid grid-3 install-alts">
