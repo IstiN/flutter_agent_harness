@@ -594,7 +594,10 @@ Future<void> main(List<String> args) async {
   }
   final cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
-    useTui: headlessPrompt == null && stdout.supportsAnsiEscapes,
+    useTui:
+        headlessPrompt == null &&
+        stdout.supportsAnsiEscapes &&
+        io.isInteractive,
     version: packageVersion,
     config: AgentCliConfig(
       model: model,
