@@ -367,4 +367,10 @@
 - feat(cli): raw-mode TUI with slash menu, model picker, and dynamic version
 - feat(site): add Windows cmd.exe installer wrapper (install.bat)
 
+## 0.1.41
+
+- fix(site): quote install URLs for zsh glob safety; refine iOS wasm_run static-library flags
+- fix(cli): avoid double stdin subscription in TUI REPL
+- fix(example): use DynamicLibrary.process for iOS wasm_run static linking
+
 ## Unreleased
