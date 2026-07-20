@@ -339,4 +339,17 @@
 - feat(cli): interactive installer with progress bar, provider/model picker, and config setup
 - fix(example): readable ONNX/WebGPU crash messages + verified engine recovery
 
+## 0.1.39
+
+- feat(cli): Pi-style terminal banner, status bar, and /help filtering
+- fix(site,install): remove DMTools from install dropdown and reword PATH symlink comment
+- fix(install): make fa available immediately after install without shell reload
+- feat(site): add DMTools install options to site dropdown
+- fix(example): split SandboxPlatform.mobile into android/ios and disable shell command ads on iOS
+- refactor(install): split installer into non-interactive install + interactive setup wizard
+- fix(cli,install): primary command is fa, auto-add pub-cache to PATH
+- fix(site): cache-bust web demo assets on every deploy
+- fix(example): render user messages through the harness loop
+- fix(site): mktemp compatibility on macOS
+
 ## Unreleased
