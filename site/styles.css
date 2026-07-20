@@ -88,6 +88,9 @@ a:hover { text-decoration: underline; }
 .nav {
   position: sticky;
   top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
   z-index: 20;
   background: rgba(7, 10, 16, 0.72);
   backdrop-filter: blur(12px);
