@@ -31,8 +31,8 @@ bool get isMobile =>
 /// `true` when running on Android (the WASM shell sandbox works there).
 bool get isAndroidPlatform => defaultTargetPlatform == TargetPlatform.android;
 
-/// `true` when running on iOS (no WASM shell sandbox; shell commands are
-/// unavailable).
+/// `true` when running on iOS (the WASM shell sandbox works there via the
+/// statically linked wasm_run library).
 bool get isIosPlatform => defaultTargetPlatform == TargetPlatform.iOS;
 
 /// `true` when running on the web.
