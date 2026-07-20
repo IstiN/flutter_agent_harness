@@ -27,10 +27,12 @@ Future<void> main() async {
   }
   try {
     await setUpWasmRuntime();
-  } on Object {
+    debugPrint('[fah] WASM runtime setup succeeded');
+  } on Object catch (error) {
     // Wasm runtime setup is best-effort. If the native bindings are
     // unavailable the app should still start so the chat UI and other
     // providers remain usable.
+    debugPrint('[fah] WASM runtime setup failed: $error');
   }
   try {
     await dotenv.load(fileName: '.env');
@@ -42,6 +44,7 @@ Future<void> main() async {
   // store, and the agent share it (on web all ride the same IndexedDB
   // snapshot; two envs would clobber each other's persisted filesystem).
   final env = await createPlatformEnv();
+  debugPrint('[fah] platform env created: ${env.runtimeType}, cwd=${env.cwd}');
   final registry = await ProviderRegistry.load(env);
   final lastConnection = await LastConnectionStore.load(env);
   final analytics = Firebase.apps.isNotEmpty
