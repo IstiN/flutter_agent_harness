@@ -63,6 +63,7 @@ final class CliArgs extends CliArgsResult {
     this.mode,
     this.cwd,
     this.sessionRoot,
+    this.session,
     this.prompt,
     this.positionals = const [],
   }) : super._();
@@ -112,6 +113,13 @@ final class CliArgs extends CliArgsResult {
   /// `--session-root <dir>`.
   final String? sessionRoot;
 
+  /// `--session <name>`.
+  ///
+  /// Resume the named session for the current working directory if it exists,
+  /// otherwise create a new session with that name. Applies to both the
+  /// interactive REPL and headless mode.
+  final String? session;
+
   /// The `-p`/`--prompt` headless prompt, used verbatim (no file
   /// resolution). Mutually exclusive with [positionals].
   final String? prompt;
@@ -146,6 +154,7 @@ CliArgsResult parseCliArgs(List<String> args) {
   String? mode;
   String? cwd;
   String? sessionRoot;
+  String? session;
   String? prompt;
   final positionals = <String>[];
 
@@ -204,6 +213,9 @@ CliArgsResult parseCliArgs(List<String> args) {
       case '--session-root':
         sessionRoot = valueFor(i, '--session-root');
         i++;
+      case '--session':
+        session = valueFor(i, '--session');
+        i++;
       case '-p' || '--prompt':
         prompt = valueFor(i, '--prompt');
         i++;
@@ -244,6 +256,7 @@ CliArgsResult parseCliArgs(List<String> args) {
     mode: mode,
     cwd: cwd,
     sessionRoot: sessionRoot,
+    session: session,
     prompt: prompt,
     positionals: positionals,
   );

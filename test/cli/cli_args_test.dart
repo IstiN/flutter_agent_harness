@@ -148,6 +148,8 @@ void main() {
                 'review',
                 '--session-root',
                 '/sessions',
+                '--session',
+                'feature-x',
               ])
               as CliArgs;
       expect(args.model, 'm');
@@ -161,6 +163,7 @@ void main() {
       expect(args.promptTemplateDirs, ['/a', '/b']);
       expect(args.mode, 'review');
       expect(args.sessionRoot, '/sessions');
+      expect(args.session, 'feature-x');
       expect(args.isHeadless, isFalse);
     });
 

@@ -436,6 +436,7 @@ Future<void> main(List<String> args) async {
     mode: mode,
     cwd: parsed.cwd,
     sessionRoot: parsed.sessionRoot,
+    session: parsed.session,
   );
 
   final model = _buildModel(effective);
@@ -589,6 +590,7 @@ Future<void> main(List<String> args) async {
       envVarIsSet: (name) => (Platform.environment[name] ?? '').isNotEmpty,
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
+      sessionName: effective.session,
       visionConfig: visionConfig,
       transcribeConfig: transcribeConfig,
       webSearchConfig: WebSearchConfig(secrets: webSearchSecrets),
