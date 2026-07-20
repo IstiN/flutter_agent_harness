@@ -40,7 +40,7 @@ Never _fail(String message) {
 }
 
 Never _exitWithUsage() {
-  stdout.write(cliHelpText);
+  stdout.write(cliHelpText(_version));
   exit(0);
 }
 
@@ -416,6 +416,9 @@ Future<void> main(List<String> args) async {
       model: model,
       apiKey: apiKey,
       providerKind: provider,
+      // The banner names the key env var in play (name only, never the
+      // value); the catalog maps the effective provider to its var names.
+      envVarIsSet: (name) => (Platform.environment[name] ?? '').isNotEmpty,
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
       visionConfig: visionConfig,

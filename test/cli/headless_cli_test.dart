@@ -233,6 +233,38 @@ void main() {
     expect(io.diag.toString(), contains('error: provider boom'));
   });
 
+  test(
+    'connection-refused error appends the endpoint hint on diagnostics',
+    () async {
+      final fake = _FakeStreamFunction([
+        [
+          StartEvent(partial: _assistant()),
+          ErrorEvent(
+            reason: StopReason.error,
+            error: _assistant(
+              stopReason: StopReason.error,
+              errorMessage: 'Connection refused',
+            ),
+          ),
+        ],
+      ]);
+      final cli = cliFor(fake.call);
+
+      final code = await cli.runHeadless('hi');
+
+      expect(code, 1);
+      expect(io.out.toString(), isEmpty);
+      expect(
+        io.diag.toString(),
+        contains(
+          'error: Connection refused — check the endpoint in '
+          '~/.fah/config.yaml (baseUrl: https://example.test) or pass '
+          '--base-url',
+        ),
+      );
+    },
+  );
+
   test('Ctrl-C abort exits 130', () async {
     final fake = _AbortableStreamFunction();
     final cli = cliFor(fake.call);

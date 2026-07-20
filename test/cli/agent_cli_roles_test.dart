@@ -151,6 +151,38 @@ void main() {
     );
   }
 
+  test('banner key status follows the resolved role provider', () async {
+    final factory = _RolesFactory({
+      'claude-a': [_textTurn('claude-a', 'ok')],
+    });
+    final resolver = resolverFor(factory, const {
+      'default': [ModelRef(provider: 'anthropic', modelId: 'claude-a')],
+    });
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: _placeholderModel,
+        apiKey: 'unused',
+        env: env,
+        sessionRoot: '/sessions',
+        modelRolesResolver: resolver,
+        envVarIsSet: (_) => false,
+      ),
+      io: io,
+    );
+    final run = cli.run();
+
+    await _waitFor(() => io.out.toString().contains('Type /help'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    // The resolved provider is anthropic; the flag provider kind
+    // (openai-completions) must not leak into the key status.
+    expect(output, contains('model: claude-a (anthropic-messages)'));
+    expect(output, contains('endpoint: https://api.anthropic.com'));
+    expect(output, contains('key: no key set (want ANTHROPIC_API_KEY)'));
+  });
+
   test(
     '/model shows the roles overview with the active chain position',
     () async {
