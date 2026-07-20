@@ -16,6 +16,10 @@ const _shTemplatePath = 'site/install.sh.template';
 const _psTemplatePath = 'site/install.ps1.template';
 const _shOut = 'site/install.sh';
 const _psOut = 'site/install.ps1';
+const _shSetupTemplatePath = 'site/setup.sh.template';
+const _psSetupTemplatePath = 'site/setup.ps1.template';
+const _shSetupOut = 'site/setup.sh';
+const _psSetupOut = 'site/setup.ps1';
 
 final _generatedHeader =
     '''
@@ -55,7 +59,32 @@ void main() {
   File(_shOut).writeAsStringSync(sh);
   File(_psOut).writeAsStringSync(ps);
 
-  print('Generated $_shOut and $_psOut from $_configPath');
+  final shSetup = File(_shSetupTemplatePath)
+      .readAsStringSync()
+      .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
+      .replaceFirst('{{PROVIDER_MENU}}', _shProviderMenu(providers))
+      .replaceFirst('{{PROVIDER_CASES}}', _shProviderCases(providers))
+      .replaceFirst('{{MODE_MENU}}', _shModeMenu(modes))
+      .replaceFirst('{{MODE_CASES}}', _shModeCases(modes))
+      .replaceFirst('{{APPROVAL_MENU}}', _shApprovalMenu(approvalModes))
+      .replaceFirst('{{APPROVAL_CASES}}', _shApprovalCases(approvalModes));
+
+  final psSetup = File(_psSetupTemplatePath)
+      .readAsStringSync()
+      .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
+      .replaceFirst('{{PROVIDER_MENU}}', _psProviderMenu(providers))
+      .replaceFirst('{{PROVIDER_SWITCH}}', _psProviderSwitch(providers))
+      .replaceFirst('{{MODE_MENU}}', _psModeMenu(modes))
+      .replaceFirst('{{MODE_SWITCH}}', _psModeSwitch(modes))
+      .replaceFirst('{{APPROVAL_MENU}}', _psApprovalMenu(approvalModes))
+      .replaceFirst('{{APPROVAL_SWITCH}}', _psApprovalSwitch(approvalModes));
+
+  File(_shSetupOut).writeAsStringSync(shSetup);
+  File(_psSetupOut).writeAsStringSync(psSetup);
+
+  print(
+    'Generated $_shOut, $_psOut, $_shSetupOut and $_psSetupOut from $_configPath',
+  );
 }
 
 // ── Shell fragments ─────────────────────────────────────────────────────────

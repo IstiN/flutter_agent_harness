@@ -1,0 +1,162 @@
+# setup.ps1 — interactive configuration wizard for the Fa CLI on Windows.
+#             Run this after `install.ps1` to pick a provider, model, API key,
+#             mode and approval policy.
+#
+#               irm https://fa1.dev/setup.ps1 | iex
+#
+# What it does:
+#   1. Verifies `fa` is installed.
+#   2. Interactively picks a provider + model (or a custom endpoint).
+#   3. Collects the API key and writes ~\.fah\config.yaml.
+#   4. Optionally persists the API key as a user environment variable.
+#
+# {{GENERATED_HEADER}}
+
+#Requires -Version 5.1
+$ErrorActionPreference = "Stop"
+
+$FahConfigDir = Join-Path $env:USERPROFILE ".fah"
+$FahConfigFile = Join-Path $FahConfigDir "config.yaml"
+
+# ── Output helpers ───────────────────────────────────────────────────────────
+function Write-Info($msg) { Write-Host "→ $msg" -ForegroundColor Cyan }
+function Write-Ok($msg) { Write-Host "✔ $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "! $msg" -ForegroundColor Yellow }
+function Write-Err($msg) { Write-Host "✘ $msg" -ForegroundColor Red }
+
+# ── Banner ───────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
+Write-Host "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"
+Write-Host "  █████╗  ███████║█████╗   ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║██║"
+Write-Host "  ██╔══╝  ██╔══██║╚════╝   ██║   ╚════╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
+Write-Host "  ██║     ██║  ██║         ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗"
+Write-Host "  ╚═╝     ╚═╝  ╚═╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"
+Write-Host ""
+Write-Host "  Fa setup wizard — flutter_agent_harness CLI (Windows)"
+Write-Host ""
+
+# ── 1. Verify CLI is installed ───────────────────────────────────────────────
+$faCmd = Get-Command fa -ErrorAction SilentlyContinue
+if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
+if (-not $faCmd) {
+    Write-Err "'fa' is not on your PATH."
+    Write-Host ""
+    Write-Host "  Run the installer first:"
+    Write-Host ""
+    Write-Host "    irm https://fa1.dev/install.ps1 | iex"
+    Write-Host ""
+    Write-Host "  Then open a new PowerShell window and run this wizard again:"
+    Write-Host ""
+    Write-Host "    irm https://fa1.dev/setup.ps1 | iex"
+    Write-Host ""
+    exit 1
+}
+Write-Ok "Found 'fa' on PATH ($($faCmd.Source))."
+
+# ── 2. Interactive configuration ─────────────────────────────────────────────
+# When invoked as `irm ... | iex`, stdin is the script text — skip prompts.
+if ([System.Console]::IsInputRedirected) {
+    Write-Info "Non-interactive environment detected."
+    Write-Host ""
+    Write-Host "  To finish setup, set an API key and run:"
+    Write-Host ""
+    Write-Host "    fa"
+    Write-Host ""
+    exit 0
+}
+
+if (Test-Path $FahConfigFile) {
+    $reconfigure = Read-Host "A config already exists at $FahConfigFile. Reconfigure? [y/N]"
+    if ($reconfigure -notmatch '^[Yy]') {
+        Write-Ok "Kept existing config. Run 'fa' to start."
+        exit 0
+    }
+}
+
+Write-Host ""
+Write-Info "Let's configure your default provider and model."
+Write-Host ""
+
+function Read-Choice($prompt, $valid) {
+    while ($true) {
+        $value = Read-Host $prompt
+        if ($valid -contains $value) { return $value }
+        Write-Warn "enter one of: $($valid -join ', ')"
+    }
+}
+
+function Read-Secure($prompt) {
+    $secure = Read-Host $prompt -AsSecureString
+    $cred = New-Object System.Net.NetworkCredential("", $secure)
+    return $cred.Password
+}
+
+{{PROVIDER_MENU}}
+
+{{PROVIDER_SWITCH}}
+
+# API key
+Write-Host ""
+$apiKey = ""
+if ($provider -eq "custom") {
+    $needsKey = Read-Host "Does this endpoint require an API key? [y/N]"
+    if ($needsKey -match '^[Yy]') {
+        $apiKey = Read-Secure "Paste your API key"
+    }
+} else {
+    $apiKey = Read-Secure "Paste your $keyVar"
+}
+
+{{MODE_MENU}}
+
+{{MODE_SWITCH}}
+
+{{APPROVAL_MENU}}
+
+{{APPROVAL_SWITCH}}
+
+# Write config.yaml
+New-Item -ItemType Directory -Force -Path $FahConfigDir | Out-Null
+@"
+provider: $providerKind
+model: $model
+baseUrl: $baseUrl
+mode: $mode
+approvalMode: $approval
+allowedTools: []
+"@ | Set-Content -Path $FahConfigFile -Encoding UTF8
+Write-Ok "Wrote $FahConfigFile"
+
+# Persist API key as a user environment variable
+if ($apiKey) {
+    Write-Host ""
+    $persist = Read-Host "Add $keyVar to your user environment variables? [Y/n]"
+    if ($persist -notmatch '^[Nn]') {
+        [Environment]::SetEnvironmentVariable($keyVar, $apiKey, "User")
+        Set-Item "Env:$keyVar" $apiKey
+        Write-Ok "Saved $keyVar to your user environment variables."
+        Write-Host "  Open a new PowerShell window, or run: `$env:$keyVar = '$apiKey'"
+    } else {
+        Write-Host ""
+        Write-Host "  Add this to your environment manually:"
+        Write-Host ""
+        Write-Host "    `$env:$keyVar = '<your-key>'"
+        Write-Host ""
+    }
+}
+
+# ── 3. Done ──────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Ok "Configuration complete."
+Write-Host ""
+Write-Host "  Start the agent:"
+Write-Host ""
+Write-Host "    fa"
+Write-Host ""
+Write-Host "  Or run a single headless task:"
+Write-Host ""
+Write-Host "    fa `"summarize CHANGELOG.md`""
+Write-Host ""
+Write-Host "  (the legacy command 'fah' also works)"
+Write-Host ""

@@ -1,4 +1,4 @@
-# install.ps1 — interactive one-line installer for the Fa CLI on Windows.
+# install.ps1 — non-interactive one-line installer for the Fa CLI on Windows.
 #                 Works when piped:
 #                   irm https://fa1.dev/install.ps1 | iex
 #
@@ -6,13 +6,10 @@
 #   1. Checks that the Dart SDK (dart.exe) is on PATH.
 #   2. Installs (or updates) flutter_agent_harness from pub.dev.
 #   3. Ensures the pub cache bin directory is on the user PATH.
-#   4. Interactively picks a provider + model (or a custom endpoint).
-#   5. Collects the API key and writes an initial ~\.fah\config.yaml.
-#   6. Persists the API key as a user environment variable.
-#   7. Verifies fah is on PATH and prints next steps.
+#   4. Prints a concise setup recipe and exits.
 #
-# Non-interactive fallback: if stdin is redirected, the installer activates the
-# package and prints a concise setup recipe.
+# For interactive configuration (provider, model, API key), run:
+#   irm https://fa1.dev/setup.ps1 | iex
 #
 # {{GENERATED_HEADER}}
 
@@ -20,8 +17,6 @@
 $ErrorActionPreference = "Stop"
 
 $Package = "flutter_agent_harness"
-$FahConfigDir = Join-Path $env:USERPROFILE ".fah"
-$FahConfigFile = Join-Path $FahConfigDir "config.yaml"
 
 # ── Output helpers ───────────────────────────────────────────────────────────
 function Write-Info($msg) { Write-Host "→ $msg" -ForegroundColor Cyan }
@@ -100,107 +95,19 @@ if ($faCmd) {
     Write-Host "  You may need to open a new PowerShell window after this installer finishes."
 }
 
-# ── 4. Interactive configuration ─────────────────────────────────────────────
-# When invoked as `irm ... | iex`, stdin is the script text — skip prompts.
-if ([System.Console]::IsInputRedirected) {
-    Write-Info "Non-interactive install complete."
-    Write-Host ""
-    Write-Host "  To finish setup, pick a provider and model, then set an API key:"
-    Write-Host ""
-    Write-Host "    `$env:OPENROUTER_API_KEY = '<your-key>'   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
-    Write-Host ""
-    Write-Host "  Then run:"
-    Write-Host ""
-    Write-Host "    fa"
-    Write-Host ""
-    exit 0
-}
-
-if (Test-Path $FahConfigFile) {
-    $reconfigure = Read-Host "A config already exists at $FahConfigFile. Reconfigure? [y/N]"
-    if ($reconfigure -notmatch '^[Yy]') {
-        Write-Ok "Kept existing config. Run 'fa' to start."
-        exit 0
-    }
-}
-
+# ── 4. Done ──────────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Info "Let's configure your default provider and model."
+Write-Ok "Installation complete."
 Write-Host ""
-
-function Read-Choice($prompt, $valid) {
-    while ($true) {
-        $value = Read-Host $prompt
-        if ($valid -contains $value) { return $value }
-        Write-Warn "enter one of: $($valid -join ', ')"
-    }
-}
-
-function Read-Secure($prompt) {
-    $secure = Read-Host $prompt -AsSecureString
-    $cred = New-Object System.Net.NetworkCredential("", $secure)
-    return $cred.Password
-}
-
-{{PROVIDER_MENU}}
-
-{{PROVIDER_SWITCH}}
-
-# API key
+Write-Host "  To configure a provider and API key interactively, run:"
 Write-Host ""
-$apiKey = ""
-if ($provider -eq "custom") {
-    $needsKey = Read-Host "Does this endpoint require an API key? [y/N]"
-    if ($needsKey -match '^[Yy]') {
-        $apiKey = Read-Secure "Paste your API key"
-    }
-} else {
-    $apiKey = Read-Secure "Paste your $keyVar"
-}
-
-{{MODE_MENU}}
-
-{{MODE_SWITCH}}
-
-{{APPROVAL_MENU}}
-
-{{APPROVAL_SWITCH}}
-
-# Write config.yaml
-New-Item -ItemType Directory -Force -Path $FahConfigDir | Out-Null
-@"
-provider: $providerKind
-model: $model
-baseUrl: $baseUrl
-mode: $mode
-approvalMode: $approval
-allowedTools: []
-"@ | Set-Content -Path $FahConfigFile -Encoding UTF8
-Write-Ok "Wrote $FahConfigFile"
-
-# Persist API key as a user environment variable
-if ($apiKey) {
-    Write-Host ""
-    $persist = Read-Host "Add $keyVar to your user environment variables? [Y/n]"
-    if ($persist -notmatch '^[Nn]') {
-        [Environment]::SetEnvironmentVariable($keyVar, $apiKey, "User")
-        Set-Item "Env:$keyVar" $apiKey
-        Write-Ok "Saved $keyVar to your user environment variables."
-        Write-Host "  Open a new PowerShell window, or run: `$env:$keyVar = '$apiKey'"
-    } else {
-        Write-Host ""
-        Write-Host "  Add this to your environment manually:"
-        Write-Host ""
-        Write-Host "    `$env:$keyVar = '<your-key>'"
-        Write-Host ""
-    }
-}
-
-# ── 5. Done ──────────────────────────────────────────────────────────────────
+Write-Host "    irm https://fa1.dev/setup.ps1 | iex"
 Write-Host ""
-Write-Ok "Installation and configuration complete."
+Write-Host "  Or configure manually by setting an environment variable:"
 Write-Host ""
-Write-Host "  Start the agent:"
+Write-Host "    `$env:OPENROUTER_API_KEY = '<your-key>'   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
+Write-Host ""
+Write-Host "  Then start the agent:"
 Write-Host ""
 Write-Host "    fa"
 Write-Host ""
