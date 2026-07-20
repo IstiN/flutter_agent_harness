@@ -3,9 +3,10 @@
 ::
 :: This file is for users running from Command Prompt (cmd.exe). It delegates
 :: to the PowerShell installer, which does the actual work:
-::   1. Checks that the Dart SDK (dart.exe) is on PATH.
-::   2. Installs (or updates) flutter_agent_harness from pub.dev.
-::   3. Ensures the pub cache bin directory is on the user PATH.
+::   1. Detects the Windows architecture.
+::   2. Downloads the matching Fa binary from the latest GitHub Release.
+::   3. Installs it to a directory on the user PATH.
+::   4. Falls back to `dart pub global activate` if no binary is available.
 ::
 :: Run from cmd:
 ::   curl -fsSL https://fa1.dev/install.bat -o install.bat && install.bat

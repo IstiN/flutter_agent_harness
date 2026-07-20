@@ -86,6 +86,12 @@ PY
   git tag -a "v$next" -m "Release v$next"
   if git push --atomic origin main --follow-tags; then
     echo "Released v$next"
+    # Create the GitHub Release so the binaries job can attach assets to it.
+    # Use the PAT for write access; `gh` is preinstalled on GitHub runners.
+    gh release create "v$next" \
+      --title "v$next" \
+      --notes "Release v$next" \
+      --repo "$GITHUB_REPOSITORY" || true
     exit 0
   fi
   echo "Push raced with another commit, rebasing and retrying..."
