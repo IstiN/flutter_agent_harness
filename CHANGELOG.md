@@ -317,4 +317,14 @@
 - fix(example): WebLLM context windows sized for the Fa system prompt + compaction scales with model window
 - feat(cli): headless mode — fa "prompt", -p alias, file-as-prompt (md/txt content, binary path ref)
 
+## 0.1.37
+
+- fix(example): halve ONNX Gemma context window to 2048 (WebGPU OOM mitigation)
+- feat: optional API token for custom providers (local servers need no key)
+- feat(cli): banner shows baseUrl+key status, connection-refused hint, version in --help
+- chore(example): ignore Firebase config files with real API keys
+- fix(site): full-width header background and Fa branding
+- feat(example): release prep — Fa branding, icons, bundle IDs, Firebase Analytics
+- feat(cli): prompt overrides (config prompts: + --system-prompt[-file]) and full --help reference
+
 ## Unreleased
