@@ -339,6 +339,10 @@ class AgentService extends ChangeNotifier {
   /// them above the composer as "pending" until the run picks them up.
   final List<String> pendingSteerTexts = [];
 
+  /// Tracks [TurnStartEvent]s within the current run so pending steering
+  /// messages can be cleared right when a continuation turn begins.
+  int _turnStartCount = 0;
+
   bool isStreaming = false;
   String? error;
 
@@ -391,7 +395,6 @@ class AgentService extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _addUserMessage(text: trimmed);
     _runWithTimeout(() => _agent.prompt(trimmed));
   }
 
@@ -484,50 +487,26 @@ class AgentService extends ChangeNotifier {
     ];
     final inline = images.isNotEmpty && inlinesImageAttachments;
     _clearError();
+    final message = inline
+        ? UserMessage(
+            content: [
+              TextContent(text: fullText),
+              for (final image in images)
+                ImageContent(
+                  data: base64Encode(image.bytes),
+                  mimeType: image.mimeType,
+                ),
+            ],
+            timestamp: DateTime.now(),
+          )
+        : UserMessage.text(fullText);
     if (_agent.state.isStreaming) {
-      _agent.steer(
-        inline
-            ? UserMessage(
-                content: [
-                  TextContent(text: fullText),
-                  for (final image in images)
-                    ImageContent(
-                      data: base64Encode(image.bytes),
-                      mimeType: image.mimeType,
-                    ),
-                ],
-                timestamp: DateTime.now(),
-              )
-            : UserMessage.text(fullText),
-      );
+      _agent.steer(message);
       pendingSteerTexts.add(fullText);
       notifyListeners();
       return;
     }
-    _addUserMessage(
-      text: fullText,
-      imageBytes: inline ? images.first.bytes : null,
-      mimeType: inline ? images.first.mimeType : null,
-    );
-    if (!inline) {
-      _runWithTimeout(() => _agent.prompt(fullText));
-      return;
-    }
-    _runWithTimeout(
-      () => _agent.promptMessage(
-        UserMessage(
-          content: [
-            TextContent(text: fullText),
-            for (final image in images)
-              ImageContent(
-                data: base64Encode(image.bytes),
-                mimeType: image.mimeType,
-              ),
-          ],
-          timestamp: DateTime.now(),
-        ),
-      ),
-    );
+    _runWithTimeout(() => _agent.promptMessage(message));
   }
 
   /// Sends a user message with an attached image.
@@ -548,7 +527,6 @@ class AgentService extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _addUserMessage(text: text, imageBytes: bytes, mimeType: mimeType);
     _runWithTimeout(() => _agent.promptMessage(message));
   }
 
@@ -724,17 +702,6 @@ class AgentService extends ChangeNotifier {
     }
   }
 
-  void _addUserMessage({
-    required String text,
-    Uint8List? imageBytes,
-    String? mimeType,
-  }) {
-    messages.add(
-      FahChatMessage(role: 'user', content: text, imageBytes: imageBytes),
-    );
-    notifyListeners();
-  }
-
   void _clearError() {
     if (error != null) {
       error = null;
@@ -747,14 +714,33 @@ class AgentService extends ChangeNotifier {
       case AgentStartEvent():
         isStreaming = true;
         _currentAssistantMessage = null;
+        _turnStartCount = 0;
         pendingSteerTexts.clear();
         notifyListeners();
+      case TurnStartEvent():
+        // Continuation turns (steering injected mid-run) start with a second
+        // TurnStartEvent; clear the pending banner now so it doesn't outlive
+        // the injected user messages.
+        if (_turnStartCount > 0 && pendingSteerTexts.isNotEmpty) {
+          pendingSteerTexts.clear();
+          notifyListeners();
+        }
+        _turnStartCount++;
       case MessageUpdateEvent(:final assistantMessageEvent):
         if (assistantMessageEvent is TextDeltaEvent) {
           _appendAssistantDelta(assistantMessageEvent.delta);
         }
       case MessageEndEvent(:final message):
-        if (message is ToolResultMessage) {
+        if (message is UserMessage) {
+          // User messages (initial prompts and injected steering) reach the
+          // transcript through the agent loop so ordering matches the context.
+          messages.add(_toChatMessage(message));
+          // If this text was shown as pending while the agent was busy, drop
+          // it from the banner now that it is in the live transcript.
+          final text = _userMessageText(message);
+          if (text != null) pendingSteerTexts.remove(text);
+          notifyListeners();
+        } else if (message is ToolResultMessage) {
           final text = message.content
               .whereType<TextContent>()
               .map((b) => b.text)
@@ -815,15 +801,27 @@ class AgentService extends ChangeNotifier {
           // missed appends (see _persistedCount).
         }
         await _maybeAutoCompact();
-        // If the user queued steering/follow-up messages while the run was
-        // active, kick off the next run automatically. Defer to the next
-        // event-loop tick so the current run's lifecycle finishes first
-        // (_activeRun is still non-null while this listener runs).
+        // If steering/follow-up messages arrived after the loop's last poll,
+        // kick off another run once the current lifecycle has fully finished.
         if (_agent.hasQueuedMessages()) {
           Future(() => _runWithTimeout(() => _agent.continueRun()));
         }
       default:
     }
+  }
+
+  /// Extracts the textual content of a [UserMessage] for matching against
+  /// [pendingSteerTexts]. Returns `null` for empty or non-text messages.
+  String? _userMessageText(UserMessage message) {
+    final content = message.content;
+    if (content is String) {
+      return content.isEmpty ? null : content;
+    }
+    final text = (content as List<ContentBlock>)
+        .whereType<TextContent>()
+        .map((b) => b.text)
+        .join('\n');
+    return text.isEmpty ? null : text;
   }
 
   void _appendAssistantDelta(String delta) {
