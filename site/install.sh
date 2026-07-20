@@ -59,6 +59,56 @@ clear_bar() {
   printf '\r%*s\r' 40 ''
 }
 
+# Make `fa`/`fah` usable in the current shell session without reloading.
+# When the pub cache bin directory is not on PATH yet (common in curl|sh),
+# create symlinks in a directory that is already on PATH, mirroring the
+# DMTools installer behaviour.
+ensure_fa_in_path() {
+  # Already reachable — nothing to do.
+  case ":${PATH}:" in
+    *:"$PUB_CACHE_BIN":*) return 0 ;;
+  esac
+
+  local candidates=(
+    "$HOME/.local/bin"
+    "$HOME/bin"
+  )
+  local dir=""
+  for candidate in "${candidates[@]}"; do
+    if [[ ":${PATH}:" == *:"$candidate":* ]]; then
+      dir="$candidate"
+      break
+    fi
+  done
+
+  # Fallback: prefer ~/.local/bin even if it is not on PATH yet, so the
+  # startup-file update we made will pick it up in future sessions.
+  if [[ -z $dir ]]; then
+    dir="$HOME/.local/bin"
+  fi
+
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    return 0
+  fi
+
+  if [[ ! -w $dir ]]; then
+    return 0
+  fi
+
+  local linked=0
+  for name in fa fah; do
+    local target="$PUB_CACHE_BIN/$name"
+    local link="$dir/$name"
+    if [[ -f $target ]] && ln -sf "$target" "$link" 2>/dev/null; then
+      linked=$((linked + 1))
+    fi
+  done
+
+  if [[ $linked -gt 0 ]]; then
+    ok "Created symlinks in $dir so 'fa' is available immediately."
+  fi
+}
+
 # run_with_progress(cmd, label, start%, end%)
 # Runs cmd in the background while animating a progress bar between start/end.
 # When cmd finishes, jumps to 100%.
@@ -184,6 +234,9 @@ else
       printf '\n# Fa CLI PATH\nexport PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}" >> "$shell_rc"
       ok "Added ${PUB_CACHE_BIN} to ${shell_rc}"
     fi
+    # Try to make the command available in the current session without
+    # requiring a shell reload (works when ~/.local/bin or ~/bin is on PATH).
+    ensure_fa_in_path
     say ""
     warn "Open a new terminal window/tab, or run this in the current shell:"
     say ""
@@ -194,6 +247,7 @@ else
     printf '    export PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}"
     say ""
   else
+    ensure_fa_in_path
     warn "Add this to your shell startup file (and open a new terminal):"
     say ""
     printf '    export PATH="$PATH:%s"\n' "${PUB_CACHE_BIN}"
