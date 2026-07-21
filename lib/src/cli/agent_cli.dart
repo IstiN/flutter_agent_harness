@@ -49,7 +49,9 @@ import '../ttsr/ttsr.dart';
 import '../types.dart';
 import '../usage_summary.dart';
 import '../web_search/web_search.dart';
-import 'fa_tui.dart';
+// The interactive dart_tui REPL is VM-only (raw terminal + FFI); web builds
+// of the root library get a no-op stub with the same host-facing API.
+import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
 import 'prompt_templates.dart';
 import 'tui_repl.dart';
 

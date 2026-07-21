@@ -7,12 +7,21 @@ import 'dart:io';
 import 'package:pty2/pty2.dart';
 
 Future<void> main() async {
-  final pty = PseudoTerminal.start(
-    'dart',
-    ['run', 'bin/fah.dart'],
-    workingDirectory: Directory.current.path,
-    raw: true,
-  );
+  // FA_SMOKE_BIN=/path/to/fa tests a compiled binary instead of `dart run`.
+  final bin = Platform.environment['FA_SMOKE_BIN'];
+  final pty = bin != null
+      ? PseudoTerminal.start(
+          bin,
+          const [],
+          workingDirectory: Directory.current.path,
+          raw: true,
+        )
+      : PseudoTerminal.start(
+          'dart',
+          ['run', 'bin/fah.dart'],
+          workingDirectory: Directory.current.path,
+          raw: true,
+        );
   pty.resize(100, 30);
   final buf = StringBuffer();
   final sub = pty.out.listen(buf.write);
