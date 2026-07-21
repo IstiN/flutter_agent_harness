@@ -47,10 +47,13 @@ Future<void> main() async {
   final env = await createPlatformEnv();
   debugPrint('[fah] platform env created: ${env.runtimeType}, cwd=${env.cwd}');
   final registry = await ProviderRegistry.load(env);
+  debugPrint('[fah] provider registry loaded');
   final lastConnection = await LastConnectionStore.load(env);
+  debugPrint('[fah] last connection loaded');
   final analytics = Firebase.apps.isNotEmpty
       ? FirebaseAnalytics.instance
       : null;
+  debugPrint('[fah] starting runApp');
   runApp(
     MyApp(
       env: env,

@@ -213,6 +213,21 @@ void main() {
     expect(lines.join('\n'), isNot(contains('fa> hello')));
   });
 
+  test('spinner ticks keep rewriting the last row so the cursor stays put', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+    final frames = <String>{};
+    for (var i = 0; i < 3; i++) {
+      frames.add(model.view().content.split('\n').last);
+      model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
+    }
+    frames.add(model.view().content.split('\n').last);
+    // The diff renderer only rewrites changed rows; the invisible suffix
+    // must make the last row differ on every tick or the physical cursor
+    // stays parked on the Working… row.
+    expect(frames.length, greaterThan(2));
+  });
+
   test('escape aborts the run via onInterrupt without quitting', () {
     var interrupted = 0;
     var model = FaTuiModel(

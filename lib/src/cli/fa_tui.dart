@@ -100,7 +100,7 @@ final class BusyMsg extends Msg {
 }
 
 /// Internal spinner-frame tick; re-scheduled while the model stays busy.
-final class _SpinnerTickMsg extends Msg {}
+final class SpinnerTickMsg extends Msg {}
 
 /// Message draining the queued messages (kimi-cli semantics: after a run
 /// settles the host takes them one-by-one as separate turns). The model
@@ -312,7 +312,7 @@ final class FaTuiModel extends TeaModel {
   Cmd _scheduleSpinnerTick() {
     return () async {
       await Future<void>.delayed(const Duration(milliseconds: 100));
-      return _SpinnerTickMsg();
+      return SpinnerTickMsg();
     };
   }
 
@@ -352,7 +352,7 @@ final class FaTuiModel extends TeaModel {
         msg.busy ? _scheduleSpinnerTick() : null,
       );
     }
-    if (msg is _SpinnerTickMsg) {
+    if (msg is SpinnerTickMsg) {
       if (!busy) return (this, null);
       return (copyWith(spinnerFrame: spinnerFrame + 1), _scheduleSpinnerTick());
     }
@@ -1103,7 +1103,12 @@ final class FaTuiModel extends TeaModel {
     final inputStartRow = lines.length - 2 - inputLines.length;
     final cursorRow = inputStartRow + cursorInputLine;
     final cursorX = cursorScreenCol;
-    final cursorLine = '\x1b[${cursorRow + 1};${cursorX + 1}H';
+    // The renderer diffs per line and emits the trailing cursor escape only
+    // when the last line changes. While the spinner ticks (no other change)
+    // the physical cursor would stay parked on the Working… row, so the last
+    // line gets an invisible, frame-varying SGR suffix to force its rewrite.
+    final idleSuffix = busy ? '\x1b[0m' * (spinnerFrame % 4) : '';
+    final cursorLine = '$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';
     return View(
       content: b.toString() + cursorLine,
       cursor: Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
