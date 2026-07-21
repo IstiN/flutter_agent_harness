@@ -120,7 +120,9 @@ class AgentService extends ChangeNotifier {
     JsonlSessionRepo? repo,
     SecretRedactor? redactor,
     this._config,
-  }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+    String promptSuffix = '',
+  }) : _promptSuffix = promptSuffix,
+       _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
     _responseTimeout = const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
     _redactor = redactor;
@@ -143,6 +145,22 @@ class AgentService extends ChangeNotifier {
     final secretsStore = createSecretsStore();
     final secrets = await secretsStore.readAll();
     final redactor = SecretRedactor.fromSecrets(secrets);
+    // Agent skills + project context files (AGENTS.md & friends) ride the
+    // same ExecutionEnv, so they work on every platform (web sandbox too):
+    // progressive disclosure — metadata in the prompt, bodies via `read`.
+    final roots = defaultSkillRoots(cwd: resolvedEnv.cwd, homeDir: null);
+    final skills = await discoverSkills(
+      resolvedEnv,
+      projectRoots: roots.projectRoots,
+      userRoots: roots.userRoots,
+    );
+    final contextFiles = await loadProjectContextFiles(resolvedEnv);
+    final promptSuffix = [
+      if (formatProjectContext(contextFiles).isNotEmpty)
+        formatProjectContext(contextFiles),
+      if (formatSkillsForPrompt(skills).isNotEmpty)
+        formatSkillsForPrompt(skills),
+    ].join('\n\n');
     return AgentService._withEnv(
       env: secrets.isEmpty
           ? resolvedEnv
@@ -150,6 +168,7 @@ class AgentService extends ChangeNotifier {
       config: config,
       redactor: redactor,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
+      promptSuffix: promptSuffix,
     );
   }
 
@@ -159,7 +178,9 @@ class AgentService extends ChangeNotifier {
     SecretRedactor? redactor,
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
+    String promptSuffix = '',
   }) : _config = config,
+       _promptSuffix = promptSuffix,
        sessionsRoot = '${env.cwd}/sessions',
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
     _providerKind = config.providerKind;
@@ -175,7 +196,7 @@ class AgentService extends ChangeNotifier {
     final isOnDevice = _isOnDeviceKind(config.providerKind);
     _agent = Agent(
       model: config.toModel(),
-      systemPrompt: _effectiveSystemPrompt(config, redactor),
+      systemPrompt: _composeSystemPrompt(config),
       streamFunction: streamFunction ?? _streamFunctionFor(config),
       toolRegistry: ToolRegistry([
         ...builtinTools(
@@ -336,6 +357,17 @@ class AgentService extends ChangeNotifier {
   /// Redactor captured at construction so [reconfigure] can rebuild the
   /// system prompt's secret-name hint.
   SecretRedactor? _redactor;
+
+  /// Rendered skills + project-context sections appended to the composed
+  /// system prompt (discovered in [AgentService.create]).
+  final String _promptSuffix;
+
+  /// The base system prompt plus the skills/context suffix (kept as one
+  /// place so model/provider switches preserve the sections).
+  String _composeSystemPrompt(AgentConfig config) {
+    final base = _effectiveSystemPrompt(config, _redactor);
+    return _promptSuffix.isEmpty ? base : '$base\n\n$_promptSuffix';
+  }
 
   /// The config this service was created with, kept so a new session can be
   /// cloned from it (see [clone]). `null` when the service was built from a
@@ -621,7 +653,7 @@ class AgentService extends ChangeNotifier {
     abort();
     await waitForIdle();
     _agent.state.model = config.toModel();
-    _agent.state.systemPrompt = _effectiveSystemPrompt(config, _redactor);
+    _agent.state.systemPrompt = _composeSystemPrompt(config);
     _agent.streamFunction = _streamFunctionFor(config);
     _providerKind = config.providerKind;
     _responseTimeout = _isOnDeviceKind(config.providerKind)

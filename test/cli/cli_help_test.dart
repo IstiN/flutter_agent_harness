@@ -93,6 +93,11 @@ void main() {
       'checkpoint',
       'rewind',
       '/tasks',
+      '/skills',
+      'SKILL.md',
+      'CLAUDE.md',
+      'GOAL.md',
+      'DESIGN.md',
       'ttsr:',
       '.fah/rules.yaml',
       // Tools.

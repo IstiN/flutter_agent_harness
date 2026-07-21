@@ -25,6 +25,8 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/tool_registry.dart';
 import '../task/task.dart';
+import '../skills/skills.dart';
+import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
@@ -134,7 +136,13 @@ final class AgentCliConfig {
     this.onModeChanged,
     this.onApprovalChanged,
     this.isShiftPressed,
+    this.homeDir,
   });
+
+  /// The user's home directory, when the host has one (used for user-level
+  /// skill/context discovery: `~/.fah/skills`, `~/.fah/AGENTS.md`). Null on
+  /// sandboxed hosts (web) where only the project FS exists.
+  final String? homeDir;
 
   /// Directories to scan for `/name` prompt templates (`.md` files).
   final List<String> promptTemplateDirs;
@@ -562,7 +570,7 @@ class AgentCli {
   AgentMode get currentMode => _currentMode;
 
   /// The effective system prompt sent to the model.
-  String get systemPrompt => config.systemPrompt ?? _currentMode.systemPrompt;
+  String get systemPrompt => _agent.state.systemPrompt;
 
   /// The underlying [Agent] driving the session.
   Agent get agent => _agent;
@@ -644,6 +652,25 @@ class AgentCli {
   late AgentMode _currentMode;
   List<PromptTemplate> _templates = [];
 
+  /// Discovered agent skills (progressive disclosure into the system
+  /// prompt) and project context files, loaded once per CLI run.
+  List<Skill> _skills = const [];
+  List<ProjectContextFile> _contextFiles = const [];
+
+  /// Rebuilds the agent's system prompt from the active mode (or the
+  /// explicit override) plus the project-context and skills sections
+  /// (pi/kimi-style: appended after the base prompt).
+  void _applyPromptComposition() {
+    final base = config.systemPrompt ?? _currentMode.systemPrompt;
+    final contextSection = formatProjectContext(_contextFiles);
+    final skillsSection = formatSkillsForPrompt(_skills);
+    _agent.state.systemPrompt = [
+      base,
+      if (contextSection.isNotEmpty) contextSection,
+      if (skillsSection.isNotEmpty) skillsSection,
+    ].join('\n\n');
+  }
+
   /// Model ids shown by the most recent `/model` picker, so `/model N` can
   /// select by number without retyping the full id.
   List<String>? _lastModelList;
@@ -673,6 +700,22 @@ class AgentCli {
       config.env,
       config.promptTemplateDirs,
     );
+    final roots = defaultSkillRoots(
+      cwd: config.env.cwd,
+      homeDir: config.homeDir,
+    );
+    _skills = await discoverSkills(
+      config.env,
+      projectRoots: roots.projectRoots,
+      userRoots: roots.userRoots,
+    );
+    _contextFiles = await loadProjectContextFiles(
+      config.env,
+      userFile: config.homeDir == null
+          ? null
+          : '${config.homeDir}/.fah/AGENTS.md',
+    );
+    _applyPromptComposition();
     _session = await _initializeSession();
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
@@ -1280,10 +1323,68 @@ class AgentCli {
     await _settled;
     if (trimmed.startsWith('!')) {
       await _runShellCommand(trimmed.substring(1));
+    } else if (trimmed.startsWith('/skill:')) {
+      await _runSkillCommand(trimmed.substring('/skill:'.length));
     } else if (trimmed.startsWith('/')) {
       await _handleCommand(trimmed);
     } else {
       _startRun(line);
+    }
+  }
+
+  /// `/skill:<name> [args]` — explicit skill invocation (kimi's slash
+  /// runner): the skill body is injected as the user message, with the args
+  /// appended as the actual request.
+  Future<void> _runSkillCommand(String rest) async {
+    final splitAt = rest.indexOf(RegExp(r'\s'));
+    final name = (splitAt < 0 ? rest : rest.substring(0, splitAt)).trim();
+    final args = splitAt < 0 ? '' : rest.substring(splitAt).trim();
+    final skill = _skills
+        .where((s) => s.name.toLowerCase() == name.toLowerCase())
+        .firstOrNull;
+    if (skill == null) {
+      io.writeln(
+        'unknown skill: $name'
+        '${_skills.isEmpty ? ' (no skills discovered)' : ''}',
+      );
+      return;
+    }
+    final body = await _readSkillBody(skill);
+    if (body == null) {
+      io.writeln('cannot read skill file: ${skill.filePath}');
+      return;
+    }
+    io.writeln('skill ${skill.name} — ${skill.filePath}');
+    final message = args.isEmpty ? body : '$body\n\nUser request:\n$args';
+    if (isBusy) {
+      _agent.steer(UserMessage.text(message));
+    } else {
+      _startRun(message);
+    }
+  }
+
+  /// Reads a skill file and strips its YAML frontmatter.
+  Future<String?> _readSkillBody(Skill skill) async {
+    final text = (await config.env.readTextFile(skill.filePath)).valueOrNull;
+    if (text == null) return null;
+    if (!text.startsWith('---')) return text.trim();
+    final end = text.indexOf('\n---', 3);
+    if (end < 0) return text.trim();
+    return text.substring(end + 4).trim();
+  }
+
+  /// `/skills` — lists the discovered skills (name, description, location).
+  void _listSkills() {
+    if (_skills.isEmpty) {
+      io.writeln('no skills discovered (roots: .fah/skills, .agents/skills)');
+      return;
+    }
+    io.writeln('skills:');
+    for (final skill in _skills) {
+      io.writeln(
+        '  ${skill.name} — ${skill.description}  '
+        '${_style.dim('${skill.filePath} (${skill.scope.name})')}',
+      );
     }
   }
 
@@ -1417,6 +1518,8 @@ class AgentCli {
         _printStats();
       case '/tasks':
         _listTaskJobs(rest);
+      case '/skills':
+        _listSkills();
       case '/model':
         await _handleModelCommand(rest);
       case '/models':
@@ -1729,7 +1832,7 @@ class AgentCli {
       return;
     }
     _currentMode = mode;
-    _agent.state.systemPrompt = mode.systemPrompt;
+    _applyPromptComposition();
     io.writeln('switched mode to ${mode.name}');
     config.onModeChanged?.call(mode.name);
   }
@@ -1943,6 +2046,7 @@ class AgentCli {
     '/compact': 'summarize history to free context',
     '/stats': 'show token and cost totals',
     '/tasks': '[cancel <id>] — list background agents',
+    '/skills': 'list discovered skills (invoke with /skill:<name>)',
     '/model': '<provider/model> — select model (opens selector)',
     '/models': '[filter] — list known models for the current provider',
     '/mode': '[name] — show or switch the active mode',
