@@ -454,6 +454,55 @@ void main() {
     expect(output, isNot(contains('key:')));
   });
 
+  test(
+    'background task job completes and re-enters the conversation',
+    () async {
+      final fake = _FakeStreamFunction([
+        // 1. The parent delegates a background agent.
+        _toolTurn([
+          ToolCall(
+            id: 't1',
+            name: 'task',
+            arguments: const {
+              'context': 'repo state',
+              'background': true,
+              'tasks': [
+                {'name': 'Scout', 'task': 'survey the repo'},
+              ],
+            },
+          ),
+        ]),
+        // 2. The parent wraps up its own turn.
+        _textTurn('delegated the survey'),
+        // 3. The background child agent produces its result.
+        _textTurn('survey says: all quiet'),
+        // 4. The async-result re-wake reacts to the injected notification.
+        _textTurn('noted, survey integrated'),
+      ]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('delegate it');
+      await _waitFor(() => fake.calls == 4 && !cli.isBusy);
+      io.sendLine('/tasks');
+      await _waitFor(() => io.out.toString().contains('background agents:'));
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      // The tool ran (start/end one-liners) and the job completed…
+      expect(output, contains('[task] context="repo state"'));
+      expect(output, contains('[task] done'));
+      expect(output, contains('[task] Scout (task) completed'));
+      expect(output, contains('agent://Scout'));
+      // The child's output re-entered as a steered/re-wake async-result…
+      expect(output, contains('survey says: all quiet'));
+      expect(output, contains('noted, survey integrated'));
+      // …and /tasks lists the settled job.
+      expect(output, contains('✓ Scout (task) completed'));
+    },
+  );
+
   test('renders tool start/end one-liners and stores tool results', () async {
     await env.writeFile('notes.txt', 'data');
     final fake = _FakeStreamFunction([

@@ -147,7 +147,20 @@ Conventions for AI agents and contributors working in this repository.
   `AgentOutputStore`, and `TaskJobManager` are session-scoped through it)
   and the background job surface — omp injects completions into the parent
   conversation as async results, here the host wires
-  `TaskJobManager.completions` to do that (CLI wiring is a follow-up).
+  `TaskJobManager.completions` to do that. The CLI wires it in
+  `agent_cli.dart`: the `task` tool is registered with the core tool
+  surface as `childTools`, and every settled job prints a dim transcript
+  notification and re-enters the parent conversation as an async-result
+  message (`<system-notice>` + `<task-result>` envelope, `agent://<id>`
+  pointer, 4k preview cap) — steered mid-run, or re-woken as a fresh run
+  while idle (omp's aside/idle-flush paths). Monitoring: the `/tasks`
+  slash command lists jobs (`○/⠿/✓/✗` + elapsed + `agent://` ref,
+  `/tasks cancel <id>` aborts a child) and the status line carries a
+  `bg:N` badge while jobs are active (kimi's toolbar badge). Headless
+  runs wait for in-flight jobs plus their re-wake reactions (kimi's
+  print-mode, capped at 10 rounds). The config captures the startup
+  model — later `/model` switches don't propagate to children (role
+  resolution still applies).
   `task_executor.dart` runs each item as a child `Agent` with a restricted
   tool surface (the registry never hands children `task`: no nesting),
   resolves cheap models per agent type through `ModelRolesResolver`

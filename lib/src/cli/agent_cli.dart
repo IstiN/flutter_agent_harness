@@ -24,6 +24,7 @@ import 'key_event.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/tool_registry.dart';
+import '../task/task.dart';
 import '../approval/approval.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
@@ -454,7 +455,10 @@ class AgentCli {
       _pluginSlashCommands.addAll(context.slashCommands);
     }
 
-    _toolRegistry = ToolRegistry([
+    _streamFunction =
+        streamFunction ??
+        providerStreamFunction(config.providerKind, config.apiKey);
+    final coreTools = <AgentTool>[
       ...builtinTools(
         config.env,
         webSearch: config.webSearchConfig,
@@ -470,10 +474,17 @@ class AgentCli {
       if (config.transcribeConfig != null)
         transcribeAudioTool(config.env, config.transcribeConfig!),
       ...pluginTools,
-    ]);
-    _streamFunction =
-        streamFunction ??
-        providerStreamFunction(config.providerKind, config.apiKey);
+    ];
+    // The `task` tool (omp's background subagents): children draw from the
+    // core tool surface (never `task` itself), completions are injected back
+    // into the parent conversation as async-result messages.
+    _taskConfig = TaskToolConfig(
+      childTools: coreTools,
+      streamFunction: _streamFunction,
+      model: config.model,
+      rolesResolver: config.modelRolesResolver,
+    );
+    _toolRegistry = ToolRegistry([...coreTools, taskTool(config: _taskConfig)]);
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
@@ -579,6 +590,11 @@ class AgentCli {
   /// The provider stream backing runs and (legacy) compaction. Mutable:
   /// model-roles wiring and `/model` switches replace it.
   late StreamFunction _streamFunction;
+
+  /// The `task` tool's session config: child tool surface, stream wiring,
+  /// and the background [TaskJobManager] whose completions are injected
+  /// back into the parent conversation (omp's async-result flow).
+  late final TaskToolConfig _taskConfig;
   late final Agent _agent;
   late final ApprovalManager _approval;
   late final ToolRegistry _toolRegistry;
@@ -661,6 +677,9 @@ class AgentCli {
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
     });
+    final taskSub = _taskConfig.jobManager.completions.listen(
+      _onTaskJobCompleted,
+    );
     try {
       if (_useTui) {
         // The TUI prints the banner itself into its output history (buffered
@@ -689,6 +708,7 @@ class AgentCli {
       _pendingAskAnswer?.complete(null);
       _pendingAskAnswer = null;
       await interruptSub.cancel();
+      await taskSub.cancel();
       await _settled;
     }
   }
@@ -1116,16 +1136,35 @@ class AgentCli {
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
     });
+    final taskSub = _taskConfig.jobManager.completions.listen(
+      _onTaskJobCompleted,
+    );
     try {
       await _agent.prompt(prompt);
       // Awaits any in-flight TTSR retry chain, persists the messages, and
       // auto-compacts — the same end-of-turn sequence as a REPL run.
       await _afterRun();
+      // Background jobs (kimi's print-mode): don't exit while agents are in
+      // flight. Settled jobs inject async-result messages through the
+      // listener (re-wake runs), so loop until every job is terminal and
+      // those reaction runs settle too (capped like kimi's drain limit).
+      for (var round = 0; round < 10; round++) {
+        final hasActive = _taskConfig.jobManager.jobs.any(
+          (job) =>
+              job.status == TaskJobStatus.queued ||
+              job.status == TaskJobStatus.running,
+        );
+        if (!hasActive) break;
+        await _taskConfig.jobManager.settled;
+        await _settled;
+        await _afterRun();
+      }
     } catch (error) {
       io.writeln(_errorLine('$error'));
       return 1;
     } finally {
       await interruptSub.cancel();
+      await taskSub.cancel();
     }
     // The exit code reads the final assistant message AFTER _afterRun: a
     // TTSR abort/retry chain replaces the aborted intermediate message with
@@ -1376,6 +1415,8 @@ class AgentCli {
         _printHelp(filter: rest);
       case '/stats':
         _printStats();
+      case '/tasks':
+        _listTaskJobs(rest);
       case '/model':
         await _handleModelCommand(rest);
       case '/models':
@@ -1856,9 +1897,19 @@ class AgentCli {
     final contextTokens = lastAssistant?.usage.input ?? 0;
     final window = model.contextWindow;
     final pct = window > 0 ? (contextTokens / window * 100).round() : 0;
+    // kimi's toolbar badge: active background agents, when any.
+    final activeJobs = _taskConfig.jobManager.jobs
+        .where(
+          (job) =>
+              job.status == TaskJobStatus.queued ||
+              job.status == TaskJobStatus.running,
+        )
+        .length;
+    final badge = activeJobs > 0 ? ' · bg:$activeJobs' : '';
     return '$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
-        '${total.totalTokens}tok · \$$cost · turn ${_usage.turns} · ${model.id}';
+        '${total.totalTokens}tok · \$$cost · turn ${_usage.turns}$badge · '
+        '${model.id}';
   }
 
   /// Compact token counts like pi's `275k` / `1M`.
@@ -1891,6 +1942,7 @@ class AgentCli {
     '/reset': 'start a new session',
     '/compact': 'summarize history to free context',
     '/stats': 'show token and cost totals',
+    '/tasks': '[cancel <id>] — list background agents',
     '/model': '<provider/model> — select model (opens selector)',
     '/models': '[filter] — list known models for the current provider',
     '/mode': '[name] — show or switch the active mode',
@@ -2001,6 +2053,120 @@ class AgentCli {
     io.writeln('cache write tokens: ${total.cacheWrite}');
     io.writeln('total tokens: ${total.totalTokens}');
     io.writeln('cost: \$${total.cost.total.toStringAsFixed(4)}');
+  }
+
+  /// Called when a background `task` job settles (omp's async-result flow):
+  /// renders a transcript notification and injects the result back into the
+  /// parent conversation — steered mid-run, or as a fresh re-wake run while
+  /// idle (omp's idle flush via `agent.prompt`).
+  void _onTaskJobCompleted(TaskJob job) {
+    final result = job.result;
+    final seconds = result == null
+        ? ''
+        : ' in ${(result.duration.inMilliseconds / 1000).toStringAsFixed(1)}s';
+    io.writeln(
+      _style.dim(
+        '[task] ${job.id} (${job.agent}) ${job.status.name}$seconds — '
+        'agent://${job.id}',
+      ),
+    );
+    if (_exited) return;
+    final message = _buildAsyncResultMessage(job);
+    if (isBusy) {
+      // Mid-run: the steering queue delivers it at the next step boundary
+      // (omp's non-interrupting aside between requests).
+      _agent.steer(UserMessage.text(message));
+    } else {
+      _startRun(message);
+    }
+  }
+
+  /// The async-result message re-injected into the parent conversation when
+  /// a background job settles (omp's `<system-notice>` + `<task-result>`
+  /// envelope, reduced: no artifact spill — the pointer is `agent://<id>`).
+  static const _asyncResultPreviewChars = 4000;
+
+  String _buildAsyncResultMessage(TaskJob job) {
+    final result = job.result;
+    final buffer = StringBuffer()
+      ..writeln('<system-notice>')
+      ..writeln(
+        'Background agent ${job.id} (${job.agent}) finished with status: '
+        '${job.status.name}.',
+      )
+      ..writeln('Task: ${job.task}')
+      ..writeln()
+      ..write(
+        '<task-result id="${job.id}" agent="${job.agent}" '
+        'status="${job.status.name}">',
+      );
+    final output = result?.output ?? '';
+    if (output.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln(
+          output.length > _asyncResultPreviewChars
+              ? '${output.substring(0, _asyncResultPreviewChars)}\n…\n'
+                    '[Full output: agent://${job.id}]'
+              : output,
+        );
+    }
+    final error = result?.error;
+    if (error != null) buffer.write('\nerror: $error');
+    buffer
+      ..write('\n</task-result>')
+      ..write('\n</system-notice>');
+    return buffer.toString();
+  }
+
+  /// `/tasks [cancel <id>]` — lists the session's background agents with
+  /// their states (kimi's TaskList surface; cancelling a running job aborts
+  /// its child run, which then settles as aborted).
+  void _listTaskJobs(String rest) {
+    final parts = rest
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    final verb = parts.isEmpty ? '' : parts.first;
+    if (verb == 'cancel') {
+      if (parts.length < 2) {
+        io.writeln('usage: /tasks cancel <id>');
+        return;
+      }
+      final job = _taskConfig.jobManager.job(parts[1]);
+      if (job == null) {
+        io.writeln('unknown task job: ${parts[1]}');
+        return;
+      }
+      job.cancel();
+      io.writeln('cancelled ${job.id}');
+      return;
+    }
+    final jobs = _taskConfig.jobManager.jobs;
+    if (jobs.isEmpty) {
+      io.writeln('no background agents this session');
+      return;
+    }
+    io.writeln('background agents:');
+    for (final job in jobs) {
+      final marker = switch (job.status) {
+        TaskJobStatus.queued => '○',
+        TaskJobStatus.running => '⠿',
+        TaskJobStatus.completed => '✓',
+        TaskJobStatus.failed || TaskJobStatus.aborted => '✗',
+      };
+      final duration = job.result?.duration;
+      final elapsed = duration == null
+          ? ''
+          : ' ${(duration.inMilliseconds / 1000).toStringAsFixed(1)}s';
+      var task = job.task.replaceAll('\n', ' ');
+      if (task.length > 60) task = '${task.substring(0, 60)}…';
+      io.writeln(
+        '  $marker ${job.id} (${job.agent}) ${job.status.name}$elapsed — '
+        '$task  ${_style.dim('agent://${job.id}')}',
+      );
+    }
   }
 
   void _onAgentEvent(AgentEvent event, CancelToken cancelToken) {
