@@ -373,4 +373,14 @@
 - fix(cli): avoid double stdin subscription in TUI REPL
 - fix(example): use DynamicLibrary.process for iOS wasm_run static linking
 
+## 0.1.42
+
+- feat(cli): dart_tui interactive TUI with markdown rendering
+- ci: add build-mobile.yml (APK/iOS) and build-macos.yml (DMG) workflows
+- feat: multi-session support — AgentSessionManager (core) + FlutterSessionManager (app)
+- fix(example): hide empty assistant bubbles in chat
+- feat(example): debug-log system prompt platform and WASM runtime setup
+- docs(example): drop stale no-WASM-on-iOS comments after static linking fix
+- fix(example): iOS gets the full WASM sandbox command set in the system prompt
+
 ## Unreleased
