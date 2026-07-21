@@ -21,19 +21,20 @@ class _NoopStyle implements TuiStyle {
 
 class _Harness {
   final out = StringBuffer();
-  final writelnCalls = <String>[];
   final submitted = <String>[];
   final selectedModels = <String>[];
   final input = StreamController<dynamic>();
-  late final TuiRepl repl;
+  late TuiRepl repl;
 
   _Harness() {
     repl = TuiRepl(
       write: out.write,
-      writeln: writelnCalls.add,
+      writeln: (text) => out.writeln(text),
       prompt: 'fa> ',
       statusLine: () => '/work · 0tok · turn 0 · test-model',
       style: _NoopStyle(),
+      columns: 80,
+      rows: 24,
       buildSlashMenu: (prefix) {
         final lower = prefix.toLowerCase();
         const items = [
@@ -49,7 +50,7 @@ class _Harness {
             )
             .toList();
       },
-      buildModelMenu: () => const [
+      buildModelMenu: (filter) => const [
         MenuItem(key: 'model-a', label: 'model-a'),
         MenuItem(key: 'model-b', label: 'model-b'),
       ],
@@ -73,15 +74,9 @@ void main() {
     h.input.add(const KeyEvent(char: '/', type: KeyType.char));
     await h.pump();
 
-    expect(h.writelnCalls, contains('[Commands]'));
-    expect(
-      h.writelnCalls,
-      contains(predicate<String>((l) => l.contains('/help'))),
-    );
-    expect(
-      h.writelnCalls,
-      contains(predicate<String>((l) => l.contains('/exit'))),
-    );
+    expect(h.out.toString(), contains('[Commands]'));
+    expect(h.out.toString(), contains('/help'));
+    expect(h.out.toString(), contains('/exit'));
 
     await h.finish();
     await run;
@@ -93,11 +88,12 @@ void main() {
 
     h.input.add(const KeyEvent(char: '/', type: KeyType.char));
     await h.pump();
-    expect(h.writelnCalls, contains('[Commands]'));
+    expect(h.out.toString(), contains('[Commands]'));
 
     h.input.add(const KeyEvent(type: KeyType.escape));
     await h.pump();
-    expect(h.writelnCalls.last, isNot(contains('[Commands]')));
+    final lastFrame = h.out.toString().split('\x1b[?2026l').last;
+    expect(lastFrame, isNot(contains('[Commands]')));
 
     await h.finish();
     await run;
@@ -123,29 +119,6 @@ void main() {
     expect(h.submitted, ['/exit']);
   });
 
-  test('typing /m opens the model picker', () async {
-    final h = _Harness();
-    final run = h.repl.run(h.input.stream);
-
-    h.input.add(const KeyEvent(char: '/', type: KeyType.char));
-    await h.pump();
-    h.input.add(const KeyEvent(char: 'm', type: KeyType.char));
-    await h.pump();
-
-    expect(h.writelnCalls, contains('[Select model]'));
-    expect(
-      h.writelnCalls,
-      contains(predicate<String>((l) => l.contains('model-a'))),
-    );
-    expect(
-      h.writelnCalls,
-      contains(predicate<String>((l) => l.contains('model-b'))),
-    );
-
-    await h.finish();
-    await run;
-  });
-
   test('typing after / filters the command menu', () async {
     final h = _Harness();
     final run = h.repl.run(h.input.stream);
@@ -155,11 +128,45 @@ void main() {
     h.input.add(const KeyEvent(char: 'h', type: KeyType.char));
     await h.pump();
 
-    final lastMenu = h.writelnCalls.lastIndexOf('[Commands]');
+    final output = h.out.toString();
+    final lastMenu = output.lastIndexOf('[Commands]');
     expect(lastMenu, greaterThanOrEqualTo(0));
-    final menuLines = h.writelnCalls.skip(lastMenu + 1).toList();
-    expect(menuLines.any((l) => l.contains('/help')), isTrue);
-    expect(menuLines.any((l) => l.contains('/exit')), isFalse);
+    final menuSlice = output.substring(lastMenu);
+    expect(menuSlice.contains('/help'), isTrue);
+    expect(menuSlice.contains('/exit'), isFalse);
+
+    await h.finish();
+    await run;
+  });
+
+  test('typing /models opens the model picker', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.input.add(const KeyEvent(char: '/', type: KeyType.char));
+    await h.pump();
+    for (final ch in 'models'.split('')) {
+      h.input.add(KeyEvent(char: ch, type: KeyType.char));
+    }
+    await h.pump();
+
+    expect(h.out.toString(), contains('[Select model]'));
+    expect(h.out.toString(), contains('model-a'));
+    expect(h.out.toString(), contains('model-b'));
+
+    await h.finish();
+    await run;
+  });
+
+  test('openModelMenu opens the model picker', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.openModelMenu();
+    await h.pump();
+
+    expect(h.out.toString(), contains('[Select model]'));
+    expect(h.out.toString(), contains('model-a'));
 
     await h.finish();
     await run;
@@ -169,9 +176,7 @@ void main() {
     final h = _Harness();
     final run = h.repl.run(h.input.stream);
 
-    h.input.add(const KeyEvent(char: '/', type: KeyType.char));
-    await h.pump();
-    h.input.add(const KeyEvent(char: 'm', type: KeyType.char));
+    h.repl.openModelMenu();
     await h.pump();
     h.input.add(const KeyEvent(type: KeyType.down));
     await h.pump();
@@ -182,5 +187,182 @@ void main() {
     await run;
 
     expect(h.selectedModels, ['model-b']);
+  });
+
+  test('selecting /model from slash menu opens model picker', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.input.add(const KeyEvent(char: '/', type: KeyType.char));
+    await h.pump();
+    // /model is the third item, so press down twice.
+    h.input.add(const KeyEvent(type: KeyType.down));
+    await h.pump();
+    h.input.add(const KeyEvent(type: KeyType.down));
+    await h.pump();
+    h.input.add(const KeyEvent(type: KeyType.enter));
+    await h.pump();
+
+    expect(h.out.toString(), contains('[Select model]'));
+
+    await h.finish();
+    await run;
+  });
+
+  test('refresh updates the model picker while open', () async {
+    final h = _Harness();
+    final extra = <MenuItem>[];
+    h.repl = TuiRepl(
+      write: h.out.write,
+      writeln: (text) => h.out.writeln(text),
+      prompt: 'fa> ',
+      statusLine: () => '/work · 0tok · turn 0 · test-model',
+      style: _NoopStyle(),
+      columns: 80,
+      rows: 24,
+      buildSlashMenu: (_) => const [],
+      buildModelMenu: (filter) => [
+        const MenuItem(key: 'model-a', label: 'model-a'),
+        ...extra,
+      ],
+      onSubmit: (line) async => h.submitted.add(line),
+      onModelSelected: (id) async => h.selectedModels.add(id),
+    );
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.openModelMenu();
+    await h.pump();
+    expect(h.out.toString(), contains('model-a'));
+    expect(h.out.toString(), isNot(contains('model-c')));
+
+    extra.add(const MenuItem(key: 'model-c', label: 'model-c'));
+    h.repl.refresh();
+    await h.pump();
+    expect(h.out.toString(), contains('model-c'));
+
+    await h.finish();
+    await run;
+  });
+
+  test('typing /models open filters the model picker', () async {
+    final h = _Harness();
+    h.repl = TuiRepl(
+      write: h.out.write,
+      writeln: (text) => h.out.writeln(text),
+      prompt: 'fa> ',
+      statusLine: () => '/work · 0tok · turn 0 · test-model',
+      style: _NoopStyle(),
+      columns: 80,
+      rows: 24,
+      buildSlashMenu: (_) => const [],
+      buildModelMenu: (filter) => [
+        if ('model-a'.contains(filter))
+          const MenuItem(key: 'model-a', label: 'model-a'),
+        if ('model-b'.contains(filter))
+          const MenuItem(key: 'model-b', label: 'model-b'),
+      ],
+      onSubmit: (line) async => h.submitted.add(line),
+      onModelSelected: (id) async => h.selectedModels.add(id),
+    );
+    final run = h.repl.run(h.input.stream);
+
+    for (final ch in '/models a'.split('')) {
+      h.input.add(KeyEvent(char: ch, type: KeyType.char));
+    }
+    await h.pump();
+
+    final output = h.out.toString();
+    final lastMenu = output.lastIndexOf('[Select model: a]');
+    expect(lastMenu, greaterThanOrEqualTo(0));
+    final menuSlice = output.substring(lastMenu);
+    expect(menuSlice, contains('model-a'));
+    expect(menuSlice, isNot(contains('model-b')));
+
+    await h.finish();
+    await run;
+  });
+
+  test('typing in model picker filters the list', () async {
+    final h = _Harness();
+    h.repl = TuiRepl(
+      write: h.out.write,
+      writeln: (text) => h.out.writeln(text),
+      prompt: 'fa> ',
+      statusLine: () => '/work · 0tok · turn 0 · test-model',
+      style: _NoopStyle(),
+      columns: 80,
+      rows: 24,
+      buildSlashMenu: (_) => const [],
+      buildModelMenu: (filter) => [
+        if ('model-a'.contains(filter))
+          const MenuItem(key: 'model-a', label: 'model-a'),
+        if ('model-b'.contains(filter))
+          const MenuItem(key: 'model-b', label: 'model-b'),
+      ],
+      onSubmit: (line) async => h.submitted.add(line),
+      onModelSelected: (id) async => h.selectedModels.add(id),
+    );
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.openModelMenu();
+    await h.pump();
+    h.input.add(const KeyEvent(char: 'a', type: KeyType.char));
+    await h.pump();
+
+    final output = h.out.toString();
+    final lastMenu = output.lastIndexOf('[Select model: a]');
+    expect(lastMenu, greaterThanOrEqualTo(0));
+    final menuSlice = output.substring(lastMenu);
+    expect(menuSlice, contains('model-a'));
+    expect(menuSlice, isNot(contains('model-b')));
+
+    await h.finish();
+    await run;
+  });
+
+  test('tab in model picker accepts the current selection', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.openModelMenu();
+    await h.pump();
+    h.input.add(const KeyEvent(type: KeyType.down));
+    await h.pump();
+    h.input.add(const KeyEvent(type: KeyType.tab));
+    await h.pump();
+
+    await h.finish();
+    await run;
+
+    expect(h.selectedModels, ['model-b']);
+  });
+
+  test('appendOutput adds lines above the prompt', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.appendOutput('tool result line\n');
+    await h.pump();
+    h.repl.appendOutput('another line');
+    await h.pump();
+
+    final output = h.out.toString();
+    expect(output, contains('tool result line'));
+    expect(output, contains('another line'));
+    expect(output, contains('fa> '));
+
+    await h.finish();
+    await run;
+  });
+
+  test('alt screen is entered and exited', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+    await h.pump();
+    expect(h.out.toString(), contains('\x1b[?1049h'));
+
+    await h.finish();
+    await run;
+    expect(h.out.toString(), contains('\x1b[?1049l'));
   });
 }

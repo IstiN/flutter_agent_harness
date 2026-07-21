@@ -259,6 +259,66 @@ void main() {
       expect(events.last, isA<DoneEvent>());
     });
 
+    test('streams reasoning_details text entries as thinking blocks', () async {
+      // OpenRouter routes some models' reasoning (e.g. NVIDIA nemotron) as
+      // reasoning_details text entries instead of a `reasoning` delta field.
+      final client = sseClient(
+        sseBody([
+          {
+            'choices': [
+              {
+                'delta': {
+                  'reasoning_details': [
+                    {'type': 'reasoning.text', 'text': 'let me ', 'index': 0},
+                  ],
+                },
+              },
+            ],
+          },
+          {
+            'choices': [
+              {
+                'delta': {
+                  'reasoning_details': [
+                    {'type': 'reasoning.text', 'text': 'think', 'index': 0},
+                  ],
+                },
+              },
+            ],
+          },
+          {
+            'choices': [
+              {
+                'delta': {'content': 'answer'},
+              },
+            ],
+          },
+          {
+            'choices': [
+              {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+            ],
+          },
+          'data: [DONE]\n\n',
+        ]),
+      );
+
+      final stream = streamOpenAICompletions(
+        openRouterModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
+      final thinkingDeltas = events.whereType<ThinkingDeltaEvent>().toList();
+      expect(thinkingDeltas, hasLength(2));
+      final thinkingPartial =
+          thinkingDeltas[1].partial.content.first as ThinkingContent;
+      expect(thinkingPartial.thinking, 'let me think');
+      expect(events.last, isA<DoneEvent>());
+    });
+
     test('parses usage incl. cached tokens and OpenRouter cost', () async {
       final client = sseClient(
         sseBody([
@@ -467,8 +527,11 @@ void main() {
     });
 
     test(
-      'stream ending without finish_reason becomes an error event',
+      'stream ending without finish_reason completes with a natural stop',
       () async {
+        // Some providers (seen on OpenRouter free-tier models) close the SSE
+        // stream without a final finish_reason chunk; the accumulated content
+        // is treated as complete instead of failing the turn.
         final client = sseClient(
           sseChunk({
             'choices': [
@@ -487,9 +550,9 @@ void main() {
         );
 
         final events = await stream.toList();
-        final error = events.last as ErrorEvent;
-        expect(error.reason, StopReason.error);
-        expect(error.error.errorMessage, contains('finish_reason'));
+        final done = events.last as DoneEvent;
+        expect(done.reason, StopReason.stop);
+        expect((done.message.content.single as TextContent).text, 'cut off');
       },
     );
 

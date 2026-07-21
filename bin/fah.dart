@@ -25,6 +25,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -52,6 +53,45 @@ Never _fail(String message) {
   stderr.writeln('fa: $message');
   stderr.writeln('Run with --help for usage.');
   exit(64);
+}
+
+/// macOS Core Graphics modifier check, mirroring pi's native-modifiers
+/// helper: terminals that do not encode Shift+Enter in the input stream
+/// still let us read the live Shift state from the HID system. Lazily opened
+/// so non-macOS hosts never touch the dylib.
+typedef _CGEventSourceFlagsStateC = ffi.Uint64 Function(ffi.Uint32);
+typedef _CGEventSourceFlagsStateDart = int Function(int);
+
+int Function(int)? _cgEventSourceFlagsState;
+var _cgLookupAttempted = false;
+
+bool _isShiftPressed() {
+  if (!Platform.isMacOS) return false;
+  if (!_cgLookupAttempted) {
+    _cgLookupAttempted = true;
+    try {
+      final coreGraphics = ffi.DynamicLibrary.open(
+        '/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics',
+      );
+      _cgEventSourceFlagsState = coreGraphics
+          .lookupFunction<
+            _CGEventSourceFlagsStateC,
+            _CGEventSourceFlagsStateDart
+          >('CGEventSourceFlagsState');
+    } on Object {
+      _cgEventSourceFlagsState = null;
+    }
+  }
+  final fn = _cgEventSourceFlagsState;
+  if (fn == null) return false;
+  const kCGEventSourceStateHIDSystemState = 1;
+  const kCGEventFlagMaskShift = 0x00020000;
+  try {
+    final flags = fn(kCGEventSourceStateHIDSystemState);
+    return (flags & kCGEventFlagMaskShift) != 0;
+  } on Object {
+    return false;
+  }
 }
 
 Never _exitWithUsage(String version) {
@@ -261,6 +301,12 @@ final class _TerminalCliIO implements CliIO {
 
   @override
   bool get supportsRawMode => !headless && stdin.hasTerminal && _rawModeOk;
+
+  @override
+  int get columns => stdout.terminalColumns;
+
+  @override
+  int get rows => stdout.terminalLines;
 
   void _startRawInput() {
     if (_keySub != null) return;
@@ -518,7 +564,11 @@ Future<void> main(List<String> args) async {
   final customEndpoint =
       provider == 'openai-completions' &&
       baseUrl != providerCatalog['openrouter']!.defaultBaseUrl;
-  final apiKey = defaultRoleResolved || customEndpoint
+  // Interactive REPL can start without a key: the user can switch providers,
+  // models, or base URLs with slash commands before the first run. Headless
+  // mode needs a key immediately because it performs a single run and exits.
+  final interactive = headlessPrompt == null;
+  final apiKey = defaultRoleResolved || customEndpoint || interactive
       ? (_optionalApiKey(provider) ?? '')
       : _resolveApiKey(provider);
 
@@ -636,6 +686,9 @@ Future<void> main(List<String> args) async {
       onModelChanged: (_) async => persistConfig(),
       onModeChanged: (_) async => persistConfig(),
       onApprovalChanged: () async => persistConfig(),
+      // Shift+Enter in the TUI: terminals that do not encode the modifier
+      // still expose it through the HID state (macOS only; null elsewhere).
+      isShiftPressed: Platform.isMacOS ? _isShiftPressed : null,
     ),
     io: io,
   );
@@ -695,5 +748,28 @@ Future<void> main(List<String> args) async {
     await cli.run();
   } finally {
     await sigintSub.cancel();
+  }
+
+  // Swallow late terminal query responses: dart_tui asks the terminal for its
+  // background color and sync-update support at startup, and the replies
+  // arrive as ordinary stdin bytes. If they land after the program stopped
+  // listening, the shell echoes them as garbage characters at the prompt.
+  // Drain stdin briefly in raw mode before handing the terminal back.
+  if (stdin.hasTerminal) {
+    try {
+      stdin.echoMode = false;
+      stdin.lineMode = false;
+    } on Exception {
+      // Best effort; the terminal may already be unusable.
+    }
+    final drain = stdin.listen((_) {});
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    await drain.cancel();
+    try {
+      stdin.echoMode = true;
+      stdin.lineMode = true;
+    } on Exception {
+      // Best effort.
+    }
   }
 }

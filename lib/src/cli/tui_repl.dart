@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'key_event.dart';
 
 /// A selectable item in the TUI inline menu.
@@ -30,9 +32,12 @@ abstract interface class TuiStyle {
 
 /// A raw-mode terminal REPL with an inline slash-command menu and model picker.
 ///
-/// This class is intentionally host-agnostic: it knows nothing about the agent
-/// or provider catalog. The embedding [AgentCli] supplies menu builders and the
-/// submit callback.
+/// Uses the terminal's alternate screen buffer so the frame never pollutes
+/// shell scrollback, and redraws changed rows at absolute positions wrapped
+/// in synchronized-output markers. Output history is kept above the fixed
+/// input line, so streaming text and tool notices append without moving the
+/// prompt. The hardware cursor is hidden for the whole session and restored
+/// on exit.
 final class TuiRepl {
   TuiRepl({
     required this.write,
@@ -46,6 +51,8 @@ final class TuiRepl {
     required this.onModelSelected,
     this.onInterrupt,
     this.isExited,
+    this.columns = 80,
+    this.rows = 24,
   });
 
   final void Function(String) write;
@@ -54,42 +61,148 @@ final class TuiRepl {
   final String Function() statusLine;
   final TuiStyle style;
   final List<MenuItem> Function(String prefix) buildSlashMenu;
-  final List<MenuItem> Function() buildModelMenu;
+  final List<MenuItem> Function(String filter) buildModelMenu;
   final Future<void> Function(String line) onSubmit;
   final Future<void> Function(String modelId) onModelSelected;
   final void Function()? onInterrupt;
   final bool Function()? isExited;
+
+  /// Terminal width in columns.
+  final int columns;
+
+  /// Terminal height in rows.
+  final int rows;
+
+  /// Maximum number of menu items rendered at once; the rest scrolls.
+  static const _maxMenuItems = 10;
+
+  /// Maximum output history kept above the input line.
+  static const _maxOutputLines = 200;
 
   final StringBuffer _buffer = StringBuffer();
   var _cursor = 0;
   var _menuOpen = false;
   var _menuModelMode = false;
   var _menuSelected = 0;
+  String _modelFilter = '';
   List<MenuItem> _menuItems = const [];
-  var _menuHeight = 0;
+
+  /// Bounded output history shown above the input line.
+  final List<String> _outputLines = <String>[];
+
+  /// Previous rendered frame, padded to [rows] lines, used for diffing.
+  List<String> _previousLines = const [];
+
+  var _renderScheduled = false;
 
   String get _text => _buffer.toString();
 
+  /// Appends host output (assistant text, tool notices, errors) above the
+  /// input line. Chunked streaming text is merged into the current last line;
+  /// embedded newlines split into new entries.
+  void appendOutput(String text, {bool newline = false}) {
+    if (text.isEmpty && !newline) return;
+    final parts = text.split('\n');
+    if (_outputLines.isEmpty) _outputLines.add('');
+    _outputLines[_outputLines.length - 1] += parts.first;
+    for (var i = 1; i < parts.length; i++) {
+      _outputLines.add(parts[i]);
+    }
+    if (newline) _outputLines.add('');
+    if (_outputLines.length > _maxOutputLines) {
+      _outputLines.removeRange(0, _outputLines.length - _maxOutputLines);
+    }
+    _scheduleRender();
+  }
+
+  void _scheduleRender() {
+    if (_renderScheduled) return;
+    _renderScheduled = true;
+    scheduleMicrotask(() {
+      _renderScheduled = false;
+      _render();
+    });
+  }
+
   /// Runs the repl until the input key stream closes or the host marks exit.
   Future<void> run(Stream<dynamic> keysOrLines) async {
-    _render();
-    await for (final event in keysOrLines) {
-      if (_hostExited) break;
-      if (event is String) {
-        await _submitLine(event);
+    // Enter the alternate screen buffer and hide the hardware cursor so the
+    // TUI frame never pollutes shell scrollback and redraws don't flicker.
+    write('\x1b[?1049h\x1b[?25l');
+    try {
+      _render();
+      await for (final event in keysOrLines) {
         if (_hostExited) break;
-        _render();
-      } else if (event is KeyEvent) {
-        _handleKey(event);
-        if (_hostExited) break;
-        _render();
+        if (event is String) {
+          await _submitLine(event);
+          if (_hostExited) break;
+          _render();
+        } else if (event is KeyEvent) {
+          _handleKey(event);
+          if (_hostExited) break;
+          _render();
+        }
       }
+    } finally {
+      write('\x1b[?25h\x1b[?1049l');
     }
   }
 
   bool get _hostExited => isExited?.call() ?? false;
 
   void _handleKey(KeyEvent key) {
+    // When the model picker is open, typing filters the list instead of
+    // editing the input buffer.
+    if (_menuOpen && _menuModelMode) {
+      switch (key.type) {
+        case KeyType.char:
+          final ch = key.char;
+          if (ch != null && ch.length == 1) {
+            // Ignore the first space after the picker opens: `/models open`
+            // should start filtering at `open`, not at the separating space.
+            if (ch == ' ' && _modelFilter.isEmpty) return;
+            _modelFilter += ch;
+            _refreshModelMenu();
+          }
+          return;
+        case KeyType.backspace:
+          if (_modelFilter.isNotEmpty) {
+            _modelFilter = _modelFilter.substring(0, _modelFilter.length - 1);
+            _refreshModelMenu();
+          }
+          return;
+        case KeyType.enter:
+        case KeyType.tab:
+          _acceptMenuItem();
+          return;
+        case KeyType.escape:
+          _closeMenu();
+          return;
+        case KeyType.up:
+          if (_menuSelected > 0) _menuSelected--;
+          return;
+        case KeyType.down:
+          if (_menuSelected < _menuItems.length - 1) _menuSelected++;
+          return;
+        case KeyType.pageUp:
+          _menuSelected = 0;
+          return;
+        case KeyType.pageDown:
+          _menuSelected = _menuItems.isEmpty ? 0 : _menuItems.length - 1;
+          return;
+        case KeyType.shiftTab:
+          if (_menuSelected > 0) _menuSelected--;
+          return;
+        case KeyType.home:
+        case KeyType.end:
+        case KeyType.left:
+        case KeyType.right:
+        case KeyType.delete:
+        case KeyType.unknown:
+          return;
+      }
+    }
+
     switch (key.type) {
       case KeyType.enter:
         if (_menuOpen) {
@@ -97,36 +210,57 @@ final class TuiRepl {
         } else {
           _submitCurrent();
         }
+        break;
       case KeyType.escape:
         _closeMenu();
+        break;
       case KeyType.tab:
         if (_menuOpen) _acceptMenuItem();
+        break;
+      case KeyType.shiftTab:
+        if (_menuOpen && _menuSelected > 0) _menuSelected--;
+        break;
       case KeyType.up:
         if (_menuOpen && _menuSelected > 0) _menuSelected--;
+        break;
       case KeyType.down:
         if (_menuOpen && _menuSelected < _menuItems.length - 1) {
           _menuSelected++;
         }
+        break;
       case KeyType.left:
         if (_cursor > 0) _cursor--;
+        break;
       case KeyType.right:
         if (_cursor < _text.length) _cursor++;
+        break;
       case KeyType.home:
         _cursor = 0;
+        break;
       case KeyType.end:
         _cursor = _text.length;
+        break;
       case KeyType.backspace:
         _deleteLeft();
         _updateMenu();
+        break;
       case KeyType.delete:
         _deleteRight();
         _updateMenu();
+        break;
       case KeyType.char:
         final ch = key.char;
         if (ch != null && ch.length == 1) {
           _insert(ch);
           _updateMenu();
         }
+        break;
+      case KeyType.pageUp:
+        if (_menuOpen) _menuSelected = 0;
+        break;
+      case KeyType.pageDown:
+        if (_menuOpen) _menuSelected = _menuItems.length - 1;
+        break;
       case KeyType.unknown:
         break;
     }
@@ -167,7 +301,15 @@ final class TuiRepl {
 
   void _updateMenu() {
     final text = _text;
-    if (text == '/m') {
+
+    // `/models <filter>` opens the picker with a pre-filled filter.
+    final filterMatch = RegExp(r'^/models\s+(.*)$').firstMatch(text);
+    if (filterMatch != null) {
+      _openModelMenu(filter: filterMatch.group(1)!);
+      return;
+    }
+
+    if (text == '/models') {
       _openModelMenu();
       return;
     }
@@ -186,11 +328,38 @@ final class TuiRepl {
     _closeMenu();
   }
 
-  void _openModelMenu() {
+  /// Refreshes the currently open menu and re-renders the frame. Call this
+  /// when the host asynchronously updates the model list while the picker is
+  /// visible.
+  void refresh() {
+    if (_menuOpen && _menuModelMode) {
+      _menuItems = buildModelMenu(_modelFilter);
+      if (_menuSelected >= _menuItems.length) {
+        _menuSelected = _menuItems.isEmpty ? 0 : _menuItems.length - 1;
+      }
+    }
+    _render();
+  }
+
+  /// Opens the model picker. Called by the host when the user submits a bare
+  /// `/model` command in TUI mode.
+  void openModelMenu() {
+    _openModelMenu();
+    _render();
+  }
+
+  void _openModelMenu({String filter = ''}) {
     _menuModelMode = true;
-    _menuItems = buildModelMenu();
+    _modelFilter = filter;
+    _menuItems = buildModelMenu(filter);
     _menuSelected = 0;
     _menuOpen = true;
+  }
+
+  void _refreshModelMenu() {
+    _menuItems = buildModelMenu(_modelFilter);
+    _menuSelected = 0;
+    _render();
   }
 
   void _closeMenu() {
@@ -198,7 +367,7 @@ final class TuiRepl {
     _menuModelMode = false;
     _menuItems = const [];
     _menuSelected = 0;
-    _menuHeight = 0;
+    _modelFilter = '';
   }
 
   void _acceptMenuItem() {
@@ -208,6 +377,12 @@ final class TuiRepl {
       _closeMenu();
       _clearBuffer();
       onModelSelected(item.key);
+      return;
+    }
+    // Selecting /model or /models from the slash menu opens the model picker
+    // instead of inserting the command text.
+    if (item.key == '/model' || item.key == '/models') {
+      _openModelMenu();
       return;
     }
     _buffer
@@ -234,36 +409,39 @@ final class TuiRepl {
     await onSubmit(line);
   }
 
-  void _render() {
-    // Move cursor to the start and clear everything drawn in the previous
-    // frame: status bar (1 line), prompt + input (1 line), menu lines.
-    final totalLines = 1 + 1 + _menuHeight;
-    final clear = StringBuffer();
-    for (var i = 0; i < totalLines; i++) {
-      if (i > 0) clear.write('\n');
-      clear.write('\r\x1B[K');
-    }
-    // Move back up to the top of the cleared block.
-    if (totalLines > 1) clear.write('\x1b[${totalLines - 1}A');
-    write(clear.toString());
+  /// Builds the visible frame as plain lines. Layout is:
+  ///   output history (bounded, oldest at top)
+  ///   separator
+  ///   status line
+  ///   prompt + input
+  ///   optional menu
+  List<String> _buildFrame() {
+    final lines = <String>[];
 
-    // Status bar
-    writeln(style.dim('─' * 60));
-    writeln(style.dim(statusLine()));
+    lines.addAll(_outputLines);
+    lines.add(style.dim('─' * columns));
+    lines.add(style.dim(statusLine()));
+    lines.add('${style.bold(style.cyan(prompt))}$_text');
 
-    // Prompt + input
-    write(style.bold(style.cyan(prompt)));
-    write(_text);
-
-    // Menu
     if (_menuOpen && _menuItems.isNotEmpty) {
       final title = _menuModelMode
-          ? style.bold('[Select model]')
+          ? style.bold(
+              '[Select model${_modelFilter.isNotEmpty ? ': $_modelFilter' : ''}]',
+            )
           : style.bold('[Commands]');
-      writeln('');
-      writeln(title);
-      _menuHeight = 1 + _menuItems.length;
-      for (var i = 0; i < _menuItems.length; i++) {
+      lines.add(title);
+      var start = 0;
+      if (_menuItems.length > _maxMenuItems) {
+        start = (_menuSelected - (_maxMenuItems ~/ 2)).clamp(
+          0,
+          _menuItems.length - _maxMenuItems,
+        );
+      }
+      final end = _menuItems.length < start + _maxMenuItems
+          ? _menuItems.length
+          : start + _maxMenuItems;
+      if (start > 0) lines.add(style.dim('  ↑ more'));
+      for (var i = start; i < end; i++) {
         final item = _menuItems[i];
         final selected = i == _menuSelected;
         final prefix = selected ? style.green('▸ ') : '  ';
@@ -271,22 +449,91 @@ final class TuiRepl {
         final desc = item.description.isNotEmpty
             ? ' ${style.dim(item.description)}'
             : '';
-        writeln('$prefix$label$desc');
+        lines.add('$prefix$label$desc');
       }
-    } else {
-      _menuHeight = 0;
-      writeln('');
+      if (end < _menuItems.length) lines.add(style.dim('  ↓ more'));
     }
 
-    // Position cursor inside the input line. Count visible chars roughly by
-    // stripping ANSI escapes. The prompt length is also stripped below.
+    return lines;
+  }
+
+  /// Pads/truncates the frame to exactly [rows] lines. The input line is
+  /// always the last line of the visible frame; when content is taller than
+  /// the screen the oldest output is scrolled off the top.
+  List<String> _visibleFrame(List<String> frame) {
+    if (frame.length > rows) {
+      return frame.sublist(frame.length - rows);
+    }
+    final padding = rows - frame.length;
+    if (padding <= 0) return frame;
+    return List<String>.filled(padding, '') + frame;
+  }
+
+  void _render() {
+    final frame = _buildFrame();
+    final visible = _visibleFrame(frame);
+
+    // The input line is the last non-menu structural line before menu items.
+    final inputRow = _inputRow(visible);
     final promptVisible = _stripAnsi(prompt).length;
     final targetCol = promptVisible + _cursor;
-    // Move up from after the menu to the input line, then to the target column.
-    if (_menuHeight > 0) {
-      write('\x1b[${_menuHeight + 1}A');
+
+    final out = StringBuffer();
+    out.write('\x1b[?2026h');
+
+    for (var i = 0; i < visible.length; i++) {
+      final newLine = visible[i];
+      final oldLine = i < _previousLines.length ? _previousLines[i] : '';
+      if (newLine != oldLine) {
+        out.write('\x1b[${i + 1};1H');
+        out.write(_truncate(newLine, columns));
+        // Only erase to end of line when the new line is narrower than the
+        // old one; unconditionally clearing the whole line first flickers.
+        if (_stripAnsi(newLine).length < _stripAnsi(oldLine).length) {
+          out.write('\x1b[K');
+        }
+      }
     }
-    write('\r\x1b[${targetCol}C');
+
+    out.write('\x1b[?2026l');
+
+    // Position the cursor on the input line.
+    out.write('\x1b[${inputRow + 1};${targetCol + 1}H');
+
+    write(out.toString());
+    _previousLines = List.of(visible);
+  }
+
+  int _inputRow(List<String> visible) {
+    // Find the line containing the prompt, searching from the bottom.
+    for (var i = visible.length - 1; i >= 0; i--) {
+      if (_stripAnsi(visible[i]).startsWith(prompt)) return i;
+    }
+    return visible.length - 1;
+  }
+
+  /// Truncates [line] to [width] visible columns, preserving ANSI sequences.
+  String _truncate(String line, int width) {
+    if (_stripAnsi(line).length <= width) return line;
+    final out = StringBuffer();
+    var visible = 0;
+    var i = 0;
+    while (i < line.length && visible < width) {
+      if (line[i] == '\x1b') {
+        final match = RegExp(
+          r'^\x1b\[[0-9;]*[A-Za-z]',
+        ).firstMatch(line.substring(i));
+        if (match != null) {
+          out.write(match.group(0));
+          i += match.group(0)!.length;
+          continue;
+        }
+      }
+      out.write(line[i]);
+      visible++;
+      i++;
+    }
+    return out.toString();
   }
 
   String _stripAnsi(String text) {
