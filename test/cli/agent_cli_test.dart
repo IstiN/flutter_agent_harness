@@ -503,6 +503,46 @@ void main() {
     },
   );
 
+  test(
+    'project context files and skills enter the system prompt; /skill: invokes',
+    () async {
+      await env.createDir('/work/.git');
+      await env.writeFile('/work/AGENTS.md', 'follow the repo rules');
+      await env.createDir('/work/.fah/skills/deploy');
+      await env.writeFile(
+        '/work/.fah/skills/deploy/SKILL.md',
+        '---\nname: deploy\ndescription: Deploy the app\n---\n'
+            'Deploy body here.\n',
+      );
+      final fake = _FakeStreamFunction([_textTurn('deploying now')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await _waitFor(
+        () =>
+            cli.systemPrompt.contains('follow the repo rules') &&
+            cli.systemPrompt.contains('<name>deploy</name>'),
+      );
+      io.sendLine('/skill:deploy ship it');
+      await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(
+        output,
+        contains('skill deploy — /work/.fah/skills/deploy/SKILL.md'),
+      );
+      expect(output, contains('deploying now'));
+      // The skill body + args reached the model as one user message.
+      final lastUser = fake.contexts.last.messages
+          .whereType<UserMessage>()
+          .last;
+      final text = lastUser.content as String;
+      expect(text, contains('Deploy body here.'));
+      expect(text, contains('User request:\nship it'));
+    },
+  );
+
   test('renders tool start/end one-liners and stores tool results', () async {
     await env.writeFile('notes.txt', 'data');
     final fake = _FakeStreamFunction([

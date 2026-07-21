@@ -683,6 +683,7 @@ Future<void> main(List<String> args) async {
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
       modelRolesResolver: rolesResolver,
+      homeDir: home,
       // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
       // with project rules (.fah/rules.yaml), project first.
       ttsr: _resolveTtsr(saved, cwd),

@@ -234,6 +234,17 @@ REPL COMMANDS
   /compact           summarize history to free context
   /stats             show token and cost totals
   /tasks [cancel <id>] list (or cancel) background agents
+  /skills            list discovered skills; /skill:<name> [args] invokes one
+
+SKILLS AND CONTEXT FILES
+  Skills are SKILL.md files with YAML frontmatter (name, description),
+  discovered from .fah/skills and .agents/skills under the project and the
+  home directory (project wins name clashes). Only metadata enters the
+  system prompt — the agent loads the body with the read tool when the
+  task matches (progressive disclosure). AGENTS.md, CLAUDE.md, GOAL.md and
+  DESIGN.md found from the working directory up to the git root (plus
+  ~/.fah/AGENTS.md) are merged into the system prompt, closest last, with
+  a 32 KiB leaf-first budget.
   /model [id|?|N]    show model/roles, pick from known models, or switch
   /models [filter]   list known models for the current provider
   /mode [name]       show or switch the active mode

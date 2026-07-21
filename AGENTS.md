@@ -137,6 +137,26 @@ Conventions for AI agents and contributors working in this repository.
   `TtsrManager` + `TtsrController` directly. The CLI wires it next to the
   checkpoint controller, awaits `TtsrController.settled` before run-end
   persistence, and `/reset` clears it.
+- `lib/src/skills/skills.dart` — agent skills (ported, reduced, from pi's
+  `core/skills.ts` + kimi-cli's `skill/__init__.py`): `<root>/<name>/SKILL.md`
+  (canonical) or flat `<root>/<name>.md`, frontmatter `name`/`description`
+  (description falls back to the first body line), roots project
+  (`.fah/skills`, `.agents/skills`) > user (`~/.fah/skills`,
+  `~/.agents/skills`), first-name-wins. Progressive disclosure: only
+  metadata enters the system prompt (`<available_skills>` block); the agent
+  loads bodies with the `read` tool. Reads go through `ExecutionEnv`, so it
+  works on every host (desktop/mobile/web sandbox).
+- `lib/src/prompts/project_context.dart` — project context files
+  (`AGENTS.md`/`CLAUDE.md`/`GOAL.md`/`DESIGN.md`) auto-merged into the
+  system prompt: walk from cwd to the git root (all four names collected
+  per directory), farthest-first with `<!-- From: -->` annotations and a
+  32 KiB leaf-first budget (kimi's chain); an optional user file
+  (`~/.fah/AGENTS.md`) merges first. The CLI composes base prompt +
+  context + skills in `AgentCli._applyPromptComposition` (startup and mode
+  switches); `/skill:<name> [args]` injects the body as the user message
+  (kimi's runner) and `/skills` lists discoveries. The example app does the
+  same in `AgentService.create` (suffix preserved across provider
+  switches).
 - `lib/src/task/` — the `task` tool: parallel subagents with
   schema-validated results (ported, reduced, from oh-my-pi
   `packages/coding-agent/src/task/`). The wire shape is omp's batch form
