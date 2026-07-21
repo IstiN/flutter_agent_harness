@@ -92,6 +92,7 @@ void main() {
       '/stats',
       'checkpoint',
       'rewind',
+      '/tasks',
       'ttsr:',
       '.fah/rules.yaml',
       // Tools.
@@ -103,6 +104,7 @@ void main() {
       'web_search',
       'web_fetch',
       'lsp',
+      'task',
       'ask',
       'inspect_image',
       'transcribe_audio',

@@ -214,6 +214,9 @@ TOOLS
   web_fetch        fetch a page rendered as Markdown
   lsp              diagnostics/definition/references/rename via language
                    servers (project server map: .fah/lsp.json)
+  task             spawn subagents — parallel batches, or background jobs
+                   (background: true) whose results re-enter the conversation
+                   as async-result messages; monitor with /tasks
   ask              ask the user structured questions mid-run
   checkpoint       mark the session for a later rewind
   rewind           prune the transcript back to a checkpoint
@@ -230,6 +233,7 @@ REPL COMMANDS
   /reset             start a new session
   /compact           summarize history to free context
   /stats             show token and cost totals
+  /tasks [cancel <id>] list (or cancel) background agents
   /model [id|?|N]    show model/roles, pick from known models, or switch
   /models [filter]   list known models for the current provider
   /mode [name]       show or switch the active mode
