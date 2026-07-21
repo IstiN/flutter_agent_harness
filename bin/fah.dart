@@ -34,9 +34,12 @@ import 'package:yaml/yaml.dart' as yaml;
 
 const _fallbackVersion = '0.1.0';
 
-/// Reads the package version from `pubspec.yaml` next to the executable so
-/// `--version` and `--help` stay in sync with releases without hard-coding it.
+/// Reads the package version with three fallbacks so compiled binaries stay
+/// accurate: `-DFA_VERSION=` baked at compile time (CI releases), then the
+/// `pubspec.yaml` next to the executable (source runs), then the constant.
 String _packageVersion() {
+  const fromEnv = String.fromEnvironment('FA_VERSION');
+  if (fromEnv.isNotEmpty) return fromEnv;
   try {
     final scriptPath = Platform.script.toFilePath();
     final pubspec = File('${File(scriptPath).parent.parent.path}/pubspec.yaml');

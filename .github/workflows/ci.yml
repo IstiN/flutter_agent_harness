@@ -186,10 +186,11 @@ jobs:
         shell: bash
         run: |
           out="fa-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          version=$(grep '^version:' pubspec.yaml | awk '{print $2}')
           if [ "${{ matrix.cross }}" = "true" ]; then
-            dart compile exe bin/fah.dart --target-os ${{ matrix.os }} --target-arch ${{ matrix.arch }} -o "$out"
+            dart compile exe bin/fah.dart --target-os ${{ matrix.os }} --target-arch ${{ matrix.arch }} -DFA_VERSION="$version" -o "$out"
           else
-            dart compile exe bin/fah.dart -o "$out"
+            dart compile exe bin/fah.dart -DFA_VERSION="$version" -o "$out"
           fi
           ls -lh "$out"
 
@@ -199,6 +200,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           asset="fa-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          # gh release upload needs the release to exist; create it lazily
+          # (matrix jobs race here, so a duplicate create is tolerated).
+          if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" --generate-notes \
+              --repo "${GITHUB_REPOSITORY}" || true
+          fi
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
   release:
