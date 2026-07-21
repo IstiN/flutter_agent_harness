@@ -69,6 +69,12 @@ class _RolesFactory {
 }
 
 class _FakeCliIO implements CliIO {
+  @override
+  int columns = 80;
+
+  @override
+  int rows = 24;
+
   final _lines = StreamController<String>();
   final _interrupts = StreamController<void>.broadcast();
   final _keys = StreamController<KeyEvent>.broadcast();

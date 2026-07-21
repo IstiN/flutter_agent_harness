@@ -179,6 +179,12 @@ class _FakeShell implements Shell {
 
 /// In-memory [CliIO]: scripted input lines, captured output.
 class FakeCliIO implements CliIO {
+  @override
+  int columns = 80;
+
+  @override
+  int rows = 24;
+
   final _lines = StreamController<String>();
   final _interrupts = StreamController<void>.broadcast();
   final _keys = StreamController<KeyEvent>.broadcast();
@@ -1091,7 +1097,12 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('/work · 15tok · \$0.0010 · turn 1 · test-model'));
+    expect(
+      output,
+      contains(
+        '/work · ctx 0% (10/100k) · 15tok · \$0.0010 · turn 1 · test-model',
+      ),
+    );
   });
 
   group('session management', () {

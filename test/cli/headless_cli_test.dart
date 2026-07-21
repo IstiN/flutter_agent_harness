@@ -109,6 +109,12 @@ class _AbortableStreamFunction {
 /// primary stream (stdout), [writeln] is diagnostics (stderr). Never
 /// interactive, like the real headless terminal IO.
 class _HeadlessFakeCliIO implements CliIO {
+  @override
+  int columns = 80;
+
+  @override
+  int rows = 24;
+
   final _interrupts = StreamController<void>.broadcast();
   final out = StringBuffer();
   final diag = StringBuffer();

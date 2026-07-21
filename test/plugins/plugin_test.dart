@@ -139,6 +139,12 @@ final class _DemoPlugin implements FahPlugin {
 
 // Minimal FakeCliIO copy to avoid cross-test coupling.
 class FakeCliIO implements CliIO {
+  @override
+  int columns = 80;
+
+  @override
+  int rows = 24;
+
   final _lines = StreamController<String>();
   final _interrupts = StreamController<void>.broadcast();
   final _keys = StreamController<KeyEvent>.broadcast();

@@ -406,6 +406,23 @@ AssistantMessageEventStream streamOpenAICompletions(
                   pendingReasoningDetailsByToolCallId[map['id'] as String] =
                       serialized;
                 }
+              } else if (detail is Map<String, dynamic>) {
+                // OpenRouter routes some models' reasoning (e.g. NVIDIA
+                // nemotron) as reasoning_details text entries instead of a
+                // plain `reasoning` delta field — surface those as thinking
+                // too, otherwise the turn looks silent.
+                final detailText = detail['text'];
+                if (detailText is String && detailText.isNotEmpty) {
+                  final block = ensureThinkingBlock('reasoning_details');
+                  block.thinking.write(detailText);
+                  eventStream.push(
+                    ThinkingDeltaEvent(
+                      contentIndex: contentIndex(block),
+                      delta: detailText,
+                      partial: snapshot(),
+                    ),
+                  );
+                }
               }
             }
           }
@@ -423,8 +440,17 @@ AssistantMessageEventStream streamOpenAICompletions(
             state.errorMessage ?? 'Provider returned an error stop reason',
           );
         }
+        // Some providers (seen on OpenRouter free-tier models) close the SSE
+        // stream without a final finish_reason chunk. The accumulated content
+        // is complete as far as we know, so keep the default natural stop
+        // instead of failing the whole turn — but flag the silent truncation
+        // so the UI can note the reply may be cut off. A genuinely truncated
+        // tool call surfaces as an args-parse error downstream, which the
+        // agent loop already feeds back to the model as a tool error.
         if (!hasFinishReason) {
-          throw StateError('Stream ended without finish_reason');
+          state.stopReason = StopReason.stop;
+          state.errorMessage ??=
+              'stream ended without finish_reason — the reply may be truncated';
         }
 
         eventStream.push(

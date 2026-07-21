@@ -236,6 +236,7 @@ REPL COMMANDS
   /session [name]    show current or switch/create a named session
   /session-new <n>   create a new named session
   /sessions          list named sessions for the current directory
+  /resume            switch to the most recent session
   /rename-session <n> rename the current session
   /approval [mode]   show or set tool approval (always-ask|write|yolo)
   /allow [tool]      always-allow a tool (or list them)

@@ -117,6 +117,7 @@ void main() {
       '/session',
       '/session-new',
       '/sessions',
+      '/resume',
       '/rename-session',
       '/help',
       // Config file.

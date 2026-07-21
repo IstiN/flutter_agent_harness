@@ -17,6 +17,8 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:http/http.dart' as http;
+
 import '../agent/agent.dart';
 import 'key_event.dart';
 import '../agent/agent_loop.dart';
@@ -47,6 +49,7 @@ import '../ttsr/ttsr.dart';
 import '../types.dart';
 import '../usage_summary.dart';
 import '../web_search/web_search.dart';
+import 'fa_tui.dart';
 import 'prompt_templates.dart';
 import 'tui_repl.dart';
 
@@ -90,6 +93,12 @@ abstract interface class CliIO {
   /// callback, so prompt-policy tool calls are denied with a reason — the
   /// safe non-interactive default.
   bool get isInteractive;
+
+  /// Terminal width in columns. Non-TUI hosts use the 80-column default.
+  int get columns => 80;
+
+  /// Terminal height in rows. Non-TUI hosts use the 24-row default.
+  int get rows => 24;
 }
 
 /// Static configuration for an [AgentCli] session.
@@ -121,6 +130,7 @@ final class AgentCliConfig {
     this.onModelChanged,
     this.onModeChanged,
     this.onApprovalChanged,
+    this.isShiftPressed,
   });
 
   /// Directories to scan for `/name` prompt templates (`.md` files).
@@ -160,6 +170,10 @@ final class AgentCliConfig {
   /// Called when the approval state changes (`/approval`, `/allow`, or an
   /// "approve always" prompt answer) so the executable can persist it.
   final void Function()? onApprovalChanged;
+
+  /// Host-provided Shift modifier check (e.g. macOS Core Graphics via FFI).
+  /// When null, Shift+Enter is not specially handled.
+  final bool Function()? isShiftPressed;
 
   /// The model to run. `/model <id>` swaps the id at runtime.
   final Model model;
@@ -271,6 +285,57 @@ final class _PluginIO implements PluginIO {
   void writeln(String text) => _io.writeln(text);
 }
 
+/// Wraps another [CliIO] and routes [write]/[writeln] into the active
+/// [FaTuiController] output history while it is running. Input and interrupt
+/// streams are delegated unchanged.
+final class _TuiCliIO implements CliIO {
+  _TuiCliIO(this._delegate);
+
+  final CliIO _delegate;
+  FaTuiController? _tui;
+
+  @override
+  Stream<String> get lines => _delegate.lines;
+
+  @override
+  Stream<void> get interrupts => _delegate.interrupts;
+
+  @override
+  Stream<KeyEvent> get keys => _delegate.keys;
+
+  @override
+  bool get supportsRawMode => _delegate.supportsRawMode;
+
+  @override
+  bool get isInteractive => _delegate.isInteractive;
+
+  @override
+  int get columns => _delegate.columns;
+
+  @override
+  int get rows => _delegate.rows;
+
+  @override
+  void write(String text) {
+    final tui = _tui;
+    if (tui != null) {
+      tui.sendOutput(text);
+    } else {
+      _delegate.write(text);
+    }
+  }
+
+  @override
+  void writeln(String text) {
+    final tui = _tui;
+    if (tui != null) {
+      tui.sendOutput(text, newline: true);
+    } else {
+      _delegate.writeln(text);
+    }
+  }
+}
+
 /// Minimal ANSI styling helper. When [enabled] is false all methods return
 /// the input unchanged, which keeps tests deterministic and avoids escape
 /// sequences in headless / piped output.
@@ -296,6 +361,61 @@ final class _Style implements TuiStyle {
   String red(String text) => _wrap(text, '31');
   @override
   String magenta(String text) => _wrap(text, '35');
+
+  /// The site's teal accent (#5eead4), used for the banner title.
+  String teal(String text) =>
+      enabled ? '\x1B[38;2;94;234;212m$text\x1B[0m' : text;
+
+  /// The site's indigo accent-2 (#818cf8), used for tool call markers.
+  String indigo(String text) =>
+      enabled ? '\x1B[38;2;129;140;248m$text\x1B[0m' : text;
+}
+
+/// Reduces a provider error blob to something readable on one line:
+/// unwraps OpenRouter's `metadata.raw` upstream JSON recursively, prefers
+/// the most specific message, and caps the result at 300 chars.
+String compactProviderError(String message) {
+  Map<String, dynamic>? decodeJson(String text) {
+    final start = text.indexOf('{');
+    if (start < 0) return null;
+    try {
+      final decoded = jsonDecode(text.substring(start));
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  String? extract(Map<String, dynamic> json) {
+    final error = json['error'];
+    if (error is! Map<String, dynamic>) return null;
+    final metadata = error['metadata'];
+    if (metadata is Map<String, dynamic>) {
+      final raw = metadata['raw'];
+      if (raw is String) {
+        final upstream = decodeJson(raw);
+        final upstreamMessage = upstream == null ? null : extract(upstream);
+        if (upstreamMessage != null) {
+          final provider = metadata['provider_name'];
+          return provider is String
+              ? '$upstreamMessage ($provider)'
+              : upstreamMessage;
+        }
+      }
+    }
+    final msg = error['message'];
+    return msg is String && msg.isNotEmpty ? msg : null;
+  }
+
+  var result = message;
+  final json = decodeJson(message);
+  final extracted = json == null ? null : extract(json);
+  if (extracted != null) {
+    final code = RegExp(r'^\d{3}').firstMatch(message)?.group(0);
+    result = '${code != null ? '$code: ' : ''}$extracted';
+  }
+  if (result.length > 300) result = '${result.substring(0, 300)}…';
+  return result;
 }
 
 /// The CLI harness: agent + built-in tools + session persistence +
@@ -306,13 +426,14 @@ class AgentCli {
   /// [AgentCliConfig.providerKind] and [AgentCliConfig.apiKey].
   AgentCli({
     required this.config,
-    required this.io,
+    required CliIO io,
     StreamFunction? streamFunction,
     this.prompt = 'fa> ',
     bool useColor = false,
     bool useTui = false,
     this._version = '0.0.0',
-  }) : _style = _Style(enabled: useColor),
+  }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
+       _style = _Style(enabled: useColor),
        _useTui = useTui && io.supportsRawMode,
        _modes = builtInAgentModes(
          config.env.cwd,
@@ -477,7 +598,17 @@ class AgentCli {
   Session? _session;
   var _persistedCount = 0;
   var _streamedText = false;
+
+  /// Whether the current assistant message already printed its `fa> ` prefix
+  /// and whether any thinking deltas were streamed (TUI-only progress for
+  /// reasoning models).
+  var _assistantPrefixPrinted = false;
+  var _streamedThinking = false;
   var _exited = false;
+
+  /// Set when the user interrupts (Esc/Ctrl-C); the TUI drain loop discards
+  /// queued messages instead of starting new turns after an abort.
+  var _abortRequested = false;
   Future<void> _settled = Future<void>.value();
 
   /// The pending approval-prompt answer, if a tool call is waiting on the
@@ -499,37 +630,20 @@ class AgentCli {
   /// select by number without retyping the full id.
   List<String>? _lastModelList;
 
+  /// Cache of model ids fetched from an OpenAI-compatible `/models` endpoint,
+  /// plus the in-flight refresh future so concurrent callers coalesce.
+  List<String> _modelCache = const [];
+  Future<void>? _modelCacheFuture;
+
+  /// Reference to the active TUI controller so asynchronous model-list updates
+  /// can refresh the picker while it is open.
+  FaTuiController? _tuiController;
+
   Map<String, dynamic> _pluginConfig(String name) {
     final raw = config.pluginConfig[name];
     if (raw is Map<String, dynamic>) return raw;
     if (raw is Map) return Map<String, dynamic>.from(raw);
     return const {};
-  }
-
-  /// Merges multiple streams into one broadcast stream.
-  static Stream<T> _mergeStreams<T>(List<Stream<T>> streams) {
-    final controller = StreamController<T>.broadcast();
-    final subscriptions = <StreamSubscription<T>>[];
-    var doneCount = 0;
-    void onDone() {
-      if (++doneCount >= streams.length) {
-        controller.close();
-      }
-    }
-
-    for (final stream in streams) {
-      subscriptions.add(
-        stream.listen(
-          controller.add,
-          onError: controller.addError,
-          onDone: onDone,
-        ),
-      );
-    }
-    controller.onCancel = () async {
-      await Future.wait(subscriptions.map((s) => s.cancel()));
-    };
-    return controller.stream;
   }
 
   /// Whether a run is currently streaming.
@@ -546,10 +660,12 @@ class AgentCli {
       if (isBusy) _agent.abort();
     });
     try {
-      await _printBanner();
       if (_useTui) {
+        // The TUI prints the banner itself into its output history (buffered
+        // by the controller until the program's event loop is listening).
         await _runTuiRepl();
       } else {
+        await _printBanner();
         _writeIdlePrompt();
         final lineIterator = StreamIterator<String>(io.lines);
         while (await lineIterator.moveNext()) {
@@ -576,29 +692,90 @@ class AgentCli {
   }
 
   Future<void> _runTuiRepl() async {
-    final repl = TuiRepl(
-      write: io.write,
-      writeln: io.writeln,
-      prompt: prompt,
-      statusLine: _statusLine,
-      style: _style,
-      buildSlashMenu: _buildSlashMenu,
-      buildModelMenu: _buildModelMenu,
-      onSubmit: _handleLine,
-      onModelSelected: _tuiSelectModel,
-      onInterrupt: () {
-        if (isBusy) _agent.abort();
-      },
+    late final FaTuiController controller;
+    controller = FaTuiController(
+      callbacks: FaTuiCallbacks(
+        onSubmit: (line) async {
+          controller.sendBusy(true);
+          try {
+            await _handleLine(line);
+            // Runs are fire-and-forget (_startRun only records the future):
+            // wait for the run to actually settle so the busy spinner lives
+            // for the whole stream instead of flashing for one frame.
+            await _settled;
+            // Drain queued messages one-by-one as separate turns (kimi-cli
+            // semantics), capped to bound a self-sustaining queue; an Esc
+            // abort discards the queue instead of starting new work.
+            var drainedRounds = 0;
+            for (;;) {
+              final queued = await controller.drainQueue();
+              if (queued.isEmpty) break;
+              if (_abortRequested || drainedRounds >= 20) {
+                io.writeln('queued message(s) dropped');
+                break;
+              }
+              drainedRounds++;
+              for (final msg in queued) {
+                await _handleLine(msg);
+                await _settled;
+                if (_abortRequested) break;
+              }
+            }
+          } finally {
+            _abortRequested = false;
+            controller.sendBusy(false);
+          }
+          // `/exit` marks the session exited during handling. Quit in a later
+          // event-loop batch: dart_tui drains the whole queue before rendering
+          // and skips the render when a quit lands in the same batch, which
+          // would swallow the farewell output just pushed above.
+          if (_exited) {
+            unawaited(
+              Future<void>.delayed(
+                const Duration(milliseconds: 100),
+                controller.sendQuit,
+              ),
+            );
+          }
+        },
+        onModelSelected: _tuiSelectModel,
+        buildSlashMenu: _buildSlashMenu,
+        buildModelMenu: _buildModelMenu,
+        statusLine: _statusLine,
+        prompt: prompt,
+        onInterrupt: () {
+          // Marks the drain loop to discard queued messages (kimi-cli drops
+          // the queue on cancel instead of starting new turns).
+          _abortRequested = true;
+          if (isBusy) _agent.abort();
+        },
+        isShiftPressed: config.isShiftPressed,
+        opensPicker: (key) =>
+            const {'/sessions', '/mode', '/approval'}.contains(key),
+        onPickerSelected: _tuiPickerSelected,
+        onSteer: (messages) async {
+          for (final message in messages) {
+            _agent.steer(UserMessage.text(message));
+          }
+        },
+      ),
       isExited: () => _exited,
     );
+    _tuiController = controller;
+    final tuiIo = io;
+    if (tuiIo is _TuiCliIO) tuiIo._tui = controller;
 
-    // In raw mode stdin can only have one listener, so drive the REPL from
-    // key events only. For non-raw hosts (tests, headless, embedded panels)
-    // keys is empty and we fall back to typed lines.
-    final input = io.supportsRawMode
-        ? io.keys
-        : _mergeStreams<dynamic>([io.lines, io.keys]);
-    await repl.run(input);
+    // The banner is part of the TUI output history so it stays visible above
+    // the input line inside the alternate screen.
+    await _printBanner();
+
+    // Warm the model cache in the background so the first /models picker is
+    // fast; failures are silent and the cache falls back to the hardcoded list.
+    unawaited(_refreshModelCache());
+
+    await controller.run();
+    if (tuiIo is _TuiCliIO) tuiIo._tui = null;
+    _tuiController = null;
   }
 
   List<MenuItem> _buildSlashMenu(String prefix) {
@@ -628,8 +805,17 @@ class AgentCli {
     return items;
   }
 
-  List<MenuItem> _buildModelMenu() {
-    final models = _listModelsForMenu();
+  List<MenuItem> _buildModelMenu(String filter) {
+    // If we have no cached models yet, kick off a background fetch and show a
+    // loading placeholder. The picker will refresh automatically when the list
+    // arrives.
+    if (_modelCache.isEmpty && _modelCacheFuture == null) {
+      unawaited(_refreshModelCache());
+    }
+    final models = _modelCandidates(filter);
+    if (models.isEmpty) {
+      return const [MenuItem(key: '', label: 'loading models...')];
+    }
     return [
       for (var i = 0; i < models.length; i++)
         MenuItem(key: models[i], label: '${i + 1}) ${models[i]}'),
@@ -638,6 +824,142 @@ class AgentCli {
 
   Future<void> _tuiSelectModel(String modelId) async {
     await _handleModelCommand(modelId);
+  }
+
+  /// Routes a generic TUI picker selection (sessions/mode/approval) to the
+  /// same handlers the typed slash command would use.
+  Future<void> _tuiPickerSelected(String pickerId, String key) async {
+    switch (pickerId) {
+      case 'sessions':
+        final index = int.tryParse(key);
+        final list = _lastSessionList;
+        if (index != null &&
+            list != null &&
+            index >= 0 &&
+            index < list.length) {
+          final metadata = list[index];
+          final session = await _repo.open(metadata);
+          final label = await session.getSessionName() ?? metadata.id;
+          await _switchToMetadata(metadata, label);
+        }
+      case 'mode':
+        await _switchMode(key);
+      case 'approval':
+        _handleApprovalMode(key);
+    }
+  }
+
+  /// The sessions shown by the most recent `/sessions` picker, so a picker
+  /// selection resolves to metadata without a second round trip.
+  List<SessionMetadata>? _lastSessionList;
+
+  Future<void> _openSessionsPicker() async {
+    final sessions = await _repo.list(cwd: config.env.cwd);
+    if (sessions.isEmpty) {
+      io.writeln('no sessions for ${config.env.cwd}');
+      return;
+    }
+    _lastSessionList = sessions;
+    final current = await _session?.getMetadata();
+    final items = <MenuItem>[];
+    for (var i = 0; i < sessions.length; i++) {
+      final metadata = sessions[i];
+      final session = await _repo.open(metadata);
+      final name = await session.getSessionName();
+      final label = name ?? metadata.id;
+      final marker = current?.path == metadata.path ? ' (current)' : '';
+      items.add(
+        MenuItem(
+          key: '$i',
+          label: '${i + 1}) $label',
+          description:
+              '${metadata.createdAt.toLocal().toIso8601String()}$marker',
+        ),
+      );
+    }
+    _tuiController?.openPicker('sessions', 'Sessions', items);
+  }
+
+  void _openModePicker() {
+    final items = [
+      for (final name in _modes.keys.toList()..sort())
+        MenuItem(
+          key: name,
+          label: name,
+          description: name == _currentMode.name ? '(current)' : '',
+        ),
+    ];
+    _tuiController?.openPicker('mode', 'Select mode', items);
+  }
+
+  void _openApprovalPicker() {
+    const descriptions = {
+      'always-ask': 'prompt before every write/exec tool call',
+      'write': 'auto-approve writes, prompt for exec',
+      'yolo': 'auto-approve everything',
+    };
+    final items = [
+      for (final mode in ApprovalMode.values)
+        MenuItem(
+          key: mode.label,
+          label: mode.label,
+          description:
+              '${descriptions[mode.label] ?? ''}'
+              '${mode == _approval.mode ? ' (current)' : ''}',
+        ),
+    ];
+    _tuiController?.openPicker('approval', 'Approval mode', items);
+  }
+
+  /// Fetches the model list from an OpenAI-compatible `/models` endpoint and
+  /// refreshes the TUI picker if it is currently open. Failures are swallowed
+  /// so the UI keeps working with the hardcoded fallback list.
+  Future<void> _refreshModelCache() async {
+    if (_modelCacheFuture != null) return _modelCacheFuture!;
+    final completer = Completer<void>();
+    _modelCacheFuture = completer.future;
+    try {
+      final model = _agent.state.model;
+      if (model.api == 'openai-completions') {
+        final ids = await _fetchOpenAiCompatibleModels(
+          model.baseUrl,
+          apiKey: config.apiKey,
+        );
+        if (ids.isNotEmpty) {
+          _modelCache = ids;
+          _tuiController?.sendModelsRefresh();
+        }
+      }
+    } finally {
+      _modelCacheFuture = null;
+      completer.complete();
+    }
+  }
+
+  Future<List<String>> _fetchOpenAiCompatibleModels(
+    String baseUrl, {
+    required String apiKey,
+  }) async {
+    final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.parse('$normalized/models');
+    final headers = <String, String>{'Accept': 'application/json'};
+    if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
+    try {
+      final response = await http.get(uri, headers: headers);
+      if (response.statusCode != 200) return const [];
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = body['data'] as List<dynamic>? ?? const <dynamic>[];
+      final ids = data
+          .whereType<Map<String, dynamic>>()
+          .map((m) => m['id'] as String?)
+          .whereType<String>()
+          .where((id) => id.isNotEmpty)
+          .toList();
+      ids.sort();
+      return ids;
+    } on Object {
+      return const [];
+    }
   }
 
   Future<Session> _initializeSession() async {
@@ -689,11 +1011,7 @@ class AgentCli {
     final trimmed = name.trim();
     final metadata = await _findSessionByName(trimmed);
     if (metadata != null) {
-      _agent.reset();
-      _checkpoints.clear();
-      _ttsr?.reset();
-      _session = await _loadSession(metadata);
-      io.writeln("switched to session '$trimmed'");
+      await _switchToMetadata(metadata, trimmed);
       return;
     }
     _agent.reset();
@@ -702,6 +1020,34 @@ class AgentCli {
     _session = await _createSession(name: trimmed);
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
+  }
+
+  /// Switches to an existing session by metadata (picker, /resume).
+  Future<void> _switchToMetadata(SessionMetadata metadata, String label) async {
+    _agent.reset();
+    _checkpoints.clear();
+    _ttsr?.reset();
+    _session = await _loadSession(metadata);
+    io.writeln("switched to session '$label'");
+  }
+
+  /// `/resume`: switches to the most recently created session for the
+  /// current directory (the repo lists sessions newest-first).
+  Future<void> _resumeLastSession() async {
+    final sessions = await _repo.list(cwd: config.env.cwd);
+    if (sessions.isEmpty) {
+      io.writeln('no sessions for ${config.env.cwd}');
+      return;
+    }
+    final latest = sessions.first;
+    final current = await _session?.getMetadata();
+    final session = await _repo.open(latest);
+    final label = await session.getSessionName() ?? latest.id;
+    if (current?.path == latest.path) {
+      io.writeln("already on the latest session '$label'");
+      return;
+    }
+    await _switchToMetadata(latest, label);
   }
 
   Future<void> _renameSession(String name) async {
@@ -792,7 +1138,10 @@ class AgentCli {
   Future<void> _printBanner() async {
     final model = _agent.state.model;
     final metadata = await _session!.getMetadata();
-    io.writeln(_style.bold(_style.cyan('fa v$_version')));
+    io.writeln(
+      '${_style.bold(_style.teal('>_'))}${_style.bold('Fa')} '
+      '${_style.dim('v$_version')}',
+    );
     io.writeln(
       _style.dim('escape interrupt · ctrl+c clear/exit · / commands · ! bash'),
     );
@@ -805,7 +1154,13 @@ class AgentCli {
     io.writeln('  ${model.id} (${model.api})');
     io.writeln('  endpoint: ${model.baseUrl}');
     final keyStatus = _keyStatusLine(model);
-    if (keyStatus != null) io.writeln('  $keyStatus');
+    if (keyStatus != null) {
+      io.writeln(
+        keyStatus.startsWith('key: no key set')
+            ? '  ${_style.yellow(keyStatus)}'
+            : '  $keyStatus',
+      );
+    }
     io.writeln('');
     io.writeln(_style.bold('[Session]'));
     final sessionName = await _session?.getSessionName();
@@ -842,17 +1197,20 @@ class AgentCli {
     return 'key: no key set (want ${names.first})';
   }
 
-  /// The `error:` diagnostic line for a failed run. A connection-level
-  /// failure ("Connection refused" — a SocketException, or a package:http
-  /// ClientException wrapping one; the provider adapters reduce both to
-  /// their message string, so detection is textual) appends the endpoint
-  /// hint: the effective base URL from the config or `--base-url` is almost
-  /// always the thing to fix then.
+  /// The `error:` diagnostic line for a failed run. Provider JSON blobs
+  /// (OpenRouter wraps upstream errors in nested JSON) are compacted to the
+  /// most specific message. A connection-level failure ("Connection
+  /// refused" — a SocketException, or a package:http ClientException
+  /// wrapping one; the provider adapters reduce both to their message
+  /// string, so detection is textual) appends the endpoint hint: the
+  /// effective base URL from the config or `--base-url` is almost always
+  /// the thing to fix then.
   String _errorLine(String message) {
-    if (!message.toLowerCase().contains('connection refused')) {
-      return 'error: $message';
+    final compact = compactProviderError(message);
+    if (!compact.toLowerCase().contains('connection refused')) {
+      return 'error: $compact';
     }
-    return 'error: $message — check the endpoint in ~/.fah/config.yaml '
+    return 'error: $compact — check the endpoint in ~/.fah/config.yaml '
         '(baseUrl: ${_agent.state.model.baseUrl}) or pass --base-url';
   }
 
@@ -1019,7 +1377,7 @@ class AgentCli {
       case '/model':
         await _handleModelCommand(rest);
       case '/models':
-        _listModels(rest);
+        await _listModels(rest);
       case '/reset':
         _agent.reset();
         _checkpoints.clear();
@@ -1030,7 +1388,13 @@ class AgentCli {
       case '/compact':
         await _compact('[compacted]');
       case '/sessions':
-        await _listSessions();
+        // In the TUI a bare /sessions opens the picker (same as /models);
+        // with an argument or in line mode it prints the list.
+        if (rest.isEmpty && _useTui && _tuiController != null) {
+          await _openSessionsPicker();
+        } else {
+          await _listSessions();
+        }
       case '/session':
         await _handleSessionCommand(rest);
       case '/session-new':
@@ -1045,10 +1409,20 @@ class AgentCli {
         } else {
           await _renameSession(rest.trim());
         }
+      case '/resume':
+        await _resumeLastSession();
       case '/mode':
-        await _handleMode(rest);
+        if (rest.isEmpty && _useTui && _tuiController != null) {
+          _openModePicker();
+        } else {
+          await _handleMode(rest);
+        }
       case '/approval':
-        _handleApprovalMode(rest);
+        if (rest.isEmpty && _useTui && _tuiController != null) {
+          _openApprovalPicker();
+        } else {
+          _handleApprovalMode(rest);
+        }
       case '/allow':
         _handleAllow(rest);
       case '/code' || '/architect' || '/review':
@@ -1318,8 +1692,13 @@ class AgentCli {
   }
 
   /// Lists the known models for the active provider, optionally filtered by
-  /// [filter]. The output is numbered so `/model N` can pick one.
-  void _listModels(String filter) {
+  /// [filter]. The output is numbered so `/model N` can pick one. For
+  /// OpenAI-compatible endpoints the list is fetched live from `/v1/models`
+  /// and cached.
+  Future<void> _listModels(String filter) async {
+    if (_modelCache.isEmpty && _modelCacheFuture == null) {
+      await _refreshModelCache();
+    }
     final candidates = _modelCandidates(filter);
     if (candidates.isEmpty) {
       io.writeln('no known models for provider ${_agent.state.model.provider}');
@@ -1337,10 +1716,14 @@ class AgentCli {
   List<String> _listModelsForMenu() => _modelCandidates('');
 
   /// Returns known model ids for the active provider, filtered by an optional
-  /// lowercase substring.
+  /// lowercase substring. Prefers the live cache fetched from the provider's
+  /// `/models` endpoint; falls back to the hardcoded subset when the cache is
+  /// empty or the fetch has not completed yet.
   List<String> _modelCandidates([String filter = '']) {
     final provider = _agent.state.model.provider;
-    final all = _knownModels[provider] ?? const <String>[];
+    final all = _modelCache.isNotEmpty
+        ? _modelCache
+        : (_knownModels[provider] ?? const <String>[]);
     if (filter.isEmpty) return all.toList();
     final lower = filter.toLowerCase();
     return all.where((id) => id.toLowerCase().contains(lower)).toList();
@@ -1349,12 +1732,17 @@ class AgentCli {
   Future<void> _handleModelCommand(String rest) async {
     final trimmed = rest.trim();
     if (trimmed == '?') {
-      _listModels('');
+      await _listModels('');
       return;
     }
     if (trimmed.isEmpty) {
-      // Bare `/model` keeps the original behavior: print the active model
-      // and, when model roles are configured, the roles overview.
+      // Bare `/model` in TUI mode opens the interactive picker; in line mode
+      // it prints the active model and the roles overview.
+      final controller = _tuiController;
+      if (controller != null) {
+        controller.openModelMenu();
+        return;
+      }
       await _switchModel('');
       return;
     }
@@ -1454,17 +1842,41 @@ class AgentCli {
   /// A compact status bar shown above every idle prompt: cwd, model, tokens,
   /// cost, and turn count.
   String _statusLine() {
-    final model = _agent.state.model.id;
+    final model = _agent.state.model;
     final total = _usage.total;
-    final tokens = total.totalTokens;
     final cost = total.cost.total.toStringAsFixed(4);
     final cwd = config.env.cwd;
-    return '$cwd · ${tokens}tok · \$$cost · turn ${_usage.turns} · $model';
+    // Current context pressure: the last assistant message's prompt size
+    // against the model's context window (pi's `context: N% (used/max)`).
+    final lastAssistant = _agent.state.messages
+        .whereType<AssistantMessage>()
+        .lastOrNull;
+    final contextTokens = lastAssistant?.usage.input ?? 0;
+    final window = model.contextWindow;
+    final pct = window > 0 ? (contextTokens / window * 100).round() : 0;
+    return '$cwd · ctx $pct% '
+        '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
+        '${total.totalTokens}tok · \$$cost · turn ${_usage.turns} · ${model.id}';
+  }
+
+  /// Compact token counts like pi's `275k` / `1M`.
+  static String _formatTokenCount(int value) {
+    if (value >= 1000000) {
+      final m = value / 1000000;
+      return '${m.toStringAsFixed(m >= 10 ? 0 : 1)}M';
+    }
+    if (value >= 1000) {
+      final k = value / 1000;
+      return '${k.toStringAsFixed(k >= 100 ? 0 : 1)}k';
+    }
+    return '$value';
   }
 
   /// Prints a divider, the status bar, and the input prompt. Used whenever the
-  /// REPL becomes idle after a command or a run.
+  /// REPL becomes idle after a command or a run. In TUI mode the prompt is
+  /// already part of the rendered frame, so this is a no-op there.
   void _writeIdlePrompt() {
+    if (_useTui) return;
     if (!_exited) {
       io.writeln(_style.dim('─' * 60));
       io.writeln(_style.dim(_statusLine()));
@@ -1483,6 +1895,7 @@ class AgentCli {
     '/session': '[name] — show current or switch/create a named session',
     '/session-new': '<name> — create a new named session',
     '/sessions': 'list named sessions for the current directory',
+    '/resume': 'switch to the most recent session',
     '/rename-session': '<name> — rename the current session',
     '/approval': '[mode] — show or set tool approval',
     '/allow': '[tool] — always-allow a tool (or list them)',
@@ -1590,19 +2003,31 @@ class AgentCli {
 
   void _onAgentEvent(AgentEvent event, CancelToken cancelToken) {
     switch (event) {
+      case MessageStartEvent(:final message):
+        if (message is AssistantMessage) _assistantPrefixPrinted = false;
       case MessageUpdateEvent(:final assistantMessageEvent):
         if (assistantMessageEvent is TextDeltaEvent) {
+          // The answer text starts on its own line after the dimmed
+          // thinking block.
+          if (_streamedThinking && !_streamedText) io.write('\n');
+          _writeAssistantPrefix();
           io.write(assistantMessageEvent.delta);
           _streamedText = true;
+        } else if (assistantMessageEvent is ThinkingDeltaEvent && _useTui) {
+          // Reasoning models stream long thinking before any text; showing
+          // it dimmed under the user message is the TUI's progress signal.
+          io.write(_style.dim(assistantMessageEvent.delta));
+          _streamedThinking = true;
         }
       case MessageEndEvent(:final message):
         if (message is AssistantMessage) {
-          if (_streamedText) {
+          if (_streamedText || _streamedThinking) {
             // The trailing newline of the streamed text belongs to the
             // primary channel (write), not to diagnostics (writeln) — a
             // headless host routes only writeln to stderr.
             io.write('\n');
             _streamedText = false;
+            _streamedThinking = false;
           }
           switch (message.stopReason) {
             case StopReason.error:
@@ -1615,15 +2040,40 @@ class AgentCli {
                 io.writeln('aborted: ${message.errorMessage ?? 'aborted'}');
               }
             default:
+              // A tolerated silent truncation (no finish_reason) is flagged
+              // on the message — tell the user the reply may be cut off.
+              if (message.errorMessage != null) {
+                io.writeln(_style.dim('(${message.errorMessage})'));
+                break;
+              }
+              // A turn that ends with neither text nor tool calls leaves the
+              // user staring at silence (seen with OpenRouter free models
+              // that burn the whole completion on reasoning). Say so.
+              final hasText = message.content.any(
+                (c) => c is TextContent && c.text.trim().isNotEmpty,
+              );
+              final hasToolCalls = message.content.any((c) => c is ToolCall);
+              if (!hasText && !hasToolCalls) {
+                io.writeln(
+                  _style.dim(
+                    '(empty response: the model returned no text — '
+                    'it may be rate-limited or reasoning-only)',
+                  ),
+                );
+              }
           }
         }
       case ToolExecutionStartEvent(:final toolName, :final args):
-        io.writeln('[$toolName] ${_formatArgs(args)}');
+        io.writeln(
+          '${_style.bold(_style.indigo('[$toolName]'))} '
+          '${_style.dim(_formatArgs(args))}',
+        );
       case ToolExecutionEndEvent(
         :final toolName,
         :final result,
         :final isError,
       ):
+        final tool = _style.bold(_style.indigo('[$toolName]'));
         if (isError) {
           final text = result.content
               .whereType<TextContent>()
@@ -1633,14 +2083,23 @@ class AgentCli {
           if (snippet.length > 120) {
             snippet = '${snippet.substring(0, 120)}...';
           }
-          io.writeln('[$toolName] error: $snippet');
+          io.writeln('$tool ${_style.red('error')}: $snippet');
         } else {
-          io.writeln('[$toolName] done');
+          io.writeln('$tool ${_style.teal('done')}');
         }
       case TurnEndEvent(:final message):
         _usage.add(message.usage);
       default:
     }
+  }
+
+  /// Prints the `>_Fa ` prefix once per assistant message, before the first
+  /// text delta. TUI-only: headless and line-mode output stay plain (a piped
+  /// headless response must remain the bare assistant text).
+  void _writeAssistantPrefix() {
+    if (!_useTui || _assistantPrefixPrinted) return;
+    io.write('${_style.bold(_style.teal('>_'))}${_style.bold('Fa')} ');
+    _assistantPrefixPrinted = true;
   }
 
   String _formatArgs(Map<String, dynamic> args) {
