@@ -22,7 +22,7 @@
   then run `fah`.
 - Flutter demo app from source:
   `git clone https://github.com/IstiN/flutter_agent_harness`, then
-  `cd flutter_agent_harness/example/flutter_example && flutter run`.
+  `cd flutter_agent_harness/flutter_app && flutter run`.
 
 ## Project
 

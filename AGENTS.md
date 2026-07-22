@@ -260,18 +260,18 @@ Conventions for AI agents and contributors working in this repository.
   HTML→markdown converter (link anchors preserved, boilerplate stripped).
   All HTTP goes through an injectable `package:http` client; both tools
   register via `builtinTools(env, webSearch: WebSearchConfig(...))`.
-- `example/flutter_example/` — Flutter chat example (mobile/web sandbox).
+- `flutter_app/` — Flutter chat example (mobile/web sandbox).
 - `site/` — static GitHub Pages landing (hand-rolled HTML/CSS/JS, no build
   step). `.github/workflows/pages.yml` builds the Flutter web demo into
   `app/` inside the Pages artifact (never committed) and deploys on pushes
   touching `site/`, `example/`, `lib/`, or `vendor/`.
 - `prompts/` — all LLM prompts as Markdown (see below); `test/` mirrors `lib/`.
-- `example/flutter_example/lib/sandbox_registry.dart` — the central registry
+- `flutter_app/lib/sandbox_registry.dart` — the central registry
   of sandbox shell commands per platform (web/mobile/desktop). The shells
   resolve against its name sets, and the Fa system prompt's `{{commands}}`
   placeholder is rendered from it (`AgentService`). Never list commands in
   prompt text or UI by hand.
-- `example/flutter_example/lib/last_connection.dart` — the
+- `flutter_app/lib/last_connection.dart` — the
   `LastConnectionStore`: persists the last successful connection
   (provider/model/URL/on-device preset — never API keys) as
   `last_connection.json` via the shared ExecutionEnv (same pattern as
@@ -279,7 +279,7 @@ Conventions for AI agents and contributors working in this repository.
   settings-dialog apply; read at boot to pre-select the settings form (an
   on-device model no longer cached/installed falls back to the default
   preset with a "previously used model was removed" note).
-- `example/flutter_example/lib/downloaded_models_quick_start.dart` — the
+- `flutter_app/lib/downloaded_models_quick_start.dart` — the
   setup screen's "Downloaded models" section above the connection form:
   one row per already-cached/installed on-device model (WebLLM +
   transformers.js CacheStorage, flutter_gemma repository — the same engine
@@ -300,14 +300,14 @@ Conventions for AI agents and contributors working in this repository.
 ## Prompts live outside Dart code
 
 - Every LLM prompt is a Markdown file under `prompts/**` (example app:
-  `example/flutter_example/prompts/`). Never write prompt string literals in
+  `flutter_app/prompts/`). Never write prompt string literals in
   `.dart` files — prompts must be findable and reviewable as Markdown.
 - File format: YAML frontmatter between `---` lines (`name`, `description`),
   then the prompt body verbatim. Runtime placeholders are `{{name}}` tokens
   (e.g. `{{cwd}}`) substituted by the consuming Dart code.
 - After editing a prompt, regenerate and commit the compiled constants:
   `dart run scripts/gen_prompts.dart` rewrites `lib/src/prompts/prompts.g.dart`
-  and `example/flutter_example/lib/prompts.g.dart` — generated files, never
+  and `flutter_app/lib/prompts.g.dart` — generated files, never
   edit by hand.
 - `test/prompts/prompts_sync_test.dart` reruns the generation and fails the
   test gate on any drift.
@@ -318,7 +318,7 @@ Conventions for AI agents and contributors working in this repository.
 - `dart test` green (integration-tagged tests excluded; they run in CI).
 - Line coverage of `lib/` ≥ 80%; jscpd duplication < 1%.
 - Max 2800 lines per `.dart` file (`*.g.dart` exempt).
-- Example app: `cd example/flutter_example && flutter test`.
+- Example app: `cd flutter_app && flutter test`.
 
 ## Commits and releases
 

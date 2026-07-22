@@ -103,7 +103,7 @@ jobs:
           cache: true
 
       - name: Install dependencies
-        working-directory: example/flutter_example
+        working-directory: flutter_app
         run: flutter pub get
 
       - name: Validate Android secrets
@@ -126,10 +126,10 @@ jobs:
 
       - name: Decode Android keystore
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > example/flutter_example/android/app/upload-keystore.jks
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > flutter_app/android/app/upload-keystore.jks
 
       - name: Create key.properties
-        working-directory: example/flutter_example/android
+        working-directory: flutter_app/android
         run: |
           cat > key.properties << EOF
           storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -139,12 +139,12 @@ jobs:
           EOF
 
       - name: Build Android AAB
-        working-directory: example/flutter_example
+        working-directory: flutter_app
         run: flutter build appbundle --release --build-number=${{ github.run_number }}
 
       - name: Verify AAB exists
         run: |
-          AAB_PATH="example/flutter_example/build/app/outputs/bundle/release/app-release.aab"
+          AAB_PATH="flutter_app/build/app/outputs/bundle/release/app-release.aab"
           if [ ! -f "$AAB_PATH" ]; then
             echo "::error::AAB file not found at $AAB_PATH"
             exit 1
@@ -155,14 +155,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-aab
-          path: example/flutter_example/build/app/outputs/bundle/release/app-release.aab
+          path: flutter_app/build/app/outputs/bundle/release/app-release.aab
           retention-days: 14
 
       - name: Cleanup
         if: always()
         run: |
-          rm -f example/flutter_example/android/app/upload-keystore.jks
-          rm -f example/flutter_example/android/key.properties
+          rm -f flutter_app/android/app/upload-keystore.jks
+          rm -f flutter_app/android/key.properties
 
   build-ios:
     name: Build iOS IPA
@@ -194,7 +194,7 @@ jobs:
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
       - name: Install Flutter dependencies
-        working-directory: example/flutter_example
+        working-directory: flutter_app
         run: flutter pub get
 
       - name: Validate iOS secrets
@@ -237,7 +237,7 @@ jobs:
           echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
       - name: Build iOS IPA
-        working-directory: example/flutter_example
+        working-directory: flutter_app
         env:
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
@@ -245,9 +245,9 @@ jobs:
 
       - name: Verify IPA exists
         run: |
-          IPA_PATH=$(find example/flutter_example/build/ios -name "*.ipa" -type f | head -1)
+          IPA_PATH=$(find flutter_app/build/ios -name "*.ipa" -type f | head -1)
           if [ -z "$IPA_PATH" ]; then
-            echo "::error::IPA file not found in example/flutter_example/build/ios"
+            echo "::error::IPA file not found in flutter_app/build/ios"
             exit 1
           fi
           echo "IPA built successfully: $(ls -la $IPA_PATH)"
@@ -256,7 +256,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
-          path: example/flutter_example/build/ios/*.ipa
+          path: flutter_app/build/ios/*.ipa
           retention-days: 14
 
       - name: Cleanup

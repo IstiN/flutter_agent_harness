@@ -23,7 +23,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
 const rootOutputPath = 'lib/src/prompts/prompts.g.dart';
 
 /// Output path (repo-root-relative) for the example app's prompt constants.
-const exampleOutputPath = 'example/flutter_example/lib/prompts.g.dart';
+const exampleOutputPath = 'flutter_app/lib/prompts.g.dart';
 
 /// Header emitted at the top of [rootOutputPath].
 const rootHeader = '''
@@ -38,7 +38,7 @@ library;
 /// Header emitted at the top of [exampleOutputPath].
 const exampleHeader = '''
 /// GENERATED — do not edit. Edit the Markdown sources under
-/// `example/flutter_example/prompts/` and rerun
+/// `flutter_app/prompts/` and rerun
 /// `dart run scripts/gen_prompts.dart` from the repository root.
 ///
 /// Prompts live outside Dart code (see the repository-root AGENTS.md).
@@ -181,16 +181,16 @@ const rootSpecs = <PromptSpec>[
 /// The example app prompts, emitted into [exampleOutputPath] in this order.
 const exampleSpecs = <PromptSpec>[
   PromptSpec(
-    source: 'example/flutter_example/prompts/sandbox_system.md',
+    source: 'flutter_app/prompts/sandbox_system.md',
     constName: 'sandboxSystemPrompt',
     requiredToken: '{{commands}}',
   ),
   PromptSpec(
-    source: 'example/flutter_example/prompts/webllm_no_tools_note.md',
+    source: 'flutter_app/prompts/webllm_no_tools_note.md',
     constName: 'webLlmNoToolsNote',
   ),
   PromptSpec(
-    source: 'example/flutter_example/prompts/transformers_js_no_tools_note.md',
+    source: 'flutter_app/prompts/transformers_js_no_tools_note.md',
     constName: 'transformersJsNoToolsNote',
   ),
 ];
