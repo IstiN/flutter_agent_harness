@@ -234,11 +234,17 @@ jobs:
           # The prebuilt XCFramework is excluded from git. On this self-hosted
           # runner the local working copy already has it, so copy it into the CI
           # workspace instead of fetching it over the network.
-          SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
+          LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
           DEST="vendor/wasm_run_flutter/macos/Frameworks"
           rm -rf "$DEST/WasmRun.xcframework"
           mkdir -p "$DEST"
-          cp -R "$SRC" "$DEST/"
+          if [ -d "$LOCAL_SRC" ]; then
+            echo "Using local framework: $LOCAL_SRC"
+            cp -R "$LOCAL_SRC" "$DEST/"
+          else
+            echo "::error::Local macOS framework not found at $LOCAL_SRC"
+            exit 1
+          fi
           ls -la "$DEST/WasmRun.xcframework"
 
       - name: Import macOS signing certificate

@@ -207,16 +207,26 @@ jobs:
         run: flutter pub get
 
       - name: Restore vendored WasmRun iOS framework
+        timeout-minutes: 15
         run: |
           set -euo pipefail
-          # The prebuilt XCFramework is excluded from git. On this self-hosted
-          # runner the local working copy already has it, so copy it into the CI
-          # workspace instead of downloading ~100 MB over the network.
-          SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework"
+          # The prebuilt XCFramework is excluded from git. Prefer the local
+          # working copy on this self-hosted runner; fall back to the upstream
+          # release asset if the local copy is unavailable.
+          LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework"
           DEST="vendor/wasm_run_flutter/ios/Frameworks"
           rm -rf "$DEST/WasmRun.xcframework"
           mkdir -p "$DEST"
-          cp -R "$SRC" "$DEST/"
+          if [ -d "$LOCAL_SRC" ]; then
+            echo "Using local framework: $LOCAL_SRC"
+            cp -R "$LOCAL_SRC" "$DEST/"
+          else
+            echo "Local framework not found, downloading from upstream release..."
+            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+              -o /tmp/WasmRun.xcframework.zip \
+              https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
+            unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+          fi
           ls -la "$DEST/WasmRun.xcframework"
 
       - name: Validate iOS secrets
