@@ -224,19 +224,31 @@ Conventions for AI agents and contributors working in this repository.
   both on stdout interactively and routes `writeln` to stderr in headless
   mode, and headless is never interactive (approval/ask resolve per the
   non-interactive rule, terminal or not). The REPL's
-  `/provider [name] [baseUrl] [token]` switches the provider/endpoint at
-  runtime (catalog defaults from `providerCatalog`, env-key fallback through
-  `AgentCliConfig.envVarValue`, keyless custom endpoints; `/provider` keeps
-  the model id just as `/model` keeps the provider). Keys resolve env-first,
-  then the platform secure store (`lib/src/secrets/secure_key_store*.dart` —
-  macOS Keychain via `security`, Secret Service via `secret-tool`, Windows
-  Credential Locker via PowerShell `PasswordVault`; the io backends are
-  exported only from `lib/io.dart`). Reads are process spawns, so the
-  executable preloads them once into the synchronous `SecureKeyCache`
-  snapshot that backs `envVarValue`/`envVarIsSet`, `_optionalApiKey`, and
-  the roles secrets overlay (rotation stacks stay env-only). An explicit
-  `/provider` token or `/key set <NAME> <value>` writes through to the store
-  (never to `~/.fah/config.yaml`; `/key` lists sources, never values) and is
+  `/provider [name] [baseUrl] [token] | custom` switches the
+  provider/endpoint at runtime (catalog defaults from `providerCatalog`,
+  env-key fallback through `AgentCliConfig.envVarValue`, keyless custom
+  endpoints; `/provider` keeps the model id just as `/model` keeps the
+  provider). `custom` is a guided setup (`lib/src/cli/provider_flow.dart`
+  over a narrow callback surface, glued in
+  `lib/src/cli/provider_commands.dart` — a `part of` extension keeping
+  `agent_cli.dart` under the 2800-line gate): api type
+  (openai/anthropic/google-like → catalog spec), base URL, optional key
+  (secure-store save when available), then the model — the endpoint's
+  `/models` list for openai-like endpoints (`AgentCliConfig.modelsFetcher`,
+  15s timeout) or manual entry; Ctrl-C cancels, roles mode skips the key
+  step and pins the default chain. Answers read through a
+  `_pendingPromptAnswer` completer routed in `_handleLine` (the flow is
+  fire-and-forget — awaiting it would deadlock the REPL loop). Keys resolve
+  env-first, then the platform secure store
+  (`lib/src/secrets/secure_key_store*.dart` — macOS Keychain via `security`,
+  Secret Service via `secret-tool`, Windows Credential Locker via PowerShell
+  `PasswordVault`; the io backends are exported only from `lib/io.dart`).
+  Reads are process spawns, so the executable preloads them once into the
+  synchronous `SecureKeyCache` snapshot that backs `envVarValue`/
+  `envVarIsSet`, `_optionalApiKey`, and the roles secrets overlay (rotation
+  stacks stay env-only). An explicit `/provider` token or
+  `/key set <NAME> <value>` writes through to the store (never to
+  `~/.fah/config.yaml`; `/key` lists sources, never values) and is
   registered with the `SecretRedactor` via `onSecretStored`
   (`onProviderChanged` persists only the provider/model/baseUrl triple).
   Hosts without a backend (headless Linux, web) report the store unavailable

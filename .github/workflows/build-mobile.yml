@@ -250,7 +250,21 @@ jobs:
         env:
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
-          flutter build ipa --release --build-number=$BUILD_NUMBER
+          set -euo pipefail
+          # flutter's own export plist falls back to the short
+          # 'iPhone Distribution' label, which Xcode 26 mis-resolves when an
+          # 'Apple Distribution' cert is also present (profile/cert mismatch).
+          # Drive the export with an explicit full-identity plist instead,
+          # with the profile UUID read from the imported profile.
+          PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+          UUID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract UUID raw -)
+          TEAM_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -)
+          BUNDLE_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements.application-identifier raw - | sed "s/^$TEAM_ID.//")
+          CERT_NAME=$(openssl pkcs12 -in certificate.p12 -passin "pass:$IOS_P12_PASSWORD" -nokeys -clcerts 2>/dev/null | openssl x509 -noout -subject | sed 's/^.*CN=//;s/, .*//')
+          python3 -c "import plistlib,sys; team,cert,bundle,uuid=sys.argv[1:5]; plistlib.dump({'method':'app-store','teamID':team,'signingStyle':'manual','signingCertificate':cert,'provisioningProfiles':{bundle:uuid}}, open('exportOptions.plist','wb'))" \
+            "$TEAM_ID" "$CERT_NAME" "$BUNDLE_ID" "$UUID"
+          flutter build ipa --release --build-number=$BUILD_NUMBER \
+            --export-options-plist=exportOptions.plist
 
       - name: Verify IPA exists
         run: |

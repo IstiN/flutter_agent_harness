@@ -100,8 +100,12 @@ PROVIDERS AND API KEYS
   In the REPL, /provider [name] [baseUrl] [token] switches the provider and
   endpoint live (openrouter, openai, anthropic, google): without a token the
   key resolves from the env vars above; an explicit token is persisted in the
-  OS secure store when one is available. The model id is kept — switch it
-  with /model afterwards if the new provider needs a different one.
+  OS secure store when one is available. /provider custom starts a guided
+  setup instead: pick the api type (openai-like / anthropic-like /
+  google-like), enter the base URL, optionally a key, then the model —
+  picked from the endpoint's /models list when it has one, typed manually
+  otherwise. The model id is kept on a plain switch — change it with /model
+  afterwards if the new provider needs a different one.
 
   Secure key storage: keys resolve env-first, then the platform secure
   store — macOS Keychain, Secret Service on Linux (secret-tool/libsecret;
@@ -267,9 +271,10 @@ SKILLS AND CONTEXT FILES
   a 32 KiB leaf-first budget.
   /model [id|?|N]    show model/roles, pick from known models, or switch
   /models [filter]   list known models for the current provider
-  /provider [name] [baseUrl] [token]
+  /provider [name] [baseUrl] [token] | custom
                      show or switch the provider/endpoint (token optional,
-                     saved to the OS secure store when available)
+                     saved to the OS secure store when available); custom is
+                     a guided setup (api type, url, key, model)
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
   /session [name]    show current or switch/create a named session

@@ -417,4 +417,39 @@ void main() {
 
     expect(io.out.toString(), contains('GOOGLE_API_KEY'));
   });
+
+  test('/provider custom pins the default chain without a key step', () async {
+    final factory = _RolesFactory({
+      'claude-a': [_textTurn('claude-a', 'proxied answer')],
+    });
+    final resolver = resolverFor(factory, const {
+      'default': [ModelRef(provider: 'anthropic', modelId: 'claude-a')],
+    });
+    final cli = cliFor(resolver);
+    final run = cli.run();
+
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().contains('type a number:'));
+    io.sendLine('2');
+    await _waitFor(() => io.out.toString().contains('base URL:'));
+    io.sendLine('http://127.0.0.1:1');
+    await _waitFor(
+      () => io.out.toString().contains('roles mode: the key resolves'),
+    );
+    await _waitFor(() => io.out.toString().contains('model id (empty keeps'));
+    io.sendLine('claude-a');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to anthropic'),
+    );
+    io.sendLine('go');
+    await _waitFor(() => factory.calls.isNotEmpty && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, isNot(contains('API key (empty for none):')));
+    expect(cli.agent.state.model.baseUrl, 'http://127.0.0.1:1');
+    expect(factory.calls, ['claude-a']);
+    expect(output, contains('proxied answer'));
+  });
 }
