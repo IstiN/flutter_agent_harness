@@ -45,15 +45,13 @@ jobs:
         run: touch flutter_app/.env
 
       # firebase_options.dart is gitignored too (real keys stay local). The
-      # web build needs the file to compile: restore the committed
-      # placeholder from history — main.dart skips Firebase init for YOUR_*
-      # values, so the demo runs without Analytics (as it always has).
+      # web build needs the file to compile: copy the tracked placeholder —
+      # main.dart skips Firebase init for YOUR_* values, so the demo runs
+      # without Analytics (as it always has).
       - name: Placeholder firebase_options.dart for the example app
-        working-directory: flutter_app
         run: >-
-          git show
-          9b62b419dfc0225dc03b6005253c34b915e8e2e7:example/flutter_example/lib/firebase_options.dart
-          > lib/firebase_options.dart
+          cp flutter_app/firebase_options.template.dart
+          flutter_app/lib/firebase_options.dart
 
       - name: Build web demo
         working-directory: flutter_app
