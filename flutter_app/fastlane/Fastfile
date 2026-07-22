@@ -11,7 +11,7 @@
 # iOS:    IOS_IPA_PATH points at the built .ipa (default: build/ios/*.ipa's
 #         conventional location).
 # macOS:  MACOS_PKG_PATH points at the signed .pkg (Mac Installer
-#         Distribution cert) and MACOS_BUNDLE_ID overrides dev.fa1.macos.
+#         Distribution cert) and MACOS_BUNDLE_ID overrides dev.fa1.app.
 
 def asc_api_key
   app_store_connect_api_key(
@@ -49,7 +49,7 @@ platform :mac do
     upload_to_testflight(
       api_key: asc_api_key,
       pkg: pkg,
-      app_identifier: ENV["MACOS_BUNDLE_ID"] || "dev.fa1.macos",
+      app_identifier: ENV["MACOS_BUNDLE_ID"] || "dev.fa1.app",
       skip_waiting_for_build_processing: true,
       skip_submission: true,
       distribute_external: false,
