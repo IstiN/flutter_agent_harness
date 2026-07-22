@@ -401,4 +401,22 @@
 - fix(windows): fa crash after TUI exit + installer mojibake
 - ci: installer-smoke job runs the one-line installers on every tag
 
+## 0.1.46
+
+- fix(example): manual code signing with Fa Profile for CI iOS builds
+- ci: placeholder firebase_options.dart for the repo-wide analyze
+- chore(example): untrack leftover Firebase configs from the pre-migration path
+- ci: cd /tmp before wiping the workspace in mirror checkout
+- ci(pages): tracked firebase_options template instead of git history
+- ci: self-updating mirror checkout in build-mobile.yml (same as build-macos)
+- ci(pages): placeholder firebase_options.dart for the web build
+- fix(example): keep Firebase Analytics from killing web startup
+- ci: quote pwsh run line breaking the ci.yml YAML parse
+- feat(example): unify bundle id to dev.fa1.app for a single App Store record
+- feat(cli): /provider runtime switching and OS secure key storage (/key)
+- fix(install): POSIX-clean install.sh and setup.sh for Ubuntu dash
+- docs: document app build/TestFlight workflows and secrets in AGENTS.md
+- ci: TestFlight submission for iOS and macOS (learn.ai pattern)
+- refactor(example): migrate example/flutter_example to flutter_app (fa package)
+
 ## Unreleased
