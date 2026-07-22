@@ -431,7 +431,7 @@ void main() {
     io.sendLine('/provider custom');
     await _waitFor(() => io.out.toString().contains('type a number:'));
     io.sendLine('2');
-    await _waitFor(() => io.out.toString().contains('base URL:'));
+    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('http://127.0.0.1:1');
     await _waitFor(
       () => io.out.toString().contains('roles mode: the key resolves'),

@@ -64,22 +64,25 @@ extension on AgentCli {
   /// Reads one input line for a guided-flow prompt (printed inline).
   /// Resolves to `null` on cancel (Ctrl-C interrupt or input shutdown),
   /// which the flow maps to "setup cancelled". Answers buffered while no
-  /// prompt was pending (piped input) are consumed first.
+  /// prompt was pending (piped input) are drained synchronously.
   Future<String?> _promptLine(String question) async {
     // Guided flows run sequentially (one command at a time); complete a
     // stray pending prompt defensively as cancelled.
     final stray = _pendingPromptAnswer;
     if (stray != null && !stray.isCompleted) stray.complete(null);
+    // Assign before writing/checking: the input gate routes lines to this
+    // completer from here on, so an answer arriving mid-setup can no
+    // longer fall between the buffer check and the assignment (deadlock).
+    final pending = Completer<String?>();
+    _pendingPromptAnswer = pending;
     io.write(question);
     if (_promptLineBuffer.isNotEmpty) {
       final buffered = _promptLineBuffer.removeAt(0);
       // Piped lines are not echoed by the terminal; keep the transcript
       // readable like the interactively typed answers.
       io.writeln(buffered);
-      return buffered;
+      pending.complete(buffered);
     }
-    final pending = Completer<String?>();
-    _pendingPromptAnswer = pending;
     final interruptSub = io.interrupts.listen((_) {
       if (!pending.isCompleted) pending.complete(null);
     });
@@ -107,15 +110,10 @@ extension on AgentCli {
       if (stray != null && !stray.isCompleted) stray.complete(null);
       final pending = Completer<String?>();
       _wizardPickerAnswer = pending;
-      controller.openPicker(
-        'wizard:$title',
-        title,
-        [
-          for (final (key, label, description) in options)
-            MenuItem(key: key, label: label, description: description),
-        ],
-        initialKey: initialKey,
-      );
+      controller.openPicker('wizard:$title', title, [
+        for (final (key, label, description) in options)
+          MenuItem(key: key, label: label, description: description),
+      ], initialKey: initialKey);
       return pending.future;
     }
     io.writeln(title);
