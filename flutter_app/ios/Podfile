@@ -48,8 +48,13 @@ post_install do |installer|
   # They are referenced only from Dart via DynamicLibrary.executable(), so the
   # linker strips them unless we force-load the archive explicitly on the
   # application target (not the pod target). Only do this for Release/device
-  # builds so Debug simulator builds are not affected.
-  wasm_run_force_load = '${PODS_ROOT}/../.symlinks/plugins/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a'
+  # builds so Debug simulator builds are not affected. The path is resolved to
+  # an absolute path at pod-install time so Xcode never depends on the
+  # ephemeral .symlinks directory created by flutter build.
+  wasm_run_force_load = File.expand_path(
+    '../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a',
+    File.dirname(__FILE__)
+  )
   installer.aggregate_targets.each do |aggregate_target|
     aggregate_target.user_project.targets.each do |target|
       next unless target.name == 'Runner'
