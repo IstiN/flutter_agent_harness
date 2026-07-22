@@ -64,7 +64,7 @@ void main() {
       // The example app is a separate package, so its constant cannot be
       // imported here; check the committed file embeds the Markdown body.
       final committed = File(gen.exampleOutputPath).readAsStringSync();
-      final body = _mdBody('example/flutter_example/prompts/sandbox_system.md');
+      final body = _mdBody('flutter_app/prompts/sandbox_system.md');
       expect(committed, contains(gen.dartStringLiteral(body)));
     });
   });

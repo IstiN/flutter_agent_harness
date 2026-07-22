@@ -1,6 +1,6 @@
 name: Pages
 
-# Builds the Flutter web demo (example/flutter_example) into site/app and
+# Builds the Flutter web demo (flutter_app) into site/app and
 # deploys the static landing (site/) to GitHub Pages. Pages source must be
 # set to "GitHub Actions" in the repo settings.
 on:
@@ -8,7 +8,7 @@ on:
     branches: [main]
     paths:
       - 'site/**'
-      - 'example/flutter_example/**'
+      - 'flutter_app/**'
       - 'lib/**'
       - 'vendor/**'
       - '.github/workflows/pages.yml'
@@ -36,16 +36,16 @@ jobs:
           channel: stable
 
       - name: Example app pub get
-        working-directory: example/flutter_example
+        working-directory: flutter_app
         run: flutter pub get
 
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
       # the build fails without it.
       - name: Placeholder .env for the example app
-        run: touch example/flutter_example/.env
+        run: touch flutter_app/.env
 
       - name: Build web demo
-        working-directory: example/flutter_example
+        working-directory: flutter_app
         run: >-
           flutter build web --release
           --base-href /app/

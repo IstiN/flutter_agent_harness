@@ -15,7 +15,7 @@ topics:
 # Test fixtures only: fake one-line PEM stubs used by the ssh builtin tests,
 # not real keys (https://dart.dev/go/false-secrets).
 false_secrets:
-  - example/flutter_example/test/sandbox_ssh_test.dart
+  - flutter_app/test/sandbox_ssh_test.dart
 
 environment:
   sdk: '>=3.12.0 <4.0.0'

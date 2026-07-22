@@ -249,7 +249,7 @@ jobs:
         run: |
           ARCH="${{ matrix.arch }}"
           echo "Building for architecture: $ARCH"
-          cd example/flutter_example
+          cd flutter_app
           FLUTTER_XCODE_ARCHS="$ARCH" flutter build macos --release \
             --build-name=$BUILD_VERSION \
             --build-number=$BUILD_NUMBER
@@ -268,7 +268,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           ARCH="${{ matrix.arch }}"
-          APP_PATH="example/flutter_example/build/macos/Build/Products/Release/Fa.app"
+          APP_PATH="flutter_app/build/macos/Build/Products/Release/Fa.app"
           DMG_NAME="fa-macos-${ARCH}-${VERSION}.dmg"
 
           rm -f fa-macos-*.dmg tmp-fa.dmg

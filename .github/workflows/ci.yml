@@ -35,13 +35,13 @@ jobs:
       # The example Flutter app lives in this repo; without its package
       # config the repo-wide `dart analyze` cannot resolve Flutter imports.
       - name: Example app pub get (for repo-wide analyze)
-        run: cd example/flutter_example && flutter pub get
+        run: cd flutter_app && flutter pub get
 
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
       # without it the analyzer fails with asset_does_not_exist (a fresh
       # clone hits the same warning locally).
       - name: Create placeholder .env for the example app
-        run: touch example/flutter_example/.env
+        run: touch flutter_app/.env
 
       - name: File size guard (no dart file over 2800 lines)
         run: |
@@ -250,7 +250,7 @@ jobs:
       - name: Smoke the installed binary (Windows)
         if: matrix.kind == 'ps1'
         shell: pwsh
-        run: '& "$env:LOCALAPPDATA\Fa\bin\fa.exe" --version'
+        run: & "$env:LOCALAPPDATA\Fa\bin\fa.exe" --version
 
       - name: Smoke the installed binary (Unix)
         if: matrix.kind == 'sh'
