@@ -1,4 +1,4 @@
-# install.ps1 — non-interactive one-line installer for the Fa CLI on Windows.
+﻿# install.ps1 — non-interactive one-line installer for the Fa CLI on Windows.
 #                 Works when piped from PowerShell:
 #                   irm https://fa1.dev/install.ps1 | iex
 #

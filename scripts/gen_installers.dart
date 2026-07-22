@@ -74,7 +74,11 @@ void main() {
   );
 
   File(_shOut).writeAsStringSync(sh);
-  File(_psOut).writeAsStringSync(ps);
+  // Windows PowerShell 5.1 parses scripts WITHOUT a BOM in the system ANSI
+  // code page, which mojibakes the UTF-8 banner/glyphs at parse time (the
+  // OutputEncoding line cannot fix already-corrupted literals). Writing the
+  // BOM makes PS 5.1 read the file as UTF-8.
+  File(_psOut).writeAsStringSync('\uFEFF' + ps);
   File(_batOut).writeAsStringSync(bat);
 
   final shSetup = File(_shSetupTemplatePath)
@@ -98,7 +102,8 @@ void main() {
       .replaceFirst('{{APPROVAL_SWITCH}}', _psApprovalSwitch(approvalModes));
 
   File(_shSetupOut).writeAsStringSync(shSetup);
-  File(_psSetupOut).writeAsStringSync(psSetup);
+  // Same UTF-8 BOM rationale as install.ps1 (see above).
+  File(_psSetupOut).writeAsStringSync('\uFEFF' + psSetup);
 
   print(
     'Generated $_shOut, $_psOut, $_shSetupOut and $_psSetupOut from $_configPath',
