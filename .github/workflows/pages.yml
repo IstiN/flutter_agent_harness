@@ -58,7 +58,7 @@ jobs:
         run: >-
           flutter build web --release
           --base-href /app/
-          --output ../../build/pages/app
+          --output ../build/pages/app
 
       - name: Assemble Pages artifact
         run: |

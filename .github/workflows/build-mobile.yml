@@ -189,6 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+          cd /tmp
           rm -rf "$GITHUB_WORKSPACE"
           mkdir -p "$GITHUB_WORKSPACE"
           git clone --reference "$MIRROR" --depth=1 \
@@ -294,6 +295,7 @@ jobs:
         run: |
           set -euo pipefail
           MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+          cd /tmp
           rm -rf "$GITHUB_WORKSPACE"
           mkdir -p "$GITHUB_WORKSPACE"
           git clone --reference "$MIRROR" --depth=1 \
