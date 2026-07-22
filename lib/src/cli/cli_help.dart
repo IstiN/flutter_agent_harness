@@ -98,14 +98,16 @@ PROVIDERS AND API KEYS
   LM Studio) need none, and no Authorization header is sent without one.
 
   In the REPL, /provider [name] [baseUrl] [token] switches the provider and
-  endpoint live (openrouter, openai, anthropic, google): without a token the
-  key resolves from the env vars above; an explicit token is persisted in the
-  OS secure store when one is available. /provider custom starts a guided
-  setup instead: pick the api type (openai-like / anthropic-like /
-  google-like), enter the base URL, optionally a key, then the model —
-  picked from the endpoint's /models list when it has one, typed manually
-  otherwise. The model id is kept on a plain switch — change it with /model
-  afterwards if the new provider needs a different one.
+  endpoint live (openrouter, openai, anthropic, google, or a saved custom
+  provider by name): without a token the key resolves from the env vars
+  above; an explicit token is persisted in the OS secure store when one is
+  available. /provider custom starts a guided setup: pick the api type from
+  a menu (openai-like / anthropic-like / google-like), enter the base URL
+  (Enter applies the shown default), optionally a key, then the model —
+  from the endpoint's /models list when it has one, typed manually
+  otherwise. The provider is saved (customProviders: in ~/.fah/config.yaml)
+  and listed first in the /provider picker, remembering its last-used
+  model; /provider-edit re-runs the wizard for the active provider.
 
   Secure key storage: keys resolve env-first, then the platform secure
   store — macOS Keychain, Secret Service on Linux (secret-tool/libsecret;
@@ -274,7 +276,9 @@ SKILLS AND CONTEXT FILES
   /provider [name] [baseUrl] [token] | custom
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
-                     a guided setup (api type, url, key, model)
+                     a guided setup that saves the provider (api type, url,
+                     key, model)
+  /provider-edit     edit the active provider via the guided setup
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
   /session [name]    show current or switch/create a named session

@@ -123,6 +123,7 @@ void main() {
       '/exit',
       '/model',
       '/provider',
+      '/provider-edit',
       '/key',
       '/mode',
       '/session',

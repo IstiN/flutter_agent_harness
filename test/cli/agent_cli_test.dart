@@ -279,6 +279,7 @@ void main() {
     modelsFetcher,
     void Function(String providerKind, String apiKey)? onProviderChanged,
     SecureKeyCache? secureKeys,
+    CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
     String? providerKind,
   }) {
@@ -293,6 +294,7 @@ void main() {
         modelsFetcher: modelsFetcher,
         onProviderChanged: onProviderChanged,
         secureKeys: secureKeys,
+        customProviders: customProviders,
         onSecretStored: onSecretStored,
         providerKind: providerKind ?? 'openai-completions',
       ),
@@ -984,7 +986,7 @@ void main() {
     io.sendLine('/provider custom');
     await _waitFor(() => io.out.toString().contains('type a number:'));
     io.sendLine('1');
-    await _waitFor(() => io.out.toString().contains('base URL:'));
+    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('http://127.0.0.1:1/v1');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
@@ -1023,13 +1025,13 @@ void main() {
     io.sendLine('/provider custom');
     await _waitFor(() => io.out.toString().contains('type a number:'));
     io.sendLine('1');
-    await _waitFor(() => io.out.toString().contains('base URL:'));
+    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('https://proxy.example.com/v1');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
     );
     io.sendLine('');
-    await _waitFor(() => io.out.toString().contains('2 models available'));
+    await _waitFor(() => io.out.toString().contains('2) m2'));
     io.sendLine('2');
     await _waitFor(
       () => io.out.toString().contains('switched provider to openai'),
@@ -1057,7 +1059,7 @@ void main() {
     io.sendLine('/provider custom');
     await _waitFor(() => io.out.toString().contains('type a number:'));
     io.sendLine('1');
-    await _waitFor(() => io.out.toString().contains('base URL:'));
+    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('https://proxy.example.com/v1');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
@@ -1074,7 +1076,7 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(store.map['OPENAI_API_KEY'], 'sk-flow-key-1');
+    expect(store.map['FA_KEY_PROXY_EXAMPLE_COM'], 'sk-flow-key-1');
     expect(output, contains('key: provided (saved to fake store'));
     expect(output, isNot(contains('sk-flow-key-1')));
   });
@@ -1087,7 +1089,7 @@ void main() {
     io.sendLine('/provider custom');
     await _waitFor(() => io.out.toString().contains('type a number:'));
     io.sendLine('2');
-    await _waitFor(() => io.out.toString().contains('base URL:'));
+    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('https://anthropic-proxy.example.com');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
@@ -1120,11 +1122,9 @@ void main() {
     io.sendLine('/provider custom');
     await _waitFor(() => io.out.toString().contains('type a number:'));
     io.sendLine('x');
-    await _waitFor(() => io.out.toString().contains('invalid api type: x'));
-    io.sendLine('/provider custom');
-    await _waitFor(() => io.out.toString().split('type a number:').length > 2);
+    await _waitFor(() => io.out.toString().contains('invalid selection: x'));
     io.sendLine('1');
-    await _waitFor(() => io.out.toString().contains('base URL:'));
+    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('localhost:8080');
     await _waitFor(() => io.out.toString().contains('invalid base URL'));
     io.sendLine('/exit');
@@ -1176,6 +1176,146 @@ void main() {
       expect(fake.calls, 0, reason: 'no answer may leak into a run');
     },
   );
+
+  test(
+    '/provider custom applies the spec default URL on an empty answer',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final cli = cliFor(fake.call, envVarValue: (_) => null);
+      final run = cli.run();
+
+      io.sendLine('/provider custom');
+      await _waitFor(() => io.out.toString().contains('type a number:'));
+      io.sendLine('1');
+      await _waitFor(
+        () => io.out.toString().contains('base URL (empty = https://'),
+      );
+      io.sendLine('');
+      await _waitFor(
+        () => io.out.toString().contains('API key (empty for none):'),
+      );
+      io.sendLine('');
+      await _waitFor(
+        () => io.out.toString().contains('no model list from the endpoint'),
+      );
+      io.sendLine('gpt-4o-mini');
+      await _waitFor(
+        () => io.out.toString().contains('switched provider to openai'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.agent.state.model.baseUrl, 'https://api.openai.com/v1');
+      expect(cli.agent.state.model.id, 'gpt-4o-mini');
+    },
+  );
+
+  test(
+    '/provider custom saves the provider and switching restores its model',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final registry = CustomProviderRegistry(const []);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => ['m1', 'm2'],
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider custom');
+      await _waitFor(() => io.out.toString().contains('type a number:'));
+      io.sendLine('1');
+      await _waitFor(() => io.out.toString().contains('base URL (empty ='));
+      io.sendLine('http://localhost:11434/v1');
+      await _waitFor(
+        () => io.out.toString().contains('API key (empty for none):'),
+      );
+      io.sendLine('');
+      await _waitFor(() => io.out.toString().contains('2) m2'));
+      io.sendLine('2');
+      await _waitFor(
+        () => io.out.toString().contains('saved provider localhost:11434'),
+      );
+
+      final entry = registry.entries.single;
+      expect(entry.name, 'localhost:11434');
+      expect(entry.modelId, 'm2');
+      expect(entry.baseUrl, 'http://localhost:11434/v1');
+
+      // A catalog switch clears it; switching back by name restores m2.
+      io.sendLine('/provider anthropic');
+      await _waitFor(
+        () => io.out.toString().contains('switched provider to anthropic'),
+      );
+      io.sendLine('/model other-model');
+      await _waitFor(
+        () => io.out.toString().contains('switched model to other-model'),
+      );
+      io.sendLine('/provider localhost:11434');
+      await _waitFor(() => cli.agent.state.model.id == 'm2');
+
+      // Per-provider model memory: /model rewrites the entry.
+      io.sendLine('/model llama3.2');
+      await _waitFor(
+        () => io.out.toString().contains('switched model to llama3.2'),
+      );
+      expect(registry.find('localhost:11434')!.modelId, 'llama3.2');
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test('/provider-edit updates the active custom provider', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final registry = CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'localhost:11434',
+        apiType: 'openai',
+        baseUrl: 'http://localhost:11434/v1',
+        modelId: 'old-model',
+      ),
+    ]);
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      customProviders: registry,
+      modelsFetcher: (baseUrl, {required apiKey}) async => [
+        'new-model',
+        'old-model',
+      ],
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider localhost:11434');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/provider-edit');
+    await _waitFor(
+      () => io.out.toString().contains('editing provider localhost:11434'),
+    );
+    io.sendLine('1');
+    await _waitFor(
+      () => io.out.toString().contains(
+        'base URL (empty = http://localhost:11434/v1)',
+      ),
+    );
+    io.sendLine('');
+    await _waitFor(
+      () => io.out.toString().contains('API key (empty for none):'),
+    );
+    io.sendLine('');
+    await _waitFor(() => io.out.toString().contains('1) new-model'));
+    io.sendLine('1');
+    await _waitFor(() => cli.agent.state.model.id == 'new-model');
+    io.sendLine('/exit');
+    await run;
+
+    final entry = registry.entries.single;
+    expect(entry.modelId, 'new-model');
+    expect(entry.baseUrl, 'http://localhost:11434/v1');
+  });
 
   test('/reset starts a fresh session and clears history', () async {
     final fake = _FakeStreamFunction([_textTurn('first'), _textTurn('second')]);

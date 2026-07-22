@@ -130,14 +130,10 @@ Future<void> runCustomProviderFlow(
   );
 
   // 1. Api type (menu).
-  final typeKey = await config.pickOption(
-    'api type',
-    [
-      for (final (label, name) in _apiTypes)
-        (name, label, providerCatalog[name]!.api),
-    ],
-    initialKey: config.initialType,
-  );
+  final typeKey = await config.pickOption('api type', [
+    for (final (label, name) in _apiTypes)
+      (name, label, providerCatalog[name]!.api),
+  ], initialKey: config.initialType);
   if (typeKey == null) return cancelled();
   final spec = providerCatalog[typeKey]!;
 
@@ -178,14 +174,10 @@ Future<void> runCustomProviderFlow(
     io.writeln('fetching models from $baseUrl/models ...');
     final models = await config.fetchModels(spec, baseUrl, token: token);
     if (models.isNotEmpty) {
-      final picked = await config.pickOption(
-        'model',
-        [
-          for (final id in models) (id, id, ''),
-          ('', '+ enter manually', ''),
-        ],
-        initialKey: models.contains(modelId) ? modelId : null,
-      );
+      final picked = await config.pickOption('model', [
+        for (final id in models) (id, id, ''),
+        ('', '+ enter manually', ''),
+      ], initialKey: models.contains(modelId) ? modelId : null);
       if (picked == null) return cancelled();
       if (picked.isNotEmpty) {
         modelId = picked;
@@ -206,9 +198,7 @@ Future<void> runCustomProviderFlow(
       if (answer.isNotEmpty) modelId = answer;
     }
   } else {
-    final manual = await config.askLine(
-      "model id (empty keeps '$modelId'): ",
-    );
+    final manual = await config.askLine("model id (empty keeps '$modelId'): ");
     if (manual == null) return cancelled();
     final answer = manual.trim();
     if (answer.isNotEmpty) modelId = answer;

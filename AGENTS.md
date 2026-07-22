@@ -232,14 +232,31 @@ Conventions for AI agents and contributors working in this repository.
   over a narrow callback surface, glued in
   `lib/src/cli/provider_commands.dart` — a `part of` extension keeping
   `agent_cli.dart` under the 2800-line gate): api type
-  (openai/anthropic/google-like → catalog spec), base URL, optional key
-  (secure-store save when available), then the model — the endpoint's
-  `/models` list for openai-like endpoints (`AgentCliConfig.modelsFetcher`,
-  15s timeout) or manual entry; Ctrl-C cancels, roles mode skips the key
-  step and pins the default chain. Answers read through a
+  (openai/anthropic/google-like → catalog spec) picked from a TUI menu
+  (wizard pickers resolve through `_wizardPickerAnswer` +
+  `onPickerCancelled`; line mode prints a numbered list), base URL (Enter
+  applies the shown default — the spec's hosted URL, or the entry's current
+  one on edit), optional key (secure-store save under
+  `CustomProviderRegistry.keyNameFor(url)` when available), then the model —
+  the endpoint's `/models` list for openai-like endpoints
+  (`AgentCliConfig.modelsFetcher`, 15s timeout) or manual entry; Ctrl-C
+  cancels, roles mode skips the key step and pins the default chain.
+  Completed setups land in the custom-provider registry
+  (`lib/src/cli/custom_providers.dart`, the `customProviders:` section of
+  `~/.fah/config.yaml` — strict parse, `ConfigException` on bad entries):
+  the `/provider` picker lists them first (`+ Add provider` last), a typed
+  `/provider <name>` matches them before the catalog, switching restores
+  the entry's last-used model, and `/model` while one is active rewrites
+  its `modelId` (per-provider memory); `/provider-edit` re-runs the wizard
+  prefilled with the active provider. Answers read through a
   `_pendingPromptAnswer` completer routed in `_handleLine` (the flow is
-  fire-and-forget — awaiting it would deadlock the REPL loop). Keys resolve
-  env-first, then the platform secure store
+  fire-and-forget — awaiting it would deadlock the REPL loop; piped answers
+  buffer while the flow is active so they cannot leak into runs). The TUI's
+  auto-follow is an explicit `followTail` latch (`lib/src/cli/fa_tui.dart`)
+  changed only by user scrolling — transient viewport shrinkage (picker
+  menus, busy row) no longer breaks auto-scroll; the stub
+  (`fa_tui_stub.dart`) mirrors every callback/signature change for web
+  builds. Keys resolve env-first, then the platform secure store
   (`lib/src/secrets/secure_key_store*.dart` — macOS Keychain via `security`,
   Secret Service via `secret-tool`, Windows Credential Locker via PowerShell
   `PasswordVault`; the io backends are exported only from `lib/io.dart`).

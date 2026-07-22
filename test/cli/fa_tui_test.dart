@@ -588,8 +588,7 @@ void main() {
       expect(model.followTail, isTrue);
     });
 
-    test('scrolling up detaches, scrolling back to the bottom re-attaches',
-        () {
+    test('scrolling up detaches, scrolling back to the bottom re-attaches', () {
       var model = filledModel();
       final bottom = model.scrollOffset;
 

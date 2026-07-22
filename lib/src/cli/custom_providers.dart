@@ -32,9 +32,7 @@ final class CustomProviderEntry {
   /// silently vanish).
   factory CustomProviderEntry.fromYaml(Object? node) {
     if (node is! Map) {
-      throw ConfigException(
-        'customProviders entries must be maps, got: $node',
-      );
+      throw ConfigException('customProviders entries must be maps, got: $node');
     }
     String requireString(String field) {
       final value = node[field];
