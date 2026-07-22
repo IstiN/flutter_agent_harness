@@ -189,18 +189,33 @@ jobs:
           rustup --version
           cargo --version
 
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
       - name: Install Flutter dependencies
+        working-directory: flutter_app
         run: |
           flutter pub get
           echo "=== Dependency versions ==="
           flutter pub deps --style=compact
 
       - name: Generate build info
+        working-directory: flutter_app
         run: |
+          set -euo pipefail
           GIT_COMMIT=$(git rev-parse --short HEAD)
           GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
           SUBMODULES=$(git submodule status --recursive | tr '\n' ';')
 
+          mkdir -p lib/core/services
           printf '%s\n' \
             '// Generated build info — CI overwrites this file before compilation.' \
             '// ignore_for_file: constant_identifier_names' \
