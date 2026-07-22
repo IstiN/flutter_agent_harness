@@ -45,6 +45,8 @@ void main() {
       // Invocation.
       'interactive REPL',
       'headless',
+      'update',
+      'uninstall',
       'Exit codes: 0 ok',
       // Providers and keys.
       'openai-completions',

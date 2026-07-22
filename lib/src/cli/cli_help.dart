@@ -72,6 +72,13 @@ OPTIONS
   --help, -h                   Show this help
   --version                    Print the version
 
+QUICK COMMANDS
+  update                       Download the latest release binary and swap
+                               it in (pub-global installs re-activate)
+  uninstall                    Remove the binary and its PATH entry after a
+                               y/N confirmation; ~/.fah (sessions, config)
+                               is kept unless a second confirmation says yes
+
 PROVIDERS AND API KEYS
   openai-completions (default)
       Key: OPENROUTER_API_KEY (fallback OPENAI_API_KEY)
