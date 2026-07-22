@@ -261,7 +261,7 @@ jobs:
           UUID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract UUID raw -)
           TEAM_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -)
           BUNDLE_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements.application-identifier raw - | sed "s/^$TEAM_ID.//")
-          CERT_NAME=$(openssl pkcs12 -in certificate.p12 -passin "pass:$IOS_P12_PASSWORD" -nokeys -clcerts 2>/dev/null | openssl x509 -noout -subject | sed 's/^.*CN=//;s/, .*//')
+          CERT_NAME=$(openssl pkcs12 -in "$GITHUB_WORKSPACE/certificate.p12" -passin "pass:$IOS_P12_PASSWORD" -nokeys -clcerts 2>/dev/null | openssl x509 -noout -subject | sed 's/^.*CN=//;s/, .*//')
           python3 -c "import plistlib,sys; team,cert,bundle,uuid=sys.argv[1:5]; plistlib.dump({'method':'app-store','teamID':team,'signingStyle':'manual','signingCertificate':cert,'provisioningProfiles':{bundle:uuid}}, open('exportOptions.plist','wb'))" \
             "$TEAM_ID" "$CERT_NAME" "$BUNDLE_ID" "$UUID"
           flutter build ipa --release --build-number=$BUILD_NUMBER \
