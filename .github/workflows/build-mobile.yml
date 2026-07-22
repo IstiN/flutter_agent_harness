@@ -265,6 +265,50 @@ jobs:
           security delete-keychain build.keychain || true
           rm -f certificate.p12
 
+  submit-ios:
+    name: Submit iOS to TestFlight
+    needs: [build-ios]
+    runs-on: [self-hosted, macOS, ARM64]
+    if: needs.build-ios.result == 'success'
+    steps:
+      - name: Checkout repository (fast local mirror)
+        run: |
+          LOCAL_REPO="$HOME/git/flutter_agent"
+          rsync -a --delete --exclude='.git' --exclude='build/' --exclude='.dart_tool/' \
+            "$LOCAL_REPO/" "$GITHUB_WORKSPACE/"
+
+      - name: Setup environment (self-hosted)
+        run: |
+          echo "$HOME/.local/flutter/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+
+      - name: Download IPA artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-ipa
+          path: ipa/
+
+      - name: Install fastlane
+        working-directory: flutter_app
+        run: bundle install
+
+      - name: Upload IPA to TestFlight
+        working-directory: flutter_app
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then
+            echo "::notice::App Store Connect API key not configured — skipping TestFlight upload (the IPA stays on the GitHub release / artifacts)."
+            exit 0
+          fi
+          IPA_PATH="$(find ipa -name '*.ipa' -type f | head -1)"
+          echo "Uploading $IPA_PATH to TestFlight..."
+          IOS_IPA_PATH="$IPA_PATH" bundle exec fastlane ios submit_only
+
   release-mobile:
     name: Create Mobile GitHub Release
     needs: [version, build-android, build-ios]

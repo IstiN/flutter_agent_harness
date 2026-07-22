@@ -1,0 +1,59 @@
+# Fastfile for the Fa app (flutter_app).
+#
+# TestFlight submit lanes, adapted 1:1 from learn.ai's deploy setup: builds
+# happen in the CI workflows (flutter build ipa / flutter build macos), so
+# these lanes only upload the produced artifacts with the App Store Connect
+# API key from the environment:
+#
+#   APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID /
+#   APP_STORE_CONNECT_KEY_CONTENT
+#
+# iOS:    IOS_IPA_PATH points at the built .ipa (default: build/ios/*.ipa's
+#         conventional location).
+# macOS:  MACOS_PKG_PATH points at the signed .pkg (Mac Installer
+#         Distribution cert) and MACOS_BUNDLE_ID overrides dev.fa1.macos.
+
+def asc_api_key
+  app_store_connect_api_key(
+    key_id: ENV["APP_STORE_CONNECT_KEY_ID"],
+    issuer_id: ENV["APP_STORE_CONNECT_ISSUER_ID"],
+    key_content: ENV["APP_STORE_CONNECT_KEY_CONTENT"],
+    is_key_content_base64: false,
+    in_house: false
+  )
+end
+
+platform :ios do
+  desc "Upload the built IPA to TestFlight (no metadata/screenshots)"
+  lane :submit_only do
+    ipa = ENV["IOS_IPA_PATH"] || File.expand_path("../build/ios/ipa/fa.ipa", __dir__)
+    UI.user_error!("IPA not found: #{ipa} (set IOS_IPA_PATH)") unless File.exist?(ipa)
+
+    upload_to_testflight(
+      api_key: asc_api_key,
+      ipa: ipa,
+      skip_waiting_for_build_processing: true,
+      skip_submission: true,
+      distribute_external: false,
+      notify_external_testers: false
+    )
+  end
+end
+
+platform :mac do
+  desc "Upload the built PKG to TestFlight (no metadata/screenshots)"
+  lane :submit_only do
+    pkg = ENV["MACOS_PKG_PATH"] || File.expand_path("../build/macos/fa.pkg", __dir__)
+    UI.user_error!("PKG not found: #{pkg} (set MACOS_PKG_PATH)") unless File.exist?(pkg)
+
+    upload_to_testflight(
+      api_key: asc_api_key,
+      pkg: pkg,
+      app_identifier: ENV["MACOS_BUNDLE_ID"] || "dev.fa1.macos",
+      skip_waiting_for_build_processing: true,
+      skip_submission: true,
+      distribute_external: false,
+      notify_external_testers: false
+    )
+  end
+end
