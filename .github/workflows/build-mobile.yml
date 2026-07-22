@@ -260,6 +260,17 @@ jobs:
           # will still fail with a clearer message.
           xcodebuild -downloadPlatform iOS -buildVersion 26.5 || true
 
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
       - name: Build iOS IPA
         working-directory: flutter_app
         env:
