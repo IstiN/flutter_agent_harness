@@ -250,7 +250,7 @@ jobs:
       - name: Smoke the installed binary (Windows)
         if: matrix.kind == 'ps1'
         shell: pwsh
-        run: & "$env:LOCALAPPDATA\Fa\bin\fa.exe" --version
+        run: '& "$env:LOCALAPPDATA\Fa\bin\fa.exe" --version'
 
       - name: Smoke the installed binary (Unix)
         if: matrix.kind == 'sh'
