@@ -326,3 +326,16 @@ Conventions for AI agents and contributors working in this repository.
   `fix(example):`, `ci:`, `test(providers):`, `refactor(prompts):`.
 - Every push to `main` triggers an automatic patch release to pub.dev
   (`scripts/auto_release.sh` via `.github/workflows/ci.yml`) — intended.
+- CLI binaries build per tag (`.github/workflows/ci.yml` `binaries` job)
+  and attach to the GitHub Release (`fa-<os>-<arch>[.exe]`); the
+  `installer-smoke` job then runs the one-line installers against them.
+- App builds (`.github/workflows/build-mobile.yml` and `build-macos.yml`,
+  manual `workflow_dispatch`): Android AAB + iOS IPA on the self-hosted
+  runner `[self-hosted, macOS, ARM64]` (local git mirror checkout),
+  macOS DMG/ZIP with signing + notarization, and TestFlight submission
+  through `flutter_app/fastlane` (`ios submit_only` / `mac submit_only`,
+  App Store Connect API key). TestFlight/Install secrets (all optional —
+  steps skip with a notice when absent): `APP_STORE_CONNECT_KEY_ID` /
+  `_ISSUER_ID` / `_KEY_CONTENT`, `MACOS_INSTALLER_P12_BASE64` /
+  `_PASSWORD` / `MACOS_INSTALLER_CERT_ID` (Mac Installer Distribution
+  cert for the arm64 TestFlight PKG).
