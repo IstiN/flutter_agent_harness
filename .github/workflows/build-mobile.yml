@@ -206,52 +206,21 @@ jobs:
         working-directory: flutter_app
         run: flutter pub get
 
-      - name: Validate iOS secrets
+      - name: Validate iOS provisioning profile secret
         env:
-          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
-          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
           IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          if [ -z "$IOS_P12_BASE64" ]; then
-            echo "::error::IOS_P12_BASE64 secret is not set"
-            exit 1
-          fi
-          if [ -z "$IOS_P12_PASSWORD" ]; then
-            echo "::error::IOS_P12_PASSWORD secret is not set"
-            exit 1
-          fi
           if [ -z "$IOS_PROVISIONING_PROFILE_BASE64" ]; then
             echo "::error::IOS_PROVISIONING_PROFILE_BASE64 secret is not set"
             exit 1
           fi
-          echo "All required iOS secrets are present"
+          echo "iOS provisioning profile secret is present"
 
-      - name: Import certificates and provisioning profiles
+      - name: Install provisioning profile
         env:
-          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
-          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
           IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
-          KEYCHAIN_PATH="$HOME/Library/Keychains/build.keychain-db"
-          security delete-keychain build.keychain 2>/dev/null || true
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security set-keychain-settings build.keychain
-          security list-keychains -d user -s build.keychain
-
-          echo "$IOS_P12_BASE64" | base64 --decode > certificate.p12
-          security import certificate.p12 -k build.keychain -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign
-
-          # Import the Apple WWDR G3 intermediate so the distribution cert is
-          # valid inside the isolated build.keychain.
-          curl -fsSL -o /tmp/AppleWWDRCAG3.cer https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-          security import /tmp/AppleWWDRCAG3.cer -k build.keychain -T /usr/bin/codesign
-          rm -f /tmp/AppleWWDRCAG3.cer
-
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
-
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
@@ -259,27 +228,19 @@ jobs:
         working-directory: flutter_app
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
         run: |
           set -euo pipefail
-          # flutter's own export plist falls back to the short
-          # 'iPhone Distribution' label, which Xcode 26 mis-resolves when an
-          # 'Apple Distribution' cert is also present (profile/cert mismatch).
-          # Drive the export with an explicit full-identity plist instead,
-          # with the profile UUID read from the imported profile.
+          # The self-hosted runner has a persistent ci.keychain with the
+          # distribution certificate + WWDR G3 intermediate installed.
+          security unlock-keychain -p "" ci.keychain
+
           PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
           UUID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract UUID raw -)
           TEAM_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -)
           BUNDLE_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements.application-identifier raw - | sed "s/^$TEAM_ID.//")
-          CERT_NAME=$(openssl pkcs12 -legacy -in "$GITHUB_WORKSPACE/certificate.p12" -passin "pass:$IOS_P12_PASSWORD" -nokeys -clcerts 2>/dev/null | openssl x509 -noout -subject | sed 's/^.*CN=//;s/, .*//')
-          # openssl 3.x needs -legacy for the RC2-encrypted p12; LibreSSL
-          # does not know the flag and must fall back to the plain call.
-          if [ -z "$CERT_NAME" ]; then
-            CERT_NAME=$(openssl pkcs12 -in "$GITHUB_WORKSPACE/certificate.p12" -passin "pass:$IOS_P12_PASSWORD" -nokeys -clcerts 2>/dev/null | openssl x509 -noout -subject | sed 's/^.*CN=//;s/, .*//')
-          fi
+          # Extract the distribution cert CN from the profile itself.
+          CERT_NAME=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract DeveloperCertificates.0 raw - | base64 --decode | openssl x509 -inform der -noout -subject | sed 's/^.*CN=//;s/\\/.*//')
           echo "CERT_NAME=$CERT_NAME"
-          security unlock-keychain -p "" build.keychain
-          security find-identity -v -p codesigning || true
           python3 -c "import plistlib,sys; team,cert,bundle,uuid=sys.argv[1:5]; plistlib.dump({'method':'app-store','teamID':team,'signingStyle':'manual','signingCertificate':cert,'provisioningProfiles':{bundle:uuid}}, open('exportOptions.plist','wb'))" \
             "$TEAM_ID" "$CERT_NAME" "$BUNDLE_ID" "$UUID"
           flutter build ipa --release --build-number=$BUILD_NUMBER \
