@@ -1,31 +1,75 @@
-/// The guided custom-provider setup (`/provider custom`): api type, base
-/// URL, optional key, then the model — picked from the endpoint's `/models`
-/// list when it has one, entered manually otherwise.
+/// The guided custom-provider setup (`/provider custom`) and edit flow
+/// (`/provider-edit`): api type (menu), base URL (Enter applies the shown
+/// default), optional key, then the model — picked from the endpoint's
+/// `/models` list when it has one, entered manually otherwise.
 ///
 /// The flow is a plain function over a narrow callback surface
-/// ([CustomProviderFlowConfig]) so it stays testable without an [AgentCli]
-/// and the CLI file stays under the size gate. Answers come back through
-/// `promptLine` (null = cancelled); application goes through
-/// `switchProvider`, the same code path as the typed `/provider` command.
+/// ([CustomProviderFlowConfig]) so it stays testable without an [AgentCli]:
+/// the host renders questions (TUI menus or numbered line lists) and
+/// applies the result (registry write + provider switch + persistence).
 library;
 
 import '../model_roles/provider_catalog.dart';
 import 'agent_cli.dart' show CliIO;
 
-/// The callbacks the custom-provider flow needs from the host CLI.
+/// One multiple-choice option: stable key + display label + dim description.
+typedef FlowOption = (String key, String label, String description);
+
+/// The completed wizard answers, ready for the host to apply.
+final class CustomProviderSetup {
+  /// Creates the result bundle.
+  const CustomProviderSetup({
+    required this.spec,
+    required this.baseUrl,
+    required this.modelId,
+    this.token,
+  });
+
+  /// The catalog spec of the chosen api type (`openai`/`anthropic`/
+  /// `google`): adapter kind, api dialect, context defaults.
+  final ProviderSpec spec;
+
+  /// The endpoint base URL (user-typed or the applied default).
+  final String baseUrl;
+
+  /// The chosen model id.
+  final String modelId;
+
+  /// The typed API key, or null (keyless / env-resolved).
+  final String? token;
+}
+
+/// The callbacks the provider flow needs from the host CLI.
 final class CustomProviderFlowConfig {
-  /// Creates the callback bundle.
+  /// Creates the callback bundle. The `initial*` fields prefill the edit
+  /// flow (`/provider-edit`); nulls mean a plain add.
   const CustomProviderFlowConfig({
-    required this.promptLine,
+    required this.askLine,
+    required this.pickOption,
     required this.fetchModels,
-    required this.switchProvider,
+    required this.applyResult,
     required this.currentModelId,
     required this.rolesActive,
+    this.initialType,
+    this.initialBaseUrl,
+    this.initialModelId,
+    this.editName,
   });
 
   /// Prints [question] and resolves to the typed line (trimmed, possibly
-  /// empty), or null on cancel (Ctrl-C / input shutdown).
-  final Future<String?> Function(String question) promptLine;
+  /// empty — the host maps empty to the question's default), or null on
+  /// cancel (Ctrl-C / input shutdown).
+  final Future<String?> Function(String question) askLine;
+
+  /// Renders [title] + [options] (a TUI menu or a numbered list) and
+  /// resolves to the chosen option key, or null on cancel. [initialKey]
+  /// pre-selects an option (edit flow).
+  final Future<String?> Function(
+    String title,
+    List<FlowOption> options, {
+    String? initialKey,
+  })
+  pickOption;
 
   /// Fetches model ids from an OpenAI-compatible `/models` endpoint, key
   /// resolution included (explicit token, else the provider's env names).
@@ -36,23 +80,29 @@ final class CustomProviderFlowConfig {
   })
   fetchModels;
 
-  /// Applies the switch (the typed `/provider` command's code path):
-  /// rebuilds model + stream (or pins the default chain in roles mode),
-  /// records the change, prints the confirmation, fires the callbacks.
-  final Future<void> Function(
-    ProviderSpec spec,
-    String baseUrl,
-    String modelId, {
-    String? token,
-  })
-  switchProvider;
+  /// Applies the completed setup (registry write, provider switch,
+  /// persistence callbacks) — the host's code path.
+  final Future<void> Function(CustomProviderSetup setup) applyResult;
 
-  /// The active model id (the model step's empty-answer default).
+  /// The active model id (the add flow's model default).
   final String Function() currentModelId;
 
   /// Whether model roles drive the agent (the key step is then skipped:
   /// keys resolve from the resolver's env-based snapshot).
   final bool rolesActive;
+
+  /// Edit prefill: the current api type (`openai`/`anthropic`/`google`).
+  final String? initialType;
+
+  /// Edit prefill: the current base URL (also the URL step's default).
+  final String? initialBaseUrl;
+
+  /// Edit prefill: the current model id (the model step's default).
+  final String? initialModelId;
+
+  /// Non-null in edit mode: the registry entry being edited (the banner and
+  /// cancellation text follow it).
+  final String? editName;
 }
 
 /// The api-type menu entries: label → catalog spec name.
@@ -68,25 +118,36 @@ Future<void> runCustomProviderFlow(
   CliIO io,
   CustomProviderFlowConfig config,
 ) async {
-  void cancelled() => io.writeln('custom provider setup cancelled');
-
-  io.writeln('custom provider setup (Ctrl-C to cancel)');
-  io.writeln(
-    'api type:  1) ${_apiTypes[0].$1}  2) ${_apiTypes[1].$1}  '
-    '3) ${_apiTypes[2].$1}',
+  final editing = config.editName != null;
+  void cancelled() => io.writeln(
+    editing ? 'provider edit cancelled' : 'custom provider setup cancelled',
   );
-  final typeAnswer = await config.promptLine('type a number: ');
-  if (typeAnswer == null) return cancelled();
-  final typeIndex = int.tryParse(typeAnswer.trim());
-  if (typeIndex == null || typeIndex < 1 || typeIndex > _apiTypes.length) {
-    io.writeln('invalid api type: ${typeAnswer.trim()} — setup aborted');
-    return;
-  }
-  final spec = providerCatalog[_apiTypes[typeIndex - 1].$2]!;
 
-  final urlAnswer = await config.promptLine('base URL: ');
+  io.writeln(
+    editing
+        ? 'editing provider ${config.editName} (Ctrl-C to cancel)'
+        : 'custom provider setup (Ctrl-C to cancel)',
+  );
+
+  // 1. Api type (menu).
+  final typeKey = await config.pickOption(
+    'api type',
+    [
+      for (final (label, name) in _apiTypes)
+        (name, label, providerCatalog[name]!.api),
+    ],
+    initialKey: config.initialType,
+  );
+  if (typeKey == null) return cancelled();
+  final spec = providerCatalog[typeKey]!;
+
+  // 2. Base URL: Enter applies the shown default (the spec's hosted URL on
+  // add, the entry's current URL on edit).
+  final urlDefault = config.initialBaseUrl ?? spec.defaultBaseUrl;
+  final urlAnswer = await config.askLine('base URL (empty = $urlDefault): ');
   if (urlAnswer == null) return cancelled();
-  final baseUrl = urlAnswer.trim().replaceAll(RegExp(r'/+$'), '');
+  final baseUrl = (urlAnswer.trim().isEmpty ? urlDefault : urlAnswer.trim())
+      .replaceAll(RegExp(r'/+$'), '');
   if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
     io.writeln(
       'invalid base URL: ${urlAnswer.trim()} (want http(s)://...) — '
@@ -95,6 +156,8 @@ Future<void> runCustomProviderFlow(
     return;
   }
 
+  // 3. API key (empty = keyless; skipped in roles mode, and on edit an
+  // empty answer keeps the entry's existing key).
   String? token;
   if (config.rolesActive) {
     io.writeln(
@@ -102,47 +165,61 @@ Future<void> runCustomProviderFlow(
       '(${spec.apiKeyEnvNames.first}) — no key step',
     );
   } else {
-    final keyAnswer = await config.promptLine('API key (empty for none): ');
+    final keyAnswer = await config.askLine('API key (empty for none): ');
     if (keyAnswer == null) return cancelled();
     final key = keyAnswer.trim();
     if (key.isNotEmpty) token = key;
   }
 
-  var modelId = config.currentModelId();
-  final modelHint = "empty keeps '$modelId'";
+  // 4. Model: the endpoint's list when it has one (plus a manual-entry
+  // option), manual entry otherwise; empty keeps the default.
+  var modelId = config.initialModelId ?? config.currentModelId();
   if (spec.kind == 'openai-completions') {
     io.writeln('fetching models from $baseUrl/models ...');
     final models = await config.fetchModels(spec, baseUrl, token: token);
     if (models.isNotEmpty) {
-      io.writeln('${models.length} models available:');
-      for (var i = 0; i < models.length; i++) {
-        io.writeln('  ${i + 1}) ${models[i]}');
-      }
-      final pick = await config.promptLine(
-        'type a number or a model id ($modelHint): ',
+      final picked = await config.pickOption(
+        'model',
+        [
+          for (final id in models) (id, id, ''),
+          ('', '+ enter manually', ''),
+        ],
+        initialKey: models.contains(modelId) ? modelId : null,
       );
-      if (pick == null) return cancelled();
-      final answer = pick.trim();
-      if (answer.isNotEmpty) {
-        final number = int.tryParse(answer);
-        modelId = number != null && number >= 1 && number <= models.length
-            ? models[number - 1]
-            : answer;
+      if (picked == null) return cancelled();
+      if (picked.isNotEmpty) {
+        modelId = picked;
+      } else {
+        final manual = await config.askLine(
+          "model id (empty keeps '$modelId'): ",
+        );
+        if (manual == null) return cancelled();
+        final answer = manual.trim();
+        if (answer.isNotEmpty) modelId = answer;
       }
     } else {
-      final manual = await config.promptLine(
-        'no model list from the endpoint — model id ($modelHint): ',
+      final manual = await config.askLine(
+        "no model list from the endpoint — model id (empty keeps '$modelId'): ",
       );
       if (manual == null) return cancelled();
       final answer = manual.trim();
       if (answer.isNotEmpty) modelId = answer;
     }
   } else {
-    final manual = await config.promptLine('model id ($modelHint): ');
+    final manual = await config.askLine(
+      "model id (empty keeps '$modelId'): ",
+    );
     if (manual == null) return cancelled();
     final answer = manual.trim();
     if (answer.isNotEmpty) modelId = answer;
   }
 
-  await config.switchProvider(spec, baseUrl, modelId, token: token);
+  await config.applyResult(
+    CustomProviderSetup(
+      spec: spec,
+      baseUrl: baseUrl,
+      modelId: modelId,
+      token: token,
+    ),
+  );
 }

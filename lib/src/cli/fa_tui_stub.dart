@@ -31,6 +31,7 @@ final class FaTuiCallbacks {
     this.isShiftPressed,
     this.opensPicker,
     this.onPickerSelected,
+    this.onPickerCancelled,
     this.onSteer,
   });
 
@@ -44,6 +45,7 @@ final class FaTuiCallbacks {
   final bool Function()? isShiftPressed;
   final bool Function(String key)? opensPicker;
   final Future<void> Function(String pickerId, String key)? onPickerSelected;
+  final void Function(String pickerId)? onPickerCancelled;
   final Future<void> Function(List<String> messages)? onSteer;
 }
 
@@ -60,7 +62,12 @@ final class FaTuiController {
 
   void openModelMenu() {}
 
-  void openPicker(String pickerId, String title, List<MenuItem> items) {}
+  void openPicker(
+    String pickerId,
+    String title,
+    List<MenuItem> items, {
+    String? initialKey,
+  }) {}
 
   void sendQuit() {}
 

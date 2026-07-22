@@ -15,6 +15,7 @@ import '../exceptions.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../ttsr/ttsr.dart';
+import 'custom_providers.dart';
 
 /// Persisted CLI configuration.
 final class CliConfig {
@@ -28,6 +29,7 @@ final class CliConfig {
     this.promptOverrides = const {},
     this.modelRoles,
     this.ttsr,
+    this.customProviders = const [],
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -53,6 +55,16 @@ final class CliConfig {
       ttsr: map['ttsr'] == null
           ? null
           : TtsrConfig.fromYaml(map['ttsr'], sourcePath: '~/.fah/config.yaml'),
+      // Saved custom providers; entry-level errors throw [ConfigException].
+      customProviders: switch (map['customProviders']) {
+        null => const [],
+        final YamlList list => [
+          for (final entry in list) CustomProviderEntry.fromYaml(entry),
+        ],
+        final other => throw ConfigException(
+          'customProviders must be a list, got: $other',
+        ),
+      },
     );
   }
 
@@ -85,6 +97,11 @@ final class CliConfig {
   /// stream-rule monitoring.
   final TtsrConfig? ttsr;
 
+  /// Saved custom providers (`customProviders:` yaml section), shown first
+  /// in the `/provider` picker and appended to by the `/provider custom`
+  /// wizard. Parsed strictly: a malformed entry throws [ConfigException].
+  final List<CustomProviderEntry> customProviders;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -112,6 +129,20 @@ final class CliConfig {
     if (roles != null) buffer.write(roles.toYaml());
     final ttsrConfig = ttsr;
     if (ttsrConfig != null) buffer.write(ttsrConfig.toYaml());
+    if (customProviders.isNotEmpty) {
+      buffer.write('customProviders:\n');
+      for (final entry in customProviders) {
+        buffer.write(
+          '  - name: ${entry.name}\n'
+          '    apiType: ${entry.apiType}\n'
+          '    baseUrl: ${entry.baseUrl}\n',
+        );
+        if (entry.keyName != null) {
+          buffer.write('    keyName: ${entry.keyName}\n');
+        }
+        buffer.write('    modelId: ${entry.modelId}\n');
+      }
+    }
     return buffer.toString();
   }
 }

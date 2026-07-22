@@ -7,22 +7,33 @@ part of 'agent_cli.dart';
 
 /// Implementation members of [AgentCli] for provider and key management.
 extension on AgentCli {
-  /// Starts the guided custom-provider setup without awaiting it: the REPL
-  /// loop must keep reading lines so the flow's prompts can be answered
+  /// Starts the guided custom-provider setup (or edit, when the `initial*`
+  /// prefills and [editName] are set) without awaiting it: the REPL loop
+  /// must keep reading lines so the flow's prompts can be answered
   /// (awaiting it here would deadlock the loop on the first question).
-  void _startCustomProviderFlow() {
+  void _startProviderFlow({
+    String? initialType,
+    String? initialBaseUrl,
+    String? initialModelId,
+    String? editName,
+  }) {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     unawaited(
       runCustomProviderFlow(
         io,
         CustomProviderFlowConfig(
-          promptLine: _promptLine,
+          askLine: _askLine,
+          pickOption: _pickOption,
           fetchModels: _fetchModelsForFlow,
-          switchProvider: (spec, baseUrl, modelId, {token}) =>
-              _switchProvider(spec, baseUrl, modelId, token: token),
+          applyResult: (setup) =>
+              _applyCustomProviderSetup(setup, editName: editName),
           currentModelId: () => _agent.state.model.id,
           rolesActive: config.modelRolesResolver != null,
+          initialType: initialType,
+          initialBaseUrl: initialBaseUrl,
+          initialModelId: initialModelId,
+          editName: editName,
         ),
       ).whenComplete(() {
         _providerFlowActive = false;
@@ -32,17 +43,23 @@ extension on AgentCli {
     );
   }
 
-  /// The flow's `/models` fetch with the same key resolution the provider
-  /// switch uses (explicit token, else the provider's env names).
-  Future<List<String>> _fetchModelsForFlow(
-    ProviderSpec spec,
-    String baseUrl, {
-    String? token,
-  }) {
-    final key = token ?? _providerKeyFromEnv(spec) ?? '';
-    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-    return fetch(baseUrl, apiKey: key);
+  /// `/provider-edit`: the guided flow prefilled with the active provider —
+  /// editing its registry entry when one is active, a plain session switch
+  /// otherwise.
+  void _startProviderEditFlow() {
+    final entry = config.customProviders?.find(_activeCustomName ?? '');
+    final model = _agent.state.model;
+    final spec = catalogProvider(model.provider) ?? providerCatalog['openai']!;
+    _startProviderFlow(
+      initialType: entry?.apiType ?? spec.name,
+      initialBaseUrl: model.baseUrl,
+      initialModelId: model.id,
+      editName: entry?.name,
+    );
   }
+
+  /// The flow's free-form questions are plain line prompts.
+  Future<String?> _askLine(String question) => _promptLine(question);
 
   /// Reads one input line for a guided-flow prompt (printed inline).
   /// Resolves to `null` on cancel (Ctrl-C interrupt or input shutdown),
@@ -76,24 +93,177 @@ extension on AgentCli {
     return line;
   }
 
-  /// The TUI provider picker (bare `/provider`): the provider catalog with
-  /// default endpoints, plus the guided custom-provider entry. A catalog
-  /// selection switches with catalog defaults; custom base URLs and tokens
-  /// go through the guided flow or the typed command.
+  /// The flow's multiple-choice questions: a TUI menu when the controller
+  /// is up (answer arrives via `_tuiPickerSelected` / cancel via
+  /// `_tuiPickerCancelled`), a numbered list plus line prompt otherwise.
+  Future<String?> _pickOption(
+    String title,
+    List<FlowOption> options, {
+    String? initialKey,
+  }) async {
+    final controller = _tuiController;
+    if (_useTui && controller != null) {
+      final stray = _wizardPickerAnswer;
+      if (stray != null && !stray.isCompleted) stray.complete(null);
+      final pending = Completer<String?>();
+      _wizardPickerAnswer = pending;
+      controller.openPicker(
+        'wizard:$title',
+        title,
+        [
+          for (final (key, label, description) in options)
+            MenuItem(key: key, label: label, description: description),
+        ],
+        initialKey: initialKey,
+      );
+      return pending.future;
+    }
+    io.writeln(title);
+    for (var i = 0; i < options.length; i++) {
+      final (key, label, description) = options[i];
+      final desc = description.isNotEmpty ? ' — $description' : '';
+      final current = key == initialKey ? ' (current)' : '';
+      io.writeln('  ${i + 1}) $label$desc$current');
+    }
+    for (;;) {
+      final answer = await _promptLine('type a number: ');
+      if (answer == null) return null;
+      final number = int.tryParse(answer.trim());
+      if (number != null && number >= 1 && number <= options.length) {
+        return options[number - 1].$1;
+      }
+      io.writeln(
+        'invalid selection: ${answer.trim()} '
+        '(1-${options.length}, Ctrl-C to cancel)',
+      );
+    }
+  }
+
+  /// The flow's `/models` fetch with the same key resolution the provider
+  /// switch uses (explicit token, else the provider's env names).
+  Future<List<String>> _fetchModelsForFlow(
+    ProviderSpec spec,
+    String baseUrl, {
+    String? token,
+  }) {
+    final key = token ?? _providerKeyFromEnv(spec) ?? '';
+    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
+    return fetch(baseUrl, apiKey: key);
+  }
+
+  /// Applies a completed wizard: writes/updates the registry entry (and the
+  /// secure-store key under the entry's own key name), then switches the
+  /// provider. In edit mode ([editName]) the entry keeps its name and its
+  /// existing key when no new token was typed.
+  Future<void> _applyCustomProviderSetup(
+    CustomProviderSetup setup, {
+    String? editName,
+  }) async {
+    final registry = config.customProviders;
+    final modelId = setup.modelId.isNotEmpty
+        ? setup.modelId
+        : _agent.state.model.id;
+    String? keyName;
+    final token = setup.token;
+    if (token != null) {
+      keyName = CustomProviderRegistry.keyNameFor(setup.baseUrl);
+      final keys = config.secureKeys;
+      if (keys != null && keys.available) {
+        await keys.save(keyName, token);
+        config.onSecretStored?.call(keyName, token);
+      } else {
+        // No secure store: the key still applies to this session via the
+        // switch below, but cannot persist with the entry.
+        keyName = null;
+        io.writeln(
+          'secure storage unavailable — the key applies to this session '
+          'only and is not saved with the provider',
+        );
+      }
+    } else if (editName != null) {
+      keyName = registry?.find(editName)?.keyName;
+    }
+    CustomProviderEntry? entry;
+    if (registry != null) {
+      entry = CustomProviderEntry(
+        name: editName ?? registry.deriveName(setup.baseUrl),
+        apiType: setup.spec.name,
+        baseUrl: setup.baseUrl,
+        modelId: modelId,
+        keyName: keyName,
+      );
+      registry.add(entry);
+      _activeCustomName = entry.name;
+      if (editName == null) {
+        io.writeln('saved provider ${entry.name} (listed first in /provider)');
+      }
+    }
+    // The key for the switch: the freshly typed token, else the entry's
+    // stored key, else the env resolution inside _switchProvider.
+    final stored = entry?.keyName;
+    final switchToken =
+        token ?? (stored != null ? config.secureKeys?.read(stored) : null);
+    await _switchProvider(
+      setup.spec,
+      setup.baseUrl,
+      modelId,
+      token: switchToken,
+      tokenKeyName: keyName,
+    );
+  }
+
+  /// Switches to a saved registry entry (picker or typed `/provider <name>`):
+  /// restores its last-used model and marks it active.
+  Future<void> _switchToSavedProvider(CustomProviderEntry entry) async {
+    final keyName = entry.keyName;
+    final token = keyName != null ? config.secureKeys?.read(keyName) : null;
+    _activeCustomName = entry.name;
+    await _switchProvider(
+      entry.spec,
+      entry.baseUrl,
+      entry.modelId,
+      token: token,
+      tokenKeyName: keyName,
+    );
+  }
+
+  /// Per-provider model memory: while a saved custom provider is active, a
+  /// `/model` switch rewrites the entry's last-used model (the host persists
+  /// it with the usual config save).
+  void _recordCustomModel(String modelId) {
+    final active = _activeCustomName;
+    if (active == null) return;
+    config.customProviders?.updateModel(active, modelId);
+  }
+
+  /// The TUI provider picker (bare `/provider`): saved custom providers
+  /// first, then the catalog presets, then the `+ Add provider` wizard
+  /// entry last. A saved selection restores the entry's last-used model.
   void _openProviderPicker() {
+    final registry = config.customProviders;
     final current = _agent.state.model.provider;
-    final items = [
+    final activeName = _activeCustomName;
+    final items = <MenuItem>[
+      if (registry != null)
+        for (final entry in registry.entries)
+          MenuItem(
+            key: 'saved:${entry.name}',
+            label: entry.name,
+            description:
+                '${entry.baseUrl} · ${entry.modelId}'
+                '${entry.name == activeName ? ' (current)' : ''}',
+          ),
       for (final spec in providerCatalog.values)
         MenuItem(
           key: spec.name,
           label: spec.name,
           description:
               '${spec.defaultBaseUrl}'
-              '${spec.name == current ? ' (current)' : ''}',
+              '${spec.name == current && activeName == null ? ' (current)' : ''}',
         ),
       const MenuItem(
         key: 'custom',
-        label: '+ custom provider…',
+        label: '+ Add provider',
         description: 'guided setup: api type, url, key, model',
       ),
     ];
@@ -103,7 +273,8 @@ extension on AgentCli {
   /// `/provider [name] [baseUrl] [token] | custom` — shows the active
   /// provider, endpoint, and key status plus the supported catalog; switches
   /// the provider/endpoint at runtime; or starts the guided custom-provider
-  /// setup (`custom`, see provider_flow.dart). Without an explicit token the
+  /// setup (`custom`, see provider_flow.dart). A saved provider name
+  /// (registry) restores its last-used model. Without an explicit token the
   /// key resolves from the provider's catalog env names; a custom endpoint
   /// may run keyless (local servers). The executable persists
   /// provider/model/baseUrl but never the key itself.
@@ -121,11 +292,20 @@ extension on AgentCli {
         io.writeln('usage: /provider custom');
         return;
       }
-      _startCustomProviderFlow();
+      _startProviderFlow();
       return;
     }
     if (args.length > 3) {
       io.writeln('usage: /provider <name> [baseUrl] [token]');
+      return;
+    }
+    // A saved custom provider name resolves before the catalog (registry
+    // names can never collide with catalog names by construction).
+    final saved = args.length == 1
+        ? config.customProviders?.find(args[0])
+        : null;
+    if (saved != null) {
+      await _switchToSavedProvider(saved);
       return;
     }
     final spec = catalogProvider(args[0]);
@@ -136,6 +316,7 @@ extension on AgentCli {
       );
       return;
     }
+    _activeCustomName = null;
     final baseUrl = args.length > 1 ? args[1] : spec.defaultBaseUrl;
     final token = args.length > 2 ? args[2] : null;
     await _switchProvider(spec, baseUrl, _agent.state.model.id, token: token);
@@ -145,14 +326,16 @@ extension on AgentCli {
   /// (roles mode pins the default chain instead), records the change, and
   /// prints the confirmation. [modelId] replaces the active id (the typed
   /// command keeps it, the custom flow lets the user pick); [token] is an
-  /// explicit session key — persisted to the secure store when available,
-  /// never to the config file. Without [token] the key resolves from the
-  /// provider's catalog env names.
+  /// explicit session key — persisted to the secure store under
+  /// [tokenKeyName] (default: the spec's primary env name), never to the
+  /// config file. Without [token] the key resolves from the provider's
+  /// catalog env names.
   Future<void> _switchProvider(
     ProviderSpec spec,
     String baseUrl,
     String modelId, {
     String? token,
+    String? tokenKeyName,
   }) async {
     final modelLine = modelId == _agent.state.model.id
         ? '  model unchanged: $modelId — use /model to change'
@@ -206,11 +389,16 @@ extension on AgentCli {
     await _session?.appendModelChange(provider: spec.name, modelId: modelId);
     var keyLine = _providerKeyLine(spec, baseUrl, explicit: token != null);
     if (token != null) {
-      final savedTo = await _storeProviderToken(spec, token);
+      final savedTo = await _storeProviderToken(
+        spec,
+        token,
+        keyName: tokenKeyName,
+      );
       if (savedTo != null) {
+        final storeName = tokenKeyName ?? spec.apiKeyEnvNames.first;
         keyLine =
             'key: provided (saved to $savedTo; '
-            'remove with /key delete ${spec.apiKeyEnvNames.first})';
+            'remove with /key delete $storeName)';
       }
     }
     io.writeln('switched provider to ${spec.name} (${spec.api})');
@@ -221,13 +409,18 @@ extension on AgentCli {
   }
 
   /// Persists an explicit `/provider` token in the platform secure store
-  /// (under the provider's primary env name) so future starts resolve it
-  /// without env vars. Returns the store label on success, null when secure
-  /// storage is unavailable (the token then stays session-only).
-  Future<String?> _storeProviderToken(ProviderSpec spec, String token) async {
+  /// so future starts resolve it without env vars. Returns the store label
+  /// on success, null when secure storage is unavailable (the token then
+  /// stays session-only). The entry name is [keyName] (registry entries use
+  /// their own), defaulting to the spec's primary env name.
+  Future<String?> _storeProviderToken(
+    ProviderSpec spec,
+    String token, {
+    String? keyName,
+  }) async {
     final keys = config.secureKeys;
     if (keys == null || !keys.available) return null;
-    final name = spec.apiKeyEnvNames.first;
+    final name = keyName ?? spec.apiKeyEnvNames.first;
     if (await keys.save(name, token)) {
       config.onSecretStored?.call(name, token);
       return keys.label;
@@ -338,13 +531,23 @@ extension on AgentCli {
   }
 
   /// Bare `/provider` in line mode: the active provider/endpoint/key status
-  /// plus the supported catalog with default endpoints.
+  /// plus saved custom providers and the catalog with default endpoints.
   void _printProviderStatus() {
     final model = _agent.state.model;
     io.writeln('provider: ${model.provider} (${model.api})');
     io.writeln('  endpoint: ${model.baseUrl}');
     final keyStatus = _keyStatusLine(model);
     if (keyStatus != null) io.writeln('  $keyStatus');
+    final registry = config.customProviders;
+    if (registry != null && registry.entries.isNotEmpty) {
+      io.writeln('saved providers:');
+      for (final entry in registry.entries) {
+        final current = entry.name == _activeCustomName ? ' (current)' : '';
+        io.writeln(
+          '  ${entry.name} — ${entry.baseUrl} · ${entry.modelId}$current',
+        );
+      }
+    }
     io.writeln('supported providers:');
     for (final spec in providerCatalog.values) {
       io.writeln('  ${spec.name} — ${spec.defaultBaseUrl}');
