@@ -383,4 +383,11 @@
 - docs(example): drop stale no-WASM-on-iOS comments after static linking fix
 - fix(example): iOS gets the full WASM sandbox command set in the system prompt
 
+## 0.1.43
+
+- feat: agent skills + project context files (all platforms)
+- feat(cli): background subagents via the task tool
+- fix(cli): keep cursor pinned to input while the spinner ticks
+- ci: create GitHub Release before binary upload + embed version
+
 ## Unreleased
