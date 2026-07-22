@@ -434,4 +434,15 @@
   list or typed manually; the TUI provider picker gains `+ custom
   provider…`. (Code landed inside 7082bc8, swept up by a parallel commit.)
 
+## 0.1.49
+
+- ci(ios): fix signing identity extraction
+- ci(ios): use fastlane build_only with temporary keychain
+- ci(ios): use persistent ci.keychain on self-hosted runner
+- ci(ios): use only build.keychain as default/search list, no OTHER_CODE_SIGN_FLAGS
+- ci(ios): import distribution cert into login.keychain and build without isolated keychain
+- ci(ios): download Apple WWDR G3 intermediate into build.keychain
+- ci(ios): import WWDR intermediate into build.keychain, keep it unlocked, pass --keychain
+- ci(ios): pass --keychain to codesign via OTHER_CODE_SIGN_FLAGS and add debug output
+
 ## Unreleased
