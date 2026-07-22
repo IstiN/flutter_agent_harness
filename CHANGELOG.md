@@ -419,4 +419,10 @@
 - ci: TestFlight submission for iOS and macOS (learn.ai pattern)
 - refactor(example): migrate example/flutter_example to flutter_app (fa package)
 
+## 0.1.47
+
+- ci: explicit export-options plist for iOS builds (UUID + full identity)
+- fix(example): pin the full signing identity name for iOS CI builds
+- fix(example): pin CODE_SIGN_IDENTITY iPhone Distribution for CI builds
+
 ## Unreleased
