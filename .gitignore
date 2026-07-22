@@ -31,5 +31,5 @@ vendor/wasm_run_flutter/macos/Frameworks/
 # Populate from your own Firebase project download; never commit.
 google-services.json
 GoogleService-Info.plist
-firebase_options.dart
+# firebase_options.dart is checked in for CI builds (public API keys only).
 
