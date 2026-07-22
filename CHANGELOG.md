@@ -425,10 +425,13 @@
 - fix(example): pin the full signing identity name for iOS CI builds
 - fix(example): pin CODE_SIGN_IDENTITY iPhone Distribution for CI builds
 
-## Unreleased
+## 0.1.48
+
 
 - feat(cli): guided custom provider setup (`/provider custom`): api type
   (openai/anthropic/google-like), base URL, optional key (saved to the OS
   secure store), then the model — picked from the endpoint's `/models`
   list or typed manually; the TUI provider picker gains `+ custom
   provider…`. (Code landed inside 7082bc8, swept up by a parallel commit.)
+
+## Unreleased
