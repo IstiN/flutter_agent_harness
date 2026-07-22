@@ -59,7 +59,7 @@ platform :ios do
       increment_build_number(xcodeproj: "ios/Runner.xcodeproj")
     end
 
-    sh("xcrun", "simctl", "list", ">", "/dev/null", "2>&1", "||", "true")
+    sh("xcrun simctl list > /dev/null 2>&1 || true")
     sh("flutter", "build", "ios", "--release", "--no-codesign")
 
     build_app(
