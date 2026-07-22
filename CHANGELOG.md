@@ -394,4 +394,11 @@
 
 - ci: fix Windows binary build + installer mojibake
 
+## 0.1.45
+
+- feat(cli): fa update and fa uninstall quick commands
+- fix(ci): quote pwsh run line — leading & parsed as a YAML anchor, breaking the whole workflow
+- fix(windows): fa crash after TUI exit + installer mojibake
+- ci: installer-smoke job runs the one-line installers on every tag
+
 ## Unreleased
