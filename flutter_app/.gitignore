@@ -50,7 +50,7 @@ app.*.map.json
 # Firebase config files contain private API keys.
 # Placeholder versions are tracked so CI can build without a real project;
 # do not commit files produced by `flutterfire configure`.
-lib/firebase_options.dart
+# lib/firebase_options.dart is checked in for CI builds (public API keys only).
 android/app/google-services.json
 ios/Runner/GoogleService-Info.plist
 ios/Runner/firebase_app_id_file.json
