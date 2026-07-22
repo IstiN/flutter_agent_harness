@@ -390,4 +390,8 @@
 - fix(cli): keep cursor pinned to input while the spinner ticks
 - ci: create GitHub Release before binary upload + embed version
 
+## 0.1.44
+
+- ci: fix Windows binary build + installer mojibake
+
 ## Unreleased
