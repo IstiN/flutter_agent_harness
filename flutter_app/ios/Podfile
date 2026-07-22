@@ -44,6 +44,25 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
   end
 
+  # wasm_run FFI symbols live in a static library inside WasmRun.xcframework.
+  # They are referenced only from Dart via DynamicLibrary.executable(), so the
+  # linker strips them unless we force-load the archive explicitly on the
+  # application target (not the pod target). Only do this for Release/device
+  # builds so Debug simulator builds are not affected.
+  wasm_run_force_load = '${PODS_ROOT}/../.symlinks/plugins/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a'
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.targets.each do |target|
+      next unless target.name == 'Runner'
+      target.build_configurations.each do |config|
+        next unless config.name == 'Release'
+        ldflags = config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
+        next if Array(ldflags).any? { |f| f.include?(wasm_run_force_load) }
+        ldflags << '-force_load'
+        ldflags << wasm_run_force_load
+      end
+    end
+  end
+
   # The vendored WasmRun.xcframework only ships an arm64 simulator slice.
   # Exclude x86_64 simulator everywhere so Debug simulator builds do not try
   # to link a missing slice.
