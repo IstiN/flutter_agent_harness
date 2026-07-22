@@ -50,9 +50,18 @@ Future<void> main() async {
   debugPrint('[fah] provider registry loaded');
   final lastConnection = await LastConnectionStore.load(env);
   debugPrint('[fah] last connection loaded');
-  final analytics = Firebase.apps.isNotEmpty
-      ? FirebaseAnalytics.instance
-      : null;
+  // Analytics is strictly optional. On web with placeholder options
+  // (`YOUR_*` — what CI builds) initializeApp above is skipped, and just
+  // reading Firebase.apps can throw (no JS SDK loaded — seen on Safari,
+  // where it killed startup before runApp); content blockers break it too.
+  FirebaseAnalytics? analytics;
+  try {
+    if (Firebase.apps.isNotEmpty) {
+      analytics = FirebaseAnalytics.instance;
+    }
+  } on Object catch (error) {
+    debugPrint('[fah] analytics unavailable, continuing without: $error');
+  }
   debugPrint('[fah] starting runApp');
   runApp(
     MyApp(
