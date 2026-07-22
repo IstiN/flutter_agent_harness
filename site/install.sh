@@ -20,7 +20,7 @@
 #  by `dart run scripts/gen_installers.dart`.
 # ═══════════════════════════════════════════════════════════════════════════
 
-set -euo pipefail
+set -eu  # no pipefail: dash (Ubuntu sh) lacks it
 
 REPO="IstiN/flutter_agent_harness"
 BINARY="fa"
@@ -101,17 +101,14 @@ esac
 asset="fa-${os}-${arch}"
 
 # ── 2. Resolve install directory ─────────────────────────────────────────────
-install_dir="${FA_INSTALL_DIR:-$HOME/.local/bin}"
 # Prefer a directory already on PATH, falling back to ~/.local/bin.
-candidates=("$install_dir" "$HOME/.local/bin" "$HOME/bin")
-install_dir=""
-for candidate in "${candidates[@]}"; do
-  if [[ ":${PATH}:" == *:"$candidate":* ]]; then
-    install_dir="$candidate"
-    break
-  fi
-done
-[[ -z $install_dir ]] && install_dir="$HOME/.local/bin"
+# (POSIX-only syntax below: Ubuntu's /bin/sh is dash, no arrays/[[]]/pipefail.)
+install_dir="${FA_INSTALL_DIR:-$HOME/.local/bin}"
+case ":${PATH}:" in
+  *":$install_dir:"*) ;;
+  *":$HOME/.local/bin:"*) install_dir="$HOME/.local/bin" ;;
+  *":$HOME/bin:"*) install_dir="$HOME/bin" ;;
+esac
 
 mkdir -p "$install_dir"
 target="$install_dir/$BINARY"
@@ -139,7 +136,7 @@ else
   fi
 fi
 
-if [[ ${FALLBACK:-} == true ]]; then
+if [ "${FALLBACK:-}" = true ]; then
   if ! command -v dart >/dev/null 2>&1; then
     err "the Dart SDK ('dart') is not on your PATH, and no prebuilt binary is available for ${os}-${arch}."
     say ""
@@ -171,9 +168,9 @@ else
     */fish) shell_rc="$HOME/.config/fish/config.fish" ;;
   esac
 
-  if [[ -n $shell_rc ]]; then
+  if [ -n "$shell_rc" ]; then
     mkdir -p "$(dirname "$shell_rc")"
-    if [[ -f $shell_rc ]] && grep -qF "$install_dir" "$shell_rc" 2>/dev/null; then
+    if [ -f "$shell_rc" ] && grep -qF "$install_dir" "$shell_rc" 2>/dev/null; then
       ok "$install_dir is already referenced in $shell_rc"
     else
       printf '\n# Fa CLI PATH\nexport PATH="$PATH:%s"\n' "$install_dir" >> "$shell_rc"
