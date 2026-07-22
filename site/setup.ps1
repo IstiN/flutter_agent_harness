@@ -18,6 +18,13 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
+# The banner and status glyphs are UTF-8; without this the default Windows
+# console code page prints them as mojibake.
+try {
+  [Console]::OutputEncoding = [Text.Encoding]::UTF8
+  $OutputEncoding = [Text.Encoding]::UTF8
+} catch { }
+
 $FahConfigDir = Join-Path $env:USERPROFILE ".fah"
 $FahConfigFile = Join-Path $FahConfigDir "config.yaml"
 
