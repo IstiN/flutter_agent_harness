@@ -32,6 +32,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
+import 'self_manage.dart';
+
 const _fallbackVersion = '0.1.0';
 
 /// Reads the package version with three fallbacks so compiled binaries stay
@@ -455,6 +457,18 @@ Future<void> main(List<String> args) async {
     };
   } on CliArgsException catch (error) {
     _fail(error.message);
+  }
+
+  // Quick self-management commands, intercepted before prompt resolution:
+  // `fa update` swaps in the latest release binary; `fa uninstall` removes
+  // the binary + PATH entry (and ~/.fah on a second confirmation).
+  if (parsed.positionals.length == 1 && parsed.prompt == null) {
+    switch (parsed.positionals.single) {
+      case 'update':
+        exit(await runSelfUpdate(currentVersion: packageVersion));
+      case 'uninstall':
+        exit(await runSelfUninstall());
+    }
   }
 
   // Headless prompt resolution: -p verbatim; a first positional naming an
