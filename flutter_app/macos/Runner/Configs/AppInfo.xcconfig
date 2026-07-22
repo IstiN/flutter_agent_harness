@@ -8,7 +8,7 @@
 PRODUCT_NAME = Fa
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = dev.fa1.macos
+PRODUCT_BUNDLE_IDENTIFIER = dev.fa1.app
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 fa1.dev. All rights reserved.
