@@ -206,6 +206,14 @@ jobs:
         working-directory: flutter_app
         run: flutter pub get
 
+      - name: Restore vendored WasmRun iOS framework
+        run: |
+          set -euo pipefail
+          # The prebuilt XCFramework is excluded from git; fetch the published
+          # package into the pub cache and copy the native binary back.
+          dart pub cache add wasm_run_flutter --version 0.1.0
+          scripts/setup_vendor_ios.sh
+
       - name: Validate iOS secrets
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
