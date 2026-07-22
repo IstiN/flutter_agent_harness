@@ -143,17 +143,6 @@ jobs:
 
           cd "$GITHUB_WORKSPACE"
 
-          # Allow local file-protocol clones used by the submodule mirrors.
-          git config --global protocol.file.allow always
-          git config submodule.third_party/flutter_local_models.url \
-            "file://$MIRROR_BASE/flutter_local_models.git"
-          git config submodule.packages/xterm.url \
-            "file://$MIRROR_BASE/xterm.git"
-
-          git submodule update --init --recursive --depth=1 --jobs=8
-          echo "Submodules initialized:"
-          git submodule status
-
           if [ -d "$BUILD_CACHE_DIR/macos" ]; then
             echo "Restoring macOS build cache for $ARCH..."
             mkdir -p build
@@ -229,11 +218,12 @@ jobs:
           cat lib/core/services/build_info.dart
 
       - name: Restore vendored WasmRun macOS framework
+        timeout-minutes: 15
         run: |
           set -euo pipefail
-          # The prebuilt XCFramework is excluded from git. On this self-hosted
-          # runner the local working copy already has it, so copy it into the CI
-          # workspace instead of fetching it over the network.
+          # The prebuilt XCFramework is excluded from git. Prefer the local
+          # working copy on this self-hosted runner; fall back to the upstream
+          # release asset if the local copy is unavailable.
           LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
           DEST="vendor/wasm_run_flutter/macos/Frameworks"
           rm -rf "$DEST/WasmRun.xcframework"
@@ -242,8 +232,11 @@ jobs:
             echo "Using local framework: $LOCAL_SRC"
             cp -R "$LOCAL_SRC" "$DEST/"
           else
-            echo "::error::Local macOS framework not found at $LOCAL_SRC"
-            exit 1
+            echo "Local framework not found, downloading from upstream release..."
+            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+              -o /tmp/WasmRun.xcframework.zip \
+              https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
+            unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
           fi
           ls -la "$DEST/WasmRun.xcframework"
 
@@ -489,9 +482,9 @@ jobs:
           echo "✅ Notarization complete"
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
-          name: YoLoIT-macos-${{ matrix.arch }}
+          name: Fa-macos-${{ matrix.arch }}
           path: |
             ${{ steps.package.outputs.dmg_name }}
             ${{ steps.package.outputs.zip_name }}
@@ -513,10 +506,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Download DMG artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           path: dmgs
           pattern: Fa-macos-*

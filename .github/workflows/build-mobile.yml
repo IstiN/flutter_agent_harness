@@ -329,7 +329,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
-          path: flutter_app/build/ios/*.ipa
+          path: flutter_app/build/ios/ipa/*.ipa
           retention-days: 14
 
       - name: Cleanup
