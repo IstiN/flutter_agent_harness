@@ -97,6 +97,19 @@ PROVIDERS AND API KEYS
   --model. The API key is optional there: local servers (llama.cpp, Ollama,
   LM Studio) need none, and no Authorization header is sent without one.
 
+  In the REPL, /provider [name] [baseUrl] [token] switches the provider and
+  endpoint live (openrouter, openai, anthropic, google): without a token the
+  key resolves from the env vars above; an explicit token is persisted in the
+  OS secure store when one is available. The model id is kept — switch it
+  with /model afterwards if the new provider needs a different one.
+
+  Secure key storage: keys resolve env-first, then the platform secure
+  store — macOS Keychain, Secret Service on Linux (secret-tool/libsecret;
+  unavailable on headless hosts), Windows Credential Locker. /key shows per
+  key where the value comes from (never the values), /key set <NAME> <value>
+  stores, /key delete <NAME> removes. Rotation stacks (NAME_2, ...) stay
+  env-only.
+
   Vision: VISION_API_KEY for --vision-model (defaults to the main key).
   Transcription: TRANSCRIBE_API_KEY for --transcribe-model (defaults to the
   main key).
@@ -254,6 +267,10 @@ SKILLS AND CONTEXT FILES
   a 32 KiB leaf-first budget.
   /model [id|?|N]    show model/roles, pick from known models, or switch
   /models [filter]   list known models for the current provider
+  /provider [name] [baseUrl] [token]
+                     show or switch the provider/endpoint (token optional,
+                     saved to the OS secure store when available)
+  /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
   /session [name]    show current or switch/create a named session
   /session-new <n>   create a new named session

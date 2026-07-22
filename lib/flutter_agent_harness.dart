@@ -39,6 +39,7 @@ export 'src/providers/google.dart';
 export 'src/providers/openai_completions.dart';
 export 'src/secrets/secret_redactor.dart';
 export 'src/secrets/secrets_store.dart';
+export 'src/secrets/secure_key_store.dart';
 export 'src/session/session_record.dart';
 export 'src/session/agent_session_manager.dart';
 export 'src/session/session_repo.dart';

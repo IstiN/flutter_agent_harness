@@ -117,19 +117,31 @@ Model _buildModel(CliArgs args) {
   );
 }
 
-String? _optionalApiKey(String provider) {
+String? _optionalApiKey(String provider, SecureKeyCache keys) {
   final env = Platform.environment;
+  // Resolution order per key name: environment first, then the platform
+  // secure store (macOS Keychain / Secret Service / Credential Locker).
+  String? byName(String name) {
+    final value = env[name];
+    if (value != null && value.isNotEmpty) return value;
+    return keys.read(name);
+  }
+
   return switch (provider) {
-    'anthropic' => env['ANTHROPIC_API_KEY'],
-    'google' => env['GOOGLE_API_KEY'],
-    'vision' => env['VISION_API_KEY'],
-    'transcribe' => env['TRANSCRIBE_API_KEY'],
-    _ => env['OPENROUTER_API_KEY'] ?? env['OPENAI_API_KEY'],
+    'anthropic' => byName('ANTHROPIC_API_KEY'),
+    'google' => byName('GOOGLE_API_KEY'),
+    'vision' => byName('VISION_API_KEY'),
+    'transcribe' => byName('TRANSCRIBE_API_KEY'),
+    _ => byName('OPENROUTER_API_KEY') ?? byName('OPENAI_API_KEY'),
   };
 }
 
-String _resolveApiKey(String provider, {String? fallback}) {
-  final key = _optionalApiKey(provider) ?? fallback;
+String _resolveApiKey(
+  String provider,
+  SecureKeyCache keys, {
+  String? fallback,
+}) {
+  final key = _optionalApiKey(provider, keys) ?? fallback;
   if (key == null || key.isEmpty) {
     final name = switch (provider) {
       'anthropic' => 'ANTHROPIC_API_KEY',
@@ -146,8 +158,13 @@ String _resolveApiKey(String provider, {String? fallback}) {
 /// Collects the secrets snapshot for the model-roles resolver: every
 /// provider catalog env name plus its rotation stack (`NAME`, `NAME_2`,
 /// `NAME_3`, ...), plus any base name referenced by an explicit
-/// `apiKeyName` in the roles config.
-Map<String, String> _collectRoleSecrets(ModelRolesConfig rolesConfig) {
+/// `apiKeyName` in the roles config. The platform secure store backs up
+/// base names where the environment has none (env wins; rotation stacks
+/// stay env-only — secure storage holds base names only).
+Map<String, String> _collectRoleSecrets(
+  ModelRolesConfig rolesConfig,
+  SecureKeyCache keys,
+) {
   final baseNames = <String>{
     for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
     for (final chain in rolesConfig.roles.values)
@@ -167,8 +184,26 @@ Map<String, String> _collectRoleSecrets(ModelRolesConfig rolesConfig) {
         if (entry.value.isNotEmpty) secrets[entry.key] = entry.value;
       }
     }
+    if (!secrets.containsKey(base)) {
+      final stored = keys.read(base);
+      if (stored != null) secrets[base] = stored;
+    }
   }
   return secrets;
+}
+
+/// The explicit `apiKeyName`s referenced by a roles config (the secure-store
+/// preload set; the catalog names are always preloaded).
+Set<String> _roleKeyNames(ModelRolesConfig rolesConfig) {
+  return {
+    for (final chain in rolesConfig.roles.values)
+      for (final ref in chain)
+        if (ref.apiKeyName != null) ref.apiKeyName!,
+    for (final override in rolesConfig.pathOverrides)
+      for (final chain in override.roles.values)
+        for (final ref in chain)
+          if (ref.apiKeyName != null) ref.apiKeyName!,
+  };
 }
 
 /// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
@@ -515,6 +550,19 @@ Future<void> main(List<String> args) async {
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
 
+  // Platform secure storage (macOS Keychain / Secret Service / Windows
+  // Credential Locker): backs up every provider key the environment does
+  // not set. Reads are process spawns, so the store is preloaded once into
+  // a synchronous session cache — every later lookup (startup resolution,
+  // the banner, `/provider`, `/key`) hits the snapshot.
+  final keyCache = SecureKeyCache(platformSecureKeyStore());
+  await keyCache.preload({
+    for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
+    'VISION_API_KEY',
+    'TRANSCRIBE_API_KEY',
+    if (saved.modelRoles != null) ..._roleKeyNames(saved.modelRoles!),
+  });
+
   // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file
   // paths resolve against the agent cwd, `~` expands; missing files are a
   // hard error, never a silent fallback).
@@ -555,7 +603,7 @@ Future<void> main(List<String> args) async {
   final rolesConfig = saved.modelRoles;
   final roleSecrets = rolesConfig == null
       ? const <String, String>{}
-      : _collectRoleSecrets(rolesConfig);
+      : _collectRoleSecrets(rolesConfig, keyCache);
   ModelRolesResolver? rolesResolver;
   var defaultRoleResolved = false;
   if (rolesConfig != null) {
@@ -586,8 +634,8 @@ Future<void> main(List<String> args) async {
   // mode needs a key immediately because it performs a single run and exits.
   final interactive = headlessPrompt == null;
   final apiKey = defaultRoleResolved || customEndpoint || interactive
-      ? (_optionalApiKey(provider) ?? '')
-      : _resolveApiKey(provider);
+      ? (_optionalApiKey(provider, keyCache) ?? '')
+      : _resolveApiKey(provider, keyCache);
 
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the
@@ -611,6 +659,15 @@ Future<void> main(List<String> args) async {
   for (final entry in roleSecrets.entries) {
     redactor.register(entry.key, entry.value);
   }
+  // As are the keys preloaded from the platform secure store (keychain
+  // values must never reach the transcript either).
+  for (final name in keyCache.names) {
+    final value = keyCache.read(name);
+    if (value != null) redactor.register(name, value);
+  }
+  // Whether the redactor is attached to the agent. A keyless startup leaves
+  // it detached; a `/provider` token arriving at runtime attaches it then.
+  var redactorAttached = !redactor.isEmpty;
 
   // Web search works out of the box via keyless DuckDuckGo; keyed providers
   // (Brave, Tavily) join the chain when their API key is in the environment.
@@ -626,7 +683,7 @@ Future<void> main(List<String> args) async {
   if (effective.visionModel != null) {
     visionConfig = InspectImageConfig(
       modelId: effective.visionModel!,
-      apiKey: _resolveApiKey('vision', fallback: apiKey),
+      apiKey: _resolveApiKey('vision', keyCache, fallback: apiKey),
       baseUrl: effective.visionBaseUrl,
     );
   }
@@ -635,7 +692,7 @@ Future<void> main(List<String> args) async {
   if (effective.transcribeModel != null) {
     transcribeConfig = TranscribeAudioConfig(
       modelId: effective.transcribeModel!,
-      apiKey: _resolveApiKey('transcribe', fallback: apiKey),
+      apiKey: _resolveApiKey('transcribe', keyCache, fallback: apiKey),
       baseUrl: effective.transcribeBaseUrl,
     );
   }
@@ -659,7 +716,10 @@ Future<void> main(List<String> args) async {
       'interactive slash/model menus are unavailable.',
     );
   }
-  final cli = AgentCli(
+  // `late` so the onProviderChanged closure can reach the agent (to attach
+  // the secret redactor on a runtime token) before the variable is assigned.
+  late final AgentCli cli;
+  cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
         headlessPrompt == null &&
@@ -672,7 +732,21 @@ Future<void> main(List<String> args) async {
       providerKind: provider,
       // The banner names the key env var in play (name only, never the
       // value); the catalog maps the effective provider to its var names.
-      envVarIsSet: (name) => (Platform.environment[name] ?? '').isNotEmpty,
+      // A name counts as set when the environment OR the secure store has
+      // it; the value resolves env-first.
+      envVarIsSet: (name) =>
+          (Platform.environment[name] ?? '').isNotEmpty ||
+          keyCache.read(name) != null,
+      // `/provider` resolves the target provider's key from the environment
+      // (or the secure store) when no explicit token is passed.
+      envVarValue: (name) {
+        final value = Platform.environment[name];
+        if (value != null && value.isNotEmpty) return value;
+        return keyCache.read(name);
+      },
+      // `/key` manages the platform secure store; `/provider ... <token>`
+      // persists the token there.
+      secureKeys: keyCache,
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
       sessionName: effective.session,
@@ -702,6 +776,29 @@ Future<void> main(List<String> args) async {
       // with project rules (.fah/rules.yaml), project first.
       ttsr: _resolveTtsr(saved, cwd),
       onModelChanged: (_) async => persistConfig(),
+      // `/provider` switches: redact an explicitly passed session token so
+      // it cannot leak into tool results or session files, then persist the
+      // new provider/model/baseUrl triple (never the key itself).
+      onProviderChanged: (kind, key) async {
+        if (key.isNotEmpty) {
+          redactor.register('/provider token', key);
+          // A keyless startup never attached the redactor; a runtime token
+          // still gets masked from here on.
+          if (!redactorAttached) {
+            attachSecretRedactor(cli.agent, redactor);
+            redactorAttached = true;
+          }
+        }
+        await persistConfig();
+      },
+      // `/key set` stored a secret: mask it from here on (same lazy attach).
+      onSecretStored: (name, value) {
+        redactor.register(name, value);
+        if (!redactorAttached && !redactor.isEmpty) {
+          attachSecretRedactor(cli.agent, redactor);
+          redactorAttached = true;
+        }
+      },
       onModeChanged: (_) async => persistConfig(),
       onApprovalChanged: () async => persistConfig(),
       // Shift+Enter in the TUI: terminals that do not encode the modifier
@@ -710,13 +807,13 @@ Future<void> main(List<String> args) async {
     ),
     io: io,
   );
-  if (!redactor.isEmpty) attachSecretRedactor(cli.agent, redactor);
+  if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
 
   persistConfig = () async {
     await saveCliConfig(
       home,
       CliConfig(
-        providerKind: provider,
+        providerKind: cli.providerKind,
         modelId: cli.agent.state.model.id,
         baseUrl: cli.agent.state.model.baseUrl,
         mode: cli.currentMode.name,

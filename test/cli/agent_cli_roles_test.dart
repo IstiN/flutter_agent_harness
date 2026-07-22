@@ -342,4 +342,79 @@ void main() {
     expect(legacyCalls, ['placeholder']);
     expect(factory.calls, ['claude-smol']);
   });
+
+  test('/provider pins the default chain to the new endpoint', () async {
+    final factory = _RolesFactory({
+      'claude-a': [_textTurn('claude-a', 'proxied answer')],
+    });
+    final resolver = resolverFor(factory, const {
+      'default': [ModelRef(provider: 'anthropic', modelId: 'claude-a')],
+    });
+    final cli = cliFor(resolver);
+    final run = cli.run();
+
+    io.sendLine('/provider anthropic http://proxy.test:1');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to anthropic'),
+    );
+    io.sendLine('go');
+    await _waitFor(() => factory.calls.isNotEmpty && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(
+      output,
+      contains(
+        'switched provider to anthropic '
+        '(endpoint: http://proxy.test:1)',
+      ),
+    );
+    expect(output, contains('model unchanged: claude-a'));
+    expect(cli.agent.state.model.baseUrl, 'http://proxy.test:1');
+    expect(factory.calls, ['claude-a']);
+    expect(output, contains('proxied answer'));
+  });
+
+  test('/provider rejects an explicit token while roles are active', () async {
+    final factory = _RolesFactory({
+      'claude-a': [_textTurn('claude-a', 'a')],
+    });
+    final resolver = resolverFor(factory, const {
+      'default': [ModelRef(provider: 'anthropic', modelId: 'claude-a')],
+    });
+    final cli = cliFor(resolver);
+    final run = cli.run();
+
+    io.sendLine('/provider anthropic http://proxy.test:1 some-token');
+    await _waitFor(
+      () => io.out.toString().contains('explicit tokens are not supported'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('set ANTHROPIC_API_KEY in the environment'));
+    expect(cli.agent.state.model.id, 'claude-a');
+    expect(cli.agent.state.model.baseUrl, 'https://api.anthropic.com');
+  });
+
+  test('/provider reports a clean error when no key resolves', () async {
+    final factory = _RolesFactory({
+      'claude-a': [_textTurn('claude-a', 'a')],
+    });
+    final resolver = resolverFor(factory, const {
+      'default': [ModelRef(provider: 'anthropic', modelId: 'claude-a')],
+    });
+    final cli = cliFor(resolver);
+    final run = cli.run();
+
+    // GOOGLE_API_KEY is absent from the resolver's secrets snapshot.
+    io.sendLine('/provider google');
+    await _waitFor(() => io.out.toString().contains('cannot switch provider'));
+    io.sendLine('/exit');
+    await run;
+
+    expect(io.out.toString(), contains('GOOGLE_API_KEY'));
+  });
 }
