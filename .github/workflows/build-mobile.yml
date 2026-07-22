@@ -249,6 +249,7 @@ jobs:
         working-directory: flutter_app
         env:
           BUILD_NUMBER: ${{ github.run_number }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
         run: |
           set -euo pipefail
           # flutter's own export plist falls back to the short
