@@ -244,9 +244,9 @@ jobs:
           # Import the Apple WWDR intermediate so the distribution cert can be
           # validated inside the isolated build.keychain without relying on the
           # login keychain during codesign.
-          security find-certificate -a -c "Apple Worldwide Developer Relations" -p > /tmp/wwdr.pem
-          security import /tmp/wwdr.pem -k build.keychain -T /usr/bin/codesign
-          rm -f /tmp/wwdr.pem
+          curl -fsSL -o /tmp/AppleWWDRCAG3.cer https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import /tmp/AppleWWDRCAG3.cer -k build.keychain -T /usr/bin/codesign
+          rm -f /tmp/AppleWWDRCAG3.cer
 
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
 
