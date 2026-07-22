@@ -214,6 +214,54 @@ jobs:
           fi
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
+  installer-smoke:
+    name: Installer smoke
+    # Actually runs the one-line installers on every release: downloads the
+    # just-built binary from the release and executes `fa --version`
+    # (catches installer syntax/encoding breakage on real Windows shells).
+    runs-on: ${{ matrix.os }}
+    needs: binaries
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            kind: ps1
+          - os: ubuntu-latest
+            kind: sh
+          - os: macos-latest
+            kind: sh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the one-line installer (PowerShell)
+        if: matrix.kind == 'ps1'
+        shell: pwsh
+        run: ./site/install.ps1
+
+      - name: Run the one-line installer (sh)
+        if: matrix.kind == 'sh'
+        shell: bash
+        env:
+          FA_INSTALL_DIR: ${{ runner.temp }}/fa-bin
+        run: sh ./site/install.sh
+
+      - name: Smoke the installed binary (Windows)
+        if: matrix.kind == 'ps1'
+        shell: pwsh
+        run: & "$env:LOCALAPPDATA\Fa\bin\fa.exe" --version
+
+      - name: Smoke the installed binary (Unix)
+        if: matrix.kind == 'sh'
+        shell: bash
+        run: |
+          if [ -x "${{ runner.temp }}/fa-bin/fa" ]; then
+            "${{ runner.temp }}/fa-bin/fa" --version
+          else
+            "$HOME/.local/bin/fa" --version
+          fi
+
   release:
     name: Auto-release (patch bump + tag)
     runs-on: ubuntu-latest
