@@ -13,13 +13,13 @@
 #
 # {{GENERATED_HEADER}}
 
-set -euo pipefail
+set -eu  # no pipefail: dash (Ubuntu sh) lacks it
 
 FAH_CONFIG_DIR="$HOME/.fah"
 FAH_CONFIG_FILE="$FAH_CONFIG_DIR/config.yaml"
 
 # ── TTY handling ─────────────────────────────────────────────────────────────
-if [[ -t 0 ]]; then
+if [ -t 0 ]; then
   FAH_TTY="/dev/stdin"
 else
   FAH_TTY="/dev/tty"
@@ -55,7 +55,7 @@ prompt() {
 ask() {
   local var="$1" text="$2" default="${3:-}"
   while true; do
-    if [[ -n $default ]]; then
+    if [ -n "$default" ]; then
       prompt "$text [$default]"
     else
       prompt "$text"
@@ -65,7 +65,7 @@ ask() {
       printf -v "$var" '%s' "$default"
       return 1
     fi
-    if [[ -z $value && -n $default ]]; then
+    if [ -z "$value" ] && [ -n "$default" ]; then
       value=$default
     fi
     printf -v "$var" '%s' "$value"
@@ -90,7 +90,7 @@ ask_yn() {
   local var="$1" text="$2" default="${3:-y}"
   local answer
   while true; do
-    if [[ $default == "y" ]]; then
+    if [ "$default" = "y" ]; then
       prompt "$text [Y/n]"
     else
       prompt "$text [y/N]"
@@ -137,7 +137,7 @@ fi
 ok "Found 'fa' on PATH ($(command -v fa 2>/dev/null || command -v fah))."
 
 # ── 2. Interactive configuration ─────────────────────────────────────────────
-if [[ ! -e /dev/tty ]] || [[ ! -t 2 ]]; then
+if [ ! -e /dev/tty ] || [ ! -t 2 ]; then
   info "Non-interactive environment detected."
   say ""
   say "  To finish setup, set an API key and run:"
@@ -147,10 +147,10 @@ if [[ ! -e /dev/tty ]] || [[ ! -t 2 ]]; then
   exit 0
 fi
 
-if [[ -f $FAH_CONFIG_FILE ]]; then
+if [ -f "$FAH_CONFIG_FILE" ]; then
   reconfigure="n"
   ask_yn reconfigure "A config already exists at ${FAH_CONFIG_FILE}. Reconfigure?" "n"
-  if [[ $reconfigure != "y" ]]; then
+  if [ "$reconfigure" != "y" ]; then
     ok "Kept existing config. Run 'fa' to start."
     exit 0
   fi
@@ -167,9 +167,9 @@ say ""
 # API key
 say ""
 api_key=""
-if [[ $provider == "custom" ]]; then
+if [ "$provider" = "custom" ]; then
   ask_yn needs_key "Does this endpoint require an API key?" "n"
-  if [[ $needs_key == "y" ]]; then
+  if [ "$needs_key" = "y" ]; then
     ask_hidden api_key "Paste your API key"
   fi
 else
@@ -197,7 +197,7 @@ EOF
 ok "Wrote ${FAH_CONFIG_FILE}"
 
 # Persist API key in shell startup file
-if [[ -n $api_key ]]; then
+if [ -n "$api_key" ]; then
   say ""
   shell_rc=""
   case "${SHELL:-}" in
@@ -206,11 +206,11 @@ if [[ -n $api_key ]]; then
     */fish) shell_rc="$HOME/.config/fish/config.fish" ;;
   esac
 
-  if [[ -n $shell_rc ]]; then
+  if [ -n "$shell_rc" ]; then
     persist="n"
     ask_yn persist "Add ${key_var} to ${shell_rc}? (we never log the value)" "y"
-    if [[ $persist == "y" ]]; then
-      if [[ -f $shell_rc ]] && grep -qF "export ${key_var}=" "$shell_rc" 2>/dev/null; then
+    if [ "$persist" = "y" ]; then
+      if [ -f "$shell_rc" ] && grep -qF "export ${key_var}=" "$shell_rc" 2>/dev/null; then
         sed -i.bak "s|^export ${key_var}=.*|export ${key_var}='${api_key}'|" "$shell_rc" && rm -f "${shell_rc}.bak"
       else
         printf "\n# Fa CLI API key\nexport %s='%s'\n" "$key_var" "$api_key" >> "$shell_rc"
