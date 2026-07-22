@@ -445,4 +445,25 @@
 - ci(ios): import WWDR intermediate into build.keychain, keep it unlocked, pass --keychain
 - ci(ios): pass --keychain to codesign via OTHER_CODE_SIGN_FLAGS and add debug output
 
+## 0.1.50
+
+- ci(ios,macos): fallback to GitHub release for WasmRun iOS framework
+- ci(ios,macos): restore WasmRun frameworks from local runner copy
+- ci(ios): restore WasmRun.xcframework from pub cache before build
+- fix(ios): use SRCROOT-relative path for wasm_run force_load
+- ci(macos): set working-directory for flutter steps and create .env placeholder
+- fix(ios): use absolute path for wasm_run force_load in Podfile
+- fix(ios): force-load wasm_run via Podfile post_install for Runner target
+- test(cli): wizard/registry coverage, help keyword, docs
+- fix(ios): force-load wasm_run in pod target only
+- fix(ios): use PODS_ROOT path for wasm_run force-load
+- fix(ios): force-load wasm_run static lib for arm64
+- ci(ios): create placeholder .env asset for build
+- chore(ios): track firebase_options.dart for CI builds
+- feat(cli): custom provider registry, guided wizard menus, TUI follow latch
+- ci(ios): download missing iOS platform before build
+- ci(ios): use simulator build to avoid missing device sdk
+- ci(ios): boot simulator before flutter build to avoid attached device
+- ci(ios): fix simctl invocation in fastlane build_only
+
 ## Unreleased
