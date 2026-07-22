@@ -122,6 +122,8 @@ void main() {
       // REPL commands.
       '/exit',
       '/model',
+      '/provider',
+      '/key',
       '/mode',
       '/session',
       '/session-new',

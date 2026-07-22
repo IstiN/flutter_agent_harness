@@ -227,6 +227,29 @@ class FakeCliIO implements CliIO {
   }
 }
 
+/// In-memory [SecureKeyStore] with a toggleable availability flag.
+class _FakeSecureKeyStore implements SecureKeyStore {
+  _FakeSecureKeyStore({this.available = true});
+
+  bool available;
+  final map = <String, String>{};
+
+  @override
+  String get label => 'fake store';
+
+  @override
+  Future<bool> isAvailable() async => available;
+
+  @override
+  Future<String?> read(String name) async => map[name];
+
+  @override
+  Future<void> write(String name, String value) async => map[name] = value;
+
+  @override
+  Future<void> delete(String name) async => map.remove(name);
+}
+
 Future<void> _waitFor(bool Function() condition, {String? reason}) async {
   for (var i = 0; i < 400; i++) {
     if (condition()) return;
@@ -251,6 +274,10 @@ void main() {
     Model model = _model,
     ExecutionEnv? envOverride,
     bool Function(String name)? envVarIsSet,
+    String? Function(String name)? envVarValue,
+    void Function(String providerKind, String apiKey)? onProviderChanged,
+    SecureKeyCache? secureKeys,
+    void Function(String name, String value)? onSecretStored,
     String? providerKind,
   }) {
     return AgentCli(
@@ -260,6 +287,10 @@ void main() {
         env: envOverride ?? env,
         sessionRoot: '/sessions',
         envVarIsSet: envVarIsSet,
+        envVarValue: envVarValue,
+        onProviderChanged: onProviderChanged,
+        secureKeys: secureKeys,
+        onSecretStored: onSecretStored,
         providerKind: providerKind ?? 'openai-completions',
       ),
       io: io,
@@ -672,6 +703,269 @@ void main() {
 
     expect(fake.models.single.id, 'new-model');
     expect(fake.contexts.single.systemPrompt, isNotNull);
+  });
+
+  test('/provider prints the active provider and the catalog', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('/provider');
+    await _waitFor(() => io.out.toString().contains('supported providers:'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('provider: test-provider (test-api)'));
+    expect(output, contains('endpoint: https://example.test'));
+    expect(output, contains('openrouter — https://openrouter.ai/api/v1'));
+    expect(output, contains('anthropic — https://api.anthropic.com'));
+    expect(output, contains('use /provider <name> [baseUrl] [token]'));
+  });
+
+  test('/provider <name> switches provider, endpoint, and env key', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final changes = <(String, String)>[];
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (name) => name == 'ANTHROPIC_API_KEY' ? 'env-key-123' : null,
+      onProviderChanged: (kind, key) => changes.add((kind, key)),
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider anthropic');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to anthropic'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    final model = cli.agent.state.model;
+    expect(model.provider, 'anthropic');
+    expect(model.api, 'anthropic-messages');
+    expect(model.baseUrl, 'https://api.anthropic.com');
+    expect(model.id, 'test-model', reason: 'the model id is kept');
+    expect(cli.providerKind, 'anthropic');
+    expect(output, contains('endpoint: https://api.anthropic.com'));
+    expect(output, contains('key: ANTHROPIC_API_KEY'));
+    expect(output, isNot(contains('env-key-123')));
+    expect(output, contains('model unchanged: test-model'));
+    expect(changes, [('anthropic', 'env-key-123')]);
+  });
+
+  test('/provider with a custom baseUrl runs keyless', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final changes = <(String, String)>[];
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      onProviderChanged: (kind, key) => changes.add((kind, key)),
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider openai http://127.0.0.1:1/v1');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    final model = cli.agent.state.model;
+    expect(model.provider, 'openai');
+    expect(model.api, 'openai-completions');
+    expect(model.baseUrl, 'http://127.0.0.1:1/v1');
+    expect(cli.providerKind, 'openai-completions');
+    expect(output, contains('key: none (keyless endpoint)'));
+    expect(changes, [('openai-completions', '')]);
+  });
+
+  test('/provider accepts an explicit session token', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final changes = <(String, String)>[];
+    final cli = cliFor(
+      fake.call,
+      onProviderChanged: (kind, key) => changes.add((kind, key)),
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider openai http://127.0.0.1:1/v1 tok-1234567890');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('key: provided'));
+    expect(output, isNot(contains('tok-1234567890')));
+    expect(changes, [('openai-completions', 'tok-1234567890')]);
+  });
+
+  test('/provider rejects an unknown provider without state changes', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('/provider bogus');
+    await _waitFor(() => io.out.toString().contains('unknown provider: bogus'));
+    io.sendLine('/provider a b c d');
+    await _waitFor(() => io.out.toString().contains('usage: /provider <name>'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(
+      output,
+      contains('supported providers: openrouter, openai, anthropic, google'),
+    );
+    expect(cli.agent.state.model.provider, 'test-provider');
+    expect(cli.providerKind, 'openai-completions');
+  });
+
+  test('/key lists key sources without exposing values', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore()
+      ..map['GOOGLE_API_KEY'] = 'google-key-123';
+    final cache = SecureKeyCache(store);
+    await cache.preload(const ['GOOGLE_API_KEY']);
+    final cli = cliFor(
+      fake.call,
+      secureKeys: cache,
+      envVarIsSet: (name) => name == 'OPENROUTER_API_KEY',
+    );
+    final run = cli.run();
+
+    io.sendLine('/key');
+    await _waitFor(
+      () => io.out.toString().contains('secure storage: fake store'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('OPENROUTER_API_KEY: env'));
+    expect(output, contains('GOOGLE_API_KEY: fake store'));
+    expect(output, contains('ANTHROPIC_API_KEY: not set'));
+    expect(output, isNot(contains('google-key-123')));
+  });
+
+  test(
+    '/key set stores, redacts, and updates the active provider key',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final store = _FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final stored = <(String, String)>[];
+      final cli = cliFor(
+        fake.call,
+        secureKeys: cache,
+        onSecretStored: (name, value) => stored.add((name, value)),
+      );
+      final run = cli.run();
+
+      io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
+      await _waitFor(
+        () => io.out.toString().contains('saved OPENAI_API_KEY to fake store'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(store.map['OPENAI_API_KEY'], 'sk-new-key-456');
+      expect(stored, [('OPENAI_API_KEY', 'sk-new-key-456')]);
+      expect(output, isNot(contains('sk-new-key-456')));
+      // openai-completions resolves OPENROUTER_API_KEY/OPENAI_API_KEY, so the
+      // freshly stored key is picked up without a restart.
+      expect(output, contains('active provider key updated'));
+    },
+  );
+
+  test('/key set reports when secure storage is unavailable', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore(available: false);
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    final cli = cliFor(fake.call, secureKeys: cache);
+    final run = cli.run();
+
+    io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
+    await _waitFor(
+      () => io.out.toString().contains('secure storage unavailable'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    expect(store.map, isEmpty);
+  });
+
+  test('/key delete removes the stored key', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    await cache.save('OPENAI_API_KEY', 'sk-stored-key');
+    final cli = cliFor(fake.call, secureKeys: cache);
+    final run = cli.run();
+
+    io.sendLine('/key delete OPENAI_API_KEY');
+    await _waitFor(() => io.out.toString().contains('removed OPENAI_API_KEY'));
+    io.sendLine('/exit');
+    await run;
+
+    expect(store.map, isEmpty);
+    expect(cache.read('OPENAI_API_KEY'), isNull);
+  });
+
+  test('/key validates its arguments', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    final cli = cliFor(fake.call, secureKeys: cache);
+    final run = cli.run();
+
+    io.sendLine('/key set ONLYNAME');
+    await _waitFor(
+      () => io.out.toString().contains('usage: /key set <NAME> <value>'),
+    );
+    io.sendLine('/key set bad-name! value');
+    await _waitFor(
+      () => io.out.toString().contains('invalid key name: bad-name!'),
+    );
+    io.sendLine('/key frobnicate');
+    await _waitFor(() => io.out.toString().contains('usage: /key [set'));
+    io.sendLine('/exit');
+    await run;
+
+    expect(store.map, isEmpty);
+  });
+
+  test('/provider persists the explicit token in the secure store', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    final cli = cliFor(fake.call, secureKeys: cache);
+    final run = cli.run();
+
+    io.sendLine('/provider openai http://127.0.0.1:1/v1 sk-token-789');
+    await _waitFor(() => io.out.toString().contains('saved to fake store'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(store.map['OPENAI_API_KEY'], 'sk-token-789');
+    expect(
+      output,
+      contains(
+        'key: provided (saved to fake store; '
+        'remove with /key delete OPENAI_API_KEY)',
+      ),
+    );
+    expect(output, isNot(contains('sk-token-789')));
   });
 
   test('/reset starts a fresh session and clears history', () async {

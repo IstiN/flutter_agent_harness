@@ -223,7 +223,25 @@ Conventions for AI agents and contributors working in this repository.
   indicators, approval/TTSR/roles notices, errors); the terminal IO merges
   both on stdout interactively and routes `writeln` to stderr in headless
   mode, and headless is never interactive (approval/ask resolve per the
-  non-interactive rule, terminal or not).
+  non-interactive rule, terminal or not). The REPL's
+  `/provider [name] [baseUrl] [token]` switches the provider/endpoint at
+  runtime (catalog defaults from `providerCatalog`, env-key fallback through
+  `AgentCliConfig.envVarValue`, keyless custom endpoints; `/provider` keeps
+  the model id just as `/model` keeps the provider). Keys resolve env-first,
+  then the platform secure store (`lib/src/secrets/secure_key_store*.dart` —
+  macOS Keychain via `security`, Secret Service via `secret-tool`, Windows
+  Credential Locker via PowerShell `PasswordVault`; the io backends are
+  exported only from `lib/io.dart`). Reads are process spawns, so the
+  executable preloads them once into the synchronous `SecureKeyCache`
+  snapshot that backs `envVarValue`/`envVarIsSet`, `_optionalApiKey`, and
+  the roles secrets overlay (rotation stacks stay env-only). An explicit
+  `/provider` token or `/key set <NAME> <value>` writes through to the store
+  (never to `~/.fah/config.yaml`; `/key` lists sources, never values) and is
+  registered with the `SecretRedactor` via `onSecretStored`
+  (`onProviderChanged` persists only the provider/model/baseUrl triple).
+  Hosts without a backend (headless Linux, web) report the store unavailable
+  and behave env-only. In roles mode `/provider` pins the default chain like
+  `/model` and rejects literal tokens (keys stay env-based there).
 - `lib/src/prompts/prompt_overrides.dart` — prompt overrides (pure Dart):
   the `prompts:` section of `~/.fah/config.yaml` maps prompt names to a
   file path OR inline text, replacing built-in prompts. Names mirror the
