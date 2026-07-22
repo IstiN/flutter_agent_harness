@@ -257,6 +257,8 @@ jobs:
           # 'Apple Distribution' cert is also present (profile/cert mismatch).
           # Drive the export with an explicit full-identity plist instead,
           # with the profile UUID read from the imported profile.
+          KEYCHAIN_PATH="$HOME/Library/Keychains/build.keychain-db"
+          export OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH"
           PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
           UUID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract UUID raw -)
           TEAM_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -)
@@ -267,6 +269,11 @@ jobs:
           if [ -z "$CERT_NAME" ]; then
             CERT_NAME=$(openssl pkcs12 -in "$GITHUB_WORKSPACE/certificate.p12" -passin "pass:$IOS_P12_PASSWORD" -nokeys -clcerts 2>/dev/null | openssl x509 -noout -subject | sed 's/^.*CN=//;s/, .*//')
           fi
+          echo "CERT_NAME=$CERT_NAME"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
+          security default-keychain
+          security list-keychains -d user
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
           python3 -c "import plistlib,sys; team,cert,bundle,uuid=sys.argv[1:5]; plistlib.dump({'method':'app-store','teamID':team,'signingStyle':'manual','signingCertificate':cert,'provisioningProfiles':{bundle:uuid}}, open('exportOptions.plist','wb'))" \
             "$TEAM_ID" "$CERT_NAME" "$BUNDLE_ID" "$UUID"
           flutter build ipa --release --build-number=$BUILD_NUMBER \
