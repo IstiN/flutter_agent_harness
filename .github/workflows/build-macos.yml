@@ -228,6 +228,19 @@ jobs:
           echo "Build info generated:"
           cat lib/core/services/build_info.dart
 
+      - name: Restore vendored WasmRun macOS framework
+        run: |
+          set -euo pipefail
+          # The prebuilt XCFramework is excluded from git. On this self-hosted
+          # runner the local working copy already has it, so copy it into the CI
+          # workspace instead of fetching it over the network.
+          SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
+          DEST="vendor/wasm_run_flutter/macos/Frameworks"
+          rm -rf "$DEST/WasmRun.xcframework"
+          mkdir -p "$DEST"
+          cp -R "$SRC" "$DEST/"
+          ls -la "$DEST/WasmRun.xcframework"
+
       - name: Import macOS signing certificate
         id: signing
         env:
@@ -320,7 +333,7 @@ jobs:
               codesign --force --deep --sign "$MACOS_CERTIFICATE_ID" \
                 --options runtime \
                 --timestamp \
-                --entitlements macos/Runner/Release.entitlements \
+                --entitlements flutter_app/macos/Runner/Release.entitlements \
                 "$APP_PATH"
             }
 
