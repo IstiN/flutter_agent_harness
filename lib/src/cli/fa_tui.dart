@@ -26,6 +26,7 @@ final class FaTuiCallbacks {
     this.isShiftPressed,
     this.opensPicker,
     this.onPickerSelected,
+    this.onPickerCancelled,
     this.onSteer,
   });
 
@@ -63,6 +64,11 @@ final class FaTuiCallbacks {
   /// resolves — [pickerId] identifies which picker, [key] the chosen item.
   final Future<void> Function(String pickerId, String key)? onPickerSelected;
 
+  /// Called when a generic picker is dismissed with Esc without a selection
+  /// (wizard flows wait on the answer and must not hang). The models picker
+  /// never reports here (Esc there is plain "close").
+  final void Function(String pickerId)? onPickerCancelled;
+
   /// Called to steer messages into the RUNNING agent (Ctrl+S while busy,
   /// kimi-cli semantics): each message is injected as a separate user
   /// message mid-turn.
@@ -84,10 +90,13 @@ final class _OpenModelMenuMsg extends Msg {}
 
 /// Message opening a generic host picker (sessions, mode, approval, ...).
 final class OpenPickerMsg extends Msg {
-  OpenPickerMsg(this.pickerId, this.title, this.items);
+  OpenPickerMsg(this.pickerId, this.title, this.items, {this.initialIndex = 0});
   final String pickerId;
   final String title;
   final List<MenuItem> items;
+
+  /// The initially highlighted item (wizard prefills).
+  final int initialIndex;
 }
 
 /// Message asking the program to quit because the host marked exit.
@@ -122,6 +131,7 @@ final class FaTuiModel extends TeaModel {
     this.inputText = '',
     this.cursor = 0,
     this.scrollOffset = 0,
+    this.followTail = true,
     this.menuOpen = false,
     this.menuModelMode = false,
     this.menuSelected = 0,
@@ -146,8 +156,16 @@ final class FaTuiModel extends TeaModel {
   final int cursor;
 
   /// Persistent viewport scroll offset (0 = top). Snapped to the bottom on
-  /// new output when the user has not scrolled up; kept while scrolling.
+  /// new output while [followTail] holds; kept (clamped) otherwise.
   final int scrollOffset;
+
+  /// Auto-follow latch: new output snaps the viewport to the bottom. Only
+  /// USER scrolling changes it (wheel/arrows detach, scrolling back to the
+  /// exact bottom re-attaches) — transient viewport shrinkage (picker menu,
+  /// busy row, queue) must NOT detach it, which the old per-event
+  /// `offset >= bottom` check got wrong: opening a picker broke follow
+  /// until the user scrolled to the bottom by hand.
+  final bool followTail;
   final bool menuOpen;
   final bool menuModelMode;
   final int menuSelected;
@@ -224,6 +242,18 @@ final class FaTuiModel extends TeaModel {
     return lines;
   }
 
+  /// Applies a user scroll: moves the offset (clamped) and re-evaluates the
+  /// follow latch — scrolling up detaches, landing back on the exact bottom
+  /// re-attaches.
+  FaTuiModel _scrolledTo(int offset) {
+    final wrapped = _wrappedLines();
+    final next = _clampScroll(offset, wrapped);
+    return copyWith(
+      scrollOffset: next,
+      followTail: next >= _scrollBottom(wrapped),
+    );
+  }
+
   int _viewportHeightFor(int width, int height) {
     const progressH = 1;
     // The input zone is framed by a rule above and a rule below it.
@@ -267,6 +297,7 @@ final class FaTuiModel extends TeaModel {
     String? inputText,
     int? cursor,
     int? scrollOffset,
+    bool? followTail,
     bool? menuOpen,
     bool? menuModelMode,
     int? menuSelected,
@@ -289,6 +320,7 @@ final class FaTuiModel extends TeaModel {
       inputText: inputText ?? this.inputText,
       cursor: cursor ?? this.cursor,
       scrollOffset: scrollOffset ?? this.scrollOffset,
+      followTail: followTail ?? this.followTail,
       menuOpen: menuOpen ?? this.menuOpen,
       menuModelMode: menuModelMode ?? this.menuModelMode,
       menuSelected: menuSelected ?? this.menuSelected,
@@ -322,13 +354,12 @@ final class FaTuiModel extends TeaModel {
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
     if (msg is OutputMsg) {
-      final wasAtBottom = scrollOffset >= _scrollBottom(_wrappedLines());
       final newLines = _appendOutput(outputLines, msg.text, msg.newline);
       final next = copyWith(outputLines: newLines);
       final nextWrapped = next._wrappedLines();
-      // Auto-follow the stream while at the bottom; preserve the scroll
+      // Auto-follow the stream while the latch holds; preserve the scroll
       // position (clamped) when the user scrolled up.
-      final nextOffset = wasAtBottom
+      final nextOffset = followTail
           ? _scrollBottom(nextWrapped)
           : _clampScroll(scrollOffset, nextWrapped);
       return (next.copyWith(scrollOffset: nextOffset), null);
@@ -406,7 +437,10 @@ final class FaTuiModel extends TeaModel {
           menuModelMode: true,
           modelFilter: '',
           menuItems: msg.items,
-          menuSelected: 0,
+          menuSelected: msg.initialIndex.clamp(
+            0,
+            msg.items.isEmpty ? 0 : msg.items.length - 1,
+          ),
           pickerId: msg.pickerId,
           pickerTitle: msg.title,
         ),
@@ -438,12 +472,7 @@ final class FaTuiModel extends TeaModel {
         _ => 0,
       };
       if (delta != 0) {
-        return (
-          copyWith(
-            scrollOffset: _clampScroll(scrollOffset + delta, _wrappedLines()),
-          ),
-          null,
-        );
+        return (_scrolledTo(scrollOffset + delta), null);
       }
       return (this, null);
     }
@@ -492,6 +521,9 @@ final class FaTuiModel extends TeaModel {
       final isModelsPicker = pickerId == 'models';
       switch (msg.key) {
         case 'esc':
+          if (!isModelsPicker && pickerId.isNotEmpty) {
+            callbacks.onPickerCancelled?.call(pickerId);
+          }
           return (copyWith(menuOpen: false, modelFilter: ''), null);
         case 'up':
           return (
@@ -714,44 +746,18 @@ final class FaTuiModel extends TeaModel {
               null,
             );
           }
-          return (
-            copyWith(
-              scrollOffset: _clampScroll(scrollOffset - 1, _wrappedLines()),
-            ),
-            null,
-          );
+          return (_scrolledTo(scrollOffset - 1), null);
         }
         return (this, null);
       case 'down':
         if (inputText.isEmpty) {
-          return (
-            copyWith(
-              scrollOffset: _clampScroll(scrollOffset + 1, _wrappedLines()),
-            ),
-            null,
-          );
+          return (_scrolledTo(scrollOffset + 1), null);
         }
         return (this, null);
       case 'pgup':
-        return (
-          copyWith(
-            scrollOffset: _clampScroll(
-              scrollOffset - _viewportHeight,
-              _wrappedLines(),
-            ),
-          ),
-          null,
-        );
+        return (_scrolledTo(scrollOffset - _viewportHeight), null);
       case 'pgdown':
-        return (
-          copyWith(
-            scrollOffset: _clampScroll(
-              scrollOffset + _viewportHeight,
-              _wrappedLines(),
-            ),
-          ),
-          null,
-        );
+        return (_scrolledTo(scrollOffset + _viewportHeight), null);
       case 'left':
         return (copyWith(cursor: cursor > 0 ? cursor - 1 : 0), null);
       case 'right':
@@ -1185,8 +1191,18 @@ final class FaTuiController {
 
   /// Opens a generic host picker (sessions, mode, approval, ...) with a
   /// static item list; selection resolves via [FaTuiCallbacks.onPickerSelected].
-  void openPicker(String pickerId, String title, List<MenuItem> items) {
-    _send(OpenPickerMsg(pickerId, title, items));
+  void openPicker(
+    String pickerId,
+    String title,
+    List<MenuItem> items, {
+    String? initialKey,
+  }) {
+    var selected = 0;
+    if (initialKey != null) {
+      final index = items.indexWhere((item) => item.key == initialKey);
+      if (index >= 0) selected = index;
+    }
+    _send(OpenPickerMsg(pickerId, title, items, initialIndex: selected));
   }
 
   void sendQuit() {

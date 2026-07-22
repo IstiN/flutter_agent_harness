@@ -747,6 +747,10 @@ Future<void> main(List<String> args) async {
       // `/key` manages the platform secure store; `/provider ... <token>`
       // persists the token there.
       secureKeys: keyCache,
+      // Saved custom providers (`customProviders:` config section): the
+      // picker lists them first, the wizard appends, /model rewrites the
+      // active entry's last-used model — all persisted via persistConfig.
+      customProviders: CustomProviderRegistry(saved.customProviders),
       env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
       sessionName: effective.session,
@@ -828,6 +832,9 @@ Future<void> main(List<String> args) async {
         // TTSR rules are static per session; keep the loaded config so
         // saving doesn't drop the section.
         ttsr: saved.ttsr,
+        // Saved custom providers (the live registry the CLI mutates).
+        customProviders:
+            cli.config.customProviders?.entries ?? saved.customProviders,
       ),
     );
   };

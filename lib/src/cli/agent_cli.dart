@@ -41,6 +41,7 @@ import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_repo.dart';
+import 'custom_providers.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
@@ -142,6 +143,7 @@ final class AgentCliConfig {
     this.onModelChanged,
     this.onProviderChanged,
     this.secureKeys,
+    this.customProviders,
     this.onSecretStored,
     this.onModeChanged,
     this.onApprovalChanged,
@@ -197,6 +199,13 @@ final class AgentCliConfig {
   /// `/key` command and lets `/provider ... <token>` persist the token.
   /// Null (web, tests) disables secure storage: tokens stay session-only.
   final SecureKeyCache? secureKeys;
+
+  /// The saved custom-provider registry (the `customProviders:` config
+  /// section), shared with the executable: the CLI mutates it (wizard adds,
+  /// per-provider model memory), the host persists it. Null (web, tests
+  /// without one) disables saved providers — the wizard still switches but
+  /// adds nothing to the list.
+  final CustomProviderRegistry? customProviders;
 
   /// Called when the user stores a secret via `/key set`, so the executable
   /// can redact the value from tool results and session files.
@@ -887,6 +896,7 @@ class AgentCli {
           '/provider',
         }.contains(key),
         onPickerSelected: _tuiPickerSelected,
+        onPickerCancelled: _tuiPickerCancelled,
         onSteer: (messages) async {
           for (final message in messages) {
             _agent.steer(UserMessage.text(message));
@@ -963,6 +973,14 @@ class AgentCli {
   /// Routes a generic TUI picker selection (sessions/mode/approval) to the
   /// same handlers the typed slash command would use.
   Future<void> _tuiPickerSelected(String pickerId, String key) async {
+    // Wizard pickers (a guided flow's multiple-choice questions) complete
+    // their pending answer instead of the command handlers.
+    final wizard = _wizardPickerAnswer;
+    if (wizard != null && pickerId.startsWith('wizard:')) {
+      if (!wizard.isCompleted) wizard.complete(key);
+      _wizardPickerAnswer = null;
+      return;
+    }
     switch (pickerId) {
       case 'sessions':
         final index = int.tryParse(key);
@@ -982,10 +1000,25 @@ class AgentCli {
         _handleApprovalMode(key);
       case 'provider':
         if (key == 'custom') {
-          _startCustomProviderFlow();
+          _startProviderFlow();
+        } else if (key.startsWith('saved:')) {
+          final entry = config.customProviders?.find(
+            key.substring('saved:'.length),
+          );
+          if (entry != null) await _switchToSavedProvider(entry);
         } else {
           await _handleProviderCommand(key);
         }
+    }
+  }
+
+  /// A generic picker dismissed with Esc: wizard pickers resolve their
+  /// pending answer as cancelled (the flow then aborts cleanly).
+  void _tuiPickerCancelled(String pickerId) {
+    final wizard = _wizardPickerAnswer;
+    if (wizard != null && pickerId.startsWith('wizard:')) {
+      if (!wizard.isCompleted) wizard.complete(null);
+      _wizardPickerAnswer = null;
     }
   }
 
@@ -1620,6 +1653,8 @@ class AgentCli {
         } else {
           await _handleProviderCommand(rest);
         }
+      case '/provider-edit':
+        _startProviderEditFlow();
       case '/key':
         await _handleKeyCommand(rest);
       case '/reset':
@@ -1782,6 +1817,15 @@ class AgentCli {
   /// Answers that arrived while no flow prompt was pending (piped input
   /// outruns the flow); consumed by the next `_promptLine` call.
   final _promptLineBuffer = <String>[];
+
+  /// The registry entry name of the active custom provider, if one is
+  /// (drives the per-provider model memory and the picker's `(current)`).
+  String? _activeCustomName;
+
+  /// The pending wizard-menu answer, if a guided flow's multiple-choice
+  /// question is on screen (TUI). Completed by `_tuiPickerSelected` (or
+  /// `_tuiPickerCancelled` on Esc).
+  Completer<String?>? _wizardPickerAnswer;
 
   /// The stdin ask surface: walks [questions] one at a time and returns one
   /// answer per question, or `null` when the user cancels.
@@ -2039,6 +2083,7 @@ class AgentCli {
         modelId: modelId,
       );
       io.writeln('switched model to $modelId');
+      _recordCustomModel(modelId);
       config.onModelChanged?.call(_agent.state.model);
       return;
     }
@@ -2061,6 +2106,7 @@ class AgentCli {
       modelId: modelId,
     );
     io.writeln('switched model to $modelId');
+    _recordCustomModel(modelId);
     config.onModelChanged?.call(_agent.state.model);
   }
 
@@ -2157,7 +2203,7 @@ class AgentCli {
     '/model': '<provider/model> — select model (opens selector)',
     '/models': '[filter] — list known models for the current provider',
     '/provider': '[name] [baseUrl] [token] | custom — switch provider/endpoint',
-    '/key': '[set <NAME> <value> | delete <NAME>] — manage stored API keys',
+    '/provider-edit': 'edit the active provider via the guided setup',
     '/mode': '[name] — show or switch the active mode',
     '/session': '[name] — show current or switch/create a named session',
     '/session-new': '<name> — create a new named session',

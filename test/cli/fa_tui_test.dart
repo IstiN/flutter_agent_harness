@@ -534,4 +534,112 @@ void main() {
       expect(model.outputLines.join('\n'), contains('later'));
     });
   });
+
+  group('follow latch (auto-scroll)', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    FaTuiModel filledModel({int lines = 30}) {
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termHeight: 12, // small viewport so content overflows fast
+      );
+      for (var i = 0; i < lines; i++) {
+        model = send(model, OutputMsg('line $i', newline: true));
+      }
+      return model;
+    }
+
+    FaTuiCallbacks cancelCallbacks(List<String> cancelled) {
+      return FaTuiCallbacks(
+        onSubmit: (_) async {},
+        onModelSelected: (_) async {},
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_) => const [],
+        statusLine: () => '',
+        prompt: '',
+        onPickerCancelled: cancelled.add,
+      );
+    }
+
+    test('opening a picker does not break auto-follow', () {
+      var model = filledModel();
+      final bottom = model.scrollOffset;
+      expect(bottom, greaterThan(0));
+      expect(model.followTail, isTrue);
+
+      model = send(
+        model,
+        OpenPickerMsg('provider', 'Select provider', const [
+          MenuItem(key: 'a', label: 'a'),
+        ]),
+      );
+      model = send(model, OutputMsg('question line', newline: true));
+      expect(model.followTail, isTrue);
+      expect(
+        model.scrollOffset,
+        greaterThan(bottom),
+        reason: 'a transient viewport shrink must not detach follow',
+      );
+
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
+      model = send(model, OutputMsg('after close', newline: true));
+      expect(model.view().content, contains('after close'));
+      expect(model.followTail, isTrue);
+    });
+
+    test('scrolling up detaches, scrolling back to the bottom re-attaches',
+        () {
+      var model = filledModel();
+      final bottom = model.scrollOffset;
+
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.scrollOffset, bottom - 1);
+      expect(model.followTail, isFalse);
+
+      model = send(model, OutputMsg('new line while detached', newline: true));
+      expect(model.scrollOffset, bottom - 1);
+
+      // The detached output moved the bottom one row further; two downs
+      // land on the exact new bottom and re-attach.
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      expect(model.followTail, isFalse);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      expect(model.followTail, isTrue);
+
+      model = send(model, OutputMsg('tail line', newline: true));
+      expect(model.view().content, contains('tail line'));
+    });
+
+    test('esc on a wizard picker reports onPickerCancelled', () {
+      final cancelled = <String>[];
+      var model = FaTuiModel(
+        callbacks: cancelCallbacks(cancelled),
+        isExited: () => false,
+      );
+      model = send(
+        model,
+        OpenPickerMsg('wizard:type', 'API type', const [
+          MenuItem(key: 'openai', label: 'openai-like'),
+        ]),
+      );
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
+      expect(cancelled, ['wizard:type']);
+      expect(model.menuOpen, isFalse);
+    });
+
+    test('esc on the models picker does not report a cancel', () {
+      final cancelled = <String>[];
+      var model = FaTuiModel(
+        callbacks: cancelCallbacks(cancelled),
+        isExited: () => false,
+      );
+      model = send(
+        model,
+        OpenPickerMsg('models', '', const [MenuItem(key: 'm1', label: 'm1')]),
+      );
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
+      expect(cancelled, isEmpty);
+    });
+  });
 }
