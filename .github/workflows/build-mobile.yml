@@ -262,14 +262,12 @@ jobs:
           TEAM_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -)
           BUNDLE_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements.application-identifier raw - | sed "s/^$TEAM_ID.//")
           PROFILE_NAME=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Name raw -)
-          CERT_NAME=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract DeveloperCertificates.0 raw - | base64 --decode | openssl x509 -inform der -noout -subject | sed 's/^.*CN=//;s/\\/.*//')
           echo "PROFILE_NAME=$PROFILE_NAME"
-          echo "CERT_NAME=$CERT_NAME"
 
           IOS_TEAM_ID="$TEAM_ID" \
           IOS_BUNDLE_ID="$BUNDLE_ID" \
           IOS_PROVISIONING_PROFILE_NAME="$PROFILE_NAME" \
-          IOS_SIGNING_IDENTITY="$CERT_NAME" \
+          IOS_SIGNING_IDENTITY="iPhone Distribution" \
           bundle exec fastlane ios build_only
 
       - name: Verify IPA exists
