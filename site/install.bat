@@ -19,4 +19,8 @@
 ::  by `dart run scripts/gen_installers.dart`.
 :: ═══════════════════════════════════════════════════════════════════════════
 
+:: The banner and status glyphs are UTF-8; switch the console code page so
+:: cmd.exe does not print them as mojibake.
+chcp 65001 >nul
+
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://fa1.dev/install.ps1 | iex"
