@@ -1,4 +1,4 @@
-# setup.ps1 — interactive configuration wizard for the Fa CLI on Windows.
+﻿# setup.ps1 — interactive configuration wizard for the Fa CLI on Windows.
 #             Run this after `install.ps1` to pick a provider, model, API key,
 #             mode and approval policy.
 #

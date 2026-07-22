@@ -763,17 +763,20 @@ Future<void> main(List<String> args) async {
     try {
       stdin.echoMode = false;
       stdin.lineMode = false;
-    } on Exception {
-      // Best effort; the terminal may already be unusable.
-    }
-    final drain = stdin.listen((_) {});
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    await drain.cancel();
-    try {
-      stdin.echoMode = true;
-      stdin.lineMode = true;
-    } on Exception {
-      // Best effort.
+      final drain = stdin.listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await drain.cancel();
+      try {
+        stdin.echoMode = true;
+        stdin.lineMode = true;
+      } on Exception {
+        // Best effort.
+      }
+    } on Object {
+      // Nothing to drain: on Windows a cancelled stdin subscription keeps
+      // the underlying console read alive, so re-listening throws "Stream
+      // has already been listened to" — skipping the drain only means the
+      // late query replies may echo once in the shell.
     }
   }
 }

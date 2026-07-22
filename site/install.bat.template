@@ -21,3 +21,10 @@
 chcp 65001 >nul
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://fa1.dev/install.ps1 | iex"
+
+:: Make fa usable in THIS console too: the user-PATH update above only takes
+:: effect in NEW windows, and the child PowerShell's session refresh dies
+:: with it. Batch files run in-process in cmd.exe, so this set persists.
+set "PATH=%LOCALAPPDATA%\Fa\bin;%PATH%"
+echo.
+echo fa is ready in THIS console. For other windows, open a NEW terminal.
