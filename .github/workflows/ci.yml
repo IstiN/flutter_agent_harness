@@ -43,6 +43,15 @@ jobs:
       - name: Create placeholder .env for the example app
         run: touch flutter_app/.env
 
+      # firebase_options.dart is gitignored (real keys stay local); the
+      # repo-wide analyze fails on the unresolved import without it. The
+      # tracked placeholder makes it compile (Firebase init is skipped for
+      # YOUR_* values at runtime).
+      - name: Create placeholder firebase_options.dart for the example app
+        run: >-
+          cp flutter_app/firebase_options.template.dart
+          flutter_app/lib/firebase_options.dart
+
       - name: File size guard (no dart file over 2800 lines)
         run: |
           violations=$(find lib test example -name '*.dart' \
