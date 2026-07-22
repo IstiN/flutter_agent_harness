@@ -174,17 +174,25 @@ jobs:
       github.event.inputs.ios_content != 'metadata_only' &&
       github.event.inputs.ios_content != 'screenshots_only'
     steps:
-      - name: Checkout repository (fast local mirror)
+      - name: Update local git mirror
         run: |
-          LOCAL_REPO="$HOME/git/flutter_agent"
-          rsync -a --delete --exclude='.git' --exclude='build/' --exclude='.dart_tool/' \
-            "$LOCAL_REPO/" "$GITHUB_WORKSPACE/"
-          if [ ! -d "$GITHUB_WORKSPACE/.git" ]; then
-            git -C "$GITHUB_WORKSPACE" init
-            git -C "$GITHUB_WORKSPACE" remote add origin https://github.com/IstiN/flutter_agent_harness.git
+          set -euo pipefail
+          MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+          mkdir -p "$(dirname "$MIRROR")"
+          if [ ! -d "$MIRROR" ]; then
+            git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
+          else
+            git -C "$MIRROR" fetch origin
           fi
-          git -C "$GITHUB_WORKSPACE" fetch "$LOCAL_REPO" HEAD --depth=1 2>&1
-          git -C "$GITHUB_WORKSPACE" checkout -f FETCH_HEAD 2>&1
+
+      - name: Checkout repository from local mirror
+        run: |
+          set -euo pipefail
+          MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+          rm -rf "$GITHUB_WORKSPACE"
+          mkdir -p "$GITHUB_WORKSPACE"
+          git clone --reference "$MIRROR" --depth=1 \
+            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
           echo "Checked out: $(git -C $GITHUB_WORKSPACE log -1 --oneline)"
 
       - name: Setup environment (self-hosted)
@@ -271,11 +279,25 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     if: needs.build-ios.result == 'success'
     steps:
-      - name: Checkout repository (fast local mirror)
+      - name: Update local git mirror
         run: |
-          LOCAL_REPO="$HOME/git/flutter_agent"
-          rsync -a --delete --exclude='.git' --exclude='build/' --exclude='.dart_tool/' \
-            "$LOCAL_REPO/" "$GITHUB_WORKSPACE/"
+          set -euo pipefail
+          MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+          mkdir -p "$(dirname "$MIRROR")"
+          if [ ! -d "$MIRROR" ]; then
+            git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
+          else
+            git -C "$MIRROR" fetch origin
+          fi
+
+      - name: Checkout repository from local mirror
+        run: |
+          set -euo pipefail
+          MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+          rm -rf "$GITHUB_WORKSPACE"
+          mkdir -p "$GITHUB_WORKSPACE"
+          git clone --reference "$MIRROR" --depth=1 \
+            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
 
       - name: Setup environment (self-hosted)
         run: |
