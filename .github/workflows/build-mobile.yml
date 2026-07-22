@@ -248,6 +248,18 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
+      - name: Ensure iOS device SDK is available
+        run: |
+          set -euo pipefail
+          echo "Available iOS SDKs:"
+          xcodebuild -showsdks | grep iphoneos || true
+          echo "Downloading iOS platform if missing..."
+          xcodebuild -downloadPlatform iOS || true
+          # The attached device may run a newer iOS than the installed SDK;
+          # try to download the matching version. If this fails, the build
+          # will still fail with a clearer message.
+          xcodebuild -downloadPlatform iOS -buildVersion 26.5 || true
+
       - name: Build iOS IPA
         working-directory: flutter_app
         env:
