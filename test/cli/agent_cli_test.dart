@@ -275,6 +275,8 @@ void main() {
     ExecutionEnv? envOverride,
     bool Function(String name)? envVarIsSet,
     String? Function(String name)? envVarValue,
+    Future<List<String>> Function(String baseUrl, {required String apiKey})?
+    modelsFetcher,
     void Function(String providerKind, String apiKey)? onProviderChanged,
     SecureKeyCache? secureKeys,
     void Function(String name, String value)? onSecretStored,
@@ -288,6 +290,7 @@ void main() {
         sessionRoot: '/sessions',
         envVarIsSet: envVarIsSet,
         envVarValue: envVarValue,
+        modelsFetcher: modelsFetcher,
         onProviderChanged: onProviderChanged,
         secureKeys: secureKeys,
         onSecretStored: onSecretStored,
@@ -967,6 +970,212 @@ void main() {
     );
     expect(output, isNot(contains('sk-token-789')));
   });
+
+  test('/provider custom runs the guided openai-like setup', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final changes = <(String, String)>[];
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      onProviderChanged: (kind, key) => changes.add((kind, key)),
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().contains('type a number:'));
+    io.sendLine('1');
+    await _waitFor(() => io.out.toString().contains('base URL:'));
+    io.sendLine('http://127.0.0.1:1/v1');
+    await _waitFor(
+      () => io.out.toString().contains('API key (empty for none):'),
+    );
+    io.sendLine('');
+    await _waitFor(
+      () => io.out.toString().contains('no model list from the endpoint'),
+    );
+    io.sendLine('my-local-model');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    final model = cli.agent.state.model;
+    expect(model.provider, 'openai');
+    expect(model.api, 'openai-completions');
+    expect(model.id, 'my-local-model');
+    expect(model.baseUrl, 'http://127.0.0.1:1/v1');
+    expect(output, contains('model: my-local-model'));
+    expect(output, contains('key: none (keyless endpoint)'));
+    expect(changes, [('openai-completions', '')]);
+  });
+
+  test('/provider custom offers the endpoint model list', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      modelsFetcher: (baseUrl, {required apiKey}) async => ['m1', 'm2'],
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().contains('type a number:'));
+    io.sendLine('1');
+    await _waitFor(() => io.out.toString().contains('base URL:'));
+    io.sendLine('https://proxy.example.com/v1');
+    await _waitFor(
+      () => io.out.toString().contains('API key (empty for none):'),
+    );
+    io.sendLine('');
+    await _waitFor(() => io.out.toString().contains('2 models available'));
+    io.sendLine('2');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(cli.agent.state.model.id, 'm2');
+    expect(output, contains('model: m2'));
+  });
+
+  test('/provider custom stores the typed key in the secure store', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    final cli = cliFor(
+      fake.call,
+      secureKeys: cache,
+      modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().contains('type a number:'));
+    io.sendLine('1');
+    await _waitFor(() => io.out.toString().contains('base URL:'));
+    io.sendLine('https://proxy.example.com/v1');
+    await _waitFor(
+      () => io.out.toString().contains('API key (empty for none):'),
+    );
+    io.sendLine('sk-flow-key-1');
+    await _waitFor(
+      () => io.out.toString().contains('no model list from the endpoint'),
+    );
+    io.sendLine('proxy-model');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(store.map['OPENAI_API_KEY'], 'sk-flow-key-1');
+    expect(output, contains('key: provided (saved to fake store'));
+    expect(output, isNot(contains('sk-flow-key-1')));
+  });
+
+  test('/provider custom supports anthropic-like endpoints', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(fake.call, envVarValue: (_) => null);
+    final run = cli.run();
+
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().contains('type a number:'));
+    io.sendLine('2');
+    await _waitFor(() => io.out.toString().contains('base URL:'));
+    io.sendLine('https://anthropic-proxy.example.com');
+    await _waitFor(
+      () => io.out.toString().contains('API key (empty for none):'),
+    );
+    io.sendLine('');
+    await _waitFor(() => io.out.toString().contains('model id (empty keeps'));
+    io.sendLine('claude-proxy-model');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to anthropic'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, isNot(contains('fetching models from')));
+    final model = cli.agent.state.model;
+    expect(model.provider, 'anthropic');
+    expect(model.api, 'anthropic-messages');
+    expect(model.id, 'claude-proxy-model');
+    expect(cli.providerKind, 'anthropic');
+  });
+
+  test('/provider custom validates the api type and base URL', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(fake.call, envVarValue: (_) => null);
+    final run = cli.run();
+
+    io.sendLine('/provider custom extra');
+    await _waitFor(() => io.out.toString().contains('usage: /provider custom'));
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().contains('type a number:'));
+    io.sendLine('x');
+    await _waitFor(() => io.out.toString().contains('invalid api type: x'));
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().split('type a number:').length > 2);
+    io.sendLine('1');
+    await _waitFor(() => io.out.toString().contains('base URL:'));
+    io.sendLine('localhost:8080');
+    await _waitFor(() => io.out.toString().contains('invalid base URL'));
+    io.sendLine('/exit');
+    await run;
+
+    expect(cli.agent.state.model.provider, 'test-provider');
+    expect(cli.providerKind, 'openai-completions');
+  });
+
+  test('/provider custom cancels on interrupt without state changes', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final cli = cliFor(fake.call, envVarValue: (_) => null);
+    final run = cli.run();
+
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().contains('type a number:'));
+    io.interrupt();
+    await _waitFor(
+      () => io.out.toString().contains('custom provider setup cancelled'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    expect(cli.agent.state.model.provider, 'test-provider');
+    expect(cli.providerKind, 'openai-completions');
+  });
+
+  test(
+    '/provider custom consumes piped answers without leaking into runs',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final cli = cliFor(fake.call, envVarValue: (_) => null);
+      final run = cli.run();
+
+      // All answers arrive before the flow asks for them (piped stdin).
+      io
+        ..sendLine('/provider custom')
+        ..sendLine('1')
+        ..sendLine('http://127.0.0.1:1/v1')
+        ..sendLine('')
+        ..sendLine('my-local-model');
+      await _waitFor(
+        () => io.out.toString().contains('switched provider to openai'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.agent.state.model.id, 'my-local-model');
+      expect(fake.calls, 0, reason: 'no answer may leak into a run');
+    },
+  );
 
   test('/reset starts a fresh session and clears history', () async {
     final fake = _FakeStreamFunction([_textTurn('first'), _textTurn('second')]);

@@ -41,6 +41,7 @@ import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_repo.dart';
+import 'provider_flow.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
 import '../tools/ask_tool.dart';
@@ -61,6 +62,8 @@ import 'prompt_templates.dart';
 import 'tui_repl.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
+
+part 'provider_commands.dart';
 
 /// Terminal IO abstracted for testability.
 ///
@@ -120,6 +123,7 @@ final class AgentCliConfig {
     this.providerKind = 'openai-completions',
     this.envVarIsSet,
     this.envVarValue,
+    this.modelsFetcher,
     this.systemPrompt,
     this.promptOverrides,
     this.visionConfig,
@@ -241,6 +245,12 @@ final class AgentCliConfig {
   /// from its catalog env names when no explicit token is passed. Null
   /// (tests, web) means no key is ever found this way.
   final String? Function(String name)? envVarValue;
+
+  /// Fetches model ids from an OpenAI-compatible `/models` endpoint (the
+  /// `/models` picker and the custom-provider flow). Null uses the built-in
+  /// HTTP implementation; tests inject a fake.
+  final Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  modelsFetcher;
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].
   ///
@@ -693,6 +703,12 @@ class AgentCli {
   /// empty input is the menu's free-text affordance. Completes with `null`
   /// on cancel (Ctrl-C, input shutdown).
   Completer<String?>? _pendingAskAnswer;
+
+  /// The pending CLI-prompt input line, if a guided flow (the custom
+  /// provider setup) is waiting on a free-form answer. Like the ask routing,
+  /// EMPTY lines complete too (the key step's "none" affordance); `null` on
+  /// cancel (Ctrl-C, input shutdown).
+  Completer<String?>? _pendingPromptAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
   final Map<String, AgentMode> _modes;
   late AgentMode _currentMode;
@@ -786,7 +802,10 @@ class AgentCli {
           }
           await _handleLine(line);
           if (_exited) break;
-          if (!isBusy) _writeIdlePrompt();
+          // No idle prompt while a guided flow owns input: its questions
+          // would interleave with the status bar, and each answered prompt
+          // would print a redundant one.
+          if (!isBusy && !_providerFlowActive) _writeIdlePrompt();
         }
       }
     } finally {
@@ -962,7 +981,11 @@ class AgentCli {
       case 'approval':
         _handleApprovalMode(key);
       case 'provider':
-        await _handleProviderCommand(key);
+        if (key == 'custom') {
+          _startCustomProviderFlow();
+        } else {
+          await _handleProviderCommand(key);
+        }
     }
   }
 
@@ -1028,24 +1051,6 @@ class AgentCli {
     _tuiController?.openPicker('approval', 'Approval mode', items);
   }
 
-  /// The TUI provider picker (bare `/provider`): the provider catalog with
-  /// default endpoints. A selection switches with catalog defaults; custom
-  /// base URLs and tokens go through the typed command.
-  void _openProviderPicker() {
-    final current = _agent.state.model.provider;
-    final items = [
-      for (final spec in providerCatalog.values)
-        MenuItem(
-          key: spec.name,
-          label: spec.name,
-          description:
-              '${spec.defaultBaseUrl}'
-              '${spec.name == current ? ' (current)' : ''}',
-        ),
-    ];
-    _tuiController?.openPicker('provider', 'Select provider', items);
-  }
-
   /// Fetches the model list from an OpenAI-compatible `/models` endpoint and
   /// refreshes the TUI picker if it is currently open. Failures are swallowed
   /// so the UI keeps working with the hardcoded fallback list.
@@ -1056,10 +1061,8 @@ class AgentCli {
     try {
       final model = _agent.state.model;
       if (model.api == 'openai-completions') {
-        final ids = await _fetchOpenAiCompatibleModels(
-          model.baseUrl,
-          apiKey: _apiKey,
-        );
+        final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
+        final ids = await fetch(model.baseUrl, apiKey: _apiKey);
         if (ids.isNotEmpty) {
           _modelCache = ids;
           _tuiController?.sendModelsRefresh();
@@ -1080,7 +1083,9 @@ class AgentCli {
     final headers = <String, String>{'Accept': 'application/json'};
     if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
     try {
-      final response = await http.get(uri, headers: headers);
+      final response = await http
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return const [];
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final data = body['data'] as List<dynamic>? ?? const <dynamic>[];
@@ -1376,6 +1381,20 @@ class AgentCli {
     final pendingAsk = _pendingAskAnswer;
     if (pendingAsk != null && !pendingAsk.isCompleted) {
       pendingAsk.complete(trimmed);
+      return;
+    }
+    // A guided flow (custom provider setup) owns input while active: lines
+    // complete its pending prompt — including empty ones (the key step's
+    // "none" affordance) — or buffer for the next prompt, because piped
+    // input outruns the flow's async gaps (a buffered answer must never
+    // leak into a run).
+    if (_providerFlowActive) {
+      final pendingPrompt = _pendingPromptAnswer;
+      if (pendingPrompt != null && !pendingPrompt.isCompleted) {
+        pendingPrompt.complete(trimmed);
+      } else {
+        _promptLineBuffer.add(trimmed);
+      }
       return;
     }
     if (trimmed.isEmpty) return;
@@ -1755,6 +1774,15 @@ class AgentCli {
     return line;
   }
 
+  /// Whether a guided custom-provider setup is between prompts (guards
+  /// against a second `/provider custom` while one is running). While true,
+  /// input lines buffer here instead of steering or starting runs.
+  var _providerFlowActive = false;
+
+  /// Answers that arrived while no flow prompt was pending (piped input
+  /// outruns the flow); consumed by the next `_promptLine` call.
+  final _promptLineBuffer = <String>[];
+
   /// The stdin ask surface: walks [questions] one at a time and returns one
   /// answer per question, or `null` when the user cancels.
   Future<List<AskAnswer>?> _answerAskQuestions(
@@ -2036,268 +2064,6 @@ class AgentCli {
     config.onModelChanged?.call(_agent.state.model);
   }
 
-  /// `/provider [name] [baseUrl] [token]` — shows the active provider,
-  /// endpoint, and key status plus the supported catalog, or switches the
-  /// provider/endpoint at runtime. The model id is kept (symmetric with
-  /// `/model`, which keeps the provider); context window and token limits
-  /// come from the provider spec. The token is optional: without it the key
-  /// resolves from the provider's catalog env names, and a custom endpoint
-  /// may run keyless (local servers). An explicit token is session-only —
-  /// the executable persists provider/model/baseUrl but never the key.
-  Future<void> _handleProviderCommand(String rest) async {
-    final args = rest
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (args.isEmpty) {
-      _printProviderStatus();
-      return;
-    }
-    if (args.length > 3) {
-      io.writeln('usage: /provider <name> [baseUrl] [token]');
-      return;
-    }
-    final spec = catalogProvider(args[0]);
-    if (spec == null) {
-      io.writeln(
-        'unknown provider: ${args[0]} — supported providers: '
-        '${providerCatalog.keys.join(', ')}',
-      );
-      return;
-    }
-    final baseUrl = args.length > 1 ? args[1] : spec.defaultBaseUrl;
-    final token = args.length > 2 ? args[2] : null;
-    final modelId = _agent.state.model.id;
-    final rolesResolver = config.modelRolesResolver;
-    if (rolesResolver != null) {
-      // Roles mode: pin the default role to the new provider/endpoint (a
-      // single-entry chain for this session), mirroring `/model <id>`.
-      // Keys resolve through the resolver's secrets snapshot, so an explicit
-      // token cannot be threaded through.
-      if (token != null) {
-        io.writeln(
-          'explicit tokens are not supported while model roles are active; '
-          'set ${spec.apiKeyEnvNames.first} in the environment instead',
-        );
-        return;
-      }
-      try {
-        rolesResolver.setDefaultChain([
-          ModelRef(provider: spec.name, modelId: modelId, baseUrl: baseUrl),
-        ]);
-        rolesResolver.applyToAgent(_agent);
-      } on ConfigException catch (error) {
-        io.writeln('cannot switch provider: ${error.message}');
-        return;
-      }
-      _streamFunction = _agent.streamFunction;
-      _modelCache = const [];
-      _lastModelList = null;
-      await _session?.appendModelChange(provider: spec.name, modelId: modelId);
-      io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
-      io.writeln('  model unchanged: $modelId — use /model to change');
-      config.onModelChanged?.call(_agent.state.model);
-      return;
-    }
-    final key = token ?? _providerKeyFromEnv(spec) ?? '';
-    _providerKind = spec.kind;
-    _apiKey = key;
-    _explicitToken = token != null;
-    _streamFunction = providerStreamFunction(spec.kind, key);
-    _agent.streamFunction = _streamFunction;
-    _agent.state.model = buildCatalogModel(
-      spec.name,
-      modelId,
-      baseUrl: baseUrl,
-    );
-    // The cached model list belongs to the previous provider/endpoint.
-    _modelCache = const [];
-    _lastModelList = null;
-    unawaited(_refreshModelCache());
-    await _session?.appendModelChange(provider: spec.name, modelId: modelId);
-    var keyLine = _providerKeyLine(spec, baseUrl, explicit: token != null);
-    if (token != null) {
-      final savedTo = await _storeProviderToken(spec, token);
-      if (savedTo != null) {
-        keyLine =
-            'key: provided (saved to $savedTo; '
-            'remove with /key delete ${spec.apiKeyEnvNames.first})';
-      }
-    }
-    io.writeln('switched provider to ${spec.name} (${spec.api})');
-    io.writeln('  endpoint: $baseUrl');
-    io.writeln('  $keyLine');
-    io.writeln('  model unchanged: $modelId — use /model to change');
-    config.onProviderChanged?.call(_providerKind, _apiKey);
-  }
-
-  /// Persists an explicit `/provider` token in the platform secure store
-  /// (under the provider's primary env name) so future starts resolve it
-  /// without env vars. Returns the store label on success, null when secure
-  /// storage is unavailable (the token then stays session-only).
-  Future<String?> _storeProviderToken(ProviderSpec spec, String token) async {
-    final keys = config.secureKeys;
-    if (keys == null || !keys.available) return null;
-    final name = spec.apiKeyEnvNames.first;
-    if (await keys.save(name, token)) {
-      config.onSecretStored?.call(name, token);
-      return keys.label;
-    }
-    return null;
-  }
-
-  static final _keyNamePattern = RegExp(r'^[A-Za-z0-9_]+$');
-
-  /// `/key [set <NAME> <value> | delete <NAME>]` — manages API keys in the
-  /// platform secure store (macOS Keychain, Secret Service, Windows
-  /// Credential Locker). Bare `/key` lists, per known key name, where the
-  /// active value comes from (env, keychain, or not set) — never values.
-  Future<void> _handleKeyCommand(String rest) async {
-    final args = rest
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    final keys = config.secureKeys;
-    if (args.isEmpty) {
-      _printKeyStatus();
-      return;
-    }
-    final storeAvailable = keys != null && keys.available;
-    switch (args.first) {
-      case 'set':
-        if (args.length != 3) {
-          io.writeln('usage: /key set <NAME> <value>');
-          return;
-        }
-        if (!_keyNamePattern.hasMatch(args[1])) {
-          io.writeln('invalid key name: ${args[1]} (use [A-Za-z0-9_]+)');
-          return;
-        }
-        if (!storeAvailable) {
-          io.writeln(
-            'secure storage unavailable on this host — '
-            'set ${args[1]} in the environment instead',
-          );
-          return;
-        }
-        await keys.save(args[1], args[2]);
-        config.onSecretStored?.call(args[1], args[2]);
-        io.writeln('saved ${args[1]} to ${keys.label}');
-        // When the stored key serves the active provider, pick it up
-        // immediately. Roles mode resolves keys from the resolver's startup
-        // snapshot, so there it takes effect on the next start.
-        final spec = catalogProvider(_providerKind);
-        if (config.modelRolesResolver != null) {
-          io.writeln('  takes effect on the next start (roles mode)');
-        } else if (spec != null && spec.apiKeyEnvNames.contains(args[1])) {
-          _apiKey = args[2];
-          _explicitToken = false;
-          _streamFunction = providerStreamFunction(spec.kind, args[2]);
-          _agent.streamFunction = _streamFunction;
-          io.writeln('  active provider key updated');
-        }
-      case 'delete':
-        if (args.length != 2) {
-          io.writeln('usage: /key delete <NAME>');
-          return;
-        }
-        if (!_keyNamePattern.hasMatch(args[1])) {
-          io.writeln('invalid key name: ${args[1]} (use [A-Za-z0-9_]+)');
-          return;
-        }
-        if (!storeAvailable) {
-          io.writeln('secure storage unavailable on this host');
-          return;
-        }
-        await keys.delete(args[1]);
-        io.writeln('removed ${args[1]} from ${keys.label}');
-      default:
-        io.writeln('usage: /key [set <NAME> <value> | delete <NAME>]');
-    }
-  }
-
-  /// Bare `/key`: for every known key name (the provider catalog's env names
-  /// plus names present in the secure-store snapshot), where the active
-  /// value comes from — `env`, the store label, or `not set`.
-  void _printKeyStatus() {
-    final keys = config.secureKeys;
-    final names = <String>{
-      for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
-      ...?keys?.names,
-    }.toList()..sort();
-    for (final name in names) {
-      final inEnv = config.envVarIsSet?.call(name) ?? false;
-      final inStore = keys != null && keys.read(name) != null;
-      final source = inEnv
-          ? 'env'
-          : inStore
-          ? keys.label ?? 'keychain'
-          : 'not set';
-      io.writeln('  $name: $source');
-    }
-    if (keys == null || !keys.available) {
-      io.writeln(
-        'secure storage unavailable on this host — keys resolve from the '
-        'environment only',
-      );
-    } else {
-      io.writeln(
-        'secure storage: ${keys.label} '
-        '(/key set <NAME> <value>, /key delete <NAME>)',
-      );
-    }
-  }
-
-  /// Bare `/provider` in line mode: the active provider/endpoint/key status
-  /// plus the supported catalog with default endpoints.
-  void _printProviderStatus() {
-    final model = _agent.state.model;
-    io.writeln('provider: ${model.provider} (${model.api})');
-    io.writeln('  endpoint: ${model.baseUrl}');
-    final keyStatus = _keyStatusLine(model);
-    if (keyStatus != null) io.writeln('  $keyStatus');
-    io.writeln('supported providers:');
-    for (final spec in providerCatalog.values) {
-      io.writeln('  ${spec.name} — ${spec.defaultBaseUrl}');
-    }
-    io.writeln('use /provider <name> [baseUrl] [token] to switch');
-  }
-
-  /// Resolves the API key for [spec] from the host environment: the first
-  /// of the catalog env names with a non-empty value. Null when the host
-  /// exposes no values (tests, web) or nothing is set.
-  String? _providerKeyFromEnv(ProviderSpec spec) {
-    final read = config.envVarValue;
-    if (read == null) return null;
-    for (final name in spec.apiKeyEnvNames) {
-      final value = read(name);
-      if (value != null && value.isNotEmpty) return value;
-    }
-    return null;
-  }
-
-  /// The `/provider` confirmation's key line: the source of the resolved
-  /// key (env var name, or "provided" for an explicit token — never the
-  /// value), a keyless note for a custom endpoint (local servers may
-  /// legitimately run without a key), or a warning when a hosted endpoint
-  /// has no key.
-  String _providerKeyLine(
-    ProviderSpec spec,
-    String baseUrl, {
-    required bool explicit,
-  }) {
-    if (explicit) return 'key: provided';
-    final read = config.envVarValue;
-    if (read != null) {
-      for (final name in spec.apiKeyEnvNames) {
-        final value = read(name);
-        if (value != null && value.isNotEmpty) return 'key: $name';
-      }
-    }
-    if (baseUrl != spec.defaultBaseUrl) return 'key: none (keyless endpoint)';
-    return 'key: no key found (want ${spec.apiKeyEnvNames.first})';
-  }
-
   /// Renders the model-roles no-silent-degrade note: every retry, key
   /// rotation, and chain failover is announced inline, and the display
   /// model tracks the active chain entry.
@@ -2390,7 +2156,7 @@ class AgentCli {
     '/skills': 'list discovered skills (invoke with /skill:<name>)',
     '/model': '<provider/model> — select model (opens selector)',
     '/models': '[filter] — list known models for the current provider',
-    '/provider': '[name] [baseUrl] [token] — switch provider/endpoint',
+    '/provider': '[name] [baseUrl] [token] | custom — switch provider/endpoint',
     '/key': '[set <NAME> <value> | delete <NAME>] — manage stored API keys',
     '/mode': '[name] — show or switch the active mode',
     '/session': '[name] — show current or switch/create a named session',
