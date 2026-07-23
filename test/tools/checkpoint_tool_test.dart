@@ -239,10 +239,13 @@ void main() {
       await expectLater(
         () => rewind.execute({'report': 'findings'}, null, null),
         throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
+          isA<Exception>().having(
+            (e) => e.toString(),
             'message',
-            contains('No active checkpoint'),
+            allOf(
+              contains('No active checkpoint'),
+              isNot(contains('Bad state')),
+            ),
           ),
         ),
       );
@@ -262,42 +265,36 @@ void main() {
       await expectLater(
         () => rewind.execute({'report': '   '}, null, null),
         throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
+          isA<Exception>().having(
+            (e) => e.toString(),
             'message',
-            contains('Report cannot be empty'),
+            allOf(
+              contains('Report cannot be empty'),
+              isNot(contains('Bad state')),
+            ),
           ),
         ),
       );
     });
 
-    test(
-      'rewind after a completed rewind errors with the repeat guard',
-      () async {
-        final fake = _FakeStreamFunction([
-          _toolTurn([checkpointCall('c1')]),
-          _toolTurn([rewindCall('findings', 'c2')]),
-          _textTurn('done'),
-        ]);
-        final h = await harness(fake);
-        await h.agent.prompt('start');
-        expect(h.controller.lastCompletedRewind, isNotNull);
+    test('rewind after a completed rewind guides without an error', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1')]),
+        _toolTurn([rewindCall('findings', 'c2')]),
+        _textTurn('done'),
+      ]);
+      final h = await harness(fake);
+      await h.agent.prompt('start');
+      expect(h.controller.lastCompletedRewind, isNotNull);
 
-        final rewind = h.controller.tools.firstWhere(
-          (t) => t.name == rewindToolName,
-        );
-        await expectLater(
-          () => rewind.execute({'report': 'again'}, null, null),
-          throwsA(
-            isA<StateError>().having(
-              (e) => e.message,
-              'message',
-              contains('Checkpoint already completed'),
-            ),
-          ),
-        );
-      },
-    );
+      final rewind = h.controller.tools.firstWhere(
+        (t) => t.name == rewindToolName,
+      );
+      final result = await rewind.execute({'report': 'again'}, null, null);
+      final text = result.content.whereType<TextContent>().single.text;
+      expect(text, contains('already rewound'));
+      expect(text, isNot(contains('Bad state')));
+    });
   });
 
   group('rewind application', () {

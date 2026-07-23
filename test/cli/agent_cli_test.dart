@@ -1779,6 +1779,57 @@ void main() {
     },
   );
 
+  test(
+    'a second rewind after a completed one guides without a Bad state crash',
+    () async {
+      await env.writeFile('notes.txt', 'data');
+      const report = 'FINDINGS: notes.txt holds data.';
+      final fake = _FakeStreamFunction([
+        _toolTurn([
+          ToolCall(id: 'c1', name: 'checkpoint', arguments: const {}),
+        ]),
+        _toolTurn([
+          ToolCall(
+            id: 'c2',
+            name: 'rewind',
+            arguments: const {'report': report},
+          ),
+        ]),
+        _toolTurn([
+          ToolCall(
+            id: 'c3',
+            name: 'rewind',
+            arguments: const {'report': 'again'},
+          ),
+        ]),
+        _textTurn('moving on'),
+      ]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('go');
+      await _waitFor(() => fake.calls == 4 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, isNot(contains('Bad state')));
+      // The result is not an error: the run continued normally.
+      expect(output, contains('moving on'));
+      final toolResults = (await sessionEntries())
+          .whereType<MessageRecord>()
+          .map((e) => e.message)
+          .whereType<ToolResultMessage>()
+          .toList();
+      final secondRewind = toolResults.last;
+      expect(secondRewind.isError, isFalse);
+      expect(
+        secondRewind.content.whereType<TextContent>().single.text,
+        contains('already rewound'),
+      );
+    },
+  );
+
   test('/reset clears the active checkpoint', () async {
     final fake = _FakeStreamFunction([
       _toolTurn([ToolCall(id: 'c1', name: 'checkpoint', arguments: const {})]),
