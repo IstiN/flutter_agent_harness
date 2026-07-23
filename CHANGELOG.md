@@ -471,4 +471,9 @@
 - ci(ios,macos): fix artifact downloads and macOS keychain password
 - ci(ios,macos): fix artifact path, macOS framework restore, action versions
 
+## 0.1.52
+
+- ci(ios): use absolute IPA path for TestFlight submit
+- ci(ios,macos): fix submit artifact path and macOS Ruby PATH
+
 ## Unreleased
