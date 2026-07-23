@@ -801,6 +801,10 @@ class AgentCli {
         await _runTuiRepl();
       } else {
         await _printBanner();
+        final resumedLabel = await _resumedSessionLabel();
+        if (resumedLabel != null) {
+          _replayRestoredHistory(_agent.state.messages, resumedLabel);
+        }
         _writeIdlePrompt();
         final lineIterator = StreamIterator<String>(io.lines);
         while (await lineIterator.moveNext()) {
@@ -912,6 +916,11 @@ class AgentCli {
     // The banner is part of the TUI output history so it stays visible above
     // the input line inside the alternate screen.
     await _printBanner();
+
+    final resumedLabel = await _resumedSessionLabel();
+    if (resumedLabel != null) {
+      _replayRestoredHistory(_agent.state.messages, resumedLabel);
+    }
 
     // Warm the model cache in the background so the first /models picker is
     // fast; failures are silent and the cache falls back to the hardcoded list.
@@ -1180,6 +1189,15 @@ class AgentCli {
     return session;
   }
 
+  /// The label for a startup-resumed session's replay header, or null when
+  /// this run started a fresh session (no messages to replay).
+  Future<String?> _resumedSessionLabel() async {
+    if (_agent.state.messages.isEmpty) return null;
+    final session = _session;
+    if (session == null) return null;
+    return await session.getSessionName() ?? (await session.getMetadata()).id;
+  }
+
   Future<void> _switchSession(String name) async {
     final trimmed = name.trim();
     final metadata = await _findSessionByName(trimmed);
@@ -1202,6 +1220,68 @@ class AgentCli {
     _ttsr?.reset();
     _session = await _loadSession(metadata);
     io.writeln("switched to session '$label'");
+    _replayRestoredHistory(_agent.state.messages, label);
+  }
+
+  /// Replays a restored session's transcript into the output so a resume
+  /// doesn't look empty: the last few messages (user/assistant/tool calls,
+  /// each capped to a couple of rows) with a header counting the rest.
+  void _replayRestoredHistory(List<Message> messages, String label) {
+    if (messages.isEmpty) return;
+    const maxShown = 10;
+    const maxRows = 2;
+    final skipped = messages.length > maxShown ? messages.length - maxShown : 0;
+    final shown = messages.sublist(skipped);
+    final count = skipped > 0
+        ? 'last $maxShown of ${messages.length}'
+        : '${messages.length}';
+    io.writeln(_style.dim('─── restored session: $label ($count messages)'));
+    for (final message in shown) {
+      for (final line in _replayLines(message, maxRows)) {
+        io.writeln(line);
+      }
+    }
+    io.writeln(_style.dim('─' * 20));
+  }
+
+  /// One compact replay entry (≤ [maxRows] rows), or none for messages the
+  /// replay skips (tool results — their calls are already shown).
+  List<String> _replayLines(Message message, int maxRows) {
+    final String text;
+    final String prefix;
+    switch (message) {
+      case UserMessage(:final content):
+        prefix = 'you: ';
+        text = content is String
+            ? content
+            : (content as List<ContentBlock>)
+                  .whereType<TextContent>()
+                  .map((b) => b.text)
+                  .join(' ');
+      case AssistantMessage(:final content):
+        final texts = content
+            .whereType<TextContent>()
+            .map((b) => b.text)
+            .join(' ')
+            .trim();
+        final calls = content
+            .whereType<ToolCall>()
+            .map((c) => '[${c.name}]')
+            .join(' ');
+        text = [texts, calls].where((s) => s.isNotEmpty).join(' ');
+        prefix = 'fa:  ';
+      default:
+        return const [];
+    }
+    if (text.trim().isEmpty) return const [];
+    final rows = text.split('\n');
+    final head = rows.take(maxRows).toList();
+    final suffix = rows.length > maxRows ? ' …' : '';
+    final indent = ' ' * prefix.length;
+    return [
+      for (var i = 0; i < head.length; i++)
+        '${i == 0 ? prefix : indent}${head[i]}${i == head.length - 1 ? suffix : ''}',
+    ];
   }
 
   /// `/resume`: switches to the most recently created session for the
@@ -1253,6 +1333,9 @@ class AgentCli {
         '${_style.dim(metadata.createdAt.toLocal().toIso8601String())}',
       );
     }
+    io.writeln(
+      _style.dim('switch: /session <name> · rename: /rename-session <name>'),
+    );
   }
 
   Future<void> _createNamedSession(String name) async {
@@ -1746,6 +1829,7 @@ class AgentCli {
       final metadata = await session.getMetadata();
       final name = await session.getSessionName();
       io.writeln('session: ${name ?? '(unnamed)'}  ${metadata.path}');
+      io.writeln(_style.dim('rename: /rename-session <name>'));
       return;
     }
     await _switchSession(trimmed);

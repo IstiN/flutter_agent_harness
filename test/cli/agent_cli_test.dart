@@ -1999,10 +1999,17 @@ void main() {
         streamFunction: fake2.call,
       );
       final run2 = cli2.run();
+      // The resumed session replays its transcript after the banner.
+      await _waitFor(
+        () => io2.out.toString().contains('restored session: work'),
+      );
       io2.sendLine('continue');
       await _waitFor(() => fake2.calls == 1 && !cli2.isBusy);
       io2.sendLine('/exit');
       await run2;
+
+      final replay = io2.out.toString();
+      expect(replay, contains('hello'));
 
       final messages = fake2.contexts.single.messages;
       expect(messages, hasLength(3));
@@ -2025,13 +2032,16 @@ void main() {
         () => io.out.toString().contains("renamed current session to 'beta'"),
       );
       io.sendLine('/sessions');
-      await _waitFor(() => io.out.toString().contains('beta'));
+      await _waitFor(
+        () => io.out.toString().contains('rename: /rename-session'),
+      );
       io.sendLine('/session gamma');
       await _waitFor(
         () => io.out.toString().contains("created session 'gamma'"),
       );
       io.sendLine('/session');
       await _waitFor(() => io.out.toString().contains('session: gamma'));
+      expect(io.out.toString(), contains('rename: /rename-session'));
       io.sendLine('/exit');
       await run;
 
@@ -2045,6 +2055,39 @@ void main() {
         names.add(await s.getSessionName());
       }
       expect(names, containsAll(['beta', 'gamma']));
+    });
+
+    test('switching back to a session replays its transcript', () async {
+      final fake = _FakeStreamFunction([
+        _textTurn('first-answer'),
+        _textTurn('second-answer'),
+      ]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/session alpha');
+      await _waitFor(
+        () => io.out.toString().contains("created session 'alpha'"),
+      );
+      io.sendLine('one');
+      await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+      io.sendLine('/session beta');
+      await _waitFor(
+        () => io.out.toString().contains("created session 'beta'"),
+      );
+      io.sendLine('two');
+      await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+      io.sendLine('/session alpha');
+      await _waitFor(
+        () => io.out.toString().contains('restored session: alpha'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('you: one'));
+      expect(output, contains('first-answer'));
+      expect(output, isNot(contains('you: two')));
     });
 
     test('headless --session resumes a named session', () async {
