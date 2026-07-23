@@ -47,6 +47,7 @@ final class _MapStore implements SecureKeyStore {
   _MapStore({this.availability = true});
 
   bool availability;
+  bool failWrites = false;
   final map = <String, String>{};
 
   @override
@@ -59,10 +60,16 @@ final class _MapStore implements SecureKeyStore {
   Future<String?> read(String name) async => map[name];
 
   @override
-  Future<void> write(String name, String value) async => map[name] = value;
+  Future<void> write(String name, String value) async {
+    if (failWrites) throw StateError('keychain write failed (exit 45)');
+    map[name] = value;
+  }
 
   @override
-  Future<void> delete(String name) async => map.remove(name);
+  Future<void> delete(String name) async {
+    if (failWrites) throw StateError('keychain write failed (exit 45)');
+    map.remove(name);
+  }
 }
 
 void main() {
@@ -370,5 +377,18 @@ void main() {
       expect(cache.read('OPENAI_API_KEY'), isNull);
       expect(await cache.save('OPENAI_API_KEY', 'sk-1'), isFalse);
     });
+
+    test(
+      'a failing backend degrades save/delete to false, never throws',
+      () async {
+        final store = _MapStore()..failWrites = true;
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+
+        expect(await cache.save('OPENAI_API_KEY', 'sk-1'), isFalse);
+        expect(cache.read('OPENAI_API_KEY'), isNull);
+        expect(await cache.delete('OPENAI_API_KEY'), isFalse);
+      },
+    );
   });
 }

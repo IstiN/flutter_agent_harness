@@ -170,12 +170,14 @@ extension on AgentCli {
         await keys.save(keyName, token);
         config.onSecretStored?.call(keyName, token);
       } else {
-        // No secure store: the key still applies to this session via the
-        // switch below, but cannot persist with the entry.
+        // No secure store OR the write failed (locked/managed keychain):
+        // the key still applies to this session via the switch below, but
+        // cannot persist with the entry.
         keyName = null;
         io.writeln(
-          'secure storage unavailable — the key applies to this session '
-          'only and is not saved with the provider',
+          'could not save the key to the secure store (unavailable, locked, '
+          'or managed) — it applies to this session only and is not saved '
+          'with the provider',
         );
       }
     } else if (editName != null) {
@@ -423,6 +425,10 @@ extension on AgentCli {
       config.onSecretStored?.call(name, token);
       return keys.label;
     }
+    io.writeln(
+      'note: could not save the key to ${keys.label} (locked or managed '
+      'keychain?) — it applies to this session only',
+    );
     return null;
   }
 
@@ -460,7 +466,14 @@ extension on AgentCli {
           );
           return;
         }
-        await keys.save(args[1], args[2]);
+        if (!await keys.save(args[1], args[2])) {
+          io.writeln(
+            'could not save ${args[1]} to ${keys.label}: the write failed '
+            '(locked or managed keychain?) — '
+            'set ${args[1]} in the environment instead',
+          );
+          return;
+        }
         config.onSecretStored?.call(args[1], args[2]);
         io.writeln('saved ${args[1]} to ${keys.label}');
         // When the stored key serves the active provider, pick it up
