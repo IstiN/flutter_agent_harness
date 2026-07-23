@@ -45,25 +45,41 @@ post_install do |installer|
   end
 
   # wasm_run FFI symbols live in a static library inside WasmRun.xcframework.
-  # They are referenced only from Dart via DynamicLibrary.executable(), so the
-  # linker strips them unless we force-load the archive explicitly on the
-  # application target (not the pod target). The XCFramework has separate
-  # device and simulator slices; use Xcode's conditional build settings to
-  # pick the right slice at build time. SRCROOT is the ios/ directory, so
-  # ../../ walks up to the repo root where vendor/ lives.
-  device_slice = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a'
-  simulator_slice = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a'
+  # They are referenced only from Dart via dlsym (DynamicLibrary.executable()),
+  # so the linker never pulls them in: force_load alone is not enough because
+  # DEAD_CODE_STRIPPING=YES (Release default) still discards the unreferenced
+  # code, and dlsym only sees exported symbols. Exporting a symbol makes it
+  # both dlsym-visible AND a dead-strip root, so export every C-ABI symbol the
+  # Dart bindings look up (wire_*/new_*/drop_*/…), derived from the archive
+  # itself so the list stays in sync with the vendored package. Without this
+  # the Release/TestFlight binary boots to a white screen
+  # ("Unsupported desktop platform: ios" from wasm_run's library locator).
+  # SRCROOT is the ios/ directory, so ../../ walks up to the repo root where
+  # vendor/ lives.
+  xcframework = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework'
+  device_slice = "#{xcframework}/ios-arm64/libwasm_run_dart.a"
+  simulator_slice = "#{xcframework}/ios-arm64_x86_64-simulator/libwasm_run_dart.a"
+  device_archive = File.expand_path('../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a', __dir__)
+  ffi_symbols = `nm -gU -arch arm64 #{device_archive}`.lines
+    .map(&:split)
+    .select { |cols| %w[T D S].include?(cols[1]) && cols[2] }
+    .map { |cols| cols[2] }
+    .uniq
+    .grep(/^_(wire|new|drop|free|get|store|init|inflate|share)_/)
+    .sort
+  raise "no wasm_run FFI symbols found in #{device_archive}" if ffi_symbols.empty?
+  export_flags = ffi_symbols.map { |s| "-Wl,-exported_symbol,#{s}" }
   installer.aggregate_targets.each do |aggregate_target|
     aggregate_target.user_project.targets.each do |target|
       next unless target.name == 'Runner'
       target.build_configurations.each do |config|
-        device_ldflags = config.build_settings['OTHER_LDFLAGS[sdk=iphoneos*]'] ||= ['$(inherited)']
-        unless Array(device_ldflags).any? { |f| f.include?(device_slice) }
-          device_ldflags << '-Wl,-force_load,' + device_slice
-        end
-        simulator_ldflags = config.build_settings['OTHER_LDFLAGS[sdk=iphonesimulator*]'] ||= ['$(inherited)']
-        unless Array(simulator_ldflags).any? { |f| f.include?(simulator_slice) }
-          simulator_ldflags << '-Wl,-force_load,' + simulator_slice
+        { 'iphoneos*' => device_slice, 'iphonesimulator*' => simulator_slice }.each do |sdk, slice|
+          key = "OTHER_LDFLAGS[sdk=#{sdk}]"
+          ldflags = Array(config.build_settings[key] || ['$(inherited)']).dup
+          # Drop stale wasm_run flags from earlier pod installs, then re-add.
+          ldflags.reject! { |f| f == '-force_load' || f.include?('wasm_run_dart.a') || f.start_with?('-Wl,-exported_symbol,') }
+          ldflags.concat(["-Wl,-force_load,#{slice}"] + export_flags)
+          config.build_settings[key] = ldflags
         end
       end
     end
