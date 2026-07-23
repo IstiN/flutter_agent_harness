@@ -66,26 +66,28 @@ private func pickDirectoryWithBookmark() -> [String: String]? {
 /// False when the bookmark is stale or the folder is gone.
 private func startAccessing(bookmarkBase64: String) -> Bool {
   guard let data = Data(base64Encoded: bookmarkBase64) else { return false }
-  var stale = ObjCBool(false)
+  var stale = false
   guard
     let url = try? URL(
-      resolvingSecurityScopedBookmarkData: data,
-      options: [],
+      resolvingBookmarkData: data,
+      options: [.withSecurityScope],
       relativeTo: nil,
       bookmarkDataIsStale: &stale,
-    ), !stale.boolValue
+    ), !stale
   else { return false }
   return url.startAccessingSecurityScopedResource()
 }
 
 /// Best-effort stop of a previously started security-scoped access.
 private func stopAccessing(bookmarkBase64: String) {
-  guard let data = Data(base64Encoded: bookmarkBase64),
+  guard let data = Data(base64Encoded: bookmarkBase64) else { return }
+  var stale = false
+  guard
     let url = try? URL(
-      resolvingSecurityScopedBookmarkData: data,
-      options: [],
+      resolvingBookmarkData: data,
+      options: [.withSecurityScope],
       relativeTo: nil,
-      bookmarkDataIsStale: nil,
+      bookmarkDataIsStale: &stale,
     )
   else { return }
   url.stopAccessingSecurityScopedResource()

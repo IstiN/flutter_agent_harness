@@ -336,8 +336,10 @@ jobs:
           PLIST=$(echo "$CHECK_DIR"/Payload/*.app/Info.plist)
           EXEC_NAME=$(plutil -extract CFBundleExecutable raw "$PLIST")
           BIN="$(dirname "$PLIST")/$EXEC_NAME"
-          EXPORTS=$(nm -gD "$BIN" 2>/dev/null || true)
-          WIRE_COUNT=$(echo "$EXPORTS" | grep -c " T _wire_" || true)
+          # dyld_info reads the exports trie, which survives stripping
+          # (nm -gD fails on stripped binaries with "no dynamic symbol table").
+          EXPORTS=$(xcrun dyld_info -exports "$BIN" 2>/dev/null || true)
+          WIRE_COUNT=$(echo "$EXPORTS" | grep -c " _wire_" || true)
           echo "wasm_run wire_* exports in binary: $WIRE_COUNT"
           for SYM in _wire_compile_wasm _store_dart_post_cobject _init_frb_dart_api_dl; do
             if ! echo "$EXPORTS" | grep -qE " ${SYM}\$"; then
