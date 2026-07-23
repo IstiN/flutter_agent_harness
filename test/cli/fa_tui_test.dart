@@ -640,5 +640,55 @@ void main() {
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
       expect(cancelled, isEmpty);
     });
+
+    test(
+      'a long single-line message marks the sticky echo with an ellipsis',
+      () async {
+        var model = FaTuiModel(
+          callbacks: cancelCallbacks(const []),
+          isExited: () => false,
+          termWidth: 60,
+        );
+        for (final ch in ('x' * 150).split('')) {
+          model = send(
+            model,
+            KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)),
+          );
+        }
+        final result = model.update(
+          KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+        );
+        model = result.$1 as FaTuiModel;
+        await result.$2?.call();
+
+        final sticky = model.stickyLines.join('\n');
+        expect(sticky, contains('…'));
+        final strippedSticky = sticky.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), '');
+        for (final row in strippedSticky.split('\n')) {
+          expect(row.length, lessThanOrEqualTo(60));
+        }
+        // The history keeps the full message, wrapped across rows.
+        final history = model.view().content.replaceAll(
+          RegExp(r'\x1b\[[0-9;]*m'),
+          '',
+        );
+        final joined = history
+            .split('\n')
+            .where((row) => row.contains('x'))
+            .join();
+        expect(joined, contains('x' * 150));
+      },
+    );
+
+    test('the scroll indicator lights only when the user scrolled away', () {
+      var model = filledModel();
+      // Busy shrinks the viewport by one row; following must not light it.
+      model = send(model, BusyMsg(true));
+      model = send(model, OutputMsg('streamed', newline: true));
+      expect(model.view().content, isNot(contains('%')));
+
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.view().content, contains('%'));
+    });
   });
 }

@@ -844,15 +844,19 @@ final class FaTuiModel extends TeaModel {
     const bg = '\x1b[48;2;30;34;42m';
     const reset = '\x1b[0m';
     final echoed = _echoAppend(outputLines, inputText);
-    // The pinned echo for long answers (Copilot-style): rule + first input
-    // line, with a dim ellipsis marking a multi-line message.
+    // The pinned echo for long answers (Copilot-style): rule + the first
+    // input line, truncated to the width with a dim ellipsis marking any
+    // remainder — a multi-line message or one simply longer than a row
+    // (a bare long line previously got visually cut without any marker).
     final firstLine = inputText.split('\n').first;
-    final more = inputText.contains('\n') ? _dim(' …') : '';
+    final fits = firstLine.length <= termWidth - 3 || termWidth <= 3;
+    final shown = fits ? firstLine : firstLine.substring(0, termWidth - 3);
+    final more = inputText.contains('\n') || !fits ? _dim(' …') : '';
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
       outputLines: echoed,
-      stickyLines: [rule, '$bg$firstLine$reset$more'],
+      stickyLines: [rule, '$bg$shown$reset$more'],
       stickyIndex: outputLines.length,
     );
     return (
@@ -997,11 +1001,12 @@ final class FaTuiModel extends TeaModel {
       b.writeln(row < wrapped.length ? wrapped[row] : '');
     }
 
-    // Scroll progress indicator — only while scrolled away from the bottom
-    // (a "you are here" hint); at the live edge the row stays blank so the
-    // layout never shifts.
+    // Scroll progress indicator — only while the user scrolled away from
+    // the live edge (a "you are here" hint); while following, the row stays
+    // blank so the layout never shifts. (A transient viewport shrink, e.g.
+    // the busy row, must not light it up spuriously.)
     final bottom = _scrollBottom(wrapped);
-    if (offset < bottom) {
+    if (!followTail && offset < bottom) {
       final scrollPercent = bottom == 0
           ? 100
           : ((offset / bottom) * 100).round().clamp(0, 100);
