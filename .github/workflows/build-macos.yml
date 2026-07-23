@@ -302,8 +302,10 @@ jobs:
           # main executable. If the symbols were dead-stripped or not exported
           # the app boots to a white screen on TestFlight — fail here instead.
           echo "=== wasm_run FFI symbol verification ==="
-          EXPORTS=$(nm -gD "$MAIN_BIN" 2>/dev/null || true)
-          WIRE_COUNT=$(echo "$EXPORTS" | grep -c " T _wire_" || true)
+          # dyld_info reads the exports trie, which survives stripping
+          # (nm -gD fails on stripped binaries with "no dynamic symbol table").
+          EXPORTS=$(xcrun dyld_info -exports "$MAIN_BIN" 2>/dev/null || true)
+          WIRE_COUNT=$(echo "$EXPORTS" | grep -c " _wire_" || true)
           echo "wasm_run wire_* exports in binary: $WIRE_COUNT"
           for SYM in _wire_compile_wasm _store_dart_post_cobject _init_frb_dart_api_dl; do
             if ! echo "$EXPORTS" | grep -qE " ${SYM}\$"; then
