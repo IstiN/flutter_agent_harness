@@ -691,4 +691,56 @@ void main() {
       expect(model.view().content, contains('%'));
     });
   });
+
+  group('mouse wheel scrolling', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    FaTuiModel filledModel({int lines = 30}) {
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termHeight: 12, // small viewport so content overflows fast
+      );
+      for (var i = 0; i < lines; i++) {
+        model = send(model, OutputMsg('line $i', newline: true));
+      }
+      return model;
+    }
+
+    test('wheel up scrolls the transcript up by three rows', () {
+      var model = filledModel();
+      final bottom = model.scrollOffset;
+      expect(bottom, greaterThan(0));
+      expect(model.followTail, isTrue);
+
+      model = send(
+        model,
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
+      );
+      expect(model.scrollOffset, bottom - 3);
+      expect(model.followTail, isFalse);
+    });
+
+    test('wheel down scrolls the transcript down by three rows', () {
+      var model = filledModel();
+      final bottom = model.scrollOffset;
+      model = send(
+        model,
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
+      );
+      expect(model.scrollOffset, bottom - 3);
+
+      model = send(
+        model,
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelDown)),
+      );
+      expect(model.scrollOffset, bottom);
+      expect(model.followTail, isTrue);
+    });
+
+    test('the view requests cell-motion mouse mode', () {
+      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      expect(model.view().mouseMode, MouseMode.cellMotion);
+    });
+  });
 }

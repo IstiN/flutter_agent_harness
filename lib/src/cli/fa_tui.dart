@@ -1123,6 +1123,7 @@ final class FaTuiModel extends TeaModel {
     return View(
       content: b.toString() + cursorLine,
       cursor: Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
+      mouseMode: MouseMode.cellMotion,
     );
   }
 
@@ -1163,6 +1164,7 @@ final class FaTuiController {
   );
   late final Program _program = Program(
     options: const ProgramOptions(altScreen: true, hideCursor: false),
+    programOptions: [withMouseCellMotion()],
   );
 
   /// Messages sent before [run] starts (e.g. the banner printed while the
