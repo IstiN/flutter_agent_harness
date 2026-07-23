@@ -690,6 +690,48 @@ void main() {
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
       expect(model.view().content, contains('%'));
     });
+
+    test(
+      'the sticky echo stays off while the message is still visible',
+      () async {
+        var model = FaTuiModel(
+          callbacks: callbacks(submitted: <String>[]),
+          isExited: () => false,
+          termHeight: 12,
+        );
+        for (final ch in 'hello'.split('')) {
+          model = send(
+            model,
+            KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)),
+          );
+        }
+        final result = model.update(
+          KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+        );
+        model = result.$1 as FaTuiModel;
+        await result.$2?.call();
+        model = send(model, BusyMsg(true));
+        // A few streamed lines: the echo still fits inside the viewport, so
+        // no pinned duplicate may render.
+        for (var i = 0; i < 3; i++) {
+          model = send(model, OutputMsg('line $i', newline: true));
+        }
+        final ansi = RegExp(r'\x1b\[[0-9;]*m');
+        final visible = model.view().content.replaceAll(ansi, '');
+        expect(visible, contains('hello'));
+        expect('hello'.allMatches(visible), hasLength(1));
+
+        // Push the echo above the viewport: the pinned copy appears at the
+        // top (and only there — the history row has scrolled away).
+        for (var i = 3; i < 20; i++) {
+          model = send(model, OutputMsg('line $i', newline: true));
+        }
+        final pushed = model.view().content.replaceAll(ansi, '');
+        final rows = pushed.split('\n');
+        expect(rows[1], contains('hello'), reason: 'pinned echo at the top');
+        expect('hello'.allMatches(pushed), hasLength(1));
+      },
+    );
   });
 
   group('mouse wheel scrolling', () {

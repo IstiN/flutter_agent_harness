@@ -145,6 +145,7 @@ final class FaTuiModel extends TeaModel {
     this.spinnerFrame = 0,
     this.stickyLines = const [],
     this.stickyIndex = -1,
+    this.stickyEchoLineCount = 0,
     this.queue = const [],
   });
 
@@ -193,6 +194,11 @@ final class FaTuiModel extends TeaModel {
   /// Index into [outputLines] where the sticky echo starts; -1 when unset.
   final int stickyIndex;
 
+  /// History lines the echo occupies (rule + input lines + trailing blank),
+  /// set at submit time; the sticky pins only when these rows have fully
+  /// scrolled out of view.
+  final int stickyEchoLineCount;
+
   /// Messages typed while a run streams (kimi-cli's queue): Enter enqueues,
   /// ↑ pops the last one back into the input, Ctrl+S steers them into the
   /// running agent, and the host drains them as separate turns afterwards.
@@ -212,9 +218,24 @@ final class FaTuiModel extends TeaModel {
   }
 
   /// Whether the sticky user echo is pinned right now: a run is streaming
-  /// and the echo has scrolled above the visible window.
-  bool get _stickyActive =>
-      busy && stickyLines.isNotEmpty && scrollOffset > stickyIndex;
+  /// and the echo has FULLY scrolled above the visible window. Rows are
+  /// counted wrapped (earlier lines may wrap), and the echo counts as out
+  /// only once its last row is gone — comparing the offset to the raw
+  /// [stickyIndex] line pinned a duplicate while the message was still
+  /// visible in the chat.
+  bool get _stickyActive {
+    if (!busy || stickyLines.isEmpty || stickyIndex < 0) return false;
+    final formatted = AnsiMarkdown(width: termWidth).formatAll(outputLines);
+    final echoEndLine = (stickyIndex + stickyEchoLineCount).clamp(
+      0,
+      formatted.length,
+    );
+    var echoEndRow = 0;
+    for (var i = 0; i < echoEndLine; i++) {
+      echoEndRow += wrapAnsiLine(formatted[i], termWidth).length;
+    }
+    return scrollOffset >= echoEndRow;
+  }
 
   /// The visible window of menu items (start inclusive, end exclusive).
   (int, int) _menuWindow() {
@@ -311,6 +332,7 @@ final class FaTuiModel extends TeaModel {
     int? spinnerFrame,
     List<String>? stickyLines,
     int? stickyIndex,
+    int? stickyEchoLineCount,
     List<String>? queue,
   }) {
     return FaTuiModel(
@@ -334,6 +356,7 @@ final class FaTuiModel extends TeaModel {
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
+      stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
       queue: queue ?? this.queue,
     );
   }
@@ -858,6 +881,7 @@ final class FaTuiModel extends TeaModel {
       outputLines: echoed,
       stickyLines: [rule, '$bg$shown$reset$more'],
       stickyIndex: outputLines.length,
+      stickyEchoLineCount: 2 + inputText.split('\n').length,
     );
     return (
       cleared.copyWith(
