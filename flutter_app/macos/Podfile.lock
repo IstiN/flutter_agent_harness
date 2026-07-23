@@ -46,6 +46,8 @@ PODS:
     - PromisesObjC (~> 2.4)
   - flutter_gemma (1.1.2):
     - FlutterMacOS
+  - flutter_js (0.0.1):
+    - FlutterMacOS
   - FlutterMacOS (1.0.0)
   - GoogleAppMeasurement/Core (11.15.0):
     - GoogleUtilities/AppDelegateSwizzler (~> 8.1)
@@ -117,6 +119,7 @@ DEPENDENCIES:
   - firebase_analytics (from `Flutter/ephemeral/.symlinks/plugins/firebase_analytics/macos`)
   - firebase_core (from `Flutter/ephemeral/.symlinks/plugins/firebase_core/macos`)
   - flutter_gemma (from `Flutter/ephemeral/.symlinks/plugins/flutter_gemma/macos`)
+  - flutter_js (from `Flutter/ephemeral/.symlinks/plugins/flutter_js/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - large_file_handler (from `Flutter/ephemeral/.symlinks/plugins/large_file_handler/macos`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
@@ -144,6 +147,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/firebase_core/macos
   flutter_gemma:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_gemma/macos
+  flutter_js:
+    :path: Flutter/ephemeral/.symlinks/plugins/flutter_js/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
   large_file_handler:
@@ -165,6 +170,7 @@ SPEC CHECKSUMS:
   FirebaseCoreInternal: 9afa45b1159304c963da48addb78275ef701c6b4
   FirebaseInstallations: 317270fec08a5d418fdbc8429282238cab3ac843
   flutter_gemma: c11ad071486512e874e419e25e1e503b85f06803
+  flutter_js: 79c3c70d33ba464c67d8eb88639a61aa718cd8b8
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   GoogleAppMeasurement: 700dce7541804bec33db590a5c496b663fbe2539
   GoogleUtilities: 00c88b9a86066ef77f0da2fab05f65d7768ed8e1

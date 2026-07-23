@@ -1,0 +1,37 @@
+{
+  "id": "stocks",
+  "name": "Stock Prices",
+  "description": "Real-time stock quotes",
+  "version": "1.0.0",
+  "icon": "📈",
+  "allowedCommands": [],
+  "network": true,
+  "cli": {
+    "summary": "Real-time stock quotes (Yahoo Finance)",
+    "events": [
+      { "id": "refresh", "description": "Reload quotes" },
+      { "id": "back", "description": "Return from chart view to list" },
+      {
+        "id": "apply_symbols",
+        "description": "Set symbols from field (payload: {\"value\":\"AAPL,MSFT\"})"
+      },
+      {
+        "id": "symbol_input_change",
+        "description": "Symbols field changed (payload: {\"value\":\"...\"})"
+      },
+      {
+        "id": "show_chart_<symbol>",
+        "description": "Open intraday chart, e.g. show_chart_AAPL"
+      }
+    ],
+    "read": {
+      "state": "yoloit app:state stocks — quotes[] with price and changePct",
+      "snapshot": "yoloit app:snapshot stocks"
+    },
+    "examples": [
+      "yoloit app:run stocks",
+      "yoloit app:execute stocks apply_symbols '{\"value\":\"AAPL,TSLA\"}'",
+      "yoloit app:state stocks"
+    ]
+  }
+}

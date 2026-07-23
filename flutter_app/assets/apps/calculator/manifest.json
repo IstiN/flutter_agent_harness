@@ -1,0 +1,32 @@
+{
+  "id": "calculator",
+  "name": "Calculator",
+  "description": "Simple scientific calculator",
+  "version": "1.0.0",
+  "icon": "🧮",
+  "allowedCommands": [],
+  "network": false,
+  "cli": {
+    "summary": "Scientific calculator with animated keys",
+    "events": [
+      {
+        "id": "btn_<key>",
+        "description": "Press a key, e.g. btn_5, btn_+, btn_=, btn_C, btn_⌫"
+      },
+      {
+        "id": "press_<key>",
+        "description": "Key press animation (auto-fired on tap)"
+      }
+    ],
+    "read": {
+      "state": "yoloit app:state calculator — expression, preview, display",
+      "snapshot": "yoloit app:snapshot calculator"
+    },
+    "examples": [
+      "yoloit app:run calculator",
+      "yoloit app:execute calculator btn_5",
+      "yoloit app:execute calculator btn_+",
+      "yoloit app:state calculator"
+    ]
+  }
+}
