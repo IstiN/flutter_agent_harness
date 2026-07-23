@@ -724,6 +724,7 @@
 					"-Wl,-exported_symbol,_wire_xor__method__Atomics",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				STRIP_STYLE = "non-global";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Profile;
@@ -1000,6 +1001,7 @@
 					"-Wl,-exported_symbol,_wire_xor__method__Atomics",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				STRIP_STYLE = "non-global";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 			};
@@ -1164,6 +1166,7 @@
 					"-Wl,-exported_symbol,_wire_xor__method__Atomics",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				STRIP_STYLE = "non-global";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;

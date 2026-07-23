@@ -73,6 +73,12 @@ post_install do |installer|
     aggregate_target.user_project.targets.each do |target|
       next unless target.name == 'Runner'
       target.build_configurations.each do |config|
+        # Archive/install builds run `strip` per STRIP_STYLE. The default
+        # "all" removes the dyld exports trie entirely (verified: plain
+        # `strip` drops every exported wire_* symbol), which kills the
+        # dlsym-based wasm_run lookups at runtime — TestFlight white screen.
+        # "non-global" (strip -x) keeps the trie intact.
+        config.build_settings['STRIP_STYLE'] = 'non-global'
         { 'iphoneos*' => device_slice, 'iphonesimulator*' => simulator_slice }.each do |sdk, slice|
           key = "OTHER_LDFLAGS[sdk=#{sdk}]"
           ldflags = Array(config.build_settings[key] || ['$(inherited)']).dup
