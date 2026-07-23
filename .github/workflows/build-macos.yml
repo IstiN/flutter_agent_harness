@@ -199,6 +199,16 @@ jobs:
           echo "=== Dependency versions ==="
           flutter pub deps --style=compact
 
+      # The workspace is re-cloned every run, which wipes Pods/ and forces a
+      # full pod install (~4 min with Firebase). Cache it keyed by the
+      # lockfile; $HOME-level caches (pub-cache, CocoaPods download cache,
+      # Ruby gems, Flutter SDK) already persist on the self-hosted runner.
+      - name: Cache CocoaPods (macOS)
+        uses: actions/cache@v4
+        with:
+          path: flutter_app/macos/Pods
+          key: macos-pods-${{ hashFiles('flutter_app/macos/Podfile.lock') }}
+
       - name: Generate build info
         working-directory: flutter_app
         run: |

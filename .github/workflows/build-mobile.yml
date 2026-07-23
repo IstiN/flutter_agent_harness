@@ -208,6 +208,16 @@ jobs:
         working-directory: flutter_app
         run: flutter pub get
 
+      # The workspace is re-cloned every run, which wipes Pods/ and forces a
+      # full pod install. Cache it keyed by the lockfile; $HOME-level caches
+      # (pub-cache, CocoaPods download cache, Ruby gems, Flutter SDK) already
+      # persist on the self-hosted runner.
+      - name: Cache CocoaPods (iOS)
+        uses: actions/cache@v4
+        with:
+          path: flutter_app/ios/Pods
+          key: ios-pods-${{ hashFiles('flutter_app/ios/Podfile.lock') }}
+
       - name: Restore vendored WasmRun iOS framework
         timeout-minutes: 15
         run: |
