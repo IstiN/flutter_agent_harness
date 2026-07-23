@@ -232,6 +232,7 @@ class _FakeSecureKeyStore implements SecureKeyStore {
   _FakeSecureKeyStore({this.available = true});
 
   bool available;
+  bool failWrites = false;
   final map = <String, String>{};
 
   @override
@@ -244,7 +245,10 @@ class _FakeSecureKeyStore implements SecureKeyStore {
   Future<String?> read(String name) async => map[name];
 
   @override
-  Future<void> write(String name, String value) async => map[name] = value;
+  Future<void> write(String name, String value) async {
+    if (failWrites) throw StateError('keychain write failed (exit 45)');
+    map[name] = value;
+  }
 
   @override
   Future<void> delete(String name) async => map.remove(name);
@@ -905,6 +909,57 @@ void main() {
 
     expect(store.map, isEmpty);
   });
+
+  test(
+    '/key set reports a failing keychain write instead of crashing',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final store = _FakeSecureKeyStore()..failWrites = true;
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final cli = cliFor(fake.call, secureKeys: cache);
+      final run = cli.run();
+
+      io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
+      await _waitFor(
+        () => io.out.toString().contains('could not save OPENAI_API_KEY'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(store.map, isEmpty);
+    },
+  );
+
+  test(
+    '/provider token falls back to session-only when the write fails',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final changes = <(String, String)>[];
+      final store = _FakeSecureKeyStore()..failWrites = true;
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final cli = cliFor(
+        fake.call,
+        secureKeys: cache,
+        onProviderChanged: (kind, key) => changes.add((kind, key)),
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider openai http://127.0.0.1:1/v1 sk-token-789');
+      await _waitFor(
+        () => io.out.toString().contains('could not save the key'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(store.map, isEmpty);
+      // Session continues keyless-to-store but with the token live.
+      expect(output, contains('key: provided'));
+      expect(changes, [('openai-completions', 'sk-token-789')]);
+    },
+  );
 
   test('/key delete removes the stored key', () async {
     final fake = _FakeStreamFunction([_textTurn('ok')]);

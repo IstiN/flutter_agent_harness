@@ -91,19 +91,30 @@ final class SecureKeyCache {
   Iterable<String> get names => _snapshot.keys;
 
   /// Writes [value] through to the store and updates the snapshot. Returns
-  /// false when the store is unavailable.
+  /// false when the store is unavailable OR the write fails (locked or
+  /// MDM-managed keychain, missing Secret Service provider) — a failing
+  /// backend must degrade to session-only, never crash the CLI.
   Future<bool> save(String name, String value) async {
     if (!available) return false;
-    await _store!.write(name, value);
+    try {
+      await _store!.write(name, value);
+    } on Object {
+      return false;
+    }
     _snapshot[name] = value;
     return true;
   }
 
   /// Deletes [name] from the store and the snapshot. Returns false when the
-  /// store is unavailable; deleting an absent name is a no-op.
+  /// store is unavailable or the delete fails; deleting an absent name is a
+  /// no-op.
   Future<bool> delete(String name) async {
     if (!available) return false;
-    await _store!.delete(name);
+    try {
+      await _store!.delete(name);
+    } on Object {
+      return false;
+    }
     _snapshot.remove(name);
     return true;
   }
