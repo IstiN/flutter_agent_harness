@@ -318,6 +318,19 @@ Conventions for AI agents and contributors working in this repository.
   resolve against its name sets, and the Fa system prompt's `{{commands}}`
   placeholder is rendered from it (`AgentService`). Never list commands in
   prompt text or UI by hand.
+- `flutter_app/lib/project_mount_env.dart` — the macOS project-folder
+  mount: `ProjectMountEnv` maps the `/project` segment onto a user-selected
+  host directory while the env root (and all app data) stays in the app
+  container. The sandbox entitlements carry
+  `com.apple.security.files.user-selected.read-write` (plus
+  `network.client` for provider calls); picking is the NSOpenPanel flow in
+  `MainFlutterWindow.swift` (channel `fah/project_folder`,
+  `project_folder_channel.dart` — security-scoped bookmarks, persisted as
+  `project_mount.json` by `project_mount_store.dart`, remounted at startup
+  in `createPlatformEnv`, a stale bookmark shows a "pick again" warning).
+  The Files panel header owns open/unmount (`file_browser.dart`, injectable
+  `ProjectFolderOps`), and `AgentService.refreshProjectMountPrompt`
+  recomposes the system prompt with the mount note on every change.
 - `flutter_app/lib/last_connection.dart` — the
   `LastConnectionStore`: persists the last successful connection
   (provider/model/URL/on-device preset — never API keys) as
