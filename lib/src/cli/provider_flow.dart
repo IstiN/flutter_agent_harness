@@ -21,6 +21,7 @@ final class CustomProviderSetup {
   const CustomProviderSetup({
     required this.spec,
     required this.baseUrl,
+    required this.name,
     required this.modelId,
     this.token,
   });
@@ -31,6 +32,11 @@ final class CustomProviderSetup {
 
   /// The endpoint base URL (user-typed or the applied default).
   final String baseUrl;
+
+  /// The provider's display name (user-typed or the host-derived default):
+  /// how the entry is listed and looked up — distinct names let several
+  /// entries share one URL (e.g. different keys per account).
+  final String name;
 
   /// The chosen model id.
   final String modelId;
@@ -50,8 +56,10 @@ final class CustomProviderFlowConfig {
     required this.applyResult,
     required this.currentModelId,
     required this.rolesActive,
+    required this.deriveName,
     this.initialType,
     this.initialBaseUrl,
+    this.initialName,
     this.initialModelId,
     this.editName,
   });
@@ -99,6 +107,12 @@ final class CustomProviderFlowConfig {
 
   /// Edit prefill: the current model id (the model step's default).
   final String? initialModelId;
+
+  /// Derives the default display name for an endpoint (host-based, unique).
+  final String Function(String baseUrl) deriveName;
+
+  /// Edit prefill: the entry's current name (the name step's default).
+  final String? initialName;
 
   /// Non-null in edit mode: the registry entry being edited (the banner and
   /// cancellation text follow it).
@@ -152,7 +166,17 @@ Future<void> runCustomProviderFlow(
     return;
   }
 
-  // 3. API key (empty = keyless; skipped in roles mode, and on edit an
+  // 3. Display name: Enter keeps the host-derived default (or the entry's
+  // current name on edit). Custom names distinguish entries that share one
+  // URL (different keys/accounts).
+  final nameDefault = config.initialName ?? config.deriveName(baseUrl);
+  final nameAnswer = await config.askLine(
+    'provider name (empty = $nameDefault): ',
+  );
+  if (nameAnswer == null) return cancelled();
+  final name = nameAnswer.trim().isEmpty ? nameDefault : nameAnswer.trim();
+
+  // 4. API key (empty = keyless; skipped in roles mode, and on edit an
   // empty answer keeps the entry's existing key).
   String? token;
   if (config.rolesActive) {
@@ -208,6 +232,7 @@ Future<void> runCustomProviderFlow(
     CustomProviderSetup(
       spec: spec,
       baseUrl: baseUrl,
+      name: name,
       modelId: modelId,
       token: token,
     ),
