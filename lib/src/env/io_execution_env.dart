@@ -320,6 +320,31 @@ final class LocalShell implements Shell {
   /// Creates a [LocalShell].
   const LocalShell();
 
+  /// The child environment: the caller's `options.env` when given (its PATH
+  /// wins), else the host's. PATH always gains the common tool directories
+  /// (`/opt/homebrew/bin`, `/usr/local/bin` when they exist) — GUI-launched
+  /// apps (the packaged macOS app) inherit a minimal PATH that would
+  /// otherwise hide user-installed tools (Homebrew python/node).
+  static Map<String, String> _environment(ShellExecOptions? options) {
+    final given = options?.env;
+    final base = <String, String>{
+      if (given == null) ...Platform.environment else ...given,
+    };
+    var current = base['PATH'] ?? '';
+    if (current.isEmpty) {
+      // An explicit env without a PATH (or a minimal GUI-app PATH): keep
+      // the shell itself resolvable, then widen for user tools.
+      current = Platform.environment['PATH'] ?? '';
+    }
+    if (current.isEmpty) current = '/usr/bin:/bin:/usr/sbin:/sbin';
+    final parts = current.split(':');
+    for (final dir in const ['/opt/homebrew/bin', '/usr/local/bin']) {
+      if (!parts.contains(dir) && Directory(dir).existsSync()) parts.add(dir);
+    }
+    base['PATH'] = parts.join(':');
+    return base;
+  }
+
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
     String command, {
@@ -337,7 +362,7 @@ final class LocalShell implements Shell {
         executable,
         args,
         workingDirectory: options?.cwd,
-        environment: options?.env,
+        environment: _environment(options),
       );
     } on Object catch (error) {
       return Err(

@@ -102,6 +102,27 @@ void main() {
       );
       expect(result.getOrThrow().stdout.trim(), 'injected');
     });
+
+    test('exec PATH gains common tool directories (Homebrew)', () async {
+      const shell = LocalShell();
+      final result = await shell.exec(r'echo "$PATH"');
+      final path = result.getOrThrow().stdout.trim();
+      for (final dir in const ['/opt/homebrew/bin', '/usr/local/bin']) {
+        if (Directory(dir).existsSync()) {
+          expect(path.split(':'), contains(dir));
+        }
+      }
+    });
+
+    test('an explicit env PATH is preserved, not replaced', () async {
+      const shell = LocalShell();
+      final result = await shell.exec(
+        r'echo "$PATH"',
+        options: const ShellExecOptions(env: {'PATH': '/bin'}),
+      );
+      final path = result.getOrThrow().stdout.trim();
+      expect(path.split(':').first, '/bin');
+    });
   });
 
   group('LocalExecutionEnv custom shell', () {
