@@ -393,7 +393,7 @@ jobs:
             echo "::notice::App Store Connect API key not configured — skipping TestFlight upload (the IPA stays on the GitHub release / artifacts)."
             exit 0
           fi
-          IPA_PATH="$(find ipa -name '*.ipa' -type f | head -1)"
+          IPA_PATH="$(find "$GITHUB_WORKSPACE/flutter_app/ipa" -name '*.ipa' -type f | head -1)"
           echo "Uploading $IPA_PATH to TestFlight..."
           IOS_IPA_PATH="$IPA_PATH" bundle exec fastlane ios submit_only
 
