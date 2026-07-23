@@ -1,0 +1,29 @@
+{
+  "id": "crypto",
+  "name": "Crypto Prices",
+  "description": "Live BTC, ETH, SOL prices via CoinGecko",
+  "version": "1.0.0",
+  "icon": "₿",
+  "allowedCommands": [],
+  "network": true,
+  "cli": {
+    "summary": "Live crypto prices (BTC, ETH, SOL, BNB, XRP)",
+    "events": [
+      { "id": "refresh", "description": "Reload prices" },
+      { "id": "back", "description": "Return from chart view to list" },
+      {
+        "id": "show_chart_<coinId>",
+        "description": "Open 24h chart, e.g. show_chart_bitcoin"
+      }
+    ],
+    "read": {
+      "state": "yoloit app:state crypto — prices[] with usd and change24h",
+      "snapshot": "yoloit app:snapshot crypto"
+    },
+    "examples": [
+      "yoloit app:run crypto",
+      "yoloit app:state crypto",
+      "yoloit app:execute crypto refresh"
+    ]
+  }
+}

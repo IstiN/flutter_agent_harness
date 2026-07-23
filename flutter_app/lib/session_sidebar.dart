@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'agent_service.dart';
 import 'app_theme.dart';
+import 'apps/apps_grid.dart';
+import 'apps/apps_store.dart';
+import 'apps/js_app_view.dart';
 import 'flutter_session_manager.dart';
 import 'last_connection.dart';
 import 'provider_registry.dart';
@@ -53,12 +58,17 @@ class _SessionSidebarState extends State<SessionSidebar> {
   List<FlutterManagedSession>? _sessions;
   String? _loadError;
 
+  /// JS apps discovered in the env's `apps/` folder (`null` = not loaded).
+  List<JsAppInfo>? _apps;
+  AppPermissionsStore? _permissionsStore;
+
   FlutterSessionManager get _manager => widget.manager;
 
   @override
   void initState() {
     super.initState();
     _reload();
+    unawaited(_loadApps());
   }
 
   Future<void> _reload() async {
@@ -72,6 +82,83 @@ class _SessionSidebarState extends State<SessionSidebar> {
     } on Object catch (e) {
       if (!mounted) return;
       setState(() => _loadError = e.toString());
+    }
+  }
+
+  /// (Re)loads the JS app list from the shared env, seeding the bundled demo
+  /// apps on first run.
+  Future<void> _loadApps() async {
+    final service = _manager.active?.service;
+    if (service == null) return;
+    try {
+      _permissionsStore ??= await AppPermissionsStore.load(service.env);
+      final store = AppsStore(service.env);
+      await store.seedBundledApps();
+      final apps = await store.listApps();
+      if (mounted) setState(() => _apps = apps);
+    } on Object {
+      // Apps are optional — a broken apps folder must not break the sidebar.
+    }
+  }
+
+  Future<void> _openAppsGrid() async {
+    final service = _manager.active?.service;
+    final permissionsStore = _permissionsStore;
+    if (service == null || permissionsStore == null) return;
+    widget.onAction?.call();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AppsGridView(
+          env: service.env,
+          permissionsStore: permissionsStore,
+          llmHandler: service.completeOnce,
+          onSendToAgent: _sendAppMessageToAgent,
+          fsRevision: service.fsRevision,
+        ),
+      ),
+    );
+    await _loadApps();
+  }
+
+  Future<void> _openApp(JsAppInfo app) async {
+    final service = _manager.active?.service;
+    final permissionsStore = _permissionsStore;
+    if (service == null || permissionsStore == null) return;
+    widget.onAction?.call();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => JsAppView(
+          app: app,
+          env: service.env,
+          permissionsStore: permissionsStore,
+          llmHandler: service.completeOnce,
+          onSendToAgent: _sendAppMessageToAgent,
+          fsRevision: service.fsRevision,
+        ),
+      ),
+    );
+    await _loadApps();
+  }
+
+  /// Forwards an in-app Fa message (text + app state + screenshot) to the
+  /// active session's agent.
+  Future<void> _sendAppMessageToAgent(FaAppMessage message) async {
+    final service = _manager.active?.service;
+    if (service == null) return;
+    final buffer = StringBuffer(message.text);
+    final stateJson = message.appStateJson;
+    if (stateJson != null) {
+      buffer.write('\n\nCurrent app state:\n```json\n$stateJson\n```');
+    }
+    final screenshot = message.screenshot;
+    if (screenshot != null) {
+      await service.sendImage(
+        bytes: screenshot,
+        mimeType: 'image/png',
+        text: buffer.toString(),
+      );
+    } else {
+      await service.sendText(buffer.toString());
     }
   }
 
@@ -197,6 +284,8 @@ class _SessionSidebarState extends State<SessionSidebar> {
         ),
         const SizedBox(height: 8),
         const Divider(height: 1),
+        _buildAppsSection(theme),
+        const Divider(height: 1),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 4, 0),
           child: Row(
@@ -220,6 +309,53 @@ class _SessionSidebarState extends State<SessionSidebar> {
           ),
         ),
         Expanded(child: _buildSessionsList(theme)),
+      ],
+    );
+  }
+
+  /// The JS-apps section: header with a grid-launcher button plus up to five
+  /// app tiles that open their [JsAppView] directly.
+  Widget _buildAppsSection(ThemeData theme) {
+    final apps = _apps ?? const <JsAppInfo>[];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 4, 0),
+          child: Row(
+            children: [
+              Icon(Icons.widgets_outlined, size: 20, color: theme.hintColor),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Apps', style: theme.textTheme.titleMedium)),
+              IconButton(
+                icon: const Icon(Icons.grid_view_rounded),
+                tooltip: 'Open apps grid',
+                onPressed: _openAppsGrid,
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh apps',
+                onPressed: _loadApps,
+              ),
+            ],
+          ),
+        ),
+        for (final app in apps.take(5))
+          ListTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            leading: Text(app.icon, style: const TextStyle(fontSize: 20)),
+            title: Text(app.name, overflow: TextOverflow.ellipsis),
+            onTap: () => _openApp(app),
+          ),
+        if (apps.length > 5)
+          ListTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            leading: const Icon(Icons.more_horiz),
+            title: Text('All apps (${apps.length})'),
+            onTap: _openAppsGrid,
+          ),
       ],
     );
   }

@@ -1,0 +1,40 @@
+{
+  "id": "weather",
+  "name": "Weather",
+  "description": "Current weather for any city using wttr.in",
+  "version": "1.0.0",
+  "icon": "🌤️",
+  "allowedCommands": [],
+  "network": true,
+  "cli": {
+    "summary": "Current weather for any city (wttr.in)",
+    "events": [
+      {
+        "id": "set_city",
+        "description": "Change city and reload weather (payload: {\"city\":\"Grodno\"})"
+      },
+      {
+        "id": "submit_city",
+        "description": "Search weather for a city (payload: {\"value\":\"Berlin\"})"
+      },
+      {
+        "id": "submit_city_btn",
+        "description": "Same as submit_city using the Go button"
+      },
+      {
+        "id": "city_input_change",
+        "description": "City text field changed (payload: {\"value\":\"...\"})"
+      }
+    ],
+    "read": {
+      "state": "yoloit app:state weather — tempC, city, humidity, windKmph",
+      "snapshot": "yoloit app:snapshot weather — full render JSON tree"
+    },
+    "examples": [
+      "yoloit app:run weather",
+      "yoloit app:execute weather set_city '{\"city\":\"Moscow\"}'",
+      "yoloit app:execute weather submit_city '{\"value\":\"Moscow\"}'",
+      "yoloit app:state weather"
+    ]
+  }
+}

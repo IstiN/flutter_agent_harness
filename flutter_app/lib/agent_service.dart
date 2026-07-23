@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'env_factory.dart';
@@ -149,6 +150,7 @@ class AgentService extends ChangeNotifier {
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
     // progressive disclosure — metadata in the prompt, bodies via `read`.
+    await _seedBundledSkills(resolvedEnv);
     final roots = defaultSkillRoots(cwd: resolvedEnv.cwd, homeDir: null);
     final skills = await discoverSkills(
       resolvedEnv,
@@ -171,6 +173,26 @@ class AgentService extends ChangeNotifier {
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
       promptSuffix: promptSuffix,
     );
+  }
+
+  /// Writes bundled agent skills (see `assets/skills/`) into the env's
+  /// project skill root so [discoverSkills] picks them up. Existing files
+  /// are never overwritten — the user (or the agent) may have customized
+  /// them. Best-effort: a missing asset or unwritable env must not block
+  /// session creation.
+  static Future<void> _seedBundledSkills(ExecutionEnv env) async {
+    const bundled = {'js-apps': 'assets/skills/js-apps/SKILL.md'};
+    for (final entry in bundled.entries) {
+      try {
+        final target = '.fah/skills/${entry.key}/SKILL.md';
+        final existing = await env.readTextFile(target);
+        if (existing.valueOrNull != null) continue;
+        final body = await rootBundle.loadString(entry.value);
+        await env.writeFile(target, body);
+      } on Object {
+        // skip this skill
+      }
+    }
   }
 
   AgentService._withEnv({
@@ -602,6 +624,32 @@ class AgentService extends ChangeNotifier {
       return;
     }
     _runWithTimeout(() => _agent.promptMessage(message));
+  }
+
+  /// One-shot LLM completion for host features (the `jsr.fa.llm` bridge in
+  /// JS apps). Runs on a throwaway agent with no tools, so it never touches
+  /// the session transcript.
+  Future<String> completeOnce(String prompt) async {
+    final agent = Agent(
+      model: _agent.state.model,
+      systemPrompt:
+          'You are a tiny assistant embedded inside a host '
+          'application. Answer briefly and plainly; no markdown fences unless '
+          'the caller asks for code.',
+      streamFunction: _agent.streamFunction,
+      toolRegistry: ToolRegistry(const []),
+    );
+    await agent.prompt(prompt);
+    final last = agent.state.messages.lastOrNull;
+    if (last is AssistantMessage) {
+      final text = last.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      if (text.isNotEmpty) return text;
+      if (last.errorMessage != null) throw StateError(last.errorMessage!);
+    }
+    throw StateError('no completion returned');
   }
 
   /// Starts one agent run and settles the UI state no matter how it ends.

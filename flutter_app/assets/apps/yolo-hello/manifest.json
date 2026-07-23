@@ -1,0 +1,25 @@
+{
+  "id": "yolo-hello",
+  "name": "Hello Animated",
+  "description": "Interactive demo: animations, gestures, requestAnimationFrame",
+  "version": "1.0.0",
+  "icon": "🎨",
+  "allowedCommands": [],
+  "network": false,
+  "cli": {
+    "summary": "Animation and gesture demo",
+    "events": [
+      { "id": "tap_hello", "description": "Animate the hello label" },
+      { "id": "toggle_theme", "description": "Toggle light/dark demo colors" }
+    ],
+    "read": {
+      "state": "yoloit app:state yolo-hello",
+      "snapshot": "yoloit app:snapshot yolo-hello"
+    },
+    "examples": [
+      "yoloit app:run yolo-hello",
+      "yoloit app:execute yolo-hello tap_hello",
+      "yoloit app:state yolo-hello"
+    ]
+  }
+}

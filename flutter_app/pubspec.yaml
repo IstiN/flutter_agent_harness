@@ -23,6 +23,10 @@ dependencies:
   # Load API keys and runtime config from .env for local dev/simulator runs.
   flutter_dotenv: ^6.0.1
 
+  # JS apps platform: runs JavaScript widgets and renders them as native
+  # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
+  js_widget_runtime: ^0.4.0
+
   cupertino_icons: ^1.0.9
   flutter_chat_ui: ^2.11.1
   flutter_markdown: ^0.7.7+1
@@ -101,6 +105,8 @@ flutter:
 
   assets:
     - .env
+    - assets/apps/
+    - assets/skills/js-apps/SKILL.md
     - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm
     - assets/wasm/rg.wasm

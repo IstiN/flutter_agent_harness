@@ -331,6 +331,29 @@ Conventions for AI agents and contributors working in this repository.
   The Files panel header owns open/unmount (`file_browser.dart`, injectable
   `ProjectFolderOps`), and `AgentService.refreshProjectMountPrompt`
   recomposes the system prompt with the mount note on every change.
+- `flutter_app/lib/apps/` — the JS apps platform (ported from YoLoIT's
+  widget system on `package:js_widget_runtime`): `apps_store.dart` discovers
+  apps in the env-shared `apps/<id>/{manifest.json,widget.js}` folder (the
+  Fa agent creates/edits apps there with its regular file tools) and seeds
+  the bundled demos from `flutter_app/assets/apps/` on first run;
+  `AppPermissionsStore` keeps per-app permission overrides in
+  `apps_permissions.json` (manifest flags: `network`, `allowedCommands`,
+  `llm`, `homekit`, `health`, `contacts` — all default denied).
+  `js_app_engine.dart` owns the `JsWidgetEngine` per app: JS storage
+  persists to `apps/<id>/storage.json`, `jsr.fetchJson` is gated on
+  `network` (package:http), `jsr.exec` on `allowedCommands`, and the
+  `jsr.fa.*` bridge (injected via `hostBootstrapJs`) rides a JSON envelope
+  over exec — `fa.llm` (one-shot `AgentService.completeOnce` on a throwaway
+  agent, gated on `llm`) and `homekit`/`health`/`contacts` stubs (gated,
+  "not available yet"). `js_app_view.dart` hosts `JsonWidgetRenderer`
+  full-screen with reload/permissions in the app bar and the floating Fa
+  button (message + `jsr.exportState` JSON + RepaintBoundary screenshot →
+  `AgentService.sendImage`/`sendText`); `apps_grid.dart` is the grid
+  launcher. The sidebar (`session_sidebar.dart`) has an Apps section; both
+  views watch `service.fsRevision` to live-reload when the agent edits app
+  files. The `js-apps` agent skill (`flutter_app/assets/skills/js-apps/
+  SKILL.md`, adapted from YoLoIT's app-development doc) is seeded into
+  `.fah/skills/` before skill discovery in `AgentService.create`.
 - `flutter_app/lib/last_connection.dart` — the
   `LastConnectionStore`: persists the last successful connection
   (provider/model/URL/on-device preset — never API keys) as
