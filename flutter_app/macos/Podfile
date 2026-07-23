@@ -65,6 +65,11 @@ post_install do |installer|
     aggregate_target.user_project.targets.each do |target|
       next unless target.name == 'Runner'
       target.build_configurations.each do |config|
+        # Archive/install builds run `strip` per STRIP_STYLE. The default
+        # "all" removes the dyld exports trie entirely, which kills the
+        # dlsym-based wasm_run lookups at runtime — TestFlight white screen.
+        # "non-global" (strip -x) keeps the trie intact.
+        config.build_settings['STRIP_STYLE'] = 'non-global'
         ldflags = Array(config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']).dup
         # Drop stale wasm_run flags from earlier pod installs, then re-add.
         ldflags.reject! { |f| f == '-force_load' || f.include?('wasm_run_dart.a') || f.start_with?('-Wl,-exported_symbol,') }
