@@ -343,6 +343,15 @@ jobs:
           IOS_SIGNING_IDENTITY="iPhone Distribution" \
           bundle exec fastlane ios build_only
 
+      - name: Upload IPA Artifact
+        # Uploaded before the symbol gate so a failed gate still leaves the
+        # IPA available for debugging.
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: flutter_app/build/ios/ipa/*.ipa
+          retention-days: 14
+
       - name: Verify IPA and wasm_run symbols
         run: |
           set -euo pipefail
@@ -374,13 +383,6 @@ jobs:
           done
           echo "✅ wasm_run FFI symbols are exported"
           rm -rf "$CHECK_DIR"
-
-      - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-ipa
-          path: flutter_app/build/ios/ipa/*.ipa
-          retention-days: 14
 
       - name: Cleanup
         if: always()
