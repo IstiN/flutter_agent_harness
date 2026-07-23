@@ -398,4 +398,13 @@ Conventions for AI agents and contributors working in this repository.
   steps skip with a notice when absent): `APP_STORE_CONNECT_KEY_ID` /
   `_ISSUER_ID` / `_KEY_CONTENT`, `MACOS_INSTALLER_P12_BASE64` /
   `_PASSWORD` / `MACOS_INSTALLER_CERT_ID` (Mac Installer Distribution
-  cert for the arm64 TestFlight PKG).
+  cert for the arm64 TestFlight PKG), `GOOGLE_SERVICE_INFO_PLIST_BASE64`
+  (the gitignored Firebase plist, injected before the build). Both
+  workflows hard-gate the produced binary on the wasm_run FFI exports
+  (`xcrun dyld_info -exports` must list `_wire_compile_wasm` &
+  friends): the Dart bindings resolve those via dlsym, and archive
+  builds lose them unless the Podfiles force-load the archive, add
+  `-exported_symbol` flags AND strip with `STRIP_STYLE=non-global`
+  (plain `strip` removes the dyld exports trie) — otherwise the app
+  boots to a white screen on TestFlight. `ios/Pods` / `macos/Pods` are
+  cached via `actions/cache` keyed by `Podfile.lock`.
