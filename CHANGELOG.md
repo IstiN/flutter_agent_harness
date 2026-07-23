@@ -466,4 +466,9 @@
 - ci(ios): boot simulator before flutter build to avoid attached device
 - ci(ios): fix simctl invocation in fastlane build_only
 
+## 0.1.51
+
+- ci(ios,macos): fix artifact downloads and macOS keychain password
+- ci(ios,macos): fix artifact path, macOS framework restore, action versions
+
 ## Unreleased
