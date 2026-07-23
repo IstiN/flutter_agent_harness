@@ -1043,6 +1043,8 @@ void main() {
     io.sendLine('1');
     await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('http://127.0.0.1:1/v1');
+    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
+    io.sendLine('');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
     );
@@ -1082,6 +1084,8 @@ void main() {
     io.sendLine('1');
     await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('https://proxy.example.com/v1');
+    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
+    io.sendLine('');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
     );
@@ -1116,6 +1120,8 @@ void main() {
     io.sendLine('1');
     await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('https://proxy.example.com/v1');
+    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
+    io.sendLine('');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
     );
@@ -1146,6 +1152,8 @@ void main() {
     io.sendLine('2');
     await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('https://anthropic-proxy.example.com');
+    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
+    io.sendLine('');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
     );
@@ -1214,11 +1222,13 @@ void main() {
       final cli = cliFor(fake.call, envVarValue: (_) => null);
       final run = cli.run();
 
-      // All answers arrive before the flow asks for them (piped stdin).
+      // All answers arrive before the flow asks for them (piped stdin):
+      // type, url, name (empty = default), key (empty = none), model.
       io
         ..sendLine('/provider custom')
         ..sendLine('1')
         ..sendLine('http://127.0.0.1:1/v1')
+        ..sendLine('')
         ..sendLine('')
         ..sendLine('my-local-model');
       await _waitFor(
@@ -1244,6 +1254,10 @@ void main() {
       io.sendLine('1');
       await _waitFor(
         () => io.out.toString().contains('base URL (empty = https://'),
+      );
+      io.sendLine('');
+      await _waitFor(
+        () => io.out.toString().contains('provider name (empty ='),
       );
       io.sendLine('');
       await _waitFor(
@@ -1284,17 +1298,21 @@ void main() {
       await _waitFor(() => io.out.toString().contains('base URL (empty ='));
       io.sendLine('http://localhost:11434/v1');
       await _waitFor(
+        () => io.out.toString().contains('provider name (empty ='),
+      );
+      io.sendLine('my-ollama');
+      await _waitFor(
         () => io.out.toString().contains('API key (empty for none):'),
       );
       io.sendLine('');
       await _waitFor(() => io.out.toString().contains('2) m2'));
       io.sendLine('2');
       await _waitFor(
-        () => io.out.toString().contains('saved provider localhost:11434'),
+        () => io.out.toString().contains('saved provider my-ollama'),
       );
 
       final entry = registry.entries.single;
-      expect(entry.name, 'localhost:11434');
+      expect(entry.name, 'my-ollama');
       expect(entry.modelId, 'm2');
       expect(entry.baseUrl, 'http://localhost:11434/v1');
 
@@ -1307,7 +1325,7 @@ void main() {
       await _waitFor(
         () => io.out.toString().contains('switched model to other-model'),
       );
-      io.sendLine('/provider localhost:11434');
+      io.sendLine('/provider my-ollama');
       await _waitFor(() => cli.agent.state.model.id == 'm2');
 
       // Per-provider model memory: /model rewrites the entry.
@@ -1315,7 +1333,7 @@ void main() {
       await _waitFor(
         () => io.out.toString().contains('switched model to llama3.2'),
       );
-      expect(registry.find('localhost:11434')!.modelId, 'llama3.2');
+      expect(registry.find('my-ollama')!.modelId, 'llama3.2');
       io.sendLine('/exit');
       await run;
     },
@@ -1358,6 +1376,11 @@ void main() {
     );
     io.sendLine('');
     await _waitFor(
+      () =>
+          io.out.toString().contains('provider name (empty = localhost:11434)'),
+    );
+    io.sendLine('renamed-ollama');
+    await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
     );
     io.sendLine('');
@@ -1367,7 +1390,9 @@ void main() {
     io.sendLine('/exit');
     await run;
 
+    expect(registry.find('localhost:11434'), isNull);
     final entry = registry.entries.single;
+    expect(entry.name, 'renamed-ollama');
     expect(entry.modelId, 'new-model');
     expect(entry.baseUrl, 'http://localhost:11434/v1');
   });

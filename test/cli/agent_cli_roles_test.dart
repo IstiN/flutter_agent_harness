@@ -433,6 +433,8 @@ void main() {
     io.sendLine('2');
     await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('http://127.0.0.1:1');
+    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
+    io.sendLine('');
     await _waitFor(
       () => io.out.toString().contains('roles mode: the key resolves'),
     );

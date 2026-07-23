@@ -14,6 +14,7 @@ extension on AgentCli {
   void _startProviderFlow({
     String? initialType,
     String? initialBaseUrl,
+    String? initialName,
     String? initialModelId,
     String? editName,
   }) {
@@ -30,8 +31,11 @@ extension on AgentCli {
               _applyCustomProviderSetup(setup, editName: editName),
           currentModelId: () => _agent.state.model.id,
           rolesActive: config.modelRolesResolver != null,
+          deriveName: (baseUrl) =>
+              config.customProviders?.deriveName(baseUrl) ?? 'custom',
           initialType: initialType,
           initialBaseUrl: initialBaseUrl,
+          initialName: initialName,
           initialModelId: initialModelId,
           editName: editName,
         ),
@@ -53,6 +57,7 @@ extension on AgentCli {
     _startProviderFlow(
       initialType: entry?.apiType ?? spec.name,
       initialBaseUrl: model.baseUrl,
+      initialName: entry?.name,
       initialModelId: model.id,
       editName: entry?.name,
     );
@@ -185,8 +190,13 @@ extension on AgentCli {
     }
     CustomProviderEntry? entry;
     if (registry != null) {
+      // Renaming on edit: drop the old entry so the new name replaces it.
+      if (editName != null && setup.name != editName) {
+        registry.entries.removeWhere((e) => e.name == editName);
+        io.writeln('renamed provider $editName to ${setup.name}');
+      }
       entry = CustomProviderEntry(
-        name: editName ?? registry.deriveName(setup.baseUrl),
+        name: setup.name,
         apiType: setup.spec.name,
         baseUrl: setup.baseUrl,
         modelId: modelId,
