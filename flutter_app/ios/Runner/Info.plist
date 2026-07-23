@@ -34,6 +34,8 @@
 	<string>Fa needs access to your photo library to let you attach images to chat messages.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Fa needs access to your camera to let you take photos and attach them to chat messages.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
