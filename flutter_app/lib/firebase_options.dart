@@ -54,19 +54,19 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyDBTbVEljGTJ39--oE1Zlw0EMtfAT55AJ4',
-    appId: '1:604727820287:ios:25939680b109e6445f71ca',
+    appId: '1:604727820287:ios:8b166cd822067f8d5f71ca',
     messagingSenderId: '604727820287',
     projectId: 'fa1-mobile',
     storageBucket: 'fa1-mobile.firebasestorage.app',
-    iosBundleId: 'dev.fa1.ios',
+    iosBundleId: 'dev.fa1.app',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyDBTbVEljGTJ39--oE1Zlw0EMtfAT55AJ4',
-    appId: '1:604727820287:ios:2bdd25562700404d5f71ca',
+    appId: '1:604727820287:ios:8b166cd822067f8d5f71ca',
     messagingSenderId: '604727820287',
     projectId: 'fa1-mobile',
     storageBucket: 'fa1-mobile.firebasestorage.app',
-    iosBundleId: 'dev.fa1.macos',
+    iosBundleId: 'dev.fa1.app',
   );
 }

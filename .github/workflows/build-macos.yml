@@ -192,6 +192,21 @@ jobs:
           HUGGINGFACE_TOKEN=
           EOF
 
+      # The plist is gitignored, so the fresh CI checkout has none and the
+      # native Firebase SDK logs I-COR000012/0008 at startup. Inject it from
+      # a secret when available (same dev.fa1.app registration as
+      # firebase_options.dart).
+      - name: Write GoogleService-Info.plist (macOS)
+        env:
+          GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
+        run: |
+          if [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > flutter_app/macos/Runner/GoogleService-Info.plist
+            echo "GoogleService-Info.plist written (bundle: $(plutil -extract BUNDLE_ID raw flutter_app/macos/Runner/GoogleService-Info.plist))"
+          else
+            echo "⚠️ GOOGLE_SERVICE_INFO_PLIST_BASE64 not set — building without the native Firebase plist"
+          fi
+
       - name: Install Flutter dependencies
         working-directory: flutter_app
         run: |
