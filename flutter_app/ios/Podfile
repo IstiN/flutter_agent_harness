@@ -59,13 +59,11 @@ post_install do |installer|
       target.build_configurations.each do |config|
         device_ldflags = config.build_settings['OTHER_LDFLAGS[sdk=iphoneos*]'] ||= ['$(inherited)']
         unless Array(device_ldflags).any? { |f| f.include?(device_slice) }
-          device_ldflags << '-force_load'
-          device_ldflags << device_slice
+          device_ldflags << '-Wl,-force_load,' + device_slice
         end
         simulator_ldflags = config.build_settings['OTHER_LDFLAGS[sdk=iphonesimulator*]'] ||= ['$(inherited)']
         unless Array(simulator_ldflags).any? { |f| f.include?(simulator_slice) }
-          simulator_ldflags << '-force_load'
-          simulator_ldflags << simulator_slice
+          simulator_ldflags << '-Wl,-force_load,' + simulator_slice
         end
       end
     end

@@ -7,17 +7,16 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Scripted [ProjectFolderOps] for the open-folder flow tests.
 final class _FakeFolderOps implements ProjectFolderOps {
-  _FakeFolderOps({this.pickResult, this.accessGranted = true});
+  _FakeFolderOps({this.pickResult});
 
   ({String path, String bookmark})? pickResult;
-  bool accessGranted;
   final stopped = <String>[];
 
   @override
   Future<({String path, String bookmark})?> pickDirectory() async => pickResult;
 
   @override
-  Future<bool> startAccessing(String bookmark) async => accessGranted;
+  Future<bool> startAccessing(String bookmark) async => true;
 
   @override
   Future<void> stopAccessing(String bookmark) async => stopped.add(bookmark);
