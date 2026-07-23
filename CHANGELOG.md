@@ -496,4 +496,9 @@
 - test(example): drop the unused accessGranted param (CI fatal-warnings)
 - feat: widen shell PATH for GUI apps (Homebrew python/node)
 
+## 0.1.60
+
+- fix(ios): export wasm_run FFI symbols so Release/TestFlight builds keep them
+- ci: whitelist the tracked Firebase config for pub.dev's leak scanner
+
 ## Unreleased
