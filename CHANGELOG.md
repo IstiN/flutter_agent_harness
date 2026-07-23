@@ -489,4 +489,11 @@
 - fix(macos): raise deployment target to 12.0 for TestFlight
 - fix(macos): add LSApplicationCategoryType for TestFlight validation
 
+## 0.1.59
+
+- fix(ios): use development provisioning profile for Debug builds
+- ci: unblock releases — vendor gitignore rule, pubspec catch-up, tag-ahead release
+- test(example): drop the unused accessGranted param (CI fatal-warnings)
+- feat: widen shell PATH for GUI apps (Homebrew python/node)
+
 ## Unreleased
