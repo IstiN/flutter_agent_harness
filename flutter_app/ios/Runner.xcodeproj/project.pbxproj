@@ -488,7 +488,12 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-force_load",
+					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a",
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"-force_load",
 					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a",
@@ -690,7 +695,12 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-force_load",
+					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a",
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"-force_load",
 					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a",
@@ -728,6 +738,16 @@
 					"$(inherited)",
 					"-force_load",
 					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a",
+				);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-force_load",
+					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a",
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"-force_load",
+					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.fa1.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";

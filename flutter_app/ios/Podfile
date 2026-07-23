@@ -48,22 +48,25 @@ post_install do |installer|
   # They are referenced only from Dart via DynamicLibrary.executable(), so the
   # linker strips them unless we force-load the archive explicitly on the
   # application target (not the pod target). The XCFramework has separate
-  # device and simulator slices; Debug/Profile are usually simulator builds,
-  # Release is a device build. SRCROOT is the ios/ directory, so ../../ walks
-  # up to the repo root where vendor/ lives.
+  # device and simulator slices; use Xcode's conditional build settings to
+  # pick the right slice at build time. SRCROOT is the ios/ directory, so
+  # ../../ walks up to the repo root where vendor/ lives.
+  device_slice = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a'
+  simulator_slice = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a'
   installer.aggregate_targets.each do |aggregate_target|
     aggregate_target.user_project.targets.each do |target|
       next unless target.name == 'Runner'
       target.build_configurations.each do |config|
-        if config.name == 'Release'
-          wasm_run_force_load = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a'
-        else
-          wasm_run_force_load = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a'
+        device_ldflags = config.build_settings['OTHER_LDFLAGS[sdk=iphoneos*]'] ||= ['$(inherited)']
+        unless Array(device_ldflags).any? { |f| f.include?(device_slice) }
+          device_ldflags << '-force_load'
+          device_ldflags << device_slice
         end
-        ldflags = config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
-        next if Array(ldflags).any? { |f| f.include?(wasm_run_force_load) }
-        ldflags << '-force_load'
-        ldflags << wasm_run_force_load
+        simulator_ldflags = config.build_settings['OTHER_LDFLAGS[sdk=iphonesimulator*]'] ||= ['$(inherited)']
+        unless Array(simulator_ldflags).any? { |f| f.include?(simulator_slice) }
+          simulator_ldflags << '-force_load'
+          simulator_ldflags << simulator_slice
+        end
       end
     end
   end

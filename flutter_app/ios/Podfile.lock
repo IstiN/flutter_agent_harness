@@ -193,6 +193,6 @@ SPEC CHECKSUMS:
   wasm_run_flutter: 2f91e8869ddce786e92e3ec99175647fea2284a4
   webview_flutter_wkwebview: 8ebf4fded22593026f7dbff1fbff31ea98573c8d
 
-PODFILE CHECKSUM: 72f0d066b2c8654dfbbe8affe858c908a03d8598
+PODFILE CHECKSUM: 27dffcad5f02ea2648efc08bbbca10d4b1bb851b
 
 COCOAPODS: 1.16.2
