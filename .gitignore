@@ -19,7 +19,10 @@ vendor/**/.dart_tool/
 # The prebuilt iOS framework is downloaded from pub cache by scripts/setup_vendor_ios.sh
 vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/
 # The prebuilt macOS framework is downloaded on first build by wasm_run_flutter.
-vendor/wasm_run_flutter/macos/Frameworks/
+# (Ignore the downloaded artifacts only, not the whole dir: pub.dev rejects
+# files that are both checked in and ignored, and its parser skips `!` rules.)
+vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework/
+vendor/wasm_run_flutter/macos/Frameworks/wasm_run-*.zip
 
 # Environment secrets
 .env
