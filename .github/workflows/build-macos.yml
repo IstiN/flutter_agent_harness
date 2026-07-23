@@ -344,7 +344,7 @@ jobs:
             if [ "$PROFILE_EMBEDDED" = "true" ] && [ -f "profile.provisionprofile" ]; then
               echo "Embedding provisioning profile..."
               cp profile.provisionprofile "$APP_PATH/Contents/embedded.provisionprofile"
-              APP_ID=$(security cms -D -i profile.provisionprofile | plutil -extract Entitlements.com.apple.application-identifier raw -)
+              APP_ID=$(security cms -D -i profile.provisionprofile | plutil -extract Entitlements xml1 -o - - | grep -A 1 'com.apple.application-identifier' | tail -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
               TEAM_ID="${APP_ID%%.*}"
               printf '%s\n' \
                 '<?xml version="1.0" encoding="UTF-8"?>' \
