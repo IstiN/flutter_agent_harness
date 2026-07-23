@@ -476,4 +476,17 @@
 - ci(ios): use absolute IPA path for TestFlight submit
 - ci(ios,macos): fix submit artifact path and macOS Ruby PATH
 
+## 0.1.53
+
+- ci(macos): fix provisioning profile entitlement extraction
+- fix(cli): rewind context crash and sticky echo duplication
+- ci(macos): fix provisioning profile entitlement key
+- fix(cli): enable mouse-wheel scrolling in TUI transcript
+- ci(macos): fix entitlements heredoc syntax
+- fix(cli): long user messages in TUI — ellipsis marker, calm scroll hint
+- ci(macos): embed provisioning profile, use git tags for version
+- fix(cli): degrade keychain write failures to session-only, never crash
+- fix(macos): raise deployment target to 12.0 for TestFlight
+- fix(macos): add LSApplicationCategoryType for TestFlight validation
+
 ## Unreleased
