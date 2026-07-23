@@ -16,6 +16,9 @@ topics:
 # not real keys (https://dart.dev/go/false-secrets).
 false_secrets:
   - flutter_app/test/sandbox_ssh_test.dart
+  # Tracked example Firebase config: public-by-design client identifiers
+  # (see flutter_app/.gitignore), not secrets.
+  - flutter_app/lib/firebase_options.dart
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
