@@ -119,6 +119,28 @@ Future<int> runSelfUpdate({required String currentVersion}) async {
 
     if (install.kind == _InstallKind.pubGlobal) {
       _say('updating via dart pub global activate…');
+      // A stale or half-written snapshot: pub believes a NEWER spec than the
+      // running binary, so a plain activate no-ops (or chokes decoding the
+      // old snapshot). Force a clean re-activation then.
+      final listed = await Process.run('dart', ['pub', 'global', 'list']);
+      final activeVersion = RegExp(
+        r'flutter_agent_harness\s+(\d+\.\d+\.\d+)',
+      ).firstMatch('${listed.stdout}${listed.stderr}')?.group(1);
+      if (activeVersion != null &&
+          _compareVersions(activeVersion, currentVersion) > 0) {
+        _say(
+          'rebuilding the activated snapshot '
+          '(spec $activeVersion, running $currentVersion)…',
+        );
+        final deactivate = await Process.run('dart', [
+          'pub',
+          'global',
+          'deactivate',
+          'flutter_agent_harness',
+        ]);
+        stdout.write(deactivate.stdout);
+        stderr.write(deactivate.stderr);
+      }
       final result = await Process.run('dart', [
         'pub',
         'global',
@@ -127,6 +149,13 @@ Future<int> runSelfUpdate({required String currentVersion}) async {
       ]);
       stdout.write(result.stdout);
       stderr.write(result.stderr);
+      if (result.exitCode == 0 &&
+          _compareVersions(latest, activeVersion ?? currentVersion) > 0) {
+        _say(
+          'note: pub.dev lags behind GitHub ($latest available as a binary) — '
+          'curl -fsSL https://fa1.dev/install.sh | sh',
+        );
+      }
       return result.exitCode;
     }
 

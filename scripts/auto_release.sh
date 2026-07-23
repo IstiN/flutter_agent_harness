@@ -39,6 +39,16 @@ for attempt in 1 2 3; do
   git reset --hard origin/main
 
   current=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+  # Other workflows (iOS/macOS CI) tag releases without bumping pubspec —
+  # when tags raced ahead, bump from the latest tag instead, or every run
+  # dies on "tag already exists".
+  latest_tag=$(git describe --tags --abbrev=0 origin/main 2>/dev/null || true)
+  if [ -n "$latest_tag" ]; then
+    tag_version="${latest_tag#v}"
+    if [ "$(printf '%s\n%s\n' "$current" "$tag_version" | sort -V | tail -1)" = "$tag_version" ]; then
+      current="$tag_version"
+    fi
+  fi
   IFS='.' read -r major minor patch <<< "$current"
   next="$major.$minor.$((patch + 1))"
   echo "Auto-release: v$current -> v$next (attempt $attempt)"
