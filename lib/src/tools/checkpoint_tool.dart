@@ -121,6 +121,19 @@ final class CheckpointSessionSink {
   final Future<String> Function(Message message) persistMessage;
 }
 
+/// A rewind/checkpoint guard failure reported to the model with a clean
+/// message — a `StateError` would render as "Bad state: ...", which reads
+/// like an internal crash rather than guidance.
+final class _RewindGuardError implements Exception {
+  const _RewindGuardError(this.message);
+
+  /// The model-facing guidance.
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Orchestrates the `checkpoint`/`rewind` flow for one [Agent].
 ///
 /// Created once per agent (the CLI creates one next to [builtinTools]); the
@@ -360,7 +373,7 @@ final class CheckpointRewindController {
       },
       execute: (arguments, cancelToken, onUpdate) async {
         if (_active != null) {
-          throw StateError(
+          throw const _RewindGuardError(
             'Checkpoint already active. Call rewind with your investigation '
             'findings before creating another checkpoint.',
           );
@@ -402,23 +415,26 @@ final class CheckpointRewindController {
       execute: (arguments, cancelToken, onUpdate) async {
         if (_active == null) {
           if (_lastCompleted != null) {
-            throw StateError(
-              'Checkpoint already completed; continue from the retained '
-              'rewind report instead of calling rewind again.',
+            // A second rewind after a completed one is not an error to
+            // recover from — tell the model to simply continue with the
+            // retained report (no "Bad state:" crash look).
+            return ToolExecutionResult.text(
+              'The checkpoint was already rewound — continue from the '
+              'retained report above; no second rewind is needed.',
             );
           }
-          throw StateError(
+          throw const _RewindGuardError(
             'No active checkpoint. Create a checkpoint before calling rewind.',
           );
         }
         if (_pendingReport != null) {
-          throw StateError(
+          throw const _RewindGuardError(
             'Rewind already requested; it applies when the turn ends.',
           );
         }
         final report = (arguments['report'] as String).trim();
         if (report.isEmpty) {
-          throw StateError('Report cannot be empty.');
+          throw const _RewindGuardError('Report cannot be empty.');
         }
         _pendingReport = report;
         return ToolExecutionResult.text(
