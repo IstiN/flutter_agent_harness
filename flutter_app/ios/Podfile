@@ -47,15 +47,19 @@ post_install do |installer|
   # wasm_run FFI symbols live in a static library inside WasmRun.xcframework.
   # They are referenced only from Dart via DynamicLibrary.executable(), so the
   # linker strips them unless we force-load the archive explicitly on the
-  # application target (not the pod target). Only do this for Release/device
-  # builds so Debug simulator builds are not affected. SRCROOT is the ios/
-  # directory, so ../../ walks up to the repo root where vendor/ lives.
-  wasm_run_force_load = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a'
+  # application target (not the pod target). The XCFramework has separate
+  # device and simulator slices; Debug/Profile are usually simulator builds,
+  # Release is a device build. SRCROOT is the ios/ directory, so ../../ walks
+  # up to the repo root where vendor/ lives.
   installer.aggregate_targets.each do |aggregate_target|
     aggregate_target.user_project.targets.each do |target|
       next unless target.name == 'Runner'
       target.build_configurations.each do |config|
-        next unless config.name == 'Release'
+        if config.name == 'Release'
+          wasm_run_force_load = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64/libwasm_run_dart.a'
+        else
+          wasm_run_force_load = '$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a'
+        end
         ldflags = config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
         next if Array(ldflags).any? { |f| f.include?(wasm_run_force_load) }
         ldflags << '-force_load'

@@ -488,6 +488,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-force_load",
+					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.fa1.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "ea16775c-88f7-44ed-993b-37eab38096bb";
@@ -684,6 +689,11 @@
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-force_load",
+					"$(SRCROOT)/../../vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/ios-arm64_x86_64-simulator/libwasm_run_dart.a",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.fa1.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
