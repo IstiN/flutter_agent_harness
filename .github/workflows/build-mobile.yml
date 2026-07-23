@@ -411,14 +411,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download artifacts
+      - name: Download iOS IPA artifact
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          pattern: |
-            android-aab
-            ios-ipa
-          merge-multiple: true
+          name: ios-ipa
+          path: artifacts/
+
+      - name: Download Android AAB artifact
+        if: needs.build-android.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-aab
+          path: artifacts/
 
       - name: List downloaded artifacts
         run: ls -laR artifacts/
