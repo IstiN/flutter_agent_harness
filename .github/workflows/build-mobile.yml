@@ -318,14 +318,35 @@ jobs:
           IOS_SIGNING_IDENTITY="iPhone Distribution" \
           bundle exec fastlane ios build_only
 
-      - name: Verify IPA exists
+      - name: Verify IPA and wasm_run symbols
         run: |
+          set -euo pipefail
           IPA_PATH=$(find flutter_app/build/ios -name "*.ipa" -type f | head -1)
           if [ -z "$IPA_PATH" ]; then
             echo "::error::IPA file not found in flutter_app/build/ios"
             exit 1
           fi
-          echo "IPA built successfully: $(ls -la $IPA_PATH)"
+          echo "IPA built successfully: $(ls -la "$IPA_PATH")"
+
+          # The Dart side resolves the wasm_run FFI surface via dlsym on the
+          # main executable. If the symbols were dead-stripped or not exported
+          # the app boots to a white screen on TestFlight — fail here instead.
+          CHECK_DIR=$(mktemp -d)
+          unzip -q "$IPA_PATH" -d "$CHECK_DIR"
+          PLIST=$(echo "$CHECK_DIR"/Payload/*.app/Info.plist)
+          EXEC_NAME=$(plutil -extract CFBundleExecutable raw "$PLIST")
+          BIN="$(dirname "$PLIST")/$EXEC_NAME"
+          EXPORTS=$(nm -gD "$BIN" 2>/dev/null || true)
+          WIRE_COUNT=$(echo "$EXPORTS" | grep -c " T _wire_" || true)
+          echo "wasm_run wire_* exports in binary: $WIRE_COUNT"
+          for SYM in _wire_compile_wasm _store_dart_post_cobject _init_frb_dart_api_dl; do
+            if ! echo "$EXPORTS" | grep -qE " ${SYM}\$"; then
+              echo "::error::$SYM is not exported from the app binary — wasm_run would crash at runtime (white screen)"
+              exit 1
+            fi
+          done
+          echo "✅ wasm_run FFI symbols are exported"
+          rm -rf "$CHECK_DIR"
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
