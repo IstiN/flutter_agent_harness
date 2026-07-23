@@ -1731,20 +1731,34 @@ void main() {
             arguments: const {'report': report},
           ),
         ]),
+        // A tool call AFTER the rewind: the swapped context must accept
+        // appended tool results (the unmodifiable-view regression).
+        _toolTurn([
+          ToolCall(
+            id: 'c4',
+            name: 'read',
+            arguments: const {'path': 'notes.txt'},
+          ),
+        ]),
         _textTurn('wrapping up'),
       ]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
       io.sendLine('go');
-      await _waitFor(() => fake.calls == 4 && !cli.isBusy);
+      await _waitFor(() => fake.calls == 5 && !cli.isBusy);
       io.sendLine('/exit');
       await run;
 
-      // Live context: checkpoint prefix + verbatim report + final answer.
+      // Live context: checkpoint prefix + verbatim report + post-rewind
+      // tool turn + final answer.
       final messages = cli.agent.state.messages;
-      expect(messages, hasLength(5));
+      expect(messages, hasLength(7));
       expect((messages[3] as UserMessage).content, report);
+      expect(
+        io.out.toString(),
+        isNot(contains('Cannot add to an unmodifiable list')),
+      );
 
       // The session tree carries the mark, the branch summary, the hidden
       // rewind report, and the abandoned detour.

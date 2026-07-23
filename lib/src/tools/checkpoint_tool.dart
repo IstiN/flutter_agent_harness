@@ -201,10 +201,12 @@ final class CheckpointRewindController {
         // The rewind pruned the transcript; the loop's context still holds
         // the dropped messages, so swap in the pruned one — the model
         // continues with the checkpoint prefix plus the retained report.
+        // The copy matters: AgentState.messages is an unmodifiable view,
+        // and the loop appends tool results to its context list.
         return AgentLoopTurnUpdate(
           context: Context(
             systemPrompt: nextTurn.context.systemPrompt,
-            messages: _agent.state.messages,
+            messages: List.of(_agent.state.messages),
             tools: nextTurn.context.tools,
           ),
         );
