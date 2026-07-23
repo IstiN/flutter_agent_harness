@@ -785,4 +785,44 @@ void main() {
       expect(model.view().mouseMode, MouseMode.cellMotion);
     });
   });
+
+  group('input kill keys', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    FaTuiModel typed(FaTuiModel m, String text) {
+      for (final ch in text.split('')) {
+        m = send(m, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
+      }
+      return m;
+    }
+
+    KeyPressMsg ctrl(String ch) => KeyPressMsg(
+      TeaKey(code: KeyCode.rune, text: ch, modifiers: {KeyMod.ctrl}),
+    );
+
+    test('ctrl+u kills from the cursor back to the start of the line', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'hello world');
+      model = send(model, ctrl('u'));
+      expect(model.inputText, isEmpty);
+      expect(model.cursor, 0);
+
+      model = typed(model, 'again');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, ctrl('u'));
+      expect(model.inputText, 'n');
+      expect(model.cursor, 0);
+    });
+
+    test('ctrl+w kills the previous word and trailing whitespace first', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'hello world  ');
+      model = send(model, ctrl('w'));
+      expect(model.inputText, 'hello ');
+      expect(model.cursor, 6);
+      model = send(model, ctrl('w'));
+      expect(model.inputText, '');
+      expect(model.cursor, 0);
+    });
+  });
 }

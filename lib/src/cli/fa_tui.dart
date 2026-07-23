@@ -808,6 +808,37 @@ final class FaTuiModel extends TeaModel {
           ),
           null,
         );
+      case 'ctrl+u':
+        // Kill from the cursor back to the start of the line (readline's
+        // unix-line-discard — also what most terminals send for Cmd+Backspace).
+        if (cursor == 0) return (this, null);
+        return (
+          _updateMenuForInput(
+            copyWith(inputText: inputText.substring(cursor), cursor: 0),
+          ),
+          null,
+        );
+      case 'ctrl+w':
+        // Kill the word before the cursor (readline's unix-word-rubout):
+        // trailing whitespace first, then the word itself.
+        if (cursor == 0) return (this, null);
+        var end = cursor;
+        while (end > 0 && inputText[end - 1] == ' ') {
+          end--;
+        }
+        while (end > 0 && inputText[end - 1] != ' ') {
+          end--;
+        }
+        return (
+          _updateMenuForInput(
+            copyWith(
+              inputText:
+                  inputText.substring(0, end) + inputText.substring(cursor),
+              cursor: end,
+            ),
+          ),
+          null,
+        );
       case 'delete':
         if (cursor >= inputText.length) return (this, null);
         final nextText =
