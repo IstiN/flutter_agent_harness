@@ -3,9 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'file_preview.dart';
+import 'project_folder_channel.dart';
+import 'project_mount_env.dart';
+import 'project_mount_store.dart';
 import 'upload.dart';
 import 'upload_picker_stub.dart'
     if (dart.library.html) 'upload_picker_web.dart';
+
+/// The default [ProjectFolderOps] on supported platforms (macOS), else null.
+ProjectFolderOps? _defaultProjectFolderOps() =>
+    ProjectFolderChannelOps.isSupported
+    ? const ProjectFolderChannelOps()
+    : null;
 
 /// Width of the file browser panel (right side panel on wide layouts, end
 /// drawer on narrow ones).
@@ -42,6 +51,8 @@ class FileBrowser extends StatefulWidget {
     this.maxUploadBatchBytes = kMaxUploadBatchBytes,
     this.fsRevision,
     this.htmlPreviewBuilder,
+    this.projectFolderOps,
+    this.onProjectMountChanged,
   });
 
   /// The environment whose filesystem is browsed — the same instance the
@@ -68,6 +79,15 @@ class FileBrowser extends StatefulWidget {
   /// the webview plugin has no platform implementation on the host.
   final HtmlPreviewBuilder? htmlPreviewBuilder;
 
+  /// Native project-folder operations behind the open-folder control
+  /// (macOS sandbox flow); defaults to the channel ops when supported.
+  /// Tests inject a fake.
+  final ProjectFolderOps? projectFolderOps;
+
+  /// Fired after the project-folder mount changes (mount/unmount), so the
+  /// host can recompose the agent's system prompt.
+  final void Function()? onProjectMountChanged;
+
   @override
   State<FileBrowser> createState() => _FileBrowserState();
 }
@@ -78,6 +98,56 @@ class _FileBrowserState extends State<FileBrowser> {
 
   List<FileInfo>? _entries;
   String? _error;
+
+  /// The mount env when the agent's env is one (desktop/macOS); null
+  /// elsewhere (the open-folder control hides then).
+  ProjectMountEnv? get _mountEnv =>
+      widget.env is ProjectMountEnv ? widget.env as ProjectMountEnv : null;
+
+  Future<void> _pickProjectFolder() async {
+    final mountEnv = _mountEnv;
+    if (mountEnv == null) return;
+    final ops = widget.projectFolderOps ?? _defaultProjectFolderOps();
+    if (ops == null) return;
+    final picked = await ops.pickDirectory();
+    if (picked == null) return;
+    final ok = await ops.startAccessing(picked.bookmark);
+    if (!ok) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not get access to that folder.')),
+        );
+      }
+      return;
+    }
+    await ProjectMountStore.save(
+      widget.env,
+      path: picked.path,
+      bookmark: picked.bookmark,
+    );
+    setState(() {
+      mountEnv.mountedRoot = picked.path;
+      mountEnv.mountUnavailable = null;
+    });
+    widget.onProjectMountChanged?.call();
+    await _load();
+  }
+
+  Future<void> _unmountProjectFolder() async {
+    final mountEnv = _mountEnv;
+    final root = mountEnv?.mountedRoot;
+    if (mountEnv == null || root == null) return;
+    final ops = widget.projectFolderOps ?? _defaultProjectFolderOps();
+    final stored = await ProjectMountStore.load(widget.env);
+    if (stored != null && ops != null) {
+      await ops.stopAccessing(stored.bookmark);
+    }
+    await ProjectMountStore.clear(widget.env);
+    setState(() => mountEnv.mountedRoot = null);
+    widget.onProjectMountChanged?.call();
+    await _load();
+  }
+
   bool _loading = true;
 
   /// Inline preview target, when [FileBrowser.inlinePreview] is on.
@@ -302,6 +372,7 @@ class _FileBrowserState extends State<FileBrowser> {
           Icon(Icons.folder_open_outlined, size: 20, color: theme.hintColor),
           const SizedBox(width: 8),
           Expanded(child: Text('Files', style: theme.textTheme.titleMedium)),
+          if (_buildMountControl(context) case final control?) control,
           if (_picker != null)
             IconButton(
               icon: const Icon(Icons.upload_file),
@@ -315,6 +386,51 @@ class _FileBrowserState extends State<FileBrowser> {
           ),
         ],
       ),
+    );
+  }
+
+  /// The project-folder control for the header (macOS sandbox): an
+  /// open-folder button when unmounted, a name+eject chip when mounted, a
+  /// warning chip when the stored folder became unavailable. Null when the
+  /// env has no mount support (web/mobile).
+  Widget? _buildMountControl(BuildContext context) {
+    final mountEnv = _mountEnv;
+    if (mountEnv == null) return null;
+    final unavailable = mountEnv.mountUnavailable;
+    if (unavailable != null) {
+      return IconButton(
+        icon: Icon(
+          Icons.warning_amber_outlined,
+          color: Theme.of(context).colorScheme.error,
+        ),
+        tooltip:
+            'Previously used folder is unavailable: $unavailable — '
+            'tap to pick again',
+        onPressed: _pickProjectFolder,
+      );
+    }
+    final mountedPath = mountEnv.mountedRoot;
+    if (mountedPath != null) {
+      final name = mountedPath.split('/').where((part) => part.isNotEmpty).last;
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(name, style: Theme.of(context).textTheme.bodySmall),
+          IconButton(
+            icon: const Icon(Icons.eject_outlined),
+            tooltip: 'Unmount $mountedPath',
+            onPressed: _unmountProjectFolder,
+          ),
+        ],
+      );
+    }
+    final canPick =
+        widget.projectFolderOps != null || ProjectFolderChannelOps.isSupported;
+    if (!canPick) return null;
+    return IconButton(
+      icon: const Icon(Icons.create_new_folder_outlined),
+      tooltip: 'Open project folder…',
+      onPressed: _pickProjectFolder,
     );
   }
 

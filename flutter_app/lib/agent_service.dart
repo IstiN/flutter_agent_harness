@@ -8,6 +8,7 @@ import 'env_factory.dart';
 import 'gemma/gemma_service.dart';
 import 'gemma/gemma_stream_function.dart';
 import 'gemma/gemma_types.dart';
+import 'project_mount_env.dart';
 import 'prompts.g.dart';
 import 'sandbox_registry.dart';
 import 'secrets_store.dart';
@@ -366,7 +367,33 @@ class AgentService extends ChangeNotifier {
   /// place so model/provider switches preserve the sections).
   String _composeSystemPrompt(AgentConfig config) {
     final base = _effectiveSystemPrompt(config, _redactor);
-    return _promptSuffix.isEmpty ? base : '$base\n\n$_promptSuffix';
+    final parts = [
+      base,
+      if (_projectMountNote() case final note?) note,
+      if (_promptSuffix.isNotEmpty) _promptSuffix,
+    ];
+    return parts.join('\n\n');
+  }
+
+  /// The project-folder mount note for the system prompt (macOS): tells the
+  /// model where the mounted project lives for file tools and the shell.
+  String? _projectMountNote() {
+    final env = this.env;
+    if (env is! ProjectMountEnv) return null;
+    final root = env.mountedRoot;
+    if (root == null) return null;
+    return 'A project folder is mounted at $projectMountSegment '
+        '(host: $root). File tools take $projectMountSegment/... paths; '
+        'shell commands work on the host path directly (cd $root).';
+  }
+
+  /// Recomposes the system prompt after the project-folder mount changes
+  /// (the file browser's open/unmount flow).
+  void refreshProjectMountPrompt() {
+    final config = _config;
+    if (config != null) {
+      _agent.state.systemPrompt = _composeSystemPrompt(config);
+    }
   }
 
   /// The config this service was created with, kept so a new session can be

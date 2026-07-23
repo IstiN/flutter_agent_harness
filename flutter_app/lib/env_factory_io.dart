@@ -6,6 +6,9 @@ import 'package:flutter_agent_harness/io.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
+import 'project_folder_channel.dart';
+import 'project_mount_env.dart';
+import 'project_mount_store.dart';
 import 'wasm_shell.dart';
 
 /// Creates the execution environment for the current platform.
@@ -39,7 +42,21 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
     );
   }
 
-  return LocalExecutionEnv(cwd: appDir.path);
+  // Desktop: the container env, plus (macOS) the project-folder mount when
+  // one was picked before. A stale bookmark (folder moved/deleted) is
+  // remembered for the UI's "pick again" warning instead of mounted.
+  final baseEnv = LocalExecutionEnv(cwd: appDir.path);
+  if (!Platform.isMacOS) return baseEnv;
+  final mountEnv = ProjectMountEnv(baseEnv);
+  final stored = await ProjectMountStore.load(baseEnv);
+  if (stored != null) {
+    if (await ProjectFolderChannelOps().startAccessing(stored.bookmark)) {
+      mountEnv.mountedRoot = stored.path;
+    } else {
+      mountEnv.mountUnavailable = stored.path;
+    }
+  }
+  return mountEnv;
 }
 
 /// `true` when running on a mobile OS that needs the WASM shell sandbox.

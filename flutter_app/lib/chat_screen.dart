@@ -996,6 +996,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   env: widget.service.env,
                   inlinePreview: false,
                   fsRevision: widget.service.fsRevision,
+                  onProjectMountChanged:
+                      widget.service.refreshProjectMountPrompt,
                 ),
               ),
             ),
@@ -1021,6 +1023,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: FileBrowser(
                 env: widget.service.env,
                 fsRevision: widget.service.fsRevision,
+                onProjectMountChanged: widget.service.refreshProjectMountPrompt,
               ),
             ),
           ],
