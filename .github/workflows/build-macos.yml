@@ -298,6 +298,20 @@ jobs:
           file "$MAIN_BIN"
           lipo -info "$MAIN_BIN"
           echo "=== End binary verification ==="
+          # The Dart side resolves the wasm_run FFI surface via dlsym on the
+          # main executable. If the symbols were dead-stripped or not exported
+          # the app boots to a white screen on TestFlight — fail here instead.
+          echo "=== wasm_run FFI symbol verification ==="
+          EXPORTS=$(nm -gD "$MAIN_BIN" 2>/dev/null || true)
+          WIRE_COUNT=$(echo "$EXPORTS" | grep -c " T _wire_" || true)
+          echo "wasm_run wire_* exports in binary: $WIRE_COUNT"
+          for SYM in _wire_compile_wasm _store_dart_post_cobject _init_frb_dart_api_dl; do
+            if ! echo "$EXPORTS" | grep -qE " ${SYM}\$"; then
+              echo "::error::$SYM is not exported from the app binary — wasm_run would crash at runtime (white screen)"
+              exit 1
+            fi
+          done
+          echo "✅ wasm_run FFI symbols are exported"
 
       - name: Package as DMG
         id: package

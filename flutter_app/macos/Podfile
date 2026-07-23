@@ -39,4 +39,39 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_macos_build_settings(target)
   end
+
+  # wasm_run FFI symbols live in a static library inside WasmRun.xcframework.
+  # They are referenced only from Dart via dlsym (DynamicLibrary.executable()),
+  # so the linker never pulls them in: force_load alone is not enough because
+  # DEAD_CODE_STRIPPING=YES (Release default) still discards the unreferenced
+  # code, and dlsym only sees exported symbols. Exporting a symbol makes it
+  # both dlsym-visible AND a dead-strip root, so export every C-ABI symbol the
+  # Dart bindings look up (wire_*/new_*/drop_*/…), derived from the archive
+  # itself so the list stays in sync with the vendored package. Without this
+  # the Release/TestFlight binary boots to a white screen. SRCROOT is the
+  # macos/ directory, so ../../ walks up to the repo root where vendor/ lives.
+  macos_slice = '$(SRCROOT)/../../vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a'
+  macos_archive = File.expand_path('../../vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a', __dir__)
+  ffi_symbols = `nm -gU -arch arm64 #{macos_archive}`.lines
+    .map(&:split)
+    .select { |cols| %w[T D S].include?(cols[1]) && cols[2] }
+    .map { |cols| cols[2] }
+    .uniq
+    .grep(/^_(wire|new|drop|free|get|store|init|inflate|share)_/)
+    .sort
+  raise "no wasm_run FFI symbols found in #{macos_archive}" if ffi_symbols.empty?
+  export_flags = ffi_symbols.map { |s| "-Wl,-exported_symbol,#{s}" }
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.targets.each do |target|
+      next unless target.name == 'Runner'
+      target.build_configurations.each do |config|
+        ldflags = Array(config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']).dup
+        # Drop stale wasm_run flags from earlier pod installs, then re-add.
+        ldflags.reject! { |f| f == '-force_load' || f.include?('wasm_run_dart.a') || f.start_with?('-Wl,-exported_symbol,') }
+        ldflags.concat(["-Wl,-force_load,#{macos_slice}"] + export_flags)
+        config.build_settings['OTHER_LDFLAGS'] = ldflags
+      end
+    end
+    aggregate_target.user_project.save
+  end
 end
