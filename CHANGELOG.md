@@ -526,4 +526,10 @@
 - feat(example): SVG app icons for JS apps
 - feat(example): restore persisted sessions in the sidebar after restart
 
+## 0.1.67
+
+- feat(example): UX batch — collapsible tool output, Fa mark, in-app work bar
+- test(example): textField onChange delivers typed text to JS
+- fix(example): render attached-image messages — add the missing imageMessageBuilder
+
 ## Unreleased
