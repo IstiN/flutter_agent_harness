@@ -1667,6 +1667,124 @@ void main() {
     );
   });
 
+  test('401 with a different stored key warns about env shadowing', () async {
+    final cache = SecureKeyCache(_FakeSecureKeyStore());
+    await cache.probe();
+    await cache.save('OPENAI_API_KEY', 'store-key');
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(
+            stopReason: StopReason.error,
+            errorMessage:
+                '401: The API Key appears to be invalid or may '
+                'have expired.',
+          ),
+        ),
+      ],
+    ]);
+    final cli = cliFor(
+      fake.call,
+      providerKind: 'openai',
+      envVarIsSet: (name) => name == 'OPENAI_API_KEY',
+      envVarValue: (name) => name == 'OPENAI_API_KEY' ? 'env-key' : null,
+      secureKeys: cache,
+    );
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('shadows a DIFFERENT key'));
+    expect(output, contains('OPENAI_API_KEY'));
+  });
+
+  test('401 without a key suggests storing one', () async {
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(
+            stopReason: StopReason.error,
+            errorMessage: '401: Unauthorized',
+          ),
+        ),
+      ],
+    ]);
+    final cli = cliFor(
+      fake.call,
+      providerKind: 'openai',
+      envVarIsSet: (_) => false,
+      envVarValue: (_) => null,
+    );
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    expect(io.out.toString(), contains('/key set OPENAI_API_KEY <value>'));
+  });
+
+  test('401 with a single-source key names its origin', () async {
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(
+            stopReason: StopReason.error,
+            errorMessage: 'authentication_error: invalid x-api-key',
+          ),
+        ),
+      ],
+    ]);
+    final cli = cliFor(
+      fake.call,
+      providerKind: 'openai',
+      envVarIsSet: (name) => name == 'OPENAI_API_KEY',
+      envVarValue: (name) => name == 'OPENAI_API_KEY' ? 'env-key' : null,
+    );
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    expect(io.out.toString(), contains('the key came from OPENAI_API_KEY'));
+  });
+
+  test('non-auth errors get no key hint', () async {
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(stopReason: StopReason.error, errorMessage: 'boom'),
+        ),
+      ],
+    ]);
+    final cli = cliFor(fake.call, providerKind: 'openai');
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, isNot(contains('/key set')));
+    expect(output, isNot(contains('shadows')));
+  });
+
   test('non-connection errors get no endpoint hint', () async {
     final fake = _FakeStreamFunction([
       [

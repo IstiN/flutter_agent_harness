@@ -1560,9 +1560,15 @@ class AgentCli {
   /// wrapping one; the provider adapters reduce both to their message
   /// string, so detection is textual) appends the endpoint hint: the
   /// effective base URL from the config or `--base-url` is almost always
-  /// the thing to fix then.
+  /// the thing to fix then. A 401-class auth failure appends the key
+  /// diagnostic: which env var is in play, whether an environment value is
+  /// shadowing a DIFFERENT stored key (env wins over the secure store — the
+  /// classic stale-export footgun), or that no key resolved at all.
   String _errorLine(String message) {
     final compact = compactProviderError(message);
+    if (_isAuthError(compact)) {
+      return _style.red('error: $compact${_authHint()}');
+    }
     if (!compact.toLowerCase().contains('connection refused')) {
       return _style.red('error: $compact');
     }
@@ -1570,6 +1576,52 @@ class AgentCli {
       'error: $compact — check the endpoint in ~/.fah/config.yaml '
       '(baseUrl: ${_agent.state.model.baseUrl}) or pass --base-url',
     );
+  }
+
+  /// 401-class detection across provider wordings (OpenAI/OpenRouter "401:
+  /// API Key invalid", Anthropic "authentication_error", plain
+  /// "Unauthorized").
+  bool _isAuthError(String compact) {
+    final lower = compact.toLowerCase();
+    return RegExp(r'\b401\b').hasMatch(compact) ||
+        lower.contains('unauthorized') ||
+        lower.contains('authentication_error') ||
+        (lower.contains('api key') && lower.contains('invalid'));
+  }
+
+  /// The ` — ...` suffix for [_errorLine] on auth failures. Never prints key
+  /// material — names and sources only.
+  String _authHint() {
+    if (_rolesDriven) {
+      return ' — roles mode reads keys from the environment only; check '
+          'the chain env vars in ~/.fah/config.yaml';
+    }
+    final spec = catalogProvider(_providerKind);
+    final names = spec?.apiKeyEnvNames;
+    if (names == null || names.isEmpty) {
+      return ' — check the credentials for ${_agent.state.model.baseUrl}';
+    }
+    final active = names
+        .where((name) => (config.envVarValue?.call(name) ?? '').isNotEmpty)
+        .firstOrNull;
+    if (active == null) {
+      return _explicitToken
+          ? ' — the /provider token was rejected; set a fresh one with '
+                '/key set ${names.first} <value>'
+          : ' — no ${names.first} set; store one with '
+                '/key set ${names.first} <value>';
+    }
+    final stored = config.secureKeys?.read(active);
+    final resolved = config.envVarValue?.call(active);
+    if (stored != null && resolved != null && stored != resolved) {
+      final label = config.secureKeys?.label ?? 'secure store';
+      return ' — the environment variable $active shadows a DIFFERENT key '
+          'in the $label; fix or unset the env var so the stored key '
+          'applies (/key shows both sources)';
+    }
+    return ' — the key came from $active; verify it is valid for '
+        '${_agent.state.model.baseUrl} or replace it with '
+        '/key set $active <value>';
   }
 
   Future<void> _handleLine(String line) async {
