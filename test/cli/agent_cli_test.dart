@@ -2186,6 +2186,79 @@ void main() {
       expect(output, isNot(contains('you: two')));
     });
 
+    test(
+      'a restored session replays the full transcript, not just the tail',
+      () async {
+        final fake = _FakeStreamFunction([
+          for (var i = 1; i <= 6; i++) _textTurn('a$i'),
+        ]);
+        final cli = cliFor(fake.call);
+        final run = cli.run();
+
+        io.sendLine('/session alpha');
+        await _waitFor(
+          () => io.out.toString().contains("created session 'alpha'"),
+        );
+        for (var i = 1; i <= 6; i++) {
+          io.sendLine('q$i');
+          await _waitFor(() => fake.calls == i && !cli.isBusy);
+        }
+        io.sendLine('/session beta');
+        await _waitFor(
+          () => io.out.toString().contains("created session 'beta'"),
+        );
+        io.sendLine('/session alpha');
+        await _waitFor(
+          () => io.out.toString().contains('restored session: alpha'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        // 6 user + 6 assistant messages — all of them, including the oldest.
+        expect(output, contains('restored session: alpha (12 messages)'));
+        expect(output, contains('you: q1'));
+        expect(output, contains('you: q6'));
+      },
+    );
+
+    test('consecutive tool-call turns collapse into one replay row', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([
+          ToolCall(
+            id: 'c1',
+            name: 'read',
+            arguments: const {'path': 'missing.txt'},
+          ),
+        ]),
+        _textTurn('done'),
+      ]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/session alpha');
+      await _waitFor(
+        () => io.out.toString().contains("created session 'alpha'"),
+      );
+      io.sendLine('go');
+      await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+      io.sendLine('/session beta');
+      await _waitFor(
+        () => io.out.toString().contains("created session 'beta'"),
+      );
+      io.sendLine('/session alpha');
+      await _waitFor(
+        () => io.out.toString().contains('restored session: alpha'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      final collapsed = RegExp(r'^fa:  \[read\]$', multiLine: true);
+      expect(collapsed.allMatches(output), hasLength(1));
+      expect(output, contains('fa:  done'));
+    });
+
     test('headless --session resumes a named session', () async {
       final fake = _FakeStreamFunction([_textTurn('ok')]);
       final cli = AgentCli(

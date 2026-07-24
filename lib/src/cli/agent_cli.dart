@@ -1224,24 +1224,89 @@ class AgentCli {
   }
 
   /// Replays a restored session's transcript into the output so a resume
-  /// doesn't look empty: the last few messages (user/assistant/tool calls,
-  /// each capped to a couple of rows) with a header counting the rest.
+  /// doesn't look empty: compact per-message rows (user/assistant/tool
+  /// calls, each capped to a couple of rows) filling a row budget from the
+  /// END — a typical session replays in full, only marathon ones truncate
+  /// (the header says so). Consecutive tool-call-only assistant messages
+  /// collapse into a single `[name] [name]` row: they dominated the tail
+  /// with zero recap value.
   void _replayRestoredHistory(List<Message> messages, String label) {
     if (messages.isEmpty) return;
-    const maxShown = 10;
-    const maxRows = 2;
-    final skipped = messages.length > maxShown ? messages.length - maxShown : 0;
-    final shown = messages.sublist(skipped);
+    // Below the TUI history cap (200 lines) so the replay never trims its
+    // own head in TUI mode.
+    const rowBudget = 190;
+    const maxRowsPerMessage = 2;
+    const maxCollapsedCalls = 12;
+    final entries = <List<String>>[];
+    final pendingCalls = <String>[];
+    var pendingFirstIndex = messages.length;
+    var rows = 0;
+    var firstIndex = messages.length;
+
+    List<String>? flushPendingCalls() {
+      if (pendingCalls.isEmpty) return null;
+      final names = pendingCalls.length > maxCollapsedCalls
+          ? [...pendingCalls.sublist(0, maxCollapsedCalls), '…']
+          : List.of(pendingCalls);
+      pendingCalls.clear();
+      firstIndex = pendingFirstIndex;
+      return ['fa:  ${names.join(' ')}'];
+    }
+
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final message = messages[i];
+      if (_isToolCallOnlyAssistant(message)) {
+        final content = (message as AssistantMessage).content;
+        pendingCalls.insertAll(0, [
+          for (final c in content.whereType<ToolCall>()) '[${c.name}]',
+        ]);
+        pendingFirstIndex = i;
+        continue;
+      }
+      final entry = _replayLines(message, maxRowsPerMessage);
+      if (entry.isNotEmpty &&
+          entries.isNotEmpty &&
+          rows + entry.length > rowBudget) {
+        break;
+      }
+      final flushed = flushPendingCalls();
+      if (flushed != null) {
+        entries.insert(0, flushed);
+        rows += flushed.length;
+      }
+      if (entry.isEmpty) continue;
+      entries.insert(0, entry);
+      rows += entry.length;
+      firstIndex = i;
+    }
+    final flushed = flushPendingCalls();
+    if (flushed != null) {
+      entries.insert(0, flushed);
+      rows += flushed.length;
+    }
+
+    final skipped = firstIndex;
     final count = skipped > 0
-        ? 'last $maxShown of ${messages.length}'
+        ? 'last ${messages.length - skipped} of ${messages.length}'
         : '${messages.length}';
     io.writeln(_style.dim('─── restored session: $label ($count messages)'));
-    for (final message in shown) {
-      for (final line in _replayLines(message, maxRows)) {
+    for (final entry in entries) {
+      for (final line in entry) {
         io.writeln(line);
       }
     }
     io.writeln(_style.dim('─' * 20));
+  }
+
+  /// Whether a message is an assistant turn carrying ONLY tool calls (no
+  /// text) — the replay collapses runs of these into one row.
+  bool _isToolCallOnlyAssistant(Message message) {
+    if (message is! AssistantMessage) return false;
+    final hasText = message.content.whereType<TextContent>().any(
+      (b) => b.text.trim().isNotEmpty,
+    );
+    if (hasText) return false;
+    return message.content.whereType<ToolCall>().isNotEmpty;
   }
 
   /// One compact replay entry (≤ [maxRows] rows), or none for messages the
