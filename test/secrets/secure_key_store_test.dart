@@ -390,5 +390,27 @@ void main() {
         expect(await cache.delete('OPENAI_API_KEY'), isFalse);
       },
     );
+
+    test('the process runner kills a hung helper instead of hanging', () async {
+      final previous = secureKeyProcessTimeout;
+      secureKeyProcessTimeout = const Duration(milliseconds: 300);
+      addTearDown(() => secureKeyProcessTimeout = previous);
+
+      final sw = Stopwatch()..start();
+      final result = await secureKeyProcessRunner('sleep', const ['30']);
+      expect(result.exitCode, -1);
+      expect(
+        sw.elapsed,
+        lessThan(const Duration(seconds: 10)),
+        reason: 'a modal/hung keychain helper must not block the CLI',
+      );
+    });
+
+    test('the process runner reports spawn failures as -1', () async {
+      final result = await secureKeyProcessRunner('definitely-not-a-binary', [
+        'x',
+      ]);
+      expect(result.exitCode, -1);
+    });
   });
 }

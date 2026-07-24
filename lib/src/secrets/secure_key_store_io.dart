@@ -13,6 +13,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:meta/meta.dart';
+
 import 'secure_key_store.dart';
 
 /// The service/account scope every backend namespaces its entries under.
@@ -42,25 +44,56 @@ typedef SecureKeyRunner =
     });
 
 /// The default [SecureKeyRunner]: [Process.start] with optional stdin.
+///
+/// Bounded by [secureKeyProcessTimeout]: keychain operations can block on a
+/// SYSTEM modal (e.g. macOS "Keychain Not Found" on a corrupt/missing login
+/// keychain) — the wizard must degrade to session-only then, never hang
+/// the CLI.
 Future<SecureKeyRunResult> _processRunner(
   String executable,
   List<String> arguments, {
   String? stdin,
   Map<String, String>? environment,
 }) async {
-  final process = await Process.start(
-    executable,
-    arguments,
-    environment: environment,
-  );
+  Process process;
+  try {
+    process = await Process.start(
+      executable,
+      arguments,
+      environment: environment,
+    );
+  } on Object {
+    return const SecureKeyRunResult(-1, '');
+  }
   if (stdin != null) {
     process.stdin.write(stdin);
   }
   unawaited(process.stdin.close());
-  final stdout = await process.stdout.transform(utf8.decoder).join();
-  final exitCode = await process.exitCode;
-  return SecureKeyRunResult(exitCode, stdout);
+  try {
+    final stdout = await process.stdout
+        .transform(utf8.decoder)
+        .join()
+        .timeout(secureKeyProcessTimeout);
+    final exitCode = await process.exitCode.timeout(
+      const Duration(seconds: 1),
+      onTimeout: () => -1,
+    );
+    return SecureKeyRunResult(exitCode, stdout);
+  } on TimeoutException {
+    process.kill();
+    return const SecureKeyRunResult(-1, '');
+  }
 }
+
+/// The per-invocation cap for helper processes (`security`, `secret-tool`,
+/// `powershell.exe`) — they can block on a system keychain modal on a
+/// broken keychain. Tests shorten it.
+@visibleForTesting
+Duration secureKeyProcessTimeout = const Duration(seconds: 15);
+
+/// Direct access to the default runner for timeout tests.
+@visibleForTesting
+SecureKeyRunner secureKeyProcessRunner = _processRunner;
 
 /// Picks the [SecureKeyStore] for the host OS. [platform] and [runner] are
 /// test seams; production callers use the defaults.
