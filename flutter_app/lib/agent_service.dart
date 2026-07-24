@@ -31,7 +31,7 @@ final class FahChatMessage {
     this.isError = false,
   });
 
-  /// One of `user`, `assistant`, `tool`, `system`.
+  /// One of `user`, `assistant`, `thinking`, `tool`, `system`.
   final String role;
 
   /// Text content. For images the text prompt lives here; the image bytes are
@@ -463,6 +463,7 @@ class AgentService extends ChangeNotifier {
   String? _sessionId;
   int _persistedCount = 0;
   FahChatMessage? _currentAssistantMessage;
+  FahChatMessage? _currentThinkingMessage;
 
   /// Id of the session new messages persist to (`null` until [initialize]).
   String? get currentSessionId => _sessionId;
@@ -888,6 +889,8 @@ class AgentService extends ChangeNotifier {
       case MessageUpdateEvent(:final assistantMessageEvent):
         if (assistantMessageEvent is TextDeltaEvent) {
           _appendAssistantDelta(assistantMessageEvent.delta);
+        } else if (assistantMessageEvent is ThinkingDeltaEvent) {
+          _appendThinkingDelta(assistantMessageEvent.delta);
         }
       case MessageEndEvent(:final message):
         if (message is UserMessage) {
@@ -1000,10 +1003,25 @@ class AgentService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _appendThinkingDelta(String delta) {
+    var target = _currentThinkingMessage;
+    if (target == null) {
+      target = FahChatMessage(role: 'thinking', content: '');
+      _currentThinkingMessage = target;
+      messages.add(target);
+    }
+    target.content += delta;
+    notifyListeners();
+  }
+
   void _finalizeAssistant(AssistantMessage message) {
     var text = message.content
         .whereType<TextContent>()
         .map((b) => b.text)
+        .join();
+    final thinking = message.content
+        .whereType<ThinkingContent>()
+        .map((b) => b.thinking)
         .join();
     final hasToolCalls = message.content.any((block) => block is ToolCall);
     if (text.trim().isEmpty &&
@@ -1021,6 +1039,17 @@ class AgentService extends ChangeNotifier {
       target.content = text;
     }
     _currentAssistantMessage = null;
+    final thinkingTarget = _currentThinkingMessage;
+    if (thinkingTarget == null) {
+      if (thinking.isNotEmpty) {
+        messages.add(FahChatMessage(role: 'thinking', content: thinking));
+      }
+    } else {
+      thinkingTarget.content = thinking.isNotEmpty
+          ? thinking
+          : thinkingTarget.content;
+    }
+    _currentThinkingMessage = null;
     if (message.stopReason case StopReason.error || StopReason.aborted) {
       error = message.errorMessage ?? 'Run failed (${message.stopReason.name})';
     }
