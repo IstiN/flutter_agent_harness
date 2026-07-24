@@ -2016,6 +2016,43 @@ void main() {
     );
   });
 
+  test('status line keeps the last real usage after a failed run', () async {
+    const usage = Usage(
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: UsageCost(input: 0.0006, output: 0.0004, total: 0.001),
+    );
+    final fake = _FakeStreamFunction([
+      _textTurn('hi', usage: usage),
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(stopReason: StopReason.error, errorMessage: 'boom'),
+        ),
+      ],
+    ]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('q');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('q2');
+    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    // The failed run's terminal message carries Usage.zero; the ctx gauge
+    // must keep the last real prompt size, not snap back to (0/...).
+    final output = io.out.toString();
+    final lastCtx = output.lastIndexOf('ctx 0% (');
+    expect(lastCtx, isNonNegative);
+    expect(output.substring(lastCtx), startsWith('ctx 0% (10/100k)'));
+  });
+
   group('session management', () {
     test('--session creates and resumes a named session', () async {
       final fake = _FakeStreamFunction([_textTurn('hello')]);
