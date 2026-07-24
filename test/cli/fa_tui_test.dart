@@ -720,6 +720,49 @@ void main() {
     });
 
     test(
+      'a submit after scrolling up re-attaches follow and pins the echo',
+      () async {
+        var model = FaTuiModel(
+          callbacks: callbacks(submitted: <String>[]),
+          isExited: () => false,
+          termHeight: 12,
+        );
+        for (var i = 0; i < 30; i++) {
+          model = send(model, OutputMsg('line $i', newline: true));
+        }
+        // Detach the latch by scrolling up.
+        model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
+        expect(model.followTail, isFalse);
+
+        // Submit a new message: follow re-attaches and the stream follows.
+        for (final ch in 'hello'.split('')) {
+          model = send(
+            model,
+            KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)),
+          );
+        }
+        final result = model.update(
+          KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+        );
+        model = result.$1 as FaTuiModel;
+        await result.$2?.call();
+        expect(model.followTail, isTrue);
+
+        model = send(model, BusyMsg(true));
+        for (var i = 0; i < 20; i++) {
+          model = send(model, OutputMsg('line $i', newline: true));
+        }
+        // The echo scrolled fully out of the viewport: the sticky pins at top.
+        final rows = model
+            .view()
+            .content
+            .replaceAll(RegExp(r'\x1b\[[0-9;?]*[A-Za-z]'), '')
+            .split('\n');
+        expect(rows[1], contains('hello'));
+      },
+    );
+
+    test(
       'the sticky echo stays off while the message is still visible',
       () async {
         var model = FaTuiModel(
