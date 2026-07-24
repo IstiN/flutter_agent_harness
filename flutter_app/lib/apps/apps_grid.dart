@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -91,11 +92,11 @@ class _AppsGridViewState extends State<AppsGridView> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Apps'),
+        title: Text(context.l10n.appsGridTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh',
+            tooltip: context.l10n.appsRefreshTooltip,
             onPressed: _reload,
           ),
         ],
@@ -107,7 +108,7 @@ class _AppsGridViewState extends State<AppsGridView> {
   Widget _buildBody(ThemeData theme) {
     final error = _error;
     if (error != null) {
-      return Center(child: Text('Failed to load apps: $error'));
+      return Center(child: Text(context.l10n.appsLoadError('$error')));
     }
     final apps = _apps;
     if (apps == null) {
@@ -118,7 +119,7 @@ class _AppsGridViewState extends State<AppsGridView> {
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Text(
-            'No apps yet. Ask Fa to build one —\nit will land in the apps/ folder.',
+            context.l10n.appsEmptyState,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyLarge,
           ),

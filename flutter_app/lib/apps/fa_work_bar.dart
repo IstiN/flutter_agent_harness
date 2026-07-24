@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 
 import '../agent_service.dart';
@@ -66,12 +67,12 @@ class _FaWorkBarState extends State<FaWorkBar>
         case 'tool':
           return '[${message.toolName}] ✓';
         case 'thinking':
-          return 'thinking…';
+          return context.l10n.appsFaStatusThinking;
         case 'assistant':
-          return 'writing…';
+          return context.l10n.appsFaStatusWriting;
       }
     }
-    return 'Fa is working…';
+    return context.l10n.appsFaStatusWorking;
   }
 
   Future<void> _send() async {
@@ -133,14 +134,14 @@ class _FaWorkBarState extends State<FaWorkBar>
                   ),
                   IconButton(
                     icon: const Icon(Icons.open_in_full, size: 16),
-                    tooltip: 'Open chat',
+                    tooltip: context.l10n.appsOpenChatTooltip,
                     visualDensity: VisualDensity.compact,
                     color: FahPalette.dim,
                     onPressed: widget.onExpand,
                   ),
                   IconButton(
                     icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                    tooltip: 'Stop',
+                    tooltip: context.l10n.appsStopTooltip,
                     visualDensity: VisualDensity.compact,
                     color: FahPalette.error,
                     onPressed: widget.service.abort,
@@ -157,7 +158,7 @@ class _FaWorkBarState extends State<FaWorkBar>
                         style: const TextStyle(fontSize: 13),
                         decoration: InputDecoration(
                           isDense: true,
-                          hintText: 'Follow up…',
+                          hintText: context.l10n.appsFollowUpHint,
                           hintStyle: const TextStyle(
                             color: FahPalette.dim,
                             fontSize: 13,
@@ -179,7 +180,7 @@ class _FaWorkBarState extends State<FaWorkBar>
                     const SizedBox(width: 6),
                     IconButton(
                       icon: const Icon(Icons.send, size: 16),
-                      tooltip: 'Send',
+                      tooltip: context.l10n.appsSendTooltip,
                       visualDensity: VisualDensity.compact,
                       color: FahPalette.indigo,
                       onPressed: _sending ? null : () => unawaited(_send()),

@@ -6,6 +6,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:fa/l10n/l10n_ext.dart';
+
 import 'webllm_service.dart';
 import 'webllm_types.dart';
 
@@ -59,23 +61,22 @@ class _WebLlmCacheSectionState extends State<WebLlmCacheSection> {
   }
 
   Future<void> _delete(WebLlmModelPreset preset) async {
+    final l10n = context.l10n;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Delete ${preset.displayName}?'),
+        title: Text(dialogContext.l10n.cacheDeleteTitle(preset.displayName)),
         content: Text(
-          'Removes the downloaded weights (${preset.sizeLabel}) from the '
-          'browser cache. The model downloads again the next time you use '
-          'it.',
+          dialogContext.l10n.cacheDeleteWeightsBrowser(preset.sizeLabel),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(dialogContext.l10n.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+            child: Text(dialogContext.l10n.commonDelete),
           ),
         ],
       ),
@@ -89,11 +90,10 @@ class _WebLlmCacheSectionState extends State<WebLlmCacheSection> {
       final wasLoaded = _engine.loadedModelId == preset.id;
       await _engine.deleteCachedModel(preset.id);
       _notice = wasLoaded
-          ? '${preset.displayName} was the loaded model — it downloads '
-                'again on next use.'
-          : 'Deleted ${preset.displayName}.';
+          ? l10n.cacheNoticeLoadedModel(preset.displayName)
+          : l10n.cacheNoticeDeleted(preset.displayName);
     } on Object catch (e) {
-      _notice = 'Failed to delete ${preset.displayName}: $e';
+      _notice = l10n.cacheNoticeDeleteFailed(e.toString(), preset.displayName);
     }
     await _refresh();
   }
@@ -103,8 +103,7 @@ class _WebLlmCacheSectionState extends State<WebLlmCacheSection> {
     final theme = Theme.of(context);
     if (!_engine.isAvailable) {
       return Text(
-        'On-device models are managed by the OS/app storage on this '
-        'platform.',
+        context.l10n.webllmCacheManagedByOs,
         style: theme.textTheme.bodySmall,
       );
     }
@@ -113,11 +112,10 @@ class _WebLlmCacheSectionState extends State<WebLlmCacheSection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('Downloaded models', style: theme.textTheme.titleSmall),
+        Text(context.l10n.webllmCacheTitle, style: theme.textTheme.titleSmall),
         const SizedBox(height: 4),
         Text(
-          'On-device model weights cached in your browser. Deleting frees '
-          'space; a model re-downloads on next use.',
+          context.l10n.cacheBrowserSubtitle,
           style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: 8),
@@ -133,7 +131,7 @@ class _WebLlmCacheSectionState extends State<WebLlmCacheSection> {
             ),
           )
         else if (cached.isEmpty)
-          Text('No models downloaded yet.', style: theme.textTheme.bodySmall)
+          Text(context.l10n.cacheNoModels, style: theme.textTheme.bodySmall)
         else
           for (final entry in cached)
             ListTile(
@@ -142,13 +140,17 @@ class _WebLlmCacheSectionState extends State<WebLlmCacheSection> {
               title: Text(entry.preset.displayName),
               subtitle: Text(
                 entry.info.bytes != null
-                    ? '${entry.preset.sizeLabel} · '
-                          '${_formatBytes(entry.info.bytes!)} cached'
+                    ? context.l10n.cacheEntryCached(
+                        _formatBytes(entry.info.bytes!),
+                        entry.preset.sizeLabel,
+                      )
                     : entry.preset.sizeLabel,
               ),
               trailing: IconButton(
                 icon: const Icon(Icons.delete_outline),
-                tooltip: 'Delete ${entry.preset.displayName}',
+                tooltip: context.l10n.cacheDeleteTooltip(
+                  entry.preset.displayName,
+                ),
                 onPressed: _busy ? null : () => _delete(entry.preset),
               ),
             ),

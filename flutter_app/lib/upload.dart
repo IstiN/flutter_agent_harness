@@ -62,16 +62,24 @@ const int kMaxUploadBatchBytes = 25 * 1024 * 1024;
 /// Returns an error message when [files] exceed [maxBytes] in total, else
 /// `null`. Checked before anything is written so an oversized batch never
 /// lands partially.
+///
+/// The message is user-facing (callers show it in a SnackBar); pass
+/// [message] to produce a localized copy — e.g.
+/// `(total, max) => context.l10n.uploadTooLarge(max, total)` — the default
+/// keeps the English text for callers that cannot localize yet.
 String? uploadBatchSizeError(
   List<UploadFile> files, {
   int maxBytes = kMaxUploadBatchBytes,
+  String Function(String total, String max)? message,
 }) {
   var total = 0;
   for (final file in files) {
     total += file.bytes.length;
     if (total > maxBytes) {
-      return 'Upload is too large: ${_formatMb(total)} exceeds the '
-          '${_formatMb(maxBytes)} per-batch limit.';
+      final totalMb = _formatMb(total);
+      final maxMb = _formatMb(maxBytes);
+      return message?.call(totalMb, maxMb) ??
+          'Upload is too large: $totalMb exceeds the $maxMb per-batch limit.';
     }
   }
   return null;

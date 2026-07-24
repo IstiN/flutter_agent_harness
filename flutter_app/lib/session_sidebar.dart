@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -325,16 +326,16 @@ class SessionSidebarState extends State<SessionSidebar> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete session?'),
-        content: const Text('This removes the saved session permanently.'),
+        title: Text(dialogContext.l10n.sidebarDeleteSessionTitle),
+        content: Text(dialogContext.l10n.sidebarDeleteSessionContent),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(dialogContext.l10n.sidebarCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+            child: Text(dialogContext.l10n.sidebarDelete),
           ),
         ],
       ),
@@ -349,7 +350,9 @@ class SessionSidebarState extends State<SessionSidebar> {
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
-              content: Text('Could not delete session: $e'),
+              content: Text(
+                context.l10n.sidebarDeleteSessionFailed(e.toString()),
+              ),
               duration: const Duration(seconds: 3),
             ),
           );
@@ -373,13 +376,14 @@ class SessionSidebarState extends State<SessionSidebar> {
     );
   }
 
-  static String _providerLabel(String kind) => switch (kind) {
-    'openai-completions' => 'OpenAI-compatible API',
-    'anthropic' => 'Anthropic',
-    'google' => 'Google',
-    webLlmProviderKind => 'On-device (WebLLM)',
-    _ => kind,
-  };
+  static String _providerLabel(BuildContext context, String kind) =>
+      switch (kind) {
+        'openai-completions' => context.l10n.sidebarProviderOpenaiCompatible,
+        'anthropic' => context.l10n.sidebarProviderAnthropic,
+        'google' => context.l10n.sidebarProviderGoogle,
+        webLlmProviderKind => context.l10n.sidebarProviderOnDeviceWebllm,
+        _ => kind,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -394,7 +398,10 @@ class SessionSidebarState extends State<SessionSidebar> {
               Icon(Icons.smart_toy_outlined, size: 20, color: theme.hintColor),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Model', style: theme.textTheme.titleMedium),
+                child: Text(
+                  context.l10n.sidebarModelHeader,
+                  style: theme.textTheme.titleMedium,
+                ),
               ),
             ],
           ),
@@ -405,7 +412,7 @@ class SessionSidebarState extends State<SessionSidebar> {
         ),
         const SizedBox(height: 8),
         const Divider(height: 1),
-        _buildAppsSection(theme),
+        _buildAppsSection(context, theme),
         const Divider(height: 1),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 4, 0),
@@ -414,29 +421,32 @@ class SessionSidebarState extends State<SessionSidebar> {
               Icon(Icons.history, size: 20, color: theme.hintColor),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Sessions', style: theme.textTheme.titleMedium),
+                child: Text(
+                  context.l10n.sidebarSessionsHeader,
+                  style: theme.textTheme.titleMedium,
+                ),
               ),
               IconButton(
                 icon: const Icon(Icons.add),
-                tooltip: 'New session',
+                tooltip: context.l10n.sidebarNewSessionTooltip,
                 onPressed: _newSession,
               ),
               IconButton(
                 icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh sessions',
+                tooltip: context.l10n.sidebarRefreshSessionsTooltip,
                 onPressed: _reload,
               ),
             ],
           ),
         ),
-        Expanded(child: _buildSessionsList(theme)),
+        Expanded(child: _buildSessionsList(context, theme)),
       ],
     );
   }
 
   /// The JS-apps section: header with a grid-launcher button plus up to five
   /// app tiles that open their [JsAppView] directly.
-  Widget _buildAppsSection(ThemeData theme) {
+  Widget _buildAppsSection(BuildContext context, ThemeData theme) {
     final apps = _apps ?? const <JsAppInfo>[];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -447,15 +457,20 @@ class SessionSidebarState extends State<SessionSidebar> {
             children: [
               Icon(Icons.widgets_outlined, size: 20, color: theme.hintColor),
               const SizedBox(width: 8),
-              Expanded(child: Text('Apps', style: theme.textTheme.titleMedium)),
+              Expanded(
+                child: Text(
+                  context.l10n.sidebarAppsHeader,
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.grid_view_rounded),
-                tooltip: 'Open apps grid',
+                tooltip: context.l10n.sidebarOpenAppsGridTooltip,
                 onPressed: _openAppsGrid,
               ),
               IconButton(
                 icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh apps',
+                tooltip: context.l10n.sidebarRefreshAppsTooltip,
                 onPressed: _loadApps,
               ),
             ],
@@ -478,7 +493,7 @@ class SessionSidebarState extends State<SessionSidebar> {
             dense: true,
             visualDensity: VisualDensity.compact,
             leading: const Icon(Icons.more_horiz),
-            title: Text('All apps (${apps.length})'),
+            title: Text(context.l10n.sidebarAllApps(apps.length.toString())),
             onTap: _openAppsGrid,
           ),
       ],
@@ -493,10 +508,10 @@ class SessionSidebarState extends State<SessionSidebar> {
       builder: (context, _) {
         final service = _manager.active?.service;
         if (service == null) {
-          return const Card(
+          return Card(
             child: Padding(
-              padding: EdgeInsets.all(12),
-              child: Text('No active session'),
+              padding: const EdgeInsets.all(12),
+              child: Text(context.l10n.sidebarNoActiveSession),
             ),
           );
         }
@@ -520,7 +535,7 @@ class SessionSidebarState extends State<SessionSidebar> {
                           style: theme.textTheme.titleSmall,
                         ),
                         Text(
-                          _providerLabel(service.providerKind),
+                          _providerLabel(context, service.providerKind),
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: FahPalette.dim,
@@ -540,7 +555,7 @@ class SessionSidebarState extends State<SessionSidebar> {
     );
   }
 
-  Widget _buildSessionsList(ThemeData theme) {
+  Widget _buildSessionsList(BuildContext context, ThemeData theme) {
     final error = _loadError;
     if (error != null) {
       return Center(
@@ -550,7 +565,7 @@ class SessionSidebarState extends State<SessionSidebar> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Could not load sessions',
+                context.l10n.sidebarLoadSessionsError,
                 style: theme.textTheme.titleSmall,
               ),
               const SizedBox(height: 4),
@@ -563,7 +578,7 @@ class SessionSidebarState extends State<SessionSidebar> {
               TextButton.icon(
                 onPressed: _reload,
                 icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Retry'),
+                label: Text(context.l10n.sidebarRetry),
               ),
             ],
           ),
@@ -579,7 +594,10 @@ class SessionSidebarState extends State<SessionSidebar> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text('No sessions yet', style: theme.textTheme.bodySmall),
+          child: Text(
+            context.l10n.sidebarNoSessions,
+            style: theme.textTheme.bodySmall,
+          ),
         ),
       );
     }
@@ -591,7 +609,7 @@ class SessionSidebarState extends State<SessionSidebar> {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: Text(
-              'On this device',
+              context.l10n.sidebarOnThisDevice,
               style: theme.textTheme.labelSmall?.copyWith(
                 color: FahPalette.dim,
               ),
@@ -612,7 +630,7 @@ class SessionSidebarState extends State<SessionSidebar> {
       dense: true,
       leading: const Icon(Icons.history, size: 18),
       title: Text(
-        'session ${metadata.id.substring(0, 8)}',
+        context.l10n.sidebarSessionTitle(metadata.id.substring(0, 8)),
         overflow: TextOverflow.ellipsis,
       ),
       subtitle: Text(
@@ -622,7 +640,7 @@ class SessionSidebarState extends State<SessionSidebar> {
       ),
       trailing: IconButton(
         icon: const Icon(Icons.delete_outline, size: 18),
-        tooltip: 'Delete session',
+        tooltip: context.l10n.sidebarDeleteSessionTooltip,
         onPressed: () => _deletePersisted(metadata),
       ),
       onTap: () => _openPersisted(metadata),
@@ -633,16 +651,20 @@ class SessionSidebarState extends State<SessionSidebar> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete session?'),
-        content: Text('Session ${metadata.id.substring(0, 8)}'),
+        title: Text(dialogContext.l10n.sidebarDeleteSessionTitle),
+        content: Text(
+          dialogContext.l10n.sidebarDeletePersistedContent(
+            metadata.id.substring(0, 8),
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(dialogContext.l10n.sidebarCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+            child: Text(dialogContext.l10n.sidebarDelete),
           ),
         ],
       ),
@@ -672,17 +694,17 @@ class SessionSidebarState extends State<SessionSidebar> {
         size: 18,
       ),
       title: Text(
-        'session ${session.id.substring(0, 8)}',
+        context.l10n.sidebarSessionTitle(session.id.substring(0, 8)),
         overflow: TextOverflow.ellipsis,
       ),
       subtitle: Text(
-        model.isNotEmpty ? model : 'no model',
+        model.isNotEmpty ? model : context.l10n.sidebarNoModel,
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.bodySmall?.copyWith(color: FahPalette.dim),
       ),
       trailing: IconButton(
         icon: const Icon(Icons.delete_outline, size: 18),
-        tooltip: 'Delete session',
+        tooltip: context.l10n.sidebarDeleteSessionTooltip,
         onPressed: () => _delete(session),
       ),
       onTap: () => _open(session),

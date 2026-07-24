@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -363,12 +364,9 @@ class _DownloadedModelsQuickStartState
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('Downloaded models', style: theme.textTheme.titleSmall),
+        Text(context.l10n.quickStartTitle, style: theme.textTheme.titleSmall),
         const SizedBox(height: 4),
-        Text(
-          'Already on this device — one tap, no API key needed.',
-          style: theme.textTheme.bodySmall,
-        ),
+        Text(context.l10n.quickStartSubtitle, style: theme.textTheme.bodySmall),
         const SizedBox(height: 4),
         for (final entry in entries)
           ListTile(
@@ -377,12 +375,15 @@ class _DownloadedModelsQuickStartState
             title: Text(entry.title),
             subtitle: Text(
               entry.bytes != null
-                  ? '${entry.sizeLabel} · ${_formatBytes(entry.bytes!)} cached'
+                  ? context.l10n.quickStartCachedLabel(
+                      _formatBytes(entry.bytes!),
+                      entry.sizeLabel,
+                    )
                   : entry.sizeLabel,
             ),
             trailing: FilledButton.tonal(
               onPressed: _busy ? null : () => _use(entry),
-              child: const Text('Use'),
+              child: Text(context.l10n.quickStartUse),
             ),
           ),
         if (_busy) ...[
@@ -392,7 +393,7 @@ class _DownloadedModelsQuickStartState
           Text(
             _loadStatus != null && _loadStatus!.isNotEmpty
                 ? _loadStatus!
-                : 'Loading model…',
+                : context.l10n.quickStartLoading,
             style: theme.textTheme.bodySmall,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

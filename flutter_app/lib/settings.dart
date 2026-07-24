@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:fa/l10n/l10n_ext.dart';
 
 import 'agent_service.dart';
 import 'approval_ui.dart';
@@ -51,32 +52,16 @@ String settingsEnv(String name, String fallback) {
 /// picker and can be edited and removed.
 enum ProviderPreset {
   openrouter(
-    label: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'openai/gpt-4o-mini',
   ),
-  ollamaCloud(
-    label: 'Ollama',
-    baseUrl: 'https://ollama.com/v1',
-    defaultModel: 'gpt-oss:120b',
-  ),
-  custom(label: 'Custom', baseUrl: null, defaultModel: ''),
-  webllm(label: 'On-device (WebLLM)', baseUrl: null, defaultModel: ''),
-  gemma(label: 'On-device (Gemma)', baseUrl: null, defaultModel: ''),
-  transformersJs(
-    label: 'On-device (Gemma, transformers.js)',
-    baseUrl: null,
-    defaultModel: '',
-  );
+  ollamaCloud(baseUrl: 'https://ollama.com/v1', defaultModel: 'gpt-oss:120b'),
+  custom(baseUrl: null, defaultModel: ''),
+  webllm(baseUrl: null, defaultModel: ''),
+  gemma(baseUrl: null, defaultModel: ''),
+  transformersJs(baseUrl: null, defaultModel: '');
 
-  const ProviderPreset({
-    required this.label,
-    required this.baseUrl,
-    required this.defaultModel,
-  });
-
-  /// Short label shown in the provider picker.
-  final String label;
+  const ProviderPreset({required this.baseUrl, required this.defaultModel});
 
   /// Fixed endpoint for hosted presets; `null` for [custom] (user-editable)
   /// and the on-device presets (no endpoint at all).
@@ -95,19 +80,23 @@ enum ProviderPreset {
       this == ProviderPreset.gemma ||
       this == ProviderPreset.transformersJs;
 
+  /// Short label shown in the provider picker.
+  String labelFor(BuildContext context) => switch (this) {
+    ProviderPreset.openrouter => context.l10n.settingsPresetOpenrouter,
+    ProviderPreset.ollamaCloud => context.l10n.settingsPresetOllama,
+    ProviderPreset.custom => context.l10n.settingsPresetCustom,
+    ProviderPreset.webllm => context.l10n.settingsPresetWebllm,
+    ProviderPreset.gemma => context.l10n.settingsPresetGemma,
+    ProviderPreset.transformersJs => context.l10n.settingsPresetTransformersJs,
+  };
+
   /// Shown under the form for providers that may reject browser (CORS)
   /// calls. OpenRouter allows cross-origin browser requests, so it has no
   /// note; other endpoints are not guaranteed to.
-  String? get corsNote => switch (this) {
+  String? corsNote(BuildContext context) => switch (this) {
     ProviderPreset.openrouter => null,
-    ProviderPreset.ollamaCloud =>
-      'Calls go straight from your browser to ollama.com, which currently '
-          'does not send CORS headers — browser calls fail. Use OpenRouter '
-          'here, or pick Ollama from the mobile/desktop app instead.',
-    ProviderPreset.custom =>
-      'Any OpenAI-compatible endpoint. The provider must allow browser '
-          '(CORS) requests — api.anthropic.com does not, so reach Anthropic '
-          'models via OpenRouter instead.',
+    ProviderPreset.ollamaCloud => context.l10n.settingsCorsNoteOllama,
+    ProviderPreset.custom => context.l10n.settingsCorsNoteCustom,
     ProviderPreset.webllm ||
     ProviderPreset.gemma ||
     ProviderPreset.transformersJs => null,
@@ -137,7 +126,7 @@ class AgentSettingsForm extends StatefulWidget {
   const AgentSettingsForm({
     super.key,
     required this.onConnect,
-    this.connectLabel = 'Start chat',
+    this.connectLabel,
     this.registry,
     this.initialConnection,
     this.webLlmEngine,
@@ -151,8 +140,8 @@ class AgentSettingsForm extends StatefulWidget {
   final Future<void> Function(AgentConfig config) onConnect;
 
   /// Label of the primary button (`Start chat` on first run, `Apply` from
-  /// the settings dialog).
-  final String connectLabel;
+  /// the settings dialog). `null` falls back to the localized `Start chat`.
+  final String? connectLabel;
 
   /// The user-added providers shown in the picker. `null` falls back to a
   /// non-persisting in-memory registry (tests, previews).
@@ -428,9 +417,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
     setState(() {
       _webllmModel = webLlmModelPresets.first;
-      _staleModelNote =
-          'The previously used model (${preset.displayName}) was removed '
-          'from the cache — pick a model to download it again.';
+      _staleModelNote = context.l10n.settingsStaleModelCache(
+        preset.displayName,
+      );
     });
   }
 
@@ -476,9 +465,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
     setState(() {
       _gemmaModel = gemmaModelPresets.first;
-      _staleModelNote =
-          'The previously used model (${preset.displayName}) was removed '
-          'from this device — pick a model to download it again.';
+      _staleModelNote = context.l10n.settingsStaleModelDevice(
+        preset.displayName,
+      );
     });
   }
 
@@ -502,9 +491,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
     setState(() {
       _transformersJsModel = transformersJsModelPresets.first;
-      _staleModelNote =
-          'The previously used model (${preset.displayName}) was removed '
-          'from the cache — pick a model to download it again.';
+      _staleModelNote = context.l10n.settingsStaleModelCache(
+        preset.displayName,
+      );
     });
   }
 
@@ -522,7 +511,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   Future<void> _addProvider() async {
     final result = await showDialog<ProviderEditorResult>(
       context: context,
-      builder: (_) => const ProviderEditorDialog(title: 'Add provider'),
+      builder: (_) =>
+          ProviderEditorDialog(title: context.l10n.settingsAddProvider),
     );
     if (result == null) return;
     final provider = await _registry.add(
@@ -542,7 +532,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     final result = await showDialog<ProviderEditorResult>(
       context: context,
       builder: (_) => ProviderEditorDialog(
-        title: 'Edit provider',
+        title: context.l10n.settingsEditProviderTitle,
         initial: selection,
         initialKey: _registry.keyFor(selection.id),
       ),
@@ -567,19 +557,16 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Delete ${selection.name}?'),
-        content: const Text(
-          'The provider is removed from the picker. The current connection '
-          'is not affected.',
-        ),
+        title: Text(context.l10n.settingsDeleteProviderTitle(selection.name)),
+        content: Text(context.l10n.settingsDeleteProviderBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(context.l10n.settingsCancelButton),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+            child: Text(context.l10n.settingsDeleteButton),
           ),
         ],
       ),
@@ -608,15 +595,15 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     final keyOptional =
         _selection is CustomProvider || _selection == ProviderPreset.custom;
     if (key.isEmpty && !keyOptional) {
-      setState(() => _error = 'API key is required');
+      setState(() => _error = context.l10n.settingsApiKeyRequired);
       return;
     }
     if (model.isEmpty) {
-      setState(() => _error = 'Model id is required');
+      setState(() => _error = context.l10n.settingsModelIdRequired);
       return;
     }
     if (baseUrl.isEmpty) {
-      setState(() => _error = 'Base URL is required');
+      setState(() => _error = context.l10n.settingsBaseUrlRequired);
       return;
     }
     setState(() {
@@ -823,9 +810,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     final theme = Theme.of(context);
     final selection = _selection;
     final corsNote = switch (selection) {
-      ProviderPreset preset => preset.corsNote,
+      ProviderPreset preset => preset.corsNote(context),
       // Custom providers share the custom preset's CORS note.
-      _ => ProviderPreset.custom.corsNote,
+      _ => ProviderPreset.custom.corsNote(context),
     };
     // Custom providers may run keyless (local servers); see _connect.
     final keyOptional =
@@ -840,7 +827,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           key: ValueKey<Object>(_selection),
           initialValue: _selection,
           isExpanded: true,
-          decoration: const InputDecoration(labelText: 'Provider'),
+          decoration: InputDecoration(
+            labelText: context.l10n.settingsProviderLabel,
+          ),
           items: [
             for (final preset in ProviderPreset.values)
               // Gemma runs on iOS/Android only (on web the transformers.js
@@ -852,7 +841,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
                       )) &&
                   (preset != ProviderPreset.transformersJs ||
                       transformersJsProviderVisible(isWeb: _isWeb)))
-                DropdownMenuItem(value: preset, child: Text(preset.label)),
+                DropdownMenuItem(
+                  value: preset,
+                  child: Text(preset.labelFor(context)),
+                ),
             for (final provider in _registry.providers)
               DropdownMenuItem(
                 value: provider,
@@ -870,19 +862,19 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             TextButton.icon(
               onPressed: _loading ? null : _addProvider,
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add provider'),
+              label: Text(context.l10n.settingsAddProvider),
             ),
             if (selection is CustomProvider) ...[
               TextButton(
                 onPressed: _loading ? null : _editProvider,
-                child: const Text('Edit'),
+                child: Text(context.l10n.settingsEditButton),
               ),
               TextButton(
                 onPressed: _loading ? null : _deleteProvider,
                 style: TextButton.styleFrom(
                   foregroundColor: theme.colorScheme.error,
                 ),
-                child: const Text('Delete'),
+                child: Text(context.l10n.settingsDeleteButton),
               ),
             ],
           ],
@@ -898,11 +890,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           TextField(
             controller: _keyController,
             decoration: InputDecoration(
-              labelText: keyOptional ? 'API key (optional)' : 'API key',
-              hintText: keyOptional ? null : 'Paste your provider key',
+              labelText: keyOptional
+                  ? context.l10n.settingsApiKeyOptionalLabel
+                  : context.l10n.settingsApiKeyLabel,
+              hintText: keyOptional ? null : context.l10n.settingsApiKeyHint,
               helperText: keyOptional
-                  ? 'Leave empty for local servers (llama.cpp, Ollama, '
-                        'LM Studio)'
+                  ? context.l10n.settingsApiKeyLocalHelper
                   : null,
             ),
             obscureText: true,
@@ -912,16 +905,18 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           const SizedBox(height: 12),
           TextField(
             controller: _modelController,
-            decoration: const InputDecoration(labelText: 'Model id'),
+            decoration: InputDecoration(
+              labelText: context.l10n.settingsModelIdLabel,
+            ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _urlController,
             enabled: _hasEditableBaseUrl,
             decoration: InputDecoration(
-              labelText: 'Base URL',
+              labelText: context.l10n.settingsBaseUrlLabel,
               helperText: _hasEditableBaseUrl
-                  ? 'OpenAI-compatible endpoint'
+                  ? context.l10n.settingsBaseUrlHelper
                   : null,
             ),
           ),
@@ -938,13 +933,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               Expanded(
                 child: Text(
                   selection is CustomProvider
-                      ? 'The provider definition (name, URL, model) is saved '
-                            '— no secrets. The API key stays in memory for '
-                            'this session only and is gone on reload.'
-                      : 'In-memory only: your key is never persisted and is '
-                            'gone on reload. Calls go straight from your '
-                            'browser to the provider — nothing is proxied or '
-                            'stored.',
+                      ? context.l10n.settingsKeyNoteCustom
+                      : context.l10n.settingsKeyNoteHosted,
                   style: theme.textTheme.bodySmall,
                 ),
               ),
@@ -1000,7 +990,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : Text(_loading ? 'Loading model…' : widget.connectLabel),
+              : Text(
+                  _loading
+                      ? context.l10n.settingsLoadingModel
+                      : widget.connectLabel ?? context.l10n.settingsStartChat,
+                ),
         ),
       ],
     );
@@ -1016,7 +1010,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         DropdownButtonFormField<WebLlmModelPreset>(
           initialValue: _webllmModel,
           isExpanded: true,
-          decoration: const InputDecoration(labelText: 'On-device model'),
+          decoration: InputDecoration(
+            labelText: context.l10n.settingsOnDeviceModelLabel,
+          ),
           items: [
             for (final preset in webLlmModelPresets)
               DropdownMenuItem(
@@ -1057,9 +1053,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Runs fully offline after download · needs WebGPU '
-                '(Chrome/Edge/newer Safari) · weights ~0.5-4 GB cached in '
-                'your browser',
+                context.l10n.settingsWebllmNote,
                 style: theme.textTheme.bodySmall,
               ),
             ),
@@ -1072,7 +1066,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           Text(
             _loadStatus != null && _loadStatus!.isNotEmpty
                 ? _loadStatus!
-                : 'Downloading model weights…',
+                : context.l10n.settingsDownloadingWeights,
             style: theme.textTheme.bodySmall,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -1093,7 +1087,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         DropdownButtonFormField<GemmaModelPreset>(
           initialValue: _gemmaModel,
           isExpanded: true,
-          decoration: const InputDecoration(labelText: 'On-device model'),
+          decoration: InputDecoration(
+            labelText: context.l10n.settingsOnDeviceModelLabel,
+          ),
           items: [
             for (final preset in gemmaModelPresets)
               DropdownMenuItem(
@@ -1118,9 +1114,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         const SizedBox(height: 12),
         TextField(
           controller: _hfTokenController,
-          decoration: const InputDecoration(
-            labelText: 'HuggingFace token (optional)',
-            hintText: 'hf_… — needed if the repo is gated',
+          decoration: InputDecoration(
+            labelText: context.l10n.settingsHfTokenLabel,
+            hintText: context.l10n.settingsHfTokenHint,
           ),
           obscureText: true,
           autocorrect: false,
@@ -1147,7 +1143,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           Text(
             _loadStatus != null && _loadStatus!.isNotEmpty
                 ? _loadStatus!
-                : 'Downloading model weights…',
+                : context.l10n.settingsDownloadingWeights,
             style: theme.textTheme.bodySmall,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -1168,7 +1164,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         DropdownButtonFormField<TransformersJsModelPreset>(
           initialValue: _transformersJsModel,
           isExpanded: true,
-          decoration: const InputDecoration(labelText: 'On-device model'),
+          decoration: InputDecoration(
+            labelText: context.l10n.settingsOnDeviceModelLabel,
+          ),
           items: [
             for (final preset in transformersJsModelPresets)
               DropdownMenuItem(
@@ -1209,10 +1207,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Runs fully offline after download · needs WebGPU '
-                '(Chrome/Edge/newer Safari) · weights download once from '
-                'HuggingFace (public repo, no token) and are cached in your '
-                'browser',
+                context.l10n.settingsTransformersJsNote,
                 style: theme.textTheme.bodySmall,
               ),
             ),
@@ -1225,7 +1220,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           Text(
             _loadStatus != null && _loadStatus!.isNotEmpty
                 ? _loadStatus!
-                : 'Downloading model weights…',
+                : context.l10n.settingsDownloadingWeights,
             style: theme.textTheme.bodySmall,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -1320,15 +1315,15 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
     final baseUrl = _urlController.text.trim();
     final modelId = _modelController.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = 'Name is required');
+      setState(() => _error = context.l10n.settingsNameRequired);
       return;
     }
     if (baseUrl.isEmpty) {
-      setState(() => _error = 'Base URL is required');
+      setState(() => _error = context.l10n.settingsBaseUrlRequired);
       return;
     }
     if (modelId.isEmpty) {
-      setState(() => _error = 'Model id is required');
+      setState(() => _error = context.l10n.settingsModelIdRequired);
       return;
     }
     Navigator.of(context).pop(
@@ -1355,33 +1350,33 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
             children: [
               TextField(
                 controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  hintText: 'My provider',
+                decoration: InputDecoration(
+                  labelText: context.l10n.settingsProviderNameLabel,
+                  hintText: context.l10n.settingsProviderNameHint,
                 ),
                 autofocus: true,
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _urlController,
-                decoration: const InputDecoration(
-                  labelText: 'Base URL',
+                decoration: InputDecoration(
+                  labelText: context.l10n.settingsBaseUrlLabel,
                   hintText: 'https://example.com/v1',
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _modelController,
-                decoration: const InputDecoration(labelText: 'Model id'),
+                decoration: InputDecoration(
+                  labelText: context.l10n.settingsModelIdLabel,
+                ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _keyController,
-                decoration: const InputDecoration(
-                  labelText: 'API key (optional)',
-                  helperText:
-                      'Leave empty for local servers (llama.cpp, Ollama, '
-                      'LM Studio)',
+                decoration: InputDecoration(
+                  labelText: context.l10n.settingsApiKeyOptionalLabel,
+                  helperText: context.l10n.settingsApiKeyLocalHelper,
                 ),
                 obscureText: true,
                 autocorrect: false,
@@ -1389,8 +1384,7 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Name, URL and model are saved; the key is kept in memory '
-                'for this session only — never persisted.',
+                context.l10n.settingsEditorKeyNote,
                 style: theme.textTheme.bodySmall,
               ),
               if (_error != null) ...[
@@ -1404,9 +1398,12 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(context.l10n.settingsCancelButton),
         ),
-        FilledButton(onPressed: _save, child: const Text('Save')),
+        FilledButton(
+          onPressed: _save,
+          child: Text(context.l10n.settingsSaveButton),
+        ),
       ],
     );
   }
@@ -1454,7 +1451,7 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: Text(context.l10n.settingsTitle)),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -1462,7 +1459,7 @@ class SettingsScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               AgentSettingsForm(
-                connectLabel: 'Apply',
+                connectLabel: context.l10n.settingsApplyButton,
                 registry: registry,
                 initialConnection: lastConnectionStore?.connection,
                 webLlmEngine: webLlmEngine,
@@ -1527,7 +1524,7 @@ class _ToolsBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        'tools via prompt',
+        context.l10n.settingsToolsBadge,
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onPrimaryContainer,
         ),
@@ -1551,7 +1548,7 @@ class _CoderBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        'coder',
+        context.l10n.settingsCoderBadge,
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onSecondaryContainer,
         ),
@@ -1576,7 +1573,7 @@ class _VisionBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        'vision',
+        context.l10n.settingsVisionBadge,
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onTertiaryContainer,
         ),

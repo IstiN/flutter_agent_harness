@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
+import 'l10n/l10n_ext.dart';
 
 /// Renders an approval prompt as a Material dialog — the Flutter/web
 /// [ApprovalPrompt] surface. The chat screen installs this on
@@ -50,7 +51,7 @@ class ApprovalDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return AlertDialog(
-      title: Text('Allow ${request.toolName}?'),
+      title: Text(context.l10n.approvalAllowToolTitle(request.toolName)),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -61,7 +62,7 @@ class ApprovalDialog extends StatelessWidget {
               Text(request.reason),
               const SizedBox(height: 8),
               Text(
-                'Tier: ${request.tier.name}',
+                context.l10n.approvalTierLabel(request.tier.name),
                 style: theme.textTheme.bodySmall,
               ),
               const SizedBox(height: 12),
@@ -86,17 +87,17 @@ class ApprovalDialog extends StatelessWidget {
         TextButton(
           onPressed: () => Navigator.of(context).pop(ApprovalDecision.deny),
           style: TextButton.styleFrom(foregroundColor: theme.colorScheme.error),
-          child: const Text('Deny'),
+          child: Text(context.l10n.approvalDeny),
         ),
         TextButton(
           onPressed: () =>
               Navigator.of(context).pop(ApprovalDecision.approveOnce),
-          child: const Text('Allow once'),
+          child: Text(context.l10n.approvalAllowOnce),
         ),
         FilledButton(
           onPressed: () =>
               Navigator.of(context).pop(ApprovalDecision.approveAlways),
-          child: const Text('Always allow'),
+          child: Text(context.l10n.approvalAlwaysAllow),
         ),
       ],
     );
@@ -123,16 +124,25 @@ class ApprovalModeSelector extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Tool approvals', style: theme.textTheme.titleSmall),
+            Text(
+              context.l10n.approvalModeTitle,
+              style: theme.textTheme.titleSmall,
+            ),
             const SizedBox(height: 8),
             SegmentedButton<ApprovalMode>(
-              segments: const [
+              segments: [
                 ButtonSegment(
                   value: ApprovalMode.alwaysAsk,
-                  label: Text('Always ask'),
+                  label: Text(context.l10n.approvalModeAlwaysAsk),
                 ),
-                ButtonSegment(value: ApprovalMode.write, label: Text('Write')),
-                ButtonSegment(value: ApprovalMode.yolo, label: Text('YOLO')),
+                ButtonSegment(
+                  value: ApprovalMode.write,
+                  label: Text(context.l10n.approvalModeWrite),
+                ),
+                ButtonSegment(
+                  value: ApprovalMode.yolo,
+                  label: Text(context.l10n.approvalModeYolo),
+                ),
               ],
               selected: {service.approval.mode},
               onSelectionChanged: (modes) =>
@@ -140,13 +150,9 @@ class ApprovalModeSelector extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(switch (service.approval.mode) {
-              ApprovalMode.alwaysAsk => 'Every tool call asks for approval.',
-              ApprovalMode.write =>
-                'File reads run freely; writes, edits and shell commands '
-                    'ask for approval.',
-              ApprovalMode.yolo =>
-                'All tools run without asking (destructive shell commands '
-                    'still ask).',
+              ApprovalMode.alwaysAsk => context.l10n.approvalModeAlwaysAskHint,
+              ApprovalMode.write => context.l10n.approvalModeWriteHint,
+              ApprovalMode.yolo => context.l10n.approvalModeYoloHint,
             }, style: theme.textTheme.bodySmall),
           ],
         );

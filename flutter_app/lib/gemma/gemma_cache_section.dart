@@ -7,6 +7,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'package:fa/l10n/l10n_ext.dart';
+
 import 'gemma_service.dart';
 import 'gemma_types.dart';
 
@@ -172,28 +174,39 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
     return entries;
   }
 
+  String _storageFrom(BuildContext context) => _isWeb
+      ? context.l10n.gemmaStorageFromBrowser
+      : context.l10n.gemmaStorageFromDevice;
+
+  String _storageIn(BuildContext context) => _isWeb
+      ? context.l10n.gemmaStorageInBrowser
+      : context.l10n.gemmaStorageOnDevice;
+
   Future<void> _delete(_CacheEntry entry) async {
+    final l10n = context.l10n;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Delete ${entry.title}?'),
+        title: Text(dialogContext.l10n.cacheDeleteTitle(entry.title)),
         content: Text(
           entry.orphan
-              ? 'Removes the file (${entry.sizeText}) from '
-                    '${_isWeb ? 'the browser storage' : 'the device'}. '
-                    'Installed models are not affected.'
-              : 'Removes the downloaded weights (${entry.sizeText}) from '
-                    '${_isWeb ? 'the browser storage' : 'the device'}. The '
-                    'model downloads again the next time you use it.',
+              ? dialogContext.l10n.gemmaCacheDeleteOrphan(
+                  entry.sizeText,
+                  _storageFrom(dialogContext),
+                )
+              : dialogContext.l10n.gemmaCacheDeleteWeights(
+                  entry.sizeText,
+                  _storageFrom(dialogContext),
+                ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(dialogContext.l10n.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+            child: Text(dialogContext.l10n.commonDelete),
           ),
         ],
       ),
@@ -208,11 +221,10 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
       final wasLoaded = presetId != null && _engine.loadedModelId == presetId;
       await _engine.uninstall(entry.filename);
       _notice = wasLoaded
-          ? '${entry.title} was the loaded model — it downloads again on '
-                'next use.'
-          : 'Deleted ${entry.title}.';
+          ? l10n.cacheNoticeLoadedModel(entry.title)
+          : l10n.cacheNoticeDeleted(entry.title);
     } on Object catch (e) {
-      _notice = 'Failed to delete ${entry.title}: $e';
+      _notice = l10n.cacheNoticeDeleteFailed(e.toString(), entry.title);
     }
     await _refresh();
   }
@@ -222,8 +234,7 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
     final theme = Theme.of(context);
     if (!_engine.isAvailable) {
       return Text(
-        'On-device (Gemma) models are available in the iOS/Android builds '
-        'only (on web the transformers.js provider covers on-device Gemma).',
+        context.l10n.gemmaCacheMobileOnly,
         style: theme.textTheme.bodySmall,
       );
     }
@@ -235,19 +246,17 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('On-device models (Gemma)', style: theme.textTheme.titleSmall),
+        Text(context.l10n.gemmaCacheTitle, style: theme.textTheme.titleSmall),
         const SizedBox(height: 4),
         Text(
-          'Gemma weights stored ${_isWeb ? 'in your browser' : 'on this '
-                    'device'}. Deleting frees space; a model re-downloads on next '
-          'use.',
+          context.l10n.gemmaCacheSubtitle(_storageIn(context)),
           style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: 8),
         if (installed == null)
           _scanError != null
               ? Text(
-                  'Could not scan the model cache: $_scanError',
+                  context.l10n.gemmaCacheScanError(_scanError.toString()),
                   style: theme.textTheme.bodySmall,
                 )
               : const Padding(
@@ -261,7 +270,7 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
                   ),
                 )
         else if (entries == null)
-          Text('No models downloaded yet.', style: theme.textTheme.bodySmall)
+          Text(context.l10n.cacheNoModels, style: theme.textTheme.bodySmall)
         else
           for (final entry in entries)
             ListTile(
@@ -271,7 +280,7 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
               subtitle: Text(entry.subtitle),
               trailing: IconButton(
                 icon: const Icon(Icons.delete_outline),
-                tooltip: 'Delete ${entry.title}',
+                tooltip: context.l10n.cacheDeleteTooltip(entry.title),
                 onPressed: _busy || !entry.deletable
                     ? null
                     : () => _delete(entry),
