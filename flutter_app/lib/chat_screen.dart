@@ -192,14 +192,21 @@ class _ChatScreenState extends State<ChatScreen> {
     _userNearBottom = position.maxScrollExtent - position.pixels < 150;
   }
 
+  DateTime _lastTailScroll = DateTime.fromMillisecondsSinceEpoch(0);
+
   /// Pins the chat to the tail after a sync when the user hasn't scrolled
-  /// away. Runs post-frame so the new content has been laid out.
+  /// away. Runs post-frame so the new content has been laid out. Throttled:
+  /// during heavy streaming (50 ms sync debounce) constant re-animation
+  /// would stutter.
   void _scrollToTailIfFollowing() {
     if (!_userNearBottom) return;
+    final now = DateTime.now();
+    if (now.difference(_lastTailScroll).inMilliseconds < 400) return;
+    _lastTailScroll = now;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_chatScrollController.hasClients) return;
       final maxExtent = _chatScrollController.position.maxScrollExtent;
-      if ((_chatScrollController.offset - maxExtent).abs() < 1) return;
+      if ((maxExtent - _chatScrollController.offset).abs() < 1) return;
       _chatScrollController.animateTo(
         maxExtent,
         duration: const Duration(milliseconds: 150),
@@ -653,8 +660,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Renders attached-image messages (user uploads and the in-app Fa
-  /// screenshot). Without an imageMessageBuilder flutter_chat_ui asserts and
-  /// paints a red error box.
+  /// screenshot) as a compact thumbnail; tap opens the full image. Without
+  /// an imageMessageBuilder flutter_chat_ui asserts and paints a red box.
   Widget _buildImageMessage(
     BuildContext context,
     ImageMessage message,
@@ -663,18 +670,33 @@ class _ChatScreenState extends State<ChatScreen> {
     MessageGroupStatus? groupStatus,
   }) {
     final source = message.source;
-    final Widget image = source.startsWith('data:')
-        ? Image.memory(base64Decode(source.split(',').last))
-        : Image.file(File(source));
+    Widget image = source.startsWith('data:')
+        ? Image.memory(
+            base64Decode(source.split(',').last),
+            // Decode at thumbnail scale — full-res app screenshots would
+            // otherwise jank every chat rebuild.
+            cacheWidth: 600,
+          )
+        : Image.file(File(source), cacheWidth: 600);
+    image = ClipRRect(borderRadius: BorderRadius.circular(10), child: image);
     return Align(
       alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-        constraints: const BoxConstraints(maxWidth: 420),
+        constraints: const BoxConstraints(maxWidth: 280),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(borderRadius: BorderRadius.circular(10), child: image),
+            GestureDetector(
+              onTap: () => _showFullImage(context, source),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: FahPalette.border),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: image,
+              ),
+            ),
             if (message.text?.isNotEmpty ?? false)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -685,6 +707,20 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showFullImage(BuildContext context, String source) {
+    final Widget image = source.startsWith('data:')
+        ? Image.memory(base64Decode(source.split(',').last))
+        : Image.file(File(source));
+    showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: const EdgeInsets.all(16),
+        child: InteractiveViewer(child: image),
       ),
     );
   }

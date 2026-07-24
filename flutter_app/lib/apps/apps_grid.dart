@@ -29,6 +29,7 @@ class AppsGridView extends StatefulWidget {
     this.onSendToAgent,
     this.fsRevision,
     this.agentService,
+    this.resolveAppService,
   });
 
   final ExecutionEnv env;
@@ -42,6 +43,10 @@ class AppsGridView extends StatefulWidget {
   /// The active session's service — forwarded to [JsAppView] so the compact
   /// [FaWorkBar] works for apps opened from the grid too.
   final AgentService? agentService;
+
+  /// Resolves the session bound to an app (`apps/<id>/session.json`) —
+  /// apps opened from the grid resume their own session.
+  final Future<AgentService?> Function(String appId)? resolveAppService;
 
   @override
   State<AppsGridView> createState() => _AppsGridViewState();
@@ -137,8 +142,11 @@ class _AppsGridViewState extends State<AppsGridView> {
     );
   }
 
-  void _openApp(JsAppInfo app) {
-    Navigator.of(context).push(
+  Future<void> _openApp(JsAppInfo app) async {
+    final appService =
+        (await widget.resolveAppService?.call(app.id)) ?? widget.agentService;
+    if (!mounted) return;
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => JsAppView(
           app: app,
@@ -148,7 +156,7 @@ class _AppsGridViewState extends State<AppsGridView> {
           platformHandler: widget.platformHandler,
           onSendToAgent: widget.onSendToAgent,
           fsRevision: widget.fsRevision,
-          agentService: widget.agentService,
+          agentService: appService,
         ),
       ),
     );

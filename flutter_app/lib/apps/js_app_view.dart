@@ -22,9 +22,18 @@ import 'js_app_engine.dart';
 /// Payload delivered when the user talks to Fa from inside an app: their
 /// message, the app's exported state, and a screenshot of the app.
 class FaAppMessage {
-  const FaAppMessage({required this.text, this.appStateJson, this.screenshot});
+  const FaAppMessage({
+    required this.text,
+    this.appId,
+    this.appStateJson,
+    this.screenshot,
+  });
 
   final String text;
+
+  /// The app the message came from — sessions started inside an app stay
+  /// bound to it (`apps/<id>/session.json`).
+  final String? appId;
   final String? appStateJson;
   final Uint8List? screenshot;
 }
@@ -162,6 +171,7 @@ class _JsAppViewState extends State<JsAppView> {
     await onSend(
       FaAppMessage(
         text: trimmed,
+        appId: widget.app.id,
         appStateJson: state == null ? null : jsonEncode(state),
         screenshot: screenshot,
       ),
