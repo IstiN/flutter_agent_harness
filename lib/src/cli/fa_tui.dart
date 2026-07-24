@@ -423,6 +423,7 @@ final class FaTuiModel extends TeaModel {
       final cleared = copyWith(queue: const [], outputLines: lines);
       final next = cleared.copyWith(
         scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+        followTail: true,
       );
       return (next, null);
     }
@@ -915,8 +916,12 @@ final class FaTuiModel extends TeaModel {
       stickyEchoLineCount: 2 + inputText.split('\n').length,
     );
     return (
+      // A fresh submit always jumps to the bottom AND re-attaches follow:
+      // without it, a latch detached by an earlier scroll-up froze the
+      // stream off-screen (and the sticky echo never activated).
       cleared.copyWith(
         scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+        followTail: true,
       ),
       () async {
         await callbacks.onSubmit(text);
@@ -954,6 +959,7 @@ final class FaTuiModel extends TeaModel {
     return (
       cleared.copyWith(
         scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+        followTail: true,
       ),
       () async {
         await callbacks.onSteer?.call(messages);
