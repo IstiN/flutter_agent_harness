@@ -37,6 +37,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'gemma_types.dart';
@@ -163,6 +164,16 @@ Future<void> _runGemma(
     await service.loadModel(preset);
     cancelToken?.throwIfCancelled();
 
+    // The engine's KV budget (preset.contextWindow) is shared by input and
+    // output and hard-fails past it (INVALID_ARGUMENT) — fit the context
+    // instead of ever going there.
+    final outputReserve = model.maxTokens > 0 ? model.maxTokens : 256;
+    final fitted = _fitGemmaContext(
+      context,
+      budgetTokens: preset.contextWindow - outputReserve - 64,
+      onNote: (note) => debugPrint('[gemma] $note'),
+    );
+
     eventStream.push(StartEvent(partial: snapshot()));
 
     var textStarted = false;
@@ -187,8 +198,14 @@ Future<void> _runGemma(
     }
 
     await service.chatStream(
-      systemInstruction: context.systemPrompt,
-      messages: convertGemmaMessages(context),
+      systemInstruction: fitted.systemPrompt,
+      messages: convertGemmaMessages(
+        Context(
+          systemPrompt: fitted.systemPrompt,
+          messages: fitted.messages,
+          tools: context.tools,
+        ),
+      ),
       tools: context.tools != null && context.tools!.isNotEmpty
           ? convertGemmaTools(context.tools!)
           : null,
@@ -421,6 +438,99 @@ List<GemmaChatMessage> convertGemmaMessages(Context context) {
 }
 
 String _formatGemmaError(Object error) {
-  if (error is StateError) return error.message;
-  return error.toString();
+  final text = error is StateError ? error.message : error.toString();
+  if (text.contains('too long') && text.contains('tokens')) {
+    return "the conversation no longer fits the on-device model's context "
+        'window — start a new session';
+  }
+  return text;
+}
+
+/// Heuristic chars-per-token matching the harness estimator (see
+/// `token_estimation.dart`).
+const _charsPerTokenEstimate = 4;
+
+/// Fits [context] into the on-device KV budget (see
+/// [GemmaModelPreset.contextWindow] — shared input+output, hard-failing
+/// past it): the oldest messages drop first, the newest is truncated next,
+/// and an oversized system prompt is hard-truncated last. [onNote] receives
+/// one line per action taken (never silent about reduced context).
+({String? systemPrompt, List<Message> messages}) _fitGemmaContext(
+  Context context, {
+  required int budgetTokens,
+  required void Function(String note) onNote,
+}) {
+  final systemPrompt = context.systemPrompt ?? '';
+  final systemTokens = systemPrompt.length ~/ _charsPerTokenEstimate;
+  final toolsTokens = context.tools == null
+      ? 0
+      : jsonEncode(context.tools).length ~/ _charsPerTokenEstimate;
+  var used = systemTokens + toolsTokens;
+  var dropped = 0;
+  final kept = <Message>[];
+  // Newest first: the current turn always stays; older ones while they fit.
+  for (final message in context.messages.reversed) {
+    final tokens = estimateTokens(message);
+    if (kept.isNotEmpty && used + tokens > budgetTokens) {
+      dropped++;
+      continue;
+    }
+    used += tokens;
+    kept.insert(0, message);
+  }
+  var messages = kept;
+  // The newest message alone still overruns: truncate its content so the
+  // turn keeps its intent.
+  if (used > budgetTokens && messages.isNotEmpty) {
+    final last = messages.last;
+    final spare = budgetTokens - (used - estimateTokens(last));
+    if (spare > 64) {
+      messages = [
+        ...messages.sublist(0, messages.length - 1),
+        _truncateGemmaMessage(last, spare),
+      ];
+      onNote('truncated the latest message to fit the on-device context');
+    }
+  }
+  var fittedSystemPrompt = systemPrompt;
+  if (systemTokens > budgetTokens) {
+    fittedSystemPrompt =
+        '${systemPrompt.substring(0, budgetTokens * _charsPerTokenEstimate)}…';
+    onNote('truncated the system prompt to fit the on-device context');
+  }
+  if (dropped > 0) {
+    onNote('dropped $dropped older message(s) to fit the on-device context');
+  }
+  return (systemPrompt: fittedSystemPrompt, messages: messages);
+}
+
+/// Hard-truncates the text content of [message] to [spareTokens] (ellipsis
+/// marked), preserving its role and shape.
+Message _truncateGemmaMessage(Message message, int spareTokens) {
+  final spareChars = spareTokens * _charsPerTokenEstimate;
+  String cut(String text) =>
+      text.length <= spareChars ? text : '${text.substring(0, spareChars)}…';
+  List<ContentBlock> cutBlocks(List<ContentBlock> blocks) => [
+    for (final block in blocks)
+      block is TextContent ? TextContent(text: cut(block.text)) : block,
+  ];
+  return switch (message) {
+    UserMessage(content: final String text) => UserMessage(
+      content: cut(text),
+      timestamp: message.timestamp,
+    ),
+    UserMessage(content: final List<ContentBlock> blocks) => UserMessage(
+      content: cutBlocks(blocks),
+      timestamp: message.timestamp,
+    ),
+    ToolResultMessage() => ToolResultMessage(
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+      content: cutBlocks(message.content),
+      isError: message.isError,
+      timestamp: message.timestamp,
+    ),
+    AssistantMessage() => message.copyWith(content: cutBlocks(message.content)),
+    _ => message,
+  };
 }

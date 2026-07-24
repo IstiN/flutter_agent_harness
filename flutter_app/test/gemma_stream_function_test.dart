@@ -544,4 +544,66 @@ void main() {
       expect(findGemmaPreset('nope'), isNull);
     });
   });
+
+  group('context fitting', () {
+    test(
+      'overflowing history drops the oldest messages, keeps the newest',
+      () async {
+        final engine = FakeGemmaEngine()..chunks = ['ok'];
+        final many = [
+          for (var i = 1; i <= 30; i++) UserMessage.text('m$i ${'a' * 1000}'),
+        ];
+        final events = await streamGemma(
+          engine,
+          _model(),
+          _context(systemPrompt: 'sys', messages: many),
+        ).toList();
+
+        final sent = engine.lastMessages!;
+        expect(sent.length, lessThan(many.length));
+        expect(sent.length, greaterThan(1));
+        expect(sent.last.content, startsWith('m30'));
+        expect(events.whereType<DoneEvent>(), isNotEmpty);
+      },
+    );
+
+    test('an oversized newest message is truncated, not dropped', () async {
+      final engine = FakeGemmaEngine()..chunks = ['ok'];
+      await streamGemma(
+        engine,
+        _model(),
+        _context(messages: [UserMessage.text('x' * 20000)]),
+      ).toList();
+
+      final sent = engine.lastMessages!.single;
+      expect(sent.content.length, lessThan(20000));
+      expect(sent.content, endsWith('…'));
+    });
+
+    test('an oversized system prompt is hard-truncated', () async {
+      final engine = FakeGemmaEngine()..chunks = ['ok'];
+      await streamGemma(
+        engine,
+        _model(),
+        _context(systemPrompt: 's' * 20000, messages: [UserMessage.text('hi')]),
+      ).toList();
+
+      final instruction = engine.lastSystemInstruction!;
+      expect(instruction.length, lessThan(20000));
+      expect(instruction, endsWith('…'));
+      expect(engine.lastMessages!.single.content, 'hi');
+    });
+
+    test('the engine token-limit error surfaces as a friendly hint', () async {
+      final engine = FakeGemmaEngine()
+        ..streamErrorMessage =
+            'INVALID_ARGUMENT: Input token ids are too long. '
+            'Exceeding the maximum number of tokens allowed: 4232 >= 4096';
+      final events = await streamGemma(engine, _model(), _context()).toList();
+
+      final error = events.whereType<ErrorEvent>().single;
+      expect(error.error.errorMessage, contains('start a new session'));
+      expect(error.error.errorMessage, isNot(contains('INVALID_ARGUMENT')));
+    });
+  });
 }
