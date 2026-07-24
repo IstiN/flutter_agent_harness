@@ -816,6 +816,16 @@ Future<AssistantMessage> _streamAssistantResponse(
       tools: context.tools,
     );
   }
+  // Orphaned tool calls (aborted run, restored session, compaction cut)
+  // make providers hard-400; repair the payload, never the transcript.
+  final repaired = repairOrphanedToolCalls(requestContext.messages);
+  if (!identical(repaired, requestContext.messages)) {
+    requestContext = Context(
+      systemPrompt: requestContext.systemPrompt,
+      messages: repaired,
+      tools: requestContext.tools,
+    );
+  }
 
   AssistantMessageEventStream response;
   try {
@@ -921,6 +931,51 @@ AssistantMessage _terminalMessage(
     errorMessage: errorMessage,
     timestamp: DateTime.now(),
   );
+}
+
+/// Repairs orphaned tool calls in a request payload: every [ToolCall] in an
+/// assistant message must be answered by a [ToolResultMessage], or providers
+/// hard-reject the whole context (OpenAI 400: "an assistant message with
+/// 'tool_calls' must be followed by tool messages..."). Aborted runs,
+/// restored sessions and compaction cuts can all leave calls without
+/// results. Rather than dropping them (which erases what the run was doing),
+/// a synthetic interrupted result is injected right after the assistant
+/// message. The transcript itself is never modified — the repair applies to
+/// the outbound request only. Returns [messages] untouched (same instance)
+/// when nothing is missing.
+List<Message> repairOrphanedToolCalls(List<Message> messages) {
+  final answered = <String>{
+    for (final message in messages)
+      if (message is ToolResultMessage) message.toolCallId,
+  };
+  List<Message>? repaired;
+  for (var i = 0; i < messages.length; i++) {
+    final message = messages[i];
+    repaired?.add(message);
+    if (message is! AssistantMessage) continue;
+    final missing = message.content.whereType<ToolCall>().where(
+      (call) => !answered.contains(call.id),
+    );
+    for (final call in missing) {
+      (repaired ??= [...messages.sublist(0, i + 1)]).add(
+        ToolResultMessage(
+          toolCallId: call.id,
+          toolName: call.name,
+          content: [
+            TextContent(
+              text:
+                  'Tool call "${call.name}" did not produce a result: the '
+                  'run was interrupted before the tool finished. Re-issue '
+                  'the tool call if it is still needed.',
+            ),
+          ],
+          isError: true,
+          timestamp: DateTime.now(),
+        ),
+      );
+    }
+  }
+  return repaired ?? messages;
 }
 
 /// Fails all tool calls from an assistant message that was truncated by the

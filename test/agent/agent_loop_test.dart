@@ -716,4 +716,100 @@ void main() {
       expect(messages.single, isA<AssistantMessage>());
     });
   });
+
+  group('repairOrphanedToolCalls', () {
+    ToolResultMessage result(String id, String name) => ToolResultMessage(
+      toolCallId: id,
+      toolName: name,
+      content: [TextContent(text: 'ok')],
+      isError: false,
+      timestamp: DateTime.utc(2026),
+    );
+
+    test('returns the same instance when every call is answered', () {
+      final messages = <Message>[
+        UserMessage.text('hi'),
+        _assistant(content: [_call('c1', 'bash')]),
+        result('c1', 'bash'),
+      ];
+      expect(identical(repairOrphanedToolCalls(messages), messages), isTrue);
+    });
+
+    test('returns the same instance when there are no tool calls', () {
+      final messages = <Message>[
+        UserMessage.text('hi'),
+        _assistant(content: [TextContent(text: 'hello')]),
+      ];
+      expect(identical(repairOrphanedToolCalls(messages), messages), isTrue);
+    });
+
+    test('injects an interrupted result right after the assistant message', () {
+      final orphan = _assistant(content: [_call('c1', 'bash')]);
+      final messages = <Message>[UserMessage.text('hi'), orphan];
+      final repaired = repairOrphanedToolCalls(messages);
+
+      expect(repaired, hasLength(3));
+      expect(identical(repaired[0], messages[0]), isTrue);
+      expect(identical(repaired[1], orphan), isTrue);
+      final injected = repaired[2];
+      expect(
+        injected,
+        isA<ToolResultMessage>()
+            .having((m) => m.toolCallId, 'toolCallId', 'c1')
+            .having((m) => m.toolName, 'toolName', 'bash')
+            .having((m) => m.isError, 'isError', isTrue),
+      );
+      // The input transcript is never modified.
+      expect(messages, hasLength(2));
+    });
+
+    test('injects only the missing results', () {
+      final messages = <Message>[
+        _assistant(content: [_call('c1', 'bash'), _call('c2', 'read')]),
+        result('c2', 'read'),
+      ];
+      final repaired = repairOrphanedToolCalls(messages);
+      expect(repaired, hasLength(3));
+      expect(repaired[1], isA<ToolResultMessage>());
+      expect((repaired[1] as ToolResultMessage).toolCallId, 'c1');
+      expect(identical(repaired[2], messages[1]), isTrue);
+    });
+
+    test('treats a result later in the transcript as answered', () {
+      // A damaged transcript with the result out of place is left alone —
+      // the repair only fills genuinely missing answers (a duplicate tool
+      // message for the same id is a provider error of its own).
+      final messages = <Message>[
+        _assistant(content: [_call('c1', 'bash')]),
+        UserMessage.text('meanwhile'),
+        result('c1', 'bash'),
+      ];
+      expect(identical(repairOrphanedToolCalls(messages), messages), isTrue);
+    });
+
+    test('the loop repairs orphans in the request payload only', () async {
+      final orphan = _assistant(content: [_call('c1', 'bash')]);
+      final contextMessages = <Message>[UserMessage.text('earlier'), orphan];
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      await agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: Context(messages: contextMessages),
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      ).result;
+
+      final sent = fake.contexts.single.messages;
+      final orphanIndex = sent.indexOf(orphan);
+      expect(orphanIndex, isNonNegative);
+      expect(
+        sent[orphanIndex + 1],
+        isA<ToolResultMessage>()
+            .having((m) => m.toolCallId, 'toolCallId', 'c1')
+            .having((m) => m.isError, 'isError', isTrue),
+      );
+      // The caller's transcript keeps the orphan (payload-only repair).
+      expect(contextMessages.whereType<ToolResultMessage>(), isEmpty);
+    });
+  });
 }
