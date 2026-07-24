@@ -539,4 +539,14 @@
 - feat(example): follow-tail auto-scroll + collapse long thinking blocks
 - fix(example): work bar for grid-opened apps; prove permission persistence
 
+## 0.1.69
+
+- fix(example): unblind hosted models — vision detection + settings checkbox
+- feat(example): localize the UI (en/ru) with a hardcoded-string guard test
+- perf(cli): coalesce streamed output deltas to keep typing responsive
+- fix(cli): keep the ctx gauge at the last real usage after a failed run
+- fix(example): bump js_widget_runtime to ^0.4.3 — renderer no longer crashes on array borderRadius
+- perf(cli): memoize the markdown wrap pass so scrolling stays O(1)
+- fix(cli): re-attach follow on submit so the sticky echo pins again
+
 ## Unreleased
