@@ -115,6 +115,32 @@ else
   echo "⚠️  jscpd not found, skipping duplication check (npm install -g jscpd)"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 6. EXAMPLE APP: flutter test (incl. golden suite) + golden gate
+# ═══════════════════════════════════════════════════════════════════════════
+if command -v flutter >/dev/null 2>&1; then
+  echo "🧪 Running flutter_app tests (incl. golden tests)..."
+  if ! (cd flutter_app && flutter test); then
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════════════════╗"
+    echo "║  ❌ QUALITY GATE FAILED — FLUTTER APP TESTS                               ║"
+    echo "╚═══════════════════════════════════════════════════════════════════════════╝"
+    echo "   Fix the failing flutter_app tests, then retry."
+    echo "   UI change? Regenerate goldens:"
+    echo "   cd flutter_app && flutter test test/golden --update-goldens"
+    echo "   — and review every changed PNG before committing."
+    exit 1
+  fi
+  echo "🔍 Checking golden coverage..."
+  if python3 scripts/check_goldens.py --quick; then
+    echo "✅ Golden gate OK"
+  else
+    exit 1
+  fi
+else
+  echo "⚠️  flutter not found, skipping flutter_app tests + golden gate"
+fi
+
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════════════════╗"
 echo "║  ✅ ALL QUALITY GATES PASSED — COMMIT APPROVED                            ║"

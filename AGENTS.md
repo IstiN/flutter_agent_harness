@@ -317,6 +317,20 @@ Conventions for AI agents and contributors working in this repository.
   literals), en/ru key drift, placeholder mismatches, and `l10n.*` keys
   missing from the arb — opt out per line with `// l10n:ignore` or per file
   with `// l10n:ignore-file` (agent-facing/log/prompt strings stay literal).
+- `flutter_app/test/golden/` — golden (screenshot) tests: EVERY widget file
+  in `flutter_app/lib/` must have coverage here (one `<area>_golden_test.dart`
+  per UI area, snapshots in `test/golden/goldens/*.png`). Pump through
+  `golden_test_helper.dart` (`pumpGolden` — real theme + l10n delegates at a
+  fixed surface, `expectGolden`) so snapshots stay host-deterministic
+  (flutter_test font, fixed data/timestamps, no network/engines).
+  `golden_guard_test.dart` hard-fails when a lib widget file is unmapped,
+  a golden test loses its assertions, or a referenced PNG is missing.
+  After an intentional UI change: `flutter test test/golden
+  --update-goldens`, then REVIEW every changed PNG before committing —
+  `flutter test` compares pixel-by-pixel afterwards.
+  `scripts/check_goldens.py` is the pipeline gate (`--quick` = existence
+  only) and runs in `scripts/pre-commit` together with the full
+  `flutter_app` suite.
 - `site/` — static GitHub Pages landing (hand-rolled HTML/CSS/JS, no build
   step). `.github/workflows/pages.yml` builds the Flutter web demo into
   `app/` inside the Pages artifact (never committed) and deploys on pushes
@@ -417,9 +431,12 @@ Conventions for AI agents and contributors working in this repository.
 
 - `dart analyze` and `dart format --set-exit-if-changed .` clean.
 - `dart test` green (integration-tagged tests excluded; they run in CI).
+- Example app: `cd flutter_app && flutter test` (includes the golden suite
+  in `flutter_app/test/golden/` — see the golden entry above; regenerate
+  with `--update-goldens` and review PNGs) + `scripts/check_goldens.py
+  --quick`.
 - Line coverage of `lib/` ≥ 80%; jscpd duplication < 1%.
 - Max 2800 lines per `.dart` file (`*.g.dart` exempt).
-- Example app: `cd flutter_app && flutter test`.
 
 ## Commits and releases
 
