@@ -1619,7 +1619,11 @@ class AgentCli {
           'in the $label; fix or unset the env var so the stored key '
           'applies (/key shows both sources)';
     }
-    return ' — the key came from $active; verify it is valid for '
+    final fromStore = stored != null && resolved == stored;
+    final source = fromStore
+        ? 'the ${config.secureKeys?.label ?? 'secure store'} ($active)'
+        : 'the environment ($active)';
+    return ' — the key came from $source; verify it is valid for '
         '${_agent.state.model.baseUrl} or replace it with '
         '/key set $active <value>';
   }

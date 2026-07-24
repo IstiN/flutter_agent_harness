@@ -1759,7 +1759,48 @@ void main() {
     io.sendLine('/exit');
     await run;
 
-    expect(io.out.toString(), contains('the key came from OPENAI_API_KEY'));
+    expect(
+      io.out.toString(),
+      contains('the key came from the environment (OPENAI_API_KEY)'),
+    );
+  });
+
+  test('401 with a store-only key names the store', () async {
+    final cache = SecureKeyCache(_FakeSecureKeyStore());
+    await cache.probe();
+    await cache.save('OPENAI_API_KEY', 'store-key');
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(
+            stopReason: StopReason.error,
+            errorMessage:
+                '401: The API Key appears to be invalid or may '
+                'have expired.',
+          ),
+        ),
+      ],
+    ]);
+    final cli = cliFor(
+      fake.call,
+      providerKind: 'openai',
+      envVarIsSet: (name) => name == 'OPENAI_API_KEY',
+      envVarValue: (name) => name == 'OPENAI_API_KEY' ? cache.read(name) : null,
+      secureKeys: cache,
+    );
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    expect(
+      io.out.toString(),
+      contains('the key came from the fake store (OPENAI_API_KEY)'),
+    );
   });
 
   test('non-auth errors get no key hint', () async {
