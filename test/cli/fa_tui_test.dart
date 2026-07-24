@@ -213,20 +213,28 @@ void main() {
     expect(lines.join('\n'), isNot(contains('fa> hello')));
   });
 
-  test('spinner ticks keep rewriting the last row so the cursor stays put', () {
-    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
-    final frames = <String>{};
-    for (var i = 0; i < 3; i++) {
-      frames.add(model.view().content.split('\n').last);
-      model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
-    }
-    frames.add(model.view().content.split('\n').last);
-    // The diff renderer only rewrites changed rows; the invisible suffix
-    // must make the last row differ on every tick or the physical cursor
-    // stays parked on the Working… row.
-    expect(frames.length, greaterThan(2));
-  });
+  test(
+    'spinner ticks cycle the Working… frame while the cursor stays hidden',
+    () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+      final spinnerRows = <String>{};
+      for (var i = 0; i < 3; i++) {
+        spinnerRows.add(
+          model
+              .view()
+              .content
+              .split('\n')
+              .firstWhere((line) => line.contains('Working')),
+        );
+        model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
+      }
+      // The spinner animates; the trailing cursor line is the hide escape —
+      // stable across ticks (the old re-homing suffix is gone on purpose).
+      expect(spinnerRows.length, greaterThan(1));
+      expect(model.view().content.split('\n').last, contains('\x1b[?25l'));
+    },
+  );
 
   test('escape aborts the run via onInterrupt without quitting', () {
     var interrupted = 0;
@@ -396,7 +404,7 @@ void main() {
                 )
                 .$1
             as FaTuiModel; // opens the menu
-    final ansi = RegExp(r'\x1b\[[0-9;]*[A-Za-z]');
+    final ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]');
     for (final line in model.view().content.split('\n')) {
       expect(
         line.replaceAll(ansi, '').length,
@@ -689,6 +697,26 @@ void main() {
 
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
       expect(model.view().content, contains('%'));
+    });
+
+    test('the physical cursor hides while busy and homes when idle', () {
+      var model = filledModel();
+      final position = RegExp(r'\x1b\[\d+;\d+H$');
+      expect(
+        model.view().content,
+        contains('\x1b[?25h'),
+        reason: 'idle: cursor shown',
+      );
+
+      model = send(model, BusyMsg(true));
+      final busyContent = model.view().content;
+      expect(busyContent, contains('\x1b[?25l'));
+      expect(busyContent, isNot(contains('\x1b[?25h')));
+
+      model = send(model, BusyMsg(false));
+      final idleContent = model.view().content;
+      expect(idleContent, contains('\x1b[?25h'));
+      expect(position.hasMatch(idleContent), isTrue);
     });
 
     test(

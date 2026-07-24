@@ -1169,12 +1169,16 @@ final class FaTuiModel extends TeaModel {
     final inputStartRow = lines.length - 2 - inputLines.length;
     final cursorRow = inputStartRow + cursorInputLine;
     final cursorX = cursorScreenCol;
-    // The renderer diffs per line and emits the trailing cursor escape only
-    // when the last line changes. While the spinner ticks (no other change)
-    // the physical cursor would stay parked on the Working… row, so the last
-    // line gets an invisible, frame-varying SGR suffix to force its rewrite.
-    final idleSuffix = busy ? '\x1b[0m' * (spinnerFrame % 4) : '';
-    final cursorLine = '$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';
+    // Cursor management: while a run streams, HIDE the physical cursor —
+    // the renderer's cell diff re-homes it only when the last frame line
+    // changes (a spinner tick), so between ticks it was left sitting inside
+    // the streamed text (the visible mid-text jump). When idle, show it and
+    // home it into the input zone; the frame-varying SGR suffix keeps the
+    // spinner-tick rewrite working.
+    final idleSuffix = busy ? '' : '\x1b[0m' * (spinnerFrame % 4);
+    final cursorLine = busy
+        ? '\x1b[?25l'
+        : '\x1b[?25h$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';
     return View(
       content: b.toString() + cursorLine,
       cursor: Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
