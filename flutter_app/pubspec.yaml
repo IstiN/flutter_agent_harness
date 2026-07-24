@@ -25,7 +25,7 @@ dependencies:
 
   # JS apps platform: runs JavaScript widgets and renders them as native
   # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
-  js_widget_runtime: ^0.4.0
+  js_widget_runtime: ^0.4.3
 
   # SVG app icons (inline markup or apps/<id>/*.svg files).
   flutter_svg: ^2.3.0
