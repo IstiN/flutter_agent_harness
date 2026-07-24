@@ -9,6 +9,8 @@ import 'package:fa/env_factory.dart';
 import 'package:fa/flutter_session_manager.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/last_connection.dart';
+import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/provider_registry.dart';
 import 'package:fa/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
@@ -112,6 +114,8 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Fa',
       theme: buildFahTheme(),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: analytics != null
           ? [FirebaseAnalyticsObserver(analytics: analytics!)]
           : const <NavigatorObserver>[],
@@ -188,7 +192,7 @@ class SetupScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Connect to fah')),
+      appBar: AppBar(title: Text(context.l10n.setupAppBarTitle)),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -159,24 +160,29 @@ class _FilePreviewViewState extends State<FilePreviewView> {
       if (!mounted) return;
       final info = infoResult.valueOrNull;
       if (info == null) {
-        _showError(infoResult.errorOrNull?.message ?? 'Cannot stat file');
+        _showError(
+          infoResult.errorOrNull?.message ?? context.l10n.filePreviewCannotStat,
+        );
         return;
       }
       _size = info.size;
       if (info.size > kPreviewReadCapBytes) {
-        _showInfo('File too large to preview');
+        _showInfo(context.l10n.filePreviewTooLarge);
         return;
       }
       final bytesResult = await widget.env.readBinaryFile(widget.path);
       if (!mounted) return;
       final bytes = bytesResult.valueOrNull;
       if (bytes == null) {
-        _showError(bytesResult.errorOrNull?.message ?? 'Cannot read file');
+        _showError(
+          bytesResult.errorOrNull?.message ??
+              context.l10n.filePreviewCannotRead,
+        );
         return;
       }
       if (_kImageExtensions.contains(fileExtension(widget.name))) {
         if (!_sniffsAsImage(bytes)) {
-          _showInfo('No preview available');
+          _showInfo(context.l10n.filePreviewNoPreview);
         } else {
           setState(() {
             _imageBytes = bytes;
@@ -186,7 +192,7 @@ class _FilePreviewViewState extends State<FilePreviewView> {
         return;
       }
       if (_looksBinary(bytes)) {
-        _showInfo('No preview available');
+        _showInfo(context.l10n.filePreviewNoPreview);
         return;
       }
       var text = utf8.decode(bytes, allowMalformed: true);
@@ -227,7 +233,7 @@ class _FilePreviewViewState extends State<FilePreviewView> {
       _PreviewState.error => _CenteredMessage(
         icon: Icons.error_outline,
         iconColor: theme.colorScheme.error,
-        title: 'Could not load file',
+        title: context.l10n.filePreviewLoadError,
         detail: _message,
       ),
       _PreviewState.info => _CenteredMessage(
@@ -239,11 +245,10 @@ class _FilePreviewViewState extends State<FilePreviewView> {
         child: Center(
           child: Image.memory(
             _imageBytes!,
-            errorBuilder: (context, error, stackTrace) =>
-                const _CenteredMessage(
-                  icon: Icons.broken_image_outlined,
-                  title: 'Could not decode image',
-                ),
+            errorBuilder: (context, error, stackTrace) => _CenteredMessage(
+              icon: Icons.broken_image_outlined,
+              title: context.l10n.filePreviewDecodeError,
+            ),
           ),
         ),
       ),
@@ -263,14 +268,14 @@ class _FilePreviewViewState extends State<FilePreviewView> {
             child: Align(
               alignment: Alignment.centerRight,
               child: SegmentedButton<_TextViewMode>(
-                segments: const [
+                segments: [
                   ButtonSegment(
                     value: _TextViewMode.preview,
-                    label: Text('Preview'),
+                    label: Text(context.l10n.filePreviewTabPreview),
                   ),
                   ButtonSegment(
                     value: _TextViewMode.source,
-                    label: Text('Source'),
+                    label: Text(context.l10n.filePreviewTabSource),
                   ),
                 ],
                 selected: {_viewMode},
@@ -284,7 +289,9 @@ class _FilePreviewViewState extends State<FilePreviewView> {
             color: theme.colorScheme.surfaceContainerHighest,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Text(
-              'Showing the first ${formatFileSize(kTextPreviewCapChars)} — truncated',
+              context.l10n.filePreviewTruncated(
+                formatFileSize(kTextPreviewCapChars),
+              ),
               style: theme.textTheme.labelSmall,
             ),
           ),

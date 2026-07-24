@@ -14,6 +14,8 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:fa/l10n/l10n_ext.dart';
+
 import 'agent_service.dart';
 import 'app_theme.dart';
 import 'approval_ui.dart';
@@ -446,7 +448,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _stagePending(String name, Uint8List bytes) async {
     final clean = sanitizeUploadName(name).split('/').last;
     if (clean.isEmpty) {
-      _showSnack('Could not attach "$name": no usable file name.');
+      _showSnack(context.l10n.chatAttachNoName(name));
       return;
     }
     try {
@@ -464,7 +466,9 @@ class _ChatScreenState extends State<ChatScreen> {
         ));
       });
     } on Object catch (e) {
-      if (mounted) _showSnack('Could not attach $clean: $e');
+      if (mounted) {
+        _showSnack(context.l10n.chatAttachError(e.toString(), clean));
+      }
     }
   }
 
@@ -494,9 +498,9 @@ class _ChatScreenState extends State<ChatScreen> {
     await Clipboard.setData(ClipboardData(text: buffer.toString()));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Session copied to clipboard'),
-          duration: Duration(seconds: 2),
+        SnackBar(
+          content: Text(context.l10n.chatCopiedToClipboard),
+          duration: const Duration(seconds: 2),
         ),
       );
     }
@@ -550,7 +554,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() => _pendingAttachments.addAll(pending));
         _textController.text = trimmed;
-        _showSnack('Could not send: $e');
+        _showSnack(context.l10n.chatSendError(e.toString()));
       }
     }
   }
@@ -565,12 +569,15 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       picked = await picker.pick();
     } on Object catch (e) {
-      if (mounted) _showSnack('Upload failed: $e');
+      if (mounted) _showSnack(context.l10n.chatUploadFailed(e.toString()));
       return;
     }
     if (picked.isEmpty || !mounted) return;
 
-    final sizeError = uploadBatchSizeError(picked);
+    final sizeError = uploadBatchSizeError(
+      picked,
+      message: (total, max) => context.l10n.uploadTooLarge(max, total),
+    );
     if (sizeError != null) {
       _showSnack(sizeError);
       return;
@@ -598,7 +605,7 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library),
-              title: const Text('Gallery'),
+              title: Text(context.l10n.chatGallery),
               onTap: () {
                 Navigator.of(context).pop();
                 _pickImage(ImageSource.gallery);
@@ -606,7 +613,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.camera_alt),
-              title: const Text('Camera'),
+              title: Text(context.l10n.chatCamera),
               onTap: () {
                 Navigator.of(context).pop();
                 _pickImage(ImageSource.camera);
@@ -615,7 +622,7 @@ class _ChatScreenState extends State<ChatScreen> {
             if (_uploadPicker != null)
               ListTile(
                 leading: const Icon(Icons.upload_file),
-                title: const Text('Attach file'),
+                title: Text(context.l10n.chatAttachFile),
                 onTap: () {
                   Navigator.of(context).pop();
                   _attachFiles();
@@ -880,7 +887,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
           IconButton(
             icon: const Icon(Icons.close, size: 18),
-            tooltip: 'Remove attachment',
+            tooltip: context.l10n.chatRemoveAttachment,
             onPressed: () => _removePendingAttachment(index),
           ),
         ],
@@ -928,7 +935,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'fah is typing...',
+                      context.l10n.chatTyping,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: FahPalette.dim,
                       ),
@@ -984,27 +991,27 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.add),
-                    tooltip: 'Attach',
+                    tooltip: context.l10n.chatAttachTooltip,
                     onPressed: _showAttachmentSheet,
                   ),
                   Expanded(
                     child: TextField(
                       controller: _textController,
-                      decoration: const InputDecoration(
-                        hintText: 'Type a message',
-                        contentPadding: EdgeInsets.symmetric(
+                      decoration: InputDecoration(
+                        hintText: context.l10n.chatInputHint,
+                        contentPadding: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 12,
                         ),
-                        border: OutlineInputBorder(
+                        border: const OutlineInputBorder(
                           borderRadius: BorderRadius.all(Radius.circular(24)),
                           borderSide: BorderSide.none,
                         ),
-                        enabledBorder: OutlineInputBorder(
+                        enabledBorder: const OutlineInputBorder(
                           borderRadius: BorderRadius.all(Radius.circular(24)),
                           borderSide: BorderSide.none,
                         ),
-                        focusedBorder: OutlineInputBorder(
+                        focusedBorder: const OutlineInputBorder(
                           borderRadius: BorderRadius.all(Radius.circular(24)),
                           borderSide: BorderSide.none,
                         ),
@@ -1025,7 +1032,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: IconButton(
                       icon: const Icon(Icons.send, size: 20),
                       color: FahPalette.onAccent,
-                      tooltip: 'Send',
+                      tooltip: context.l10n.chatSendTooltip,
                       onPressed: () => _send(_textController.text),
                     ),
                   ),
@@ -1094,33 +1101,33 @@ class _ChatScreenState extends State<ChatScreen> {
         leading: Builder(
           builder: (context) => IconButton(
             icon: const Icon(Icons.menu),
-            tooltip: 'Sessions & model',
+            tooltip: context.l10n.chatSessionsTooltip,
             onPressed: () => _openSidebar(context),
           ),
         ),
-        title: const Text('Fa'),
+        title: Text(context.l10n.appTitle),
         actions: [
           if (_isStreaming)
             IconButton(
               icon: const Icon(Icons.stop),
-              tooltip: 'Abort',
+              tooltip: context.l10n.chatAbortTooltip,
               onPressed: widget.service.abort,
             ),
           Builder(
             builder: (context) => IconButton(
               icon: const Icon(Icons.folder_outlined),
-              tooltip: 'Files',
+              tooltip: context.l10n.chatFilesTooltip,
               onPressed: () => _openFiles(context),
             ),
           ),
           IconButton(
             icon: const Icon(Icons.copy_outlined),
-            tooltip: 'Copy session',
+            tooltip: context.l10n.chatCopySessionTooltip,
             onPressed: _copySession,
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Connection settings',
+            tooltip: context.l10n.chatSettingsTooltip,
             onPressed: _openSettings,
           ),
         ],
@@ -1240,7 +1247,9 @@ class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
               ),
               const SizedBox(width: 4),
               Text(
-                _expanded ? 'Свернуть' : 'Показать все (${lines.length})',
+                _expanded
+                    ? context.l10n.chatCollapse
+                    : context.l10n.chatShowAll(lines.length.toString()),
                 style: FahPalette.mono(color: FahPalette.indigo, fontSize: 12),
               ),
             ],

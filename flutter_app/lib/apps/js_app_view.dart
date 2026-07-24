@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -223,12 +224,12 @@ class _JsAppViewState extends State<JsAppView> {
         actions: [
           IconButton(
             icon: const Icon(Icons.shield_outlined),
-            tooltip: 'App permissions',
+            tooltip: context.l10n.appsPermissionsTooltip,
             onPressed: _openPermissions,
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Reload app',
+            tooltip: context.l10n.appsReloadTooltip,
             onPressed: _restart,
           ),
         ],
@@ -250,7 +251,7 @@ class _JsAppViewState extends State<JsAppView> {
               bottom: 16,
               child: FloatingActionButton.small(
                 heroTag: 'fa-${widget.app.id}',
-                tooltip: 'Ask Fa about this app',
+                tooltip: context.l10n.appsAskFaTooltip,
                 onPressed: _openFaSheet,
                 child: const FaMark(size: 18),
               ),
@@ -279,7 +280,7 @@ class _JsAppViewState extends State<JsAppView> {
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'Failed to start ${widget.app.name}:\n$error',
+            context.l10n.appsStartError('$error', widget.app.name),
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.error,
@@ -343,12 +344,12 @@ class _FaMessageSheetState extends State<_FaMessageSheet> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Ask Fa about ${widget.app.name}',
+            context.l10n.appsAskFaAbout(widget.app.name),
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 4),
           Text(
-            'Fa gets your message, the app state and a screenshot.',
+            context.l10n.appsAskFaSubtitle,
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -357,16 +358,16 @@ class _FaMessageSheetState extends State<_FaMessageSheet> {
             autofocus: true,
             minLines: 1,
             maxLines: 4,
-            decoration: const InputDecoration(
-              hintText: 'e.g. make the buttons bigger and purple',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              hintText: context.l10n.appsAskFaHint,
+              border: const OutlineInputBorder(),
             ),
             onSubmitted: (value) => Navigator.of(context).pop(value),
           ),
           const SizedBox(height: 12),
           FilledButton.icon(
             icon: const Icon(Icons.send),
-            label: const Text('Send to Fa'),
+            label: Text(context.l10n.appsSendToFa),
             onPressed: () => Navigator.of(context).pop(_controller.text),
           ),
         ],
@@ -418,7 +419,7 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
           const SizedBox(width: 8),
           Flexible(
             child: Text(
-              '${widget.app.name} permissions',
+              context.l10n.appsPermissionsTitle(widget.app.name),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -428,32 +429,32 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _toggle(
-            'Network',
-            'jsr.fetchJson — let the app call HTTP APIs',
+            context.l10n.appsPermissionNetwork,
+            context.l10n.appsPermissionNetworkDesc,
             _current.network,
             (v) => _set(_current.copyWith(network: v)),
           ),
           _toggle(
-            'LLM',
-            'jsr.fa.llm — let the app ask the connected model',
+            context.l10n.appsPermissionLlm,
+            context.l10n.appsPermissionLlmDesc,
             _current.llm,
             (v) => _set(_current.copyWith(llm: v)),
           ),
           _toggle(
-            'HomeKit',
-            'jsr.fa.homekit — smart home devices (coming soon)',
+            context.l10n.appsPermissionHomekit,
+            context.l10n.appsPermissionHomekitDesc,
             _current.homekit,
             (v) => _set(_current.copyWith(homekit: v)),
           ),
           _toggle(
-            'Health',
-            'jsr.fa.health — health data (coming soon)',
+            context.l10n.appsPermissionHealth,
+            context.l10n.appsPermissionHealthDesc,
             _current.health,
             (v) => _set(_current.copyWith(health: v)),
           ),
           _toggle(
-            'Contacts',
-            'jsr.fa.contacts — address book (coming soon)',
+            context.l10n.appsPermissionContacts,
+            context.l10n.appsPermissionContactsDesc,
             _current.contacts,
             (v) => _set(_current.copyWith(contacts: v)),
           ),
@@ -462,7 +463,7 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(_changed),
-          child: const Text('Done'),
+          child: Text(context.l10n.appsPermissionsDone),
         ),
       ],
     );

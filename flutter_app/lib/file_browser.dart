@@ -1,3 +1,4 @@
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -115,7 +116,7 @@ class _FileBrowserState extends State<FileBrowser> {
     if (!ok) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not get access to that folder.')),
+          SnackBar(content: Text(context.l10n.filesFolderAccessDenied)),
         );
       }
       return;
@@ -213,7 +214,8 @@ class _FileBrowserState extends State<FileBrowser> {
         setState(() {
           _entries = null;
           _loading = false;
-          _error = result.errorOrNull?.message ?? 'Could not list folder';
+          _error =
+              result.errorOrNull?.message ?? context.l10n.filesListFolderError;
         });
         return;
       }
@@ -301,7 +303,7 @@ class _FileBrowserState extends State<FileBrowser> {
     try {
       picked = await picker.pick();
     } on Object catch (e) {
-      if (mounted) _showSnack('Upload failed: $e');
+      if (mounted) _showSnack(context.l10n.filesUploadFailed(e.toString()));
       return;
     }
     if (picked.isEmpty || !mounted) return;
@@ -309,6 +311,7 @@ class _FileBrowserState extends State<FileBrowser> {
     final sizeError = uploadBatchSizeError(
       picked,
       maxBytes: widget.maxUploadBatchBytes,
+      message: (total, max) => context.l10n.uploadTooLarge(max, total),
     );
     if (sizeError != null) {
       _showSnack(sizeError);
@@ -317,10 +320,11 @@ class _FileBrowserState extends State<FileBrowser> {
 
     var written = 0;
     final failed = <String>[];
+    final emptyName = context.l10n.filesEmptyFileName;
     for (final file in picked) {
       final name = sanitizeUploadName(file.name);
       if (name.isEmpty) {
-        failed.add(file.name.isEmpty ? '(empty file name)' : file.name);
+        failed.add(file.name.isEmpty ? emptyName : file.name);
         continue;
       }
       final result = await widget.env.writeBinaryFile(
@@ -335,11 +339,15 @@ class _FileBrowserState extends State<FileBrowser> {
     }
     if (!mounted) return;
     if (written > 0) await _load();
+    if (!mounted) return;
     // Failures stay visible: which files, not just how many.
-    _showSnack(
-      'Uploaded $written file${written == 1 ? '' : 's'}'
-      '${failed.isNotEmpty ? ', ${failed.length} failed: ${failed.join(', ')}' : ''}',
-    );
+    final failures = failed.isNotEmpty
+        ? context.l10n.filesUploadFailures(
+            failed.length.toString(),
+            failed.join(', '),
+          )
+        : '';
+    _showSnack(context.l10n.filesUploadSummary(failures, written));
   }
 
   IconData _iconFor(FileInfo info) {
@@ -371,17 +379,22 @@ class _FileBrowserState extends State<FileBrowser> {
         children: [
           Icon(Icons.folder_open_outlined, size: 20, color: theme.hintColor),
           const SizedBox(width: 8),
-          Expanded(child: Text('Files', style: theme.textTheme.titleMedium)),
+          Expanded(
+            child: Text(
+              context.l10n.filesPanelTitle,
+              style: theme.textTheme.titleMedium,
+            ),
+          ),
           if (_buildMountControl(context) case final control?) control,
           if (_picker != null)
             IconButton(
               icon: const Icon(Icons.upload_file),
-              tooltip: 'Upload files here',
+              tooltip: context.l10n.filesUploadTooltip,
               onPressed: _upload,
             ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh',
+            tooltip: context.l10n.filesRefreshTooltip,
             onPressed: _load,
           ),
         ],
@@ -403,9 +416,7 @@ class _FileBrowserState extends State<FileBrowser> {
           Icons.warning_amber_outlined,
           color: Theme.of(context).colorScheme.error,
         ),
-        tooltip:
-            'Previously used folder is unavailable: $unavailable — '
-            'tap to pick again',
+        tooltip: context.l10n.filesMountUnavailableTooltip(unavailable),
         onPressed: _pickProjectFolder,
       );
     }
@@ -418,7 +429,7 @@ class _FileBrowserState extends State<FileBrowser> {
           Text(name, style: Theme.of(context).textTheme.bodySmall),
           IconButton(
             icon: const Icon(Icons.eject_outlined),
-            tooltip: 'Unmount $mountedPath',
+            tooltip: context.l10n.filesUnmountTooltip(mountedPath),
             onPressed: _unmountProjectFolder,
           ),
         ],
@@ -429,7 +440,7 @@ class _FileBrowserState extends State<FileBrowser> {
     if (!canPick) return null;
     return IconButton(
       icon: const Icon(Icons.create_new_folder_outlined),
-      tooltip: 'Open project folder…',
+      tooltip: context.l10n.filesOpenProjectFolderTooltip,
       onPressed: _pickProjectFolder,
     );
   }
@@ -441,7 +452,7 @@ class _FileBrowserState extends State<FileBrowser> {
         children: [
           IconButton(
             icon: const Icon(Icons.arrow_upward, size: 18),
-            tooltip: 'Up',
+            tooltip: context.l10n.filesUpTooltip,
             onPressed: _segments.isEmpty ? null : _goUp,
           ),
           Expanded(
@@ -494,7 +505,7 @@ class _FileBrowserState extends State<FileBrowser> {
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back),
-                tooltip: 'Back to files',
+                tooltip: context.l10n.filesBackTooltip,
                 onPressed: () => setState(() => _preview = null),
               ),
               Expanded(
@@ -538,7 +549,10 @@ class _FileBrowserState extends State<FileBrowser> {
                 color: theme.colorScheme.error,
               ),
               const SizedBox(height: 12),
-              Text('Could not open folder', style: theme.textTheme.titleSmall),
+              Text(
+                context.l10n.filesOpenFolderError,
+                style: theme.textTheme.titleSmall,
+              ),
               const SizedBox(height: 4),
               Text(
                 error,
@@ -549,7 +563,7 @@ class _FileBrowserState extends State<FileBrowser> {
               TextButton.icon(
                 onPressed: _load,
                 icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Retry'),
+                label: Text(context.l10n.filesRetryButton),
               ),
             ],
           ),
@@ -565,7 +579,10 @@ class _FileBrowserState extends State<FileBrowser> {
           children: [
             Icon(Icons.folder_open_outlined, size: 40, color: theme.hintColor),
             const SizedBox(height: 12),
-            Text('Empty folder', style: theme.textTheme.bodySmall),
+            Text(
+              context.l10n.filesEmptyFolder,
+              style: theme.textTheme.bodySmall,
+            ),
           ],
         ),
       );

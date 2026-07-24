@@ -308,6 +308,15 @@ Conventions for AI agents and contributors working in this repository.
   All HTTP goes through an injectable `package:http` client; both tools
   register via `builtinTools(env, webSearch: WebSearchConfig(...))`.
 - `flutter_app/` — Flutter chat example (mobile/web sandbox).
+- `flutter_app/lib/l10n/` — UI localization (gen-l10n): `app_en.arb` +
+  `app_ru.arb` → generated `AppLocalizations` (never edit the generated
+  files; `l10n.yaml` config, `flutter gen-l10n` to regen). UI copy goes
+  through `context.l10n.<key>` (`l10n_ext.dart` extension); the locale
+  follows the system. `flutter_app/test/l10n_guard_test.dart` hard-fails on
+  hardcoded widget strings (`Text('…')`, `labelText`/`hintText`/`tooltip`
+  literals), en/ru key drift, placeholder mismatches, and `l10n.*` keys
+  missing from the arb — opt out per line with `// l10n:ignore` or per file
+  with `// l10n:ignore-file` (agent-facing/log/prompt strings stay literal).
 - `site/` — static GitHub Pages landing (hand-rolled HTML/CSS/JS, no build
   step). `.github/workflows/pages.yml` builds the Flutter web demo into
   `app/` inside the Pages artifact (never committed) and deploys on pushes

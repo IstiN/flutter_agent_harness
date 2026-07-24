@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa/l10n/l10n_ext.dart';
+
 import 'agent_service.dart';
 
 /// Renders the ask tool's questions as a modal bottom sheet — the
@@ -86,13 +88,18 @@ class _AskSheetState extends State<AskSheet> {
               children: [
                 Expanded(
                   child: Text(
-                    total > 1 ? 'Question ${_index + 1} of $total' : 'Question',
+                    total > 1
+                        ? context.l10n.askQuestionProgress(
+                            (_index + 1).toString(),
+                            total.toString(),
+                          )
+                        : context.l10n.askQuestionTitle,
                     style: theme.textTheme.labelLarge,
                   ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.close),
-                  tooltip: 'Cancel',
+                  tooltip: context.l10n.askCancel,
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
@@ -100,7 +107,7 @@ class _AskSheetState extends State<AskSheet> {
             Text(question.question, style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             if (question.options.isEmpty)
-              _otherField('Your answer')
+              _otherField(context.l10n.askYourAnswerLabel)
             else if (question.multiSelect) ...[
               for (var i = 0; i < question.options.length; i++)
                 CheckboxListTile(
@@ -115,7 +122,7 @@ class _AskSheetState extends State<AskSheet> {
                   title: _optionLabel(i),
                   subtitle: _optionDescription(i),
                 ),
-              _otherField('Other (type your own)'),
+              _otherField(context.l10n.askOtherLabel),
             ] else
               RadioGroup<int>(
                 groupValue: _draft.radioIndex,
@@ -131,10 +138,10 @@ class _AskSheetState extends State<AskSheet> {
                       ),
                     RadioListTile<int>(
                       value: _AskDraft.otherIndex,
-                      title: const Text('Other (type your own)'),
+                      title: Text(context.l10n.askOtherLabel),
                     ),
                     if (_draft.radioIndex == _AskDraft.otherIndex)
-                      _otherField('Your answer'),
+                      _otherField(context.l10n.askYourAnswerLabel),
                   ],
                 ),
               ),
@@ -144,19 +151,23 @@ class _AskSheetState extends State<AskSheet> {
               children: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(context.l10n.askCancel),
                 ),
                 if (_index > 0)
                   TextButton(
                     onPressed: () => setState(() => _index--),
-                    child: const Text('Back'),
+                    child: Text(context.l10n.askBack),
                   ),
                 const SizedBox(width: 8),
                 ListenableBuilder(
                   listenable: _draft.otherController,
                   builder: (context, _) => FilledButton(
                     onPressed: _draft.hasAnswer ? _advance : null,
-                    child: Text(_isLast ? 'Answer' : 'Next'),
+                    child: Text(
+                      _isLast
+                          ? context.l10n.askAnswerAction
+                          : context.l10n.askNext,
+                    ),
                   ),
                 ),
               ],
@@ -177,8 +188,8 @@ class _AskSheetState extends State<AskSheet> {
       children: [
         Flexible(child: Text(option.label)),
         const SizedBox(width: 8),
-        const Chip(
-          label: Text('Recommended'),
+        Chip(
+          label: Text(context.l10n.askRecommended),
           visualDensity: VisualDensity.compact,
           padding: EdgeInsets.zero,
         ),
