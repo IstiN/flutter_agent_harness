@@ -176,18 +176,18 @@ class AgentService extends ChangeNotifier {
   }
 
   /// Writes bundled agent skills (see `assets/skills/`) into the env's
-  /// project skill root so [discoverSkills] picks them up. Existing files
-  /// are never overwritten — the user (or the agent) may have customized
-  /// them. Best-effort: a missing asset or unwritable env must not block
-  /// session creation.
+  /// project skill root so [discoverSkills] picks them up. Files are
+  /// refreshed when the bundled content changed (the skills are ours, not
+  /// user data). Best-effort: a missing asset or unwritable env must not
+  /// block session creation.
   static Future<void> _seedBundledSkills(ExecutionEnv env) async {
     const bundled = {'js-apps': 'assets/skills/js-apps/SKILL.md'};
     for (final entry in bundled.entries) {
       try {
         final target = '.fah/skills/${entry.key}/SKILL.md';
-        final existing = await env.readTextFile(target);
-        if (existing.valueOrNull != null) continue;
         final body = await rootBundle.loadString(entry.value);
+        final existing = await env.readTextFile(target);
+        if (existing.valueOrNull == body) continue;
         await env.writeFile(target, body);
       } on Object {
         // skip this skill

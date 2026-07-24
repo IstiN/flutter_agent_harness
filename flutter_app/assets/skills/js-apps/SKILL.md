@@ -586,6 +586,94 @@ Common failures: UI not updating after an edit → syntax error (read the file b
 
 ---
 
+## Testing Your App (do this BEFORE showing it to the user)
+
+Always write a test for a non-trivial app and run it before handing over. Tests live in `test/apps/<id>_test.dart` in the app repo and run with `flutter test test/apps/`. Two proven recipes:
+
+### 1. Headless logic test (fast — no widgets)
+
+Boots the real JS engine against a `MemoryExecutionEnv`, drives events directly, and asserts on `exportedState` and the render tree. Use this for game logic, state machines, data transforms.
+
+```dart
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('my app logic', (tester) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile('apps/myapp/widget.js', myWidgetJsSource);
+    final engine = JsAppEngine(
+      app: JsAppInfo.fromManifest(
+        const {'id': 'myapp', 'name': 'My App'},
+        bundled: false,
+        fallbackId: 'myapp',
+      ),
+      env: env,
+      permissions: const AppPermissions(), // match the manifest
+    );
+    try {
+      // The JS backend needs the REAL event loop: run everything
+      // engine-related inside tester.runAsync. Fake-time pump() would
+      // starve the bridge (and dart:io reads hang outside runAsync).
+      await tester.runAsync(() async {
+        await engine.start();
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(engine.tree.value, isNotNull);
+        expect(engine.exportedState?['ready'], isTrue);
+
+        await engine.callEvent('increment');
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(engine.exportedState?['count'], 1);
+      });
+    } finally {
+      await tester.runAsync(engine.dispose);
+    }
+  });
+}
+```
+
+### 2. UI tap test (events through the real renderer)
+
+Renders the JS tree with `JsonWidgetRenderer` and taps actual widgets — catches dead-button and hit-test bugs.
+
+```dart
+await tester.pumpWidget(
+  MaterialApp(
+    home: ValueListenableBuilder<Map<String, dynamic>?>(
+      valueListenable: engine.tree,
+      builder: (context, tree, _) {
+        if (tree == null) return const SizedBox.shrink();
+        return JsonWidgetRenderer(
+          theme: JsonWidgetTheme.fromAccent(
+            Theme.of(context).colorScheme.primary,
+          ),
+          onEvent: (id, payload) => engine.callEvent(id, payload),
+        ).build(tree, context);
+      },
+    ),
+  ),
+);
+await tester.tap(find.text('7'));
+// Let the tap travel: microtask → engine → render → exportedState.
+await tester.runAsync(
+  () => Future<void>.delayed(const Duration(milliseconds: 300)),
+);
+expect(engine.exportedState?['expression'], '7');
+```
+
+Rules of thumb:
+- Boot the engine inside `tester.runAsync`; never read files with dart:io outside it.
+- Poll `engine.exportedState` with small real delays instead of assuming instant delivery.
+- Assert both the exported state AND the tree (`engine.tree.value`) — a render that never fires is a bug even when logic is right.
+- Reference implementations to copy: `test/apps/js_app_engine_test.dart` (recipe 1), `test/apps/js_app_tap_test.dart` (recipe 2), `test/apps/js_app_view_test.dart` (full render of the calculator demo).
+- Pure render-tree checks (no engine needed) can build a hand-written tree through `JsonWidgetRenderer` directly — handy for layout tweaks.
+
+---
+
 ## Demo Apps — Study References
 
 Real-world examples shipped in the `apps/` folder. Read their source before building something similar.
