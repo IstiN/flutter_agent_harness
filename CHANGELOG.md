@@ -507,4 +507,8 @@
 - feat(example): JS apps platform in the Fa app (js_widget_runtime)
 - docs: document the wasm_run symbol gate, strip-style pitfall, and new CI secrets/caches
 
+## 0.1.64
+
+- fix(ios,macos): keep -exported_symbol out of Debug link flags
+
 ## Unreleased
