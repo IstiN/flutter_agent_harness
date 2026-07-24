@@ -430,6 +430,32 @@ Conventions for AI agents and contributors working in this repository.
   network access behind the agent's tools goes through the `ExecutionEnv`
   abstraction.
 
+## Golden tests are MANDATORY for UI work
+
+Any change to `flutter_app/lib/` UI code (new widget, visual tweak, theme,
+layout, copy) is INCOMPLETE until its golden tests are done right. "Done
+right" means ALL of the following — never commit partial work:
+
+1. **Coverage first.** New widget file → golden tests in
+   `test/golden/<area>_golden_test.dart` + a map entry in
+   `golden_guard_test.dart` (it hard-fails otherwise). Changed visuals →
+   the affected snapshots regenerated.
+2. **Real fonts.** `setUpAll(ensureGoldenFonts)` in every golden file.
+   Snapshots with placeholder-box glyphs are garbage — delete and redo.
+3. **Full, beautiful frames.** Snapshots are marketing material: pump full
+   app frames (`goldenSizeDesktop` / `goldenSizePhone`) filled with
+   realistic content. A widget floating in a black void is a failed test
+   in spirit — compose the frame instead.
+4. **Determinism.** Fixed data and timestamps, fakes from the existing
+   unit tests, no network, no real engines, no infinite animations under
+   `pumpAndSettle`.
+5. **Eyes on the pixels.** After `--update-goldens`, OPEN every
+   changed/added PNG and actually look at it (no tofu, no overflow
+   stripes, no dead areas, buttons/icons legible) before committing.
+6. **Green gate.** `flutter test test/golden` passes; the pre-commit hook
+   runs the full suite + `scripts/check_goldens.py`, so broken or missing
+   goldens block the commit anyway.
+
 ## Prompts live outside Dart code
 
 - Every LLM prompt is a Markdown file under `prompts/**` (example app:
