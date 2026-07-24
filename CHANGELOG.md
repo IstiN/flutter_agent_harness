@@ -511,4 +511,12 @@
 
 - fix(ios,macos): keep -exported_symbol out of Debug link flags
 
+## 0.1.65
+
+- feat(example): teach the js-apps skill how to test apps before handover
+- fix(example): fit the on-device Gemma context instead of engine overflow
+- test(example): tap test — calculator key reaches the JS engine
+- fix(cli): never hang on a keychain system modal
+- fix(example): bundle demo app assets — nested asset dirs need explicit entries
+
 ## Unreleased
