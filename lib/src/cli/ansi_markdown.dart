@@ -55,6 +55,9 @@ final class AnsiMarkdown {
   static final _tableRowRe = RegExp(r'^\s*\|.*\|\s*$');
   static final _tableSeparatorCellRe = RegExp(r'^:?-+:?$');
   static final _ansiRe = RegExp(r'\x1b\[[0-9;]*m');
+  // Hoisted out of the per-line hot path: constructing a RegExp per
+  // formatted line showed up in scroll/stream rendering profiles.
+  static final _ruleRe = RegExp(r'^─+$');
 
   /// The SGR matcher shared with [wrapAnsiLine] and tests.
   static RegExp get ansiSgrPattern => _ansiRe;
@@ -96,7 +99,7 @@ final class AnsiMarkdown {
     // Full-width rules are stored baked at submit-time width; re-render them
     // at the current width so a resize never leaves ragged bars behind.
     final stripped = line.replaceAll(_ansiRe, '');
-    if (stripped.length > 2 && RegExp(r'^─+$').hasMatch(stripped)) {
+    if (stripped.length > 2 && _ruleRe.hasMatch(stripped)) {
       return '$_dim${'─' * width}$_reset';
     }
 
@@ -136,7 +139,9 @@ final class AnsiMarkdown {
       final body = bullet.group(3)!;
       // Task list items keep their checkbox (pi renders [x] / [ ]).
       final task = _taskRe.firstMatch(body);
-      final renderedMarker = marker.startsWith(RegExp(r'[-*+]'))
+      // One-char marker = a `-`*`+` bullet (numeric markers are `12.` —
+      // always longer), so no regex is needed on this per-line hot path.
+      final renderedMarker = marker.length == 1
           ? '$_teal•$_reset'
           : '$_teal$marker$_reset';
       if (task != null) {
@@ -245,6 +250,10 @@ final class AnsiMarkdown {
   static int _visibleLength(String text) => text.replaceAll(_ansiRe, '').length;
 }
 
+/// Tokenizer for [wrapAnsiLine] — hoisted: it runs per wrapped line, and
+/// building the RegExp there dominated the wrap cost on long histories.
+final _ansiTokenRe = RegExp(r'\x1b\[[0-9;]*m|.', unicode: true);
+
 /// Wraps one ANSI-styled line to [width] visible columns WITHOUT cutting
 /// inside SGR escape sequences — dart_tui's viewport wrap slices raw text
 /// and leaks escape tails (e.g. `212m`) as visible text. SGR state carries
@@ -257,7 +266,7 @@ List<String> wrapAnsiLine(String line, int width) {
   final rows = <String>[];
   var current = StringBuffer();
   var col = 0;
-  final tokens = RegExp(r'\x1b\[[0-9;]*m|.', unicode: true).allMatches(line);
+  final tokens = _ansiTokenRe.allMatches(line);
   for (final match in tokens) {
     final token = match.group(0)!;
     if (token.startsWith('\x1b')) {
