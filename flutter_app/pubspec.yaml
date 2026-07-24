@@ -105,7 +105,12 @@ flutter:
 
   assets:
     - .env
-    - assets/apps/
+    - assets/apps/animation-showcase/
+    - assets/apps/calculator/
+    - assets/apps/crypto/
+    - assets/apps/stocks/
+    - assets/apps/weather/
+    - assets/apps/yolo-hello/
     - assets/skills/js-apps/SKILL.md
     - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm
