@@ -27,6 +27,9 @@ dependencies:
   # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
   js_widget_runtime: ^0.4.0
 
+  # SVG app icons (inline markup or apps/<id>/*.svg files).
+  flutter_svg: ^2.3.0
+
   cupertino_icons: ^1.0.9
   flutter_chat_ui: ^2.11.1
   flutter_markdown: ^0.7.7+1

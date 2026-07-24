@@ -82,7 +82,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `name` | ✅ | Display name shown in UI |
 | `description` | ✅ | Short description |
 | `version` | ✅ | Semver string |
-| `icon` | ✅ | Emoji used in the app picker |
+| `icon` | ✅ | App-picker icon: an emoji, inline SVG markup (`"<svg …>"`), or an SVG filename inside the app folder (see below) |
 | `network` | ❌ | `true` to allow `jsr.fetchJson` (default: false) |
 | `allowedCommands` | ❌ | Array of shell commands allowed via `jsr.exec` (default: none) |
 | `llm` | ❌ | `true` to allow `jsr.fa.llm` (default: false) |
@@ -91,6 +91,16 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `contacts` | ❌ | `true` to allow `jsr.fa.contacts` (default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
+
+### App icons (emoji or SVG)
+
+The `icon` field accepts three forms:
+
+1. **Emoji** — `"icon": "🚀"` (simplest).
+2. **Inline SVG markup** — `"icon": "<svg xmlns=…>…</svg>"`.
+3. **SVG file in the app folder** — `"icon": "icon.svg"`, resolved as `apps/<id>/icon.svg`. Create the file with your write tool alongside the manifest. Prefer this for anything non-trivial; keep the SVG small, single-color friendly (`stroke`/`fill` with a hex color), `viewBox` 24×24.
+
+SVG icons render in the sidebar, the apps grid, the app bar and the permissions dialog. Inside the app UI itself, use the `svg` node (`{"type": "svg", "data": "<svg …>", "width": 24, "color": "#818cf8"}`) for inline vector graphics.
 
 ---
 

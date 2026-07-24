@@ -279,16 +279,34 @@ class AppsStore {
   Future<String> readWidgetSource(JsAppInfo app) async =>
       (await _env.readTextFile(app.widgetPath)).getOrThrow();
 
-  /// Copies bundled demo apps (see [seedDemoIds]) into `apps/` when they are
-  /// missing. Existing apps are never overwritten.
+  /// Copies bundled demo apps (see [seedDemoIds]) into `apps/`. Files are
+  /// refreshed when the bundled content changed (demo apps are samples, not
+  /// user data — custom apps should use their own id). A manifest whose
+  /// `icon` points at an `.svg` file gets that file copied alongside.
   Future<void> seedBundledApps([List<String>? demoIds]) async {
     for (final id in demoIds ?? seedDemoIds) {
-      final existing = await _env.readTextFile('apps/$id/manifest.json');
-      if (existing.valueOrNull != null) continue;
       final manifest = await _readAsset('$bundledAssetRoot/$id/manifest.json');
       final widget = await _readAsset('$bundledAssetRoot/$id/widget.js');
-      await _env.writeFile('apps/$id/manifest.json', manifest);
-      await _env.writeFile('apps/$id/widget.js', widget);
+      await _writeIfChanged('apps/$id/manifest.json', manifest);
+      await _writeIfChanged('apps/$id/widget.js', widget);
+      try {
+        final decoded = jsonDecode(manifest);
+        if (decoded is Map<String, Object?>) {
+          final icon = decoded['icon']?.toString() ?? '';
+          if (icon.toLowerCase().endsWith('.svg')) {
+            final svg = await _readAsset('$bundledAssetRoot/$id/$icon');
+            await _writeIfChanged('apps/$id/$icon', svg);
+          }
+        }
+      } on FormatException {
+        // Keep the app even if its manifest doesn't parse.
+      }
     }
+  }
+
+  Future<void> _writeIfChanged(String path, String content) async {
+    final existing = await _env.readTextFile(path);
+    if (existing.valueOrNull == content) return;
+    await _env.writeFile(path, content);
   }
 }

@@ -6,6 +6,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'agent_service.dart';
 import 'app_theme.dart';
 import 'apps/apps_grid.dart';
+import 'apps/app_icon.dart';
 import 'apps/apps_store.dart';
 import 'apps/js_app_view.dart';
 import 'flutter_session_manager.dart';
@@ -381,7 +382,11 @@ class _SessionSidebarState extends State<SessionSidebar> {
           ListTile(
             dense: true,
             visualDensity: VisualDensity.compact,
-            leading: Text(app.icon, style: const TextStyle(fontSize: 20)),
+            leading: AppIcon(
+              app: app,
+              env: _manager.active!.service.env,
+              size: 20,
+            ),
             title: Text(app.name, overflow: TextOverflow.ellipsis),
             onTap: () => _openApp(app),
           ),
