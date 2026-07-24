@@ -617,6 +617,43 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// Renders attached-image messages (user uploads and the in-app Fa
+  /// screenshot). Without an imageMessageBuilder flutter_chat_ui asserts and
+  /// paints a red error box.
+  Widget _buildImageMessage(
+    BuildContext context,
+    ImageMessage message,
+    int index, {
+    required bool isSentByMe,
+    MessageGroupStatus? groupStatus,
+  }) {
+    final source = message.source;
+    final Widget image = source.startsWith('data:')
+        ? Image.memory(base64Decode(source.split(',').last))
+        : Image.file(File(source));
+    return Align(
+      alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(borderRadius: BorderRadius.circular(10), child: image),
+            if (message.text?.isNotEmpty ?? false)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  message.text!,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCustomMessage(
     BuildContext context,
     CustomMessage message,
@@ -957,6 +994,7 @@ class _ChatScreenState extends State<ChatScreen> {
             builders: Builders(
               textMessageBuilder: _buildTextMessage,
               customMessageBuilder: _buildCustomMessage,
+              imageMessageBuilder: _buildImageMessage,
               composerBuilder: (_) => const SizedBox.shrink(),
             ),
             theme: buildFahChatTheme(),
