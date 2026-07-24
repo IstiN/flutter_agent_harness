@@ -12,6 +12,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
+import 'app_icon.dart';
 import 'apps_store.dart';
 import 'js_app_engine.dart';
 
@@ -174,6 +175,7 @@ class _JsAppViewState extends State<JsAppView> {
       context: context,
       builder: (context) => _AppPermissionsDialog(
         app: widget.app,
+        env: widget.env,
         store: widget.permissionsStore,
       ),
     );
@@ -187,7 +189,7 @@ class _JsAppViewState extends State<JsAppView> {
       appBar: AppBar(
         title: Row(
           children: [
-            Text(widget.app.icon),
+            AppIcon(app: widget.app, env: widget.env, size: 24),
             const SizedBox(width: 8),
             Flexible(
               child: Text(widget.app.name, overflow: TextOverflow.ellipsis),
@@ -339,9 +341,14 @@ class _FaMessageSheetState extends State<_FaMessageSheet> {
 
 /// Per-app permission toggles; writes overrides to [AppPermissionsStore].
 class _AppPermissionsDialog extends StatefulWidget {
-  const _AppPermissionsDialog({required this.app, required this.store});
+  const _AppPermissionsDialog({
+    required this.app,
+    required this.env,
+    required this.store,
+  });
 
   final JsAppInfo app;
+  final ExecutionEnv env;
   final AppPermissionsStore store;
 
   @override
@@ -369,7 +376,18 @@ class _AppPermissionsDialogState extends State<_AppPermissionsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text('${widget.app.icon} ${widget.app.name} permissions'),
+      title: Row(
+        children: [
+          AppIcon(app: widget.app, env: widget.env, size: 22),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              '${widget.app.name} permissions',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

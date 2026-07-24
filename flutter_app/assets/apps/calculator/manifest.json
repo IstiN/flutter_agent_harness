@@ -3,7 +3,7 @@
   "name": "Calculator",
   "description": "Simple scientific calculator",
   "version": "1.0.0",
-  "icon": "🧮",
+  "icon": "icon.svg",
   "allowedCommands": [],
   "network": false,
   "cli": {

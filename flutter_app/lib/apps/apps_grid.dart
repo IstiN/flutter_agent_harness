@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'app_icon.dart';
 import 'apps_store.dart';
 import 'js_app_engine.dart';
 import 'js_app_view.dart';
@@ -122,8 +123,11 @@ class _AppsGridViewState extends State<AppsGridView> {
         childAspectRatio: 1.1,
       ),
       itemCount: apps.length,
-      itemBuilder: (context, index) =>
-          _AppCard(app: apps[index], onTap: () => _openApp(apps[index])),
+      itemBuilder: (context, index) => _AppCard(
+        app: apps[index],
+        env: widget.env,
+        onTap: () => _openApp(apps[index]),
+      ),
     );
   }
 
@@ -145,9 +149,10 @@ class _AppsGridViewState extends State<AppsGridView> {
 }
 
 class _AppCard extends StatelessWidget {
-  const _AppCard({required this.app, required this.onTap});
+  const _AppCard({required this.app, required this.env, required this.onTap});
 
   final JsAppInfo app;
+  final ExecutionEnv env;
   final VoidCallback onTap;
 
   @override
@@ -162,7 +167,7 @@ class _AppCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(app.icon, style: const TextStyle(fontSize: 32)),
+              AppIcon(app: app, env: env, size: 32),
               const Spacer(),
               Text(
                 app.name,

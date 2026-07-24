@@ -39,14 +39,41 @@ void main() {
       expect(apps.single.declaredPermissions.llm, isTrue);
       expect(apps.single.declaredPermissions.allowedCommands, contains('echo'));
 
-      // Seeding again must not overwrite local modifications.
+      // Demo files are refreshed when the bundled content changed —
+      // identical files stay untouched, local edits are replaced by the
+      // updated bundled version (demos are samples, not user data).
       await env.writeFile(
         'apps/demo/manifest.json',
         _manifest.replaceAll('Demo App', 'Edited App'),
       );
       await store.seedBundledApps(['demo']);
       apps = await store.listApps();
-      expect(apps.single.name, 'Edited App');
+      expect(apps.single.name, 'Demo App');
+    });
+
+    test('seeds the svg icon file when the manifest references one', () async {
+      final env = MemoryExecutionEnv();
+      Future<String> assets(String path) async {
+        if (path.endsWith('icon.svg')) return '<svg/>';
+        return _fakeAssets(path);
+      }
+
+      const manifestWithSvg = '''
+{
+  "id": "demo",
+  "name": "Demo App",
+  "description": "A demo",
+  "icon": "icon.svg"
+}
+''';
+      final store = AppsStore(
+        env,
+        readAsset: (path) async =>
+            path.endsWith('manifest.json') ? manifestWithSvg : assets(path),
+      );
+      await store.seedBundledApps(['demo']);
+      final svg = await env.readTextFile('apps/demo/icon.svg');
+      expect(svg.valueOrNull, '<svg/>');
     });
 
     test('skips malformed app folders', () async {
