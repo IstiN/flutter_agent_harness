@@ -30,7 +30,7 @@ import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/services/upload_picker_stub.dart'
-    if (dart.library.html) 'upload_picker_web.dart';
+    if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 
 /// Minimum body width (logical px) at which the side panels (sessions/model
 /// on the left, files on the right) become persistent, collapsible panels

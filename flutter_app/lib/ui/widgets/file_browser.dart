@@ -9,7 +9,7 @@ import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/services/upload_picker_stub.dart'
-    if (dart.library.html) 'upload_picker_web.dart';
+    if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 
 /// The default [ProjectFolderOps] on supported platforms (macOS), else null.
 ProjectFolderOps? _defaultProjectFolderOps() =>
