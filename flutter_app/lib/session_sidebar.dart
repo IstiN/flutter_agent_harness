@@ -158,6 +158,7 @@ class _SessionSidebarState extends State<SessionSidebar> {
           llmHandler: service.completeOnce,
           onSendToAgent: _sendAppMessageToAgent,
           fsRevision: service.fsRevision,
+          agentService: service,
         ),
       ),
     );

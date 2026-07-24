@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import '../agent_service.dart';
 import 'app_icon.dart';
 import 'apps_store.dart';
 import 'js_app_engine.dart';
@@ -27,6 +28,7 @@ class AppsGridView extends StatefulWidget {
     this.platformHandler,
     this.onSendToAgent,
     this.fsRevision,
+    this.agentService,
   });
 
   final ExecutionEnv env;
@@ -36,6 +38,10 @@ class AppsGridView extends StatefulWidget {
   final FaPlatformHandler? platformHandler;
   final Future<void> Function(FaAppMessage message)? onSendToAgent;
   final ValueNotifier<int>? fsRevision;
+
+  /// The active session's service — forwarded to [JsAppView] so the compact
+  /// [FaWorkBar] works for apps opened from the grid too.
+  final AgentService? agentService;
 
   @override
   State<AppsGridView> createState() => _AppsGridViewState();
@@ -142,6 +148,7 @@ class _AppsGridViewState extends State<AppsGridView> {
           platformHandler: widget.platformHandler,
           onSendToAgent: widget.onSendToAgent,
           fsRevision: widget.fsRevision,
+          agentService: widget.agentService,
         ),
       ),
     );
