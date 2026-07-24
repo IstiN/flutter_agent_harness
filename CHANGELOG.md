@@ -532,4 +532,11 @@
 - test(example): textField onChange delivers typed text to JS
 - fix(example): render attached-image messages — add the missing imageMessageBuilder
 
+## 0.1.68
+
+- feat(cli): render provider error lines in red
+- fix(cli): hide the physical cursor while a run streams
+- feat(example): follow-tail auto-scroll + collapse long thinking blocks
+- fix(example): work bar for grid-opened apps; prove permission persistence
+
 ## Unreleased
