@@ -122,6 +122,26 @@ final class DrainQueueMsg extends Msg {
 /// The braille spinner frames cycled while [FaTuiModel.busy] is set.
 const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+/// Memoized markdown+wrap pass over [FaTuiModel.outputLines]. Formatting is
+/// O(transcript) (regex-heavy markdown plus ANSI-safe wrapping) and used to
+/// run two to four times PER event (update handler, `_stickyActive`, view),
+/// which made wheel scrolling and streaming visibly stutter. The result is
+/// shared across model copies and recomputed only when the source list
+/// (identity — every mutation path builds a new list) or the width changes,
+/// so scrolling and re-renders stay O(1) in markdown work. [lineStartRows]
+/// maps a raw line index to its first physical row so the sticky echo math
+/// is O(1) as well.
+final class _WrapCache {
+  /// The [FaTuiModel.outputLines] instance the pass ran on.
+  List<String>? source;
+  int width = -1;
+  List<String> rows = const [];
+
+  /// `lineStartRows[i]` = first wrapped row of raw line `i`; the final entry
+  /// is the total row count (sentinel for end-of-buffer calculations).
+  List<int> lineStartRows = const [0];
+}
+
 /// The dart_tui model backing the Fa interactive REPL.
 final class FaTuiModel extends TeaModel {
   FaTuiModel({
@@ -204,6 +224,11 @@ final class FaTuiModel extends TeaModel {
   /// running agent, and the host drains them as separate turns afterwards.
   final List<String> queue;
 
+  /// Shared markdown+wrap memo (see [_WrapCache]); `copyWith` hands the same
+  /// instance to the next model version so unchanged content never
+  /// re-formats.
+  var _wrapCache = _WrapCache();
+
   int get _inputLineCount => inputText.split('\n').length;
 
   /// Truncates [text] to [maxWidth] (default: the terminal width) with an
@@ -225,16 +250,15 @@ final class FaTuiModel extends TeaModel {
   /// visible in the chat.
   bool get _stickyActive {
     if (!busy || stickyLines.isEmpty || stickyIndex < 0) return false;
-    final formatted = AnsiMarkdown(width: termWidth).formatAll(outputLines);
+    // Served from the shared wrap cache (refreshed here when stale): the
+    // start row of the line just past the echo IS its end row.
+    _wrappedLines();
+    final starts = _wrapCache.lineStartRows;
     final echoEndLine = (stickyIndex + stickyEchoLineCount).clamp(
       0,
-      formatted.length,
+      starts.length - 1,
     );
-    var echoEndRow = 0;
-    for (var i = 0; i < echoEndLine; i++) {
-      echoEndRow += wrapAnsiLine(formatted[i], termWidth).length;
-    }
-    return scrollOffset >= echoEndRow;
+    return scrollOffset >= starts[echoEndLine];
   }
 
   /// The visible window of menu items (start inclusive, end exclusive).
@@ -299,11 +323,29 @@ final class FaTuiModel extends TeaModel {
 
   /// The output history formatted and wrapped to physical rows at [width]
   /// (default: the current terminal width). All scroll math happens in
-  /// these rows — raw line counts lie once long lines wrap.
+  /// these rows — raw line counts lie once long lines wrap. Memoized in the
+  /// shared [_WrapCache]: the O(transcript) markdown+wrap pass re-runs only
+  /// when the source list or the width actually changes.
   List<String> _wrappedLines([int? width]) {
     final w = width ?? termWidth;
+    final cache = _wrapCache;
+    if (identical(cache.source, outputLines) && cache.width == w) {
+      return cache.rows;
+    }
     final formatted = AnsiMarkdown(width: w).formatAll(outputLines);
-    return [for (final line in formatted) ...wrapAnsiLine(line, w)];
+    final rows = <String>[];
+    final starts = <int>[];
+    for (final line in formatted) {
+      starts.add(rows.length);
+      rows.addAll(wrapAnsiLine(line, w));
+    }
+    starts.add(rows.length); // sentinel: total row count
+    cache
+      ..source = outputLines
+      ..width = w
+      ..rows = rows
+      ..lineStartRows = starts;
+    return rows;
   }
 
   /// The scroll offset that puts the last wrapped row at the bottom.
@@ -335,7 +377,7 @@ final class FaTuiModel extends TeaModel {
     int? stickyEchoLineCount,
     List<String>? queue,
   }) {
-    return FaTuiModel(
+    final copy = FaTuiModel(
       callbacks: callbacks,
       isExited: isExited,
       outputLines: outputLines ?? this.outputLines,
@@ -359,6 +401,8 @@ final class FaTuiModel extends TeaModel {
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
       queue: queue ?? this.queue,
     );
+    copy._wrapCache = _wrapCache;
+    return copy;
   }
 
   @override
@@ -1049,13 +1093,11 @@ final class FaTuiModel extends TeaModel {
     }
 
     // Output history, padded to a fixed height. Markdown is formatted and
-    // ANSI-safely wrapped to physical rows at view time (SGR-only output,
-    // escapes never cut at wrap points) so streamed text gains styling as
-    // closing markers arrive, exactly like pi's per-delta re-render.
-    final wrapped = md
-        .formatAll(outputLines)
-        .expand((line) => wrapAnsiLine(line, termWidth))
-        .toList();
+    // ANSI-safely wrapped to physical rows (SGR-only output, escapes never
+    // cut at wrap points) so streamed text gains styling as closing markers
+    // arrive; the pass is memoized in the shared wrap cache, so a frame
+    // triggered by scrolling reuses the rows computed on the last change.
+    final wrapped = _wrappedLines();
     final offset = _clampScroll(scrollOffset, wrapped);
     for (var i = 0; i < height; i++) {
       final row = offset + i;
