@@ -187,7 +187,7 @@ class _JsAppViewState extends State<JsAppView> {
   Future<void> _openPermissions() async {
     final changed = await showDialog<bool>(
       context: context,
-      builder: (context) => _AppPermissionsDialog(
+      builder: (context) => AppPermissionsDialog(
         app: widget.app,
         env: widget.env,
         store: widget.permissionsStore,
@@ -366,8 +366,8 @@ class _FaMessageSheetState extends State<_FaMessageSheet> {
 }
 
 /// Per-app permission toggles; writes overrides to [AppPermissionsStore].
-class _AppPermissionsDialog extends StatefulWidget {
-  const _AppPermissionsDialog({
+class AppPermissionsDialog extends StatefulWidget {
+  const AppPermissionsDialog({
     required this.app,
     required this.env,
     required this.store,
@@ -378,10 +378,10 @@ class _AppPermissionsDialog extends StatefulWidget {
   final AppPermissionsStore store;
 
   @override
-  State<_AppPermissionsDialog> createState() => _AppPermissionsDialogState();
+  State<AppPermissionsDialog> createState() => AppPermissionsDialogState();
 }
 
-class _AppPermissionsDialogState extends State<_AppPermissionsDialog> {
+class AppPermissionsDialogState extends State<AppPermissionsDialog> {
   late AppPermissions _current;
   bool _changed = false;
 
