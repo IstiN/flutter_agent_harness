@@ -82,9 +82,15 @@ post_install do |installer|
         { 'iphoneos*' => device_slice, 'iphonesimulator*' => simulator_slice }.each do |sdk, slice|
           key = "OTHER_LDFLAGS[sdk=#{sdk}]"
           ldflags = Array(config.build_settings[key] || ['$(inherited)']).dup
-          # Drop stale wasm_run flags from earlier pod installs, then re-add.
+          # Drop stale wasm_run flags from earlier pod installs.
           ldflags.reject! { |f| f == '-force_load' || f.include?('wasm_run_dart.a') || f.start_with?('-Wl,-exported_symbol,') }
-          ldflags.concat(["-Wl,-force_load,#{slice}"] + export_flags)
+          ldflags << "-Wl,-force_load,#{slice}"
+          # Debug must NOT get -exported_symbol flags: giving any flips ld
+          # into "export only these" mode, which hides the JIT entry point
+          # (main) from the debug host — abort_could_not_find_entry_point
+          # at launch. Debug exports all globals by default, so dlsym finds
+          # the wire_* symbols without any flags.
+          ldflags.concat(export_flags) unless config.name == 'Debug'
           config.build_settings[key] = ldflags
         end
       end

@@ -71,9 +71,15 @@ post_install do |installer|
         # "non-global" (strip -x) keeps the trie intact.
         config.build_settings['STRIP_STYLE'] = 'non-global'
         ldflags = Array(config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']).dup
-        # Drop stale wasm_run flags from earlier pod installs, then re-add.
+        # Drop stale wasm_run flags from earlier pod installs.
         ldflags.reject! { |f| f == '-force_load' || f.include?('wasm_run_dart.a') || f.start_with?('-Wl,-exported_symbol,') }
-        ldflags.concat(["-Wl,-force_load,#{macos_slice}"] + export_flags)
+        ldflags << "-Wl,-force_load,#{macos_slice}"
+        # Debug must NOT get -exported_symbol flags: giving any flips ld
+        # into "export only these" mode, which hides the JIT entry point
+        # (main) from the debug host — abort_could_not_find_entry_point
+        # at launch. Debug exports all globals by default, so dlsym finds
+        # the wire_* symbols without any flags.
+        ldflags.concat(export_flags) unless config.name == 'Debug'
         config.build_settings['OTHER_LDFLAGS'] = ldflags
       end
     end
