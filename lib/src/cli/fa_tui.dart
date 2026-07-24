@@ -1281,9 +1281,19 @@ final class FaTuiController {
   final List<Msg> _pending = [];
   var _running = false;
 
+  /// Streaming text coalesces here and flushes on a short timer (or right
+  /// before any non-output message, to preserve ordering). A fast token
+  /// stream used to cost one model update — and one full markdown pass over
+  /// the whole output history — PER DELTA, saturating the event loop so
+  /// keystrokes queued up behind them (typing lag while a run streamed).
+  final _outputBuffer = StringBuffer();
+  Timer? _outputFlushTimer;
+  static const _outputFlushInterval = Duration(milliseconds: 50);
+
   FaTuiModel get model => _model;
 
   void _send(Msg msg) {
+    if (msg is! OutputMsg) _flushOutput();
     if (_running) {
       _program.send(msg);
     } else {
@@ -1292,7 +1302,26 @@ final class FaTuiController {
   }
 
   void sendOutput(String text, {bool newline = false}) {
-    _send(OutputMsg(text, newline: newline));
+    // Merge semantics match sending the pieces separately: text just
+    // concatenates and the newline flag is a trailing '\n' (the model's
+    // _appendOutput splits on '\n' and its trailing empty part plays the
+    // role of the flag's extra empty line).
+    _outputBuffer.write(text);
+    if (newline) _outputBuffer.write('\n');
+    if (_running) {
+      _outputFlushTimer ??= Timer(_outputFlushInterval, _flushOutput);
+    } else {
+      _flushOutput();
+    }
+  }
+
+  void _flushOutput() {
+    _outputFlushTimer?.cancel();
+    _outputFlushTimer = null;
+    if (_outputBuffer.isEmpty) return;
+    final text = _outputBuffer.toString();
+    _outputBuffer.clear();
+    _send(OutputMsg(text));
   }
 
   void sendModelsRefresh() {
