@@ -2234,11 +2234,13 @@ class AgentCli {
     // Current context pressure: the last assistant message's prompt size
     // against the model's context window (pi's `context: N% (used/max)`).
     // Error/aborted terminal messages carry Usage.zero — skip them, or the
-    // gauge snaps back to 0% right after a failed run.
-    final lastAssistant = _agent.state.messages
+    // gauge snaps back to 0% right after a failed run. Scanned from the END:
+    // this runs on every rendered frame, so a full-history forward scan
+    // (allocating lazy iterables over hundreds of messages) is wasted work.
+    final lastAssistant = _agent.state.messages.reversed
         .whereType<AssistantMessage>()
         .where((m) => m.usage.input > 0)
-        .lastOrNull;
+        .firstOrNull;
     final contextTokens = lastAssistant?.usage.input ?? 0;
     final window = model.contextWindow;
     final pct = window > 0 ? (contextTokens / window * 100).round() : 0;

@@ -896,4 +896,34 @@ void main() {
       expect(model.cursor, 0);
     });
   });
+
+  group('output coalescing', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    test('a merged burst produces the same lines as separate messages', () {
+      // The controller folds a burst of sendOutput calls into ONE OutputMsg
+      // (text concatenated, newline flags as '\n') — the model must land on
+      // identical history either way.
+      var separate = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      var merged = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+
+      final pieces = <(String, bool)>[
+        ('hel', false),
+        ('lo', false),
+        (' world', true),
+        ('next ', false),
+        ('line', true),
+        ('tail', false),
+      ];
+      final folded = StringBuffer();
+      for (final (text, newline) in pieces) {
+        separate = send(separate, OutputMsg(text, newline: newline));
+        folded.write(text);
+        if (newline) folded.write('\n');
+      }
+      merged = send(merged, OutputMsg(folded.toString()));
+
+      expect(merged.outputLines, separate.outputLines);
+    });
+  });
 }
