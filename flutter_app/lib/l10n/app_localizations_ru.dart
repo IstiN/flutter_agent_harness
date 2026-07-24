@@ -733,4 +733,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get webllmCacheTitle => 'Загруженные модели';
+
+  @override
+  String get settingsVisionLabel => 'Поддерживает изображения (vision)';
 }

@@ -204,5 +204,6 @@
   "tjsCacheWebOnly": "On-device модели (transformers.js) доступны только в веб-сборке.",
   "uploadTooLarge": "Загрузка слишком большая: {total} превышает лимит {max} на один пакет.",
   "webllmCacheManagedByOs": "На этой платформе on-device модели управляются хранилищем ОС/приложения.",
-  "webllmCacheTitle": "Загруженные модели"
+  "webllmCacheTitle": "Загруженные модели",
+  "settingsVisionLabel": "Поддерживает изображения (vision)"
 }

@@ -15,6 +15,7 @@ import 'provider_registry.dart';
 import 'transformers_js/transformers_js_cache_section.dart';
 import 'transformers_js/transformers_js_service.dart';
 import 'transformers_js/transformers_js_types.dart';
+import 'vision_models.dart';
 import 'webllm/webllm_cache_section.dart';
 import 'webllm/webllm_service.dart';
 import 'webllm/webllm_types.dart';
@@ -222,6 +223,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   bool _loading = false;
   String? _error;
 
+  /// Whether the hosted model accepts image input (the "vision" checkbox).
+  /// Initialized from the [modelIdSuggestsVision] heuristic and re-derived
+  /// on every model-id edit until the user toggles it manually.
+  bool _vision = false;
+  bool _visionOverridden = false;
+
   @override
   void initState() {
     super.initState();
@@ -240,6 +247,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _modelController = TextEditingController(
       text: settingsEnv('MODEL_ID', preset.defaultModel),
     );
+    _vision = modelIdSuggestsVision(_modelController.text);
+    _modelController.addListener(_onModelIdChanged);
     _urlController = TextEditingController(text: initialUrl);
     _hfTokenController = TextEditingController(
       text: settingsEnv('HUGGINGFACE_TOKEN', ''),
@@ -248,6 +257,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     // never touched (keys are session-only and never persisted).
     final connection = widget.initialConnection;
     if (connection != null) _applyLastConnection(connection);
+  }
+
+  void _onModelIdChanged() {
+    if (_visionOverridden) return;
+    final suggested = modelIdSuggestsVision(_modelController.text);
+    if (suggested != _vision) setState(() => _vision = suggested);
   }
 
   @override
@@ -301,6 +316,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
 
   void _applyPreset(ProviderPreset preset) {
     _selection = preset;
+    _visionOverridden = false;
     final baseUrl = preset.baseUrl;
     if (baseUrl != null) {
       _urlController.text = baseUrl;
@@ -318,6 +334,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
 
   void _applyCustomProvider(CustomProvider provider) {
     _selection = provider;
+    _visionOverridden = false;
     _urlController.text = provider.baseUrl;
     _modelController.text = provider.modelId;
     _keyController.text = _registry.keyFor(provider.id) ?? '';
@@ -617,6 +634,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           modelId: model,
           baseUrl: baseUrl,
           apiKey: key,
+          supportsImages: _vision,
         ),
       );
       // Connected: keep the key for this session so reopening settings (or
@@ -786,6 +804,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           // appends the tool instructions upstream.
           contextWindow: preset.contextWindow,
           maxTokens: 1024,
+          supportsImages: preset.supportsVision,
         ),
       );
     } catch (e) {
@@ -908,6 +927,17 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             decoration: InputDecoration(
               labelText: context.l10n.settingsModelIdLabel,
             ),
+          ),
+          CheckboxListTile(
+            value: _vision,
+            onChanged: (value) => setState(() {
+              _vision = value ?? false;
+              _visionOverridden = true;
+            }),
+            title: Text(context.l10n.settingsVisionLabel),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
           ),
           const SizedBox(height: 12),
           TextField(

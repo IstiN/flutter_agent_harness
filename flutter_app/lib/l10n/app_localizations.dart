@@ -1327,6 +1327,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Downloaded models'**
   String get webllmCacheTitle;
+
+  /// No description provided for @settingsVisionLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Supports images (vision)'**
+  String get settingsVisionLabel;
 }
 
 class _AppLocalizationsDelegate

@@ -371,6 +371,15 @@ Conventions for AI agents and contributors working in this repository.
   settings-dialog apply; read at boot to pre-select the settings form (an
   on-device model no longer cached/installed falls back to the default
   preset with a "previously used model was removed" note).
+- `flutter_app/lib/vision_models.dart` — vision detection for the agent's
+  `Model.input`: hosted endpoints expose no modality metadata, so
+  `modelIdSuggestsVision` matches well-known vision families (gpt-4o/4.1/5,
+  claude-3+, gemini, qwen-vl, pixtral, llava, glm-4v, grok-4, …).
+  `AgentConfig.supportsImages` (nullable) overrides it — the settings form
+  has a "Supports images (vision)" checkbox that follows the heuristic
+  until the user touches it; transformers.js presets carry their own
+  `supportsVision`. Without `image` in `Model.input` the `read` tool
+  appends its non-vision note and the provider adapters drop image blocks.
 - `flutter_app/lib/downloaded_models_quick_start.dart` — the
   setup screen's "Downloaded models" section above the connection form:
   one row per already-cached/installed on-device model (WebLLM +

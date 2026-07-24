@@ -729,4 +729,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get webllmCacheTitle => 'Downloaded models';
+
+  @override
+  String get settingsVisionLabel => 'Supports images (vision)';
 }
