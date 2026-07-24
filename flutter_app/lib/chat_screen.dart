@@ -358,6 +358,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       case 'system':
       case 'tool':
+      case 'thinking':
         return Message.custom(
           id: id,
           authorId: chat.role == 'tool' ? 'tool' : 'system',
@@ -627,6 +628,39 @@ class _ChatScreenState extends State<ChatScreen> {
     final toolName = metadata['toolName'] as String?;
     final content = (metadata['content'] as String?) ?? '';
     final isError = (metadata['isError'] as bool?) ?? false;
+    final role = metadata['role'] as String?;
+
+    if (role == 'thinking') {
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: FahPalette.panelAlt.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: FahPalette.border.withValues(alpha: 0.5)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              Icons.psychology_outlined,
+              size: 14,
+              color: FahPalette.dim,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                content,
+                style: FahPalette.mono(
+                  color: FahPalette.dim,
+                  fontSize: 12,
+                ).copyWith(fontStyle: FontStyle.italic),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),

@@ -86,7 +86,13 @@ class _SessionSidebarState extends State<SessionSidebar> {
           ? const <SessionMetadata>[]
           : await service.listSessions();
       if (!mounted) return;
-      final liveIds = sessions.map((s) => s.id).toSet();
+      final liveIds = <String>{
+        for (final s in sessions) s.id,
+        // The manager id usually IS the service's persisted session id, but
+        // cover pairs where they diverge (tests, hand-registered sessions).
+        for (final s in sessions)
+          if (s.service.currentSessionId != null) s.service.currentSessionId!,
+      };
       setState(() {
         _sessions = sessions;
         _persisted = [
