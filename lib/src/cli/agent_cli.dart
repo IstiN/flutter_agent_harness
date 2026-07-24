@@ -832,6 +832,18 @@ class AgentCli {
       await taskSub.cancel();
       await _settled;
     }
+    await _printSessionResumeHint();
+  }
+
+  /// After an interactive run ends, prints the command that picks this
+  /// session back up (kimi prints the resume hint on exit too). Skipped for
+  /// sessions with nothing persisted yet — resuming those is pointless.
+  Future<void> _printSessionResumeHint() async {
+    final session = _session;
+    if (session == null || _persistedCount == 0) return;
+    final name = await session.getSessionName();
+    final id = name ?? (await session.getMetadata()).id;
+    io.writeln(_style.dim("resume this session with: fa --session '$id'"));
   }
 
   Future<void> _runTuiRepl() async {
@@ -1169,9 +1181,12 @@ class AgentCli {
     return session;
   }
 
+  /// Finds a session by display name OR by exact id (the exit hint prints
+  /// `fa --session '<id>'` for unnamed sessions, so ids must resolve too).
   Future<SessionMetadata?> _findSessionByName(String name) async {
     final sessions = await _repo.list(cwd: config.env.cwd);
     for (final metadata in sessions) {
+      if (metadata.id == name.trim()) return metadata;
       final session = await _repo.open(metadata);
       final sessionName = await session.getSessionName();
       if (sessionName != null && sessionName.trim() == name.trim()) {

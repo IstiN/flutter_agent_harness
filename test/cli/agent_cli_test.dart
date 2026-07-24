@@ -2259,6 +2259,85 @@ void main() {
       expect(output, contains('fa:  done'));
     });
 
+    test('exit prints the resume command for a named session', () async {
+      final fake = _FakeStreamFunction([_textTurn('hi')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: _model,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'work',
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+
+      io.sendLine('q');
+      await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        io.out.toString(),
+        contains("resume this session with: fa --session 'work'"),
+      );
+    });
+
+    test(
+      'exit prints the resume command and the id resumes the session',
+      () async {
+        final fake = _FakeStreamFunction([_textTurn('memorable-answer')]);
+        final cli = cliFor(fake.call);
+        final run = cli.run();
+
+        io.sendLine('q');
+        await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+        io.sendLine('/exit');
+        await run;
+
+        // Unnamed session: the hint carries the session id.
+        final hint = RegExp(
+          r"resume this session with: fa --session '([0-9a-f-]+)'",
+        ).firstMatch(io.out.toString());
+        expect(hint, isNotNull);
+        final id = hint!.group(1)!;
+
+        // `fa --session '<id>'` picks the same session back up.
+        final io2 = FakeCliIO();
+        final fake2 = _FakeStreamFunction([_textTurn('again')]);
+        final cli2 = AgentCli(
+          config: AgentCliConfig(
+            model: _model,
+            apiKey: 'test-key',
+            env: env,
+            sessionRoot: '/sessions',
+            sessionName: id,
+          ),
+          io: io2,
+          streamFunction: fake2.call,
+        );
+        final run2 = cli2.run();
+        io2.sendLine('/exit');
+        await run2;
+
+        expect(io2.out.toString(), contains('restored session'));
+        expect(io2.out.toString(), contains('memorable-answer'));
+      },
+    );
+
+    test('no resume hint when the session has nothing persisted', () async {
+      final fake = _FakeStreamFunction([_textTurn('unused')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/exit');
+      await run;
+
+      expect(io.out.toString(), isNot(contains('resume this session with')));
+    });
+
     test('headless --session resumes a named session', () async {
       final fake = _FakeStreamFunction([_textTurn('ok')]);
       final cli = AgentCli(
