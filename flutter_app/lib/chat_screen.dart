@@ -756,7 +756,10 @@ class _ChatScreenState extends State<ChatScreen> {
                       ],
                     ),
                   )
-                : Text(content, style: FahPalette.mono(color: FahPalette.dim)),
+                : _CollapsibleToolOutput(
+                    content: content,
+                    style: FahPalette.mono(color: FahPalette.dim),
+                  ),
         ],
       ),
     );
@@ -1101,6 +1104,71 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Tool-output block that caps long dumps (file reads, big writes) at a few
+/// lines with an expand/collapse toggle — keeps the transcript scannable
+/// while the full output stays one tap away.
+class _CollapsibleToolOutput extends StatefulWidget {
+  const _CollapsibleToolOutput({required this.content, required this.style});
+
+  final String content;
+  final TextStyle style;
+
+  /// Outputs longer than this collapse by default.
+  static const int collapsedLineCount = 8;
+  static const int longLineThreshold = 12;
+  static const int longCharThreshold = 700;
+
+  @override
+  State<_CollapsibleToolOutput> createState() => _CollapsibleToolOutputState();
+}
+
+class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
+  bool _expanded = false;
+
+  bool get _isLong {
+    final lines = widget.content.split('\n');
+    return lines.length > _CollapsibleToolOutput.longLineThreshold ||
+        widget.content.length > _CollapsibleToolOutput.longCharThreshold;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isLong) {
+      return Text(widget.content, style: widget.style);
+    }
+    final lines = widget.content.split('\n');
+    final shown = _expanded
+        ? lines
+        : lines.take(_CollapsibleToolOutput.collapsedLineCount).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(shown.join('\n'), style: widget.style),
+        const SizedBox(height: 4),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                size: 14,
+                color: FahPalette.indigo,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                _expanded ? 'Свернуть' : 'Показать все (${lines.length})',
+                style: FahPalette.mono(color: FahPalette.indigo, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
