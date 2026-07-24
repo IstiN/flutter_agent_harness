@@ -325,6 +325,7 @@ class _DownloadedModelsQuickStartState
       apiKey: '',
       contextWindow: preset.contextWindow,
       maxTokens: 1024,
+      supportsImages: preset.supportsVision,
     );
   }
 

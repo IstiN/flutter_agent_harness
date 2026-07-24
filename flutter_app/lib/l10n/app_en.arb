@@ -207,5 +207,6 @@
   "tjsCacheWebOnly": "On-device (transformers.js) models are available in the web build only.",
   "uploadTooLarge": "Upload is too large: {total} exceeds the {max} per-batch limit.",
   "webllmCacheManagedByOs": "On-device models are managed by the OS/app storage on this platform.",
-  "webllmCacheTitle": "Downloaded models"
+  "webllmCacheTitle": "Downloaded models",
+  "settingsVisionLabel": "Supports images (vision)"
 }

@@ -10,6 +10,7 @@ import 'gemma/gemma_service.dart';
 import 'gemma/gemma_stream_function.dart';
 import 'gemma/gemma_types.dart';
 import 'project_mount_env.dart';
+import 'vision_models.dart';
 import 'prompts.g.dart';
 import 'sandbox_registry.dart';
 import 'secrets_store.dart';
@@ -58,6 +59,7 @@ final class AgentConfig {
     this.systemPrompt,
     this.contextWindow = 128000,
     this.maxTokens = 4096,
+    this.supportsImages,
   });
 
   /// Provider adapter kind: `openai-completions`, `anthropic`, `google`,
@@ -86,6 +88,12 @@ final class AgentConfig {
   /// Output-token cap reported to the agent loop.
   final int maxTokens;
 
+  /// Whether the model accepts image input. When null (session restores,
+  /// tests, programmatic configs) the vision heuristic
+  /// [modelIdSuggestsVision] decides from [modelId]; the settings form
+  /// passes the user's explicit checkbox value.
+  final bool? supportsImages;
+
   Model toModel() => Model(
     id: modelId,
     name: modelId,
@@ -94,6 +102,10 @@ final class AgentConfig {
     baseUrl: baseUrl,
     contextWindow: contextWindow,
     maxTokens: maxTokens,
+    input: [
+      'text',
+      if (supportsImages ?? modelIdSuggestsVision(modelId)) 'image',
+    ],
   );
 }
 
