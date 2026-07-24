@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:fa/secrets_store_io.dart';
+import 'package:fa/services/secrets_store_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

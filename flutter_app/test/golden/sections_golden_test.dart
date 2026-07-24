@@ -11,10 +11,10 @@
 /// the markup it was fed — the real webview only exists on device.
 library;
 
-import 'package:fa/downloaded_models_quick_start.dart';
+import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
 import 'package:fa/gemma/gemma_cache_section.dart';
 import 'package:fa/gemma/gemma_types.dart';
-import 'package:fa/html_preview_stub.dart';
+import 'package:fa/ui/widgets/html_preview_stub.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';

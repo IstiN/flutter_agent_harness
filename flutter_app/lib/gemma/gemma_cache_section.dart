@@ -9,8 +9,8 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 
-import 'gemma_service.dart';
-import 'gemma_types.dart';
+import 'package:fa/gemma/gemma_service.dart';
+import 'package:fa/gemma/gemma_types.dart';
 
 /// One row in the Gemma cache section: a preset (installed or not) or a
 /// stale repository entry (orphan).

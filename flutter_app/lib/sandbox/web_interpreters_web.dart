@@ -8,7 +8,7 @@ import 'dart:html' as html;
 import 'dart:js_interop';
 import 'dart:typed_data';
 
-import 'sandbox_pip.dart';
+import 'package:fa/sandbox/sandbox_pip.dart';
 
 /// Result of running a snippet in a browser-hosted interpreter.
 typedef InterpreterResult = ({bool available, String stdout, String stderr});

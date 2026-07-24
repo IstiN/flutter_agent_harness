@@ -9,11 +9,11 @@ import 'package:archive/archive.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
-import 'sandbox_builtins.dart';
-import 'sandbox_registry.dart';
-import 'shell_parser.dart';
-import 'web_git.dart';
-import 'web_interpreters_stub.dart'
+import 'package:fa/sandbox/sandbox_builtins.dart';
+import 'package:fa/sandbox/sandbox_registry.dart';
+import 'package:fa/sandbox/shell_parser.dart';
+import 'package:fa/sandbox/web_git.dart';
+import 'package:fa/sandbox/web_interpreters_stub.dart'
     if (dart.library.html) 'web_interpreters_web.dart';
 
 /// A pure-Dart [Shell] that operates on a [MemoryFileSystem].

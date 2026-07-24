@@ -16,8 +16,8 @@ import 'dart:js_interop';
 
 import 'package:flutter/foundation.dart';
 
-import 'webllm_js_interop.dart';
-import 'webllm_types.dart';
+import 'package:fa/webllm/webllm_js_interop.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// Returns the process-wide [WebLlmEngineApi] singleton.
 ///

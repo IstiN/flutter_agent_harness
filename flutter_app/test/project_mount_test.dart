@@ -1,6 +1,6 @@
-import 'package:fa/file_browser.dart';
-import 'package:fa/project_folder_channel.dart';
-import 'package:fa/project_mount_env.dart';
+import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/services/project_folder_channel.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';

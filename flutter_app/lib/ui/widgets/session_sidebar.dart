@@ -5,17 +5,17 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'agent_service.dart';
-import 'app_theme.dart';
-import 'apps/apps_grid.dart';
-import 'apps/app_icon.dart';
-import 'apps/apps_store.dart';
-import 'apps/js_app_view.dart';
-import 'flutter_session_manager.dart';
-import 'last_connection.dart';
-import 'provider_registry.dart';
-import 'settings.dart';
-import 'webllm/webllm_types.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:fa/apps/apps_grid.dart';
+import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_view.dart';
+import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// Width of the left sidebar (model picker + sessions) — side panel on wide
 /// layouts, drawer on narrow ones.

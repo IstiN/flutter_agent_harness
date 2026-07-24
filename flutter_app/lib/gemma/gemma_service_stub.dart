@@ -8,7 +8,7 @@
 /// obscurely.
 library;
 
-import 'gemma_types.dart';
+import 'package:fa/gemma/gemma_types.dart';
 
 /// Returns a stub [GemmaEngineApi] that reports unavailable.
 GemmaEngineApi createGemmaService() => GemmaService();

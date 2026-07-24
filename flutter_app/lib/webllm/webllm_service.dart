@@ -6,5 +6,5 @@
 /// everywhere else (same pattern as `web_interpreters.dart` in this app).
 library;
 
-export 'webllm_service_stub.dart'
+export 'package:fa/webllm/webllm_service_stub.dart'
     if (dart.library.html) 'webllm_service_web.dart';

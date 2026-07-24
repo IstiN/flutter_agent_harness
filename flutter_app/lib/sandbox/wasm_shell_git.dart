@@ -17,9 +17,9 @@ import 'package:dart_git/utils/file_mode.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:path/path.dart' as p;
 
-import 'git_smart_http.dart';
-import 'shell_parser.dart';
-import 'wasm_shell.dart';
+import 'package:fa/sandbox/git_smart_http.dart';
+import 'package:fa/sandbox/shell_parser.dart';
+import 'package:fa/sandbox/wasm_shell.dart';
 
 /// Pure-Dart git porcelain for the WASM sandbox, backed by `dart_git` for
 /// local operations and the GitHub tarball API for `git clone`.

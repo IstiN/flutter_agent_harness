@@ -6,7 +6,7 @@
 /// never load app fonts, or snapshots become host-dependent.
 library;
 
-import 'package:fa/app_theme.dart';
+import 'package:fa/ui/app_theme.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

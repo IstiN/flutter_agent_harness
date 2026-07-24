@@ -8,13 +8,13 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'agent_service.dart';
-import 'gemma/gemma_service.dart';
-import 'gemma/gemma_types.dart';
-import 'transformers_js/transformers_js_service.dart';
-import 'transformers_js/transformers_js_types.dart';
-import 'webllm/webllm_service.dart';
-import 'webllm/webllm_types.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/gemma/gemma_service.dart';
+import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/transformers_js/transformers_js_service.dart';
+import 'package:fa/transformers_js/transformers_js_types.dart';
+import 'package:fa/webllm/webllm_service.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// Which on-device engine a quick-start row belongs to.
 enum _QuickStartKind { webllm, gemma, transformersJs }

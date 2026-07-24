@@ -15,11 +15,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:fa/agent_service.dart';
-import 'package:fa/app_theme.dart';
-import 'package:fa/chat_screen.dart';
-import 'package:fa/fa_mark.dart';
-import 'package:fa/flutter_session_manager.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';

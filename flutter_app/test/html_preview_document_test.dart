@@ -1,4 +1,4 @@
-import 'package:fa/html_preview_document.dart';
+import 'package:fa/ui/widgets/html_preview_document.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

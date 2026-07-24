@@ -1,4 +1,4 @@
-import 'package:fa/upload.dart';
+import 'package:fa/services/upload.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Host tests for the upload classification rules: only decodable raster

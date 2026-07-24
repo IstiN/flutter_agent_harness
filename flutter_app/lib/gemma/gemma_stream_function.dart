@@ -40,7 +40,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'gemma_types.dart';
+import 'package:fa/gemma/gemma_types.dart';
 
 /// Builds a [StreamFunction] that runs inference through [service].
 ///

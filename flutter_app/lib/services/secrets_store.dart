@@ -1,4 +1,5 @@
-export 'secrets_store_stub.dart' if (dart.library.io) 'secrets_store_io.dart';
+export 'package:fa/services/secrets_store_stub.dart'
+    if (dart.library.io) 'package:fa/services/secrets_store_io.dart';
 
 /// Re-exported factory for the platform [SecretsStore].
 ///

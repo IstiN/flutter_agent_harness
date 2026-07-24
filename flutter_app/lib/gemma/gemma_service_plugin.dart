@@ -22,8 +22,8 @@ import 'package:flutter_gemma/core/services/model_repository.dart'
 import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart';
 
-import 'gemma_types.dart';
-import 'gemma_web_registration.dart';
+import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/gemma/gemma_web_registration.dart';
 
 /// Returns the shared [GemmaService] (the plugin is process-global, so the
 /// service is a singleton — the settings form's load and the stream

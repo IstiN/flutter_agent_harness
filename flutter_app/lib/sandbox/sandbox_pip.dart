@@ -8,7 +8,7 @@ import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 
-import 'sandbox_builtins.dart';
+import 'package:fa/sandbox/sandbox_builtins.dart';
 
 /// Removes a directory tree from the shell's filesystem; a missing directory
 /// is ignored. The path is the verbatim command argument; the closure

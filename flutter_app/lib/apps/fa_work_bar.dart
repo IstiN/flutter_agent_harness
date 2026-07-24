@@ -7,9 +7,9 @@ import 'dart:async';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 
-import '../agent_service.dart';
-import '../app_theme.dart';
-import '../fa_mark.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/widgets/fa_mark.dart';
 
 /// Compact "Fa is working" bar shown at the bottom of a JS app view while
 /// the agent runs: the sparkling Fa mark, a live status line (current tool

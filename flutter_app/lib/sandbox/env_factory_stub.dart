@@ -2,10 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
-import 'fs_persistence_stub.dart'
+import 'package:fa/sandbox/fs_persistence_stub.dart'
     if (dart.library.html) 'fs_persistence_web.dart';
-import 'memory_shell.dart';
-import 'persistent_web_env.dart';
+import 'package:fa/sandbox/memory_shell.dart';
+import 'package:fa/sandbox/persistent_web_env.dart';
 
 /// Creates the execution environment for the current platform.
 ///

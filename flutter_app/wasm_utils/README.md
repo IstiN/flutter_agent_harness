@@ -45,7 +45,7 @@ The resulting `.wasm` files are copied to `../assets/wasm/`.
 
 ## Usage in the sandbox
 
-`lib/wasm_shell.dart` maps shell commands to the correct module name and
+`lib/sandbox/wasm_shell.dart` maps shell commands to the correct module name and
 arguments:
 
 - `tar` and `gzip` are invoked directly.

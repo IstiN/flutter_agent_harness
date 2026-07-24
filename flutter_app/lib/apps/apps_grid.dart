@@ -8,11 +8,11 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import '../agent_service.dart';
-import 'app_icon.dart';
-import 'apps_store.dart';
-import 'js_app_engine.dart';
-import 'js_app_view.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_view.dart';
 
 /// Grid launcher for the JS apps living in the env's `apps/` folder.
 ///

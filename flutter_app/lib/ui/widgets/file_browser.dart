@@ -3,12 +3,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'file_preview.dart';
-import 'project_folder_channel.dart';
-import 'project_mount_env.dart';
-import 'project_mount_store.dart';
-import 'upload.dart';
-import 'upload_picker_stub.dart'
+import 'package:fa/ui/widgets/file_preview.dart';
+import 'package:fa/services/project_folder_channel.dart';
+import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/project_mount_store.dart';
+import 'package:fa/services/upload.dart';
+import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.html) 'upload_picker_web.dart';
 
 /// The default [ProjectFolderOps] on supported platforms (macOS), else null.

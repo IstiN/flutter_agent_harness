@@ -1,6 +1,6 @@
-import 'package:fa/agent_service.dart';
+import 'package:fa/services/agent_service.dart';
 import 'package:fa/gemma/gemma_types.dart';
-import 'package:fa/last_connection.dart';
+import 'package:fa/services/last_connection.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';

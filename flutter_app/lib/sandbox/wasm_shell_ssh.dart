@@ -9,8 +9,8 @@ import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:path/path.dart' as p;
 
-import 'sandbox_ssh.dart';
-import 'wasm_shell.dart';
+import 'package:fa/sandbox/sandbox_ssh.dart';
+import 'package:fa/sandbox/wasm_shell.dart';
 
 /// dartssh2-backed SSH transport for the sandbox `ssh`/`scp`/`sftp`
 /// builtins (`dart:io` only; the web shell reports exit 127 instead).

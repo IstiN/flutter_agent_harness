@@ -14,12 +14,12 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
 
-import 'sandbox_builtins.dart';
-import 'sandbox_pip.dart';
-import 'sandbox_registry.dart';
-import 'shell_parser.dart';
-import 'wasm_shell_git.dart';
-import 'wasm_shell_ssh.dart';
+import 'package:fa/sandbox/sandbox_builtins.dart';
+import 'package:fa/sandbox/sandbox_pip.dart';
+import 'package:fa/sandbox/sandbox_registry.dart';
+import 'package:fa/sandbox/shell_parser.dart';
+import 'package:fa/sandbox/wasm_shell_git.dart';
+import 'package:fa/sandbox/wasm_shell_ssh.dart';
 
 /// A [Shell] backed by a sandbox of permissive WASI binaries.
 ///

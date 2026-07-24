@@ -1,4 +1,4 @@
-import 'package:fa/shell_parser.dart';
+import 'package:fa/sandbox/shell_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

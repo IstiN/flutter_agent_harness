@@ -28,7 +28,7 @@ const _skippedFiles = ['lib/prompts.g.dart'];
 
 /// `path:line-fragment` pairs we deliberately keep hardcoded.
 const _allowlist = <String, List<String>>{
-  'lib/settings.dart': ['https://example.com/v1'],
+  'lib/ui/screens/settings.dart': ['https://example.com/v1'],
 };
 
 final _textPattern = RegExp(

@@ -17,8 +17,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:js_interop';
 
-import 'transformers_js_js_interop.dart';
-import 'transformers_js_types.dart';
+import 'package:fa/transformers_js/transformers_js_js_interop.dart';
+import 'package:fa/transformers_js/transformers_js_types.dart';
 
 /// Returns the process-wide [TransformersJsEngineApi] singleton.
 ///

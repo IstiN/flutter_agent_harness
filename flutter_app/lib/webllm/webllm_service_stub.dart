@@ -7,7 +7,7 @@
 /// unavailability instead of failing obscurely.
 library;
 
-import 'webllm_types.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// The message shown when the on-device provider is used off the web.
 const webLlmUnavailableMessage =

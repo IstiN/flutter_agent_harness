@@ -12,8 +12,8 @@
 /// animation, so its states are pumped frame-by-frame (never pumpAndSettle).
 library;
 
-import 'package:fa/agent_service.dart';
-import 'package:fa/app_theme.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/app_theme.dart';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_grid.dart';
 import 'package:fa/apps/apps_store.dart';

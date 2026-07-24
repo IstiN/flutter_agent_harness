@@ -7,7 +7,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'agent_service.dart';
+import 'package:fa/services/agent_service.dart';
 
 /// One managed chat session: the [AgentService] and the session id.
 final class FlutterManagedSession {

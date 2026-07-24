@@ -1,5 +1,5 @@
-import 'package:fa/agent_service.dart';
-import 'package:fa/vision_models.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/vision_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

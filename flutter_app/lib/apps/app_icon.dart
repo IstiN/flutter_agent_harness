@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import 'apps_store.dart';
+import 'package:fa/apps/apps_store.dart';
 
 /// Renders a JS app's manifest icon: an emoji (the common case), inline SVG
 /// markup (`"icon": "<svg …>"`), or an SVG file inside the app folder

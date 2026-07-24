@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:fa/env_factory.dart';
+import 'package:fa/sandbox/env_factory.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';

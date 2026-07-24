@@ -8,7 +8,7 @@
 /// obscurely.
 library;
 
-import 'transformers_js_types.dart';
+import 'package:fa/transformers_js/transformers_js_types.dart';
 
 /// Returns a stub [TransformersJsEngineApi] that reports unavailable.
 TransformersJsEngineApi createTransformersJsService() =>

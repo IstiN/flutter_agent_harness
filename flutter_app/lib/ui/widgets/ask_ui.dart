@@ -3,7 +3,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 
-import 'agent_service.dart';
+import 'package:fa/services/agent_service.dart';
 
 /// Renders the ask tool's questions as a modal bottom sheet — the
 /// Flutter/web [AskCallback] surface. The chat screen installs this on

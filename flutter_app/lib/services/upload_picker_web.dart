@@ -6,7 +6,7 @@ import 'dart:async';
 import 'dart:html' as html;
 import 'dart:typed_data';
 
-import 'upload.dart';
+import 'package:fa/services/upload.dart';
 
 /// Browser [UploadPicker]: clicks a hidden `<input type="file" multiple>`
 /// and reads the chosen files fully into memory.

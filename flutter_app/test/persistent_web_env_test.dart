@@ -5,9 +5,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:fa/fs_persistence.dart';
-import 'package:fa/memory_shell.dart';
-import 'package:fa/persistent_web_env.dart';
+import 'package:fa/sandbox/fs_persistence.dart';
+import 'package:fa/sandbox/memory_shell.dart';
+import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -6,5 +6,5 @@
 /// everywhere else (same pattern as `webllm_service.dart` in this app).
 library;
 
-export 'transformers_js_service_stub.dart'
+export 'package:fa/transformers_js/transformers_js_service_stub.dart'
     if (dart.library.html) 'transformers_js_service_web.dart';

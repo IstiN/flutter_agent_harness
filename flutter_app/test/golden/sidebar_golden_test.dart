@@ -6,9 +6,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:fa/agent_service.dart';
-import 'package:fa/flutter_session_manager.dart';
-import 'package:fa/session_sidebar.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';

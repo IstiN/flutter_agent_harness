@@ -19,8 +19,8 @@
 library;
 
 import 'package:flutter/foundation.dart';
-import 'package:fa/env_factory.dart';
-import 'package:fa/persistent_web_env.dart';
+import 'package:fa/sandbox/env_factory.dart';
+import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;

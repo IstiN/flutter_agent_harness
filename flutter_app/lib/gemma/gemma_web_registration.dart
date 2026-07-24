@@ -7,5 +7,5 @@
 /// for why it is needed); a no-op on every other platform.
 library;
 
-export 'gemma_web_registration_stub.dart'
+export 'package:fa/gemma/gemma_web_registration_stub.dart'
     if (dart.library.js_interop) 'gemma_web_registration_web.dart';

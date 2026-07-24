@@ -1,4 +1,4 @@
-import 'package:fa/sandbox_registry.dart';
+import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

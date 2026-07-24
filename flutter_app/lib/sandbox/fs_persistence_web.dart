@@ -6,7 +6,7 @@ import 'dart:async';
 import 'dart:html' as html;
 import 'dart:js_interop';
 
-import 'fs_persistence.dart';
+import 'package:fa/sandbox/fs_persistence.dart';
 
 @JS('__fahFsLoad')
 external JSPromise _fahFsLoadJs();

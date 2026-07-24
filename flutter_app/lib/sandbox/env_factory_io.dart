@@ -6,10 +6,10 @@ import 'package:flutter_agent_harness/io.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
-import 'project_folder_channel.dart';
-import 'project_mount_env.dart';
-import 'project_mount_store.dart';
-import 'wasm_shell.dart';
+import 'package:fa/services/project_folder_channel.dart';
+import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/project_mount_store.dart';
+import 'package:fa/sandbox/wasm_shell.dart';
 
 /// Creates the execution environment for the current platform.
 ///

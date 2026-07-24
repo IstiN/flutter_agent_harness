@@ -16,20 +16,20 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 
-import 'agent_service.dart';
-import 'app_theme.dart';
-import 'approval_ui.dart';
-import 'ask_ui.dart';
-import 'file_browser.dart';
-import 'file_preview.dart';
-import 'flutter_session_manager.dart';
-import 'last_connection.dart';
-import 'markdown_style.dart';
-import 'provider_registry.dart';
-import 'session_sidebar.dart';
-import 'settings.dart';
-import 'upload.dart';
-import 'upload_picker_stub.dart'
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/widgets/approval_ui.dart';
+import 'package:fa/ui/widgets/ask_ui.dart';
+import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/ui/widgets/file_preview.dart';
+import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/last_connection.dart';
+import 'package:fa/ui/markdown_style.dart';
+import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/widgets/session_sidebar.dart';
+import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/services/upload.dart';
+import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.html) 'upload_picker_web.dart';
 
 /// Minimum body width (logical px) at which the side panels (sessions/model

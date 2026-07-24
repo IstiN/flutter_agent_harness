@@ -8,7 +8,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'fs_persistence.dart';
+import 'package:fa/sandbox/fs_persistence.dart';
 
 /// An [ExecutionEnv] wrapper that mirrors the delegate's filesystem into an
 /// [FsSnapshotStore] so the web sandbox (an in-memory FS) survives page

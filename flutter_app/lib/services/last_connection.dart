@@ -6,10 +6,10 @@ import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'agent_service.dart';
-import 'gemma/gemma_types.dart';
-import 'transformers_js/transformers_js_types.dart';
-import 'webllm/webllm_types.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/transformers_js/transformers_js_types.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// The provider/model combination of the last successful connection.
 ///

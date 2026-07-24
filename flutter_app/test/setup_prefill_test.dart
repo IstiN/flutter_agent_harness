@@ -3,12 +3,12 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:fa/chat_screen.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/gemma/gemma_types.dart';
-import 'package:fa/last_connection.dart';
+import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
-import 'package:fa/provider_registry.dart';
-import 'package:fa/settings.dart';
+import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';

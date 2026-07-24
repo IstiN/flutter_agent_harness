@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import 'html_preview_document.dart';
+import 'package:fa/ui/widgets/html_preview_document.dart';
 
 /// Mobile/desktop HTML preview: a [WebViewWidget] fed the file's markup.
 ///

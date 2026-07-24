@@ -6,8 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
-import 'html_preview_stub.dart' if (dart.library.html) 'html_preview_web.dart';
-import 'markdown_style.dart';
+import 'package:fa/ui/widgets/html_preview_stub.dart'
+    if (dart.library.html) 'package:fa/ui/widgets/html_preview_web.dart';
+import 'package:fa/ui/markdown_style.dart';
 
 /// Files larger than this are never loaded for preview (4 MB).
 const int kPreviewReadCapBytes = 4 * 1024 * 1024;

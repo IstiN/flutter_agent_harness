@@ -36,8 +36,8 @@ import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import '../prompts.g.dart';
-import 'webllm_types.dart';
+import 'package:fa/prompts.g.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// Builds a [StreamFunction] that runs inference through [service], with
 /// tool calling provided by the universal prompt-tools wrapper (see the

@@ -5,8 +5,8 @@
 /// network/file/JS backends are touched).
 library;
 
-import 'package:fa/provider_registry.dart';
-import 'package:fa/settings.dart';
+import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

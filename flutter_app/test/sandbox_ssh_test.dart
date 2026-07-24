@@ -12,7 +12,7 @@ library;
 
 import 'dart:convert';
 
-import 'package:fa/sandbox_ssh.dart';
+import 'package:fa/sandbox/sandbox_ssh.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 

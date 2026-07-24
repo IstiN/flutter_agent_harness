@@ -1,26 +1,27 @@
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:fa/agent_service.dart';
-import 'package:fa/app_theme.dart';
-import 'package:fa/chat_screen.dart';
-import 'package:fa/downloaded_models_quick_start.dart';
-import 'package:fa/env_factory.dart';
-import 'package:fa/flutter_session_manager.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
+import 'package:fa/sandbox/env_factory.dart';
+import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/gemma/gemma_types.dart';
-import 'package:fa/last_connection.dart';
+import 'package:fa/services/last_connection.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
-import 'package:fa/provider_registry.dart';
-import 'package:fa/settings.dart';
+import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-import 'wasm_setup_stub.dart' if (dart.library.io) 'wasm_setup_io.dart';
+import 'package:fa/sandbox/wasm_setup_stub.dart'
+    if (dart.library.io) 'package:fa/sandbox/wasm_setup_io.dart';
 
-import 'firebase_options.dart';
+import 'package:fa/firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

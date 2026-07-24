@@ -8,7 +8,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
-import 'sandbox_builtins.dart';
+import 'package:fa/sandbox/sandbox_builtins.dart';
 
 /// Result of one remote command executed over SSH.
 final class SandboxSshExecResult {

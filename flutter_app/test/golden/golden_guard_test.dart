@@ -21,31 +21,32 @@ import 'package:flutter_test/flutter_test.dart';
 /// lib file (relative to flutter_app/) → golden test file covering it.
 const _coverage = <String, String>{
   'lib/main.dart': 'test/golden/setup_golden_test.dart',
-  'lib/settings.dart': 'test/golden/settings_golden_test.dart',
-  'lib/chat_screen.dart': 'test/golden/chat_golden_test.dart',
-  'lib/fa_mark.dart': 'test/golden/chat_golden_test.dart',
-  'lib/session_sidebar.dart': 'test/golden/sidebar_golden_test.dart',
-  'lib/file_browser.dart': 'test/golden/files_golden_test.dart',
-  'lib/file_preview.dart': 'test/golden/files_golden_test.dart',
-  'lib/approval_ui.dart': 'test/golden/dialogs_golden_test.dart',
-  'lib/ask_ui.dart': 'test/golden/dialogs_golden_test.dart',
+  'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/chat_screen.dart': 'test/golden/chat_golden_test.dart',
+  'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',
+  'lib/ui/widgets/session_sidebar.dart': 'test/golden/sidebar_golden_test.dart',
+  'lib/ui/widgets/file_browser.dart': 'test/golden/files_golden_test.dart',
+  'lib/ui/widgets/file_preview.dart': 'test/golden/files_golden_test.dart',
+  'lib/ui/widgets/approval_ui.dart': 'test/golden/dialogs_golden_test.dart',
+  'lib/ui/widgets/ask_ui.dart': 'test/golden/dialogs_golden_test.dart',
   'lib/apps/app_icon.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/apps_grid.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/fa_work_bar.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/js_app_view.dart': 'test/golden/apps_golden_test.dart',
-  'lib/downloaded_models_quick_start.dart':
+  'lib/ui/widgets/downloaded_models_quick_start.dart':
       'test/golden/sections_golden_test.dart',
   'lib/gemma/gemma_cache_section.dart': 'test/golden/sections_golden_test.dart',
   'lib/webllm/webllm_cache_section.dart':
       'test/golden/sections_golden_test.dart',
   'lib/transformers_js/transformers_js_cache_section.dart':
       'test/golden/sections_golden_test.dart',
-  'lib/html_preview_stub.dart': 'test/golden/sections_golden_test.dart',
+  'lib/ui/widgets/html_preview_stub.dart':
+      'test/golden/sections_golden_test.dart',
 };
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.
 const _exempt = <String, String>{
-  'lib/html_preview_web.dart':
+  'lib/ui/widgets/html_preview_web.dart':
       'web-only conditional implementation; the '
       'stub variant (same widget API) is covered instead',
 };

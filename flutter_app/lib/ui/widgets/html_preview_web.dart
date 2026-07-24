@@ -3,7 +3,7 @@ import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/widgets.dart';
 
-import 'html_preview_document.dart';
+import 'package:fa/ui/widgets/html_preview_document.dart';
 
 /// Browser HTML preview: an `<iframe>` fed the file's markup via `srcdoc`,
 /// registered as a platform view. Selected when `dart.library.html` is

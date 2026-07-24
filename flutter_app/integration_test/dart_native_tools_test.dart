@@ -5,7 +5,7 @@
 /// Integration test for Dart-native shell builtins: curl, jq, yq.
 library;
 
-import 'package:fa/env_factory.dart';
+import 'package:fa/sandbox/env_factory.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;

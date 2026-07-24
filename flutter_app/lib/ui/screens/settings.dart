@@ -5,20 +5,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 
-import 'agent_service.dart';
-import 'approval_ui.dart';
-import 'gemma/gemma_cache_section.dart';
-import 'gemma/gemma_service.dart';
-import 'gemma/gemma_types.dart';
-import 'last_connection.dart';
-import 'provider_registry.dart';
-import 'transformers_js/transformers_js_cache_section.dart';
-import 'transformers_js/transformers_js_service.dart';
-import 'transformers_js/transformers_js_types.dart';
-import 'vision_models.dart';
-import 'webllm/webllm_cache_section.dart';
-import 'webllm/webllm_service.dart';
-import 'webllm/webllm_types.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/widgets/approval_ui.dart';
+import 'package:fa/gemma/gemma_cache_section.dart';
+import 'package:fa/gemma/gemma_service.dart';
+import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/provider_registry.dart';
+import 'package:fa/transformers_js/transformers_js_cache_section.dart';
+import 'package:fa/transformers_js/transformers_js_service.dart';
+import 'package:fa/transformers_js/transformers_js_types.dart';
+import 'package:fa/services/vision_models.dart';
+import 'package:fa/webllm/webllm_cache_section.dart';
+import 'package:fa/webllm/webllm_service.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// Compile-time configuration injected via `--dart-define`. Values fall back
 /// to the `.env` file (local dev) at runtime — see [settingsEnv].

@@ -4,9 +4,9 @@
 /// `test/approval_ui_test.dart` and `test/ask_ui_test.dart`.
 library;
 
-import 'package:fa/agent_service.dart';
-import 'package:fa/approval_ui.dart';
-import 'package:fa/ask_ui.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/widgets/approval_ui.dart';
+import 'package:fa/ui/widgets/ask_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';

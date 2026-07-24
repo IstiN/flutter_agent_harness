@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
-import 'app_theme.dart';
+import 'package:fa/ui/app_theme.dart';
 
 /// The app's shared [MarkdownStyleSheet]: dark-theme text with the landing
 /// palette's teal links, mono inline code, and bordered code blocks /

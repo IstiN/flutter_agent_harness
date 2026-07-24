@@ -46,9 +46,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import '../prompts.g.dart';
-import '../upload.dart';
-import 'transformers_js_types.dart';
+import 'package:fa/prompts.g.dart';
+import 'package:fa/services/upload.dart';
+import 'package:fa/transformers_js/transformers_js_types.dart';
 
 /// Builds a [StreamFunction] that runs inference through [service], with
 /// tool calling provided by the universal prompt-tools wrapper (see the

@@ -5,22 +5,22 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'env_factory.dart';
-import 'gemma/gemma_service.dart';
-import 'gemma/gemma_stream_function.dart';
-import 'gemma/gemma_types.dart';
-import 'project_mount_env.dart';
-import 'vision_models.dart';
-import 'prompts.g.dart';
-import 'sandbox_registry.dart';
-import 'secrets_store.dart';
-import 'transformers_js/transformers_js_service.dart';
-import 'transformers_js/transformers_js_stream_function.dart';
-import 'transformers_js/transformers_js_types.dart';
-import 'upload.dart';
-import 'webllm/webllm_service.dart';
-import 'webllm/webllm_stream_function.dart';
-import 'webllm/webllm_types.dart';
+import 'package:fa/sandbox/env_factory.dart';
+import 'package:fa/gemma/gemma_service.dart';
+import 'package:fa/gemma/gemma_stream_function.dart';
+import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/vision_models.dart';
+import 'package:fa/prompts.g.dart';
+import 'package:fa/sandbox/sandbox_registry.dart';
+import 'package:fa/services/secrets_store.dart';
+import 'package:fa/transformers_js/transformers_js_service.dart';
+import 'package:fa/transformers_js/transformers_js_stream_function.dart';
+import 'package:fa/transformers_js/transformers_js_types.dart';
+import 'package:fa/services/upload.dart';
+import 'package:fa/webllm/webllm_service.dart';
+import 'package:fa/webllm/webllm_stream_function.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// A UI-facing chat message.
 final class FahChatMessage {

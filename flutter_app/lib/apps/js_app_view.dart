@@ -13,12 +13,12 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
-import '../agent_service.dart';
-import '../fa_mark.dart';
-import 'app_icon.dart';
-import 'apps_store.dart';
-import 'fa_work_bar.dart';
-import 'js_app_engine.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/fa_work_bar.dart';
+import 'package:fa/apps/js_app_engine.dart';
 
 /// Payload delivered when the user talks to Fa from inside an app: their
 /// message, the app's exported state, and a screenshot of the app.

@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:dart_git/dart_git.dart';
 import 'package:flutter/foundation.dart';
-import 'package:fa/git_smart_http.dart';
+import 'package:fa/sandbox/git_smart_http.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

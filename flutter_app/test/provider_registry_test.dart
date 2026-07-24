@@ -1,4 +1,4 @@
-import 'package:fa/provider_registry.dart';
+import 'package:fa/services/provider_registry.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -8,8 +8,8 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 
-import 'transformers_js_service.dart';
-import 'transformers_js_types.dart';
+import 'package:fa/transformers_js/transformers_js_service.dart';
+import 'package:fa/transformers_js/transformers_js_types.dart';
 
 /// The "Downloaded models (transformers.js)" settings section for the
 /// on-device transformers.js provider: lists the models whose ONNX weights

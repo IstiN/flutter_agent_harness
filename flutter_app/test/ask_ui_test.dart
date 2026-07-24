@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:fa/agent_service.dart';
-import 'package:fa/ask_ui.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/widgets/ask_ui.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -1,6 +1,6 @@
 import 'package:fa/prompts.g.dart';
-import 'package:fa/sandbox_registry.dart';
-import 'package:fa/secrets_store.dart';
+import 'package:fa/sandbox/sandbox_registry.dart';
+import 'package:fa/services/secrets_store.dart';
 import 'package:fa/webllm/webllm_stream_function.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';

@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:fa/agent_service.dart';
-import 'package:fa/downloaded_models_quick_start.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';

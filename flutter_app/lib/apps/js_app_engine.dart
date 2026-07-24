@@ -10,7 +10,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
-import 'apps_store.dart';
+import 'package:fa/apps/apps_store.dart';
 
 /// One-shot LLM completion used by the `jsr.fa.llm(prompt)` bridge call.
 typedef FaLlmHandler = Future<Object?> Function(String prompt);

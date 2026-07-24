@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'agent_service.dart';
-import 'l10n/l10n_ext.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/l10n/l10n_ext.dart';
 
 /// Renders an approval prompt as a Material dialog — the Flutter/web
 /// [ApprovalPrompt] surface. The chat screen installs this on

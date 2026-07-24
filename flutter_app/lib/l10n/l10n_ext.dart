@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 
-import 'app_localizations.dart';
-import 'app_localizations_en.dart';
+import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/l10n/app_localizations_en.dart';
 
 /// Shorthand accessor: `context.l10n.someKey`.
 ///

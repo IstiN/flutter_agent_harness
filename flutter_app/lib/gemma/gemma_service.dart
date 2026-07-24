@@ -9,6 +9,6 @@
 /// pattern as `secrets_store.dart` in this app).
 library;
 
-export 'gemma_service_stub.dart'
+export 'package:fa/gemma/gemma_service_stub.dart'
     if (dart.library.io) 'gemma_service_plugin.dart'
     if (dart.library.js_interop) 'gemma_service_plugin.dart';

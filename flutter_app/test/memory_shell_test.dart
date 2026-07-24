@@ -1,8 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:fa/memory_shell.dart';
-import 'package:fa/sandbox_builtins.dart';
+import 'package:fa/sandbox/memory_shell.dart';
+import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;

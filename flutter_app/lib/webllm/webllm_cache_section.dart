@@ -8,8 +8,8 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 
-import 'webllm_service.dart';
-import 'webllm_types.dart';
+import 'package:fa/webllm/webllm_service.dart';
+import 'package:fa/webllm/webllm_types.dart';
 
 /// The "Downloaded models" settings section for the on-device (WebLLM)
 /// provider: lists the models whose weights sit in the browser's
