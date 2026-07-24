@@ -123,9 +123,10 @@ class AgentService extends ChangeNotifier {
     SecretRedactor? redactor,
     this._config,
     String promptSuffix = '',
+    Duration? responseTimeout,
   }) : _promptSuffix = promptSuffix,
        _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
-    _responseTimeout = const Duration(seconds: 90);
+    _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
     _redactor = redactor;
     _attachRedactor(redactor);
@@ -663,29 +664,42 @@ class AgentService extends ChangeNotifier {
   void _runWithTimeout(Future<void> Function() startRun) {
     final Future<void> run;
     try {
+      _armIdleWatchdog();
       run = startRun();
     } on Object catch (e) {
+      _idleWatchdog?.cancel();
       isStreaming = false;
       error = e is StateError ? e.message : e.toString();
       notifyListeners();
       return;
     }
-    run
-        .timeout(
-          _responseTimeout,
-          onTimeout: () {
-            abort();
-            throw TimeoutException(
-              'The model did not respond within '
-              '${_responseTimeout.inSeconds} seconds.',
-            );
-          },
-        )
-        .catchError((Object e) {
-          isStreaming = false;
-          error = e.toString();
-          notifyListeners();
-        });
+    run.catchError((Object e) {
+      _idleWatchdog?.cancel();
+      isStreaming = false;
+      error = e.toString();
+      notifyListeners();
+    });
+  }
+
+  /// Idle watchdog: the run aborts only when NOTHING comes back for
+  /// [_responseTimeout] — any event (tokens, tool calls) proves the model is
+  /// alive and rearms it. Replaces the previous whole-run timeout, which
+  /// killed long coding tasks ("Request was aborted" after 90 s of healthy
+  /// streaming). Long tool calls suppress it via [_activeToolCalls].
+  Timer? _idleWatchdog;
+  int _activeToolCalls = 0;
+
+  void _armIdleWatchdog() {
+    _idleWatchdog?.cancel();
+    _idleWatchdog = Timer(_responseTimeout, () {
+      if (_activeToolCalls > 0) return; // a long tool is still running
+      abort();
+      isStreaming = false;
+      error =
+          'The model stopped responding for '
+          '${_responseTimeout.inSeconds} seconds.';
+      notifyListeners();
+    });
   }
 
   /// Aborts the current run, if any.
@@ -693,6 +707,7 @@ class AgentService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _idleWatchdog?.cancel();
     fsRevision.dispose();
     super.dispose();
   }
@@ -852,6 +867,8 @@ class AgentService extends ChangeNotifier {
   }
 
   Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
+    // Any event proves the run is alive — rearm the idle watchdog.
+    if (event is! AgentEndEvent) _armIdleWatchdog();
     switch (event) {
       case AgentStartEvent():
         isStreaming = true;
@@ -899,6 +916,9 @@ class AgentService extends ChangeNotifier {
           _finalizeAssistant(message);
         }
       case ToolExecutionStartEvent(:final toolName, :final args):
+        // Tool calls can run long (builds, installs) without producing agent
+        // events — the idle watchdog must not fire during them.
+        _activeToolCalls++;
         messages.add(
           FahChatMessage(
             role: 'system',
@@ -911,6 +931,8 @@ class AgentService extends ChangeNotifier {
         :final result,
         :final isError,
       ):
+        _activeToolCalls--;
+        _armIdleWatchdog();
         if (_kMutatingToolNames.contains(toolName)) {
           // "Hook" for file-watching UI: the agent may have changed files.
           fsRevision.value++;
@@ -929,6 +951,7 @@ class AgentService extends ChangeNotifier {
         );
         notifyListeners();
       case AgentEndEvent():
+        _idleWatchdog?.cancel();
         isStreaming = false;
         _currentAssistantMessage = null;
         notifyListeners();
