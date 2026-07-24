@@ -112,6 +112,13 @@ class _ChatScreenState extends State<ChatScreen> {
   late final InMemoryChatController _chatController;
   final _textController = TextEditingController();
 
+  /// Own scroll controller for the message list (injected via
+  /// [Builders.chatAnimatedListBuilder]) so the follow-tail logic can track
+  /// whether the user is at the bottom and keep up with streaming updates —
+  /// the library only auto-scrolls on inserts, not on in-place updates.
+  final _chatScrollController = ScrollController();
+  bool _userNearBottom = true;
+
   final _user = const User(id: 'user', name: 'Me');
   final _assistant = const User(id: 'assistant', name: 'Fa');
   final _tool = const User(id: 'tool', name: 'tool');
@@ -168,11 +175,37 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _chatController = InMemoryChatController();
+    _chatScrollController.addListener(_trackNearBottom);
     widget.manager.addListener(_onManagerChanged);
     _subscribeToService();
     _isStreaming = widget.service.isStreaming;
     _error = widget.service.error;
     _syncMessages();
+  }
+
+  /// The follow-tail latch (YoLoIT's pattern): scrolling up unlatches,
+  /// scrolling back to the bottom relatches. Streaming then keeps the tail
+  /// pinned only while the user is at the bottom.
+  void _trackNearBottom() {
+    if (!_chatScrollController.hasClients) return;
+    final position = _chatScrollController.position;
+    _userNearBottom = position.maxScrollExtent - position.pixels < 150;
+  }
+
+  /// Pins the chat to the tail after a sync when the user hasn't scrolled
+  /// away. Runs post-frame so the new content has been laid out.
+  void _scrollToTailIfFollowing() {
+    if (!_userNearBottom) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_chatScrollController.hasClients) return;
+      final maxExtent = _chatScrollController.position.maxScrollExtent;
+      if ((_chatScrollController.offset - maxExtent).abs() < 1) return;
+      _chatScrollController.animateTo(
+        maxExtent,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.linearToEaseOut,
+      );
+    });
   }
 
   void _subscribeToService() {
@@ -211,6 +244,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _syncDebounce?.cancel();
     _textController.dispose();
+    _chatScrollController.dispose();
     widget.manager.removeListener(_onManagerChanged);
     _unsubscribeFromService();
     _chatController.dispose();
@@ -296,6 +330,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       _lastSynced = newList;
+      _scrollToTailIfFollowing();
     } on Object catch (e, stack) {
       // _syncMessages runs from a Timer callback: an escape here is an
       // unhandled async error that repeats on every service notification
@@ -686,8 +721,10 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const SizedBox(width: 6),
             Expanded(
-              child: Text(
-                content,
+              // Reasoning can run to thousands of lines (and small models
+              // sometimes loop there) — collapse like long tool output.
+              child: _CollapsibleToolOutput(
+                content: content,
                 style: FahPalette.mono(
                   color: FahPalette.dim,
                   fontSize: 12,
@@ -998,6 +1035,11 @@ class _ChatScreenState extends State<ChatScreen> {
               textMessageBuilder: _buildTextMessage,
               customMessageBuilder: _buildCustomMessage,
               imageMessageBuilder: _buildImageMessage,
+              chatAnimatedListBuilder: (context, itemBuilder) =>
+                  ChatAnimatedList(
+                    itemBuilder: itemBuilder,
+                    scrollController: _chatScrollController,
+                  ),
               composerBuilder: (_) => const SizedBox.shrink(),
             ),
             theme: buildFahChatTheme(),
