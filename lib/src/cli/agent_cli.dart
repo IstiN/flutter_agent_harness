@@ -1484,10 +1484,12 @@ class AgentCli {
   String _errorLine(String message) {
     final compact = compactProviderError(message);
     if (!compact.toLowerCase().contains('connection refused')) {
-      return 'error: $compact';
+      return _style.red('error: $compact');
     }
-    return 'error: $compact — check the endpoint in ~/.fah/config.yaml '
-        '(baseUrl: ${_agent.state.model.baseUrl}) or pass --base-url';
+    return _style.red(
+      'error: $compact — check the endpoint in ~/.fah/config.yaml '
+      '(baseUrl: ${_agent.state.model.baseUrl}) or pass --base-url',
+    );
   }
 
   Future<void> _handleLine(String line) async {

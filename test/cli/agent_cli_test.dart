@@ -1569,6 +1569,40 @@ void main() {
     expect(cli.agent.state.model.id, 'test-model');
   });
 
+  test('error lines render red when color is enabled', () async {
+    final fake = _FakeStreamFunction([
+      [
+        StartEvent(partial: _assistant()),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _assistant(stopReason: StopReason.error, errorMessage: 'boom'),
+        ),
+      ],
+    ]);
+    final cli = AgentCli(
+      useColor: true,
+      config: AgentCliConfig(
+        model: _model,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    final run = cli.run();
+
+    io.sendLine('go');
+    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('\x1b[31merror: boom\x1b[0m'));
+    // No-color mode (tests above) stays plain for stable assertions.
+    expect(output, contains('error: boom'));
+  });
+
   test('connection-refused error appends the endpoint hint (ClientException '
       'message shape)', () async {
     final fake = _FakeStreamFunction([
