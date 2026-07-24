@@ -1,27 +1,32 @@
-/// Golden (screenshot) tests for the chat surface: `lib/chat_screen.dart`
-/// (the full `ChatScreen` on the wide layout) and `lib/fa_mark.dart`.
+/// Golden (screenshot) tests for the chat surface:
+/// `lib/ui/screens/chat_screen.dart` (the full `ChatScreen`) and
+/// `lib/ui/widgets/fa_mark.dart`.
 ///
 /// Messages are injected straight into `AgentService.messages` (the pattern
 /// from `app_theme_test.dart`) so no agent run, network, or clock leaks into
 /// the snapshots; the fakes below are copied verbatim from
 /// `chat_screen_test.dart`.
 ///
-/// The left session sidebar is collapsed before every snapshot: its apps
-/// section seeds bundled demos from assets on the real event loop, which is
-/// inherently racy in widget tests — and the sidebar has its own golden file.
+/// The hero conversation shot keeps the session sidebar OPEN: its apps
+/// section seeds the bundled demo apps through `rootBundle`, which is
+/// unreliable in widget tests without the `_mockBundledAppAssets` +
+/// `_settleSidebar` dance (borrowed from `sidebar_golden_test.dart`). The
+/// smaller states collapse the sidebar so they stay focused on the chat
+/// surface itself.
 library;
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
-import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 // Platform-interface fakes for path_provider (transitive deps — kept out of
@@ -77,6 +82,53 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
+/// Serves `rootBundle` from the asset tree `flutter test` builds into
+/// `build/unit_test_assets/` (same helper as `sidebar_golden_test.dart`).
+///
+/// The sidebar's `_loadApps` seeds the bundled demo apps through
+/// `AppsStore` → `rootBundle.loadString` (not injectable — see
+/// `SessionSidebar._loadApps`). Two framework quirks make this unreliable
+/// without help:
+///  1. the real `flutter/assets` channel answers only in the FIRST test of
+///     a process (later sends hang forever), so every test registers this
+///     mock handler — the framework resets handlers per test;
+///  2. `rootBundle` is a process-global `CachingAssetBundle`: a test that
+///     ends with asset loads in flight leaves PENDING cached futures whose
+///     continuations belonged to the dead test zone — every later
+///     `loadString` of those keys hangs on the poisoned cache entry.
+///     `rootBundle.clear()` drops them so each test re-reads via the mock.
+void _mockBundledAppAssets() {
+  rootBundle.clear();
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMessageHandler('flutter/assets', (message) async {
+        if (message == null) return null;
+        final key = utf8.decode(message.buffer.asUint8List());
+        final file = File('build/unit_test_assets/$key');
+        if (!file.existsSync()) return null;
+        return ByteData.sublistView(await file.readAsBytes());
+      });
+}
+
+/// Waits until the sidebar's apps section finished seeding + loading.
+///
+/// `_loadApps` (unawaited from `initState`) is real async I/O that
+/// `pumpAndSettle` does NOT wait for (no frame is scheduled between the last
+/// write and the final `setState`), so it would race the snapshot.
+/// Alternating `runAsync` delays (the real event loop drives the seeding)
+/// with `pump` (rebuilds with whatever state landed) converges
+/// deterministically.
+Future<void> _settleSidebar(WidgetTester tester) async {
+  for (var i = 0; i < 200 && find.text('Calculator').evaluate().isEmpty; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+  }
+  await tester.pumpAndSettle();
+  // Sanity: the seeded apps rendered before the snapshot.
+  expect(find.text('Calculator'), findsOneWidget);
+}
+
 /// A 64×64 teal→indigo gradient swatch PNG (618 bytes), generated once
 /// offline and embedded so the image-attachment snapshot never touches
 /// network or assets.
@@ -111,8 +163,13 @@ class _FakePathProviderPlatform extends PathProviderPlatform
 }
 
 /// Pumps the full [ChatScreen] as the app home (it is a Scaffold itself) at
-/// the wide surface, then collapses the left sidebar (see the file doc).
-Future<void> _pumpChatScreen(WidgetTester tester, AgentService service) async {
+/// [size], then collapses the left sidebar so the snapshot focuses on the
+/// chat surface (the sidebar has its own golden file).
+Future<void> _pumpChatScreen(
+  WidgetTester tester,
+  AgentService service, {
+  Size size = goldenSizeWide,
+}) async {
   final manager = FlutterSessionManager(
     env: MemoryExecutionEnv(),
     sessionsRoot: '/sessions',
@@ -120,72 +177,125 @@ Future<void> _pumpChatScreen(WidgetTester tester, AgentService service) async {
   await pumpGolden(
     tester,
     ChatScreen(manager: manager),
-    size: goldenSizeWide,
+    size: size,
     wrap: (child) => child,
   );
-  await _collapseSidebar(tester);
-}
-
-Future<void> _collapseSidebar(WidgetTester tester) async {
   await tester.tap(find.byTooltip('Sessions & model'));
   await tester.pumpAndSettle();
 }
 
 void main() {
+  setUpAll(() async {
+    await ensureGoldenFonts();
+    // Icon fonts are not registered from the test asset bundle — without
+    // this every Icon renders as a placeholder square.
+    final icons = FontLoader('MaterialIcons')
+      ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+    await icons.load();
+  });
+
   group('ChatScreen goldens', () {
     testWidgets('empty chat screen', (tester) async {
       await _pumpChatScreen(tester, _fakeService(MemoryExecutionEnv()));
       await expectGolden(tester, 'chat_empty');
     });
 
-    testWidgets('conversation: user + assistant + tool messages', (
-      tester,
-    ) async {
-      final service = _fakeService(MemoryExecutionEnv());
+    testWidgets('hero: conversation with sidebar, tool call, code block, '
+        'collapsed thinking', (tester) async {
+      _mockBundledAppAssets();
+      final env = MemoryExecutionEnv();
+      // One persisted session from a "previous run" so the sidebar shows its
+      // on-disk section next to the two live ones.
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      await repo.create(
+        JsonlSessionCreateOptions(
+          id: 'c0ffee01-weekend-plan',
+          cwd: 'openai-completions',
+          metadata: const {'agent': 'fa', 'model': 'old-model'},
+        ),
+      );
+
+      final service = _fakeService(env);
       service.messages
-        ..add(FahChatMessage(role: 'user', content: 'what is in README.md?'))
+        ..add(
+          FahChatMessage(
+            role: 'user',
+            content:
+                'the auth integration test fails after my refactor — can you '
+                'take a look?',
+          ),
+        )
+        ..add(
+          FahChatMessage(
+            role: 'thinking',
+            content: [
+              'Let me trace through the auth flow.',
+              'The refactor made the token parameter optional…',
+              '…but the test may still pass it positionally.',
+              'Checking the call sites first:',
+              '  - lib/auth.dart: signIn({token})',
+              '  - integration_test/auth_test.dart: old two-arg call',
+              'So the expectation is stale, not the implementation.',
+              'I will read the test to confirm the exact mismatch,',
+              'then update the expectation to the new signature',
+              'and re-run the suite to make sure it is green.',
+              'Nothing else touches signIn directly —',
+              'the provider wrapper goes through the facade.',
+              'Risk is low: test-only change, no behavior diff.',
+              'Plan: read → patch expectation → verify.',
+            ].join('\n'),
+          ),
+        )
         ..add(
           FahChatMessage(
             role: 'system',
-            content: '[read] {"path": "README.md"}',
+            content: '[read] {"path": "integration_test/auth_test.dart"}',
           ),
         )
         ..add(
           FahChatMessage(
             role: 'tool',
             toolName: 'read',
-            content: '# Flutter Agent Harness\n\nA Dart agent core.',
+            content:
+                '12  test(\'signs in anonymously\', () async {\n'
+                '13    final session = await auth.signIn(\'token\');\n'
+                '14    expect(session.token, isNotNull);\n'
+                '15  });',
           ),
         )
         ..add(
           FahChatMessage(
             role: 'assistant',
             content:
-                'The README describes the **Flutter Agent Harness** project:\n'
-                '- a pure Dart agent core\n'
-                '- a Flutter chat example app',
+                'Found it — the test still calls the old two-argument '
+                '`signIn`:\n'
+                '\n'
+                '```dart\n'
+                'test(\'signs in anonymously\', () async {\n'
+                '  final session = await auth.signIn();\n'
+                '  expect(session.token, isNotNull);\n'
+                '});\n'
+                '```\n'
+                '\n'
+                'Patched `integration_test/auth_test.dart` — the suite is '
+                'green again.',
           ),
         );
-      await _pumpChatScreen(tester, service);
-      await expectGolden(tester, 'chat_conversation');
-    });
 
-    testWidgets('collapsed thinking block', (tester) async {
-      final thinking = [
-        for (var i = 1; i <= 20; i++) 'reasoning step $i: checking the code',
-      ].join('\n');
-      final service = _fakeService(MemoryExecutionEnv());
-      service.messages
-        ..add(FahChatMessage(role: 'user', content: 'fix the failing test'))
-        ..add(FahChatMessage(role: 'thinking', content: thinking))
-        ..add(
-          FahChatMessage(
-            role: 'assistant',
-            content: 'I found the issue in the parser.',
-          ),
-        );
-      await _pumpChatScreen(tester, service);
-      await expectGolden(tester, 'chat_thinking_collapsed');
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('7b21e04d-notes-app', _fakeService(env))
+        ..addSession('f3a9c1d4-auth-test-fix', service);
+
+      await pumpGolden(
+        tester,
+        ChatScreen(manager: manager),
+        size: goldenSizeDesktop,
+        wrap: (child) => child,
+      );
+      await _settleSidebar(tester);
+      expect(find.textContaining('f3a9c1d4'), findsOneWidget);
+
+      await expectGolden(tester, 'chat_conversation');
     });
 
     testWidgets('image attachment thumbnail', (tester) async {
@@ -238,7 +348,8 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 300));
         await tester.pump();
         await tester.pumpAndSettle();
-        await _collapseSidebar(tester);
+        await tester.tap(find.byTooltip('Sessions & model'));
+        await tester.pumpAndSettle();
       });
       await expectGolden(tester, 'chat_image');
     });

@@ -75,7 +75,7 @@ class ApprovalDialog extends StatelessWidget {
                 child: Text(
                   _formattedArguments(),
                   style: theme.textTheme.bodySmall?.copyWith(
-                    fontFamily: 'monospace',
+                    fontFamily: 'JetBrainsMono',
                   ),
                 ),
               ),

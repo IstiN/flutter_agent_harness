@@ -79,7 +79,7 @@ abstract final class FahPalette {
     FontWeight? fontWeight,
   }) {
     return TextStyle(
-      fontFamily: 'monospace',
+      fontFamily: 'JetBrainsMono',
       fontFamilyFallback: monoFallback,
       color: color,
       fontSize: fontSize,
@@ -127,9 +127,11 @@ ThemeData buildFahTheme() {
     surfaceTint: Colors.transparent, // flat — no M3 tint overlays
   );
 
-  final textTheme = ThemeData.dark(
-    useMaterial3: true,
-  ).textTheme.apply(bodyColor: FahPalette.text, displayColor: FahPalette.text);
+  final textTheme = ThemeData.dark(useMaterial3: true).textTheme
+      .apply(bodyColor: FahPalette.text, displayColor: FahPalette.text)
+      // Inter is bundled (see pubspec fonts): one UI typeface on every
+      // platform — consistent brand look and host-deterministic goldens.
+      .apply(fontFamily: 'Inter');
 
   const inputBorder = OutlineInputBorder(
     borderRadius: BorderRadius.all(Radius.circular(10)),
@@ -241,7 +243,12 @@ ThemeData buildFahTheme() {
         foregroundColor: FahPalette.onAccent,
         disabledBackgroundColor: FahPalette.panelAlt,
         disabledForegroundColor: FahPalette.dim,
-        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        // fontFamily is required: styleFrom replaces labelLarge outright,
+        // so a family-less style would fall back to the platform font.
+        textStyle: const TextStyle(
+          fontFamily: 'Inter',
+          fontWeight: FontWeight.w600,
+        ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     ),
@@ -249,7 +256,12 @@ ThemeData buildFahTheme() {
       style: ElevatedButton.styleFrom(
         backgroundColor: FahPalette.panelAlt,
         foregroundColor: FahPalette.text,
-        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        // fontFamily is required: styleFrom replaces labelLarge outright,
+        // so a family-less style would fall back to the platform font.
+        textStyle: const TextStyle(
+          fontFamily: 'Inter',
+          fontWeight: FontWeight.w600,
+        ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
           side: const BorderSide(color: FahPalette.borderBright),

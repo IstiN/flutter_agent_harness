@@ -57,3 +57,6 @@ ios/Runner/firebase_app_id_file.json
 macos/Runner/GoogleService-Info.plist
 macos/Runner/firebase_app_id_file.json
 
+
+# Golden test failure artifacts (diff dumps).
+test/golden/failures/

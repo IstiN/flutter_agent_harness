@@ -340,7 +340,7 @@ class _FilePreviewViewState extends State<FilePreviewView> {
       child: SelectableText(
         _text!,
         style: theme.textTheme.bodySmall?.copyWith(
-          fontFamily: 'monospace',
+          fontFamily: 'JetBrainsMono',
           fontFamilyFallback: const ['Courier', 'monospace'],
         ),
       ),

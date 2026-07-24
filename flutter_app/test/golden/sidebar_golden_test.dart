@@ -1,6 +1,14 @@
-// Copyright (c) 2026, the Flutter Agent Harness authors.
-// Use of this source code is governed by a MIT license that can be found
-// in the LICENSE file.
+/// Golden (screenshot) tests for the session sidebar:
+/// `lib/ui/widgets/session_sidebar.dart`.
+///
+/// The populated shots are full desktop app frames ([goldenSizeDesktop]):
+/// the real [ChatScreen] docks the sidebar on the left and fills the rest
+/// with the chat surface, into which a fixed conversation is injected
+/// straight through `AgentService.messages` (the pattern from
+/// `chat_golden_test.dart`) so no agent run, network, or clock leaks into
+/// the snapshots. The service/manager fakes are copied verbatim from
+/// `test/session_sidebar_restore_test.dart`.
+library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -8,9 +16,11 @@ import 'dart:typed_data';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -90,7 +100,9 @@ void _mockBundledAppAssets() {
 }
 
 /// A manager with two live sessions (fixed ids — the tiles render the first
-/// 8 chars) and one persisted session on disk from a "previous run".
+/// 8 chars) and one persisted session on disk from a "previous run". The
+/// active session carries a fixed conversation so the chat panel next to
+/// the sidebar looks real.
 Future<FlutterSessionManager> _populatedManager(ExecutionEnv env) async {
   final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
   await repo.create(
@@ -103,15 +115,56 @@ Future<FlutterSessionManager> _populatedManager(ExecutionEnv env) async {
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   manager.addSession('aaa00001-first-chat', _fakeService(env));
   manager.addSession('bbb00002-second-chat', _fakeService(env));
+  manager.active!.service.messages
+    ..add(FahChatMessage(role: 'user', content: 'what is in README.md?'))
+    ..add(
+      FahChatMessage(
+        role: 'assistant',
+        content:
+            'The README describes the **Flutter Agent Harness**:\n'
+            '- a pure Dart agent core\n'
+            '- a Flutter chat example app',
+      ),
+    );
   return manager;
 }
 
-/// The sidebar at its real width ([kSessionSidebarWidth]) so the snapshots
-/// match what the chat screen renders.
-Widget _sidebar(FlutterSessionManager manager) {
-  return SizedBox(
-    width: kSessionSidebarWidth,
-    child: SessionSidebar(manager: manager),
+/// The app theme's `FilledButton.styleFrom(textStyle: TextStyle(fontWeight:
+/// w600))` carries no `fontFamily`; the button applies it as its internal
+/// `DefaultTextStyle`, so the label falls back to the engine default font —
+/// the system font on device, placeholder boxes in tests. This override
+/// restores the theme's own intent (`buildFahTheme` applies Inter to the
+/// whole text theme) so dialog action labels aren't tofu in snapshots.
+ThemeData _withInterButtonLabels() {
+  final theme = buildFahTheme();
+  return theme.copyWith(
+    filledButtonTheme: FilledButtonThemeData(
+      style: theme.filledButtonTheme.style?.copyWith(
+        textStyle: const WidgetStatePropertyAll(
+          TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w600),
+        ),
+      ),
+    ),
+  );
+}
+
+/// The full app frame at the desktop size: the real [ChatScreen] (a
+/// Scaffold) docks the sidebar on the left and shows the injected
+/// conversation on the right.
+Future<void> _pumpFrame(
+  WidgetTester tester,
+  FlutterSessionManager manager, {
+  Locale locale = const Locale('en'),
+  ThemeData? themeOverride,
+}) {
+  return pumpGolden(
+    tester,
+    ChatScreen(manager: manager),
+    size: goldenSizeDesktop,
+    locale: locale,
+    wrap: themeOverride == null
+        ? (child) => child
+        : (child) => Theme(data: themeOverride, child: child),
   );
 }
 
@@ -140,6 +193,16 @@ Future<void> _settleSidebar(WidgetTester tester) async {
 }
 
 void main() {
+  setUpAll(() async {
+    await ensureGoldenFonts();
+    // MaterialIcons ships in the test asset bundle (FontManifest) but
+    // flutter_test never registers it with the engine — without this every
+    // icon renders as a hollow square.
+    final icons = FontLoader('MaterialIcons')
+      ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+    await icons.load();
+  });
+
   testWidgets('populated: model card, sessions, persisted, apps', (
     tester,
   ) async {
@@ -147,7 +210,7 @@ void main() {
     final env = MemoryExecutionEnv();
     final manager = await _populatedManager(env);
 
-    await pumpGolden(tester, _sidebar(manager));
+    await _pumpFrame(tester, manager);
     await _settleSidebar(tester);
 
     await expectGolden(tester, 'sidebar_populated');
@@ -157,7 +220,15 @@ void main() {
     final env = MemoryExecutionEnv();
     final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
 
-    await pumpGolden(tester, _sidebar(manager));
+    // ChatScreen requires an active session, so the empty state shoots the
+    // bare sidebar at its real width.
+    await pumpGolden(
+      tester,
+      SizedBox(
+        width: kSessionSidebarWidth,
+        child: SessionSidebar(manager: manager),
+      ),
+    );
 
     await expectGolden(tester, 'sidebar_empty');
   });
@@ -167,7 +238,7 @@ void main() {
     final env = MemoryExecutionEnv();
     final manager = await _populatedManager(env);
 
-    await pumpGolden(tester, _sidebar(manager), locale: const Locale('ru'));
+    await _pumpFrame(tester, manager, locale: const Locale('ru'));
     await _settleSidebar(tester);
 
     await expectGolden(tester, 'sidebar_populated_ru');
@@ -178,7 +249,7 @@ void main() {
     final env = MemoryExecutionEnv();
     final manager = await _populatedManager(env);
 
-    await pumpGolden(tester, _sidebar(manager));
+    await _pumpFrame(tester, manager, themeOverride: _withInterButtonLabels());
     await _settleSidebar(tester);
 
     // The trailing delete button of the first (active) session tile.

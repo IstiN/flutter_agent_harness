@@ -1,30 +1,94 @@
-/// Golden (screenshot) tests for `lib/settings.dart` — the BYOK connection
-/// form (`AgentSettingsForm`) shared by the setup screen and the in-chat
-/// settings dialog. Fakes and pump patterns mirror `test/settings_test.dart`
-/// (in-memory `ProviderRegistry`, no engines needed: no test connects, so no
-/// network/file/JS backends are touched).
+/// Golden (screenshot) tests for `lib/ui/screens/settings.dart` — the BYOK
+/// connection form (`AgentSettingsForm`) shared by the setup screen and the
+/// in-chat settings dialog. Fakes and pump patterns mirror
+/// `test/settings_test.dart` (in-memory `ProviderRegistry`, no engines
+/// needed: no test connects, so no network/file/JS backends are touched).
+///
+/// Every shot pumps the form inside a realistic app frame — a `Scaffold`
+/// with the settings `AppBar`, the form centered in a max-width column —
+/// like `SettingsScreen` does, so the snapshots double as marketing
+/// material.
 library;
 
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
 
-/// Pumps the settings form the way `test/settings_test.dart` does (scaffold +
-/// scroll view) but inside the shared golden harness (theme + l10n + fixed
-/// surface).
-Future<void> _pumpSettingsForm(
+/// Loads the MaterialIcons font from the local Flutter SDK so icon glyphs
+/// (dropdown chevrons, add/lock/info icons) render instead of tofu boxes.
+/// No-ops when the SDK font cannot be located.
+Future<void> _ensureMaterialIcons() async {
+  final root = Platform.environment['FLUTTER_ROOT'];
+  if (root == null) return;
+  final file = File(
+    '$root/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+  );
+  if (!file.existsSync()) return;
+  final bytes = file.readAsBytesSync();
+  final loader = FontLoader('MaterialIcons')
+    ..addFont(Future.value(ByteData.sublistView(bytes)));
+  await loader.load();
+}
+
+/// Pumps the settings form in the same frame `SettingsScreen` uses (app bar
+/// + padded scroll view), centered in a readable max-width column so the
+/// content fills wide frames instead of getting lost at the edge.
+///
+/// The theme's `filledButtonTheme.textStyle` carries no `fontFamily` (the
+/// `styleFrom` textStyle replaces `labelLarge`), which falls back to the
+/// platform font on device but renders tofu in tests — so the frame pins it
+/// to Inter, matching the app's one-typeface intent.
+Future<void> _pumpSettingsFrame(
   WidgetTester tester, {
   ProviderRegistry? registry,
-  Size size = goldenSizeTall,
+  Size size = goldenSizeDesktop,
 }) {
   return pumpGolden(
     tester,
-    AgentSettingsForm(registry: registry, onConnect: (_) async {}),
+    AgentSettingsForm(
+      registry: registry,
+      connectLabel: 'Apply',
+      onConnect: (_) async {},
+    ),
     size: size,
-    wrap: (child) => Scaffold(body: SingleChildScrollView(child: child)),
+    wrap: (child) => Builder(
+      builder: (context) {
+        final theme = Theme.of(context);
+        return Theme(
+          data: theme.copyWith(
+            filledButtonTheme: FilledButtonThemeData(
+              style: theme.filledButtonTheme.style?.copyWith(
+                textStyle: const WidgetStatePropertyAll(
+                  TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+          child: Scaffold(
+            appBar: AppBar(title: Text(context.l10n.settingsTitle)),
+            body: SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: child,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    ),
   );
 }
 
@@ -38,9 +102,14 @@ Future<void> _selectProvider(WidgetTester tester, String label) async {
 }
 
 void main() {
+  setUpAll(() async {
+    await ensureGoldenFonts();
+    await _ensureMaterialIcons();
+  });
+
   group('settings goldens', () {
     testWidgets('hosted provider form (OpenRouter)', (tester) async {
-      await _pumpSettingsForm(tester);
+      await _pumpSettingsFrame(tester);
       await tester.enterText(
         find.widgetWithText(TextField, 'API key'),
         'sk-or-test-key',
@@ -52,19 +121,19 @@ void main() {
       await expectGolden(tester, 'settings_hosted');
     });
 
-    testWidgets('hosted provider form on a wide surface', (tester) async {
-      await _pumpSettingsForm(tester, size: goldenSizeWide);
+    testWidgets('hosted provider form on a portrait frame', (tester) async {
+      await _pumpSettingsFrame(tester, size: goldenSizeTall);
       await tester.enterText(
         find.widgetWithText(TextField, 'API key'),
         'sk-or-test-key',
       );
       await tester.pumpAndSettle();
 
-      await expectGolden(tester, 'settings_hosted_wide');
+      await expectGolden(tester, 'settings_hosted_tall');
     });
 
     testWidgets('custom preset form with editable base URL', (tester) async {
-      await _pumpSettingsForm(tester);
+      await _pumpSettingsFrame(tester);
       await _selectProvider(tester, 'Custom');
       await tester.enterText(
         find.widgetWithText(TextField, 'Base URL'),
@@ -89,7 +158,7 @@ void main() {
         baseUrl: 'https://acme.example/v1',
         modelId: 'acme-1',
       );
-      await _pumpSettingsForm(tester, registry: registry);
+      await _pumpSettingsFrame(tester, registry: registry);
       await _selectProvider(tester, 'Acme');
 
       // Edit/Delete buttons and the "definition is saved" key note.
@@ -97,7 +166,7 @@ void main() {
     });
 
     testWidgets('on-device WebLLM form', (tester) async {
-      await _pumpSettingsForm(tester);
+      await _pumpSettingsFrame(tester);
       await _selectProvider(tester, 'On-device (WebLLM)');
 
       // The key/model/URL fields are replaced by the model picker with the
@@ -105,14 +174,14 @@ void main() {
       await expectGolden(tester, 'settings_webllm');
     });
 
-    testWidgets('hosted connect without a key shows the validation error', (
+    testWidgets('hosted apply without a key shows the validation error', (
       tester,
     ) async {
-      await _pumpSettingsForm(tester);
+      await _pumpSettingsFrame(tester);
 
-      await tester.ensureVisible(find.text('Start chat'));
+      await tester.ensureVisible(find.text('Apply'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Start chat'));
+      await tester.tap(find.text('Apply'));
       await tester.pumpAndSettle();
 
       expect(find.text('API key is required'), findsOneWidget);

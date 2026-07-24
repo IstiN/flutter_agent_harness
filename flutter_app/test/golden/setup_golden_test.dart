@@ -4,16 +4,38 @@
 /// answers, in-memory registry/store, no real IO or plugins.
 library;
 
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:fa/gemma/gemma_types.dart';
-import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
+import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
+
+/// Loads the MaterialIcons font from the local Flutter SDK so icon glyphs
+/// (dropdown chevrons, add/lock/info icons) render instead of tofu boxes
+/// (same loader as `settings_golden_test.dart`). No-ops when the SDK font
+/// cannot be located.
+Future<void> _ensureMaterialIcons() async {
+  final root = Platform.environment['FLUTTER_ROOT'];
+  if (root == null) return;
+  final file = File(
+    '$root/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+  );
+  if (!file.existsSync()) return;
+  final bytes = file.readAsBytesSync();
+  final loader = FontLoader('MaterialIcons')
+    ..addFont(Future.value(ByteData.sublistView(bytes)));
+  await loader.load();
+}
 
 /// Fake [WebLlmEngineApi] answering cache queries from a script (the same
 /// fake as `test/setup_prefill_test.dart`).
@@ -152,8 +174,14 @@ final class _FakeTransformersJsEngine implements TransformersJsEngineApi {
 
 /// Pumps [SetupScreen] full-screen (it is itself a `Scaffold`) with
 /// deterministic fakes: in-memory env/registry/store and scripted engines.
+///
+/// The theme's `filledButtonTheme.textStyle` carries no `fontFamily` (the
+/// `styleFrom` textStyle replaces `labelLarge`), which renders tofu in tests
+/// — the wrap pins it to Inter, matching the app's one-typeface intent (same
+/// fix as `settings_golden_test.dart`).
 Future<void> _pumpSetup(
   WidgetTester tester, {
+  Size size = goldenSizeDesktop,
   ProviderRegistry? registry,
   LastConnection? lastConnection,
   _FakeWebLlmEngine? webLlmEngine,
@@ -173,37 +201,90 @@ Future<void> _pumpSetup(
       transformersJsEngine:
           transformersJsEngine ?? _FakeTransformersJsEngine(const {}),
     ),
-    wrap: (child) => child,
+    size: size,
+    wrap: (child) => Builder(
+      builder: (context) {
+        final theme = Theme.of(context);
+        return Theme(
+          data: theme.copyWith(
+            filledButtonTheme: FilledButtonThemeData(
+              style: theme.filledButtonTheme.style?.copyWith(
+                textStyle: const WidgetStatePropertyAll(
+                  TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+          child: child,
+        );
+      },
+    ),
+  );
+}
+
+/// Engines scripted with three already-downloaded on-device models: one per
+/// engine family, with fixed byte counts so the size labels are stable.
+({
+  _FakeWebLlmEngine webLlm,
+  _FakeGemmaEngine gemma,
+  _FakeTransformersJsEngine transformersJs,
+})
+_downloadedEngines() {
+  return (
+    webLlm: _FakeWebLlmEngine(const {
+      'Qwen3-4B-q4f16_1-MLC': WebLlmCacheInfo(cached: true, bytes: 2900000000),
+    }),
+    gemma: _FakeGemmaEngine(const [
+      GemmaInstalledModel(
+        filename: 'gemma-4-E4B-it.litertlm',
+        sizeBytes: 4300000000,
+      ),
+    ]),
+    transformersJs: _FakeTransformersJsEngine(const {
+      'onnx-community/gemma-4-E2B-it-ONNX': TransformersJsCacheInfo(
+        cached: true,
+        bytes: 2500000000,
+      ),
+    }),
   );
 }
 
 void main() {
-  testWidgets('first run: empty quick start, default hosted form', (
+  setUpAll(() async {
+    await ensureGoldenFonts();
+    await _ensureMaterialIcons();
+  });
+
+  testWidgets('first run on a phone: empty quick start, default hosted form', (
     tester,
   ) async {
-    await _pumpSetup(tester);
-    await expectGolden(tester, 'setup_first_run');
+    await _pumpSetup(tester, size: goldenSizePhone);
+    await expectGolden(tester, 'setup_first_run_phone');
   });
 
   testWidgets('quick start lists cached/installed on-device models', (
     tester,
   ) async {
+    final engines = _downloadedEngines();
     await _pumpSetup(
       tester,
-      webLlmEngine: _FakeWebLlmEngine(const {
-        'Qwen3-4B-q4f16_1-MLC': WebLlmCacheInfo(
-          cached: true,
-          bytes: 2900000000,
-        ),
-      }),
-      gemmaEngine: _FakeGemmaEngine(const [
-        GemmaInstalledModel(
-          filename: 'gemma-4-E4B-it.litertlm',
-          sizeBytes: 4300000000,
-        ),
-      ]),
+      webLlmEngine: engines.webLlm,
+      gemmaEngine: engines.gemma,
+      transformersJsEngine: engines.transformersJs,
     );
-    await expectGolden(tester, 'setup_quick_start');
+    await expectGolden(tester, 'setup_quick_start_desktop');
+  });
+
+  testWidgets('quick start on a phone frame', (tester) async {
+    final engines = _downloadedEngines();
+    await _pumpSetup(
+      tester,
+      size: goldenSizePhone,
+      webLlmEngine: engines.webLlm,
+      gemmaEngine: engines.gemma,
+      transformersJsEngine: engines.transformersJs,
+    );
+    await expectGolden(tester, 'setup_quick_start_phone');
   });
 
   testWidgets('a saved hosted connection prefills the form', (tester) async {
@@ -215,7 +296,7 @@ void main() {
         baseUrl: 'https://ollama.com/v1',
       ),
     );
-    await expectGolden(tester, 'setup_prefilled_hosted');
+    await expectGolden(tester, 'setup_prefilled_hosted_desktop');
   });
 
   testWidgets('a saved custom provider is re-selected with edit/delete', (
@@ -236,7 +317,7 @@ void main() {
         baseUrl: 'https://acme.example/v1',
       ),
     );
-    await expectGolden(tester, 'setup_custom_provider');
+    await expectGolden(tester, 'setup_custom_provider_desktop');
   });
 
   testWidgets('a removed on-device model falls back with a note', (
@@ -254,6 +335,6 @@ void main() {
         'Qwen3-4B-q4f16_1-MLC': WebLlmCacheInfo(cached: false),
       }),
     );
-    await expectGolden(tester, 'setup_model_removed_note');
+    await expectGolden(tester, 'setup_model_removed_note_desktop');
   });
 }

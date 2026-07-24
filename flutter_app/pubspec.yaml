@@ -150,6 +150,27 @@ flutter:
     - assets/wasm/LICENSE.quickjs
     - assets/wasm/LICENSE.lua
     - assets/wasm/ATTRIBUTION.md
+    - assets/fonts/
+
+  fonts:
+    # Inter (SIL OFL 1.1, assets/fonts/Inter-LICENSE.txt) — the app's UI
+    # typeface on every platform, so the look is consistent and golden
+    # screenshots are host-deterministic.
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
+    # JetBrains Mono (SIL OFL 1.1) — code/terminal text.
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
 
 flutter_launcher_icons:
   image_path: "assets/app_icon_source.png"

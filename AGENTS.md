@@ -263,10 +263,17 @@ Conventions for AI agents and contributors working in this repository.
   Reads are process spawns, so the executable preloads them once into the
   synchronous `SecureKeyCache` snapshot that backs `envVarValue`/
   `envVarIsSet`, `_optionalApiKey`, and the roles secrets overlay (rotation
-  stacks stay env-only). An explicit `/provider` token or
-  `/key set <NAME> <value>` writes through to the store (never to
-  `~/.fah/config.yaml`; `/key` lists sources, never values) and is
-  registered with the `SecretRedactor` via `onSecretStored`
+  stacks stay env-only). Keys resolve in order: a genuine environment value
+  of the catalog env names → the endpoint-scoped store entry
+  (`FA_KEY_<HOST>` via `CustomProviderRegistry.keyNameFor`;
+  `/provider <name> [baseUrl] <token>` writes there, never under the shared
+  env name, so a key for one endpoint cannot leak onto another; a saved
+  custom provider gets a NAME-scoped slot `FA_KEY_<HOST>_<NAME>` so several
+  accounts on the same endpoint keep separate keys, and the entry persists
+  its `keyName` for stable reads) → legacy env-name store entries written
+  by older versions. `/key set <NAME> <value>` writes through to the store
+  (never to `~/.fah/config.yaml`; `/key` lists sources, never values) and
+  is registered with the `SecretRedactor` via `onSecretStored`
   (`onProviderChanged` persists only the provider/model/baseUrl triple).
   Hosts without a backend (headless Linux, web) report the store unavailable
   and behave env-only. In roles mode `/provider` pins the default chain like
@@ -307,7 +314,14 @@ Conventions for AI agents and contributors working in this repository.
   HTML→markdown converter (link anchors preserved, boilerplate stripped).
   All HTTP goes through an injectable `package:http` client; both tools
   register via `builtinTools(env, webSearch: WebSearchConfig(...))`.
-- `flutter_app/` — Flutter chat example (mobile/web sandbox).
+- `flutter_app/` — Flutter chat example (mobile/web sandbox). Layout:
+  `lib/main.dart` (entrypoint + SetupScreen), `lib/ui/` (`app_theme.dart`,
+  `markdown_style.dart`, `screens/`, `widgets/`), `lib/services/` (agent
+  service, provider/connection stores, upload, secrets, project mount,
+  vision), `lib/sandbox/` (execution env, shells, wasm, git, fs
+  persistence), feature dirs `lib/apps|gemma|webllm|transformers_js|l10n/`.
+  All lib-internal imports are absolute `package:fa/...` (no relative
+  imports — the analyzer gate keeps it that way).
 - `flutter_app/lib/l10n/` — UI localization (gen-l10n): `app_en.arb` +
   `app_ru.arb` → generated `AppLocalizations` (never edit the generated
   files; `l10n.yaml` config, `flutter gen-l10n` to regen). UI copy goes
@@ -321,11 +335,15 @@ Conventions for AI agents and contributors working in this repository.
   in `flutter_app/lib/` must have coverage here (one `<area>_golden_test.dart`
   per UI area, snapshots in `test/golden/goldens/*.png`). Pump through
   `golden_test_helper.dart` (`pumpGolden` — real theme + l10n delegates at a
-  fixed surface, `expectGolden`) so snapshots stay host-deterministic
-  (flutter_test font, fixed data/timestamps, no network/engines).
-  `golden_guard_test.dart` hard-fails when a lib widget file is unmapped,
-  a golden test loses its assertions, or a referenced PNG is missing.
-  After an intentional UI change: `flutter test test/golden
+  fixed surface, `expectGolden`) and call `ensureGoldenFonts` from
+  `setUpAll` so snapshots render the real bundled fonts (Inter +
+  JetBrainsMono + MaterialIcons), never placeholder boxes. Snapshots double
+  as marketing material: full app frames (`goldenSizeDesktop` 1280x800,
+  `goldenSizePhone` 390x844) filled with realistic content — no tiny
+  widgets floating on a black void; fixed data/timestamps, no
+  network/engines. `golden_guard_test.dart` hard-fails when a lib widget
+  file is unmapped, a golden test loses its assertions, or a referenced PNG
+  is missing. After an intentional UI change: `flutter test test/golden
   --update-goldens`, then REVIEW every changed PNG before committing —
   `flutter test` compares pixel-by-pixel afterwards.
   `scripts/check_goldens.py` is the pipeline gate (`--quick` = existence
@@ -336,12 +354,12 @@ Conventions for AI agents and contributors working in this repository.
   `app/` inside the Pages artifact (never committed) and deploys on pushes
   touching `site/`, `example/`, `lib/`, or `vendor/`.
 - `prompts/` — all LLM prompts as Markdown (see below); `test/` mirrors `lib/`.
-- `flutter_app/lib/sandbox_registry.dart` — the central registry
+- `flutter_app/lib/sandbox/sandbox_registry.dart` — the central registry
   of sandbox shell commands per platform (web/mobile/desktop). The shells
   resolve against its name sets, and the Fa system prompt's `{{commands}}`
   placeholder is rendered from it (`AgentService`). Never list commands in
   prompt text or UI by hand.
-- `flutter_app/lib/project_mount_env.dart` — the macOS project-folder
+- `flutter_app/lib/services/project_mount_env.dart` — the macOS project-folder
   mount: `ProjectMountEnv` maps the `/project` segment onto a user-selected
   host directory while the env root (and all app data) stays in the app
   container. The sandbox entitlements carry
@@ -377,7 +395,7 @@ Conventions for AI agents and contributors working in this repository.
   files. The `js-apps` agent skill (`flutter_app/assets/skills/js-apps/
   SKILL.md`, adapted from YoLoIT's app-development doc) is seeded into
   `.fah/skills/` before skill discovery in `AgentService.create`.
-- `flutter_app/lib/last_connection.dart` — the
+- `flutter_app/lib/services/last_connection.dart` — the
   `LastConnectionStore`: persists the last successful connection
   (provider/model/URL/on-device preset — never API keys) as
   `last_connection.json` via the shared ExecutionEnv (same pattern as
@@ -385,7 +403,7 @@ Conventions for AI agents and contributors working in this repository.
   settings-dialog apply; read at boot to pre-select the settings form (an
   on-device model no longer cached/installed falls back to the default
   preset with a "previously used model was removed" note).
-- `flutter_app/lib/vision_models.dart` — vision detection for the agent's
+- `flutter_app/lib/services/vision_models.dart` — vision detection for the agent's
   `Model.input`: hosted endpoints expose no modality metadata, so
   `modelIdSuggestsVision` matches well-known vision families (gpt-4o/4.1/5,
   claude-3+, gemini, qwen-vl, pixtral, llava, glm-4v, grok-4, …).
@@ -394,7 +412,7 @@ Conventions for AI agents and contributors working in this repository.
   until the user touches it; transformers.js presets carry their own
   `supportsVision`. Without `image` in `Model.input` the `read` tool
   appends its non-vision note and the provider adapters drop image blocks.
-- `flutter_app/lib/downloaded_models_quick_start.dart` — the
+- `flutter_app/lib/ui/widgets/downloaded_models_quick_start.dart` — the
   setup screen's "Downloaded models" section above the connection form:
   one row per already-cached/installed on-device model (WebLLM +
   transformers.js CacheStorage, flutter_gemma repository — the same engine
@@ -429,13 +447,16 @@ Conventions for AI agents and contributors working in this repository.
 
 ## Quality gates (pre-commit hook: `scripts/pre-commit`)
 
-- `dart analyze` and `dart format --set-exit-if-changed .` clean.
+- `dart analyze` and `dart format --set-exit-if-changed .` clean; the
+  example app additionally gets `flutter analyze --no-fatal-infos
+  --no-fatal-warnings`.
 - `dart test` green (integration-tagged tests excluded; they run in CI).
 - Example app: `cd flutter_app && flutter test` (includes the golden suite
   in `flutter_app/test/golden/` — see the golden entry above; regenerate
   with `--update-goldens` and review PNGs) + `scripts/check_goldens.py
   --quick`.
-- Line coverage of `lib/` ≥ 80%; jscpd duplication < 1%.
+- Line coverage of `lib/` ≥ 80%; jscpd duplication < 1% for core `lib/`,
+  < 2.2% for `flutter_app/lib/` (ratchet — only tighten).
 - Max 2800 lines per `.dart` file (`*.g.dart` exempt).
 
 ## Commits and releases

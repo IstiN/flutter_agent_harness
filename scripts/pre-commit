@@ -20,6 +20,10 @@ unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE 2>/dev/null || true
 
 COVERAGE_BASELINE=80.0
 DUP_THRESHOLD=1.0
+# flutter_app duplication ratchet: pre-existing clones (wasm/git shells,
+# near-identical on-device stream functions) sit at ~2.15% — only allowed
+# DOWN from here. Tighten as the app is refactored.
+DUP_THRESHOLD_APP=2.2
 MAX_LINES=2800
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -89,26 +93,39 @@ fi
 # 5. CODE DUPLICATION GUARD
 # ═══════════════════════════════════════════════════════════════════════════
 if command -v jscpd >/dev/null 2>&1; then
-  echo "🔍 Checking code duplication (threshold: < ${DUP_THRESHOLD}%)..."
-  jscpd --min-tokens 50 --min-lines 5 --reporters json --output /tmp/jscpd-precommit lib/ >/dev/null 2>&1 || true
-  DUP_PCT=$(python3 -c "
+  echo "🔍 Checking code duplication (thresholds: core < ${DUP_THRESHOLD}%, flutter_app < ${DUP_THRESHOLD_APP}%)..."
+  dup_pct() {
+    jscpd --min-tokens 50 --min-lines 5 --reporters json --output "$2" "$1" >/dev/null 2>&1 || true
+    python3 -c "
 import json
 try:
-    with open('/tmp/jscpd-precommit/jscpd-report.json') as f:
+    with open('$2/jscpd-report.json') as f:
         d=json.load(f)
     print(d['statistics']['total']['percentage'])
 except Exception:
     print('0.0')
-" 2>/dev/null || echo "0.0")
-  if python3 -c "exit(0 if float('$DUP_PCT') < float('$DUP_THRESHOLD') else 1)"; then
-    echo "✅ Duplication check OK ($DUP_PCT% < ${DUP_THRESHOLD}%)"
+" 2>/dev/null || echo "0.0"
+  }
+  CORE_DUP=$(dup_pct lib/ /tmp/jscpd-precommit-core)
+  APP_DUP=$(dup_pct flutter_app/lib/ /tmp/jscpd-precommit-app)
+  DUP_OK=1
+  if python3 -c "exit(0 if float('$CORE_DUP') < float('$DUP_THRESHOLD') else 1)"; then
+    echo "✅ Core duplication check OK ($CORE_DUP% < ${DUP_THRESHOLD}%)"
   else
+    DUP_OK=0
+  fi
+  if python3 -c "exit(0 if float('$APP_DUP') < float('$DUP_THRESHOLD_APP') else 1)"; then
+    echo "✅ flutter_app duplication check OK ($APP_DUP% < ${DUP_THRESHOLD_APP}%)"
+  else
+    DUP_OK=0
+  fi
+  if (( DUP_OK == 0 )); then
     echo ""
     echo "╔═══════════════════════════════════════════════════════════════════════════╗"
     echo "║  ❌ QUALITY GATE FAILED — CODE DUPLICATION                                ║"
     echo "╚═══════════════════════════════════════════════════════════════════════════╝"
-    echo "   Duplication: $DUP_PCT% (max ${DUP_THRESHOLD}%)"
-    echo "   Run: jscpd --min-tokens 50 --min-lines 5 lib/"
+    echo "   Core: $CORE_DUP% (max ${DUP_THRESHOLD}%) · flutter_app: $APP_DUP% (max ${DUP_THRESHOLD_APP}%)"
+    echo "   Run: jscpd --min-tokens 50 --min-lines 5 lib/ flutter_app/lib/"
     exit 1
   fi
 else
@@ -119,6 +136,14 @@ fi
 # 6. EXAMPLE APP: flutter test (incl. golden suite) + golden gate
 # ═══════════════════════════════════════════════════════════════════════════
 if command -v flutter >/dev/null 2>&1; then
+  echo "🔍 Running flutter analyze (flutter_app)..."
+  if ! (cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings); then
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════════════════╗"
+    echo "║  ❌ QUALITY GATE FAILED — FLUTTER ANALYZE                                 ║"
+    echo "╚═══════════════════════════════════════════════════════════════════════════╝"
+    exit 1
+  fi
   echo "🧪 Running flutter_app tests (incl. golden tests)..."
   if ! (cd flutter_app && flutter test); then
     echo ""
