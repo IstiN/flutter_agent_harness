@@ -12,8 +12,11 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
+import '../agent_service.dart';
+import '../fa_mark.dart';
 import 'app_icon.dart';
 import 'apps_store.dart';
+import 'fa_work_bar.dart';
 import 'js_app_engine.dart';
 
 /// Payload delivered when the user talks to Fa from inside an app: their
@@ -40,6 +43,7 @@ class JsAppView extends StatefulWidget {
     this.platformHandler,
     this.onSendToAgent,
     this.fsRevision,
+    this.agentService,
   });
 
   final JsAppInfo app;
@@ -55,6 +59,10 @@ class JsAppView extends StatefulWidget {
   /// Bumped when the agent edits files (AgentService.fsRevision) — the app
   /// reloads itself so agent-written code shows up live.
   final ValueNotifier<int>? fsRevision;
+
+  /// The active session's service — drives the compact [FaWorkBar] while
+  /// the agent runs (status, stop, expand, inline follow-up).
+  final AgentService? agentService;
 
   @override
   State<JsAppView> createState() => _JsAppViewState();
@@ -145,6 +153,21 @@ class _JsAppViewState extends State<JsAppView> {
     }
   }
 
+  Future<void> _sendFaMessage(String text) async {
+    final onSend = widget.onSendToAgent;
+    final trimmed = text.trim();
+    if (onSend == null || trimmed.isEmpty) return;
+    final state = _engine?.exportedState;
+    final screenshot = await _captureScreenshot();
+    await onSend(
+      FaAppMessage(
+        text: trimmed,
+        appStateJson: state == null ? null : jsonEncode(state),
+        screenshot: screenshot,
+      ),
+    );
+  }
+
   Future<void> _openFaSheet() async {
     if (widget.onSendToAgent == null) return;
     setState(() => _faSheetOpen = true);
@@ -155,16 +178,7 @@ class _JsAppViewState extends State<JsAppView> {
         builder: (context) => _FaMessageSheet(app: widget.app),
       );
       if (message == null || message.trim().isEmpty || !mounted) return;
-      final engine = _engine;
-      final state = engine?.exportedState;
-      final screenshot = await _captureScreenshot();
-      await widget.onSendToAgent!(
-        FaAppMessage(
-          text: message.trim(),
-          appStateJson: state == null ? null : jsonEncode(state),
-          screenshot: screenshot,
-        ),
-      );
+      await _sendFaMessage(message);
     } finally {
       if (mounted) setState(() => _faSheetOpen = false);
     }
@@ -220,7 +234,7 @@ class _JsAppViewState extends State<JsAppView> {
               ),
             ),
           ),
-          if (widget.onSendToAgent != null)
+          if (widget.onSendToAgent != null) ...[
             Positioned(
               right: 16,
               bottom: 16,
@@ -228,9 +242,21 @@ class _JsAppViewState extends State<JsAppView> {
                 heroTag: 'fa-${widget.app.id}',
                 tooltip: 'Ask Fa about this app',
                 onPressed: _openFaSheet,
-                child: const Text('Fa'),
+                child: const FaMark(size: 18),
               ),
             ),
+            if (widget.agentService != null)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: FaWorkBar(
+                  service: widget.agentService!,
+                  onSend: _sendFaMessage,
+                  onExpand: () => Navigator.of(context).maybePop(),
+                ),
+              ),
+          ],
         ],
       ),
     );
