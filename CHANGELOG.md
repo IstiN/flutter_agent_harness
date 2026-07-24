@@ -549,4 +549,17 @@
 - perf(cli): memoize the markdown wrap pass so scrolling stays O(1)
 - fix(cli): re-attach follow on submit so the sticky echo pins again
 
+## 0.1.70
+
+- docs: mandate golden tests for all UI work in AGENTS.md
+- feat(example): brand fonts (Inter/JetBrainsMono), marketing-grade full-screen goldens, app quality gates
+- fix(example): absolute path for upload_picker_web conditional import
+- fix(example): update imports for the sandbox/services/ui layout
+- feat(cli): name the key source (environment vs secure store) in the 401 hint
+- feat(cli): diagnose auth failures with the key source (env vs store shadowing)
+- feat(cli): print the session resume command on exit
+- test(example): golden tests for every UI widget + pipeline golden gate
+- fix(agent): repair orphaned tool calls in the request payload
+- feat(cli): replay the full restored transcript with collapsed tool runs
+
 ## Unreleased
