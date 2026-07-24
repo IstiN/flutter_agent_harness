@@ -2233,8 +2233,11 @@ class AgentCli {
     final cwd = config.env.cwd;
     // Current context pressure: the last assistant message's prompt size
     // against the model's context window (pi's `context: N% (used/max)`).
+    // Error/aborted terminal messages carry Usage.zero — skip them, or the
+    // gauge snaps back to 0% right after a failed run.
     final lastAssistant = _agent.state.messages
         .whereType<AssistantMessage>()
+        .where((m) => m.usage.input > 0)
         .lastOrNull;
     final contextTokens = lastAssistant?.usage.input ?? 0;
     final window = model.contextWindow;
