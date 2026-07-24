@@ -501,4 +501,10 @@
 - fix(ios): export wasm_run FFI symbols so Release/TestFlight builds keep them
 - ci: whitelist the tracked Firebase config for pub.dev's leak scanner
 
+## 0.1.63
+
+- test(example): end-to-end render test for the calculator demo app
+- feat(example): JS apps platform in the Fa app (js_widget_runtime)
+- docs: document the wasm_run symbol gate, strip-style pitfall, and new CI secrets/caches
+
 ## Unreleased
