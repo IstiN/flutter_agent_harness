@@ -519,4 +519,11 @@
 - fix(cli): never hang on a keychain system modal
 - fix(example): bundle demo app assets — nested asset dirs need explicit entries
 
+## 0.1.66
+
+- feat(example): stream model thinking live into the chat
+- fix(example): replace the whole-run timeout with an idle watchdog
+- feat(example): SVG app icons for JS apps
+- feat(example): restore persisted sessions in the sidebar after restart
+
 ## Unreleased
