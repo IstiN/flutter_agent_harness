@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
 import 'app_theme.dart';
@@ -58,6 +59,9 @@ class _SessionSidebarState extends State<SessionSidebar> {
   List<FlutterManagedSession>? _sessions;
   String? _loadError;
 
+  /// Sessions persisted on disk but not open in the manager yet.
+  List<SessionMetadata> _persisted = const [];
+
   /// JS apps discovered in the env's `apps/` folder (`null` = not loaded).
   List<JsAppInfo>? _apps;
   AppPermissionsStore? _permissionsStore;
@@ -74,15 +78,48 @@ class _SessionSidebarState extends State<SessionSidebar> {
   Future<void> _reload() async {
     try {
       final sessions = _manager.sessions;
+      // The manager only tracks sessions opened in this app run; surface
+      // older ones persisted on disk so a restart doesn't "lose" them.
+      final service = _manager.active?.service;
+      final persisted = service == null
+          ? const <SessionMetadata>[]
+          : await service.listSessions();
       if (!mounted) return;
+      final liveIds = sessions.map((s) => s.id).toSet();
       setState(() {
         _sessions = sessions;
+        _persisted = [
+          for (final m in persisted)
+            if (!liveIds.contains(m.id)) m,
+        ];
         _loadError = null;
       });
     } on Object catch (e) {
       if (!mounted) return;
       setState(() => _loadError = e.toString());
     }
+  }
+
+  /// Opens a persisted session from disk in a cloned service.
+  Future<void> _openPersisted(SessionMetadata metadata) async {
+    final active = _manager.active?.service;
+    if (active == null) return;
+    final config =
+        active.configForClone ??
+        AgentConfig(
+          providerKind: active.providerKind,
+          modelId: active.modelId,
+          baseUrl: '',
+          apiKey: '',
+        );
+    await _manager.openSession(
+      metadata,
+      config: config,
+      serviceFactory: () => active.clone(),
+    );
+    if (!mounted) return;
+    widget.onAction?.call();
+    await _reload();
   }
 
   /// (Re)loads the JS app list from the shared env, seeding the bundled demo
@@ -449,7 +486,8 @@ class _SessionSidebarState extends State<SessionSidebar> {
     if (sessions == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (sessions.isEmpty) {
+    final persisted = _persisted;
+    if (sessions.isEmpty && persisted.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -457,12 +495,75 @@ class _SessionSidebarState extends State<SessionSidebar> {
         ),
       );
     }
-    return ListView.builder(
+    return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      itemCount: sessions.length,
-      itemBuilder: (context, index) =>
-          _buildSessionTile(theme, sessions[index]),
+      children: [
+        for (final session in sessions) _buildSessionTile(theme, session),
+        if (persisted.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Text(
+              'On this device',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: FahPalette.dim,
+              ),
+            ),
+          ),
+          for (final metadata in persisted)
+            _buildPersistedTile(theme, metadata),
+        ],
+      ],
     );
+  }
+
+  /// A session persisted on disk but not open in this app run; tapping
+  /// restores it via [FlutterSessionManager.openSession].
+  Widget _buildPersistedTile(ThemeData theme, SessionMetadata metadata) {
+    final model = metadata.metadata?['model']?.toString() ?? '';
+    return ListTile(
+      dense: true,
+      leading: const Icon(Icons.history, size: 18),
+      title: Text(
+        'session ${metadata.id.substring(0, 8)}',
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        model.isNotEmpty ? model : metadata.cwd,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.bodySmall?.copyWith(color: FahPalette.dim),
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.delete_outline, size: 18),
+        tooltip: 'Delete session',
+        onPressed: () => _deletePersisted(metadata),
+      ),
+      onTap: () => _openPersisted(metadata),
+    );
+  }
+
+  Future<void> _deletePersisted(SessionMetadata metadata) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete session?'),
+        content: Text('Session ${metadata.id.substring(0, 8)}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final service = _manager.active?.service;
+    if (service == null) return;
+    await service.deleteSession(metadata);
+    await _reload();
   }
 
   Widget _buildSessionTile(ThemeData theme, FlutterManagedSession session) {
