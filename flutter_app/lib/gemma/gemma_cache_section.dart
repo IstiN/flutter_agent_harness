@@ -11,42 +11,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_types.dart';
-
-/// One row in the Gemma cache section: a preset (installed or not) or a
-/// stale repository entry (orphan).
-final class _CacheEntry {
-  const _CacheEntry({
-    required this.filename,
-    required this.title,
-    required this.subtitle,
-    required this.sizeText,
-    required this.deletable,
-    this.presetId,
-    this.orphan = false,
-  });
-
-  /// The repository id handed to [GemmaEngineApi.uninstall].
-  final String filename;
-
-  /// Row title (preset display name, or the orphan's file name).
-  final String title;
-
-  /// Row subtitle (installed state / leftover explanation + size).
-  final String subtitle;
-
-  /// Size mentioned in the confirm dialog.
-  final String sizeText;
-
-  /// Whether the row has a delete action (installed presets and orphans).
-  final bool deletable;
-
-  /// The preset id when this row is one of [gemmaModelPresets] — used to
-  /// detect deleting the loaded model; `null` for orphans.
-  final String? presetId;
-
-  /// Whether this row is a stale repository entry, not a current preset.
-  final bool orphan;
-}
+import 'package:fa/ui/widgets/model_cache_section.dart';
 
 /// The "On-device models (Gemma)" settings section: lists each Gemma preset
 /// with its installed state and size, plus any stale model files left in
@@ -75,55 +40,31 @@ class GemmaCacheSection extends StatefulWidget {
 class _GemmaCacheSectionState extends State<GemmaCacheSection> {
   late final GemmaEngineApi _engine = widget.engine ?? createGemmaService();
   late final bool _isWeb = widget.isWeb ?? kIsWeb;
-
-  /// Repository entries from the last scan; `null` while the first scan
-  /// runs.
-  List<GemmaInstalledModel>? _installed;
-
-  /// Set when the repository scan itself failed (corrupt store, plugin
-  /// unavailable); shown instead of the list.
-  Object? _scanError;
-
-  bool _busy = false;
-  String? _notice;
+  late final ModelCacheSectionController _controller =
+      ModelCacheSectionController(
+        isAvailable: () => _engine.isAvailable,
+        scan: _scan,
+        scanTimeout: const Duration(seconds: 10),
+        scanErrorText: (context, error) =>
+            context.l10n.gemmaCacheScanError(error.toString()),
+        setState: setState,
+        mounted: () => mounted,
+      );
 
   @override
   void initState() {
     super.initState();
-    unawaited(_refresh());
-  }
-
-  /// Upper bound for one repository scan: a hung store (OPFS lock, dead
-  /// plugin channel) must not pin the settings dialog on the spinner.
-  static const _scanTimeout = Duration(seconds: 10);
-
-  Future<void> _refresh() async {
-    if (!_engine.isAvailable) return;
-    try {
-      final installed = await _engine.installedModels().timeout(_scanTimeout);
-      if (mounted) {
-        setState(() {
-          _installed = installed;
-          _scanError = null;
-          _busy = false;
-        });
-      }
-    } on Object catch (e) {
-      if (mounted) {
-        setState(() {
-          _scanError = e;
-          _busy = false;
-        });
-      }
-    }
+    unawaited(_controller.refresh());
   }
 
   /// Maps the raw repository entries to display rows: one per preset
   /// (installed or not), then one per orphan — an entry no preset installs
   /// under on this platform (the stale mobile-named file on web is the
   /// motivating case).
-  List<_CacheEntry> _entries(List<GemmaInstalledModel> installed) {
-    final entries = <_CacheEntry>[];
+  Future<List<ModelCacheRow>> _scan() async {
+    final installed = await _engine.installedModels();
+    if (installed.isEmpty) return const [];
+    final rows = <ModelCacheRow>[];
     for (final preset in gemmaModelPresets) {
       final filename = preset.filenameFor(isWeb: _isWeb);
       final sizeLabel = preset.sizeLabelFor(isWeb: _isWeb);
@@ -132,18 +73,20 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
         if (model.filename == filename) match = model;
       }
       final bytes = match?.sizeBytes;
-      entries.add(
-        _CacheEntry(
-          filename: filename,
+      final sizeText = bytes != null ? formatCacheBytes(bytes) : sizeLabel;
+      rows.add(
+        ModelCacheRow(
           title: preset.displayName,
-          subtitle: match == null
+          subtitle: (context) => match == null
               ? 'Not downloaded · $sizeLabel'
               : bytes != null
-              ? '$sizeLabel · ${_formatBytes(bytes)} cached'
+              ? '$sizeLabel · ${formatCacheBytes(bytes)} cached'
               : '$sizeLabel · installed',
-          sizeText: bytes != null ? _formatBytes(bytes) : sizeLabel,
+          confirmContent: (dialogContext) => dialogContext.l10n
+              .gemmaCacheDeleteWeights(sizeText, _storageFrom(dialogContext)),
+          delete: () => _engine.uninstall(filename),
+          wasLoaded: () => _engine.loadedModelId == preset.id,
           deletable: match != null,
-          presetId: preset.id,
         ),
       );
     }
@@ -156,22 +99,22 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
         (preset) => preset.filename == model.filename,
       );
       final size = model.sizeBytes != null
-          ? _formatBytes(model.sizeBytes!)
+          ? formatCacheBytes(model.sizeBytes!)
           : 'unknown size';
-      entries.add(
-        _CacheEntry(
-          filename: model.filename,
+      rows.add(
+        ModelCacheRow(
           title: model.filename,
-          subtitle: isStaleMobileBuild
+          subtitle: (context) => isStaleMobileBuild
               ? 'Leftover mobile build — not used on web · $size'
               : 'Unrecognized model file · $size',
-          sizeText: size,
-          deletable: true,
-          orphan: true,
+          confirmContent: (dialogContext) => dialogContext.l10n
+              .gemmaCacheDeleteOrphan(size, _storageFrom(dialogContext)),
+          delete: () => _engine.uninstall(model.filename),
+          wasLoaded: () => false,
         ),
       );
     }
-    return entries;
+    return rows;
   }
 
   String _storageFrom(BuildContext context) => _isWeb
@@ -182,123 +125,14 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
       ? context.l10n.gemmaStorageInBrowser
       : context.l10n.gemmaStorageOnDevice;
 
-  Future<void> _delete(_CacheEntry entry) async {
-    final l10n = context.l10n;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(dialogContext.l10n.cacheDeleteTitle(entry.title)),
-        content: Text(
-          entry.orphan
-              ? dialogContext.l10n.gemmaCacheDeleteOrphan(
-                  entry.sizeText,
-                  _storageFrom(dialogContext),
-                )
-              : dialogContext.l10n.gemmaCacheDeleteWeights(
-                  entry.sizeText,
-                  _storageFrom(dialogContext),
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(dialogContext.l10n.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(dialogContext.l10n.commonDelete),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    setState(() {
-      _busy = true;
-      _notice = null;
-    });
-    try {
-      final presetId = entry.presetId;
-      final wasLoaded = presetId != null && _engine.loadedModelId == presetId;
-      await _engine.uninstall(entry.filename);
-      _notice = wasLoaded
-          ? l10n.cacheNoticeLoadedModel(entry.title)
-          : l10n.cacheNoticeDeleted(entry.title);
-    } on Object catch (e) {
-      _notice = l10n.cacheNoticeDeleteFailed(e.toString(), entry.title);
-    }
-    await _refresh();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    if (!_engine.isAvailable) {
-      return Text(
-        context.l10n.gemmaCacheMobileOnly,
-        style: theme.textTheme.bodySmall,
-      );
-    }
-    final installed = _installed;
-    final entries = installed == null || installed.isEmpty
-        ? null
-        : _entries(installed);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(context.l10n.gemmaCacheTitle, style: theme.textTheme.titleSmall),
-        const SizedBox(height: 4),
-        Text(
-          context.l10n.gemmaCacheSubtitle(_storageIn(context)),
-          style: theme.textTheme.bodySmall,
-        ),
-        const SizedBox(height: 8),
-        if (installed == null)
-          _scanError != null
-              ? Text(
-                  context.l10n.gemmaCacheScanError(_scanError.toString()),
-                  style: theme.textTheme.bodySmall,
-                )
-              : const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Center(
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                )
-        else if (entries == null)
-          Text(context.l10n.cacheNoModels, style: theme.textTheme.bodySmall)
-        else
-          for (final entry in entries)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(entry.title),
-              subtitle: Text(entry.subtitle),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline),
-                tooltip: context.l10n.cacheDeleteTooltip(entry.title),
-                onPressed: _busy || !entry.deletable
-                    ? null
-                    : () => _delete(entry),
-              ),
-            ),
-        if (_notice != null) ...[
-          const SizedBox(height: 4),
-          Text(_notice!, style: theme.textTheme.bodySmall),
-        ],
-      ],
+    return buildModelCacheSection(
+      context,
+      unavailableNote: context.l10n.gemmaCacheMobileOnly,
+      title: context.l10n.gemmaCacheTitle,
+      subtitle: context.l10n.gemmaCacheSubtitle(_storageIn(context)),
+      controller: _controller,
     );
   }
-}
-
-/// Human-readable byte count for cached-weights sizes (`2.6 GB`, `750 MB`).
-String _formatBytes(int bytes) {
-  if (bytes >= 1 << 30) return '${(bytes / (1 << 30)).toStringAsFixed(1)} GB';
-  if (bytes >= 1 << 20) return '${bytes ~/ (1 << 20)} MB';
-  if (bytes >= 1 << 10) return '${bytes ~/ (1 << 10)} KB';
-  return '$bytes B';
 }
