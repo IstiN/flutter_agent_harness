@@ -34,7 +34,7 @@ The host **watches the app files and reloads the running app automatically** as 
 3. **Register `jsr.onEvent`** — even if you handle few events.
 4. **Set the permissions the app actually needs** in `manifest.json`, and tell the user they may also need to enable them at runtime in the app's permissions dialog.
 5. **Never hand-edit `apps/<id>/storage.json`** — that file is owned by `jsr.storage`.
-6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase, calendar, map, health, homekit). Read their source before building something similar.
+6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase, calendar, contacts, map, health, homekit). Read their source before building something similar.
 
 ---
 
@@ -93,7 +93,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `llm` | ❌ | `true` to allow `jsr.fa.llm` / `jsr.fa.llm.chat` / `jsr.fa.llm.stream` (default: false) |
 | `homekit` | ❌ | `true` to allow `jsr.fa.homekit` (default: false) |
 | `health` | ❌ | `true` to allow `jsr.fa.health` (default: false) |
-| `contacts` | ❌ | `true` to allow `jsr.fa.contacts` (default: false) |
+| `contacts` | ❌ | `true` to allow `jsr.fa.contacts.*` — system contacts access (search + create/update/delete + call/sms; default: false) |
 | `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — system calendar access (read + create/update/delete; default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
@@ -403,8 +403,46 @@ jsr.fa.calendar.delete({ id: eventId });
 
 The Fa agent has matching tools (`calendar_add` / `calendar_update` / `calendar_delete`, plus read-only `calendar_events`), so users can also manage events by chatting — the write tools follow a list-then-confirm flow.
 
-### `jsr.fa.homekit(action, args)` / `jsr.fa.health(action, args)` / `jsr.fa.contacts(action, args)` → Promise
-Platform bridges. Each requires its matching manifest permission (`homekit` / `health` / `contacts`). **These are currently stubs**: they resolve with an error message until implemented on the host. Do not build apps that depend on them without warning the user.
+### `jsr.fa.contacts.search(args)` → Promise
+Access to the user's system contacts (macOS/iOS). Requires `"contacts": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS contacts-access prompt. `args` is optional: `{query: 'anna'}` — a case-insensitive name match; empty lists the first contacts (max 50).
+
+```javascript
+jsr.fa.contacts.search({ query: 'anna' }).then(function(result) {
+  if (result && result.__error) { jsr.showError(result.__error); return; }
+  // result.contacts: [{ id, name, phones: [...], emails: [...] }]
+  renderContacts(result.contacts);
+});
+```
+
+**Write methods** (same `contacts` permission):
+
+```javascript
+// Create — returns { id }. phones/emails are string lists.
+jsr.fa.contacts.create({
+  name: 'Anna Ivanova', phones: ['+1 555 0100'], emails: ['anna@example.com'],
+  // note: '…'
+}).then(function(result) { /* result.id or result.__error */ });
+
+// Update — only the supplied fields change; a supplied phones/emails list
+// REPLACES the existing entries. id comes from the search results.
+jsr.fa.contacts.update({ id: contactId, phones: ['+1 555 0199'] });
+
+// Delete — permanent; confirm with the user first.
+jsr.fa.contacts.delete({ id: contactId });
+```
+
+**Call / SMS triggers** (same permission; they open the system dialer / Messages app — the user still confirms there):
+
+```javascript
+// Pass the phone from the search results (or {id: contactId}).
+jsr.fa.contacts.call({ phone: '+1 555 0100' });
+jsr.fa.contacts.sms({ phone: '+1 555 0100', text: 'Running late, sorry!' });
+```
+
+The Fa agent has matching tools (`contacts_search`, plus write-tier `contacts_add` / `contacts_call` / `contacts_sms`), so users can also reach their contacts by chatting — the call/SMS tools follow a search-then-confirm flow.
+
+### `jsr.fa.homekit(action, args)` / `jsr.fa.health(action, args)` → Promise
+Platform bridges. Each requires its matching manifest permission (`homekit` / `health`). **These are currently stubs**: they resolve with an error message until implemented on the host. Do not build apps that depend on them without warning the user.
 
 **Error convention**: bridge failures (permission denied, not implemented, platform error) come back as an object with an `__error` field — the same convention as `jsr.fetchJson`. Always check `result.__error` before using a result:
 
@@ -835,6 +873,7 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 | `yolo-hello` | Hello Animated | Interactive demo: bounce, gradient, gestures, RAF | ❌ |
 | `animation-showcase` | Animation Showcase | 7 animation demos: fade, morph, bounce, cards, drag, pulse, colors | ❌ |
 | `calendar` | Calendar | System calendar events via `jsr.fa.calendar`, day navigation, add/edit/delete forms + permission states | ❌ |
+| `contacts` | Contacts | System contacts via `jsr.fa.contacts.*`, search, detail card with call/SMS, add form + permission states | ❌ |
 | `map` | Map | OSM `map` node: preset markers, tap-to-pin, zoom controls | ✅ |
 | `health` | Health | `jsr.fa.health` bridge status + demo metrics dashboard | ❌ |
 | `homekit` | Home | `jsr.fa.homekit` bridge status + demo device panel with local toggles | ❌ |

@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/calendar_service.dart';
+import 'package:fa/services/contact_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -68,6 +69,61 @@ final class _FakeCalendarApi implements CalendarApi {
   @override
   Future<void> deleteEvent({required String id}) async {
     deletedIds.add(id);
+  }
+}
+
+/// Fake [ContactApi] for the `fa.contacts` bridge tests — the host-side
+/// tests never touch the real method channel.
+final class _FakeContactApi implements ContactApi {
+  final created = <({String name, List<String>? phones})>[];
+  final deletedIds = <String>[];
+  final openedUrls = <String>[];
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<List<Contact>> searchContacts({required String query}) async => [
+    (
+      id: 'c-anna',
+      name: 'Anna Ivanova',
+      phones: const ['+1 555 0100'],
+      emails: const ['anna@example.com'],
+    ),
+  ];
+
+  @override
+  Future<String> createContact({
+    required String name,
+    List<String>? phones,
+    List<String>? emails,
+    String? note,
+  }) async {
+    created.add((name: name, phones: phones));
+    return 'fake-id-${created.length}';
+  }
+
+  @override
+  Future<void> updateContact({
+    required String id,
+    String? name,
+    List<String>? phones,
+    List<String>? emails,
+    String? note,
+  }) async {}
+
+  @override
+  Future<void> deleteContact({required String id}) async {
+    deletedIds.add(id);
+  }
+
+  @override
+  Future<bool> openUrl(String url) async {
+    openedUrls.add(url);
+    return true;
   }
 }
 
@@ -557,6 +613,143 @@ void main() {
         final created = jsonEncode(granted.exportedState?['created']);
         expect(created, contains('fake-id-1'));
         expect(jsonEncode(granted.exportedState?['deleted']), contains('true'));
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.contacts is gated by the contacts permission', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.contacts.search({query: 'anna'}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final contacts = _FakeContactApi();
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        contacts: contacts,
+      );
+      try {
+        await denied.start();
+        await Future<void>.delayed(settle);
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('contacts permission'),
+        );
+
+        final granted = JsAppEngine(
+          app: app(),
+          env: env,
+          permissions: const AppPermissions(contacts: true),
+          contacts: contacts,
+        );
+        try {
+          await granted.start();
+          await Future<void>.delayed(settle);
+          final result = jsonEncode(granted.exportedState?['result']);
+          expect(result, contains('Anna Ivanova'));
+          expect(result, contains('+1 555 0100'));
+        } finally {
+          await granted.dispose();
+        }
+      } finally {
+        await denied.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.contacts write/call/sms are gated by the permission', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.contacts.create({name: 'Bob', phones: ['+7 900 0000']}).then(function(result) {
+    jsr.exportState({created: result});
+  }, function(error) {
+    jsr.exportState({created: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final deniedContacts = _FakeContactApi();
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        contacts: deniedContacts,
+      );
+      try {
+        await denied.start();
+        await Future<void>.delayed(settle);
+        expect(
+          jsonEncode(denied.exportedState?['created']),
+          contains('contacts permission'),
+        );
+        expect(deniedContacts.created, isEmpty);
+        expect(deniedContacts.deletedIds, isEmpty);
+        expect(deniedContacts.openedUrls, isEmpty);
+      } finally {
+        await denied.dispose();
+      }
+    });
+  });
+
+  testWidgets('granted fa.contacts create/call/sms reach the ContactApi', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.contacts.create({name: 'Bob', phones: ['+7 900 0000']}).then(function(result) {
+    jsr.fa.contacts.call({id: 'c-anna'}).then(function(callResult) {
+      jsr.fa.contacts.sms({phone: '+1 555 0100', text: 'hi there'}).then(function(smsResult) {
+        jsr.exportState({created: result, called: callResult, texted: smsResult});
+      });
+    });
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final contacts = _FakeContactApi();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(contacts: true),
+        contacts: contacts,
+      );
+      try {
+        await granted.start();
+        await Future<void>.delayed(settle);
+        expect(contacts.created, hasLength(1));
+        expect(contacts.created.single.name, 'Bob');
+        expect(contacts.created.single.phones, ['+7 900 0000']);
+        // {id} resolved via the search results to the first phone number.
+        expect(contacts.openedUrls, [
+          'tel:+1 555 0100',
+          'sms:+1 555 0100?&body=hi%20there',
+        ]);
+        final state = granted.exportedState!;
+        expect(jsonEncode(state['created']), contains('fake-id-1'));
+        expect(jsonEncode(state['called']), contains('+1 555 0100'));
+        expect(jsonEncode(state['texted']), contains('+1 555 0100'));
       } finally {
         await granted.dispose();
       }

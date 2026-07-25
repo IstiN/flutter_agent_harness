@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/calendar_service.dart';
+import 'package:fa/services/contact_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -82,6 +83,72 @@ final class _FakeCalendarApi implements CalendarApi {
   }
 }
 
+/// Fake [ContactApi] so the contacts demo's bridge calls resolve without
+/// touching the real platform channel.
+final class _FakeContactApi implements ContactApi {
+  final created =
+      <({String name, List<String>? phones, List<String>? emails})>[];
+  final openedUrls = <String>[];
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<List<Contact>> searchContacts({required String query}) async {
+    const all = [
+      (
+        id: 'c-anna',
+        name: 'Anna Ivanova',
+        phones: ['+1 555 0100'],
+        emails: ['anna@example.com'],
+      ),
+      (
+        id: 'c-bob',
+        name: 'Bob Petrov',
+        phones: ['+1 555 0200'],
+        emails: <String>[],
+      ),
+    ];
+    if (query.isEmpty) return all;
+    final needle = query.toLowerCase();
+    return all
+        .where((contact) => contact.name.toLowerCase().contains(needle))
+        .toList();
+  }
+
+  @override
+  Future<String> createContact({
+    required String name,
+    List<String>? phones,
+    List<String>? emails,
+    String? note,
+  }) async {
+    created.add((name: name, phones: phones, emails: emails));
+    return 'fake-id-${created.length}';
+  }
+
+  @override
+  Future<void> updateContact({
+    required String id,
+    String? name,
+    List<String>? phones,
+    List<String>? emails,
+    String? note,
+  }) async {}
+
+  @override
+  Future<void> deleteContact({required String id}) async {}
+
+  @override
+  Future<bool> openUrl(String url) async {
+    openedUrls.add(url);
+    return true;
+  }
+}
+
 /// Smoke tests for the bundled demo apps under `assets/apps/`:
 /// manifest discovery/parse/permission flags for every seeded id, plus a
 /// real-engine boot of the bridge demos (calendar, map, health, homekit) —
@@ -121,6 +188,10 @@ void main() {
       final calendar = AppPermissions.fromJson(manifest('calendar'));
       expect(calendar.calendar, isTrue);
       expect(calendar.network, isFalse);
+
+      final contacts = AppPermissions.fromJson(manifest('contacts'));
+      expect(contacts.contacts, isTrue);
+      expect(contacts.network, isFalse);
 
       final map = AppPermissions.fromJson(manifest('map'));
       expect(map.network, isTrue); // OSM tiles
@@ -276,6 +347,120 @@ void main() {
           expect(
             jsonEncode(engine.tree.value),
             contains('Calendar permission needed'),
+          );
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('contacts renders search results from the bridge', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = await envWithApp('contacts');
+        final engine = JsAppEngine(
+          app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
+          env: env,
+          permissions: const AppPermissions(contacts: true),
+          contacts: _FakeContactApi(),
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          expect(engine.tree.value, isNotNull);
+          expect(engine.exportedState?['loading'], isFalse);
+          expect(engine.exportedState?['error'], isNull);
+          expect(engine.exportedState?['resultCount'], 2);
+          expect(
+            jsonEncode(engine.exportedState?['contacts']),
+            contains('Anna Ivanova'),
+          );
+
+          // Tapping a result opens the detail card with call/SMS buttons.
+          await engine.callEvent('contact_0');
+          await Future<void>.delayed(settle);
+          expect(engine.exportedState?['selected'], 'Anna Ivanova');
+          final tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('Call'));
+          expect(tree, contains('SMS'));
+
+          // A name query re-searches through the bridge.
+          await engine.callEvent('back_list');
+          await engine.callEvent('search_change', {'value': 'bob'});
+          await engine.callEvent('search_submit');
+          await Future<void>.delayed(settle);
+          expect(engine.exportedState?['resultCount'], 1);
+          expect(
+            jsonEncode(engine.exportedState?['contacts']),
+            contains('Bob Petrov'),
+          );
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('contacts add form creates a contact through the bridge', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final contacts = _FakeContactApi();
+        final env = await envWithApp('contacts');
+        final engine = JsAppEngine(
+          app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
+          env: env,
+          permissions: const AppPermissions(contacts: true),
+          contacts: contacts,
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          // Open the add form, fill it, save.
+          await engine.callEvent('add_open');
+          await Future<void>.delayed(settle);
+          expect(engine.exportedState?['form'], 'add');
+          await engine.callEvent('form_name', {'value': 'Carol Sidorova'});
+          await engine.callEvent('form_phone', {'value': '+1 555 0300'});
+          await engine.callEvent('form_save');
+          await Future<void>.delayed(settle);
+
+          expect(contacts.created, hasLength(1));
+          expect(contacts.created.single.name, 'Carol Sidorova');
+          expect(contacts.created.single.phones, ['+1 555 0300']);
+          // The form closed and the list reloaded.
+          expect(engine.exportedState?['form'], isNull);
+          expect(engine.exportedState?['notice'], 'Contact added.');
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('contacts without the permission shows the grant card', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = await envWithApp('contacts');
+        final engine = JsAppEngine(
+          app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
+          env: env,
+          permissions: const AppPermissions(),
+          contacts: _FakeContactApi(),
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          expect(
+            engine.exportedState?['error'],
+            contains('contacts permission'),
+          );
+          expect(
+            jsonEncode(engine.tree.value),
+            contains('Contacts permission needed'),
           );
         } finally {
           await engine.dispose();

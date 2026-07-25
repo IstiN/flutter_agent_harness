@@ -10,6 +10,8 @@ import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/calendar_tool.dart';
+import 'package:fa/services/contact_service.dart';
+import 'package:fa/services/contact_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -248,6 +250,14 @@ class AgentService extends ChangeNotifier {
         calendarAddTool(createCalendarService()),
         calendarUpdateTool(createCalendarService()),
         calendarDeleteTool(createCalendarService()),
+      ],
+      // System-contacts access (macOS/iOS via the `fah/contacts` channel;
+      // the tools themselves report a clean note where unsupported).
+      if (contactsPlatformSupported) ...[
+        contactsSearchTool(createContactService()),
+        contactsAddTool(createContactService()),
+        contactsCallTool(createContactService()),
+        contactsSmsTool(createContactService()),
       ],
     ]);
     _toolRegistry = registry;

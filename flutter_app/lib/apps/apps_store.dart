@@ -260,6 +260,7 @@ class AppsStore {
     'animation-showcase',
     'yolo-hello',
     'calendar',
+    'contacts',
     'map',
     'health',
     'homekit',

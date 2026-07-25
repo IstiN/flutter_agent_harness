@@ -1,3 +1,4 @@
+import Contacts
 import EventKit
 import Flutter
 import UIKit
@@ -14,6 +15,7 @@ import UIKit
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     registerCalendarChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerContactsChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerKeychainChannel(messenger: engineBridge.applicationRegistrar.messenger())
   }
 }
@@ -321,4 +323,244 @@ private func calendarDeleteEvent(args: [String: Any]) -> Any {
       details: nil,
     )
   }
+}
+
+/// Shared store for the `fah/contacts` channel (CNContactStore wants a
+/// long-lived instance).
+private let contactStore = CNContactStore()
+
+/// The keys every contacts fetch shares. CNContactNoteKey is deliberately
+/// absent — reading notes requires Apple's notes entitlement; writing a
+/// note on a mutable contact works without it.
+private let contactKeys: [CNKeyDescriptor] = [
+  CNContactIdentifierKey as CNKeyDescriptor,
+  CNContactGivenNameKey as CNKeyDescriptor,
+  CNContactFamilyNameKey as CNKeyDescriptor,
+  CNContactPhoneNumbersKey as CNKeyDescriptor,
+  CNContactEmailAddressesKey as CNKeyDescriptor,
+]
+
+/// The `fah/contacts` method channel: access to the user's system contacts
+/// via Contacts.framework. Methods: `isAvailable`, `requestAccess`,
+/// `searchContacts` with {query} returning a list of contact maps
+/// ({id, name, phones, emails}), the write methods `createContact` /
+/// `updateContact` / `deleteContact`, and `openUrl` ({url}) which opens
+/// `tel:`/`sms:` URLs for the call/SMS flows.
+private func registerContactsChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/contacts",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "isAvailable":
+      result(true)
+    case "requestAccess":
+      contactStore.requestAccess(for: .contacts) { granted, _ in
+        DispatchQueue.main.async { result(granted) }
+      }
+    case "searchContacts":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(contactsSearch(query: args["query"] as? String ?? ""))
+    case "createContact":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(contactsCreate(args: args))
+    case "updateContact":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(contactsUpdate(args: args))
+    case "deleteContact":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(contactsDelete(args: args))
+    case "openUrl":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(contactsOpenUrl(args["url"] as? String ?? ""))
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+/// Whether the store may read contacts (iOS 18's limited access counts —
+/// the selected contacts can be read and new ones created).
+private func contactsAccessGranted() -> Bool {
+  let status = CNContactStore.authorizationStatus(for: .contacts)
+  if #available(iOS 18.0, *) {
+    return status == .authorized || status == .limited
+  }
+  return status == .authorized
+}
+
+/// One contact as a Flutter-friendly map: {id, name, phones[], emails[]}.
+private func contactMap(_ contact: CNContact) -> [String: Any] {
+  let name = "\(contact.givenName) \(contact.familyName)"
+    .trimmingCharacters(in: .whitespaces)
+  return [
+    "id": contact.identifier,
+    "name": name.isEmpty ? "(no name)" : name,
+    "phones": contact.phoneNumbers.map { $0.value.stringValue },
+    "emails": contact.emailAddresses.map { $0.value as String },
+  ]
+}
+
+/// Name matches as Flutter-friendly maps (capped at 50); an empty query
+/// lists the first contacts. Empty when access is not granted (the Dart
+/// side requests access before calling).
+private func contactsSearch(query: String) -> [[String: Any]] {
+  guard contactsAccessGranted() else { return [] }
+  var matches: [[String: Any]] = []
+  do {
+    if query.isEmpty {
+      let request = CNContactFetchRequest(keysToFetch: contactKeys)
+      try contactStore.enumerateContacts(with: request) { contact, stop in
+        matches.append(contactMap(contact))
+        if matches.count >= 50 { stop.pointee = true }
+      }
+    } else {
+      let predicate = CNContact.predicateForContacts(matchingName: query)
+      matches = try contactStore.unifiedContacts(
+        matching: predicate,
+        keysToFetch: contactKeys,
+      ).prefix(50).map(contactMap)
+    }
+  } catch {
+    return []
+  }
+  return matches
+}
+
+private func contactsDeniedError() -> FlutterError {
+  FlutterError(
+    code: "denied",
+    message: "contacts access was not granted",
+    details: nil,
+  )
+}
+
+/// Splits a full name into given/family parts (last word is the family).
+private func contactsApplyName(_ name: String, to contact: CNMutableContact) {
+  let parts = name.split(separator: " ").map(String.init)
+  if parts.count > 1 {
+    contact.givenName = parts.dropLast().joined(separator: " ")
+    contact.familyName = parts.last ?? ""
+  } else {
+    contact.givenName = name
+    contact.familyName = ""
+  }
+}
+
+/// Applies the shared write fields ({name, phones, emails, note}) to
+/// [contact]; only present keys are applied, and a present phones/emails
+/// list REPLACES the existing entries.
+private func contactsApplyWriteFields(
+  args: [String: Any],
+  to contact: CNMutableContact,
+) {
+  if let name = args["name"] as? String { contactsApplyName(name, to: contact) }
+  if let phones = args["phones"] as? [String] {
+    contact.phoneNumbers = phones.map {
+      CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: $0))
+    }
+  }
+  if let emails = args["emails"] as? [String] {
+    contact.emailAddresses = emails.map {
+      CNLabeledValue(label: CNLabelHome, value: $0 as NSString)
+    }
+  }
+  if let note = args["note"] as? String { contact.note = note }
+}
+
+/// Creates a contact from {name, phones?, emails?, note?} and returns the
+/// new contact id (or a FlutterError).
+private func contactsCreate(args: [String: Any]) -> Any {
+  guard contactsAccessGranted() else { return contactsDeniedError() }
+  guard let name = args["name"] as? String, !name.isEmpty else {
+    return FlutterError(
+      code: "bad_args",
+      message: "name is required",
+      details: nil,
+    )
+  }
+  let contact = CNMutableContact()
+  contactsApplyWriteFields(args: args, to: contact)
+  let request = CNSaveRequest()
+  request.add(contact, toContainerWithIdentifier: nil)
+  do {
+    try contactStore.execute(request)
+    return contact.identifier
+  } catch {
+    return FlutterError(
+      code: "save_failed",
+      message: error.localizedDescription,
+      details: nil,
+    )
+  }
+}
+
+/// Updates the contact with args["id"]; returns true or a FlutterError.
+private func contactsUpdate(args: [String: Any]) -> Any {
+  guard contactsAccessGranted() else { return contactsDeniedError() }
+  guard let id = args["id"] as? String,
+    let existing = try? contactStore.unifiedContact(
+      withIdentifier: id,
+      keysToFetch: contactKeys,
+    ),
+    let contact = existing.mutableCopy() as? CNMutableContact
+  else {
+    return FlutterError(
+      code: "not_found",
+      message: "no contact with this id",
+      details: nil,
+    )
+  }
+  contactsApplyWriteFields(args: args, to: contact)
+  let request = CNSaveRequest()
+  request.update(contact)
+  do {
+    try contactStore.execute(request)
+    return true
+  } catch {
+    return FlutterError(
+      code: "save_failed",
+      message: error.localizedDescription,
+      details: nil,
+    )
+  }
+}
+
+/// Deletes the contact with args["id"]; returns true or a FlutterError.
+private func contactsDelete(args: [String: Any]) -> Any {
+  guard contactsAccessGranted() else { return contactsDeniedError() }
+  guard let id = args["id"] as? String,
+    let existing = try? contactStore.unifiedContact(
+      withIdentifier: id,
+      keysToFetch: contactKeys,
+    ),
+    let contact = existing.mutableCopy() as? CNMutableContact
+  else {
+    return FlutterError(
+      code: "not_found",
+      message: "no contact with this id",
+      details: nil,
+    )
+  }
+  let request = CNSaveRequest()
+  request.delete(contact)
+  do {
+    try contactStore.execute(request)
+    return true
+  } catch {
+    return FlutterError(
+      code: "delete_failed",
+      message: error.localizedDescription,
+      details: nil,
+    )
+  }
+}
+
+/// Opens a `tel:`/`sms:` URL with the system handler; false when the URL
+/// is malformed (the open itself completes asynchronously).
+private func contactsOpenUrl(_ urlString: String) -> Bool {
+  guard let url = URL(string: urlString) else { return false }
+  UIApplication.shared.open(url, options: [:]) { _ in }
+  return true
 }

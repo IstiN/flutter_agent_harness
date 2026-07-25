@@ -12,6 +12,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/calendar_service.dart';
+import 'package:fa/services/contact_service.dart';
 
 /// One chat message for the `jsr.fa.llm.chat/stream` bridge calls; [role] is
 /// `user`, `assistant`, or `system`.
@@ -26,7 +27,7 @@ typedef FaLlmHandler =
       void Function(String delta)? onDelta,
     });
 
-/// Handler for platform bridges (`homekit`, `health`, `contacts`). Receives
+/// Handler for platform bridges (`homekit`, `health`). Receives
 /// the action name (`homekit.read`, `health.stepsToday`, …) and args.
 typedef FaPlatformHandler =
     Future<Object?> Function(String action, Map<String, Object?> args);
@@ -42,7 +43,9 @@ typedef FaPlatformHandler =
 ///   [AppPermissions.llm]
 /// - `jsr.fa.calendar` → [AppPermissions.calendar] (real backend via
 ///   [CalendarApi]; requests OS access on first use)
-/// - `jsr.fa.homekit/health/contacts` → the matching flag (stubbed until the
+/// - `jsr.fa.contacts.*` → [AppPermissions.contacts] (real backend via
+///   [ContactApi]; requests OS access on first use)
+/// - `jsr.fa.homekit/health` → the matching flag (stubbed until the
 ///   platform implementations land — a granted call answers "not available").
 class JsAppEngine {
   JsAppEngine({
@@ -52,6 +55,7 @@ class JsAppEngine {
     this.llmHandler,
     this.platformHandler,
     this.calendar,
+    this.contacts,
     this.initialTheme = const {},
     void Function(String line)? onLog,
   }) : _onLog = onLog;
@@ -69,6 +73,10 @@ class JsAppEngine {
   /// Calendar backend for `jsr.fa.calendar`; `null` uses the platform
   /// service ([createCalendarService] — a never-available stub on web).
   final CalendarApi? calendar;
+
+  /// Contacts backend for `jsr.fa.contacts.*`; `null` uses the platform
+  /// service ([createContactService] — a never-available stub on web).
+  final ContactApi? contacts;
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -226,6 +234,12 @@ jsr.fa = {
 jsr.fa.calendar.create = function(args) { return jsr.fa.call('calendar.create', args); };
 jsr.fa.calendar.update = function(args) { return jsr.fa.call('calendar.update', args); };
 jsr.fa.calendar.delete = function(args) { return jsr.fa.call('calendar.delete', args); };
+jsr.fa.contacts.search = function(args) { return jsr.fa.call('contacts.search', args); };
+jsr.fa.contacts.create = function(args) { return jsr.fa.call('contacts.create', args); };
+jsr.fa.contacts.update = function(args) { return jsr.fa.call('contacts.update', args); };
+jsr.fa.contacts.delete = function(args) { return jsr.fa.call('contacts.delete', args); };
+jsr.fa.contacts.call = function(args) { return jsr.fa.call('contacts.call', args); };
+jsr.fa.contacts.sms = function(args) { return jsr.fa.call('contacts.sms', args); };
 
 // Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
 // a function reference, so the host pushes reserved 'llm.delta' events (see
@@ -391,6 +405,30 @@ Object.defineProperty(jsr, 'onBack', {
         _resolve?.call(id, await _calendarDelete(args));
         return;
       }
+      if (method == 'contacts.search') {
+        _resolve?.call(id, await _contactsSearch(args));
+        return;
+      }
+      if (method == 'contacts.create') {
+        _resolve?.call(id, await _contactsCreate(args));
+        return;
+      }
+      if (method == 'contacts.update') {
+        _resolve?.call(id, await _contactsUpdate(args));
+        return;
+      }
+      if (method == 'contacts.delete') {
+        _resolve?.call(id, await _contactsDelete(args));
+        return;
+      }
+      if (method == 'contacts.call') {
+        _resolve?.call(id, await _contactsCall(args));
+        return;
+      }
+      if (method == 'contacts.sms') {
+        _resolve?.call(id, await _contactsSms(args));
+        return;
+      }
       // Back-navigation contract (see _faBootstrapJs): the app reports its
       // jsr.onBack registration, and asks the host to close when a back
       // event went unconsumed. Neither is permission-gated.
@@ -532,6 +570,157 @@ Object.defineProperty(jsr, 'onBack', {
       throw StateError(
         'calendar access was denied — enable it in the system privacy '
         'settings (Privacy & Security → Calendars)',
+      );
+    }
+    return api;
+  }
+
+  /// `jsr.fa.contacts.search({query?})` → `{contacts: [...]}` — system
+  /// contacts access, gated on the `contacts` permission.
+  Future<Map<String, Object?>> _contactsSearch(
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedContacts();
+    final query = (args['query'] ?? '').toString().trim();
+    final found = await api.searchContacts(query: query);
+    return {
+      'contacts': [for (final contact in found) _contactMap(contact)],
+    };
+  }
+
+  static Map<String, Object?> _contactMap(Contact contact) => {
+    'id': contact.id,
+    'name': contact.name,
+    'phones': contact.phones,
+    'emails': contact.emails,
+  };
+
+  /// `jsr.fa.contacts.create({name, phones?, emails?, note?})` → `{id}` —
+  /// same `contacts` permission gate.
+  Future<Map<String, Object?>> _contactsCreate(
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedContacts();
+    final name = (args['name'] ?? '').toString().trim();
+    if (name.isEmpty) throw StateError('name is required');
+    final id = await api.createContact(
+      name: name,
+      phones: _stringListArg(args, 'phones'),
+      emails: _stringListArg(args, 'emails'),
+      note: args['note']?.toString(),
+    );
+    return {'id': id};
+  }
+
+  /// `jsr.fa.contacts.update({id, name?, phones?, emails?, note?})` →
+  /// `{updated: true}`; a supplied phones/emails list REPLACES the
+  /// existing entries.
+  Future<Map<String, Object?>> _contactsUpdate(
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedContacts();
+    final id = (args['id'] ?? '').toString();
+    if (id.isEmpty) throw StateError('id is required');
+    await api.updateContact(
+      id: id,
+      name: args['name']?.toString(),
+      phones: _stringListArg(args, 'phones'),
+      emails: _stringListArg(args, 'emails'),
+      note: args['note']?.toString(),
+    );
+    return {'updated': true};
+  }
+
+  /// `jsr.fa.contacts.delete({id})` → `{deleted: true}`.
+  Future<Map<String, Object?>> _contactsDelete(
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedContacts();
+    final id = (args['id'] ?? '').toString();
+    if (id.isEmpty) throw StateError('id is required');
+    await api.deleteContact(id: id);
+    return {'deleted': true};
+  }
+
+  /// `jsr.fa.contacts.call({phone} | {id})` → `{calling: phone}` — opens
+  /// a `tel:` URL with the contact's number.
+  Future<Map<String, Object?>> _contactsCall(Map<String, Object?> args) async {
+    final api = await _gatedContacts();
+    final phone = await _contactsPhone(api, args);
+    if (!await api.openUrl('tel:$phone')) {
+      throw StateError('could not open the dialer for $phone');
+    }
+    return {'calling': phone};
+  }
+
+  /// `jsr.fa.contacts.sms({phone, text} | {id, text})` → `{texting:
+  /// phone}` — opens an `sms:` URL pre-filled with the message.
+  Future<Map<String, Object?>> _contactsSms(Map<String, Object?> args) async {
+    final api = await _gatedContacts();
+    final text = (args['text'] ?? '').toString().trim();
+    if (text.isEmpty) throw StateError('text is required');
+    final phone = await _contactsPhone(api, args);
+    final url = 'sms:$phone?&body=${Uri.encodeComponent(text)}';
+    if (!await api.openUrl(url)) {
+      throw StateError('could not open the Messages app for $phone');
+    }
+    return {'texting': phone};
+  }
+
+  /// The target phone for contacts.call/sms: the explicit `phone` arg, or
+  /// the first number of the contact with `id`.
+  Future<String> _contactsPhone(
+    ContactApi api,
+    Map<String, Object?> args,
+  ) async {
+    final phone = (args['phone'] ?? '').toString().trim();
+    if (phone.isNotEmpty) return phone;
+    final id = (args['id'] ?? '').toString().trim();
+    if (id.isEmpty) throw StateError('phone (or id) is required');
+    for (final contact in await api.searchContacts(query: '')) {
+      if (contact.id == id) {
+        if (contact.phones.isEmpty) {
+          throw StateError('this contact has no phone number');
+        }
+        return contact.phones.first;
+      }
+    }
+    throw StateError(
+      'no contact with id "$id" — search first, then pass phone',
+    );
+  }
+
+  /// Reads a string-list bridge argument: a JSON list, or a single
+  /// comma-separated string. Null when absent/empty.
+  static List<String>? _stringListArg(Map<String, Object?> args, String key) {
+    final raw = args[key];
+    final items = <String>[];
+    if (raw is List) {
+      for (final item in raw) {
+        final text = item.toString().trim();
+        if (text.isNotEmpty) items.add(text);
+      }
+    } else if (raw != null) {
+      for (final part in raw.toString().split(',')) {
+        final text = part.trim();
+        if (text.isNotEmpty) items.add(text);
+      }
+    }
+    return items.isEmpty ? null : items;
+  }
+
+  /// The permission gate every `jsr.fa.contacts.*` bridge call shares:
+  /// the `contacts` permission, a platform backend, and OS access.
+  Future<ContactApi> _gatedContacts() async {
+    if (!permissions.contacts) throw StateError(_denied('contacts'));
+    final api = contacts ?? createContactService();
+    if (!await api.isAvailable) {
+      throw StateError('contacts are not available on this platform');
+    }
+    if (!await api.requestAccess()) {
+      throw StateError(
+        'contacts access was denied — enable it in the system privacy '
+        'settings (Privacy & Security → Contacts)',
       );
     }
     return api;

@@ -122,6 +122,7 @@ flutter:
     - assets/apps/animation-showcase/
     - assets/apps/calculator/
     - assets/apps/calendar/
+    - assets/apps/contacts/
     - assets/apps/crypto/
     - assets/apps/health/
     - assets/apps/homekit/
