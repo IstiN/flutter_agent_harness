@@ -572,4 +572,8 @@
 - feat(example): jsr.theme plumbing (light/dark live), Fa mini reply sheet, map-app golden
 - fix(example): chart node API alignment (0.4.7), gridView docs, bar chart demo
 
+## 0.1.76
+
+- feat(example): chrome modes, branding sweep (fah→Fa), textArea+scrolling docs (0.4.8), system-API design doc
+
 ## Unreleased
