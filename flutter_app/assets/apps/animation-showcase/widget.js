@@ -1,6 +1,7 @@
 // Animation Showcase — interactive menu with demo scenes
 // Demonstrates: animatedContainer, animatedOpacity, animatedPositioned,
-// gestureDetector, requestAnimationFrame, transforms
+// entrance, animatedSwitcher, gestureDetector, requestAnimationFrame,
+// transforms
 (function() {
   var currentScene = 'menu';
 
@@ -14,6 +15,7 @@
       {id:'drag',     icon:'👆', title:'Drag & Follow',     desc:'gestureDetector onPanUpdate'},
       {id:'pulse',    icon:'💓', title:'Pulse Animation',   desc:'RAF + scale oscillation'},
       {id:'colors',   icon:'🌈', title:'Color Transitions', desc:'smooth gradient morphing'},
+      {id:'listcard', icon:'📇', title:'List → Card',       desc:'entrance stagger + animatedSwitcher'},
     ];
 
     var items = demos.map(function(d) {
@@ -225,6 +227,74 @@
     requestAnimationFrame(colorLoop);
   }
 
+  // ── Scene: List → Card ─────────────────────────────────────────────
+  var lcItems = [
+    {id:'comet',  icon:'☄️', title:'Comet',  desc:'Slides in from below'},
+    {id:'rocket', icon:'🚀', title:'Rocket', desc:'Staggered by delay: i * 60'},
+    {id:'saturn', icon:'🪐', title:'Saturn', desc:'switchKey drives the swap'},
+    {id:'star',   icon:'⭐', title:'Star',   desc:'fadeScale on the card'},
+    {id:'moon',   icon:'🌙', title:'Moon',   desc:'slideLeft transition'},
+    {id:'alien',  icon:'👾', title:'Alien',  desc:'One-shot entrance'},
+    {id:'ufo',    icon:'🛸', title:'UFO',    desc:'Tap to fly back'},
+  ];
+  var lcSelected = null;
+
+  function renderListCard() {
+    var switchKey = lcSelected ? 'card:'+lcSelected : 'list';
+    var view = lcSelected ? lcCardView() : lcListView();
+    jsr.render(sceneWrap('List → Card', {
+      type:'container', width:300, height:340,
+      child:{type:'animatedSwitcher', switchKey:switchKey, animation:'slideLeft',
+        duration:300, curve:'easeInOut', child:view},
+    }));
+  }
+
+  function lcListView() {
+    var rows = lcItems.map(function(it, i) {
+      return {type:'entrance', animation:'slideUp', delay:i*60, duration:300, curve:'easeOut',
+        child:{type:'inkWell', onTap:'lc_open_'+it.id, borderRadius:10,
+          child:{type:'container',
+            decoration:{color: jsr.theme.surface, borderRadius:10, borderColor: jsr.theme.border, borderWidth:1},
+            padding:[10,12,10,12], margin:[0,0,0,8],
+            child:{type:'row', crossAxisAlignment:'center', children:[
+              {type:'text', data:it.icon, style:{fontSize:22}},
+              {type:'sizedBox', width:10},
+              {type:'expanded', child:{type:'column', crossAxisAlignment:'start', children:[
+                {type:'text', data:it.title, style:{color: jsr.theme.text, fontSize:13, fontWeight:'w600'}},
+                {type:'text', data:it.desc, style:{color: jsr.theme.muted, fontSize:10}},
+              ]}},
+              {type:'icon', name:'arrow_forward', size:14, color: jsr.theme.muted},
+            ]},
+          },
+        },
+      };
+    });
+    return {type:'listView', padding:[4,4,4,4], children:rows};
+  }
+
+  function lcCardView() {
+    var it = null;
+    for (var i = 0; i < lcItems.length; i++) {
+      if (lcItems[i].id === lcSelected) { it = lcItems[i]; break; }
+    }
+    if (!it) return lcListView();
+    return {type:'entrance', animation:'fadeScale', duration:300, curve:'easeOut',
+      child:{type:'container',
+        decoration:{color: jsr.theme.surface, borderRadius:16, borderColor: jsr.theme.border, borderWidth:1},
+        padding:[20,20,20,20],
+        child:{type:'column', mainAxisAlignment:'center', crossAxisAlignment:'center', children:[
+          {type:'text', data:it.icon, style:{fontSize:56}},
+          {type:'sizedBox', height:12},
+          {type:'text', data:it.title, style:{color: jsr.theme.text, fontSize:18, fontWeight:'w700'}},
+          {type:'sizedBox', height:4},
+          {type:'text', data:it.desc, style:{color: jsr.theme.muted, fontSize:12}},
+          {type:'sizedBox', height:16},
+          {type:'button', text:'← Back to list', onTap:'lc_back'},
+        ]},
+      },
+    };
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────
   function sceneWrap(title, content) {
     return {type:'column', crossAxisAlignment:'stretch', children:[
@@ -255,6 +325,7 @@
     if (actionId === 'go_drag')   { currentScene = 'drag'; dragX=100; dragY=100; renderDrag(); return; }
     if (actionId === 'go_pulse')  { currentScene = 'pulse'; pulseScale=1; pulseActive=false; renderPulse(); return; }
     if (actionId === 'go_colors') { currentScene = 'colors'; colorHue=0; colorActive=false; renderColors(); return; }
+    if (actionId === 'go_listcard') { currentScene = 'listcard'; lcSelected=null; renderListCard(); return; }
 
     // Fade
     if (actionId === 'toggle_fade') { fadeVisible = !fadeVisible; renderFade(); return; }
@@ -289,6 +360,10 @@
       if (colorActive) colorLoop(); else renderColors();
       return;
     }
+
+    // List → Card
+    if (actionId.indexOf('lc_open_') === 0) { lcSelected = actionId.substring(8); renderListCard(); return; }
+    if (actionId === 'lc_back') { lcSelected = null; renderListCard(); return; }
   }
 
   function stopAll() {

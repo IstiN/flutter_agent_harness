@@ -25,7 +25,10 @@ dependencies:
 
   # JS apps platform: runs JavaScript widgets and renders them as native
   # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
-  js_widget_runtime: ^0.4.5
+  js_widget_runtime: ^0.4.6
+
+  # TileProvider type for injecting offline map tiles (tests, custom hosts).
+  flutter_map: ^8.2.2
 
   # SVG app icons (inline markup or apps/<id>/*.svg files).
   flutter_svg: ^2.3.0

@@ -70,6 +70,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsAskFaTooltip => 'Спросить Fa об этом приложении';
 
   @override
+  String get appsDismissReplyTooltip => 'Скрыть';
+
+  @override
   String get appsEmptyState =>
       'Пока нет приложений. Попросите Fa создать одно —\nоно появится в папке apps/.';
 
@@ -585,6 +588,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'Имя, URL и модель сохраняются; ключ хранится в памяти только для этого сеанса — он не записывается на диск.';
 
   @override
+  String get settingsEditorKeyNoteSecure =>
+      'Имя, URL и модель сохраняются; ключ хранится в Keychain на этом устройстве.';
+
+  @override
   String get settingsHfTokenHint => 'hf_… — нужен, если репозиторий закрытый';
 
   @override
@@ -595,8 +602,16 @@ class AppLocalizationsRu extends AppLocalizations {
       'Определение провайдера (имя, URL, модель) сохраняется — без секретов. Ключ API хранится в памяти только в течение этого сеанса и исчезает после перезагрузки.';
 
   @override
+  String get settingsKeyNoteCustomSecure =>
+      'Определение провайдера (имя, URL, модель) сохраняется — без секретов. Сохранённые ключи хранятся в Keychain на этом устройстве; несохранённый ключ остаётся в памяти только на этот сеанс.';
+
+  @override
   String get settingsKeyNoteHosted =>
       'Только в памяти: ваш ключ нигде не сохраняется и исчезает после перезагрузки. Запросы идут напрямую из браузера к провайдеру — ничего не проксируется и не хранится.';
+
+  @override
+  String get settingsKeyNoteHostedSecure =>
+      'Сохранённые ключи хранятся в Keychain на этом устройстве; ключ, только введённый в форму, остаётся в памяти на этот сеанс. Запросы идут напрямую из приложения к провайдеру — ничего не проксируется.';
 
   @override
   String get settingsLoadingModel => 'Загрузка модели…';
@@ -606,6 +621,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsModelIdRequired => 'Требуется ID модели';
+
+  @override
+  String get settingsModelsFetching => 'Загрузка списка моделей с эндпоинта…';
 
   @override
   String get settingsNameRequired => 'Требуется имя';

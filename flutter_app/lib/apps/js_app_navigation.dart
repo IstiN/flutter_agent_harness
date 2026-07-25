@@ -89,8 +89,8 @@ Future<AgentService> createAppBoundSession(
   return managed.service;
 }
 
-/// Forwards an in-app Fa message (text + app state + screenshot) to the
-/// session bound to the app (creating + binding one on first contact).
+/// Forwards an in-app Fa message (text + app state + theme + screenshot) to
+/// the session bound to the app (creating + binding one on first contact).
 Future<void> forwardAppMessageToAgent(
   FlutterSessionManager manager,
   FaAppMessage message,
@@ -105,6 +105,10 @@ Future<void> forwardAppMessageToAgent(
   final stateJson = message.appStateJson;
   if (stateJson != null) {
     buffer.write('\n\nCurrent app state:\n```json\n$stateJson\n```');
+  }
+  final themeLine = message.themeLine;
+  if (themeLine != null) {
+    buffer.write('\n$themeLine');
   }
   final screenshot = message.screenshot;
   if (screenshot != null) {

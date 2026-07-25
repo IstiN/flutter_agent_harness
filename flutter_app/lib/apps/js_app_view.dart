@@ -11,14 +11,19 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_map/flutter_map.dart' show TileProvider;
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_theme.dart';
 
 /// Payload delivered when the user talks to Fa from inside an app: their
 /// message, the app's exported state, and a screenshot of the app.
@@ -27,6 +32,7 @@ class FaAppMessage {
     required this.text,
     this.appId,
     this.appStateJson,
+    this.themeLine,
     this.screenshot,
   });
 
@@ -36,6 +42,10 @@ class FaAppMessage {
   /// bound to it (`apps/<id>/session.json`).
   final String? appId;
   final String? appStateJson;
+
+  /// Compact one-line theme summary (see [jsThemeSummaryLine]) appended to
+  /// the agent message so the model never guesses colors.
+  final String? themeLine;
   final Uint8List? screenshot;
 }
 
@@ -54,6 +64,7 @@ class JsAppView extends StatefulWidget {
     this.onSendToAgent,
     this.fsRevision,
     this.agentService,
+    this.mapTileProvider,
   });
 
   final JsAppInfo app;
@@ -61,6 +72,10 @@ class JsAppView extends StatefulWidget {
   final AppPermissionsStore permissionsStore;
   final FaLlmHandler? llmHandler;
   final FaPlatformHandler? platformHandler;
+
+  /// Optional tile provider for `map` nodes — tests inject an offline
+  /// provider; null uses the runtime default (OSM over the network).
+  final TileProvider? mapTileProvider;
 
   /// Called with the composed Fa message; typically forwards to
   /// `AgentService.sendImage`/`sendText` of the active session.
@@ -86,11 +101,41 @@ class _JsAppViewState extends State<JsAppView> {
   Timer? _reloadDebounce;
   int _lastFsRevision = -1;
 
+  /// The reply shown on the mini reply sheet; null while it is hidden.
+  String? _faReply;
+
+  /// The last assistant text already accounted for (shown, or present when
+  /// the view opened) — the sheet never re-shows it.
+  String? _seenReplyText;
+
+  /// The reply the user dismissed — never re-shown for the same text.
+  String? _dismissedReplyText;
+
+  /// The last theme map handed to the engine (JSON-encoded for cheap
+  /// change detection in [didChangeDependencies]).
+  String? _themeJson;
+
   @override
   void initState() {
     super.initState();
     widget.fsRevision?.addListener(_onFsRevision);
+    widget.agentService?.addListener(_onAgentServiceEvent);
+    _seenReplyText = _lastAssistantText(widget.agentService);
     unawaited(_restart());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Runs before the first build and again on every ambient theme change:
+    // push live theme updates into the running JS app (`jsr._onThemeChange`).
+    final next = jsonEncode(jsThemeMap(context));
+    if (next == _themeJson) return;
+    _themeJson = next;
+    final engine = _engine;
+    if (engine != null) {
+      unawaited(engine.updateTheme(jsonDecode(next) as Map<String, dynamic>));
+    }
   }
 
   @override
@@ -100,11 +145,19 @@ class _JsAppViewState extends State<JsAppView> {
       oldWidget.fsRevision?.removeListener(_onFsRevision);
       widget.fsRevision?.addListener(_onFsRevision);
     }
+    if (oldWidget.agentService != widget.agentService) {
+      oldWidget.agentService?.removeListener(_onAgentServiceEvent);
+      widget.agentService?.addListener(_onAgentServiceEvent);
+      _faReply = null;
+      _dismissedReplyText = null;
+      _seenReplyText = _lastAssistantText(widget.agentService);
+    }
   }
 
   @override
   void dispose() {
     widget.fsRevision?.removeListener(_onFsRevision);
+    widget.agentService?.removeListener(_onAgentServiceEvent);
     _reloadDebounce?.cancel();
     unawaited(_engine?.dispose() ?? Future.value());
     super.dispose();
@@ -122,6 +175,16 @@ class _JsAppViewState extends State<JsAppView> {
   }
 
   Future<void> _restart() async {
+    // Yield one microtask: on the first call (from initState) this lets
+    // didChangeDependencies run first and record _themeJson, so the engine
+    // boots with the real theme instead of an empty map. A microtask (not
+    // Future(...)/Timer) keeps widget tests' fake-async zone clean.
+    await Future<void>.value();
+    if (!mounted) return;
+    final themeJson = _themeJson;
+    final initialTheme = themeJson == null
+        ? jsThemeMap(context)
+        : jsonDecode(themeJson) as Map<String, dynamic>;
     final old = _engine;
     setState(() {
       _engine = null;
@@ -136,6 +199,7 @@ class _JsAppViewState extends State<JsAppView> {
         permissions: effective,
         llmHandler: widget.llmHandler,
         platformHandler: widget.platformHandler,
+        initialTheme: initialTheme,
       );
       await engine.start();
       if (!mounted) {
@@ -163,17 +227,60 @@ class _JsAppViewState extends State<JsAppView> {
     }
   }
 
+  /// The newest assistant TEXT message in the transcript (tool, system and
+  /// thinking entries are skipped); null when there is none.
+  static String? _lastAssistantText(AgentService? service) {
+    if (service == null) return null;
+    for (final message in service.messages.reversed) {
+      if (message.role == 'assistant' && message.content.trim().isNotEmpty) {
+        return message.content.trim();
+      }
+    }
+    return null;
+  }
+
+  /// Shows the mini reply sheet when a run ENDS with a new assistant text
+  /// message; while the run streams the [FaWorkBar] is the indicator and the
+  /// sheet stays hidden.
+  void _onAgentServiceEvent() {
+    final service = widget.agentService;
+    if (service == null || !mounted) return;
+    if (service.isStreaming) {
+      if (_faReply != null) setState(() => _faReply = null);
+      return;
+    }
+    final reply = _lastAssistantText(service);
+    if (reply == null ||
+        reply == _seenReplyText ||
+        reply == _dismissedReplyText) {
+      return;
+    }
+    _seenReplyText = reply;
+    setState(() => _faReply = reply);
+  }
+
+  void _dismissFaReply() {
+    setState(() {
+      _dismissedReplyText = _faReply;
+      _faReply = null;
+    });
+  }
+
   Future<void> _sendFaMessage(String text) async {
     final onSend = widget.onSendToAgent;
     final trimmed = text.trim();
     if (onSend == null || trimmed.isEmpty) return;
+    // A new question hides the mini reply sheet; the work bar takes over.
+    if (_faReply != null) setState(() => _faReply = null);
     final state = _engine?.exportedState;
     final screenshot = await _captureScreenshot();
+    if (!mounted) return;
     await onSend(
       FaAppMessage(
         text: trimmed,
         appId: widget.app.id,
         appStateJson: state == null ? null : jsonEncode(state),
+        themeLine: jsThemeSummaryLine(jsThemeMap(context)),
         screenshot: screenshot,
       ),
     );
@@ -256,7 +363,7 @@ class _JsAppViewState extends State<JsAppView> {
                 child: const FaMark(size: 18),
               ),
             ),
-            if (widget.agentService != null)
+            if (widget.agentService != null) ...[
               Positioned(
                 left: 0,
                 right: 0,
@@ -267,6 +374,19 @@ class _JsAppViewState extends State<JsAppView> {
                   onExpand: () => Navigator.of(context).maybePop(),
                 ),
               ),
+              if (_faReply != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: FaReplySheet(
+                    service: widget.agentService!,
+                    reply: _faReply!,
+                    onExpand: () => Navigator.of(context).maybePop(),
+                    onDismiss: _dismissFaReply,
+                  ),
+                ),
+            ],
           ],
         ],
       ),
@@ -300,13 +420,202 @@ class _JsAppViewState extends State<JsAppView> {
           return const Center(child: CircularProgressIndicator());
         }
         final renderer = JsonWidgetRenderer(
-          theme: JsonWidgetTheme.fromAccent(theme.colorScheme.primary),
+          theme: JsonWidgetTheme.fromAccent(
+            theme.colorScheme.primary,
+            brightness: theme.brightness,
+          ),
+          mapTileProvider: widget.mapTileProvider,
           onEvent: (actionId, payload) {
             unawaited(engine.callEvent(actionId, payload));
           },
         );
         return ClipRect(child: renderer.build(tree, context));
       },
+    );
+  }
+}
+
+/// Mini reply sheet shown above the [FaWorkBar] when the bound session's
+/// run ends with a new assistant text message: a compact card with the Fa
+/// mark, the reply rendered as Markdown (the chat's style sheet, capped at
+/// five lines with a soft fade at the cut), tap-to-open-chat and a dismiss
+/// button. It slides up and fades in (~200 ms) on appearance; the work bar
+/// stays the progress indicator while the run streams.
+class FaReplySheet extends StatefulWidget {
+  const FaReplySheet({
+    super.key,
+    required this.service,
+    required this.reply,
+    this.onExpand,
+    this.onDismiss,
+  });
+
+  /// The session's service — only used for the orbit treatment: the Fa mark
+  /// spins while the agent streams and is static otherwise.
+  final AgentService service;
+
+  /// The assistant reply text (Markdown).
+  final String reply;
+
+  /// Opens the full chat (typically pops the app view) when the card body
+  /// is tapped.
+  final VoidCallback? onExpand;
+
+  /// Dismisses the sheet until the next reply.
+  final VoidCallback? onDismiss;
+
+  @override
+  State<FaReplySheet> createState() => _FaReplySheetState();
+}
+
+class _FaReplySheetState extends State<FaReplySheet>
+    with SingleTickerProviderStateMixin {
+  /// Markdown lines shown before the fade cuts the reply off.
+  static const int _maxLines = 5;
+
+  late final AnimationController _orbit;
+  bool _entered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _orbit = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    widget.service.addListener(_syncOrbit);
+    _syncOrbit();
+    // Entrance: start slightly lowered + transparent, spring up on the
+    // first frame so the AnimatedSlide/Fade actually animate.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _entered = true);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant FaReplySheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.service != widget.service) {
+      oldWidget.service.removeListener(_syncOrbit);
+      widget.service.addListener(_syncOrbit);
+      _syncOrbit();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.service.removeListener(_syncOrbit);
+    _orbit.dispose();
+    super.dispose();
+  }
+
+  void _syncOrbit() {
+    if (widget.service.isStreaming) {
+      if (!_orbit.isAnimating) _orbit.repeat();
+    } else if (_orbit.isAnimating) {
+      _orbit.stop();
+      _orbit.value = 0;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = FahColors.of(context);
+    final styleSheet = fahMarkdownStyleSheet(theme).copyWith(
+      p: theme.textTheme.bodyMedium?.copyWith(fontSize: 13, height: 1.45),
+    );
+    final textStyle = styleSheet.p;
+    final lineHeight =
+        (textStyle?.fontSize ?? 13) * (textStyle?.height ?? 1.45);
+    final maxHeight = lineHeight * _maxLines;
+    return AnimatedSlide(
+      offset: _entered ? Offset.zero : const Offset(0, 0.3),
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      child: AnimatedOpacity(
+        opacity: _entered ? 1 : 0,
+        duration: const Duration(milliseconds: 200),
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          decoration: BoxDecoration(
+            color: colors.panelAlt.withValues(alpha: 0.97),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: colors.border),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black38,
+                blurRadius: 16,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: widget.onExpand,
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: ListenableBuilder(
+                        listenable: widget.service,
+                        builder: (context, _) => widget.service.isStreaming
+                            ? FaOrbitIndicator(animation: _orbit, size: 22)
+                            : const FaMark(size: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ShaderMask(
+                        blendMode: BlendMode.dstIn,
+                        shaderCallback: (rect) {
+                          // Uncut replies (shorter than the cap) get a solid
+                          // mask; only a reply cut at the cap fades out.
+                          if (rect.height < maxHeight - 0.5) {
+                            return const LinearGradient(
+                              colors: [Colors.white, Colors.white],
+                            ).createShader(rect);
+                          }
+                          return LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.white,
+                              Colors.white.withValues(alpha: 0),
+                            ],
+                            stops: [(rect.height - 20) / rect.height, 1.0],
+                          ).createShader(rect);
+                        },
+                        child: ClipRect(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(maxHeight: maxHeight),
+                            child: MarkdownBody(
+                              data: widget.reply,
+                              styleSheet: styleSheet,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      tooltip: context.l10n.appsDismissReplyTooltip,
+                      visualDensity: VisualDensity.compact,
+                      color: colors.dim,
+                      onPressed: widget.onDismiss,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

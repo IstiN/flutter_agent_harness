@@ -200,6 +200,12 @@ abstract class AppLocalizations {
   /// **'Ask Fa about this app'**
   String get appsAskFaTooltip;
 
+  /// No description provided for @appsDismissReplyTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get appsDismissReplyTooltip;
+
   /// No description provided for @appsEmptyState.
   ///
   /// In en, this message translates to:
@@ -1058,6 +1064,12 @@ abstract class AppLocalizations {
   /// **'Name, URL and model are saved; the key is kept in memory for this session only — never persisted.'**
   String get settingsEditorKeyNote;
 
+  /// No description provided for @settingsEditorKeyNoteSecure.
+  ///
+  /// In en, this message translates to:
+  /// **'Name, URL and model are saved; the key is stored in the Keychain on this device.'**
+  String get settingsEditorKeyNoteSecure;
+
   /// No description provided for @settingsHfTokenHint.
   ///
   /// In en, this message translates to:
@@ -1076,11 +1088,23 @@ abstract class AppLocalizations {
   /// **'The provider definition (name, URL, model) is saved — no secrets. The API key stays in memory for this session only and is gone on reload.'**
   String get settingsKeyNoteCustom;
 
+  /// No description provided for @settingsKeyNoteCustomSecure.
+  ///
+  /// In en, this message translates to:
+  /// **'The provider definition (name, URL, model) is saved — no secrets. Saved keys are stored in the Keychain on this device; an unsaved key stays in memory for this session only.'**
+  String get settingsKeyNoteCustomSecure;
+
   /// No description provided for @settingsKeyNoteHosted.
   ///
   /// In en, this message translates to:
   /// **'In-memory only: your key is never persisted and is gone on reload. Calls go straight from your browser to the provider — nothing is proxied or stored.'**
   String get settingsKeyNoteHosted;
+
+  /// No description provided for @settingsKeyNoteHostedSecure.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved keys are stored in the Keychain on this device; a key only typed into the form stays in memory for this session. Calls go straight from the app to the provider — nothing is proxied.'**
+  String get settingsKeyNoteHostedSecure;
 
   /// No description provided for @settingsLoadingModel.
   ///
@@ -1099,6 +1123,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Model id is required'**
   String get settingsModelIdRequired;
+
+  /// No description provided for @settingsModelsFetching.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetching models from the endpoint…'**
+  String get settingsModelsFetching;
 
   /// No description provided for @settingsNameRequired.
   ///

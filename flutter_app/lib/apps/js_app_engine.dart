@@ -41,6 +41,7 @@ class JsAppEngine {
     this.llmHandler,
     this.platformHandler,
     this.calendar,
+    this.initialTheme = const {},
     void Function(String line)? onLog,
   }) : _onLog = onLog;
 
@@ -49,6 +50,10 @@ class JsAppEngine {
   final AppPermissions permissions;
   final FaLlmHandler? llmHandler;
   final FaPlatformHandler? platformHandler;
+
+  /// The `jsr.theme` map the app boots with (see `js_theme.dart`); later
+  /// host theme changes are pushed via [updateTheme].
+  final Map<String, dynamic> initialTheme;
 
   /// Calendar backend for `jsr.fa.calendar`; `null` uses the platform
   /// service ([createCalendarService] — a never-available stub on web).
@@ -75,6 +80,7 @@ class JsAppEngine {
     final storage = await _readStorage();
     final config = JsRuntimeConfig(
       widgetId: app.id,
+      initialTheme: initialTheme,
       initialStorage: storage,
       hostBootstrapJs: _faBootstrapJs,
       onRender: (t) => tree.value = t,
@@ -96,6 +102,14 @@ class JsAppEngine {
     final engine = _engine;
     if (engine == null) return Future.value();
     return engine.callEvent(actionId, payload);
+  }
+
+  /// Pushes a new `jsr.theme` map into the running app; the JS side replaces
+  /// `jsr.theme` and invokes `jsr._onThemeChange(theme)` when the app
+  /// subscribed. No-op before [start] completes.
+  Future<void> updateTheme(Map<String, dynamic> theme) {
+    _engine?.updateTheme(theme);
+    return Future.value();
   }
 
   Future<void> dispose() async {

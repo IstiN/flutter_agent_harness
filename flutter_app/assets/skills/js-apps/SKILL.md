@@ -204,26 +204,44 @@ jsr.storage.delete('city');
 Per-app encrypted secure storage (platform Keychain/Keystore), for API keys/tokens/passwords. Same shape as `jsr.storage`: `set(key, value)`, `get(key)` → Promise, `delete(key)`.
 
 ### `jsr.theme` — Current Theme Colors
-Reactive theme object. Always use these colors instead of hardcoded hex values so your app respects light/dark mode.
+Reactive theme object, injected by the Fa host from its own palette. **Always use these colors instead of hardcoded hex values** — the theme follows the app's light/dark mode live, and hardcoded palettes look broken in one of the two modes.
+
+All color values are `'#RRGGBB'` strings (uppercase, no alpha — layer translucency yourself via node `opacity` if needed):
+
+| Key | Value |
+|-----|-------|
+| `brightness` | `'dark'` or `'light'` |
+| `dark` | `true` in dark mode (boolean) |
+| `background` | page background |
+| `surface` | card/panel surface |
+| `surfaceAlt` | raised panel / sunken input fill |
+| `border` | card borders |
+| `borderBright` | hover/emphasis borders |
+| `text` | primary text |
+| `muted` | dimmed/secondary text |
+| `accent` | teal accent (success, links, highlights) |
+| `accent2` | indigo accent (primary actions) |
+| `onAccent` | text/icons on top of accent fills |
+| `error` | error text/icons |
+| `userBubble` | user chat bubble fill |
+| `userBubbleBorder` | user chat bubble border |
+| `codeBg` | inline-code background |
+
+(`isDark` and `bg` also exist as legacy aliases of `dark` and `background` — prefer the canonical keys in new code.)
 
 ```javascript
 var t = jsr.theme;
-// t.isDark   — boolean
-// t.bg       — main background color hex (e.g. '#0f172a')
-// t.surface  — card/panel surface color
-// t.border   — border color
-// t.accent   — accent/primary color
-// t.text     — primary text color
-// t.muted    — secondary/muted text color
+// Read jsr.theme fresh on every render — the object is REPLACED on theme
+// change, so a cached reference goes stale.
 ```
 
-### `jsr.onThemeChange(callback)`
-Subscribe to theme changes (when user toggles dark/light mode). The callback receives the same object as `jsr.theme`.
+### `jsr._onThemeChange` — Theme Change Hook
+When the user toggles dark/light mode, the host replaces `jsr.theme` and then calls `jsr._onThemeChange(jsr.theme)` if it is set. Assign it (directly or via the `jsr.onThemeChange(fn)` sugar) and re-render:
 
 ```javascript
-jsr.onThemeChange(function(theme) {
-  render(); // re-render with new colors
-});
+jsr._onThemeChange = function(theme) {
+  render(); // re-render with the new colors
+};
 ```
 
 ### `jsr.setTitle(title)`
@@ -385,10 +403,30 @@ All nodes are plain JSON objects with a `type` field.
 | `animatedContainer` | same as `container` + `duration` (ms), `curve`, `transform` | Animates size/color/decoration changes |
 | `animatedOpacity` | `child`, `opacity`, `duration`, `curve` | Smooth fade in/out |
 | `animatedPositioned` | `child`, `left`, `top`, `right`, `bottom`, `width`, `height`, `duration`, `curve` | Animates position inside a `stack` |
+| `entrance` | `child`, `animation`, `delay` (ms), `duration` (ms), `curve` | One-shot mount animation — plays once, then rests |
+| `animatedSwitcher` | `child`, `switchKey`, `animation`, `duration` (ms), `curve` | View transition — changing `switchKey` animates old child out, new one in |
 
 **Curves**: `linear`, `easeIn`, `easeOut`, `easeInOut`, `bounce`, `bounceIn`, `elastic`, `elasticIn`, `decelerate`, `fastOutSlowIn`
 
 **Transform** (on `animatedContainer`): `{translateX, translateY, scale, rotate}` — rotate in radians.
+
+**Animation variants** (the `animation` prop — `type` stays the node discriminator, so the variant can't live there; unknown values fall back to `fade`):
+- `entrance`: `fade`, `slideUp`, `slideDown`, `slideLeft`, `slideRight`, `scale`, `fadeScale`
+- `animatedSwitcher`: `fade`, `slideLeft`, `slideRight`, `slideUp`, `scale`, `fadeScale`
+
+```javascript
+// Staggered list entrance — delay holds the hidden start state, so i * 60
+// cascades the rows in one after another.
+{type:'listView', children: items.map(function(it, i) {
+  return {type:'entrance', animation:'slideUp', delay:i*60, duration:300,
+    child: row(it)};
+})}
+
+// List → detail transition — keep switchKey stable to update in place,
+// change it to animate the swap.
+{type:'animatedSwitcher', switchKey: selected ? 'card:'+selected.id : 'list',
+  animation:'slideLeft', duration:300, child: viewNode}
+```
 
 ### Data Viz
 
@@ -725,7 +763,7 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 
 ## Tips for the Fa Agent
 
-1. **Always use `jsr.theme` colors** — never hardcode hex. Users switch dark/light mode.
+1. **Always use `jsr.theme` colors** — never hardcode hex. Users switch dark/light mode and `jsr.theme` follows it live (re-render from `jsr._onThemeChange`).
 2. **Wrap everything in an IIFE** — `(function(){ ... })()` — functions inside are NOT global.
 3. **`jsr.onEvent` is mandatory** — register it even if you handle few events.
 4. **Storage is async** — `jsr.storage.get()` returns a Promise. Always use `.then()` before using the value.

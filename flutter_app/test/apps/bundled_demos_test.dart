@@ -279,5 +279,88 @@ void main() {
         }
       });
     });
+
+    testWidgets(
+      'animation-showcase staggers entrances and switches list → card',
+      (tester) async {
+        List<Map<String, Object?>> nodesOfType(Object? node, String type) {
+          final out = <Map<String, Object?>>[];
+          void walk(Object? n) {
+            if (n is Map) {
+              if (n['type'] == type) out.add(n.cast<String, Object?>());
+              n.values.forEach(walk);
+            } else if (n is List) {
+              n.forEach(walk);
+            }
+          }
+
+          walk(node);
+          return out;
+        }
+
+        await tester.runAsync(() async {
+          final env = await envWithApp('animation-showcase');
+          final engine = JsAppEngine(
+            app: app('animation-showcase', const {
+              'id': 'animation-showcase',
+              'name': 'Animation Showcase',
+            }),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+
+            // Menu boot: the new demo is listed.
+            expect(jsonEncode(engine.tree.value), contains('go_listcard'));
+
+            // Open the List → Card scene.
+            await engine.callEvent('go_listcard');
+            await Future<void>.delayed(settle);
+
+            var tree = engine.tree.value;
+            final entrances = nodesOfType(tree, 'entrance');
+            expect(entrances, hasLength(7));
+            // Staggered slideUp rows: delays strictly increase by 60ms.
+            final delays = entrances
+                .map((n) => (n['delay'] as num).toInt())
+                .toList();
+            expect(delays, [0, 60, 120, 180, 240, 300, 360]);
+            expect(entrances.every((n) => n['animation'] == 'slideUp'), isTrue);
+
+            var switchers = nodesOfType(tree, 'animatedSwitcher');
+            expect(switchers, hasLength(1));
+            expect(switchers.single['switchKey'], 'list');
+            expect(switchers.single['animation'], 'slideLeft');
+
+            // Tap a row → detail card, switchKey flips to card:<id>.
+            await engine.callEvent('lc_open_rocket');
+            await Future<void>.delayed(settle);
+
+            tree = engine.tree.value;
+            switchers = nodesOfType(tree, 'animatedSwitcher');
+            expect(switchers.single['switchKey'], 'card:rocket');
+            // The card itself enters with a fadeScale entrance.
+            final cardEntrances = nodesOfType(tree, 'entrance');
+            expect(cardEntrances, hasLength(1));
+            expect(cardEntrances.single['animation'], 'fadeScale');
+            expect(jsonEncode(tree), contains('Rocket'));
+
+            // Back button returns to the staggered list.
+            await engine.callEvent('lc_back');
+            await Future<void>.delayed(settle);
+            tree = engine.tree.value;
+            expect(
+              nodesOfType(tree, 'animatedSwitcher').single['switchKey'],
+              'list',
+            );
+            expect(nodesOfType(tree, 'entrance'), hasLength(7));
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+    );
   });
 }

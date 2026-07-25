@@ -69,6 +69,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsAskFaTooltip => 'Ask Fa about this app';
 
   @override
+  String get appsDismissReplyTooltip => 'Dismiss';
+
+  @override
   String get appsEmptyState =>
       'No apps yet. Ask Fa to build one —\nit will land in the apps/ folder.';
 
@@ -581,6 +584,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Name, URL and model are saved; the key is kept in memory for this session only — never persisted.';
 
   @override
+  String get settingsEditorKeyNoteSecure =>
+      'Name, URL and model are saved; the key is stored in the Keychain on this device.';
+
+  @override
   String get settingsHfTokenHint => 'hf_… — needed if the repo is gated';
 
   @override
@@ -591,8 +598,16 @@ class AppLocalizationsEn extends AppLocalizations {
       'The provider definition (name, URL, model) is saved — no secrets. The API key stays in memory for this session only and is gone on reload.';
 
   @override
+  String get settingsKeyNoteCustomSecure =>
+      'The provider definition (name, URL, model) is saved — no secrets. Saved keys are stored in the Keychain on this device; an unsaved key stays in memory for this session only.';
+
+  @override
   String get settingsKeyNoteHosted =>
       'In-memory only: your key is never persisted and is gone on reload. Calls go straight from your browser to the provider — nothing is proxied or stored.';
+
+  @override
+  String get settingsKeyNoteHostedSecure =>
+      'Saved keys are stored in the Keychain on this device; a key only typed into the form stays in memory for this session. Calls go straight from the app to the provider — nothing is proxied.';
 
   @override
   String get settingsLoadingModel => 'Loading model…';
@@ -602,6 +617,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelIdRequired => 'Model id is required';
+
+  @override
+  String get settingsModelsFetching => 'Fetching models from the endpoint…';
 
   @override
   String get settingsNameRequired => 'Name is required';

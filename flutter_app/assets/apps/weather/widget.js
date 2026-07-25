@@ -1,10 +1,11 @@
 // Weather widget — native Flutter UI via JSON tree
 // Uses wttr.in free API (fetched through Dart, no CORS)
 // Features animated transitions between city changes
+// All colors come from jsr.theme (follows the host's light/dark mode).
 (function() {
   var city = 'London';
   var _inputCity = city;
-  var _visible = false; // for fade-in animation
+  var _lastData = null; // last successful payload, kept for theme re-renders
 
   function iconForDesc(desc) {
     var d = desc.toLowerCase();
@@ -18,6 +19,74 @@
     return '🌡️';
   }
 
+  function _stat(t, icon, label, value) {
+    return {type:'column',crossAxisAlignment:'center',mainAxisSize:'min',children:[
+      {type:'text',data:icon,style:{fontSize:18}},
+      {type:'sizedBox',height:2},
+      {type:'text',data:value,style:{color:t.text,fontSize:13,fontWeight:'w600'}},
+      {type:'text',data:label,style:{color:t.muted,fontSize:10}},
+    ]};
+  }
+
+  function render(d) {
+    // Read jsr.theme fresh on every render — the object is replaced when
+    // the host theme changes.
+    var t = jsr.theme;
+    jsr.render({
+      type: 'animatedOpacity',
+      opacity: 1.0,
+      duration: 400,
+      curve: 'easeInOut',
+      child: {
+      type: 'column',
+      crossAxisAlignment: 'stretch',
+      children: [
+        // Header with animated temperature
+        {type:'animatedContainer', duration:500, curve:'easeOut',
+         decoration:{color:t.surface, borderRadius:0},
+         padding:[16,20,16,16],
+         child:{type:'column',crossAxisAlignment:'center',children:[
+          {type:'text',data:d.icon,style:{fontSize:52}},
+          {type:'sizedBox',height:4},
+          {type:'text',data:d.areaName+', '+d.country,
+           style:{color:t.muted,fontSize:12,textAlign:'center'}},
+          {type:'sizedBox',height:6},
+          {type:'text',data:d.tempC+'°C',
+           style:{fontSize:40,fontWeight:'w700',color:t.text,textAlign:'center'}},
+          {type:'text',data:d.desc,
+           style:{color:t.text,fontSize:13,textAlign:'center'}},
+        ]}},
+        // Stats row
+        {type:'padding',padding:[12,12,12,8],child:{type:'row',
+          mainAxisAlignment:'spaceAround',
+          children:[
+            _stat(t,'💧','Humidity',d.humidity+'%'),
+            _stat(t,'💨','Wind',d.windKmph+' km/h'),
+            _stat(t,'🌡️','Feels',d.feelsLikeC+'°C'),
+            _stat(t,'👁️','Vis.',d.visibilityKm+' km'),
+          ]
+        }},
+        // City input row
+        {type:'padding',padding:[12,0,12,12],child:{type:'row',crossAxisAlignment:'center',children:[
+          {type:'expanded',child:{
+            type:'textField',
+            value: city,
+            hint: 'Enter city…',
+            onSubmit: 'submit_city',
+            onChange: 'city_input_change',
+          }},
+          {type:'sizedBox',width:8},
+          {type:'textButton',text:'Go',onTap:'submit_city_btn'},
+        ]}},
+        {type:'padding',padding:[0,0,12,8],child:{
+          type:'text',
+          data:'via wttr.in',
+          style:{color:t.muted,fontSize:10,textAlign:'right'},
+        }},
+      ]
+    }});
+  }
+
   async function load() {
     jsr.exportState({ loading: true, query: city });
     jsr.render({type:'center',child:{type:'circularProgressIndicator',size:24}});
@@ -26,93 +95,37 @@
       var data = await jsr.fetchJson(url);
       var cur = data.current_condition[0];
       var area = data.nearest_area[0];
-      var areaName = area.areaName[0].value;
-      var country = area.country[0].value;
-      var icon = iconForDesc(cur.weatherDesc[0].value);
 
-      jsr.setTitle('Weather — ' + areaName);
+      jsr.setTitle('Weather — ' + area.areaName[0].value);
 
-      // Fade out then in on city change
-      _visible = true;
-
-      jsr.render({
-        type: 'animatedOpacity',
-        opacity: _visible ? 1.0 : 0.0,
-        duration: 400,
-        curve: 'easeInOut',
-        child: {
-        type: 'column',
-        crossAxisAlignment: 'stretch',
-        children: [
-          // Header with animated temperature
-          {type:'animatedContainer', duration:500, curve:'easeOut',
-           decoration:{color:'#0f172a', borderRadius:0},
-           padding:[16,20,16,16],
-           child:{type:'column',crossAxisAlignment:'center',children:[
-            {type:'text',data:icon,style:{fontSize:52}},
-            {type:'sizedBox',height:4},
-            {type:'text',data:areaName+', '+country,
-             style:{color:'#94a3b8',fontSize:12,textAlign:'center'}},
-            {type:'sizedBox',height:6},
-            {type:'text',data:cur.temp_C+'°C',
-             style:{fontSize:40,fontWeight:'w700',color:'#f1f5f9',textAlign:'center'}},
-            {type:'text',data:cur.weatherDesc[0].value,
-             style:{color:'#cbd5e1',fontSize:13,textAlign:'center'}},
-          ]}},
-          // Stats row
-          {type:'padding',padding:[12,12,12,8],child:{type:'row',
-            mainAxisAlignment:'spaceAround',
-            children:[
-              _stat('💧','Humidity',cur.humidity+'%'),
-              _stat('💨','Wind',cur.windspeedKmph+' km/h'),
-              _stat('🌡️','Feels',cur.FeelsLikeC+'°C'),
-              _stat('👁️','Vis.',cur.visibility+' km'),
-            ]
-          }},
-          // City input row
-          {type:'padding',padding:[12,0,12,12],child:{type:'row',crossAxisAlignment:'center',children:[
-            {type:'expanded',child:{
-              type:'textField',
-              value: city,
-              hint: 'Enter city…',
-              onSubmit: 'submit_city',
-              onChange: 'city_input_change',
-            }},
-            {type:'sizedBox',width:8},
-            {type:'textButton',text:'Go',onTap:'submit_city_btn'},
-          ]}},
-          {type:'padding',padding:[0,0,12,8],child:{
-            type:'text',
-            data:'via wttr.in',
-            style:{color:'#334155',fontSize:10,textAlign:'right'},
-          }},
-        ]
-      }});
+      _lastData = {
+        icon: iconForDesc(cur.weatherDesc[0].value),
+        areaName: area.areaName[0].value,
+        country: area.country[0].value,
+        tempC: cur.temp_C,
+        desc: cur.weatherDesc[0].value,
+        humidity: cur.humidity,
+        windKmph: cur.windspeedKmph,
+        feelsLikeC: cur.FeelsLikeC,
+        visibilityKm: cur.visibility,
+      };
+      render(_lastData);
       jsr.exportState({
         loading: false,
         query: city,
-        city: areaName,
-        country: country,
-        tempC: cur.temp_C,
-        feelsLikeC: cur.FeelsLikeC,
-        humidity: cur.humidity,
-        windKmph: cur.windspeedKmph,
-        visibilityKm: cur.visibility,
-        description: cur.weatherDesc[0].value,
+        city: _lastData.areaName,
+        country: _lastData.country,
+        tempC: _lastData.tempC,
+        feelsLikeC: _lastData.feelsLikeC,
+        humidity: _lastData.humidity,
+        windKmph: _lastData.windKmph,
+        visibilityKm: _lastData.visibilityKm,
+        description: _lastData.desc,
       });
     } catch(e) {
       jsr.exportState({ loading: false, query: city, error: e.message || String(e) });
       jsr.showError('Could not load weather:\n'+e.message);
     }
-  }
-
-  function _stat(icon, label, value) {
-    return {type:'column',crossAxisAlignment:'center',mainAxisSize:'min',children:[
-      {type:'text',data:icon,style:{fontSize:18}},
-      {type:'sizedBox',height:2},
-      {type:'text',data:value,style:{color:'#e2e8f0',fontSize:13,fontWeight:'w600'}},
-      {type:'text',data:label,style:{color:'#64748b',fontSize:10}},
-    ]};
   }
 
   function cityFromPayload(payload) {
@@ -140,6 +153,10 @@
   }
 
   jsr.onEvent(handleEvent);
+  // Re-render with the new colors when the host flips light/dark mode.
+  jsr._onThemeChange = function() {
+    if (_lastData) render(_lastData);
+  };
   jsr.storage.get('city').then(function(saved) {
     if (saved) { city = saved; _inputCity = saved; }
     load();

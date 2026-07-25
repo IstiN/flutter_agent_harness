@@ -30,6 +30,8 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/l10n/app_localizations.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -339,8 +341,8 @@ Future<void> _pumpFrames(
 
 /// A hand-built stand-in for a running JS app render tree: a calculator pad,
 /// so the FaWorkBar shots show the bar over a realistic app canvas instead
-/// of an empty scaffold.
-Widget _calculatorCanvas() {
+/// of an empty scaffold. [colors] picks the dark (default) or light palette.
+Widget _calculatorCanvas([FahColors colors = FahColors.dark]) {
   const rows = [
     ['C', '±', '%', '÷'],
     ['7', '8', '9', '×'],
@@ -350,15 +352,15 @@ Widget _calculatorCanvas() {
   ];
   const operators = {'÷', '×', '−', '+'};
   return ColoredBox(
-    color: FahPalette.bg,
+    color: colors.bg,
     child: Center(
       child: Container(
         width: 420,
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: FahPalette.panel,
+          color: colors.panel,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: FahPalette.border),
+          border: Border.all(color: colors.border),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -367,7 +369,7 @@ Widget _calculatorCanvas() {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               decoration: BoxDecoration(
-                color: FahPalette.panelAlt,
+                color: colors.panelAlt,
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Column(
@@ -375,12 +377,12 @@ Widget _calculatorCanvas() {
                 children: [
                   Text(
                     '128 × 27 + 36',
-                    style: FahPalette.mono(color: FahPalette.dim, fontSize: 14),
+                    style: colors.mono(color: colors.dim, fontSize: 14),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     '3,492',
-                    style: FahPalette.mono(
+                    style: colors.mono(
                       fontSize: 40,
                       fontWeight: FontWeight.w700,
                     ),
@@ -400,6 +402,7 @@ Widget _calculatorCanvas() {
                           padding: const EdgeInsets.symmetric(horizontal: 5),
                           child: _calcKey(
                             key,
+                            colors,
                             isOperator: operators.contains(key),
                             isEquals: key == '=',
                           ),
@@ -416,7 +419,8 @@ Widget _calculatorCanvas() {
 }
 
 Widget _calcKey(
-  String label, {
+  String label,
+  FahColors colors, {
   bool isOperator = false,
   bool isEquals = false,
 }) {
@@ -424,12 +428,12 @@ Widget _calcKey(
     height: 56,
     decoration: BoxDecoration(
       color: isEquals
-          ? FahPalette.indigo
+          ? colors.indigo
           : isOperator
-          ? FahPalette.userBubble
-          : FahPalette.panelAlt,
+          ? colors.userBubble
+          : colors.panelAlt,
       borderRadius: BorderRadius.circular(12),
-      border: isEquals ? null : Border.all(color: FahPalette.border),
+      border: isEquals ? null : Border.all(color: colors.border),
     ),
     child: Center(
       child: Text(
@@ -438,10 +442,10 @@ Widget _calcKey(
           fontSize: 18,
           fontWeight: FontWeight.w600,
           color: isEquals
-              ? FahPalette.onAccent
+              ? colors.onAccent
               : isOperator
-              ? FahPalette.indigo
-              : FahPalette.text,
+              ? colors.indigo
+              : colors.text,
         ),
       ),
     ),
@@ -491,6 +495,56 @@ Widget _workBarHost(AgentService service, MemoryExecutionEnv env) {
   );
 }
 
+/// A JsAppView-like scaffold after a completed run: app bar with the app
+/// icon + name + the permissions/reload actions, the mock app canvas, and
+/// the mini Fa reply sheet docked at the bottom (the run is over, so the
+/// FaWorkBar is hidden and the Fa mark is static).
+Widget _replySheetHost(
+  AgentService service,
+  MemoryExecutionEnv env, {
+  required FahColors colors,
+  required String reply,
+}) {
+  final calcApp = _app(const {
+    'id': 'calculator',
+    'name': 'Calculator',
+    'icon': 'icon.svg',
+  }, fallbackId: 'calculator');
+  return Scaffold(
+    appBar: AppBar(
+      title: Row(
+        children: [
+          AppIcon(app: calcApp, env: env, size: 24),
+          const SizedBox(width: 8),
+          const Flexible(
+            child: Text('Calculator', overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
+      actions: [
+        IconButton(icon: const Icon(Icons.shield_outlined), onPressed: () {}),
+        IconButton(icon: const Icon(Icons.refresh), onPressed: () {}),
+      ],
+    ),
+    body: Stack(
+      children: [
+        Positioned.fill(child: _calculatorCanvas(colors)),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: FaReplySheet(
+            service: service,
+            reply: reply,
+            onExpand: () {},
+            onDismiss: () {},
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 Widget _iconTile(String label, Widget icon) {
   return Column(
     mainAxisSize: MainAxisSize.min,
@@ -510,6 +564,15 @@ Widget _iconTile(String label, Widget icon) {
     ],
   );
 }
+
+/// A realistic Fa answer for the mini reply sheet snapshots: Markdown with
+/// bold + inline code, a couple of short paragraphs.
+const _faReply =
+    'Done — the operator keys are now **indigo**, the display grew to '
+    '`40px`, and the equals key uses the brand gradient.\n\n'
+    'The pad keeps a 10px rhythm between rows and the whole card sits on '
+    'the raised panel, so it reads like one instrument.\n\n'
+    'Want a history tape or haptic ticks next?';
 
 void main() {
   setUpAll(ensureGoldenFonts);
@@ -643,6 +706,39 @@ void main() {
     await expectGolden(tester, 'apps_work_bar_streaming');
   });
 
+  testWidgets('mini Fa reply sheet after a completed run (dark)', (
+    tester,
+  ) async {
+    // Real file IO must run outside the FakeAsync test zone.
+    final env = (await tester.runAsync(_seededEnv))!;
+    final service = _hungService(); // idle: the Fa mark stays static
+    addTearDown(service.dispose);
+    await pumpGolden(
+      tester,
+      _replySheetHost(service, env, colors: FahColors.dark, reply: _faReply),
+      size: goldenSizeDesktop,
+      wrap: (child) => child,
+    );
+    await expectGolden(tester, 'apps_fa_reply_sheet');
+  });
+
+  testWidgets('mini Fa reply sheet after a completed run (light)', (
+    tester,
+  ) async {
+    // Real file IO must run outside the FakeAsync test zone.
+    final env = (await tester.runAsync(_seededEnv))!;
+    final service = _hungService();
+    addTearDown(service.dispose);
+    await pumpGolden(
+      tester,
+      _replySheetHost(service, env, colors: FahColors.light, reply: _faReply),
+      size: goldenSizeDesktop,
+      theme: buildFahThemeLight(),
+      wrap: (child) => child,
+    );
+    await expectGolden(tester, 'apps_fa_reply_sheet_light');
+  });
+
   testWidgets('app permissions dialog with a persisted override', (
     tester,
   ) async {
@@ -697,4 +793,84 @@ void main() {
     );
     await expectGolden(tester, 'apps_view_error');
   });
+
+  testWidgets('map app renders the bundled Map demo with offline tiles', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final manifest =
+          (jsonDecode(
+                    await File('assets/apps/map/manifest.json').readAsString(),
+                  )
+                  as Map)
+              .cast<String, Object?>();
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/map/manifest.json', jsonEncode(manifest));
+      await env.writeFile(
+        'apps/map/widget.js',
+        await File('assets/apps/map/widget.js').readAsString(),
+      );
+      final tileBytes = await File(
+        'test/golden/assets/map_tile.png',
+      ).readAsBytes();
+      final permissions = await AppPermissionsStore.load(env);
+
+      tester.view.physicalSize = goldenSizeDesktop;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: buildFahTheme(),
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: JsAppView(
+            app: _app(manifest, fallbackId: 'map'),
+            env: env,
+            permissionsStore: permissions,
+            mapTileProvider: _SolidTileProvider(tileBytes),
+            onSendToAgent: (message) async {},
+          ),
+        ),
+      );
+      // The QuickJS engine boots and renders on the real event loop; the
+      // fake-zone settle would hang on its periodic timer, so wait real
+      // time and flush frames manually.
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+        if (find.text('Old Castle').evaluate().isNotEmpty) break;
+      }
+      expect(find.text('Old Castle'), findsWidgets);
+      // Wait until the offline tiles actually decoded and painted — the
+      // frame cache survives exiting runAsync, so the snapshot afterwards
+      // shows the real tile grid, not the placeholder background.
+      var painted = false;
+      for (var i = 0; i < 50 && !painted; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+        painted = tester
+            .widgetList<RawImage>(find.byType(RawImage))
+            .any((r) => r.image != null);
+      }
+      expect(painted, isTrue, reason: 'map tiles never decoded');
+      await tester.pump(const Duration(milliseconds: 300));
+    });
+    // matchesGoldenFile needs its own runAsync — call it outside ours.
+    await tester.pump();
+    await expectGolden(tester, 'apps_map_view');
+  });
+}
+
+/// Offline tile provider: every tile is the same in-memory PNG, so the map
+/// renders a full grid without network access.
+final class _SolidTileProvider extends TileProvider {
+  _SolidTileProvider(this.bytes);
+
+  final Uint8List bytes;
+
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
+      MemoryImage(bytes);
 }
