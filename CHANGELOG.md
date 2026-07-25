@@ -566,4 +566,10 @@
 
 - feat(example): orbit work-bar, light theme, secrets UI, open_app + calendar tools, map node demos
 
+## 0.1.75
+
+- feat(example): animation nodes demo (entrance stagger, animatedSwitcher), theme+reply-sheet sources
+- feat(example): jsr.theme plumbing (light/dark live), Fa mini reply sheet, map-app golden
+- fix(example): chart node API alignment (0.4.7), gridView docs, bar chart demo
+
 ## Unreleased
