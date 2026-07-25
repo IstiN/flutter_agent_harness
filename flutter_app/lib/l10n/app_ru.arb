@@ -40,6 +40,8 @@
   "appsPermissionMicrophoneDesc": "jsr.fa.asr — запись аудио и распознавание речи",
   "appsPermissionNetwork": "Сеть",
   "appsPermissionNetworkDesc": "jsr.fetchJson — разрешить приложению вызывать HTTP API",
+  "appsPermissionNotifications": "Уведомления",
+  "appsPermissionNotificationsDesc": "jsr.fa.notify — локальные уведомления",
   "appsPermissionsDone": "Готово",
   "appsPermissionsTitle": "Разрешения {name}",
   "appsPermissionsTooltip": "Разрешения приложения",

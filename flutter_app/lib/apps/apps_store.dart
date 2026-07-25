@@ -11,8 +11,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 ///
 /// Mirrors YoLoIT's widget manifest (`network`, `allowedCommands`) and adds
 /// the Fa bridge surface (`llm`, `homekit`, `health`, `contacts`,
-/// `microphone`). Every capability defaults to denied; the user can
-/// grant/deny per app at runtime (see [AppPermissionsStore]).
+/// `microphone`, `notifications`). Every capability defaults to denied; the
+/// user can grant/deny per app at runtime (see [AppPermissionsStore]).
 class AppPermissions {
   const AppPermissions({
     this.network = false,
@@ -23,6 +23,7 @@ class AppPermissions {
     this.contacts = false,
     this.calendar = false,
     this.microphone = false,
+    this.notifications = false,
   });
 
   factory AppPermissions.fromJson(Map<String, Object?> json) {
@@ -38,6 +39,7 @@ class AppPermissions {
       contacts: json['contacts'] == true,
       calendar: json['calendar'] == true,
       microphone: json['microphone'] == true,
+      notifications: json['notifications'] == true,
     );
   }
 
@@ -65,6 +67,10 @@ class AppPermissions {
   /// Microphone bridge (`jsr.fa.asr`) — record audio and transcribe speech.
   final bool microphone;
 
+  /// Local-notifications bridge (`jsr.fa.notify`) — schedule/cancel local
+  /// system notifications.
+  final bool notifications;
+
   AppPermissions copyWith({
     bool? network,
     bool? llm,
@@ -73,6 +79,7 @@ class AppPermissions {
     bool? contacts,
     bool? calendar,
     bool? microphone,
+    bool? notifications,
   }) {
     return AppPermissions(
       network: network ?? this.network,
@@ -83,6 +90,7 @@ class AppPermissions {
       contacts: contacts ?? this.contacts,
       calendar: calendar ?? this.calendar,
       microphone: microphone ?? this.microphone,
+      notifications: notifications ?? this.notifications,
     );
   }
 
@@ -95,6 +103,7 @@ class AppPermissions {
     'contacts': contacts,
     'calendar': calendar,
     'microphone': microphone,
+    'notifications': notifications,
   };
 }
 
@@ -172,6 +181,7 @@ class EffectiveAppPermissions {
   bool get contacts => overrides?.contacts ?? declared.contacts;
   bool get calendar => overrides?.calendar ?? declared.calendar;
   bool get microphone => overrides?.microphone ?? declared.microphone;
+  bool get notifications => overrides?.notifications ?? declared.notifications;
   List<String> get allowedCommands => declared.allowedCommands;
 
   AppPermissions effective() => AppPermissions(
@@ -183,6 +193,7 @@ class EffectiveAppPermissions {
     contacts: contacts,
     calendar: calendar,
     microphone: microphone,
+    notifications: notifications,
   );
 }
 
@@ -275,6 +286,7 @@ class AppsStore {
     'health',
     'homekit',
     'voice-notes',
+    'reminders',
   ];
 
   /// The demo apps this store seeds (see [seedBundledApps]).

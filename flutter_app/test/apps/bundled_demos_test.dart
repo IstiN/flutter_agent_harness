@@ -13,6 +13,7 @@ import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/health_service.dart';
 import 'package:fa/services/home_service.dart';
+import 'package:fa/services/notify_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -216,6 +217,38 @@ final class _FakeAsrTranscriber implements AsrTranscriber {
   }) async => 'fake transcript';
 }
 
+/// Fake [NotifyApi] so the reminders demo's bridge calls resolve without
+/// touching the real platform channel.
+final class _FakeNotifyApi implements NotifyApi {
+  final scheduled = <({String title, String? body, double? delaySeconds})>[];
+  final cancelledIds = <String>[];
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<String> schedule({
+    required String title,
+    String? body,
+    String? id,
+    double? delaySeconds,
+  }) async {
+    scheduled.add((title: title, body: body, delaySeconds: delaySeconds));
+    return id ?? 'fake-id-${scheduled.length}';
+  }
+
+  @override
+  Future<void> cancel({required String id}) async {
+    cancelledIds.add(id);
+  }
+
+  @override
+  Future<void> cancelAll() async {}
+}
+
 /// Fake [HomeApi] so the home demo's bridge calls resolve with real
 /// accessories without touching the real platform channel.
 final class _FakeHomeApi implements HomeApi {
@@ -330,6 +363,10 @@ void main() {
       final voiceNotes = AppPermissions.fromJson(manifest('voice-notes'));
       expect(voiceNotes.microphone, isTrue);
       expect(voiceNotes.network, isFalse);
+
+      final reminders = AppPermissions.fromJson(manifest('reminders'));
+      expect(reminders.notifications, isTrue);
+      expect(reminders.network, isFalse);
     });
   });
 
@@ -900,6 +937,109 @@ void main() {
           expect(
             jsonEncode(engine.tree.value),
             contains('Microphone permission needed'),
+          );
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('reminders schedules and cancels through the fa.notify '
+        'bridge', (tester) async {
+      await tester.runAsync(() async {
+        final notify = _FakeNotifyApi();
+        final env = await envWithApp('reminders');
+        final engine = JsAppEngine(
+          app: app('reminders', const {'id': 'reminders', 'name': 'Reminders'}),
+          env: env,
+          permissions: const AppPermissions(notifications: true),
+          notify: notify,
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          expect(engine.tree.value, isNotNull);
+          expect(engine.exportedState?['loading'], isFalse);
+          expect(engine.exportedState?['reminderCount'], 0);
+
+          // Fill the form and schedule: the bridge call crosses real
+          // platform channels, so poll instead of a fixed settle.
+          await engine.callEvent('remind_title', {'value': 'Stretch break'});
+          await engine.callEvent('remind_minutes', {'value': '1'});
+          await engine.callEvent('remind_add');
+          for (
+            var i = 0;
+            i < 40 && engine.exportedState?['reminderCount'] != 1;
+            i++
+          ) {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
+          expect(notify.scheduled, hasLength(1));
+          expect(notify.scheduled.single.title, 'Stretch break');
+          expect(notify.scheduled.single.delaySeconds, 60.0);
+          expect(engine.exportedState?['reminderCount'], 1);
+          expect(engine.exportedState?['notice'], 'Reminder scheduled.');
+          final tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('Stretch break'));
+          // The list is persisted via jsr.storage.
+          final storage = await env.readTextFile('apps/reminders/storage.json');
+          expect(storage.valueOrNull, contains('Stretch break'));
+
+          // Cancel the row: the bridge cancel reaches the NotifyApi.
+          await engine.callEvent('cancel_0');
+          for (
+            var i = 0;
+            i < 40 && engine.exportedState?['reminderCount'] != 0;
+            i++
+          ) {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
+          expect(notify.cancelledIds, ['fake-id-1']);
+          expect(engine.exportedState?['reminderCount'], 0);
+          expect(engine.exportedState?['notice'], 'Reminder cancelled.');
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('reminders without the permission shows the grant card', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final notify = _FakeNotifyApi();
+        final env = await envWithApp('reminders');
+        final engine = JsAppEngine(
+          app: app('reminders', const {'id': 'reminders', 'name': 'Reminders'}),
+          env: env,
+          permissions: const AppPermissions(),
+          notify: notify,
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          await engine.callEvent('remind_title', {'value': 'Stretch break'});
+          await engine.callEvent('remind_minutes', {'value': '1'});
+          await engine.callEvent('remind_add');
+          // The bridge call crosses real platform channels — poll instead
+          // of a fixed settle (races under load).
+          for (
+            var i = 0;
+            i < 40 && engine.exportedState?['error'] == null;
+            i++
+          ) {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
+          expect(notify.scheduled, isEmpty);
+          expect(
+            engine.exportedState?['error'],
+            contains('notifications permission'),
+          );
+          expect(
+            jsonEncode(engine.tree.value),
+            contains('Notifications permission needed'),
           );
         } finally {
           await engine.dispose();

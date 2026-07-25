@@ -338,6 +338,18 @@ abstract class AppLocalizations {
   /// **'jsr.fetchJson — let the app call HTTP APIs'**
   String get appsPermissionNetworkDesc;
 
+  /// No description provided for @appsPermissionNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get appsPermissionNotifications;
+
+  /// No description provided for @appsPermissionNotificationsDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'jsr.fa.notify — schedule local notifications'**
+  String get appsPermissionNotificationsDesc;
+
   /// No description provided for @appsPermissionsDone.
   ///
   /// In en, this message translates to:

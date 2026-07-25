@@ -18,6 +18,8 @@ import 'package:fa/services/health_service.dart';
 import 'package:fa/services/health_tool.dart';
 import 'package:fa/services/home_service.dart';
 import 'package:fa/services/home_tool.dart';
+import 'package:fa/services/notify_service.dart';
+import 'package:fa/services/notify_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -282,6 +284,9 @@ class AgentService extends ChangeNotifier {
       // tool itself reports a clean note where unsupported). Pairs with
       // transcribe_audio below.
       if (asrPlatformSupported) micRecordTool(createAsrService(), env),
+      // Local notifications (macOS/iOS via the `fah/notify` channel; the
+      // tool itself reports a clean note where unsupported).
+      if (notifyPlatformSupported) notifyTool(createNotifyService()),
       // Audio transcription via the active provider when it is an
       // OpenAI-compatible endpoint (Whisper /audio/transcriptions) —
       // transcribes mic_record takes and any audio file in the sandbox.

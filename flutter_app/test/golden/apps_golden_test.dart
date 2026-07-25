@@ -6,8 +6,8 @@
 /// app_icon.dart, apps_grid.dart, fa_work_bar.dart and js_app_view.dart.
 ///
 /// Everything runs on MemoryExecutionEnv with fixed manifests — no network,
-/// no real file system writes, no real JS engine. The grid seeds the ten
-/// bundled demo manifests (read from assets/apps/ on disk) plus twelve
+/// no real file system writes, no real JS engine. The grid seeds the bundled
+/// demo manifests (read from assets/apps/ on disk) plus twelve
 /// custom "agent-built" apps. The JsAppView coverage uses the deterministic
 /// start-error chrome (missing widget.js) instead of booting the
 /// JavaScriptCore backend; FaWorkBar states render over a hand-built

@@ -12,6 +12,7 @@ import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/health_service.dart';
 import 'package:fa/services/home_service.dart';
+import 'package:fa/services/notify_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -874,6 +875,140 @@ void main() {
     });
   });
 
+  testWidgets('fa.notify is gated by the notifications permission', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.notify.schedule({title: 'Build done', body: 'ok', delaySeconds: 60}).then(function(result) {
+    if (result && result.id) {
+      jsr.fa.notify.cancel({id: result.id}).then(function(cancelResult) {
+        jsr.exportState({result: result, cancelResult: cancelResult});
+      }, function(error) {
+        jsr.exportState({result: {__error: '' + error}});
+      });
+    } else {
+      jsr.exportState({result: result});
+    }
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      // Without the permission the bridge answers with a permission error
+      // and the backend never sees a schedule.
+      final deniedNotify = _FakeNotifyApi();
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        notify: deniedNotify,
+      );
+      try {
+        await denied.start();
+        // The bridge call crosses real platform channels — poll instead of
+        // a fixed settle (races under load).
+        for (
+          var i = 0;
+          i < 40 && denied.exportedState?['result'] == null;
+          i++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 150));
+        }
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('__error'),
+        );
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('notifications permission'),
+        );
+        expect(deniedNotify.scheduled, isEmpty);
+      } finally {
+        await denied.dispose();
+      }
+
+      // With it, schedule reaches the NotifyApi and cancel removes the id.
+      final grantedNotify = _FakeNotifyApi();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(notifications: true),
+        notify: grantedNotify,
+      );
+      try {
+        await granted.start();
+        for (
+          var i = 0;
+          i < 40 && granted.exportedState?['cancelResult'] == null;
+          i++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 150));
+        }
+        expect(grantedNotify.scheduled, hasLength(1));
+        expect(grantedNotify.scheduled.single.title, 'Build done');
+        expect(grantedNotify.scheduled.single.body, 'ok');
+        expect(grantedNotify.scheduled.single.delaySeconds, 60.0);
+        expect(grantedNotify.cancelledIds, ['fake-id-1']);
+        expect(
+          jsonEncode(granted.exportedState?['result']),
+          contains('fake-id-1'),
+        );
+        expect(
+          jsonEncode(granted.exportedState?['cancelResult']),
+          contains('true'),
+        );
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.notify schedule validates its arguments', (tester) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.notify.schedule({title: '', delaySeconds: -1}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final notify = _FakeNotifyApi();
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(notifications: true),
+        notify: notify,
+      );
+      try {
+        await engine.start();
+        for (
+          var i = 0;
+          i < 40 && engine.exportedState?['result'] == null;
+          i++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 150));
+        }
+        expect(
+          jsonEncode(engine.exportedState?['result']),
+          contains('__error'),
+        );
+        expect(notify.scheduled, isEmpty);
+      } finally {
+        await engine.dispose();
+      }
+    });
+  });
+
   testWidgets('fa.contacts is gated by the contacts permission', (
     tester,
   ) async {
@@ -1237,4 +1372,37 @@ final class _FakeAsrTranscriber implements AsrTranscriber {
     calls.add((bytes: bytes, filename: filename));
     return 'fake transcript';
   }
+}
+
+/// Fake [NotifyApi] for the `fa.notify` bridge tests — the host-side tests
+/// never touch the real method channel.
+final class _FakeNotifyApi implements NotifyApi {
+  bool granted = true;
+  final scheduled = <({String title, String? body, double? delaySeconds})>[];
+  final cancelledIds = <String>[];
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => granted;
+
+  @override
+  Future<String> schedule({
+    required String title,
+    String? body,
+    String? id,
+    double? delaySeconds,
+  }) async {
+    scheduled.add((title: title, body: body, delaySeconds: delaySeconds));
+    return id ?? 'fake-id-${scheduled.length}';
+  }
+
+  @override
+  Future<void> cancel({required String id}) async {
+    cancelledIds.add(id);
+  }
+
+  @override
+  Future<void> cancelAll() async {}
 }

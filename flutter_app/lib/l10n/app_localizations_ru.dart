@@ -149,6 +149,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'jsr.fetchJson — разрешить приложению вызывать HTTP API';
 
   @override
+  String get appsPermissionNotifications => 'Уведомления';
+
+  @override
+  String get appsPermissionNotificationsDesc =>
+      'jsr.fa.notify — локальные уведомления';
+
+  @override
   String get appsPermissionsDone => 'Готово';
 
   @override

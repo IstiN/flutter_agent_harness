@@ -127,6 +127,7 @@ flutter:
     - assets/apps/health/
     - assets/apps/homekit/
     - assets/apps/map/
+    - assets/apps/reminders/
     - assets/apps/stocks/
     - assets/apps/voice-notes/
     - assets/apps/weather/

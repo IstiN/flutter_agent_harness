@@ -43,6 +43,8 @@
   "appsPermissionMicrophoneDesc": "jsr.fa.asr — record audio and transcribe speech",
   "appsPermissionNetwork": "Network",
   "appsPermissionNetworkDesc": "jsr.fetchJson — let the app call HTTP APIs",
+  "appsPermissionNotifications": "Notifications",
+  "appsPermissionNotificationsDesc": "jsr.fa.notify — schedule local notifications",
   "appsPermissionsDone": "Done",
   "appsPermissionsTitle": "{name} permissions",
   "appsPermissionsTooltip": "App permissions",

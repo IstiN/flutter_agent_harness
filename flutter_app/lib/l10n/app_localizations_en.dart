@@ -148,6 +148,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'jsr.fetchJson — let the app call HTTP APIs';
 
   @override
+  String get appsPermissionNotifications => 'Notifications';
+
+  @override
+  String get appsPermissionNotificationsDesc =>
+      'jsr.fa.notify — schedule local notifications';
+
+  @override
   String get appsPermissionsDone => 'Done';
 
   @override

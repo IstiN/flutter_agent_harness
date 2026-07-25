@@ -5,6 +5,7 @@ import Flutter
 import HealthKit
 import HomeKit
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -23,6 +24,7 @@ import UIKit
     registerHomeChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerKeychainChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerMicChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerNotifyChannel(messenger: engineBridge.applicationRegistrar.messenger())
   }
 }
 
@@ -1171,4 +1173,93 @@ private func micStopRecording() -> Any {
     "durationMs": durationMs,
     "sampleRate": 44100,
   ]
+}
+
+/// The `fah/notify` method channel: LOCAL user notifications via
+/// UNUserNotificationCenter — no remote pushes, no background modes.
+/// Methods: `requestAccess`, `schedule` {title, body, id?, delaySeconds?}
+/// answering the scheduled id (immediate when delaySeconds is absent/zero,
+/// otherwise a one-shot UNTimeIntervalNotificationTrigger — no repeats),
+/// `cancel` {id}, and `cancelAll`.
+private func registerNotifyChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/notify",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "requestAccess":
+      // The OS shows its prompt at most once; later calls return the stored
+      // decision without prompting again.
+      UNUserNotificationCenter.current().requestAuthorization(
+        options: [.alert, .sound, .badge],
+      ) { granted, _ in
+        DispatchQueue.main.async { result(granted) }
+      }
+    case "schedule":
+      let args = call.arguments as? [String: Any] ?? [:]
+      notifySchedule(args: args, result: result)
+    case "cancel":
+      let args = call.arguments as? [String: Any] ?? [:]
+      notifyCancel(id: args["id"] as? String ?? "")
+      result(true)
+    case "cancelAll":
+      let center = UNUserNotificationCenter.current()
+      center.removeAllPendingNotificationRequests()
+      center.removeAllDeliveredNotifications()
+      result(true)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+/// Adds a local notification request and answers its id (or a FlutterError).
+/// A nil trigger delivers immediately; a positive delaySeconds schedules a
+/// one-shot time-interval trigger.
+private func notifySchedule(args: [String: Any], result: @escaping FlutterResult) {
+  guard let title = args["title"] as? String, !title.isEmpty else {
+    result(
+      FlutterError(
+        code: "bad_args",
+        message: "title is required",
+        details: nil,
+      ),
+    )
+    return
+  }
+  let id = (args["id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+  let content = UNMutableNotificationContent()
+  content.title = title
+  if let body = args["body"] as? String, !body.isEmpty { content.body = body }
+  content.sound = .default
+  let delay = (args["delaySeconds"] as? NSNumber)?.doubleValue ?? 0
+  let trigger =
+    delay > 0
+    ? UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)
+    : nil
+  let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
+  UNUserNotificationCenter.current().add(request) { error in
+    DispatchQueue.main.async {
+      if let error = error {
+        result(
+          FlutterError(
+            code: "schedule_failed",
+            message: error.localizedDescription,
+            details: nil,
+          ),
+        )
+      } else {
+        result(id)
+      }
+    }
+  }
+}
+
+/// Cancels a scheduled (and already-delivered) notification by id.
+private func notifyCancel(id: String) {
+  guard !id.isEmpty else { return }
+  let center = UNUserNotificationCenter.current()
+  center.removePendingNotificationRequests(withIdentifiers: [id])
+  center.removeDeliveredNotifications(withIdentifiers: [id])
 }

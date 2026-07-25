@@ -34,7 +34,7 @@ The host **watches the app files and reloads the running app automatically** as 
 3. **Register `jsr.onEvent`** — even if you handle few events.
 4. **Set the permissions the app actually needs** in `manifest.json`, and tell the user they may also need to enable them at runtime in the app's permissions dialog.
 5. **Never hand-edit `apps/<id>/storage.json`** — that file is owned by `jsr.storage`.
-6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase, calendar, contacts, map, health, homekit, voice-notes). Read their source before building something similar.
+6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase, calendar, contacts, map, health, homekit, voice-notes, reminders). Read their source before building something similar.
 
 ---
 
@@ -78,7 +78,8 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
   "health": false,
   "contacts": false,
   "calendar": false,
-  "microphone": false
+  "microphone": false,
+  "notifications": false
 }
 ```
 
@@ -97,6 +98,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `contacts` | ❌ | `true` to allow `jsr.fa.contacts.*` — system contacts access (search + create/update/delete + call/sms; default: false) |
 | `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — system calendar access (read + create/update/delete; default: false) |
 | `microphone` | ❌ | `true` to allow `jsr.fa.asr.*` — microphone recording + speech-to-text (macOS/iOS; default: false) |
+| `notifications` | ❌ | `true` to allow `jsr.fa.notify.*` — schedule/cancel local system notifications (macOS/iOS; default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
 
@@ -512,6 +514,26 @@ jsr.fa.asr.record({ seconds: 5 }).then(function(rec) {
 ```
 
 The Fa agent has a matching write-tier tool (`mic_record`, which stages takes into the sandbox `recordings/` folder) plus the read-tier `transcribe_audio` tool, so users can also dictate and transcribe by chatting — the chat composer has a mic button riding the same bridge.
+
+### `jsr.fa.notify.*` → Promise
+Local system notifications (macOS/iOS — LOCAL only, no remote pushes): the notification reaches the user even when Fa is in the background. Requires `"notifications": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS notification-access prompt.
+
+```javascript
+// Schedule — resolves with { id }. delaySeconds is optional (default: fire
+// immediately); triggers never repeat.
+jsr.fa.notify.schedule({
+  title: 'Build finished', body: 'flutter build macos succeeded',
+  delaySeconds: 300,
+}).then(function(result) {
+  if (result && result.__error) { jsr.showError(result.__error); return; }
+  rememberId(result.id);
+});
+
+// Cancel — resolves with { cancelled: true }.
+jsr.fa.notify.cancel({ id: notificationId });
+```
+
+The Fa agent has a matching write-tier tool (`notify`), so users can also ask for notifications by chatting — both are steered to fire sparingly (long-running/background-relevant updates only, never per-turn chatter).
 
 ---
 
@@ -938,6 +960,7 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 | `health` | Health | HealthKit dashboard via `jsr.fa.health.summary` (steps/HR/sleep cards + charts), demo fallback | ❌ |
 | `homekit` | Home | HomeKit control via `jsr.fa.home.*` — rooms, accessory cards, power/brightness/temperature controls + demo fallback | ❌ |
 | `voice-notes` | Voice Notes | Microphone record + transcript list via `jsr.fa.asr.*`, persisted via `jsr.storage` | ❌ |
+| `reminders` | Reminders | Local notifications via `jsr.fa.notify.*` — schedule in N minutes, list + cancel per row, persisted via `jsr.storage` | ❌ |
 
 **Tip**: Before building a new app, always read the source of the most similar demo — especially for network fetch, storage, and theming patterns.
 
@@ -951,7 +974,7 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 4. **Storage is async** — `jsr.storage.get()` returns a Promise. Always use `.then()` before using the value.
 5. **`jsr.render()` replaces everything** — not additive; always render the complete UI tree.
 6. **After editing files, do nothing** — the app reloads automatically; the user can also hit Reload.
-7. **Network requires the manifest flag** — set `"network": true` or `fetchJson` fails; same for `llm`/`allowedCommands` and the `calendar`/`homekit`/`health`/`contacts`/`microphone` bridges. Tell the user to enable permissions in the app's permissions dialog when needed.
+7. **Network requires the manifest flag** — set `"network": true` or `fetchJson` fails; same for `llm`/`allowedCommands` and the `calendar`/`homekit`/`health`/`contacts`/`microphone`/`notifications` bridges. Tell the user to enable permissions in the app's permissions dialog when needed.
 8. **Always check `__error`** on results from `jsr.fetchJson` and the `jsr.fa.*` bridges before using the data.
 9. **Always call `jsr.exportState`** with meaningful state — it's what you (the agent) receive when the user talks to you from inside the app.
 10. **Timer cleanup** — save `setInterval` IDs and `clearInterval` when done.

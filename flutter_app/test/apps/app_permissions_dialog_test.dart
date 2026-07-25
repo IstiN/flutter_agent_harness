@@ -71,4 +71,40 @@ void main() {
     expect(tester.widget<SwitchListTile>(calendarTile).value, isTrue);
     expect(store.forApp(app).calendar, isTrue);
   });
+
+  testWidgets('permissions dialog shows and toggles the notifications '
+      'permission', (tester) async {
+    final env = MemoryExecutionEnv();
+    final app = JsAppInfo.fromManifest(
+      const {'id': 'demo', 'name': 'Demo', 'icon': '🧪'},
+      bundled: false,
+      fallbackId: 'demo',
+    );
+    final store = await AppPermissionsStore.load(env);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppPermissionsDialog(app: app, env: env, store: store),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final notificationsTile = find.widgetWithText(
+      SwitchListTile,
+      'Notifications',
+    );
+    expect(notificationsTile, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(notificationsTile).value, isFalse);
+
+    // The eighth toggle sits below the fold in the default test window.
+    await tester.ensureVisible(notificationsTile);
+    await tester.pumpAndSettle();
+    await tester.tap(notificationsTile);
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<SwitchListTile>(notificationsTile).value, isTrue);
+    expect(store.forApp(app).notifications, isTrue);
+  });
 }

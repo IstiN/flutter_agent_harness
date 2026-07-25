@@ -850,7 +850,7 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      // Seven toggles + title can exceed small window heights.
+      // Eight toggles + title can exceed small window heights.
       scrollable: true,
       title: Row(
         children: [
@@ -908,6 +908,12 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
             context.l10n.appsPermissionMicrophoneDesc,
             _current.microphone,
             (v) => _set(_current.copyWith(microphone: v)),
+          ),
+          _toggle(
+            context.l10n.appsPermissionNotifications,
+            context.l10n.appsPermissionNotificationsDesc,
+            _current.notifications,
+            (v) => _set(_current.copyWith(notifications: v)),
           ),
         ],
       ),

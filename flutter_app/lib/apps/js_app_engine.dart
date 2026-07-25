@@ -16,6 +16,7 @@ import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/health_service.dart';
 import 'package:fa/services/home_service.dart';
+import 'package:fa/services/notify_service.dart';
 
 /// One chat message for the `jsr.fa.llm.chat/stream` bridge calls; [role] is
 /// `user`, `assistant`, or `system`.
@@ -58,6 +59,9 @@ typedef FaPlatformHandler =
 ///   [AppPermissions.microphone] (real backend via [AsrApi]; requests OS
 ///   microphone access on first use; transcription rides the configured
 ///   OpenAI-compatible endpoint via [AsrTranscriber])
+/// - `jsr.fa.notify.schedule` / `jsr.fa.notify.cancel` →
+///   [AppPermissions.notifications] (real backend via [NotifyApi]; requests
+///   OS notification access on first use)
 /// - other health actions → the matching flag (stubbed until the platform
 ///   implementations land — a granted call answers "not available").
 class JsAppEngine {
@@ -73,6 +77,7 @@ class JsAppEngine {
     this.home,
     this.asr,
     this.asrTranscriber,
+    this.notify,
     this.initialTheme = const {},
     void Function(String line)? onLog,
   }) : _onLog = onLog;
@@ -110,6 +115,10 @@ class JsAppEngine {
   /// Transcriber for `jsr.fa.asr.transcribe`; `null` (no ASR-capable
   /// endpoint configured) answers with an actionable error.
   final AsrTranscriber? asrTranscriber;
+
+  /// Notifications backend for `jsr.fa.notify.*`; `null` uses the platform
+  /// service ([createNotifyService] — a never-available stub on web).
+  final NotifyApi? notify;
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -290,6 +299,14 @@ jsr.fa.home = {
 jsr.fa.asr = {
   record: function(args) { return jsr.fa.call('asr.record', args); },
   transcribe: function(args) { return jsr.fa.call('asr.transcribe', args); },
+};
+
+// Local notifications, gated on the `notifications` manifest flag.
+// schedule({title, body, delaySeconds}) → {id}; cancel({id}) →
+// {cancelled: true}.
+jsr.fa.notify = {
+  schedule: function(args) { return jsr.fa.call('notify.schedule', args); },
+  cancel: function(args) { return jsr.fa.call('notify.cancel', args); },
 };
 
 // Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
@@ -490,6 +507,14 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'asr.transcribe') {
         _resolve?.call(id, await _asrTranscribe(args));
+        return;
+      }
+      if (method == 'notify.schedule') {
+        _resolve?.call(id, await _notifySchedule(args));
+        return;
+      }
+      if (method == 'notify.cancel') {
+        _resolve?.call(id, await _notifyCancel(args));
         return;
       }
       // Home control (iOS HomeKit). `home.*` is the current surface; the
@@ -952,6 +977,53 @@ Object.defineProperty(jsr, 'onBack', {
       throw StateError(
         'microphone access was denied — enable it in the system privacy '
         'settings (Privacy & Security → Microphone)',
+      );
+    }
+    return api;
+  }
+
+  /// `jsr.fa.notify.schedule({title, body?, delaySeconds?})` → `{id}` —
+  /// schedules a local notification (immediate, or after `delaySeconds`;
+  /// never repeating), gated on the `notifications` permission.
+  Future<Map<String, Object?>> _notifySchedule(
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedNotify();
+    final title = (args['title'] ?? '').toString().trim();
+    if (title.isEmpty) throw StateError('title is required');
+    final delay = (args['delaySeconds'] as num?)?.toDouble() ?? 0;
+    if (delay < 0) throw StateError('delaySeconds must be >= 0');
+    final id = await api.schedule(
+      title: title,
+      body: args['body']?.toString(),
+      delaySeconds: delay,
+    );
+    return {'id': id};
+  }
+
+  /// `jsr.fa.notify.cancel({id})` → `{cancelled: true}`.
+  Future<Map<String, Object?>> _notifyCancel(Map<String, Object?> args) async {
+    final api = await _gatedNotify();
+    final id = (args['id'] ?? '').toString();
+    if (id.isEmpty) throw StateError('id is required');
+    await api.cancel(id: id);
+    return {'cancelled': true};
+  }
+
+  /// The permission gate every `jsr.fa.notify.*` bridge call shares: the
+  /// `notifications` permission, a platform backend, and OS access.
+  Future<NotifyApi> _gatedNotify() async {
+    if (!permissions.notifications) throw StateError(_denied('notifications'));
+    final api = notify ?? createNotifyService();
+    if (!await api.isAvailable) {
+      throw StateError(
+        'local notifications are not available on this platform',
+      );
+    }
+    if (!await api.requestAccess()) {
+      throw StateError(
+        'notification access was denied — enable it in the system settings '
+        '(System Settings → Notifications → Fa)',
       );
     }
     return api;
