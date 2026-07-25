@@ -135,6 +135,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'jsr.fa.llm — разрешить приложению обращаться к подключённой модели';
 
   @override
+  String get appsPermissionMedia => 'Медиа';
+
+  @override
+  String get appsPermissionMediaDesc =>
+      'jsr.fa.media — генерация изображений, речи и музыки';
+
+  @override
   String get appsPermissionMicrophone => 'Микрофон';
 
   @override

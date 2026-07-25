@@ -79,7 +79,8 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
   "contacts": false,
   "calendar": false,
   "microphone": false,
-  "notifications": false
+  "notifications": false,
+  "media": false
 }
 ```
 
@@ -99,6 +100,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — system calendar access (read + create/update/delete; default: false) |
 | `microphone` | ❌ | `true` to allow `jsr.fa.asr.*` — microphone recording + speech-to-text (macOS/iOS; default: false) |
 | `notifications` | ❌ | `true` to allow `jsr.fa.notify.*` — schedule/cancel local system notifications (macOS/iOS; default: false) |
+| `media` | ❌ | `true` to allow `jsr.fa.media.*` — image / TTS / music generation on the configured media endpoints (default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
 
@@ -534,6 +536,34 @@ jsr.fa.notify.cancel({ id: notificationId });
 ```
 
 The Fa agent has a matching write-tier tool (`notify`), so users can also ask for notifications by chatting — both are steered to fire sparingly (long-running/background-relevant updates only, never per-turn chatter).
+
+### `jsr.fa.media.*` → Promise
+Media generation: images, text-to-speech, and music. Requires `"media": true` in the manifest (and the runtime permission toggle). Endpoints resolve from `media_models.json` per-modality slots (`imageGeneration`, `audioTts`, `musicGeneration`), falling back to the connected provider when it is OpenAI-compatible. Errors (permission off, no usable endpoint, provider failure) REJECT the promise with an actionable message — always pass an error handler. Every method saves the file into the sandbox `generated/` folder and resolves with `{ path, bytes, detail }` — render it with a `file:<path>` source in `image` / `audio` nodes:
+
+```javascript
+// Image — args: {prompt, size?} (size like '1024x1024', provider-dependent).
+jsr.fa.media.generateImage({ prompt: 'a teal robot mascot, flat vector' }).then(function(result) {
+  jsr.render({ type: 'image', url: 'file:' + result.path, width: 256, height: 256 });
+}, function(error) {
+  jsr.showError(String(error));
+});
+
+// Speech — args: {text, voice?} (voice default 'alloy', provider-dependent).
+jsr.fa.media.speak({ text: 'Build finished', voice: 'nova' }).then(function(result) {
+  jsr.render({ type: 'audio', src: 'file:' + result.path, title: 'TTS' });
+}, function(error) {
+  jsr.showError(String(error));
+});
+
+// Music — args: {prompt, seconds?} (default 30). Music has no OpenAI
+// standard, so this only works with a musicGeneration slot configured in
+// media_models.json; the endpoint must accept POST {baseUrl}/music/generations
+// with {model, prompt, duration} and answer {"data": [{"b64_json": "..."}]}
+// or {"data": [{"url": "..."}]}.
+jsr.fa.media.generateMusic({ prompt: 'lo-fi hip hop loop', seconds: 20 });
+```
+
+The Fa agent has matching write-tier tools (`generate_image`, `speak`, `generate_music`), so users can also generate media by chatting — both surfaces resolve endpoints identically.
 
 ---
 
@@ -974,7 +1004,7 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 4. **Storage is async** — `jsr.storage.get()` returns a Promise. Always use `.then()` before using the value.
 5. **`jsr.render()` replaces everything** — not additive; always render the complete UI tree.
 6. **After editing files, do nothing** — the app reloads automatically; the user can also hit Reload.
-7. **Network requires the manifest flag** — set `"network": true` or `fetchJson` fails; same for `llm`/`allowedCommands` and the `calendar`/`homekit`/`health`/`contacts`/`microphone`/`notifications` bridges. Tell the user to enable permissions in the app's permissions dialog when needed.
+7. **Network requires the manifest flag** — set `"network": true` or `fetchJson` fails; same for `llm`/`allowedCommands` and the `calendar`/`homekit`/`health`/`contacts`/`microphone`/`notifications`/`media` bridges. Tell the user to enable permissions in the app's permissions dialog when needed.
 8. **Always check `__error`** on results from `jsr.fetchJson` and the `jsr.fa.*` bridges before using the data.
 9. **Always call `jsr.exportState`** with meaningful state — it's what you (the agent) receive when the user talks to you from inside the app.
 10. **Timer cleanup** — save `setInterval` IDs and `clearInterval` when done.

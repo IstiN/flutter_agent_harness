@@ -39,6 +39,8 @@
   "appsPermissionHomekitDesc": "jsr.fa.homekit — smart home devices (coming soon)",
   "appsPermissionLlm": "LLM",
   "appsPermissionLlmDesc": "jsr.fa.llm — let the app ask the connected model",
+  "appsPermissionMedia": "Media",
+  "appsPermissionMediaDesc": "jsr.fa.media — generate images, speech, and music",
   "appsPermissionMicrophone": "Microphone",
   "appsPermissionMicrophoneDesc": "jsr.fa.asr — record audio and transcribe speech",
   "appsPermissionNetwork": "Network",

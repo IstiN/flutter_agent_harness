@@ -17,6 +17,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
+import 'package:fa/services/media_tools.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
@@ -67,6 +68,7 @@ class JsAppView extends StatefulWidget {
     this.fsRevision,
     this.agentService,
     this.asrTranscriber,
+    this.mediaGateway,
     this.mapTileProvider,
   });
 
@@ -80,6 +82,11 @@ class JsAppView extends StatefulWidget {
   /// derives one from [agentService]'s active provider (an
   /// OpenAI-compatible endpoint), which may still resolve to none.
   final AsrTranscriber? asrTranscriber;
+
+  /// Media generation backend behind the `jsr.fa.media.*` bridge calls;
+  /// `null` derives it from [agentService] (the same gateway the agent's
+  /// media tools use).
+  final MediaGateway? mediaGateway;
 
   /// Optional tile provider for `map` nodes — tests inject an offline
   /// provider; null uses the runtime default (OSM over the network).
@@ -212,6 +219,7 @@ class _JsAppViewState extends State<JsAppView> {
         llmHandler: widget.llmHandler,
         platformHandler: widget.platformHandler,
         asrTranscriber: widget.asrTranscriber ?? _serviceAsrTranscriber(),
+        mediaGateway: widget.mediaGateway ?? widget.agentService?.mediaGateway,
         initialTheme: initialTheme,
       );
       engine.onCloseRequested = _closeFromJs;
@@ -914,6 +922,12 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
             context.l10n.appsPermissionNotificationsDesc,
             _current.notifications,
             (v) => _set(_current.copyWith(notifications: v)),
+          ),
+          _toggle(
+            context.l10n.appsPermissionMedia,
+            context.l10n.appsPermissionMediaDesc,
+            _current.media,
+            (v) => _set(_current.copyWith(media: v)),
           ),
         ],
       ),

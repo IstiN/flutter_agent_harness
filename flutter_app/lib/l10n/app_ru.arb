@@ -36,6 +36,8 @@
   "appsPermissionHomekitDesc": "jsr.fa.homekit — устройства умного дома (скоро)",
   "appsPermissionLlm": "LLM",
   "appsPermissionLlmDesc": "jsr.fa.llm — разрешить приложению обращаться к подключённой модели",
+  "appsPermissionMedia": "Медиа",
+  "appsPermissionMediaDesc": "jsr.fa.media — генерация изображений, речи и музыки",
   "appsPermissionMicrophone": "Микрофон",
   "appsPermissionMicrophoneDesc": "jsr.fa.asr — запись аудио и распознавание речи",
   "appsPermissionNetwork": "Сеть",

@@ -134,6 +134,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'jsr.fa.llm — let the app ask the connected model';
 
   @override
+  String get appsPermissionMedia => 'Media';
+
+  @override
+  String get appsPermissionMediaDesc =>
+      'jsr.fa.media — generate images, speech, and music';
+
+  @override
   String get appsPermissionMicrophone => 'Microphone';
 
   @override

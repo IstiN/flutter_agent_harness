@@ -314,6 +314,18 @@ abstract class AppLocalizations {
   /// **'jsr.fa.llm — let the app ask the connected model'**
   String get appsPermissionLlmDesc;
 
+  /// No description provided for @appsPermissionMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Media'**
+  String get appsPermissionMedia;
+
+  /// No description provided for @appsPermissionMediaDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'jsr.fa.media — generate images, speech, and music'**
+  String get appsPermissionMediaDesc;
+
   /// No description provided for @appsPermissionMicrophone.
   ///
   /// In en, this message translates to:

@@ -110,7 +110,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(AppPermissionsDialog), findsOneWidget);
-    expect(find.byType(SwitchListTile), findsNWidgets(8));
+    expect(find.byType(SwitchListTile), findsNWidgets(9));
 
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();

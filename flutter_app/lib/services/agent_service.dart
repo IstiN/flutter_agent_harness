@@ -20,6 +20,8 @@ import 'package:fa/services/home_service.dart';
 import 'package:fa/services/home_tool.dart';
 import 'package:fa/services/icloud_sync_service.dart';
 import 'package:fa/services/icloud_sync_tool.dart';
+import 'package:fa/services/media_models_store.dart';
+import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
 import 'package:fa/services/notify_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
@@ -153,6 +155,7 @@ class AgentService extends ChangeNotifier {
     String promptSuffix = '',
     Duration? responseTimeout,
   }) : _promptSuffix = promptSuffix,
+       _resolveSecretName = null,
        _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
@@ -200,6 +203,7 @@ class AgentService extends ChangeNotifier {
       config: config,
       redactor: redactor,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
+      resolveSecretName: (name) async => secrets[name],
       promptSuffix: promptSuffix,
     );
   }
@@ -230,12 +234,16 @@ class AgentService extends ChangeNotifier {
     SecretRedactor? redactor,
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
+    MediaKeyResolver? resolveSecretName,
     String promptSuffix = '',
   }) : _config = config,
+       _resolveSecretName = resolveSecretName,
        _promptSuffix = promptSuffix,
        sessionsRoot = '${env.cwd}/sessions',
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
     _providerKind = config.providerKind;
+    _activeBaseUrl = config.baseUrl;
+    _activeApiKey = config.apiKey;
     _redactor = redactor;
     _responseTimeout = _isOnDeviceKind(config.providerKind)
         // First on-device generation compiles WebGPU shaders (WebLLM,
@@ -246,6 +254,19 @@ class AgentService extends ChangeNotifier {
     // On-device backends have small context windows; keep only the core
     // coding tools so the tool-instruction block stays small.
     final isOnDevice = _isOnDeviceKind(config.providerKind);
+    // Media generation gateway: resolves per-modality endpoints from
+    // media_models.json with the ACTIVE connection as fallback (the closure
+    // reads the mutable provider fields, so `reconfigure` is picked up).
+    _mediaGateway = MediaGateway(
+      env: env,
+      fallback: () => MediaFallback(
+        providerKind: _providerKind,
+        baseUrl: _activeBaseUrl,
+        modelId: _agent.state.model.id,
+        apiKey: _activeApiKey,
+      ),
+      resolveKey: resolveSecretName,
+    );
     final registry = ToolRegistry([
       ...builtinTools(
         env,
@@ -304,6 +325,16 @@ class AgentService extends ChangeNotifier {
           )
           case final transcribeConfig?)
         transcribeAudioTool(env, transcribeConfig),
+      // Media generation (image / TTS / music) against the per-modality
+      // endpoints in media_models.json, falling back to the main
+      // connection; the tools report an actionable error when the slot has
+      // no usable endpoint. Skipped for the on-device backends, which keep
+      // only the core coding tools (small tool-instruction block).
+      if (!isOnDevice) ...[
+        generateImageTool(_mediaGateway!),
+        speakTool(_mediaGateway!),
+        generateMusicTool(_mediaGateway!),
+      ],
     ]);
     _toolRegistry = registry;
     _agent = Agent(
@@ -490,6 +521,22 @@ class AgentService extends ChangeNotifier {
   /// `webllm`, ...). Updated by [reconfigure].
   String get providerKind => _providerKind;
   late String _providerKind;
+
+  /// Base URL and API key of the active backend, tracked alongside
+  /// [_providerKind] so the media gateway's fallback follows [reconfigure].
+  late String _activeBaseUrl;
+  late String _activeApiKey;
+
+  /// Resolver for named secrets (media slot `apiKeyName` references);
+  /// `AgentService.create` wires it to the secrets store.
+  final MediaKeyResolver? _resolveSecretName;
+
+  /// Media generation gateway shared by the `generate_image` / `speak` /
+  /// `generate_music` tools and exposed for the `jsr.fa.media.*` bridge.
+  /// `null` for services constructed around a pre-constructed [Agent]
+  /// (tests).
+  MediaGateway? get mediaGateway => _mediaGateway;
+  MediaGateway? _mediaGateway;
 
   /// Model id of the active backend (shorthand for the agent's current
   /// model; updated by [reconfigure]).
@@ -898,6 +945,8 @@ class AgentService extends ChangeNotifier {
     _agent.state.systemPrompt = _composeSystemPrompt(config);
     _agent.streamFunction = _streamFunctionFor(config);
     _providerKind = config.providerKind;
+    _activeBaseUrl = config.baseUrl;
+    _activeApiKey = config.apiKey;
     _responseTimeout = _isOnDeviceKind(config.providerKind)
         ? const Duration(minutes: 10)
         : const Duration(seconds: 90);
@@ -931,6 +980,7 @@ class AgentService extends ChangeNotifier {
       config: config,
       redactor: _redactor,
       streamFunction: _agent.streamFunction,
+      resolveSecretName: _resolveSecretName,
     );
   }
 

@@ -11,8 +11,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 ///
 /// Mirrors YoLoIT's widget manifest (`network`, `allowedCommands`) and adds
 /// the Fa bridge surface (`llm`, `homekit`, `health`, `contacts`,
-/// `microphone`, `notifications`). Every capability defaults to denied; the
-/// user can grant/deny per app at runtime (see [AppPermissionsStore]).
+/// `microphone`, `notifications`, `media`). Every capability defaults to
+/// denied; the user can grant/deny per app at runtime (see
+/// [AppPermissionsStore]).
 class AppPermissions {
   const AppPermissions({
     this.network = false,
@@ -24,6 +25,7 @@ class AppPermissions {
     this.calendar = false,
     this.microphone = false,
     this.notifications = false,
+    this.media = false,
   });
 
   factory AppPermissions.fromJson(Map<String, Object?> json) {
@@ -40,6 +42,7 @@ class AppPermissions {
       calendar: json['calendar'] == true,
       microphone: json['microphone'] == true,
       notifications: json['notifications'] == true,
+      media: json['media'] == true,
     );
   }
 
@@ -71,6 +74,10 @@ class AppPermissions {
   /// system notifications.
   final bool notifications;
 
+  /// Media-generation bridge (`jsr.fa.media`) — image / TTS / music
+  /// generation on the configured media endpoints.
+  final bool media;
+
   AppPermissions copyWith({
     bool? network,
     bool? llm,
@@ -80,6 +87,7 @@ class AppPermissions {
     bool? calendar,
     bool? microphone,
     bool? notifications,
+    bool? media,
   }) {
     return AppPermissions(
       network: network ?? this.network,
@@ -91,6 +99,7 @@ class AppPermissions {
       calendar: calendar ?? this.calendar,
       microphone: microphone ?? this.microphone,
       notifications: notifications ?? this.notifications,
+      media: media ?? this.media,
     );
   }
 
@@ -104,6 +113,7 @@ class AppPermissions {
     'calendar': calendar,
     'microphone': microphone,
     'notifications': notifications,
+    'media': media,
   };
 }
 
@@ -182,6 +192,7 @@ class EffectiveAppPermissions {
   bool get calendar => overrides?.calendar ?? declared.calendar;
   bool get microphone => overrides?.microphone ?? declared.microphone;
   bool get notifications => overrides?.notifications ?? declared.notifications;
+  bool get media => overrides?.media ?? declared.media;
   List<String> get allowedCommands => declared.allowedCommands;
 
   AppPermissions effective() => AppPermissions(
@@ -194,6 +205,7 @@ class EffectiveAppPermissions {
     calendar: calendar,
     microphone: microphone,
     notifications: notifications,
+    media: media,
   );
 }
 

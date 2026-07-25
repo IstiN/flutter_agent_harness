@@ -16,6 +16,7 @@ import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/health_service.dart';
 import 'package:fa/services/home_service.dart';
+import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
 
 /// One chat message for the `jsr.fa.llm.chat/stream` bridge calls; [role] is
@@ -62,6 +63,13 @@ typedef FaPlatformHandler =
 /// - `jsr.fa.notify.schedule` / `jsr.fa.notify.cancel` →
 ///   [AppPermissions.notifications] (real backend via [NotifyApi]; requests
 ///   OS notification access on first use)
+/// - `jsr.fa.notify.schedule` / `jsr.fa.notify.cancel` →
+///   [AppPermissions.notifications] (real backend via [NotifyApi]; requests
+///   OS notification access on first use)
+/// - `jsr.fa.media.generateImage` / `jsr.fa.media.speak` /
+///   `jsr.fa.media.generateMusic` → [AppPermissions.media] (endpoint
+///   resolution via [MediaGateway] over `media_models.json` + the main
+///   connection, the same resolvers the agent's media tools use)
 /// - other health actions → the matching flag (stubbed until the platform
 ///   implementations land — a granted call answers "not available").
 class JsAppEngine {
@@ -78,6 +86,7 @@ class JsAppEngine {
     this.asr,
     this.asrTranscriber,
     this.notify,
+    this.mediaGateway,
     this.initialTheme = const {},
     void Function(String line)? onLog,
   }) : _onLog = onLog;
@@ -119,6 +128,11 @@ class JsAppEngine {
   /// Notifications backend for `jsr.fa.notify.*`; `null` uses the platform
   /// service ([createNotifyService] — a never-available stub on web).
   final NotifyApi? notify;
+
+  /// Media generation backend for `jsr.fa.media.*` (see [MediaGateway]);
+  /// `null` answers with an actionable "not available in this session"
+  /// error.
+  final MediaGateway? mediaGateway;
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -307,6 +321,16 @@ jsr.fa.asr = {
 jsr.fa.notify = {
   schedule: function(args) { return jsr.fa.call('notify.schedule', args); },
   cancel: function(args) { return jsr.fa.call('notify.cancel', args); },
+};
+
+// Media generation (image / TTS / music), gated on the `media` manifest
+// flag. Each resolves with {path, bytes, detail}: the file is saved in the
+// sandbox generated/ folder — reference it as file:<path> in image/audio
+// nodes.
+jsr.fa.media = {
+  generateImage: function(args) { return jsr.fa.call('media.generateImage', args); },
+  speak: function(args) { return jsr.fa.call('media.speak', args); },
+  generateMusic: function(args) { return jsr.fa.call('media.generateMusic', args); },
 };
 
 // Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
@@ -515,6 +539,18 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'notify.cancel') {
         _resolve?.call(id, await _notifyCancel(args));
+        return;
+      }
+      if (method == 'media.generateImage') {
+        _resolve?.call(id, await _mediaGenerateImage(args));
+        return;
+      }
+      if (method == 'media.speak') {
+        _resolve?.call(id, await _mediaSpeak(args));
+        return;
+      }
+      if (method == 'media.generateMusic') {
+        _resolve?.call(id, await _mediaGenerateMusic(args));
         return;
       }
       // Home control (iOS HomeKit). `home.*` is the current surface; the
@@ -1027,6 +1063,60 @@ Object.defineProperty(jsr, 'onBack', {
       );
     }
     return api;
+  }
+
+  /// `jsr.fa.media.generateImage({prompt, size?})` → `{path, bytes,
+  /// detail}` — image generation on the configured imageGeneration
+  /// endpoint, gated on the `media` permission.
+  Future<Map<String, Object?>> _mediaGenerateImage(
+    Map<String, Object?> args,
+  ) async {
+    final gateway = _gatedMedia();
+    final file = await gateway.generateImage(
+      prompt: (args['prompt'] ?? '').toString(),
+      size: args['size']?.toString(),
+    );
+    return file.toBridgeJson();
+  }
+
+  /// `jsr.fa.media.speak({text, voice?})` → `{path, bytes, detail}` —
+  /// text-to-speech on the configured audioTts endpoint, same gate.
+  Future<Map<String, Object?>> _mediaSpeak(Map<String, Object?> args) async {
+    final gateway = _gatedMedia();
+    final file = await gateway.speak(
+      text: (args['text'] ?? '').toString(),
+      voice: args['voice']?.toString(),
+    );
+    return file.toBridgeJson();
+  }
+
+  /// `jsr.fa.media.generateMusic({prompt, seconds?})` → `{path, bytes,
+  /// detail}` — music on the configured musicGeneration endpoint, same
+  /// gate.
+  Future<Map<String, Object?>> _mediaGenerateMusic(
+    Map<String, Object?> args,
+  ) async {
+    final gateway = _gatedMedia();
+    final file = await gateway.generateMusic(
+      prompt: (args['prompt'] ?? '').toString(),
+      seconds: (args['seconds'] as num?)?.toInt(),
+    );
+    return file.toBridgeJson();
+  }
+
+  /// The permission gate every `jsr.fa.media.*` bridge call shares: the
+  /// `media` permission plus a session media gateway (endpoint resolution
+  /// errors come from the gateway itself, with actionable text).
+  MediaGateway _gatedMedia() {
+    if (!permissions.media) throw StateError(_denied('media'));
+    final gateway = mediaGateway;
+    if (gateway == null) {
+      throw StateError(
+        'media generation is not available in this session — connect a '
+        'model in the Fa settings first',
+      );
+    }
+    return gateway;
   }
 
   /// Validates the `messages` argument of `llm.chat`/`llm.stream`:
