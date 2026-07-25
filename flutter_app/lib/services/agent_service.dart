@@ -240,10 +240,14 @@ class AgentService extends ChangeNotifier {
         model: () => _agent.state.model,
       ),
       askTool(callback: _answerAskQuestions),
-      // Read-only system-calendar access (macOS/iOS via the `fah/calendar`
-      // channel; the tool itself reports a clean note where unsupported).
-      if (calendarPlatformSupported)
+      // System-calendar access (macOS/iOS via the `fah/calendar` channel;
+      // the tools themselves report a clean note where unsupported).
+      if (calendarPlatformSupported) ...[
         calendarEventsTool(createCalendarService()),
+        calendarAddTool(createCalendarService()),
+        calendarUpdateTool(createCalendarService()),
+        calendarDeleteTool(createCalendarService()),
+      ],
     ]);
     _toolRegistry = registry;
     _agent = Agent(

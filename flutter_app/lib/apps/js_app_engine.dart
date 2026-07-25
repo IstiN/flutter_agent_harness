@@ -212,6 +212,9 @@ jsr.fa = {
   contacts: function(action, args) { return jsr.fa.call('contacts.' + action, args); },
   calendar: function(args) { return jsr.fa.call('calendar.events', args); },
 };
+jsr.fa.calendar.create = function(args) { return jsr.fa.call('calendar.create', args); };
+jsr.fa.calendar.update = function(args) { return jsr.fa.call('calendar.update', args); };
+jsr.fa.calendar.delete = function(args) { return jsr.fa.call('calendar.delete', args); };
 
 // Back-navigation contract: the host forwards route-back attempts (iOS edge
 // swipe, Android system back, app-bar arrow) as a reserved 'back' event. An
@@ -301,6 +304,18 @@ Object.defineProperty(jsr, 'onBack', {
         _resolve?.call(id, await _calendarEvents(args));
         return;
       }
+      if (method == 'calendar.create') {
+        _resolve?.call(id, await _calendarCreate(args));
+        return;
+      }
+      if (method == 'calendar.update') {
+        _resolve?.call(id, await _calendarUpdate(args));
+        return;
+      }
+      if (method == 'calendar.delete') {
+        _resolve?.call(id, await _calendarDelete(args));
+        return;
+      }
       // Back-navigation contract (see _faBootstrapJs): the app reports its
       // jsr.onBack registration, and asks the host to close when a back
       // event went unconsumed. Neither is permission-gated.
@@ -334,11 +349,105 @@ Object.defineProperty(jsr, 'onBack', {
     }
   }
 
-  /// `jsr.fa.calendar({date, days})` → `{events: [...]}` — read-only system
-  /// calendar access, gated on the `calendar` permission.
+  /// `jsr.fa.calendar({date, days})` → `{events: [...]}` — system calendar
+  /// access, gated on the `calendar` permission.
   Future<Map<String, Object?>> _calendarEvents(
     Map<String, Object?> args,
   ) async {
+    final api = await _gatedCalendar();
+    final range = calendarRange(
+      date: args['date']?.toString(),
+      days: (args['days'] as num?)?.toInt(),
+    );
+    final events = await api.events(start: range.start, end: range.end);
+    return {
+      'events': [
+        for (final event in events)
+          {
+            'id': event.id,
+            'title': event.title,
+            'startMs': event.start.millisecondsSinceEpoch,
+            'endMs': event.end.millisecondsSinceEpoch,
+            'allDay': event.allDay,
+            if (event.calendar != null) 'calendar': event.calendar,
+            if (event.location != null) 'location': event.location,
+            if (event.notes != null) 'notes': event.notes,
+          },
+      ],
+    };
+  }
+
+  /// `jsr.fa.calendar.create({title, date, startHour, endHour, allDay,
+  /// location, notes})` → `{id}` — same `calendar` permission gate.
+  Future<Map<String, Object?>> _calendarCreate(
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedCalendar();
+    final title = (args['title'] ?? '').toString().trim();
+    if (title.isEmpty) throw StateError('title is required');
+    final slot = calendarSlot(
+      date: args['date']?.toString(),
+      startHour: args['startHour'] as num?,
+      endHour: args['endHour'] as num?,
+      allDay: args['allDay'] == true,
+    );
+    final id = await api.createEvent(
+      title: title,
+      start: slot.start,
+      end: slot.end,
+      allDay: slot.allDay,
+      location: args['location']?.toString(),
+      notes: args['notes']?.toString(),
+    );
+    return {'id': id};
+  }
+
+  /// `jsr.fa.calendar.update({id, ...same fields})` → `{updated: true}`;
+  /// only the supplied fields change.
+  Future<Map<String, Object?>> _calendarUpdate(
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedCalendar();
+    final id = (args['id'] ?? '').toString();
+    if (id.isEmpty) throw StateError('id is required');
+    final hasSlot =
+        args.containsKey('startHour') ||
+        args.containsKey('endHour') ||
+        args.containsKey('allDay');
+    final slot = hasSlot
+        ? calendarSlot(
+            date: args['date']?.toString(),
+            startHour: args['startHour'] as num?,
+            endHour: args['endHour'] as num?,
+            allDay: args['allDay'] == true,
+          )
+        : null;
+    await api.updateEvent(
+      id: id,
+      title: args['title']?.toString(),
+      start: slot?.start,
+      end: slot?.end,
+      allDay: slot?.allDay,
+      location: args['location']?.toString(),
+      notes: args['notes']?.toString(),
+    );
+    return {'updated': true};
+  }
+
+  /// `jsr.fa.calendar.delete({id})` → `{deleted: true}`.
+  Future<Map<String, Object?>> _calendarDelete(
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedCalendar();
+    final id = (args['id'] ?? '').toString();
+    if (id.isEmpty) throw StateError('id is required');
+    await api.deleteEvent(id: id);
+    return {'deleted': true};
+  }
+
+  /// The permission gate every `jsr.fa.calendar*` bridge call shares:
+  /// the `calendar` permission, a platform backend, and OS access.
+  Future<CalendarApi> _gatedCalendar() async {
     if (!permissions.calendar) throw StateError(_denied('calendar'));
     final api = calendar ?? createCalendarService();
     if (!await api.isAvailable) {
@@ -350,25 +459,7 @@ Object.defineProperty(jsr, 'onBack', {
         'settings (Privacy & Security → Calendars)',
       );
     }
-    final range = calendarRange(
-      date: args['date']?.toString(),
-      days: (args['days'] as num?)?.toInt(),
-    );
-    final events = await api.events(start: range.start, end: range.end);
-    return {
-      'events': [
-        for (final event in events)
-          {
-            'title': event.title,
-            'startMs': event.start.millisecondsSinceEpoch,
-            'endMs': event.end.millisecondsSinceEpoch,
-            'allDay': event.allDay,
-            if (event.calendar != null) 'calendar': event.calendar,
-            if (event.location != null) 'location': event.location,
-            if (event.notes != null) 'notes': event.notes,
-          },
-      ],
-    };
+    return api;
   }
 
   String _denied(String what) =>

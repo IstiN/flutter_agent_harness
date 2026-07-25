@@ -94,7 +94,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `homekit` | ❌ | `true` to allow `jsr.fa.homekit` (default: false) |
 | `health` | ❌ | `true` to allow `jsr.fa.health` (default: false) |
 | `contacts` | ❌ | `true` to allow `jsr.fa.contacts` (default: false) |
-| `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — read-only system calendar access (default: false) |
+| `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — system calendar access (read + create/update/delete; default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
 
@@ -339,15 +339,33 @@ jsr.fa.llm('Summarize this text: ' + noteText).then(function(summary) {
 Use it for summarization, tagging, smart suggestions — anything that benefits from the user's connected model. Keep prompts self-contained (the call is stateless; there is no chat history).
 
 ### `jsr.fa.calendar(args)` → Promise
-Read-only access to the user's system calendar (macOS/iOS). Requires `"calendar": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS calendar-access prompt. `args` is optional: `{date: 'YYYY-MM-DD', days: N}` — defaults to today, 1 day (max 31).
+Access to the user's system calendar (macOS/iOS). Requires `"calendar": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS calendar-access prompt. `args` is optional: `{date: 'YYYY-MM-DD', days: N}` — defaults to today, 1 day (max 31).
 
 ```javascript
 jsr.fa.calendar({ date: '2026-07-25', days: 1 }).then(function(result) {
   if (result && result.__error) { jsr.showError(result.__error); return; }
-  // result.events: [{ title, startMs, endMs, allDay, calendar?, location?, notes? }]
+  // result.events: [{ id, title, startMs, endMs, allDay, calendar?, location?, notes? }]
   renderEvents(result.events);
 });
 ```
+
+**Write methods** (same `calendar` permission):
+
+```javascript
+// Create — returns { id }. Hours are local; endHour defaults to startHour + 1.
+jsr.fa.calendar.create({
+  title: 'Dentist', date: '2026-07-25', startHour: 14, endHour: 15,
+  // allDay: false, location: '…', notes: '…'
+}).then(function(result) { /* result.id or result.__error */ });
+
+// Update — only the supplied fields change; id comes from the events list.
+jsr.fa.calendar.update({ id: eventId, title: 'Dentist (moved)', startHour: 16 });
+
+// Delete — permanent; confirm with the user first.
+jsr.fa.calendar.delete({ id: eventId });
+```
+
+The Fa agent has matching tools (`calendar_add` / `calendar_update` / `calendar_delete`, plus read-only `calendar_events`), so users can also manage events by chatting — the write tools follow a list-then-confirm flow.
 
 ### `jsr.fa.homekit(action, args)` / `jsr.fa.health(action, args)` / `jsr.fa.contacts(action, args)` → Promise
 Platform bridges. Each requires its matching manifest permission (`homekit` / `health` / `contacts`). **These are currently stubs**: they resolve with an error message until implemented on the host. Do not build apps that depend on them without warning the user.
@@ -780,7 +798,7 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 | `stocks` | Stock Prices | Real-time stock quotes, textField + fetch | ✅ |
 | `yolo-hello` | Hello Animated | Interactive demo: bounce, gradient, gestures, RAF | ❌ |
 | `animation-showcase` | Animation Showcase | 7 animation demos: fade, morph, bounce, cards, drag, pulse, colors | ❌ |
-| `calendar` | Calendar | System calendar events via `jsr.fa.calendar`, day navigation + permission states | ❌ |
+| `calendar` | Calendar | System calendar events via `jsr.fa.calendar`, day navigation, add/edit/delete forms + permission states | ❌ |
 | `map` | Map | OSM `map` node: preset markers, tap-to-pin, zoom controls | ✅ |
 | `health` | Health | `jsr.fa.health` bridge status + demo metrics dashboard | ❌ |
 | `homekit` | Home | `jsr.fa.homekit` bridge status + demo device panel with local toggles | ❌ |

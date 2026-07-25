@@ -13,6 +13,9 @@ import 'package:flutter_test/flutter_test.dart';
 /// Fake [CalendarApi] for the `fa.calendar` bridge tests — the host-side
 /// tests never touch the real method channel.
 final class _FakeCalendarApi implements CalendarApi {
+  final created = <({String title, DateTime start, DateTime end})>[];
+  final deletedIds = <String>[];
+
   @override
   Future<bool> get isAvailable async => true;
 
@@ -25,6 +28,7 @@ final class _FakeCalendarApi implements CalendarApi {
     required DateTime end,
   }) async => [
     (
+      id: 'ev-standup',
       title: 'Standup',
       start: DateTime(2026, 7, 25, 10),
       end: DateTime(2026, 7, 25, 11),
@@ -34,6 +38,37 @@ final class _FakeCalendarApi implements CalendarApi {
       notes: null,
     ),
   ];
+
+  @override
+  Future<String> createEvent({
+    required String title,
+    required DateTime start,
+    required DateTime end,
+    bool allDay = false,
+    String? calendar,
+    String? location,
+    String? notes,
+  }) async {
+    created.add((title: title, start: start, end: end));
+    return 'fake-id-${created.length}';
+  }
+
+  @override
+  Future<void> updateEvent({
+    required String id,
+    String? title,
+    DateTime? start,
+    DateTime? end,
+    bool? allDay,
+    String? calendar,
+    String? location,
+    String? notes,
+  }) async {}
+
+  @override
+  Future<void> deleteEvent({required String id}) async {
+    deletedIds.add(id);
+  }
 }
 
 /// Smoke test for the real JS backend (flutter_js / JavaScriptCore on the
@@ -290,6 +325,86 @@ void main() {
         final result = jsonEncode(granted.exportedState?['result']);
         expect(result, contains('Standup'));
         expect(result, contains('Work'));
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.calendar write methods are gated by the permission', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.calendar.create({title: 'Dentist', date: '2026-07-25', startHour: 14, endHour: 15}).then(function(result) {
+    jsr.exportState({created: result});
+  }, function(error) {
+    jsr.exportState({created: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      // Without the permission the write calls answer with an error.
+      final deniedCalendar = _FakeCalendarApi();
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        calendar: deniedCalendar,
+      );
+      try {
+        await denied.start();
+        await Future<void>.delayed(settle);
+        expect(
+          jsonEncode(denied.exportedState?['created']),
+          contains('calendar permission'),
+        );
+        expect(deniedCalendar.created, isEmpty);
+        expect(deniedCalendar.deletedIds, isEmpty);
+      } finally {
+        await denied.dispose();
+      }
+    });
+  });
+
+  testWidgets('granted fa.calendar create/delete reach the CalendarApi', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.calendar.create({title: 'Dentist', date: '2026-07-25', startHour: 14, endHour: 15}).then(function(result) {
+    jsr.exportState({created: result});
+    jsr.fa.calendar.delete({id: 'ev-standup'}).then(function(deleteResult) {
+      jsr.exportState({created: result, deleted: deleteResult});
+    });
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final calendar = _FakeCalendarApi();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(calendar: true),
+        calendar: calendar,
+      );
+      try {
+        await granted.start();
+        await Future<void>.delayed(settle);
+        expect(calendar.created, hasLength(1));
+        expect(calendar.created.single.title, 'Dentist');
+        expect(calendar.created.single.start, DateTime(2026, 7, 25, 14));
+        expect(calendar.created.single.end, DateTime(2026, 7, 25, 15));
+        expect(calendar.deletedIds, ['ev-standup']);
+        final created = jsonEncode(granted.exportedState?['created']);
+        expect(created, contains('fake-id-1'));
+        expect(jsonEncode(granted.exportedState?['deleted']), contains('true'));
       } finally {
         await granted.dispose();
       }

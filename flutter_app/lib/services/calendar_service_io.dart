@@ -16,8 +16,7 @@ bool get calendarPlatformSupported => Platform.isMacOS || Platform.isIOS;
 /// Creates the method-channel-backed [CalendarApi] (IO platforms).
 CalendarApi createCalendarService() => const MethodChannelCalendarApi();
 
-/// [CalendarApi] over the `fah/calendar` method channel. Read-only: the
-/// native side only ever queries EventKit, it never writes.
+/// [CalendarApi] over the `fah/calendar` method channel.
 final class MethodChannelCalendarApi implements CalendarApi {
   const MethodChannelCalendarApi();
 
@@ -67,6 +66,7 @@ final class MethodChannelCalendarApi implements CalendarApi {
     }
 
     return (
+      id: textOf('id') ?? '',
       title: textOf('title') ?? '(no title)',
       start: DateTime.fromMillisecondsSinceEpoch(msOf('startMs')),
       end: DateTime.fromMillisecondsSinceEpoch(msOf('endMs')),
@@ -76,4 +76,76 @@ final class MethodChannelCalendarApi implements CalendarApi {
       notes: textOf('notes'),
     );
   }
+
+  @override
+  Future<String> createEvent({
+    required String title,
+    required DateTime start,
+    required DateTime end,
+    bool allDay = false,
+    String? calendar,
+    String? location,
+    String? notes,
+  }) async {
+    _ensureSupported();
+    try {
+      final id = await _channel.invokeMethod<String>('createEvent', {
+        'title': title,
+        'startMs': start.millisecondsSinceEpoch,
+        'endMs': end.millisecondsSinceEpoch,
+        'allDay': allDay,
+        'calendar': ?calendar,
+        'location': ?location,
+        'notes': ?notes,
+      });
+      return id ?? '';
+    } on MissingPluginException {
+      throw _unsupported();
+    }
+  }
+
+  @override
+  Future<void> updateEvent({
+    required String id,
+    String? title,
+    DateTime? start,
+    DateTime? end,
+    bool? allDay,
+    String? calendar,
+    String? location,
+    String? notes,
+  }) async {
+    _ensureSupported();
+    try {
+      await _channel.invokeMethod<void>('updateEvent', {
+        'id': id,
+        'title': ?title,
+        if (start != null) 'startMs': start.millisecondsSinceEpoch,
+        if (end != null) 'endMs': end.millisecondsSinceEpoch,
+        'allDay': ?allDay,
+        'calendar': ?calendar,
+        'location': ?location,
+        'notes': ?notes,
+      });
+    } on MissingPluginException {
+      throw _unsupported();
+    }
+  }
+
+  @override
+  Future<void> deleteEvent({required String id}) async {
+    _ensureSupported();
+    try {
+      await _channel.invokeMethod<void>('deleteEvent', {'id': id});
+    } on MissingPluginException {
+      throw _unsupported();
+    }
+  }
+
+  static void _ensureSupported() {
+    if (!calendarPlatformSupported) throw _unsupported();
+  }
+
+  static StateError _unsupported() =>
+      StateError('The system calendar is not supported on this platform.');
 }

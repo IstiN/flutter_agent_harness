@@ -14,6 +14,9 @@ import 'package:flutter_test/flutter_test.dart';
 /// Fake [CalendarApi] so the calendar demo's bridge call resolves without
 /// touching the real platform channel.
 final class _FakeCalendarApi implements CalendarApi {
+  final created = <({String title, DateTime start, DateTime end})>[];
+  final deletedIds = <String>[];
+
   @override
   Future<bool> get isAvailable async => true;
 
@@ -26,6 +29,7 @@ final class _FakeCalendarApi implements CalendarApi {
     required DateTime end,
   }) async => [
     (
+      id: 'ev-standup',
       title: 'Standup',
       start: DateTime(start.year, start.month, start.day, 10),
       end: DateTime(start.year, start.month, start.day, 11),
@@ -35,6 +39,7 @@ final class _FakeCalendarApi implements CalendarApi {
       notes: null,
     ),
     (
+      id: 'ev-lunch',
       title: 'Lunch with Alex',
       start: DateTime(start.year, start.month, start.day, 13),
       end: DateTime(start.year, start.month, start.day, 14),
@@ -44,6 +49,37 @@ final class _FakeCalendarApi implements CalendarApi {
       notes: null,
     ),
   ];
+
+  @override
+  Future<String> createEvent({
+    required String title,
+    required DateTime start,
+    required DateTime end,
+    bool allDay = false,
+    String? calendar,
+    String? location,
+    String? notes,
+  }) async {
+    created.add((title: title, start: start, end: end));
+    return 'fake-id-${created.length}';
+  }
+
+  @override
+  Future<void> updateEvent({
+    required String id,
+    String? title,
+    DateTime? start,
+    DateTime? end,
+    bool? allDay,
+    String? calendar,
+    String? location,
+    String? notes,
+  }) async {}
+
+  @override
+  Future<void> deleteEvent({required String id}) async {
+    deletedIds.add(id);
+  }
 }
 
 /// Smoke tests for the bundled demo apps under `assets/apps/`:
@@ -139,6 +175,79 @@ void main() {
           await Future<void>.delayed(settle);
           expect(engine.exportedState?['loading'], isFalse);
           expect(engine.exportedState?['eventCount'], 2);
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('calendar add form creates an event through the bridge', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final calendar = _FakeCalendarApi();
+        final env = await envWithApp('calendar');
+        final engine = JsAppEngine(
+          app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
+          env: env,
+          permissions: const AppPermissions(calendar: true),
+          calendar: calendar,
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          // Open the add form, fill it, save.
+          await engine.callEvent('add_open');
+          await Future<void>.delayed(settle);
+          expect(engine.exportedState?['form'], 'add');
+          await engine.callEvent('form_title', {'value': 'Dentist'});
+          await engine.callEvent('form_start', {'value': '16'});
+          await engine.callEvent('form_end', {'value': '17'});
+          await engine.callEvent('form_save');
+          await Future<void>.delayed(settle);
+
+          expect(calendar.created, hasLength(1));
+          expect(calendar.created.single.title, 'Dentist');
+          expect(calendar.created.single.start.hour, 16);
+          expect(calendar.created.single.end.hour, 17);
+          // The form closed and the day reloaded.
+          expect(engine.exportedState?['form'], isNull);
+          expect(engine.exportedState?['notice'], 'Event added.');
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('calendar event tap opens edit, delete removes the event', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final calendar = _FakeCalendarApi();
+        final env = await envWithApp('calendar');
+        final engine = JsAppEngine(
+          app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
+          env: env,
+          permissions: const AppPermissions(calendar: true),
+          calendar: calendar,
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          // Tapping the first event row opens the edit form for it.
+          await engine.callEvent('event_0');
+          await Future<void>.delayed(settle);
+          expect(engine.exportedState?['form'], 'edit');
+          expect(jsonEncode(engine.tree.value), contains('Edit event'));
+
+          // The delete action goes through the bridge with the event id.
+          await engine.callEvent('form_delete');
+          await Future<void>.delayed(settle);
+          expect(calendar.deletedIds, ['ev-standup']);
+          expect(engine.exportedState?['form'], isNull);
+          expect(engine.exportedState?['notice'], 'Event deleted.');
         } finally {
           await engine.dispose();
         }

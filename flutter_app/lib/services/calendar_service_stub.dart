@@ -27,4 +27,36 @@ final class _UnavailableCalendarApi implements CalendarApi {
     required DateTime start,
     required DateTime end,
   }) async => const [];
+
+  @override
+  Future<String> createEvent({
+    required String title,
+    required DateTime start,
+    required DateTime end,
+    bool allDay = false,
+    String? calendar,
+    String? location,
+    String? notes,
+  }) => throw StateError(
+    'The system calendar is not supported on this platform.',
+  );
+
+  @override
+  Future<void> updateEvent({
+    required String id,
+    String? title,
+    DateTime? start,
+    DateTime? end,
+    bool? allDay,
+    String? calendar,
+    String? location,
+    String? notes,
+  }) => throw StateError(
+    'The system calendar is not supported on this platform.',
+  );
+
+  @override
+  Future<void> deleteEvent({required String id}) => throw StateError(
+    'The system calendar is not supported on this platform.',
+  );
 }
