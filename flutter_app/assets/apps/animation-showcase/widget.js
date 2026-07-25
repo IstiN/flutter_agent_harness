@@ -373,6 +373,17 @@
   }
 
   jsr.onEvent(handleEvent);
+  // Back contract: in the List → Card scene, back from a card returns to
+  // the list instead of closing the app. Anything else declines (return
+  // false) and the host closes the app.
+  jsr.onBack = function() {
+    if (currentScene === 'listcard' && lcSelected) {
+      lcSelected = null;
+      renderListCard();
+      return true;
+    }
+    return false;
+  };
   jsr.setTitle('🎬 Animation Showcase');
   renderMenu();
 })();

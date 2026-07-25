@@ -38,6 +38,16 @@
 	<string>Fa reads your calendar so the agent can answer questions about your schedule.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Fa reads your calendar so the agent can answer questions about your schedule.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Fa accesses your contacts only when you ask the agent or an app to look someone up.</string>
+	<key>NSHomeKitUsageDescription</key>
+	<string>Fa accesses your HomeKit accessories only when you ask the agent or an app to control them.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Fa reads health data you choose to share so the agent can answer questions about it.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Fa saves health data only when you ask it to log something.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Fa uses the microphone only when you use voice input.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>

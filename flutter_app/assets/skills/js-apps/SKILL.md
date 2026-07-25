@@ -162,6 +162,31 @@ jsr.onEvent(function(actionId, payload) {
 `actionId` — string you put in `onTap`, `onPressed`, `onSubmit`, `onChange`
 `payload` — optional object with extra data (e.g. `{ value: 'text typed' }`)
 
+### `jsr.onBack` — Back Navigation Contract
+Register a handler for the host's back gesture (iOS edge swipe, Android
+system back, the app-bar back arrow). Return `true` to consume it for
+in-app navigation (e.g. card → list); return anything else — or never
+register it — and the host closes the app.
+
+```javascript
+jsr.onBack = function() {
+  if (scene === 'detail') {
+    scene = 'list';
+    renderList();
+    return true;   // consumed — the app stays open
+  }
+  return false;    // declined — the host pops the route
+};
+```
+
+While a handler is registered the native swipe-to-go-back is disabled and
+the route never pops on its own — every back attempt (system back button,
+app-bar arrow) reaches `jsr.onBack` first, so make sure your UI offers its
+own back affordance for internal navigation. Requires `jsr.onEvent` (the
+back event rides the same dispatch); `back` is a reserved actionId and
+never reaches your `jsr.onEvent` handler. Clear it with `jsr.onBack = null`
+to hand back control to the host.
+
 ### `jsr.fetchJson(url, opts)` → Promise
 HTTP fetch via Dart (bypasses CORS, uses native networking). Requires `"network": true` in manifest.json.
 

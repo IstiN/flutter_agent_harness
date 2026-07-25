@@ -361,6 +361,30 @@ void main() {
               'list',
             );
             expect(nodesOfType(tree, 'entrance'), hasLength(7));
+
+            // The app registered the jsr.onBack contract at boot.
+            expect(engine.backHandlerRegistered.value, isTrue);
+
+            // Back on a card: consumed — returns to the list, no close.
+            var closeRequests = 0;
+            engine.onCloseRequested = () => closeRequests++;
+            await engine.callEvent('lc_open_saturn');
+            await Future<void>.delayed(settle);
+            await engine.callEvent('back');
+            await Future<void>.delayed(settle);
+            expect(
+              nodesOfType(
+                engine.tree.value,
+                'animatedSwitcher',
+              ).single['switchKey'],
+              'list',
+            );
+            expect(closeRequests, 0);
+
+            // Back on the list: declined — the host is asked to close.
+            await engine.callEvent('back');
+            await Future<void>.delayed(settle);
+            expect(closeRequests, 1);
           } finally {
             await engine.dispose();
           }

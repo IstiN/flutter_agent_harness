@@ -116,6 +116,10 @@ class _JsAppViewState extends State<JsAppView> {
   /// change detection in [didChangeDependencies]).
   String? _themeJson;
 
+  /// Fallback for the PopScope's registration listenable while no engine
+  /// is running: no `jsr.onBack`, so the route may pop natively.
+  static final ValueNotifier<bool> _noBackHandler = ValueNotifier(false);
+
   @override
   void initState() {
     super.initState();
@@ -202,6 +206,7 @@ class _JsAppViewState extends State<JsAppView> {
         platformHandler: widget.platformHandler,
         initialTheme: initialTheme,
       );
+      engine.onCloseRequested = _closeFromJs;
       await engine.start();
       if (!mounted) {
         await engine.dispose();
@@ -315,101 +320,138 @@ class _JsAppViewState extends State<JsAppView> {
     if (changed == true) await _restart();
   }
 
+  /// A back attempt (system back, edge swipe, app-bar arrow) while the app
+  /// has a `jsr.onBack` handler: forward it to JS as the reserved 'back'
+  /// event. The app may consume it for internal navigation; otherwise the
+  /// bootstrap bridges `back.close` back to us and [_closeFromJs] pops.
+  void _forwardBackToApp() {
+    final engine = _engine;
+    if (engine == null) {
+      Navigator.of(context).pop();
+      return;
+    }
+    unawaited(engine.callEvent('back'));
+  }
+
+  /// The JS app declined to consume a back event — close the app. Uses
+  /// [Navigator.pop], not maybePop: with canPop false maybePop would just
+  /// re-enter the back flow it came from.
+  void _closeFromJs() {
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final fullChrome = widget.app.isFullChrome;
-    return Scaffold(
-      appBar: fullChrome
-          ? null
-          : AppBar(
-              title: Row(
-                children: [
-                  AppIcon(app: widget.app, env: widget.env, size: 24),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      widget.app.name,
-                      overflow: TextOverflow.ellipsis,
+    // With a jsr.onBack handler registered the app owns back navigation:
+    // the native pop (iOS edge swipe, system back) is vetoed and the
+    // attempt forwards to JS instead. Without one the route pops natively.
+    return ValueListenableBuilder<bool>(
+      valueListenable: _engine?.backHandlerRegistered ?? _noBackHandler,
+      builder: (context, backRegistered, _) {
+        return PopScope(
+          canPop: !backRegistered,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) _forwardBackToApp();
+          },
+          child: Scaffold(
+            appBar: fullChrome
+                ? null
+                : AppBar(
+                    title: Row(
+                      children: [
+                        AppIcon(app: widget.app, env: widget.env, size: 24),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            widget.app.name,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      IconButton(
+                        icon: const Icon(Icons.shield_outlined),
+                        tooltip: context.l10n.appsPermissionsTooltip,
+                        onPressed: _openPermissions,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.refresh),
+                        tooltip: context.l10n.appsReloadTooltip,
+                        onPressed: _restart,
+                      ),
+                    ],
+                  ),
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    key: _boundaryKey,
+                    child: ColoredBox(
+                      color: theme.scaffoldBackgroundColor,
+                      child: _buildBody(theme),
                     ),
                   ),
+                ),
+                // Full chrome has no AppBar — permissions/reload live in a small
+                // floating menu so immersive apps (maps) keep the whole canvas.
+                if (fullChrome)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: _chromeMenu(theme),
+                      ),
+                    ),
+                  ),
+                if (widget.onSendToAgent != null) ...[
+                  Positioned(
+                    right: 16,
+                    bottom: 16,
+                    child: FloatingActionButton.small(
+                      heroTag: 'fa-${widget.app.id}',
+                      tooltip: context.l10n.appsAskFaTooltip,
+                      onPressed: _openFaSheet,
+                      child: const FaMark(size: 18),
+                    ),
+                  ),
+                  if (widget.agentService != null) ...[
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: FaWorkBar(
+                        service: widget.agentService!,
+                        onSend: _sendFaMessage,
+                        // Expand-to-chat always leaves the app (an explicit tap,
+                        // not a back gesture) — pop directly, bypassing canPop.
+                        onExpand: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                    if (_faReply != null)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: FaReplySheet(
+                          service: widget.agentService!,
+                          reply: _faReply!,
+                          onExpand: () => Navigator.of(context).pop(),
+                          onDismiss: _dismissFaReply,
+                        ),
+                      ),
+                  ],
                 ],
-              ),
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.shield_outlined),
-                  tooltip: context.l10n.appsPermissionsTooltip,
-                  onPressed: _openPermissions,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: context.l10n.appsReloadTooltip,
-                  onPressed: _restart,
-                ),
               ],
             ),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: RepaintBoundary(
-              key: _boundaryKey,
-              child: ColoredBox(
-                color: theme.scaffoldBackgroundColor,
-                child: _buildBody(theme),
-              ),
-            ),
           ),
-          // Full chrome has no AppBar — permissions/reload live in a small
-          // floating menu so immersive apps (maps) keep the whole canvas.
-          if (fullChrome)
-            Positioned(
-              top: 0,
-              right: 0,
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: _chromeMenu(theme),
-                ),
-              ),
-            ),
-          if (widget.onSendToAgent != null) ...[
-            Positioned(
-              right: 16,
-              bottom: 16,
-              child: FloatingActionButton.small(
-                heroTag: 'fa-${widget.app.id}',
-                tooltip: context.l10n.appsAskFaTooltip,
-                onPressed: _openFaSheet,
-                child: const FaMark(size: 18),
-              ),
-            ),
-            if (widget.agentService != null) ...[
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: FaWorkBar(
-                  service: widget.agentService!,
-                  onSend: _sendFaMessage,
-                  onExpand: () => Navigator.of(context).maybePop(),
-                ),
-              ),
-              if (_faReply != null)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: FaReplySheet(
-                    service: widget.agentService!,
-                    reply: _faReply!,
-                    onExpand: () => Navigator.of(context).maybePop(),
-                    onDismiss: _dismissFaReply,
-                  ),
-                ),
-            ],
-          ],
-        ],
-      ),
+        );
+      },
     );
   }
 

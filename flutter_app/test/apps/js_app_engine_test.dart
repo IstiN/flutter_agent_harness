@@ -98,6 +98,92 @@ void main() {
     });
   });
 
+  testWidgets('back bridge: registration push, consume, and close', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  var backs = 0;
+  jsr.onEvent(function(actionId, payload) {
+    // 'back' is reserved: it must NOT reach the app handler.
+    if (actionId === 'back') jsr.exportState({leaked: true});
+  });
+  jsr.onBack = function() {
+    backs++;
+    jsr.exportState({backs: backs});
+    return backs < 2; // consume the first back, decline the second
+  };
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+      );
+      try {
+        var closeRequests = 0;
+        engine.onCloseRequested = () => closeRequests++;
+        await engine.start();
+
+        // The bootstrap pushes the jsr.onBack registration to the host.
+        for (var i = 0; i < 20 && !engine.backHandlerRegistered.value; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(engine.backHandlerRegistered.value, isTrue);
+
+        // First back: the app consumes it — no close request.
+        await engine.callEvent('back');
+        await Future<void>.delayed(settle);
+        expect(engine.exportedState?['backs'], 1);
+        expect(engine.exportedState?['leaked'], isNull);
+        expect(closeRequests, 0);
+
+        // Second back: the app declines — the host is asked to close.
+        await engine.callEvent('back');
+        await Future<void>.delayed(settle);
+        expect(engine.exportedState?['backs'], 2);
+        expect(closeRequests, 1);
+      } finally {
+        await engine.dispose();
+      }
+    });
+  });
+
+  testWidgets('back without a jsr.onBack handler asks the host to close', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.onEvent(function(actionId, payload) {});
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+      );
+      try {
+        var closeRequests = 0;
+        engine.onCloseRequested = () => closeRequests++;
+        await engine.start();
+        await Future<void>.delayed(settle);
+        expect(engine.backHandlerRegistered.value, isFalse);
+
+        await engine.callEvent('back');
+        await Future<void>.delayed(settle);
+        expect(closeRequests, 1);
+      } finally {
+        await engine.dispose();
+      }
+    });
+  });
+
   testWidgets('fa.llm is gated by the llm permission', (tester) async {
     await tester.runAsync(() async {
       final env = MemoryExecutionEnv();

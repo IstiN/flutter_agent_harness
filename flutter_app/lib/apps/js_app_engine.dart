@@ -64,6 +64,16 @@ class JsAppEngine {
   final ValueNotifier<Map<String, dynamic>?> tree =
       ValueNotifier<Map<String, dynamic>?>(null);
 
+  /// Whether the running app registered a `jsr.onBack` handler — pushed by
+  /// the bootstrap (`back.handler` bridge) every time the app assigns it.
+  /// The view uses it for PopScope.canPop: with a handler, back gestures
+  /// forward to JS first; without one the route pops natively.
+  final ValueNotifier<bool> backHandlerRegistered = ValueNotifier(false);
+
+  /// Called when the app declines to consume a back event (`back.close`
+  /// bridge) — the host should pop the app route. Set by the view.
+  void Function()? onCloseRequested;
+
   JsWidgetEngine? _engine;
   JsResolveCallback? _resolve;
 
@@ -75,6 +85,7 @@ class JsAppEngine {
     final old = _engine;
     _engine = null;
     if (old != null) await old.dispose();
+    backHandlerRegistered.value = false;
 
     final js = (await env.readTextFile(app.widgetPath)).getOrThrow();
     final storage = await _readStorage();
@@ -117,6 +128,7 @@ class JsAppEngine {
     _engine = null;
     if (engine != null) await engine.dispose();
     tree.dispose();
+    backHandlerRegistered.dispose();
   }
 
   // --- storage persistence -------------------------------------------------
@@ -200,6 +212,37 @@ jsr.fa = {
   contacts: function(action, args) { return jsr.fa.call('contacts.' + action, args); },
   calendar: function(args) { return jsr.fa.call('calendar.events', args); },
 };
+
+// Back-navigation contract: the host forwards route-back attempts (iOS edge
+// swipe, Android system back, app-bar arrow) as a reserved 'back' event. An
+// app that assigned jsr.onBack may consume it (return true) for internal
+// navigation; anything else lets the host close the app.
+jsr._onBackFn = null;
+Object.defineProperty(jsr, 'onBack', {
+  configurable: true,
+  get: function() { return jsr._onBackFn; },
+  set: function(fn) {
+    jsr._onBackFn = (typeof fn === 'function') ? fn : null;
+    jsr.fa.call('back.handler', {registered: jsr._onBackFn !== null});
+  },
+});
+(function() {
+  var baseOnEvent = jsr.onEvent;
+  jsr.onEvent = function(fn) {
+    baseOnEvent(function(actionId, payload) {
+      if (actionId === 'back') {
+        var consumed = false;
+        if (jsr._onBackFn !== null) {
+          try { consumed = jsr._onBackFn() === true; }
+          catch (e) { console.error('jsr.onBack: ' + e); }
+        }
+        if (!consumed) jsr.fa.call('back.close');
+        return;
+      }
+      fn(actionId, payload);
+    });
+  };
+})();
 ''';
 
   Future<void> _exec(String id, String cmd) async {
@@ -256,6 +299,19 @@ jsr.fa = {
       }
       if (method == 'calendar.events') {
         _resolve?.call(id, await _calendarEvents(args));
+        return;
+      }
+      // Back-navigation contract (see _faBootstrapJs): the app reports its
+      // jsr.onBack registration, and asks the host to close when a back
+      // event went unconsumed. Neither is permission-gated.
+      if (method == 'back.handler') {
+        backHandlerRegistered.value = args['registered'] == true;
+        _resolve?.call(id, true);
+        return;
+      }
+      if (method == 'back.close') {
+        onCloseRequested?.call();
+        _resolve?.call(id, true);
         return;
       }
       final prefix = method.split('.').first;
