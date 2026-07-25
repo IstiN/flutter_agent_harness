@@ -92,7 +92,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `allowedCommands` | ❌ | Array of shell commands allowed via `jsr.exec` (default: none) |
 | `llm` | ❌ | `true` to allow `jsr.fa.llm` / `jsr.fa.llm.chat` / `jsr.fa.llm.stream` (default: false) |
 | `homekit` | ❌ | `true` to allow `jsr.fa.homekit` (default: false) |
-| `health` | ❌ | `true` to allow `jsr.fa.health` (default: false) |
+| `health` | ❌ | `true` to allow `jsr.fa.health.summary` — read-only HealthKit data (iOS; default: false) |
 | `contacts` | ❌ | `true` to allow `jsr.fa.contacts.*` — system contacts access (search + create/update/delete + call/sms; default: false) |
 | `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — system calendar access (read + create/update/delete; default: false) |
 
@@ -441,8 +441,23 @@ jsr.fa.contacts.sms({ phone: '+1 555 0100', text: 'Running late, sorry!' });
 
 The Fa agent has matching tools (`contacts_search`, plus write-tier `contacts_add` / `contacts_call` / `contacts_sms`), so users can also reach their contacts by chatting — the call/SMS tools follow a search-then-confirm flow.
 
-### `jsr.fa.homekit(action, args)` / `jsr.fa.health(action, args)` → Promise
-Platform bridges. Each requires its matching manifest permission (`homekit` / `health`). **These are currently stubs**: they resolve with an error message until implemented on the host. Do not build apps that depend on them without warning the user.
+### `jsr.fa.health.summary(args)` → Promise
+Read-only health data (iOS HealthKit — there is no HealthKit on macOS). Requires `"health": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS health-access prompt. `args` is optional: `{days: 7}` — how many days back to summarize (1–31, default 7).
+
+```javascript
+jsr.fa.health.summary({ days: 7 }).then(function(result) {
+  if (result && result.__error) { jsr.showError(result.__error); return; }
+  // result.steps:            [{ date: '2026-07-25', value: 8432 }, ...]
+  // result.restingHeartRate: [{ date, value }] — daily bpm averages
+  // result.sleepHours:       [{ date, value }] — night attributed to its morning
+  renderDashboard(result);
+});
+```
+
+Days without data are omitted from each series. The Fa agent has a matching read-tier tool (`health_summary`), so users can also ask about their health data by chatting.
+
+### `jsr.fa.homekit(action, args)` → Promise
+Platform bridge. Requires the `homekit` manifest permission. **This is currently a stub**: it resolves with an error message until implemented on the host. Do not build apps that depend on it without warning the user. (Other `jsr.fa.health(action, …)` actions beyond `health.summary` are stubs the same way.)
 
 **Error convention**: bridge failures (permission denied, not implemented, platform error) come back as an object with an `__error` field — the same convention as `jsr.fetchJson`. Always check `result.__error` before using a result:
 
@@ -875,7 +890,7 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 | `calendar` | Calendar | System calendar events via `jsr.fa.calendar`, day navigation, add/edit/delete forms + permission states | ❌ |
 | `contacts` | Contacts | System contacts via `jsr.fa.contacts.*`, search, detail card with call/SMS, add form + permission states | ❌ |
 | `map` | Map | OSM `map` node: preset markers, tap-to-pin, zoom controls | ✅ |
-| `health` | Health | `jsr.fa.health` bridge status + demo metrics dashboard | ❌ |
+| `health` | Health | HealthKit dashboard via `jsr.fa.health.summary` (steps/HR/sleep cards + charts), demo fallback | ❌ |
 | `homekit` | Home | `jsr.fa.homekit` bridge status + demo device panel with local toggles | ❌ |
 
 **Tip**: Before building a new app, always read the source of the most similar demo — especially for network fetch, storage, and theming patterns.

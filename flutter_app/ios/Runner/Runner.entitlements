@@ -9,5 +9,9 @@
 	<true/>
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
+	<!-- fah/health channel: read-only HealthKit access (steps, resting
+	     heart rate, sleep) for the health_summary tool + JS bridge. -->
+	<key>com.apple.developer.healthkit</key>
+	<true/>
 </dict>
 </plist>

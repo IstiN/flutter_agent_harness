@@ -12,6 +12,8 @@ import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/calendar_tool.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/contact_tool.dart';
+import 'package:fa/services/health_service.dart';
+import 'package:fa/services/health_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -258,6 +260,11 @@ class AgentService extends ChangeNotifier {
         contactsAddTool(createContactService()),
         contactsCallTool(createContactService()),
         contactsSmsTool(createContactService()),
+      ],
+      // Health data (iOS-only HealthKit via the `fah/health` channel; the
+      // tool itself reports a clean note where unsupported).
+      if (healthPlatformSupported) ...[
+        healthSummaryTool(createHealthService()),
       ],
     ]);
     _toolRegistry = registry;

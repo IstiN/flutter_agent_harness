@@ -13,6 +13,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
+import 'package:fa/services/health_service.dart';
 
 /// One chat message for the `jsr.fa.llm.chat/stream` bridge calls; [role] is
 /// `user`, `assistant`, or `system`.
@@ -27,8 +28,9 @@ typedef FaLlmHandler =
       void Function(String delta)? onDelta,
     });
 
-/// Handler for platform bridges (`homekit`, `health`). Receives
-/// the action name (`homekit.read`, `health.stepsToday`, …) and args.
+/// Handler for platform bridges still without a real backend (`homekit`,
+/// health actions other than `health.summary`). Receives the action name
+/// (`homekit.read`, `health.stepsToday`, …) and args.
 typedef FaPlatformHandler =
     Future<Object?> Function(String action, Map<String, Object?> args);
 
@@ -45,8 +47,11 @@ typedef FaPlatformHandler =
 ///   [CalendarApi]; requests OS access on first use)
 /// - `jsr.fa.contacts.*` → [AppPermissions.contacts] (real backend via
 ///   [ContactApi]; requests OS access on first use)
-/// - `jsr.fa.homekit/health` → the matching flag (stubbed until the
-///   platform implementations land — a granted call answers "not available").
+/// - `jsr.fa.health.summary` → [AppPermissions.health] (real backend via
+///   [HealthApi], iOS HealthKit; requests OS access on first use)
+/// - `jsr.fa.homekit` and other health actions → the matching flag (stubbed
+///   until the platform implementations land — a granted call answers "not
+///   available").
 class JsAppEngine {
   JsAppEngine({
     required this.app,
@@ -56,6 +61,7 @@ class JsAppEngine {
     this.platformHandler,
     this.calendar,
     this.contacts,
+    this.health,
     this.initialTheme = const {},
     void Function(String line)? onLog,
   }) : _onLog = onLog;
@@ -77,6 +83,10 @@ class JsAppEngine {
   /// Contacts backend for `jsr.fa.contacts.*`; `null` uses the platform
   /// service ([createContactService] — a never-available stub on web).
   final ContactApi? contacts;
+
+  /// Health backend for `jsr.fa.health.summary`; `null` uses the platform
+  /// service ([createHealthService] — a never-available stub on web).
+  final HealthApi? health;
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -240,6 +250,7 @@ jsr.fa.contacts.update = function(args) { return jsr.fa.call('contacts.update', 
 jsr.fa.contacts.delete = function(args) { return jsr.fa.call('contacts.delete', args); };
 jsr.fa.contacts.call = function(args) { return jsr.fa.call('contacts.call', args); };
 jsr.fa.contacts.sms = function(args) { return jsr.fa.call('contacts.sms', args); };
+jsr.fa.health.summary = function(args) { return jsr.fa.call('health.summary', args); };
 
 // Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
 // a function reference, so the host pushes reserved 'llm.delta' events (see
@@ -427,6 +438,10 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'contacts.sms') {
         _resolve?.call(id, await _contactsSms(args));
+        return;
+      }
+      if (method == 'health.summary') {
+        _resolve?.call(id, await _healthSummary(args));
         return;
       }
       // Back-navigation contract (see _faBootstrapJs): the app reports its
@@ -721,6 +736,40 @@ Object.defineProperty(jsr, 'onBack', {
       throw StateError(
         'contacts access was denied — enable it in the system privacy '
         'settings (Privacy & Security → Contacts)',
+      );
+    }
+    return api;
+  }
+
+  /// `jsr.fa.health.summary({days?})` → `{steps, restingHeartRate,
+  /// sleepHours}` (each a list of {date, value} day entries) — read-only
+  /// health data, gated on the `health` permission.
+  Future<Map<String, Object?>> _healthSummary(Map<String, Object?> args) async {
+    final api = await _gatedHealth();
+    final summary = await api.summary(days: healthDays(args['days'] as num?));
+    List<Map<String, Object?>> entries(List<HealthSample> samples) => [
+      for (final sample in samples)
+        {'date': sample.date, 'value': sample.value},
+    ];
+    return {
+      'steps': entries(summary.steps),
+      'restingHeartRate': entries(summary.restingHeartRate),
+      'sleepHours': entries(summary.sleepHours),
+    };
+  }
+
+  /// The permission gate every `jsr.fa.health.*` bridge call shares:
+  /// the `health` permission, a platform backend, and OS access.
+  Future<HealthApi> _gatedHealth() async {
+    if (!permissions.health) throw StateError(_denied('health'));
+    final api = health ?? createHealthService();
+    if (!await api.isAvailable) {
+      throw StateError('health data is not available on this platform');
+    }
+    if (!await api.requestAccess()) {
+      throw StateError(
+        'health access was denied — enable it in the Health app '
+        '(profile picture → Apps → Fa)',
       );
     }
     return api;

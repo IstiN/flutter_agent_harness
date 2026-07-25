@@ -14,6 +14,7 @@ class MainFlutterWindow: NSWindow {
     registerProjectFolderChannel(registry: flutterViewController)
     registerCalendarChannel(registry: flutterViewController)
     registerContactsChannel(registry: flutterViewController)
+    registerHealthChannel(registry: flutterViewController)
     registerKeychainChannel(registry: flutterViewController)
 
     super.awakeFromNib()
@@ -638,4 +639,32 @@ private func contactsDelete(args: [String: Any]) -> Any {
 private func contactsOpenUrl(_ urlString: String) -> Bool {
   guard let url = URL(string: urlString) else { return false }
   return NSWorkspace.shared.open(url)
+}
+
+/// The `fah/health` method channel: HealthKit does not exist on macOS, so
+/// the channel is registered but honestly reports every call as
+/// unsupported. The Dart side (`healthPlatformSupported`) already gates
+/// health to iOS and never gets here in practice.
+private func registerHealthChannel(registry: FlutterPluginRegistry) {
+  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+  let channel = FlutterMethodChannel(
+    name: "fah/health",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "isAvailable", "requestAccess":
+      result(false)
+    case "summary":
+      result(
+        FlutterError(
+          code: "unsupported",
+          message: "HealthKit is not available on macOS",
+          details: nil,
+        ),
+      )
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
 }

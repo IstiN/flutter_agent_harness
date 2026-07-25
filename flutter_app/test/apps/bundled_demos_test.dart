@@ -9,6 +9,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
+import 'package:fa/services/health_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -147,6 +148,32 @@ final class _FakeContactApi implements ContactApi {
     openedUrls.add(url);
     return true;
   }
+}
+
+/// Fake [HealthApi] so the health demo's bridge call resolves with real
+/// data without touching the real platform channel.
+final class _FakeHealthApi implements HealthApi {
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<HealthSummary> summary({required int days}) async => (
+    steps: const [
+      (date: '2026-07-24', value: 10234.0),
+      (date: '2026-07-25', value: 12345.0),
+    ],
+    restingHeartRate: const [
+      (date: '2026-07-24', value: 61.0),
+      (date: '2026-07-25', value: 58.0),
+    ],
+    sleepHours: const [
+      (date: '2026-07-24', value: 6.8),
+      (date: '2026-07-25', value: 7.5),
+    ],
+  );
 }
 
 /// Smoke tests for the bundled demo apps under `assets/apps/`:
@@ -528,6 +555,44 @@ void main() {
           expect(tree, contains('"chart"'));
           expect(tree, contains('"data":[3.2,5.1,4,6.8,5.5,7.9,8.4]'));
           expect(tree, contains('"chartType":"bar"')); // water card
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('health renders real data when the bridge provides it', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = await envWithApp('health');
+        final engine = JsAppEngine(
+          app: app('health', const {'id': 'health', 'name': 'Health'}),
+          env: env,
+          permissions: const AppPermissions(health: true),
+          health: _FakeHealthApi(),
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          expect(engine.exportedState?['loading'], isFalse);
+          expect(engine.exportedState?['bridgeAvailable'], isTrue);
+          expect(engine.exportedState?['bridgeError'], isNull);
+          expect(engine.exportedState?['demoData'], isFalse);
+          expect(
+            jsonEncode(engine.exportedState?['latest']),
+            contains('"steps":12345'),
+          );
+          final tree = jsonEncode(engine.tree.value);
+          // Real dashboard — no demo banner, no sample numbers.
+          expect(tree, isNot(contains('DEMO DATA')));
+          expect(tree, isNot(contains('8,432')));
+          expect(tree, contains('LIVE'));
+          expect(tree, contains('12,345')); // real steps card
+          expect(tree, contains('7.5 h')); // real sleep card
+          expect(tree, contains('"chart"'));
+          expect(tree, contains('"data":[10234,12345]'));
         } finally {
           await engine.dispose();
         }

@@ -8,6 +8,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
+import 'package:fa/services/health_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -124,6 +125,28 @@ final class _FakeContactApi implements ContactApi {
   Future<bool> openUrl(String url) async {
     openedUrls.add(url);
     return true;
+  }
+}
+
+/// Fake [HealthApi] for the `fa.health.summary` bridge tests — the host-side
+/// tests never touch the real method channel.
+final class _FakeHealthApi implements HealthApi {
+  int? lastDays;
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<HealthSummary> summary({required int days}) async {
+    lastDays = days;
+    return (
+      steps: const [(date: '2026-07-25', value: 12345.0)],
+      restingHeartRate: const [(date: '2026-07-25', value: 58.0)],
+      sleepHours: const [(date: '2026-07-25', value: 7.5)],
+    );
   }
 }
 
@@ -533,6 +556,69 @@ void main() {
         final result = jsonEncode(granted.exportedState?['result']);
         expect(result, contains('Standup'));
         expect(result, contains('Work'));
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.health.summary is gated by the health permission', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.health.summary({days: 14}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      // Without the permission the bridge answers with a permission error.
+      final deniedHealth = _FakeHealthApi();
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        health: deniedHealth,
+      );
+      try {
+        await denied.start();
+        await Future<void>.delayed(settle);
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('__error'),
+        );
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('health permission'),
+        );
+        expect(deniedHealth.lastDays, isNull);
+      } finally {
+        await denied.dispose();
+      }
+
+      // With it, the summary comes from the HealthApi.
+      final grantedHealth = _FakeHealthApi();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(health: true),
+        health: grantedHealth,
+      );
+      try {
+        await granted.start();
+        await Future<void>.delayed(settle);
+        expect(grantedHealth.lastDays, 14);
+        final result = jsonEncode(granted.exportedState?['result']);
+        expect(result, contains('2026-07-25'));
+        expect(result, contains('12345'));
+        expect(result, contains('restingHeartRate'));
+        expect(result, contains('sleepHours'));
       } finally {
         await granted.dispose();
       }
