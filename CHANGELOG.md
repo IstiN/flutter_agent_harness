@@ -576,4 +576,11 @@
 
 - feat(example): chrome modes, branding sweep (fah→Fa), textArea+scrolling docs (0.4.8), system-API design doc
 
+## 0.1.77
+
+- feat(example): contacts domain — channel, agent tools, js bridge, demo app
+- feat(example): jsr.fa.llm chat (multi-turn) + stream (delta events)
+- feat(example): calendar write — channel, agent tools, js bridge, demo editing
+- feat(example): back-swipe contract (jsr.onBack), privacy manifests + usage descriptions
+
 ## Unreleased
