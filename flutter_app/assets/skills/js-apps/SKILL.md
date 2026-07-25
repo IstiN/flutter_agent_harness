@@ -90,7 +90,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `icon` | ✅ | App-picker icon: an emoji, inline SVG markup (`"<svg …>"`), or an SVG filename inside the app folder (see below) |
 | `network` | ❌ | `true` to allow `jsr.fetchJson` (default: false) |
 | `allowedCommands` | ❌ | Array of shell commands allowed via `jsr.exec` (default: none) |
-| `llm` | ❌ | `true` to allow `jsr.fa.llm` (default: false) |
+| `llm` | ❌ | `true` to allow `jsr.fa.llm` / `jsr.fa.llm.chat` / `jsr.fa.llm.stream` (default: false) |
 | `homekit` | ❌ | `true` to allow `jsr.fa.homekit` (default: false) |
 | `health` | ❌ | `true` to allow `jsr.fa.health` (default: false) |
 | `contacts` | ❌ | `true` to allow `jsr.fa.contacts` (default: false) |
@@ -336,7 +336,43 @@ jsr.fa.llm('Summarize this text: ' + noteText).then(function(summary) {
 });
 ```
 
-Use it for summarization, tagging, smart suggestions — anything that benefits from the user's connected model. Keep prompts self-contained (the call is stateless; there is no chat history).
+Use it for summarization, tagging, smart suggestions — anything that benefits from the user's connected model. Keep prompts self-contained (the call is stateless; there is no chat history — use `jsr.fa.llm.chat` when you need one).
+
+### `jsr.fa.llm.chat(messages)` → Promise\<string\>
+Multi-turn completion. `messages` is an array of `{role: 'user'|'assistant'|'system', content: '...'}` — `system` entries steer the model, `user`/`assistant` entries replay the conversation (end with a `user` message). Resolves with the assistant's reply text; rejects with an actionable error (permission off, or no model connected — tell the user to connect one in the Fa settings).
+
+```javascript
+var history = [];
+function ask(text) {
+  history.push({role: 'user', content: text});
+  return jsr.fa.llm.chat(history).then(function(reply) {
+    history.push({role: 'assistant', content: reply});
+    return reply;
+  });
+}
+```
+
+### `jsr.fa.llm.stream(messages, onDelta)` → Promise\<string\>
+Same as `chat`, but while the model generates, `onDelta(partialText)` fires per delta with the ACCUMULATED text so far (replace your UI text with it, don't append). The promise resolves with the full reply. `onDelta` is optional. Example — a notes app with an "AI summary" button that streams:
+
+```javascript
+var note = {title: 'Week 30', body: 'Shipped the beta. Fixed sync bugs. ...'};
+jsr.onEvent(function(actionId, payload) {
+  if (actionId === 'summarize') {
+    render({type: 'text', data: 'Summarizing…', style: {color: jsr.theme.muted}});
+    jsr.fa.llm.stream([
+      {role: 'system', content: 'Summarize the note in 3 bullet points.'},
+      {role: 'user', content: note.title + '\n\n' + note.body}
+    ], function(partial) {
+      render({type: 'text', data: partial, style: {color: jsr.theme.text}});
+    }).then(function(full) {
+      render({type: 'text', data: full, style: {color: jsr.theme.text}});
+    }, function(error) {
+      jsr.showError(String(error));
+    });
+  }
+});
+```
 
 ### `jsr.fa.calendar(args)` → Promise
 Access to the user's system calendar (macOS/iOS). Requires `"calendar": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS calendar-access prompt. `args` is optional: `{date: 'YYYY-MM-DD', days: N}` — defaults to today, 1 day (max 31).

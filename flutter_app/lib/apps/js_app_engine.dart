@@ -13,8 +13,18 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/calendar_service.dart';
 
-/// One-shot LLM completion used by the `jsr.fa.llm(prompt)` bridge call.
-typedef FaLlmHandler = Future<Object?> Function(String prompt);
+/// One chat message for the `jsr.fa.llm.chat/stream` bridge calls; [role] is
+/// `user`, `assistant`, or `system`.
+typedef FaLlmMessage = ({String role, String content});
+
+/// LLM completion used by the `jsr.fa.llm*` bridge calls. Receives the
+/// conversation and resolves with the assistant's reply text. When [onDelta]
+/// is given (the `llm.stream` call), it reports text deltas as they arrive.
+typedef FaLlmHandler =
+    Future<Object?> Function(
+      List<FaLlmMessage> messages, {
+      void Function(String delta)? onDelta,
+    });
 
 /// Handler for platform bridges (`homekit`, `health`, `contacts`). Receives
 /// the action name (`homekit.read`, `health.stepsToday`, …) and args.
@@ -28,7 +38,8 @@ typedef FaPlatformHandler =
 /// Permission gates:
 /// - `jsr.fetchJson` → [AppPermissions.network]
 /// - `jsr.exec(<shell>)` → command must be in [AppPermissions.allowedCommands]
-/// - `jsr.fa.llm` → [AppPermissions.llm]
+/// - `jsr.fa.llm` / `jsr.fa.llm.chat` / `jsr.fa.llm.stream` →
+///   [AppPermissions.llm]
 /// - `jsr.fa.calendar` → [AppPermissions.calendar] (real backend via
 ///   [CalendarApi]; requests OS access on first use)
 /// - `jsr.fa.homekit/health/contacts` → the matching flag (stubbed until the
@@ -216,6 +227,30 @@ jsr.fa.calendar.create = function(args) { return jsr.fa.call('calendar.create', 
 jsr.fa.calendar.update = function(args) { return jsr.fa.call('calendar.update', args); };
 jsr.fa.calendar.delete = function(args) { return jsr.fa.call('calendar.delete', args); };
 
+// Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
+// a function reference, so the host pushes reserved 'llm.delta' events (see
+// the onEvent wrapper below) carrying the ACCUMULATED partial text; the
+// promise resolves with the full reply.
+jsr._llmStreams = {};
+jsr.fa.llm.chat = function(messages) { return jsr.fa.call('llm.chat', {messages: messages}); };
+jsr.fa.llm.stream = function(messages, onDelta) {
+  var streamId = 'llm-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  if (typeof onDelta === 'function') jsr._llmStreams[streamId] = onDelta;
+  return jsr.fa.call('llm.stream', {messages: messages, stream: streamId}).then(function(text) {
+    delete jsr._llmStreams[streamId];
+    return text;
+  }, function(error) {
+    delete jsr._llmStreams[streamId];
+    throw error;
+  });
+};
+jsr._dispatchLlmDelta = function(payload) {
+  var handler = payload && jsr._llmStreams[payload.stream];
+  if (handler) {
+    try { handler(payload.text); } catch (e) { console.error('jsr.fa.llm.stream onDelta: ' + e); }
+  }
+};
+
 // Back-navigation contract: the host forwards route-back attempts (iOS edge
 // swipe, Android system back, app-bar arrow) as a reserved 'back' event. An
 // app that assigned jsr.onBack may consume it (return true) for internal
@@ -233,6 +268,10 @@ Object.defineProperty(jsr, 'onBack', {
   var baseOnEvent = jsr.onEvent;
   jsr.onEvent = function(fn) {
     baseOnEvent(function(actionId, payload) {
+      if (actionId === 'llm.delta') {
+        jsr._dispatchLlmDelta(payload);
+        return;
+      }
       if (actionId === 'back') {
         var consumed = false;
         if (jsr._onBackFn !== null) {
@@ -245,6 +284,11 @@ Object.defineProperty(jsr, 'onBack', {
       fn(actionId, payload);
     });
   };
+  // Fallback so llm.stream deltas land even when the app never registers an
+  // event handler; an app registration replaces this via the wrapper above.
+  baseOnEvent(function(actionId, payload) {
+    if (actionId === 'llm.delta') jsr._dispatchLlmDelta(payload);
+  });
 })();
 ''';
 
@@ -293,11 +337,42 @@ Object.defineProperty(jsr, 'onBack', {
     Map<String, Object?> args,
   ) async {
     try {
-      if (method == 'llm') {
+      if (method == 'llm' || method == 'llm.chat' || method == 'llm.stream') {
         if (!permissions.llm) throw StateError(_denied('llm'));
         final handler = llmHandler;
-        if (handler == null) throw StateError('LLM is not connected');
-        _resolve?.call(id, await handler((args['prompt'] ?? '').toString()));
+        if (handler == null) {
+          throw StateError(
+            'no LLM is connected — connect a model in the Fa settings first',
+          );
+        }
+        final messages = method == 'llm'
+            ? [(role: 'user', content: (args['prompt'] ?? '').toString())]
+            : _parseLlmMessages(args['messages']);
+        if (method == 'llm.stream') {
+          // Deltas cross back as reserved 'llm.delta' events (see
+          // _faBootstrapJs) carrying the accumulated partial text.
+          final streamId = (args['stream'] ?? '').toString();
+          final partial = StringBuffer();
+          _resolve?.call(
+            id,
+            await handler(
+              messages,
+              onDelta: (delta) {
+                partial.write(delta);
+                final engine = _engine;
+                if (engine == null) return;
+                unawaited(
+                  engine.callEvent('llm.delta', {
+                    'stream': streamId,
+                    'text': partial.toString(),
+                  }),
+                );
+              },
+            ),
+          );
+          return;
+        }
+        _resolve?.call(id, await handler(messages));
         return;
       }
       if (method == 'calendar.events') {
@@ -460,6 +535,29 @@ Object.defineProperty(jsr, 'onBack', {
       );
     }
     return api;
+  }
+
+  /// Validates the `messages` argument of `llm.chat`/`llm.stream`:
+  /// `[{role: 'user'|'assistant'|'system', content: '...'}]`.
+  static List<FaLlmMessage> _parseLlmMessages(Object? raw) {
+    if (raw is! List) {
+      throw StateError('messages must be a list of {role, content} objects');
+    }
+    final messages = <FaLlmMessage>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        throw StateError('each message must be a {role, content} object');
+      }
+      final role = (entry['role'] ?? '').toString();
+      if (role != 'user' && role != 'assistant' && role != 'system') {
+        throw StateError(
+          'unsupported message role "$role" (user/assistant/system)',
+        );
+      }
+      messages.add((role: role, content: (entry['content'] ?? '').toString()));
+    }
+    if (messages.isEmpty) throw StateError('messages must not be empty');
+    return messages;
   }
 
   String _denied(String what) =>

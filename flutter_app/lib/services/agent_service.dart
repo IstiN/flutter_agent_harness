@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/calendar_service.dart';
@@ -689,20 +690,57 @@ class AgentService extends ChangeNotifier {
     _runWithTimeout(() => _agent.promptMessage(message));
   }
 
-  /// One-shot LLM completion for host features (the `jsr.fa.llm` bridge in
-  /// JS apps). Runs on a throwaway agent with no tools, so it never touches
-  /// the session transcript.
-  Future<String> completeOnce(String prompt) async {
+  /// LLM completion for host features (the `jsr.fa.llm*` bridge in JS apps).
+  /// Runs on a throwaway agent with no tools, so it never touches the session
+  /// transcript. `system` messages are folded into the system prompt; `user`
+  /// and `assistant` messages become the conversation, which should end with
+  /// a user message. When [onDelta] is given, streamed text deltas are
+  /// forwarded as they arrive.
+  Future<String> completeOnce(
+    List<FaLlmMessage> messages, {
+    void Function(String delta)? onDelta,
+  }) async {
+    final model = _agent.state.model;
     final agent = Agent(
-      model: _agent.state.model,
-      systemPrompt:
-          'You are a tiny assistant embedded inside a host '
-          'application. Answer briefly and plainly; no markdown fences unless '
-          'the caller asks for code.',
+      model: model,
+      systemPrompt: [
+        'You are a tiny assistant embedded inside a host '
+            'application. Answer briefly and plainly; no markdown fences unless '
+            'the caller asks for code.',
+        for (final message in messages)
+          if (message.role == 'system') message.content,
+      ].join('\n\n'),
       streamFunction: _agent.streamFunction,
       toolRegistry: ToolRegistry(const []),
     );
-    await agent.prompt(prompt);
+    if (onDelta != null) {
+      agent.subscribe((event, cancelToken) async {
+        if (event case MessageUpdateEvent(
+          assistantMessageEvent: TextDeltaEvent(:final delta),
+        )) {
+          onDelta(delta);
+        }
+      });
+    }
+    final conversation = [
+      for (final message in messages)
+        if (message.role == 'assistant')
+          AssistantMessage(
+            content: [TextContent(text: message.content)],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: Usage.zero,
+            stopReason: StopReason.stop,
+            timestamp: DateTime.now(),
+          )
+        else if (message.role == 'user')
+          UserMessage.text(message.content),
+    ];
+    if (conversation.isEmpty) {
+      throw StateError('messages must include at least one user message');
+    }
+    await agent.promptMessages(conversation);
     final last = agent.state.messages.lastOrNull;
     if (last is AssistantMessage) {
       final text = last.content

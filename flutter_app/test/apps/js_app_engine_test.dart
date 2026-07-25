@@ -233,7 +233,10 @@ void main() {
 })();
 ''');
 
-      Future<Object?> fakeLlm(String prompt) async => 'pong:$prompt';
+      Future<Object?> fakeLlm(
+        List<FaLlmMessage> messages, {
+        void Function(String delta)? onDelta,
+      }) async => 'pong:${messages.single.content}';
 
       // Without the permission the bridge answers with a permission error.
       final denied = JsAppEngine(
@@ -270,6 +273,155 @@ void main() {
         expect(granted.exportedState?['result'], 'pong:ping');
       } finally {
         await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.llm.chat is gated and passes multi-turn messages in order', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.llm.chat([
+    {role: 'system', content: 'be terse'},
+    {role: 'user', content: 'hi'},
+    {role: 'assistant', content: 'hello'},
+    {role: 'user', content: 'how are you?'}
+  ]).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final received = <FaLlmMessage>[];
+      Future<Object?> fakeLlm(
+        List<FaLlmMessage> messages, {
+        void Function(String delta)? onDelta,
+      }) async {
+        received.addAll(messages);
+        return 'fine';
+      }
+
+      // Without the permission the bridge answers with a permission error.
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        llmHandler: fakeLlm,
+      );
+      try {
+        await denied.start();
+        await Future<void>.delayed(settle);
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('llm permission'),
+        );
+        expect(received, isEmpty);
+      } finally {
+        await denied.dispose();
+      }
+
+      // With it, the full conversation reaches the handler in order.
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(llm: true),
+        llmHandler: fakeLlm,
+      );
+      try {
+        await granted.start();
+        await Future<void>.delayed(settle);
+        expect(granted.exportedState?['result'], 'fine');
+        expect(received.map((m) => m.role), [
+          'system',
+          'user',
+          'assistant',
+          'user',
+        ]);
+        expect(received.map((m) => m.content), [
+          'be terse',
+          'hi',
+          'hello',
+          'how are you?',
+        ]);
+      } finally {
+        await granted.dispose();
+      }
+
+      // Permission granted but no model connected: actionable error.
+      final noModel = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(llm: true),
+      );
+      try {
+        await noModel.start();
+        await Future<void>.delayed(settle);
+        expect(
+          jsonEncode(noModel.exportedState?['result']),
+          contains('connect a model'),
+        );
+      } finally {
+        await noModel.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.llm.stream delivers ordered deltas and resolves full text', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      // Note: no jsr.onEvent registration — the bootstrap's fallback handler
+      // must still deliver llm.delta events.
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  var partials = [];
+  jsr.fa.llm.stream([{role: 'user', content: 'count'}], function(partial) {
+    partials.push(partial);
+  }).then(function(text) {
+    jsr.exportState({partials: partials, done: text});
+  }, function(error) {
+    jsr.exportState({done: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final received = <FaLlmMessage>[];
+      Future<Object?> fakeLlm(
+        List<FaLlmMessage> messages, {
+        void Function(String delta)? onDelta,
+      }) async {
+        received.addAll(messages);
+        onDelta?.call('one ');
+        onDelta?.call('two');
+        return 'one two';
+      }
+
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(llm: true),
+        llmHandler: fakeLlm,
+      );
+      try {
+        await engine.start();
+        for (var i = 0; i < 30 && engine.exportedState?['done'] == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        // onDelta receives the ACCUMULATED partial text, in order.
+        expect(engine.exportedState?['partials'], ['one ', 'one two']);
+        expect(engine.exportedState?['done'], 'one two');
+        expect(received.single.role, 'user');
+        expect(received.single.content, 'count');
+      } finally {
+        await engine.dispose();
       }
     });
   });
