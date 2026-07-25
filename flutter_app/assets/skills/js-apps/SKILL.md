@@ -370,6 +370,7 @@ All nodes are plain JSON objects with a `type` field.
 | `safeArea` | `child` | Insets for notches/bars |
 | `aspectRatio` | `child`, `aspectRatio` | Force aspect ratio |
 | `listView` | `children`, `shrinkWrap`, `scrollDirection` | Scrollable list |
+| `gridView` | `children`, `crossAxisCount`, `crossAxisSpacing`, `mainAxisSpacing`, `childAspectRatio`, `padding` | Fixed-column grid |
 
 ### Display
 
@@ -432,7 +433,7 @@ All nodes are plain JSON objects with a `type` field.
 
 | Type | Key props | Description |
 |------|-----------|-------------|
-| `chart` | `data`, `color`, `fillColor`, `strokeWidth`, `height` | Sparkline chart (line graph) |
+| `chart` | `data`, `chartType` (`line`\|`bar`), `color`, `fillColor`, `strokeWidth`, `height` | Sparkline or bar chart |
 | `map` | `center {lat,lng}`, `zoom`, `markers [{id,lat,lng,label?,color?}]`, `polylines`, `fitBounds`, `width`, `height` | OpenStreetMap (needs `network`) — `onTap` fires `{lat,lng}`, `onMarkerTap` fires `{id}`; `center`/`zoom` apply on creation only, so re-create the node to move the camera |
 | `path` | `path` (SVG path data), `progress`, `color`, `strokeWidth`, `cap`, `join` | SVG path stroke |
 | `absoluteFill` / `fill` | `color`, `child` | Expand to fill parent |
@@ -568,6 +569,7 @@ jsr.onEvent(function(action, payload) {
   height: 60,
 }
 ```
+Bar variant: `{type:'chart', chartType:'bar', data:[3,7,4], color:'#0ea5e9', height:60}`
 
 ### `icon`
 ```javascript

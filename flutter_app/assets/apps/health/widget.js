@@ -19,7 +19,7 @@
       unit: 'last night', color: '#8b5cf6',
       chart: [6.5, 7.0, 6.2, 7.5, 6.8, 7.9, 7.2] },
     { id: 'water', icon: 'water_drop', label: 'Water', value: '1.2',
-      unit: 'liters today', color: '#0ea5e9',
+      unit: 'liters today', color: '#0ea5e9', chartType: 'bar',
       chart: [0.4, 0.8, 0.6, 1.0, 0.9, 1.1, 1.2] },
   ];
 
@@ -111,8 +111,9 @@
         { type: 'text', data: m.unit,
           style: { color: t.muted, fontSize: 10 } },
         { type: 'sizedBox', height: 6 },
-        { type: 'chart', data: m.chart, color: m.color,
-          fillColor: m.color + '33', strokeWidth: 2, height: 36 },
+        { type: 'chart', data: m.chart, chartType: m.chartType,
+          color: m.color, fillColor: m.color + '33', strokeWidth: 2,
+          height: 36 },
       ] },
     };
   }

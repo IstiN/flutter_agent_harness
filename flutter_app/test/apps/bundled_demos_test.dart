@@ -229,6 +229,11 @@ void main() {
           final tree = jsonEncode(engine.tree.value);
           expect(tree, contains('DEMO DATA'));
           expect(tree, contains('8,432')); // sample steps card
+          // Chart nodes carry their series (renderer turns these into
+          // sparklines/bars via the documented `data` prop — 0.4.7).
+          expect(tree, contains('"chart"'));
+          expect(tree, contains('"data":[3.2,5.1,4,6.8,5.5,7.9,8.4]'));
+          expect(tree, contains('"chartType":"bar"')); // water card
         } finally {
           await engine.dispose();
         }
