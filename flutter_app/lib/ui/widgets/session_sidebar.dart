@@ -12,6 +12,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/widgets/model_mark.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -426,7 +427,7 @@ class SessionSidebarState extends State<SessionSidebar> {
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  const Icon(Icons.psychology_outlined, color: FahPalette.teal),
+                  const ModelMark(),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -448,7 +449,7 @@ class SessionSidebarState extends State<SessionSidebar> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.tune, size: 18, color: FahPalette.dim),
+                  const TuneMark(),
                 ],
               ),
             ),

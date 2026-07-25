@@ -69,7 +69,7 @@ const providerCatalog = <String, ProviderSpec>{
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
     apiKeyEnvNames: ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
     contextWindow: 200000,
-    maxTokens: 8192,
+    maxTokens: 16384,
   ),
   'openai': ProviderSpec(
     name: 'openai',
@@ -78,7 +78,7 @@ const providerCatalog = <String, ProviderSpec>{
     defaultBaseUrl: 'https://api.openai.com/v1',
     apiKeyEnvNames: ['OPENAI_API_KEY'],
     contextWindow: 200000,
-    maxTokens: 8192,
+    maxTokens: 16384,
   ),
   'anthropic': ProviderSpec(
     name: 'anthropic',
@@ -87,7 +87,7 @@ const providerCatalog = <String, ProviderSpec>{
     defaultBaseUrl: 'https://api.anthropic.com',
     apiKeyEnvNames: ['ANTHROPIC_API_KEY'],
     contextWindow: 200000,
-    maxTokens: 8192,
+    maxTokens: 16384,
   ),
   'google': ProviderSpec(
     name: 'google',
@@ -96,7 +96,7 @@ const providerCatalog = <String, ProviderSpec>{
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     apiKeyEnvNames: ['GOOGLE_API_KEY'],
     contextWindow: 1000000,
-    maxTokens: 8192,
+    maxTokens: 16384,
   ),
 };
 

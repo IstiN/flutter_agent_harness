@@ -99,20 +99,26 @@ PROVIDERS AND API KEYS
 
   In the REPL, /provider [name] [baseUrl] [token] switches the provider and
   endpoint live (openrouter, openai, anthropic, google, or a saved custom
-  provider by name): without a token the key resolves from the env vars
-  above; an explicit token is persisted in the OS secure store when one is
-  available. /provider custom starts a guided setup: pick the api type from
-  a menu (openai-like / anthropic-like / google-like), enter the base URL
-  (Enter applies the shown default), optionally a key, then the model —
-  from the endpoint's /models list when it has one, typed manually
+  provider by name): without a token the key resolves per below; an explicit
+  token is persisted in the OS secure store when one is available — under an
+  endpoint-scoped name (FA_KEY_<HOST>, the same scheme custom providers
+  use), never the shared env name, so a key written for one endpoint cannot
+  be picked up by another. /provider custom starts a guided setup: pick the
+  api type from a menu (openai-like / anthropic-like / google-like), enter
+  the base URL (Enter applies the shown default), optionally a key, then the
+  model — from the endpoint's /models list when it has one, typed manually
   otherwise. The provider is saved (customProviders: in ~/.fah/config.yaml)
   and listed first in the /provider picker, remembering its last-used
   model; /provider-edit re-runs the wizard for the active provider.
 
-  Secure key storage: keys resolve env-first, then the platform secure
-  store — macOS Keychain, Secret Service on Linux (secret-tool/libsecret;
-  unavailable on headless hosts), Windows Credential Locker. /key shows per
-  key where the value comes from (never the values), /key set <NAME> <value>
+  Secure key storage: keys resolve in order — a genuine environment value
+  of the catalog env names, then the endpoint-scoped secure-store entry
+  (FA_KEY_<HOST>, or FA_KEY_<HOST>_<NAME> for a saved custom provider —
+  several accounts on the same endpoint keep separate keys), then legacy
+  env-name store entries written by older versions. The store is the macOS
+  Keychain, Secret Service on Linux (secret-tool/libsecret; unavailable on
+  headless hosts), or the Windows Credential Locker. /key shows per key
+  where the value comes from (never the values), /key set <NAME> <value>
   stores, /key delete <NAME> removes. Rotation stacks (NAME_2, ...) stay
   env-only.
 
@@ -273,6 +279,11 @@ SKILLS AND CONTEXT FILES
   a 32 KiB leaf-first budget.
   /model [id|?|N]    show model/roles, pick from known models, or switch
   /models [filter]   list known models for the current provider
+  /model-edit [contextWindow|maxTokens <n>]
+                     show or override the active model's token limits for
+                     this session (an endpoint-reported window from /models
+                     wins over the 200k catalog default; persist per chain
+                     via roles yaml contextWindow:/maxTokens:)
   /provider [name] [baseUrl] [token] | custom
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is

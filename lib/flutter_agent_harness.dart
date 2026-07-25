@@ -37,6 +37,7 @@ export 'src/model_roles/model_roles.dart';
 export 'src/overflow.dart';
 export 'src/providers/anthropic.dart';
 export 'src/providers/google.dart';
+export 'src/providers/models_endpoint.dart';
 export 'src/providers/openai_completions.dart';
 export 'src/secrets/secret_redactor.dart';
 export 'src/secrets/secrets_store.dart';

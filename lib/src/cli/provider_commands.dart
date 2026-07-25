@@ -143,13 +143,13 @@ extension on AgentCli {
   }
 
   /// The flow's `/models` fetch with the same key resolution the provider
-  /// switch uses (explicit token, else the provider's env names).
+  /// switch uses (explicit token, else env → endpoint-scoped → legacy store).
   Future<List<String>> _fetchModelsForFlow(
     ProviderSpec spec,
     String baseUrl, {
     String? token,
   }) {
-    final key = token ?? _providerKeyFromEnv(spec) ?? '';
+    final key = token ?? _providerKeyFor(spec, baseUrl) ?? '';
     final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
     return fetch(baseUrl, apiKey: key);
   }
@@ -169,7 +169,18 @@ extension on AgentCli {
     String? keyName;
     final token = setup.token;
     if (token != null) {
-      keyName = CustomProviderRegistry.keyNameFor(setup.baseUrl);
+      // A same-name edit keeps the entry's existing store name (stable key
+      // slot); a new entry (or a rename) gets a NAME-scoped one, so several
+      // accounts on the same endpoint keep separate keys instead of
+      // overwriting one host-scoped entry.
+      final existing = editName != null ? registry?.find(editName) : null;
+      keyName =
+          existing != null && existing.keyName != null && setup.name == editName
+          ? existing.keyName!
+          : CustomProviderRegistry.keyNameFor(
+              setup.baseUrl,
+              providerName: setup.name,
+            );
       final keys = config.secureKeys;
       if (keys != null && keys.available) {
         await keys.save(keyName, token);
@@ -374,6 +385,8 @@ extension on AgentCli {
       }
       _streamFunction = _agent.streamFunction;
       _modelCache = const [];
+      _modelContextWindows = const {};
+      _modelMaxTokens = const {};
       _lastModelList = null;
       await _session?.appendModelChange(provider: spec.name, modelId: modelId);
       io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
@@ -381,7 +394,7 @@ extension on AgentCli {
       config.onModelChanged?.call(_agent.state.model);
       return;
     }
-    final key = token ?? _providerKeyFromEnv(spec) ?? '';
+    final key = token ?? _providerKeyFor(spec, baseUrl) ?? '';
     _providerKind = spec.kind;
     _apiKey = key;
     _explicitToken = token != null;
@@ -394,6 +407,8 @@ extension on AgentCli {
     );
     // The cached model list belongs to the previous provider/endpoint.
     _modelCache = const [];
+    _modelContextWindows = const {};
+    _modelMaxTokens = const {};
     _lastModelList = null;
     unawaited(_refreshModelCache());
     await _session?.appendModelChange(provider: spec.name, modelId: modelId);
@@ -401,11 +416,13 @@ extension on AgentCli {
     if (token != null) {
       final savedTo = await _storeProviderToken(
         spec,
+        baseUrl,
         token,
         keyName: tokenKeyName,
       );
       if (savedTo != null) {
-        final storeName = tokenKeyName ?? spec.apiKeyEnvNames.first;
+        final storeName =
+            tokenKeyName ?? CustomProviderRegistry.keyNameFor(baseUrl);
         keyLine =
             'key: provided (saved to $savedTo; '
             'remove with /key delete $storeName)';
@@ -422,15 +439,18 @@ extension on AgentCli {
   /// so future starts resolve it without env vars. Returns the store label
   /// on success, null when secure storage is unavailable (the token then
   /// stays session-only). The entry name is [keyName] (registry entries use
-  /// their own), defaulting to the spec's primary env name.
+  /// their own), defaulting to the endpoint-scoped name for [baseUrl] —
+  /// NOT the spec's shared env name, so a key for one endpoint can never be
+  /// picked up by another (the stale-OPENAI_API_KEY-on-kimi footgun).
   Future<String?> _storeProviderToken(
     ProviderSpec spec,
+    String baseUrl,
     String token, {
     String? keyName,
   }) async {
     final keys = config.secureKeys;
     if (keys == null || !keys.available) return null;
-    final name = keyName ?? spec.apiKeyEnvNames.first;
+    final name = keyName ?? CustomProviderRegistry.keyNameFor(baseUrl);
     if (await keys.save(name, token)) {
       config.onSecretStored?.call(name, token);
       return keys.label;
@@ -579,24 +599,39 @@ extension on AgentCli {
     );
   }
 
-  /// Resolves the API key for [spec] from the host environment: the first
-  /// of the catalog env names with a non-empty value. Null when the host
-  /// exposes no values (tests, web) or nothing is set.
-  String? _providerKeyFromEnv(ProviderSpec spec) {
+  /// Resolves the API key for [spec] at [baseUrl], in order:
+  /// 1. a genuine ENVIRONMENT value of the catalog env names (it differs
+  ///    from the store's entry, so it came from the actual environment) —
+  ///    the ecosystem convention stays first;
+  /// 2. the endpoint-scoped secure-store entry (`FA_KEY_<HOST>` — what
+  ///    `/provider` and the custom-provider wizard write);
+  /// 3. legacy env-name store entries, written by older versions.
+  /// Null when the host exposes no values (tests, web) or nothing is set.
+  String? _providerKeyFor(ProviderSpec spec, String baseUrl) {
     final read = config.envVarValue;
-    if (read == null) return null;
+    final keys = config.secureKeys;
     for (final name in spec.apiKeyEnvNames) {
-      final value = read(name);
-      if (value != null && value.isNotEmpty) return value;
+      final value = read?.call(name);
+      if (value != null && value.isNotEmpty && value != keys?.read(name)) {
+        return value;
+      }
+    }
+    if (keys != null) {
+      final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
+      if (scoped != null && scoped.isNotEmpty) return scoped;
+      for (final name in spec.apiKeyEnvNames) {
+        final value = keys.read(name);
+        if (value != null && value.isNotEmpty) return value;
+      }
     }
     return null;
   }
 
   /// The `/provider` confirmation's key line: the source of the resolved
-  /// key (env var name, or "provided" for an explicit token — never the
-  /// value), a keyless note for a custom endpoint (local servers may
-  /// legitimately run without a key), or a warning when a hosted endpoint
-  /// has no key.
+  /// key (env var name, endpoint-scoped or legacy store entry, or
+  /// "provided" for an explicit token — never the value), a keyless note
+  /// for a custom endpoint (local servers may legitimately run without a
+  /// key), or a warning when a hosted endpoint has no key.
   String _providerKeyLine(
     ProviderSpec spec,
     String baseUrl, {
@@ -604,13 +639,310 @@ extension on AgentCli {
   }) {
     if (explicit) return 'key: provided';
     final read = config.envVarValue;
-    if (read != null) {
+    final keys = config.secureKeys;
+    for (final name in spec.apiKeyEnvNames) {
+      final value = read?.call(name);
+      if (value != null && value.isNotEmpty && value != keys?.read(name)) {
+        return 'key: $name';
+      }
+    }
+    if (keys != null) {
+      final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
+      if (keys.read(scopedName) != null) {
+        return 'key: $scopedName (${keys.label ?? 'secure store'})';
+      }
       for (final name in spec.apiKeyEnvNames) {
-        final value = read(name);
-        if (value != null && value.isNotEmpty) return 'key: $name';
+        if (keys.read(name) != null) {
+          return 'key: $name (${keys.label ?? 'secure store'})';
+        }
       }
     }
     if (baseUrl != spec.defaultBaseUrl) return 'key: none (keyless endpoint)';
     return 'key: no key found (want ${spec.apiKeyEnvNames.first})';
   }
+
+  // ------------------------------------------------------------- models
+
+  List<MenuItem> _buildModelMenu(String filter) {
+    // If we have no cached models yet, kick off a background fetch and show a
+    // loading placeholder. The picker will refresh automatically when the list
+    // arrives.
+    if (_modelCache.isEmpty && _modelCacheFuture == null) {
+      unawaited(_refreshModelCache());
+    }
+    final models = _modelCandidates(filter);
+    if (models.isEmpty) {
+      return const [MenuItem(key: '', label: 'loading models...')];
+    }
+    return [
+      for (var i = 0; i < models.length; i++)
+        MenuItem(key: models[i], label: '${i + 1}) ${models[i]}'),
+    ];
+  }
+
+  Future<void> _tuiSelectModel(String modelId) async {
+    await _handleModelCommand(modelId);
+  }
+
+  /// Fetches the model list from an OpenAI-compatible `/models` endpoint and
+  /// refreshes the TUI picker if it is currently open. Failures are swallowed
+  /// so the UI keeps working with the hardcoded fallback list. When the
+  /// payload reports the active model's real context window, the model is
+  /// corrected (roles mode keeps the chain's configured window instead).
+  Future<void> _refreshModelCache() async {
+    if (_modelCacheFuture != null) return _modelCacheFuture!;
+    final completer = Completer<void>();
+    _modelCacheFuture = completer.future;
+    try {
+      final model = _agent.state.model;
+      if (model.api == 'openai-completions') {
+        final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
+        final ids = await fetch(model.baseUrl, apiKey: _apiKey);
+        if (ids.isNotEmpty) {
+          _modelCache = ids;
+          _tuiController?.sendModelsRefresh();
+          if (config.modelRolesResolver == null) {
+            final detected = _modelContextWindows[model.id];
+            if (detected != null && detected != model.contextWindow) {
+              _replaceModelLimits(contextWindow: detected);
+              io.writeln(
+                _style.dim('model context window: $detected (from endpoint)'),
+              );
+            }
+            final detectedCap = _modelMaxTokens[model.id];
+            if (detectedCap != null && detectedCap != model.maxTokens) {
+              _replaceModelLimits(maxTokens: detectedCap);
+              io.writeln(
+                _style.dim('model max tokens: $detectedCap (from endpoint)'),
+              );
+            }
+          }
+        }
+      }
+    } finally {
+      _modelCacheFuture = null;
+      completer.complete();
+    }
+  }
+
+  Future<List<String>> _fetchOpenAiCompatibleModels(
+    String baseUrl, {
+    required String apiKey,
+  }) async {
+    final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.parse('$normalized/models');
+    final headers = <String, String>{'Accept': 'application/json'};
+    if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
+    try {
+      final response = await http
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return const [];
+      final (ids, windows, maxTokens) = parseModelsResponse(response.body);
+      _modelContextWindows = windows;
+      _modelMaxTokens = maxTokens;
+      return ids;
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// Lists the known models for the active provider, optionally filtered by
+  /// [filter]. The output is numbered so `/model N` can pick one. For
+  /// OpenAI-compatible endpoints the list is fetched live from `/v1/models`
+  /// and cached.
+  Future<void> _listModels(String filter) async {
+    if (_modelCache.isEmpty && _modelCacheFuture == null) {
+      await _refreshModelCache();
+    }
+    final candidates = _modelCandidates(filter);
+    if (candidates.isEmpty) {
+      io.writeln('no known models for provider ${_agent.state.model.provider}');
+      return;
+    }
+    io.writeln('models for ${_agent.state.model.provider}:');
+    for (var i = 0; i < candidates.length; i++) {
+      io.writeln('  ${i + 1}) ${candidates[i]}');
+    }
+    _lastModelList = candidates;
+    io.writeln('use /model <n> or /model <id> to switch');
+  }
+
+  /// Returns the full list of known model ids for the active provider.
+  List<String> _listModelsForMenu() => _modelCandidates('');
+
+  /// Returns known model ids for the active provider, filtered by an optional
+  /// lowercase substring. Prefers the live cache fetched from the provider's
+  /// `/models` endpoint; falls back to the hardcoded subset when the cache is
+  /// empty or the fetch has not completed yet.
+  List<String> _modelCandidates([String filter = '']) {
+    final provider = _agent.state.model.provider;
+    final all = _modelCache.isNotEmpty
+        ? _modelCache
+        : (_knownModels[provider] ?? const <String>[]);
+    if (filter.isEmpty) return all.toList();
+    final lower = filter.toLowerCase();
+    return all.where((id) => id.toLowerCase().contains(lower)).toList();
+  }
+
+  Future<void> _handleModelCommand(String rest) async {
+    final trimmed = rest.trim();
+    if (trimmed == '?') {
+      await _listModels('');
+      return;
+    }
+    if (trimmed.isEmpty) {
+      // Bare `/model` in TUI mode opens the interactive picker; in line mode
+      // it prints the active model and the roles overview.
+      final controller = _tuiController;
+      if (controller != null) {
+        controller.openModelMenu();
+        return;
+      }
+      await _switchModel('');
+      return;
+    }
+    final number = int.tryParse(trimmed);
+    final lastList = _lastModelList ?? _listModelsForMenu();
+    if (number != null) {
+      if (number < 1 || number > lastList.length) {
+        io.writeln('invalid selection: $number (1-${lastList.length})');
+        return;
+      }
+      await _switchModel(lastList[number - 1]);
+      return;
+    }
+    await _switchModel(trimmed);
+  }
+
+  Future<void> _switchModel(String modelId) async {
+    final current = _agent.state.model;
+    final rolesResolver = config.modelRolesResolver;
+    if (modelId.isEmpty) {
+      io.writeln('model: ${current.id} (${current.api})');
+      if (rolesResolver != null) io.writeln(rolesResolver.describeRoles());
+      return;
+    }
+    // An endpoint-reported window/cap beats the carried one (the catalog
+    // defaults) when the id is known to /models.
+    final window = _modelContextWindows[modelId] ?? current.contextWindow;
+    final cap = _modelMaxTokens[modelId] ?? current.maxTokens;
+    if (rolesResolver != null) {
+      // Roles mode: pin the default role to the requested model id on the
+      // current provider (a single-entry chain for this session).
+      rolesResolver.setDefaultChain([
+        ModelRef(
+          provider: current.provider,
+          modelId: modelId,
+          baseUrl: current.baseUrl,
+          contextWindow: window,
+          maxTokens: cap,
+        ),
+      ]);
+      rolesResolver.applyToAgent(_agent);
+      _streamFunction = _agent.streamFunction;
+      await _session?.appendModelChange(
+        provider: current.provider,
+        modelId: modelId,
+      );
+      io.writeln('switched model to $modelId');
+      _recordCustomModel(modelId);
+      config.onModelChanged?.call(_agent.state.model);
+      return;
+    }
+    _agent.state.model = Model(
+      id: modelId,
+      name: modelId,
+      api: current.api,
+      provider: current.provider,
+      baseUrl: current.baseUrl,
+      reasoning: current.reasoning,
+      input: current.input,
+      cost: current.cost,
+      contextWindow: window,
+      maxTokens: cap,
+      headers: current.headers,
+      compat: current.compat,
+    );
+    await _session?.appendModelChange(
+      provider: current.provider,
+      modelId: modelId,
+    );
+    io.writeln('switched model to $modelId');
+    _recordCustomModel(modelId);
+    config.onModelChanged?.call(_agent.state.model);
+  }
+
+  /// `/model-edit [contextWindow|maxTokens <n>]`: shows or overrides the
+  /// active model's token limits for this session (persist per chain via
+  /// roles yaml `contextWindow:`/`maxTokens:`).
+  void _handleModelEdit(String rest) {
+    final current = _agent.state.model;
+    final args = rest
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (args.isEmpty) {
+      io.writeln(
+        'model ${current.id}: contextWindow ${current.contextWindow} · '
+        'maxTokens ${current.maxTokens}',
+      );
+      io.writeln(
+        _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
+      );
+      return;
+    }
+    final value = args.length == 2 ? int.tryParse(args[1]) : null;
+    if (args.length != 2 || value == null || value <= 0) {
+      io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
+      return;
+    }
+    switch (args[0]) {
+      case 'contextWindow':
+        _replaceModelLimits(contextWindow: value);
+        io.writeln('model context window set to $value');
+      case 'maxTokens':
+        _replaceModelLimits(maxTokens: value);
+        io.writeln('model max tokens set to $value');
+      default:
+        io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
+    }
+  }
+
+  /// Rebuilds the active model with new token limits, preserving every other
+  /// field (endpoint detection and `/model-edit`).
+  void _replaceModelLimits({int? contextWindow, int? maxTokens}) {
+    final current = _agent.state.model;
+    _agent.state.model = Model(
+      id: current.id,
+      name: current.name,
+      api: current.api,
+      provider: current.provider,
+      baseUrl: current.baseUrl,
+      reasoning: current.reasoning,
+      input: current.input,
+      cost: current.cost,
+      contextWindow: contextWindow ?? current.contextWindow,
+      maxTokens: maxTokens ?? current.maxTokens,
+      headers: current.headers,
+      compat: current.compat,
+    );
+    config.onModelChanged?.call(_agent.state.model);
+  }
 }
+
+/// Known model ids shown by `/models` and the `/model` picker. Maps the
+/// provider name stored on the active [Model] to a short, useful subset.
+const _knownModels = <String, List<String>>{
+  'openrouter': [
+    'anthropic/claude-sonnet-4',
+    'openai/gpt-4o-mini',
+    'google/gemini-2.5-pro',
+    'anthropic/claude-opus-4',
+    'openai/gpt-4.1-mini',
+  ],
+  'anthropic': ['claude-sonnet-4-5', 'claude-opus-4', 'claude-haiku-4'],
+  'google': ['gemini-2.5-pro', 'gemini-2.0-flash'],
+  'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+};

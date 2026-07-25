@@ -9,6 +9,29 @@ class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
+
+    // Modern unified titlebar (macOS 14+, see the traffic-lights skill):
+    // the native traffic lights float over Flutter content — no solid
+    // title-bar band, no duplicated text title (it stays for Dock/Mission
+    // Control only), and the window background matches the app's dark
+    // palette (#070A10) so the seam is invisible without making the
+    // Flutter scaffold transparent.
+    titlebarAppearsTransparent = true
+    titleVisibility = .hidden
+    styleMask.insert(.fullSizeContentView)
+    if #available(macOS 11.0, *) {
+      toolbarStyle = .unifiedCompact
+    }
+    toolbar = NSToolbar(identifier: "FaToolbar")
+    toolbar?.showsBaselineSeparator = false
+    isMovableByWindowBackground = true
+    backgroundColor = NSColor(
+      calibratedRed: 7.0 / 255.0,
+      green: 10.0 / 255.0,
+      blue: 16.0 / 255.0,
+      alpha: 1.0,
+    )
+
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
 

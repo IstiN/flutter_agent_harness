@@ -1,8 +1,13 @@
+import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('SessionKeysStore', () {
     test('starts empty; inMemory seed is listed sorted', () {
       final empty = SessionKeysStore.inMemory();
@@ -95,6 +100,86 @@ void main() {
       await reloaded.delete('HUGGINGFACE_TOKEN');
       final again = await SessionKeysStore.load(env);
       expect(again.names, ['OPENROUTER_API_KEY']);
+    });
+  });
+
+  group('SessionKeysStore with a Keychain backend', () {
+    const channel = MethodChannel('fah/keychain');
+    final backend = <String, String>{};
+
+    setUp(() {
+      backend.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            switch (call.method) {
+              case 'isAvailable':
+                return true;
+              case 'readAll':
+                return Map<String, String>.of(backend);
+              case 'set':
+                backend[call.arguments['name'] as String] =
+                    call.arguments['value'] as String;
+                return true;
+              case 'delete':
+                backend.remove(call.arguments['name'] as String);
+                return true;
+            }
+            return null;
+          });
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    });
+
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('reads and writes go to the Keychain, not the file', () async {
+      backend['OPENROUTER_API_KEY'] = 'sk-secure';
+      final env = MemoryExecutionEnv();
+      final store = await SessionKeysStore.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      expect(store.usesKeychain, isTrue);
+      expect(store.valueOf('OPENROUTER_API_KEY'), 'sk-secure');
+
+      await store.set('HUGGINGFACE_TOKEN', 'hf-secure');
+      expect(backend['HUGGINGFACE_TOKEN'], 'hf-secure');
+      // Nothing is written to the plaintext file on this backend.
+      expect(
+        (await env.readTextFile('${env.cwd}/session_keys.json')).valueOrNull,
+        isNull,
+      );
+
+      await store.delete('OPENROUTER_API_KEY');
+      expect(backend.containsKey('OPENROUTER_API_KEY'), isFalse);
+    });
+
+    test('file-persisted keys migrate into the Keychain once', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        '${env.cwd}/session_keys.json',
+        '{"version": 1, "keys": {"OPENROUTER_API_KEY": "sk-file"}}',
+      );
+      final store = await SessionKeysStore.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      expect(store.valueOf('OPENROUTER_API_KEY'), 'sk-file');
+      expect(backend['OPENROUTER_API_KEY'], 'sk-file');
+
+      // Later boots read the Keychain, so a file edit no longer matters.
+      await env.writeFile(
+        '${env.cwd}/session_keys.json',
+        '{"version": 1, "keys": {"OPENROUTER_API_KEY": "sk-changed"}}',
+      );
+      final reloaded = await SessionKeysStore.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      expect(reloaded.valueOf('OPENROUTER_API_KEY'), 'sk-file');
     });
   });
 }

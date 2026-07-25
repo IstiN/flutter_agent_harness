@@ -91,13 +91,15 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/model_roles/provider_catalog.dart` — provider table; specs
   default `input: ['text','image']` (vision).
 - `flutter_app/` — Flutter chat example. Layout: `lib/main.dart`
-  (entrypoint + SetupScreen), `lib/ui/` (`app_theme.dart` — dark + light
-  palettes/themes, `FahColors.of(context)` resolves per brightness;
-  `markdown_style.dart`, `screens/`, `widgets/`), `lib/services/` (agent
-  service, stores, upload, secrets, project mount, vision,
-  `theme_controller.dart` theme-mode persistence + `FahThemeScope`,
-  `session_keys_store.dart` user-saved keys + `SessionKeysScope`),
-  `lib/sandbox/` (env, shells, wasm, git, fs persistence), feature dirs
+  (entrypoint + BootstrapScreen: auto-connects the restored last connection
+  when its key resolves, else SetupScreen), `lib/ui/` (`app_theme.dart` —
+  dark + light palettes/themes, `FahColors.of(context)` resolves per
+  brightness; `markdown_style.dart`, `screens/`, `widgets/`),
+  `lib/services/` (agent service, stores, upload, secrets, project mount,
+  vision, `theme_controller.dart` theme-mode persistence + `FahThemeScope`,
+  `session_keys_store.dart` user-saved keys + `SessionKeysScope`,
+  `keychain_store.dart` iOS/macOS Keychain channel), `lib/sandbox/` (env,
+  shells, wasm, git, fs persistence), feature dirs
   `lib/apps|gemma|webllm|transformers_js|l10n/`. All lib-internal imports
   are absolute `package:fa/...` — no relative imports.
 - `flutter_app/lib/l10n/` — gen-l10n: `app_en.arb` + `app_ru.arb` →
@@ -135,15 +137,28 @@ factual: paths, commands, invariants — no essays.
   Agent tool `calendar_events {date?, days?}` in `calendar_tool.dart`
   (registered when `calendarPlatformSupported`); denial result points to
   System Settings → Privacy → Calendars.
+- macOS window chrome: `MainFlutterWindow.swift` uses the modern unified
+  titlebar (`titlebarAppearsTransparent`, hidden title,
+  `fullSizeContentView`, `toolbarStyle = .unifiedCompact`, window
+  background `#070A10`; deployment target 14.0 in `project.pbxproj`), so the
+  compact traffic lights float over Flutter content; `MaterialApp.builder`
+  in `main.dart` reserves a 28px top strip on macOS so they never overlap
+  the app header.
 - `flutter_app/lib/services/theme_controller.dart` — ThemeMode
   (system/light/dark) persisted as `theme.json`; `app_theme.dart` has
   `buildFahTheme()` (dark) + `buildFahThemeLight()`, widgets read colors via
   `FahColors.of(context)` (never `FahPalette` directly in widgets).
 - `flutter_app/lib/services/session_keys_store.dart` — in-app secrets:
-  `session_keys.json` via the env (set/delete, never displays values);
-  the settings Keys section manages them.
+  on iOS/macOS persisted in the platform Keychain via `keychain_store.dart`
+  (the `fah/keychain` MethodChannel, service `fa.app`; file-persisted keys
+  migrate once), elsewhere `session_keys.json` via the env (set/delete,
+  never displays values); the settings Keys section manages them.
+  `provider_registry.dart` custom-provider keys ride the same Keychain
+  backend (host-scoped `FA_KEY_<HOST>` names, like the CLI).
 - `flutter_app/lib/services/last_connection.dart` — persists last connection
-  (never API keys) as `last_connection.json`; pre-selects the settings form.
+  (never API keys) as `last_connection.json`; at boot `restorableBootConfig`
+  (main.dart) rebuilds the AgentConfig (custom-provider key → saved hosted
+  key) for the auto-connect, else it pre-selects the settings form.
 - `flutter_app/lib/services/vision_models.dart` — `modelIdSuggestsVision`
   heuristic fills `Model.input`; `AgentConfig.supportsImages` overrides;
   without `image` the `read` tool notes non-vision and adapters drop image

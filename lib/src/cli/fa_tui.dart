@@ -167,6 +167,7 @@ final class FaTuiModel extends TeaModel {
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
     this.queue = const [],
+    this.frameNonce = 0,
   });
 
   final FaTuiCallbacks callbacks;
@@ -223,6 +224,15 @@ final class FaTuiModel extends TeaModel {
   /// ↑ pops the last one back into the input, Ctrl+S steers them into the
   /// running agent, and the host drains them as separate turns afterwards.
   final List<String> queue;
+
+  /// Monotonic frame counter, bumped by every `copyWith` (i.e. every model
+  /// change). The view mixes it into the cursor line's invisible SGR suffix
+  /// so the row carrying the cursor-home escape differs on EVERY content
+  /// change — dart_tui's row diff only re-emits the home sequence when that
+  /// row changed, and a static suffix stranded the cursor mid-history after
+  /// a lone output append while idle (spinner ticks only vary it while
+  /// busy).
+  final int frameNonce;
 
   /// Shared markdown+wrap memo (see [_WrapCache]); `copyWith` hands the same
   /// instance to the next model version so unchanged content never
@@ -400,6 +410,9 @@ final class FaTuiModel extends TeaModel {
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
       queue: queue ?? this.queue,
+      // Every copy is a new model state: bump the frame nonce so the view's
+      // cursor line always differs after a change (see [frameNonce]).
+      frameNonce: frameNonce + 1,
     );
     copy._wrapCache = _wrapCache;
     return copy;
@@ -1221,9 +1234,11 @@ final class FaTuiModel extends TeaModel {
     // the renderer's cell diff re-homes it only when the last frame line
     // changes (a spinner tick), so between ticks it was left sitting inside
     // the streamed text (the visible mid-text jump). When idle, show it and
-    // home it into the input zone; the frame-varying SGR suffix keeps the
-    // spinner-tick rewrite working.
-    final idleSuffix = busy ? '' : '\x1b[0m' * (spinnerFrame % 4);
+    // home it into the input zone; the nonce-varying SGR suffix forces that
+    // row to differ on every content change, so the home sequence re-emits
+    // even when the only changed row is mid-history (a lone output append
+    // while idle used to strand the cursor inside the transcript).
+    final idleSuffix = '\x1b[0m' * (frameNonce % 4);
     final cursorLine = busy
         ? '\x1b[?25l'
         : '\x1b[?25h$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';

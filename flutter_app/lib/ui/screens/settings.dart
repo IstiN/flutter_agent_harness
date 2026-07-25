@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:http/http.dart' as http;
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 
 import 'package:fa/services/agent_service.dart';
@@ -11,6 +14,7 @@ import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/gemma/gemma_cache_section.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -56,6 +60,54 @@ String settingsKeyEnv(String name, SessionKeysStore? keysStore) {
   }
   return '';
 }
+
+/// The production [ModelsEndpointFetcher]: GETs `<baseUrl>/models` (OpenAI
+/// shape, bearer key when present) and parses it with the shared harness
+/// parser (ids, context windows, output caps). Failures return empty info —
+/// free-text model entry keeps working.
+Future<ModelsEndpointInfo> _defaultModelsEndpointFetcher(
+  String baseUrl, {
+  required String apiKey,
+}) async {
+  try {
+    final uri = Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models');
+    final response = await http
+        .get(
+          uri,
+          headers: {
+            'Accept': 'application/json',
+            if (apiKey.isNotEmpty) 'authorization': 'Bearer $apiKey',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      return (const <String>[], const <String, int>{}, const <String, int>{});
+    }
+    return parseModelsResponse(response.body);
+  } on Object {
+    return (const <String>[], const <String, int>{}, const <String, int>{});
+  }
+}
+
+/// The key-storage notes match the platform: on iOS/macOS saved keys land
+/// in the Keychain (see [KeychainStore]); elsewhere the session/app-sandbox
+/// wording applies.
+String settingsKeyNoteHostedFor(AppLocalizations l10n) =>
+    KeychainStore.isSupported
+    ? l10n.settingsKeyNoteHostedSecure
+    : l10n.settingsKeyNoteHosted;
+
+/// Custom-provider variant of [settingsKeyNoteHostedFor].
+String settingsKeyNoteCustomFor(AppLocalizations l10n) =>
+    KeychainStore.isSupported
+    ? l10n.settingsKeyNoteCustomSecure
+    : l10n.settingsKeyNoteCustom;
+
+/// Provider-editor variant of [settingsKeyNoteHostedFor].
+String settingsEditorKeyNoteFor(AppLocalizations l10n) =>
+    KeychainStore.isSupported
+    ? l10n.settingsEditorKeyNoteSecure
+    : l10n.settingsEditorKeyNote;
 
 /// A bring-your-own-key provider preset. Hosted presets talk to an
 /// OpenAI-compatible chat-completions endpoint; [webllm] runs a small model
@@ -155,6 +207,7 @@ class AgentSettingsForm extends StatefulWidget {
     this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
+    this.modelsFetcher,
   });
 
   /// Called with the assembled [AgentConfig]. Throw to surface an error in
@@ -199,6 +252,11 @@ class AgentSettingsForm extends StatefulWidget {
   /// [gemmaProviderVisible] — is exercised through this seam, the same
   /// pattern as `GemmaCacheSection.isWeb`).
   final bool? isWeb;
+
+  /// `/models` fetch override (tests); defaults to the production HTTP
+  /// fetch + shared parser. Feeds the model quick select AND the
+  /// connect-time limits.
+  final ModelsEndpointFetcher? modelsFetcher;
 
   @override
   State<AgentSettingsForm> createState() => _AgentSettingsFormState();
@@ -246,6 +304,24 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// be cancelled).
   Timer? _gemmaVerifyTimer;
 
+  /// The endpoint's `/models` ids feeding the model field's quick select.
+  /// Free text always stays valid (the field is a [RawAutocomplete]).
+  List<String> _endpointModels = const [];
+
+  /// Endpoint-reported per-model limits (see [parseModelsResponse]),
+  /// applied to the [AgentConfig] at connect — same source of truth as the
+  /// CLI's auto-correction instead of the hardcoded defaults.
+  Map<String, int> _endpointContextWindows = const {};
+  Map<String, int> _endpointMaxTokens = const {};
+  var _modelsLoading = false;
+
+  /// Stale-response guard: bumped per fetch, only the latest applies.
+  var _modelsFetchGeneration = 0;
+  Timer? _modelsFetchDebounce;
+
+  /// The model field's focus node (drives the quick-select overlay).
+  final FocusNode _modelFocusNode = FocusNode();
+
   bool _loading = false;
   String? _error;
 
@@ -283,6 +359,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     // never touched (keys are session-only and never persisted).
     final connection = widget.initialConnection;
     if (connection != null) _applyLastConnection(connection);
+    // The endpoint's model list feeds the model field's quick select;
+    // endpoint/key edits refetch (debounced).
+    _urlController.addListener(_scheduleModelsFetch);
+    _keyController.addListener(_scheduleModelsFetch);
+    _scheduleModelsFetch();
   }
 
   void _onModelIdChanged() {
@@ -291,9 +372,53 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (suggested != _vision) setState(() => _vision = suggested);
   }
 
+  /// Debounced refetch of the endpoint's model list for the quick select.
+  void _scheduleModelsFetch() {
+    _modelsFetchDebounce?.cancel();
+    _modelsFetchDebounce = Timer(const Duration(milliseconds: 400), () {
+      unawaited(_fetchEndpointModels());
+    });
+  }
+
+  /// Fetches `<baseUrl>/models` (OpenAI shape) for the model field's quick
+  /// select. Silent on failure — free-text entry always works, the field
+  /// just loses its suggestions.
+  Future<void> _fetchEndpointModels() async {
+    if (_isOnDevice || _isGemma || _isTransformersJs) return;
+    final baseUrl = _urlController.text.trim();
+    if (baseUrl.isEmpty) return;
+    final generation = ++_modelsFetchGeneration;
+    if (mounted) setState(() => _modelsLoading = true);
+    try {
+      final key = _keyController.text.trim();
+      final fetch = widget.modelsFetcher ?? _defaultModelsEndpointFetcher;
+      final (ids, windows, caps) = await fetch(baseUrl, apiKey: key);
+      if (!mounted || generation != _modelsFetchGeneration) return;
+      setState(() {
+        _endpointModels = ids;
+        _endpointContextWindows = windows;
+        _endpointMaxTokens = caps;
+      });
+    } on Object {
+      if (mounted && generation == _modelsFetchGeneration) {
+        setState(() {
+          _endpointModels = const [];
+          _endpointContextWindows = const {};
+          _endpointMaxTokens = const {};
+        });
+      }
+    } finally {
+      if (mounted && generation == _modelsFetchGeneration) {
+        setState(() => _modelsLoading = false);
+      }
+    }
+  }
+
   @override
   void dispose() {
     _gemmaVerifyTimer?.cancel();
+    _modelsFetchDebounce?.cancel();
+    _modelFocusNode.dispose();
     _registry.removeListener(_onRegistryChanged);
     _keyController.dispose();
     _modelController.dispose();
@@ -660,6 +785,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           modelId: model,
           baseUrl: baseUrl,
           apiKey: key,
+          // Endpoint-reported limits (the /models quick-select fetch) win
+          // over the shared fallbacks — same correction as the CLI.
+          contextWindow:
+              _endpointContextWindows[model] ?? fallbackContextWindow,
+          maxTokens: _endpointMaxTokens[model] ?? fallbackMaxTokens,
           supportsImages: _vision,
         ),
       );
@@ -948,11 +1078,72 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             enableSuggestions: false,
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _modelController,
-            decoration: InputDecoration(
-              labelText: context.l10n.settingsModelIdLabel,
-            ),
+          RawAutocomplete<String>(
+            textEditingController: _modelController,
+            focusNode: _modelFocusNode,
+            // Quick select over the endpoint's /models list, filtered by
+            // the typed text; any custom id stays valid (free text).
+            optionsBuilder: (value) {
+              final query = value.text.trim().toLowerCase();
+              if (query.isEmpty) return _endpointModels;
+              return _endpointModels.where(
+                (id) => id.toLowerCase().contains(query),
+              );
+            },
+            onSelected: (id) => _modelController.text = id,
+            fieldViewBuilder:
+                (context, controller, focusNode, onFieldSubmitted) {
+                  return TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    decoration: InputDecoration(
+                      labelText: context.l10n.settingsModelIdLabel,
+                      helperText: _modelsLoading
+                          ? context.l10n.settingsModelsFetching
+                          : null,
+                      suffixIcon: _modelsLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : null,
+                    ),
+                  );
+                },
+            optionsViewBuilder: (context, onSelected, options) {
+              return Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  elevation: 4,
+                  borderRadius: BorderRadius.circular(8),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxHeight: 240,
+                      maxWidth: 440,
+                    ),
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      itemCount: options.length,
+                      itemBuilder: (context, index) {
+                        final option = options.elementAt(index);
+                        return ListTile(
+                          dense: true,
+                          title: Text(option),
+                          onTap: () => onSelected(option),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
           CheckboxListTile(
             value: _vision,
@@ -989,8 +1180,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               Expanded(
                 child: Text(
                   selection is CustomProvider
-                      ? context.l10n.settingsKeyNoteCustom
-                      : context.l10n.settingsKeyNoteHosted,
+                      ? settingsKeyNoteCustomFor(context.l10n)
+                      : settingsKeyNoteHostedFor(context.l10n),
                   style: theme.textTheme.bodySmall,
                 ),
               ),
@@ -1440,7 +1631,7 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
               ),
               const SizedBox(height: 12),
               Text(
-                context.l10n.settingsEditorKeyNote,
+                settingsEditorKeyNoteFor(context.l10n),
                 style: theme.textTheme.bodySmall,
               ),
               if (_error != null) ...[

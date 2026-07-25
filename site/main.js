@@ -139,6 +139,91 @@
       if (!choice) { return; }
       installTitle.textContent = choice.title;
       installText.textContent = choice.cmd;
+      track('install_method_selected', { method: installSelect.value });
     });
   }
+
+  /* ── Analytics (GA4 custom events; no-ops when gtag is blocked) ────── */
+  function track(name, params) {
+    if (typeof window.gtag === 'function') {
+      window.gtag('event', name, params || {});
+    }
+  }
+
+  // Copy-to-clipboard: which command, and whether it succeeded.
+  document.querySelectorAll('[data-copy-target]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      track('copy_command', {
+        command_id: btn.getAttribute('data-copy-target'),
+        method: installSelect ? installSelect.value : ''
+      });
+    });
+  });
+
+  // Hero CTA + every cross-page link: outbound (GitHub/pub.dev/issues) and
+  // internal section jumps get separate events for clean funnel reports.
+  document.querySelectorAll('a[href]').forEach(function (link) {
+    link.addEventListener('click', function () {
+      var href = link.getAttribute('href') || '';
+      var text = (link.textContent || '').trim().slice(0, 80);
+      if (/^https?:\/\//.test(href) && href.indexOf('//fa1.dev') === -1) {
+        track('outbound_click', {
+          link_url: href,
+          link_domain: href.replace(/^https?:\/\/([^/]+).*/, '$1'),
+          link_text: text
+        });
+      } else if (href.charAt(0) === '#') {
+        track('section_navigate', { section: href.slice(1), link_text: text });
+      } else if (href.indexOf('./app') === 0 || href.indexOf('/app/') !== -1) {
+        track('demo_open', { link_text: text });
+      }
+    });
+  });
+
+  // The embedded demo finishing its load is the strongest engagement signal.
+  var demoFrame = document.querySelector('.demo iframe');
+  if (demoFrame) {
+    demoFrame.addEventListener('load', function () {
+      track('demo_loaded', { non_interaction: true });
+    });
+  }
+
+  // Section views: reuse the reveal observer's data so we know how far the
+  // story actually gets read (demo/install/features/platforms/byok/faq).
+  if ('IntersectionObserver' in window) {
+    var sectionObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          track('section_view', { section: entry.target.id || '(hero)' });
+          sectionObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.25 });
+    document.querySelectorAll('main > section[id]').forEach(function (el) {
+      sectionObserver.observe(el);
+    });
+  }
+
+  // Scroll depth milestones (GA4's own scroll event only fires at 90%).
+  var depths = [25, 50, 75, 100];
+  var depthHit = {};
+  function onScrollDepth() {
+    var doc = document.documentElement;
+    var max = doc.scrollHeight - window.innerHeight;
+    if (max <= 0) { return; }
+    var pct = Math.round((window.scrollY / max) * 100);
+    depths.forEach(function (d) {
+      if (pct >= d && !depthHit[d]) {
+        depthHit[d] = true;
+        track('scroll_depth', { percent: d });
+      }
+    });
+  }
+  var scrollTicking = false;
+  window.addEventListener('scroll', function () {
+    if (!scrollTicking) {
+      scrollTicking = true;
+      setTimeout(function () { onScrollDepth(); scrollTicking = false; }, 400);
+    }
+  }, { passive: true });
 })();

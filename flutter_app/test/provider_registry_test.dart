@@ -1,8 +1,13 @@
+import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('ProviderRegistry persistence', () {
     test('missing file loads as empty', () async {
       final env = MemoryExecutionEnv();
@@ -188,6 +193,82 @@ void main() {
       expect(a, equals(b));
       expect(a, isNot(equals(c)));
       expect(a.hashCode, b.hashCode);
+    });
+  });
+
+  group('ProviderRegistry with a Keychain backend', () {
+    const channel = MethodChannel('fah/keychain');
+    final backend = <String, String>{};
+
+    setUp(() {
+      backend.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            switch (call.method) {
+              case 'isAvailable':
+                return true;
+              case 'readAll':
+                return Map<String, String>.of(backend);
+              case 'set':
+                backend[call.arguments['name'] as String] =
+                    call.arguments['value'] as String;
+                return true;
+              case 'delete':
+                backend.remove(call.arguments['name'] as String);
+                return true;
+            }
+            return null;
+          });
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    });
+
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('rememberKey persists host-scoped; load hydrates keys', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      final acme = await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      registry.rememberKey(acme.id, 'sk-acme');
+      // Fire-and-forget persistence: let the channel call land.
+      await Future<void>.delayed(Duration.zero);
+      expect(backend['FA_KEY_ACME_EXAMPLE'], 'sk-acme');
+
+      // A fresh boot restores the key from the Keychain, not the file.
+      final reloaded = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      expect(reloaded.keyFor(acme.id), 'sk-acme');
+    });
+
+    test('remove deletes the provider and its Keychain slot', () async {
+      backend['FA_KEY_ACME_EXAMPLE'] = 'sk-acme';
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      final acme = await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      expect(registry.keyFor(acme.id), 'sk-acme');
+
+      await registry.remove(acme.id);
+      expect(backend.containsKey('FA_KEY_ACME_EXAMPLE'), isFalse);
+      expect(registry.keyFor(acme.id), isNull);
     });
   });
 }

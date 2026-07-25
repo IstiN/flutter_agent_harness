@@ -7,6 +7,8 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa/services/keychain_store.dart';
+
 /// The well-known key names the Keys settings section always lists, even
 /// when unset. User-saved names beyond these are listed too (see
 /// [SessionKeysStore.names]); custom-provider keys live in
@@ -30,27 +32,43 @@ const knownKeyNames = ['OPENROUTER_API_KEY', 'HUGGINGFACE_TOKEN'];
 /// Values are write-only for the UI: the Keys section lists names and
 /// sources, never values.
 class SessionKeysStore extends ChangeNotifier {
-  SessionKeysStore._(this._env);
+  SessionKeysStore._(this._env, [this._keychain]);
 
   /// A store without persistence (tests, widget fallbacks): mutations
   /// notify listeners but nothing is written anywhere.
-  SessionKeysStore.inMemory([Map<String, String>? initial]) : _env = null {
+  SessionKeysStore.inMemory([Map<String, String>? initial])
+    : _env = null,
+      _keychain = null {
     if (initial != null) _keys.addAll(initial);
   }
 
-  /// File name (under [ExecutionEnv.cwd]) the store persists to.
+  /// File name (under [ExecutionEnv.cwd]) the store persists to when no
+  /// Keychain backend is in use.
   static const fileName = 'session_keys.json';
 
   /// Schema version of the JSON envelope; other versions load as empty.
   static const _version = 1;
 
   final ExecutionEnv? _env;
+
+  /// The iOS/macOS Keychain backend (see [KeychainStore]); when available it
+  /// REPLACES the plaintext file as the persistence medium.
+  final KeychainStore? _keychain;
+  var _useKeychain = false;
+
+  /// Whether saved keys land in the platform Keychain (drives the settings
+  /// note text).
+  bool get usesKeychain => _useKeychain;
   final Map<String, String> _keys = {};
 
   /// Loads the store persisted in [env]; a missing, unreadable, or corrupt
-  /// file yields an empty store.
-  static Future<SessionKeysStore> load(ExecutionEnv env) async {
-    final store = SessionKeysStore._(env);
+  /// file yields an empty store. With a working [keychain] the Keychain is
+  /// the source of truth, and file-persisted keys are migrated into it once.
+  static Future<SessionKeysStore> load(
+    ExecutionEnv env, {
+    KeychainStore? keychain,
+  }) async {
+    final store = SessionKeysStore._(env, keychain);
     await store._load();
     return store;
   }
@@ -65,7 +83,8 @@ class SessionKeysStore extends ChangeNotifier {
   String? valueOf(String name) => _keys[name];
 
   /// Saves [value] under [name] (replacing any previous value). An empty
-  /// value deletes the entry instead. Persistence is best effort.
+  /// value deletes the entry instead. Persistence is best effort (Keychain
+  /// when available, else the file).
   Future<void> set(String name, String value) async {
     if (value.isEmpty) {
       return delete(name);
@@ -73,6 +92,10 @@ class SessionKeysStore extends ChangeNotifier {
     if (_keys[name] == value) return;
     _keys[name] = value;
     notifyListeners();
+    if (_useKeychain) {
+      await _keychain?.set(name, value);
+      return;
+    }
     await _save();
   }
 
@@ -80,10 +103,37 @@ class SessionKeysStore extends ChangeNotifier {
   Future<void> delete(String name) async {
     if (_keys.remove(name) == null) return;
     notifyListeners();
+    if (_useKeychain) {
+      await _keychain?.delete(name);
+      return;
+    }
     await _save();
   }
 
   Future<void> _load() async {
+    final keychain = _keychain;
+    if (keychain != null && await keychain.isAvailable()) {
+      final secure = await keychain.readAll();
+      _useKeychain = true;
+      if (secure.isNotEmpty) {
+        _keys
+          ..clear()
+          ..addAll(secure);
+        return;
+      }
+      // One-time migration: file-persisted keys move into the Keychain.
+      await _loadFile();
+      if (_keys.isNotEmpty) {
+        for (final entry in _keys.entries) {
+          await keychain.set(entry.key, entry.value);
+        }
+      }
+      return;
+    }
+    await _loadFile();
+  }
+
+  Future<void> _loadFile() async {
     final env = _env;
     if (env == null) return;
     try {

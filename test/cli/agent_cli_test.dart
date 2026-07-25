@@ -371,19 +371,16 @@ void main() {
     final fake = _FakeStreamFunction([_textTurn('Hello world')]);
     final cli = cliFor(fake.call);
     final run = cli.run();
-
     io.sendLine('hi');
     await _waitFor(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
-
     final output = io.out.toString();
     expect(output, contains('test-model (test-api)'));
     expect(output, contains('/work'));
     expect(output, contains('fa> '));
     expect(output, contains('Hello world'));
     expect(output, contains('bye'));
-
     final entries = await sessionEntries();
     final messages = entries.whereType<MessageRecord>().toList();
     expect(messages, hasLength(2));
@@ -405,11 +402,9 @@ void main() {
       envVarIsSet: (name) => name == 'ANTHROPIC_API_KEY',
     );
     final run = cli.run();
-
     await _waitFor(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
-
     final output = io.out.toString();
     expect(output, contains('endpoint: https://api.anthropic.com'));
     expect(output, contains('key: ANTHROPIC_API_KEY'));
@@ -425,11 +420,9 @@ void main() {
       envVarIsSet: (_) => false,
     );
     final run = cli.run();
-
     await _waitFor(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
-
     expect(
       io.out.toString(),
       contains('key: no key set (want ANTHROPIC_API_KEY)'),
@@ -440,7 +433,6 @@ void main() {
     final fake = _FakeStreamFunction([_textTurn('ok')]);
     final cli = cliFor(fake.call, providerKind: 'test-kind');
     final run = cli.run();
-
     await _waitFor(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
@@ -1017,15 +1009,101 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(store.map['OPENAI_API_KEY'], 'sk-token-789');
+    // Endpoint-scoped store name (FA_KEY_<HOST>), never the shared env name.
+    expect(store.map['FA_KEY_127_0_0_1_1'], 'sk-token-789');
+    expect(store.map['OPENAI_API_KEY'], isNull);
     expect(
       output,
       contains(
         'key: provided (saved to fake store; '
-        'remove with /key delete OPENAI_API_KEY)',
+        'remove with /key delete FA_KEY_127_0_0_1_1)',
       ),
     );
     expect(output, isNot(contains('sk-token-789')));
+  });
+
+  test('/provider resolves the endpoint-scoped store key', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    await cache.save('FA_KEY_127_0_0_1_1', 'scoped-key');
+    final changes = <(String, String)>[];
+    final cli = cliFor(
+      fake.call,
+      secureKeys: cache,
+      envVarValue: (name) =>
+          name == 'FA_KEY_127_0_0_1_1' ? cache.read(name) : null,
+      onProviderChanged: (kind, key) => changes.add((kind, key)),
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider openai http://127.0.0.1:1/v1');
+    await _waitFor(() => changes.isNotEmpty);
+    io.sendLine('/exit');
+    await run;
+
+    expect(changes.single.$2, 'scoped-key');
+    expect(io.out.toString(), contains('key: FA_KEY_127_0_0_1_1 (fake store)'));
+  });
+
+  test('/provider still resolves a legacy env-name store key', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    await cache.save('OPENAI_API_KEY', 'legacy-key');
+    final changes = <(String, String)>[];
+    final cli = cliFor(
+      fake.call,
+      secureKeys: cache,
+      envVarValue: (name) => name == 'OPENAI_API_KEY' ? cache.read(name) : null,
+      onProviderChanged: (kind, key) => changes.add((kind, key)),
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider openai http://127.0.0.1:1/v1');
+    await _waitFor(() => changes.isNotEmpty);
+    io.sendLine('/exit');
+    await run;
+
+    expect(changes.single.$2, 'legacy-key');
+    expect(io.out.toString(), contains('key: OPENAI_API_KEY (fake store)'));
+  });
+
+  test('/provider key order: env beats scoped, scoped beats legacy', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    await cache.save('OPENAI_API_KEY', 'legacy-key');
+    await cache.save('FA_KEY_127_0_0_1_1', 'scoped-key');
+    final changes = <(String, String)>[];
+    String? envValue = 'env-key';
+    final cli = cliFor(
+      fake.call,
+      secureKeys: cache,
+      envVarValue: (name) {
+        if (name == 'OPENAI_API_KEY') return envValue;
+        if (name == 'FA_KEY_127_0_0_1_1') return cache.read(name);
+        return null;
+      },
+      onProviderChanged: (kind, key) => changes.add((kind, key)),
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider openai http://127.0.0.1:1/v1');
+    await _waitFor(() => changes.isNotEmpty);
+    expect(changes.removeLast().$2, 'env-key');
+
+    // Without the env var the scoped entry wins over the legacy one.
+    envValue = null;
+    io.sendLine('/provider openai http://127.0.0.1:1/v1');
+    await _waitFor(() => changes.isNotEmpty);
+    io.sendLine('/exit');
+    await run;
+
+    expect(changes.removeLast().$2, 'scoped-key');
   });
 
   test('/provider custom runs the guided openai-like setup', () async {
@@ -1121,7 +1199,7 @@ void main() {
     await _waitFor(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('https://proxy.example.com/v1');
     await _waitFor(() => io.out.toString().contains('provider name (empty ='));
-    io.sendLine('');
+    io.sendLine('work');
     await _waitFor(
       () => io.out.toString().contains('API key (empty for none):'),
     );
@@ -1137,9 +1215,60 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(store.map['FA_KEY_PROXY_EXAMPLE_COM'], 'sk-flow-key-1');
+    // Name-scoped slot: the key binds to this entry, not just the host.
+    expect(store.map['FA_KEY_PROXY_EXAMPLE_COM_WORK'], 'sk-flow-key-1');
     expect(output, contains('key: provided (saved to fake store'));
     expect(output, isNot(contains('sk-flow-key-1')));
+  });
+
+  test('two accounts on one endpoint keep separate keys', () async {
+    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final store = _FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    final cli = cliFor(
+      fake.call,
+      secureKeys: cache,
+      modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      customProviders: CustomProviderRegistry(const []),
+    );
+    final run = cli.run();
+
+    Future<void> addAccount(String name, String key) async {
+      // Match only output produced by THIS wizard run — identical prompts
+      // from the previous account would satisfy the waits prematurely and
+      // desync the scripted answers.
+      final marker = io.out.toString().length;
+      String fresh() => io.out.toString().substring(marker);
+      io.sendLine('/provider custom');
+      await _waitFor(() => fresh().contains('type a number:'));
+      io.sendLine('1');
+      await _waitFor(() => fresh().contains('base URL (empty ='));
+      io.sendLine('https://proxy.example.com/v1');
+      await _waitFor(() => fresh().contains('provider name (empty ='));
+      io.sendLine(name);
+      await _waitFor(() => fresh().contains('API key (empty for none):'));
+      io.sendLine(key);
+      await _waitFor(() => fresh().contains('no model list from the endpoint'));
+      io.sendLine('proxy-model');
+      await _waitFor(() => fresh().contains('saved provider $name'));
+    }
+
+    await addAccount('ira1', 'sk-one');
+    await addAccount('ira2', 'sk-two');
+    io.sendLine('/exit');
+    await run;
+
+    // Distinct name-scoped slots — the second account did not overwrite the
+    // first.
+    expect(store.map['FA_KEY_PROXY_EXAMPLE_COM_IRA1'], 'sk-one');
+    expect(store.map['FA_KEY_PROXY_EXAMPLE_COM_IRA2'], 'sk-two');
+    final entries = cli.config.customProviders?.entries ?? const [];
+    expect(
+      entries.map((e) => e.keyName).toSet().length,
+      entries.length,
+      reason: 'every entry owns a distinct key slot',
+    );
   });
 
   test('/provider custom supports anthropic-like endpoints', () async {
@@ -1730,7 +1859,9 @@ void main() {
     io.sendLine('/exit');
     await run;
 
-    expect(io.out.toString(), contains('/key set OPENAI_API_KEY <value>'));
+    // A custom endpoint suggests its endpoint-scoped store name (what
+    // /provider writes), not the shared env name.
+    expect(io.out.toString(), contains('/key set FA_KEY_EXAMPLE_TEST <value>'));
   });
 
   test('401 with a single-source key names its origin', () async {
@@ -2418,6 +2549,55 @@ void main() {
       expect(output, contains('fa:  done'));
     });
 
+    test('tool results do not break a collapsing tool-call run', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([
+          ToolCall(
+            id: 'c1',
+            name: 'read',
+            arguments: const {'path': 'missing.txt'},
+          ),
+        ]),
+        _toolTurn([
+          ToolCall(
+            id: 'c2',
+            name: 'edit',
+            arguments: const {'path': 'missing.txt', 'patch': ''},
+          ),
+        ]),
+        _textTurn('done'),
+      ]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/session alpha');
+      await _waitFor(
+        () => io.out.toString().contains("created session 'alpha'"),
+      );
+      io.sendLine('go');
+      await _waitFor(() => fake.calls == 3 && !cli.isBusy);
+      io.sendLine('/session beta');
+      await _waitFor(
+        () => io.out.toString().contains("created session 'beta'"),
+      );
+      io.sendLine('/session alpha');
+      await _waitFor(
+        () => io.out.toString().contains('restored session: alpha'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      // assistant([read]), result, assistant([edit]), result collapse into
+      // ONE run row — the tool results between them stay invisible.
+      final run_row = RegExp(r'^fa:  \[read\] \[edit\]$', multiLine: true);
+      expect(run_row.allMatches(output), hasLength(1));
+      expect(
+        RegExp(r'^fa:  \[edit\]$', multiLine: true).allMatches(output),
+        isEmpty,
+      );
+    });
+
     test('exit prints the resume command for a named session', () async {
       final fake = _FakeStreamFunction([_textTurn('hi')]);
       final cli = AgentCli(
@@ -2531,6 +2711,86 @@ void main() {
       expect(messages[0], isA<UserMessage>());
       expect(messages[1], isA<AssistantMessage>());
       expect(messages[2], isA<UserMessage>());
+    });
+  });
+
+  group('parseModelsResponse', () {
+    test('reads ids sorted and context windows from all known fields', () {
+      final (ids, windows, _) = parseModelsResponse(
+        '{"data": ['
+        '{"id": "z-model", "context_length": 262144},'
+        '{"id": "a-model", "context_window": 131072},'
+        '{"id": "m-model", "max_context_length": 32768},'
+        '{"id": "no-window"},'
+        '{"id": "bad-window", "context_length": "lots"},'
+        '{"id": ""}'
+        ']}',
+      );
+      expect(ids, ['a-model', 'bad-window', 'm-model', 'no-window', 'z-model']);
+      expect(windows, {'z-model': 262144, 'a-model': 131072, 'm-model': 32768});
+    });
+
+    test('reads max completion caps (flat and top_provider nested)', () {
+      final (_, _, caps) = parseModelsResponse(
+        '{"data": ['
+        '{"id": "flat", "max_completion_tokens": 65536},'
+        '{"id": "nested", "top_provider": {"max_completion_tokens": 32768}},'
+        '{"id": "alt", "max_output_tokens": 16384},'
+        '{"id": "none"},'
+        '{"id": "nullish", "max_completion_tokens": null}'
+        ']}',
+      );
+      expect(caps, {'flat': 65536, 'nested': 32768, 'alt': 16384});
+    });
+
+    test('tolerates an empty payload', () {
+      final (ids, windows, caps) = parseModelsResponse('{"data": []}');
+      expect(ids, isEmpty);
+      expect(windows, isEmpty);
+      expect(caps, isEmpty);
+    });
+  });
+
+  group('/model-edit', () {
+    test('bare shows the active limits; setting applies them', () async {
+      final fake = _FakeStreamFunction([_textTurn('hi')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/model-edit');
+      await _waitFor(() => io.out.toString().contains('contextWindow 100000'));
+      io.sendLine('/model-edit contextWindow 131072');
+      await _waitFor(
+        () => io.out.toString().contains('model context window set to 131072'),
+      );
+      expect(cli.agent.state.model.contextWindow, 131072);
+      expect(cli.agent.state.model.maxTokens, 4096);
+
+      io.sendLine('/model-edit maxTokens 8192');
+      await _waitFor(
+        () => io.out.toString().contains('model max tokens set to 8192'),
+      );
+      expect(cli.agent.state.model.maxTokens, 8192);
+      expect(cli.agent.state.model.contextWindow, 131072);
+
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('rejects bad input without touching the model', () async {
+      final fake = _FakeStreamFunction([_textTurn('hi')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/model-edit contextWindow nope');
+      await _waitFor(() => io.out.toString().contains('usage: /model-edit'));
+      io.sendLine('/model-edit bananas 123');
+      await _waitFor(() => io.out.toString().contains('usage: /model-edit'));
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.agent.state.model.contextWindow, 100000);
+      expect(cli.agent.state.model.maxTokens, 4096);
     });
   });
 }

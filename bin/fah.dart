@@ -117,31 +117,60 @@ Model _buildModel(CliArgs args) {
   );
 }
 
-String? _optionalApiKey(String provider, SecureKeyCache keys) {
+String? _optionalApiKey(
+  String provider,
+  SecureKeyCache keys, {
+  String? baseUrl,
+  Iterable<String>? scopedKeyNames,
+}) {
   final env = Platform.environment;
-  // Resolution order per key name: environment first, then the platform
-  // secure store (macOS Keychain / Secret Service / Credential Locker).
-  String? byName(String name) {
+  final names = switch (provider) {
+    'anthropic' => const ['ANTHROPIC_API_KEY'],
+    'google' => const ['GOOGLE_API_KEY'],
+    'vision' => const ['VISION_API_KEY'],
+    'transcribe' => const ['TRANSCRIBE_API_KEY'],
+    _ => const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
+  };
+  // Resolution order: a genuine environment value of the catalog env names,
+  // then endpoint-scoped secure-store entries (FA_KEY_<HOST> — what
+  // /provider writes — plus any saved custom entry's name-scoped key for
+  // this endpoint), then legacy env-name store entries from older versions.
+  for (final name in names) {
     final value = env[name];
     if (value != null && value.isNotEmpty) return value;
-    return keys.read(name);
   }
-
-  return switch (provider) {
-    'anthropic' => byName('ANTHROPIC_API_KEY'),
-    'google' => byName('GOOGLE_API_KEY'),
-    'vision' => byName('VISION_API_KEY'),
-    'transcribe' => byName('TRANSCRIBE_API_KEY'),
-    _ => byName('OPENROUTER_API_KEY') ?? byName('OPENAI_API_KEY'),
-  };
+  if (baseUrl != null) {
+    final candidates = [
+      CustomProviderRegistry.keyNameFor(baseUrl),
+      ...?scopedKeyNames,
+    ];
+    for (final name in candidates) {
+      final stored = keys.read(name);
+      if (stored != null && stored.isNotEmpty) return stored;
+    }
+  }
+  for (final name in names) {
+    final stored = keys.read(name);
+    if (stored != null && stored.isNotEmpty) return stored;
+  }
+  return null;
 }
 
 String _resolveApiKey(
   String provider,
   SecureKeyCache keys, {
   String? fallback,
+  String? baseUrl,
+  Iterable<String>? scopedKeyNames,
 }) {
-  final key = _optionalApiKey(provider, keys) ?? fallback;
+  final key =
+      _optionalApiKey(
+        provider,
+        keys,
+        baseUrl: baseUrl,
+        scopedKeyNames: scopedKeyNames,
+      ) ??
+      fallback;
   if (key == null || key.isEmpty) {
     final name = switch (provider) {
       'anthropic' => 'ANTHROPIC_API_KEY',
@@ -557,7 +586,15 @@ Future<void> main(List<String> args) async {
   // the banner, `/provider`, `/key`) hits the snapshot.
   final keyCache = SecureKeyCache(platformSecureKeyStore());
   await keyCache.preload({
-    for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
+    for (final spec in providerCatalog.values) ...[
+      ...spec.apiKeyEnvNames,
+      // Endpoint-scoped keys (FA_KEY_<HOST>): catalog defaults, the
+      // configured endpoint, and every saved custom provider's.
+      CustomProviderRegistry.keyNameFor(spec.defaultBaseUrl),
+    ],
+    CustomProviderRegistry.keyNameFor(baseUrl),
+    for (final entry in saved.customProviders)
+      entry.keyName ?? CustomProviderRegistry.keyNameFor(entry.baseUrl),
     'VISION_API_KEY',
     'TRANSCRIBE_API_KEY',
     if (saved.modelRoles != null) ..._roleKeyNames(saved.modelRoles!),
@@ -633,9 +670,26 @@ Future<void> main(List<String> args) async {
   // models, or base URLs with slash commands before the first run. Headless
   // mode needs a key immediately because it performs a single run and exits.
   final interactive = headlessPrompt == null;
+  // Saved custom entries for this endpoint carry name-scoped keys
+  // (multi-account); they resolve right after the host-scoped slot.
+  final entryKeyNames = [
+    for (final entry in saved.customProviders)
+      if (entry.baseUrl == baseUrl && entry.keyName != null) entry.keyName!,
+  ];
   final apiKey = defaultRoleResolved || customEndpoint || interactive
-      ? (_optionalApiKey(provider, keyCache) ?? '')
-      : _resolveApiKey(provider, keyCache);
+      ? (_optionalApiKey(
+              provider,
+              keyCache,
+              baseUrl: baseUrl,
+              scopedKeyNames: entryKeyNames,
+            ) ??
+            '')
+      : _resolveApiKey(
+          provider,
+          keyCache,
+          baseUrl: baseUrl,
+          scopedKeyNames: entryKeyNames,
+        );
 
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the
@@ -844,14 +898,15 @@ Future<void> main(List<String> args) async {
   final sigintSub = ProcessSignal.sigint.watch().listen((_) {
     if (cli.isBusy) {
       io.fireInterrupt();
+    } else if (headlessPrompt == null) {
+      // Idle Ctrl-C exits 130; restore canonical mode first so the shell is
+      // not left with raw input disabled, and print the same resume hint
+      // the /exit path shows — this path never returns from cli.run().
+      io.resetRawMode();
+      stdout.writeln();
+      unawaited(cli.printSessionResumeHint().whenComplete(() => exit(130)));
     } else {
-      // Idle Ctrl-C exits 130; the cosmetic newline stays off stdout in
-      // headless mode so a pipe never sees it. Restore canonical mode first
-      // so the shell is not left with raw input disabled.
-      if (headlessPrompt == null) {
-        io.resetRawMode();
-        stdout.writeln();
-      }
+      // Headless: no cosmetic newline on stdout so a pipe never sees it.
       exit(130);
     }
   });

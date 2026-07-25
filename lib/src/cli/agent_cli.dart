@@ -38,6 +38,7 @@ import '../exceptions.dart';
 import '../lsp/lsp_tool.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
+import '../providers/models_endpoint.dart';
 import '../prompts/prompt_overrides.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_repo.dart';
@@ -316,21 +317,6 @@ final class AgentCliConfig {
 /// The default system prompt for the CLI agent.
 String defaultAgentCliSystemPrompt(String cwd) =>
     defaultAgentMode(cwd).systemPrompt;
-
-/// Known model ids shown by `/models` and the `/model` picker. Maps the
-/// provider name stored on the active [Model] to a short, useful subset.
-const _knownModels = <String, List<String>>{
-  'openrouter': [
-    'anthropic/claude-sonnet-4',
-    'openai/gpt-4o-mini',
-    'google/gemini-2.5-pro',
-    'anthropic/claude-opus-4',
-    'openai/gpt-4.1-mini',
-  ],
-  'anthropic': ['claude-sonnet-4-5', 'claude-opus-4', 'claude-haiku-4'],
-  'google': ['gemini-2.5-pro', 'gemini-2.0-flash'],
-  'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
-};
 
 /// Adapts [CliIO] to the [PluginIO] surface exposed to plugins.
 final class _PluginIO implements PluginIO {
@@ -742,6 +728,10 @@ class AgentCli {
     ].join('\n\n');
   }
 
+  /// Reference to the active TUI controller so asynchronous model-list updates
+  /// can refresh the picker while it is open.
+  FaTuiController? _tuiController;
+
   /// Model ids shown by the most recent `/model` picker, so `/model N` can
   /// select by number without retyping the full id.
   List<String>? _lastModelList;
@@ -751,9 +741,17 @@ class AgentCli {
   List<String> _modelCache = const [];
   Future<void>? _modelCacheFuture;
 
-  /// Reference to the active TUI controller so asynchronous model-list updates
-  /// can refresh the picker while it is open.
-  FaTuiController? _tuiController;
+  /// Context windows reported by the endpoint's `/models` payload (see
+  /// [parseModelsResponse] in provider_commands.dart); empty when the
+  /// fetcher is replaced (tests) or the endpoint reports none. Drives
+  /// automatic window correction so the catalog default (200k) stops lying
+  /// for custom endpoints.
+  Map<String, int> _modelContextWindows = const {};
+
+  /// Max-output-token caps reported by the endpoint's `/models` payload
+  /// (same source as [_modelContextWindows]); drives automatic `maxTokens`
+  /// correction so the conservative catalog floor stops truncating answers.
+  Map<String, int> _modelMaxTokens = const {};
 
   Map<String, dynamic> _pluginConfig(String name) {
     final raw = config.pluginConfig[name];
@@ -832,13 +830,15 @@ class AgentCli {
       await taskSub.cancel();
       await _settled;
     }
-    await _printSessionResumeHint();
+    await printSessionResumeHint();
   }
 
   /// After an interactive run ends, prints the command that picks this
   /// session back up (kimi prints the resume hint on exit too). Skipped for
   /// sessions with nothing persisted yet — resuming those is pointless.
-  Future<void> _printSessionResumeHint() async {
+  /// Also called from the top-level idle-SIGINT path in `bin/fah.dart`,
+  /// which exits 130 without returning from [run].
+  Future<void> printSessionResumeHint() async {
     final session = _session;
     if (session == null || _persistedCount == 0) return;
     final name = await session.getSessionName();
@@ -970,27 +970,6 @@ class AgentCli {
     return items;
   }
 
-  List<MenuItem> _buildModelMenu(String filter) {
-    // If we have no cached models yet, kick off a background fetch and show a
-    // loading placeholder. The picker will refresh automatically when the list
-    // arrives.
-    if (_modelCache.isEmpty && _modelCacheFuture == null) {
-      unawaited(_refreshModelCache());
-    }
-    final models = _modelCandidates(filter);
-    if (models.isEmpty) {
-      return const [MenuItem(key: '', label: 'loading models...')];
-    }
-    return [
-      for (var i = 0; i < models.length; i++)
-        MenuItem(key: models[i], label: '${i + 1}) ${models[i]}'),
-    ];
-  }
-
-  Future<void> _tuiSelectModel(String modelId) async {
-    await _handleModelCommand(modelId);
-  }
-
   /// Routes a generic TUI picker selection (sessions/mode/approval) to the
   /// same handlers the typed slash command would use.
   Future<void> _tuiPickerSelected(String pickerId, String key) async {
@@ -1105,57 +1084,6 @@ class AgentCli {
     _tuiController?.openPicker('approval', 'Approval mode', items);
   }
 
-  /// Fetches the model list from an OpenAI-compatible `/models` endpoint and
-  /// refreshes the TUI picker if it is currently open. Failures are swallowed
-  /// so the UI keeps working with the hardcoded fallback list.
-  Future<void> _refreshModelCache() async {
-    if (_modelCacheFuture != null) return _modelCacheFuture!;
-    final completer = Completer<void>();
-    _modelCacheFuture = completer.future;
-    try {
-      final model = _agent.state.model;
-      if (model.api == 'openai-completions') {
-        final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-        final ids = await fetch(model.baseUrl, apiKey: _apiKey);
-        if (ids.isNotEmpty) {
-          _modelCache = ids;
-          _tuiController?.sendModelsRefresh();
-        }
-      }
-    } finally {
-      _modelCacheFuture = null;
-      completer.complete();
-    }
-  }
-
-  Future<List<String>> _fetchOpenAiCompatibleModels(
-    String baseUrl, {
-    required String apiKey,
-  }) async {
-    final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
-    final uri = Uri.parse('$normalized/models');
-    final headers = <String, String>{'Accept': 'application/json'};
-    if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
-    try {
-      final response = await http
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return const [];
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final data = body['data'] as List<dynamic>? ?? const <dynamic>[];
-      final ids = data
-          .whereType<Map<String, dynamic>>()
-          .map((m) => m['id'] as String?)
-          .whereType<String>()
-          .where((id) => id.isNotEmpty)
-          .toList();
-      ids.sort();
-      return ids;
-    } on Object {
-      return const [];
-    }
-  }
-
   Future<Session> _initializeSession() async {
     final name = config.sessionName?.trim();
     if (name != null && name.isNotEmpty) {
@@ -1265,11 +1193,21 @@ class AgentCli {
           : List.of(pendingCalls);
       pendingCalls.clear();
       firstIndex = pendingFirstIndex;
-      return ['fa:  ${names.join(' ')}'];
+      final joined = names.join(' ');
+      // TUI: a dim indicator row like the live tool indicators; line mode:
+      // the compact fa:-prefixed row.
+      return [_useTui ? _style.dim(joined) : 'fa:  $joined'];
     }
 
     for (var i = messages.length - 1; i >= 0; i--) {
       final message = messages[i];
+      if (message is ToolResultMessage) {
+        // Tool results never render in the replay, and they must NOT break
+        // a collapsing run of tool-call-only assistant messages (a run is
+        // assistant(calls), result, assistant(calls), result, ...).
+        firstIndex = i;
+        continue;
+      }
       if (_isToolCallOnlyAssistant(message)) {
         final content = (message as AssistantMessage).content;
         pendingCalls.insertAll(0, [
@@ -1278,7 +1216,9 @@ class AgentCli {
         pendingFirstIndex = i;
         continue;
       }
-      final entry = _replayLines(message, maxRowsPerMessage);
+      final entry = _useTui
+          ? _replayLinesTui(message)
+          : _replayLines(message, maxRowsPerMessage);
       if (entry.isNotEmpty &&
           entries.isNotEmpty &&
           rows + entry.length > rowBudget) {
@@ -1322,6 +1262,51 @@ class AgentCli {
     );
     if (hasText) return false;
     return message.content.whereType<ToolCall>().isNotEmpty;
+  }
+
+  /// TUI-mode replay entry in the ACTIVE session's format: the user message
+  /// as the same background echo box the TUI draws at submit time, the
+  /// assistant text as raw markdown ([AnsiMarkdown] styles it at render
+  /// time, exactly like a live stream), and the tool calls of a
+  /// text-bearing message as one dim indicator row. Call-only assistant
+  /// messages collapse through the pending-runs machinery instead.
+  List<String> _replayLinesTui(Message message) {
+    const maxRows = 20;
+    final width = io.columns > 0 ? io.columns : 80;
+    switch (message) {
+      case UserMessage(:final content):
+        final text = content is String
+            ? content
+            : (content as List<ContentBlock>)
+                  .whereType<TextContent>()
+                  .map((b) => b.text)
+                  .join('\n');
+        if (text.trim().isEmpty) return const [];
+        const bg = '\x1b[48;2;30;34;42m';
+        const reset = '\x1b[0m';
+        return [
+          _style.dim('─' * width),
+          for (final line in text.split('\n')) '$bg$line$reset',
+          '',
+        ];
+      case AssistantMessage(:final content):
+        final texts = content
+            .whereType<TextContent>()
+            .map((b) => b.text)
+            .join('\n')
+            .trim();
+        if (texts.isEmpty) return const [];
+        final rows = texts.split('\n');
+        final head = rows.take(maxRows).toList();
+        if (rows.length > maxRows) head[head.length - 1] = '${head.last} …';
+        final calls = content
+            .whereType<ToolCall>()
+            .map((c) => '[${c.name}]')
+            .join(' ');
+        return [...head, if (calls.isNotEmpty) _style.dim(calls)];
+      default:
+        return const [];
+    }
   }
 
   /// One compact replay entry (≤ [maxRows] rows), or none for messages the
@@ -1544,13 +1529,48 @@ class AgentCli {
     final spec = catalogProvider(_rolesDriven ? model.provider : _providerKind);
     final names = spec?.apiKeyEnvNames;
     if (names == null || names.isEmpty) return null;
+    final keys = config.secureKeys;
+    // An explicit /provider token (or a saved custom entry's key) IS the
+    // active key: name its store slot. The value is never printed.
+    if (!_rolesDriven && _explicitToken) {
+      final entryKey = _activeCustomKeyName();
+      if (entryKey != null && keys?.read(entryKey) != null) {
+        return 'key: $entryKey';
+      }
+      final scoped = CustomProviderRegistry.keyNameFor(model.baseUrl);
+      if (keys?.read(scoped) != null) return 'key: $scoped';
+      return 'key: provided';
+    }
+    // Genuine environment values first (they differ from the store's entry);
+    // then the active custom entry's slot (multi-account entries use
+    // name-scoped ones), the host-scoped slot, and legacy env-name entries
+    // (env or store — indistinguishable here).
+    for (final name in names) {
+      final value = config.envVarValue?.call(name);
+      if (value != null && value.isNotEmpty && value != keys?.read(name)) {
+        return 'key: $name';
+      }
+    }
+    final entryKey = _activeCustomKeyName();
+    if (entryKey != null && keys?.read(entryKey) != null) {
+      return 'key: $entryKey';
+    }
+    final scopedName = CustomProviderRegistry.keyNameFor(model.baseUrl);
+    if (keys?.read(scopedName) != null) return 'key: $scopedName';
     final set = names
         .where((name) => config.envVarIsSet?.call(name) ?? false)
         .firstOrNull;
     if (set != null) return 'key: $set';
-    if (!_rolesDriven && _explicitToken) return 'key: provided';
     if (spec != null && model.baseUrl != spec.defaultBaseUrl) return null;
     return 'key: no key set (want ${names.first})';
+  }
+
+  /// The active saved custom provider's secure-store key name, or null when
+  /// none is active (or the entry is keyless).
+  String? _activeCustomKeyName() {
+    final name = _activeCustomName;
+    if (name == null) return null;
+    return config.customProviders?.find(name)?.keyName;
   }
 
   /// The `error:` diagnostic line for a failed run. Provider JSON blobs
@@ -1590,7 +1610,9 @@ class AgentCli {
   }
 
   /// The ` — ...` suffix for [_errorLine] on auth failures. Never prints key
-  /// material — names and sources only.
+  /// material — names and sources only. Mirrors the provider key resolution
+  /// order: genuine environment value → endpoint-scoped store entry →
+  /// legacy env-name store entry.
   String _authHint() {
     if (_rolesDriven) {
       return ' — roles mode reads keys from the environment only; check '
@@ -1598,34 +1620,56 @@ class AgentCli {
     }
     final spec = catalogProvider(_providerKind);
     final names = spec?.apiKeyEnvNames;
+    final baseUrl = _agent.state.model.baseUrl;
     if (names == null || names.isEmpty) {
-      return ' — check the credentials for ${_agent.state.model.baseUrl}';
+      return ' — check the credentials for $baseUrl';
     }
-    final active = names
+    final keys = config.secureKeys;
+    final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
+    // A genuine environment key in play: warn when it shadows a different
+    // same-name store entry, else name it as the source.
+    final envActive = names.where((name) {
+      final value = config.envVarValue?.call(name);
+      return value != null && value.isNotEmpty && value != keys?.read(name);
+    }).firstOrNull;
+    if (envActive != null) {
+      final storedTwin = keys?.read(envActive);
+      if (storedTwin != null && storedTwin.isNotEmpty) {
+        final label = keys?.label ?? 'secure store';
+        return ' — the environment variable $envActive shadows a DIFFERENT '
+            'key in the $label; the env value is the one sent — fix or '
+            'unset it, or /key delete $envActive';
+      }
+      return ' — the key came from the environment ($envActive); verify it '
+          'is valid for $baseUrl or replace it with '
+          '/key set $envActive <value>';
+    }
+    // Endpoint-scoped store key (what /provider and the wizard write): the
+    // active custom entry's name-scoped slot first, then the host-scoped
+    // one.
+    final entryKey = _activeCustomKeyName();
+    final scoped = entryKey ?? scopedName;
+    if (keys?.read(scoped) != null) {
+      final label = keys?.label ?? 'secure store';
+      return ' — the key came from the $label ($scoped); verify it is '
+          'valid for $baseUrl or replace it with /key set $scoped <value>';
+    }
+    // Legacy env-name store key (older versions wrote these).
+    final legacy = names
         .where((name) => (config.envVarValue?.call(name) ?? '').isNotEmpty)
         .firstOrNull;
-    if (active == null) {
-      return _explicitToken
-          ? ' — the /provider token was rejected; set a fresh one with '
-                '/key set ${names.first} <value>'
-          : ' — no ${names.first} set; store one with '
-                '/key set ${names.first} <value>';
+    if (legacy != null) {
+      final label = keys?.label ?? 'secure store';
+      return ' — the key came from the $label ($legacy); verify it is valid '
+          'for $baseUrl or replace it with /key set $legacy <value>';
     }
-    final stored = config.secureKeys?.read(active);
-    final resolved = config.envVarValue?.call(active);
-    if (stored != null && resolved != null && stored != resolved) {
-      final label = config.secureKeys?.label ?? 'secure store';
-      return ' — the environment variable $active shadows a DIFFERENT key '
-          'in the $label; fix or unset the env var so the stored key '
-          'applies (/key shows both sources)';
-    }
-    final fromStore = stored != null && resolved == stored;
-    final source = fromStore
-        ? 'the ${config.secureKeys?.label ?? 'secure store'} ($active)'
-        : 'the environment ($active)';
-    return ' — the key came from $source; verify it is valid for '
-        '${_agent.state.model.baseUrl} or replace it with '
-        '/key set $active <value>';
+    final suggested =
+        entryKey ??
+        (baseUrl != spec?.defaultBaseUrl ? scopedName : names.first);
+    return _explicitToken
+        ? ' — the /provider token was rejected; set a fresh one with '
+              '/key set $suggested <value>'
+        : ' — no key set; store one with /key set $suggested <value>';
   }
 
   Future<void> _handleLine(String line) async {
@@ -1868,6 +1912,8 @@ class AgentCli {
         await _handleModelCommand(rest);
       case '/models':
         await _listModels(rest);
+      case '/model-edit':
+        _handleModelEdit(rest);
       case '/provider':
         if (rest.isEmpty && _useTui && _tuiController != null) {
           _openProviderPicker();
@@ -2210,128 +2256,6 @@ class AgentCli {
     config.onModeChanged?.call(mode.name);
   }
 
-  /// Lists the known models for the active provider, optionally filtered by
-  /// [filter]. The output is numbered so `/model N` can pick one. For
-  /// OpenAI-compatible endpoints the list is fetched live from `/v1/models`
-  /// and cached.
-  Future<void> _listModels(String filter) async {
-    if (_modelCache.isEmpty && _modelCacheFuture == null) {
-      await _refreshModelCache();
-    }
-    final candidates = _modelCandidates(filter);
-    if (candidates.isEmpty) {
-      io.writeln('no known models for provider ${_agent.state.model.provider}');
-      return;
-    }
-    io.writeln('models for ${_agent.state.model.provider}:');
-    for (var i = 0; i < candidates.length; i++) {
-      io.writeln('  ${i + 1}) ${candidates[i]}');
-    }
-    _lastModelList = candidates;
-    io.writeln('use /model <n> or /model <id> to switch');
-  }
-
-  /// Returns the full list of known model ids for the active provider.
-  List<String> _listModelsForMenu() => _modelCandidates('');
-
-  /// Returns known model ids for the active provider, filtered by an optional
-  /// lowercase substring. Prefers the live cache fetched from the provider's
-  /// `/models` endpoint; falls back to the hardcoded subset when the cache is
-  /// empty or the fetch has not completed yet.
-  List<String> _modelCandidates([String filter = '']) {
-    final provider = _agent.state.model.provider;
-    final all = _modelCache.isNotEmpty
-        ? _modelCache
-        : (_knownModels[provider] ?? const <String>[]);
-    if (filter.isEmpty) return all.toList();
-    final lower = filter.toLowerCase();
-    return all.where((id) => id.toLowerCase().contains(lower)).toList();
-  }
-
-  Future<void> _handleModelCommand(String rest) async {
-    final trimmed = rest.trim();
-    if (trimmed == '?') {
-      await _listModels('');
-      return;
-    }
-    if (trimmed.isEmpty) {
-      // Bare `/model` in TUI mode opens the interactive picker; in line mode
-      // it prints the active model and the roles overview.
-      final controller = _tuiController;
-      if (controller != null) {
-        controller.openModelMenu();
-        return;
-      }
-      await _switchModel('');
-      return;
-    }
-    final number = int.tryParse(trimmed);
-    final lastList = _lastModelList ?? _listModelsForMenu();
-    if (number != null) {
-      if (number < 1 || number > lastList.length) {
-        io.writeln('invalid selection: $number (1-${lastList.length})');
-        return;
-      }
-      await _switchModel(lastList[number - 1]);
-      return;
-    }
-    await _switchModel(trimmed);
-  }
-
-  Future<void> _switchModel(String modelId) async {
-    final current = _agent.state.model;
-    final rolesResolver = config.modelRolesResolver;
-    if (modelId.isEmpty) {
-      io.writeln('model: ${current.id} (${current.api})');
-      if (rolesResolver != null) io.writeln(rolesResolver.describeRoles());
-      return;
-    }
-    if (rolesResolver != null) {
-      // Roles mode: pin the default role to the requested model id on the
-      // current provider (a single-entry chain for this session).
-      rolesResolver.setDefaultChain([
-        ModelRef(
-          provider: current.provider,
-          modelId: modelId,
-          baseUrl: current.baseUrl,
-          contextWindow: current.contextWindow,
-          maxTokens: current.maxTokens,
-        ),
-      ]);
-      rolesResolver.applyToAgent(_agent);
-      _streamFunction = _agent.streamFunction;
-      await _session?.appendModelChange(
-        provider: current.provider,
-        modelId: modelId,
-      );
-      io.writeln('switched model to $modelId');
-      _recordCustomModel(modelId);
-      config.onModelChanged?.call(_agent.state.model);
-      return;
-    }
-    _agent.state.model = Model(
-      id: modelId,
-      name: modelId,
-      api: current.api,
-      provider: current.provider,
-      baseUrl: current.baseUrl,
-      reasoning: current.reasoning,
-      input: current.input,
-      cost: current.cost,
-      contextWindow: current.contextWindow,
-      maxTokens: current.maxTokens,
-      headers: current.headers,
-      compat: current.compat,
-    );
-    await _session?.appendModelChange(
-      provider: current.provider,
-      modelId: modelId,
-    );
-    io.writeln('switched model to $modelId');
-    _recordCustomModel(modelId);
-    config.onModelChanged?.call(_agent.state.model);
-  }
-
   /// Renders the model-roles no-silent-degrade note: every retry, key
   /// rotation, and chain failover is announced inline, and the display
   /// model tracks the active chain entry.
@@ -2429,6 +2353,8 @@ class AgentCli {
     '/skills': 'list discovered skills (invoke with /skill:<name>)',
     '/model': '<provider/model> — select model (opens selector)',
     '/models': '[filter] — list known models for the current provider',
+    '/model-edit':
+        '[contextWindow|maxTokens <n>] — show or override token limits',
     '/provider': '[name] [baseUrl] [token] | custom — switch provider/endpoint',
     '/provider-edit': 'edit the active provider via the guided setup',
     '/mode': '[name] — show or switch the active mode',

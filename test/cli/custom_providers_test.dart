@@ -142,6 +142,31 @@ void main() {
         startsWith('FA_KEY_'),
       );
     });
+
+    test('keyNameFor scopes to the provider name when given', () {
+      expect(
+        CustomProviderRegistry.keyNameFor(
+          'https://api.acme.com/v1',
+          providerName: 'work',
+        ),
+        'FA_KEY_API_ACME_COM_WORK',
+      );
+      expect(
+        CustomProviderRegistry.keyNameFor(
+          'https://api.acme.com/v1',
+          providerName: 'my acc 2',
+        ),
+        'FA_KEY_API_ACME_COM_MY_ACC_2',
+      );
+      // Empty/blank names fall back to the host-only slot.
+      expect(
+        CustomProviderRegistry.keyNameFor(
+          'https://api.acme.com/v1',
+          providerName: ' - ',
+        ),
+        'FA_KEY_API_ACME_COM',
+      );
+    });
   });
 
   group('CliConfig customProviders section', () {

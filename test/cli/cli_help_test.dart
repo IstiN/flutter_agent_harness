@@ -122,6 +122,7 @@ void main() {
       // REPL commands.
       '/exit',
       '/model',
+      '/model-edit',
       '/provider',
       '/provider-edit',
       '/key',

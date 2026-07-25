@@ -151,8 +151,11 @@ final class CustomProviderRegistry {
 
   /// The secure-store key name backing [baseUrl]'s key:
   /// `FA_KEY_LOCALHOST_11434`, `FA_KEY_API_ACME_COM` (the store accepts
-  /// `[A-Za-z0-9_]+` only).
-  static String keyNameFor(String baseUrl) {
+  /// `[A-Za-z0-9_]+` only). With [providerName] (a saved entry's name) the
+  /// name is appended — `FA_KEY_API_KIMI_COM_WORK` — so several accounts on
+  /// the same endpoint keep separate keys instead of overwriting one
+  /// host-scoped entry.
+  static String keyNameFor(String baseUrl, {String? providerName}) {
     final uri = Uri.tryParse(baseUrl);
     var host = uri?.host ?? baseUrl;
     if (host.isEmpty) host = 'custom';
@@ -163,6 +166,11 @@ final class CustomProviderRegistry {
         .toUpperCase()
         .replaceAll(RegExp('[^A-Z0-9]+'), '_')
         .replaceAll(RegExp('^_+|_+\$'), '');
-    return 'FA_KEY_${sanitized.isEmpty ? 'CUSTOM' : sanitized}';
+    final base = 'FA_KEY_${sanitized.isEmpty ? 'CUSTOM' : sanitized}';
+    final name = providerName
+        ?.toUpperCase()
+        .replaceAll(RegExp('[^A-Z0-9]+'), '_')
+        .replaceAll(RegExp('^_+|_+\$'), '');
+    return name == null || name.isEmpty ? base : '${base}_$name';
   }
 }

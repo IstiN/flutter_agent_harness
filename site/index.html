@@ -26,6 +26,7 @@
 <!-- Open Graph -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Fa">
+<meta property="og:locale" content="en_US">
 <meta property="og:title" content="Fa — one agent harness, every device">
 <meta property="og:description" content="A coding agent with a real tool loop — sandboxed shell, git, python3 & sqlite in-browser, sessions and compaction. Try it live with your own API key.">
 <meta property="og:url" content="https://fa1.dev/">
@@ -58,7 +59,107 @@
   "codeRepository": "https://github.com/IstiN/flutter_agent_harness",
   "downloadUrl": "https://pub.dev/packages/flutter_agent_harness",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": {
+    "@type": "Organization",
+    "name": "IstiN",
+    "url": "https://github.com/IstiN"
+  },
   "featureList": "Sandboxed shell with curl/jq/rg/sed/awk/git, python3 and sqlite3 in the browser, secrets redaction, file browser, session tree with compaction, BYOK live demo"
+}
+</script>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What is Fa?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Fa (Flutter Agent Harness) is an open-source coding agent for Dart and Flutter. It pairs a pure-Dart agent core (provider adapters, tool loop, session tree, compaction) with a real sandboxed workbench: shell commands, git, python3 and sqlite3 — running identically on iOS, Android, web, desktop, and as a CLI."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is my API key safe in the web demo?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The key is held in page memory only — never written to localStorage, cookies, or disk, and gone on reload. API calls go directly from your browser to the LLM provider: the page is static files, so there is no server or proxy in between that could log it."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Which LLM providers does Fa support?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "OpenAI-compatible endpoints (OpenRouter, Ollama Cloud, self-hosted llama.cpp / LM Studio / vLLM), Anthropic, and Google. Custom OpenAI-compatible providers can be added with a base URL — the model list, context window, and output limits are detected from the endpoint automatically."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Which platforms does Fa run on?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "iOS, Android, web (as static files, no server), macOS, Windows, Linux, and a terminal CLI. The core library is pure Dart with no dart:io, so the same agent loop and tools run everywhere behind a small environment abstraction."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What can the agent actually do?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Run shell commands (curl, jq, rg, sed, awk, tar, zip, diff, patch), clone and push git repositories over HTTP/SSH, run python3 with pip, query sqlite3, execute QuickJS, edit files, browse the web, and keep long-running sessions with automatic context compaction. All of it inside a sandbox you can inspect live in the file browser."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is Fa free?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Fa itself is free and open source (MIT license). You bring your own provider key and pay your LLM provider only for the tokens you use — there is no markup, subscription, or account."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I install the CLI?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "One line: curl -fsSL \"https://fa1.dev/install.sh\" | sh (macOS / Linux / WSL) or the PowerShell equivalent on Windows, then run the setup wizard to pick a provider and key. Alternatively dart pub global activate flutter_agent_harness from pub.dev. Both give you the fa and fah commands."
+      }
+    }
+  ]
+}
+</script>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Install the Fa CLI",
+  "description": "Install the Fa coding-agent CLI on macOS, Linux/WSL, or Windows and configure a provider.",
+  "totalTime": "PT2M",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Run the installer",
+      "text": "macOS / Linux / WSL: curl -fsSL \"https://fa1.dev/install.sh\" | sh — Windows PowerShell: irm \"https://fa1.dev/install.ps1\" | iex. The non-interactive installer checks the Dart SDK, activates the pub.dev package, and puts fa/fah on your PATH."
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Configure the provider",
+      "text": "Run the setup wizard (curl -fsSL \"https://fa1.dev/setup.sh\" | sh) or start fa and use /provider to pick a provider, endpoint, and API key."
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Start the agent",
+      "text": "Run fa in any project directory. Sessions persist automatically and can be resumed with fa --session '<id>'."
+    }
+  ]
 }
 </script>
 </head>
@@ -78,6 +179,7 @@
       <a href="#features">Features</a>
       <a href="#platforms">Platforms</a>
       <a href="#byok">BYOK</a>
+      <a href="#faq">FAQ</a>
     </nav>
     <nav class="nav-ext" aria-label="Project links">
       <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
@@ -357,6 +459,67 @@ flutter run</pre>
     </div>
   </section>
 
+  <!-- ── FAQ ──────────────────────────────────────────────────────────── -->
+  <section id="faq" class="faq reveal">
+    <p class="kicker">FAQ</p>
+    <h2>Straight answers.</h2>
+    <div class="faq-list">
+      <details class="faq-item" id="faq-what">
+        <summary>What is Fa?</summary>
+        <p>Fa (Flutter Agent Harness) is an open-source coding agent for Dart
+        and Flutter. It pairs a pure-Dart agent core (provider adapters, tool
+        loop, session tree, compaction) with a real sandboxed workbench:
+        shell commands, git, python3 and sqlite3 — running identically on
+        iOS, Android, web, desktop, and as a CLI.</p>
+      </details>
+      <details class="faq-item" id="faq-key">
+        <summary>Is my API key safe in the web demo?</summary>
+        <p>Yes. The key is held in page memory only — never written to
+        localStorage, cookies, or disk, and gone on reload. API calls go
+        directly from your browser to the LLM provider: this page is static
+        files, so there is no server or proxy in between that could log it.</p>
+      </details>
+      <details class="faq-item" id="faq-providers">
+        <summary>Which LLM providers does Fa support?</summary>
+        <p>OpenAI-compatible endpoints (OpenRouter, Ollama Cloud, self-hosted
+        llama.cpp / LM Studio / vLLM), Anthropic, and Google. Custom
+        OpenAI-compatible providers can be added with a base URL — the model
+        list, context window, and output limits are detected from the
+        endpoint automatically.</p>
+      </details>
+      <details class="faq-item" id="faq-platforms">
+        <summary>Which platforms does Fa run on?</summary>
+        <p>iOS, Android, web (as static files, no server), macOS, Windows,
+        Linux, and a terminal CLI. The core library is pure Dart with no
+        dart:io, so the same agent loop and tools run everywhere behind a
+        small environment abstraction.</p>
+      </details>
+      <details class="faq-item" id="faq-tools">
+        <summary>What can the agent actually do?</summary>
+        <p>Run shell commands (curl, jq, rg, sed, awk, tar, zip, diff, patch),
+        clone and push git repositories over HTTP/SSH, run python3 with pip,
+        query sqlite3, execute QuickJS, edit files, browse the web, and keep
+        long-running sessions with automatic context compaction. All of it
+        inside a sandbox you can inspect live in the file browser.</p>
+      </details>
+      <details class="faq-item" id="faq-cost">
+        <summary>Is Fa free?</summary>
+        <p>Fa itself is free and open source (MIT license). You bring your own
+        provider key and pay your LLM provider only for the tokens you use —
+        there is no markup, subscription, or account.</p>
+      </details>
+      <details class="faq-item" id="faq-cli">
+        <summary>How do I install the CLI?</summary>
+        <p>One line: <code>curl -fsSL "https://fa1.dev/install.sh" | sh</code>
+        (macOS / Linux / WSL) or the PowerShell equivalent on Windows, then
+        run the setup wizard to pick a provider and key. Alternatively
+        <code>dart pub global activate flutter_agent_harness</code> from
+        pub.dev. Both give you the <code>fa</code> and <code>fah</code>
+        commands.</p>
+      </details>
+    </div>
+  </section>
+
 </main>
 
 <footer class="footer">
@@ -364,6 +527,7 @@ flutter run</pre>
   flutter_agent_harness. MIT licensed, static files only.</p>
   <nav aria-label="Footer links">
     <a href="#install">Install</a>
+    <a href="#faq">FAQ</a>
     <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
     <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
     <a href="https://github.com/IstiN/flutter_agent_harness/blob/main/LICENSE" rel="noopener">License</a>

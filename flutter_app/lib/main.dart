@@ -1,13 +1,19 @@
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'dart:async' show unawaited;
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
+import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
@@ -51,12 +57,15 @@ Future<void> main() async {
   // snapshot; two envs would clobber each other's persisted filesystem).
   final env = await createPlatformEnv();
   debugPrint('[fah] platform env created: ${env.runtimeType}, cwd=${env.cwd}');
-  final registry = await ProviderRegistry.load(env);
+  // iOS/macOS persist API keys in the platform Keychain (see
+  // [KeychainStore]); other platforms fall back to file/session storage.
+  const keychain = KeychainStore();
+  final registry = await ProviderRegistry.load(env, keychain: keychain);
   debugPrint('[fah] provider registry loaded');
   final lastConnection = await LastConnectionStore.load(env);
   debugPrint('[fah] last connection loaded');
   final themeController = await ThemeController.load(env);
-  final sessionKeys = await SessionKeysStore.load(env);
+  final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
   // Analytics is strictly optional. On web with placeholder options
   // (`YOUR_*` — what CI builds) initializeApp above is skipped, and just
   // reading Firebase.apps can throw (no JS SDK loaded — seen on Safari,
@@ -148,7 +157,21 @@ class MyApp extends StatelessWidget {
           navigatorObservers: analytics != null
               ? [FirebaseAnalyticsObserver(analytics: analytics!)]
               : const <NavigatorObserver>[],
-          home: SetupScreen(
+          // macOS desktop: the unified titlebar's traffic lights float over
+          // Flutter content (fullSizeContentView) — reserve a drag strip at
+          // the top so they never overlap the app's own header row.
+          builder: (context, navigatorChild) {
+            if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
+              return navigatorChild ?? const SizedBox.shrink();
+            }
+            return Column(
+              children: [
+                Container(height: 28, color: FahPalette.bg),
+                Expanded(child: navigatorChild ?? const SizedBox.shrink()),
+              ],
+            );
+          },
+          home: BootstrapScreen(
             env: env,
             registry: registry,
             lastConnectionStore: lastConnectionStore,
@@ -165,6 +188,160 @@ class MyApp extends StatelessWidget {
       child = SessionKeysScope(store: sessionKeys, child: child);
     }
     return child;
+  }
+}
+
+/// Rebuilds the last connection's [AgentConfig] for the boot auto-connect,
+/// or null when the setup screen should show instead: nothing configured,
+/// an on-device connection (those re-offer the quick start instead of
+/// silently loading multi-GB weights at boot), or a hosted connection
+/// whose key is gone. Key order: the matching custom provider's
+/// (Keychain-backed) registry key, then the saved hosted key; keyless
+/// custom endpoints (llama.cpp/Ollama) connect without a key.
+AgentConfig? restorableBootConfig({
+  required LastConnection? connection,
+  required ProviderRegistry? registry,
+  required SessionKeysStore? sessionKeysStore,
+}) {
+  if (connection == null) return null;
+  if (connection.providerKind != 'openai-completions') return null;
+  final baseUrl = connection.baseUrl ?? '';
+  if (baseUrl.isEmpty) return null;
+  CustomProvider? custom;
+  if (registry != null) {
+    for (final provider in registry.providers) {
+      if (provider.baseUrl == baseUrl) {
+        custom = provider;
+        break;
+      }
+    }
+  }
+  var key = custom != null ? registry!.keyFor(custom.id) ?? '' : '';
+  if (key.isEmpty) {
+    key = settingsKeyEnv('OPENROUTER_API_KEY', sessionKeysStore);
+  }
+  if (key.isEmpty && custom == null) return null;
+  return AgentConfig(
+    providerKind: connection.providerKind,
+    modelId: connection.modelId,
+    baseUrl: baseUrl,
+    apiKey: key,
+    supportsImages: modelIdSuggestsVision(connection.modelId),
+  );
+}
+
+/// Boot decision screen: the setup form shows only when nothing was ever
+/// configured (first run) or the last connection cannot be restored (its
+/// key is gone, or it was an on-device model — those re-offer the quick
+/// start instead of silently loading multi-GB weights at boot). A
+/// restorable last connection goes straight to chat.
+class BootstrapScreen extends StatefulWidget {
+  const BootstrapScreen({
+    super.key,
+    this.env,
+    this.registry,
+    this.lastConnectionStore,
+    this.sessionKeysStore,
+    this.webLlmEngine,
+    this.gemmaEngine,
+    this.transformersJsEngine,
+  });
+
+  /// The shared execution env handed to [AgentService.create].
+  final ExecutionEnv? env;
+
+  /// The persisted custom-provider registry (its keys ride the Keychain on
+  /// iOS/macOS — that is what makes a hosted auto-connect possible).
+  final ProviderRegistry? registry;
+
+  /// The persisted last-connection record being restored.
+  final LastConnectionStore? lastConnectionStore;
+
+  /// The persisted saved-keys store (hosted key resolution).
+  final SessionKeysStore? sessionKeysStore;
+
+  /// Engine overrides for the on-device providers (tests).
+  final WebLlmEngineApi? webLlmEngine;
+  final GemmaEngineApi? gemmaEngine;
+  final TransformersJsEngineApi? transformersJsEngine;
+
+  @override
+  State<BootstrapScreen> createState() => _BootstrapScreenState();
+}
+
+class _BootstrapScreenState extends State<BootstrapScreen> {
+  /// The connection being restored; null renders the setup form directly
+  /// (no navigation, so the first frame already shows it).
+  AgentConfig? _config;
+
+  @override
+  void initState() {
+    super.initState();
+    _config = restorableBootConfig(
+      connection: widget.lastConnectionStore?.connection,
+      registry: widget.registry,
+      sessionKeysStore: widget.sessionKeysStore,
+    );
+    if (_config != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_boot()));
+    }
+  }
+
+  Future<void> _boot() async {
+    final config = _config!;
+    try {
+      final env = widget.env ?? await createPlatformEnv();
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '${env.cwd}/sessions',
+      );
+      await manager.createSession(
+        config: config,
+        serviceFactory: () => AgentService.create(config: config, env: env),
+      );
+      if (!mounted) return;
+      await Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            manager: manager,
+            registry: widget.registry,
+            lastConnectionStore: widget.lastConnectionStore,
+          ),
+        ),
+      );
+    } on Object {
+      // A failed restore (endpoint down, key rejected) lands on the setup
+      // form — prefilled by the same last-connection record.
+      if (mounted) setState(() => _config = null);
+    }
+  }
+
+  Widget _buildSetupScreen() => SetupScreen(
+    env: widget.env,
+    registry: widget.registry,
+    lastConnectionStore: widget.lastConnectionStore,
+    sessionKeysStore: widget.sessionKeysStore,
+    webLlmEngine: widget.webLlmEngine,
+    gemmaEngine: widget.gemmaEngine,
+    transformersJsEngine: widget.transformersJsEngine,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final config = _config;
+    if (config == null) return _buildSetupScreen();
+    return const Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FaMark(size: 48),
+            SizedBox(height: 24),
+            CircularProgressIndicator(),
+          ],
+        ),
+      ),
+    );
   }
 }
 
