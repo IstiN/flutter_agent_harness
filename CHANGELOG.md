@@ -562,4 +562,8 @@
 - fix(agent): repair orphaned tool calls in the request payload
 - feat(cli): replay the full restored transcript with collapsed tool runs
 
+## 0.1.72
+
+- feat(example): orbit work-bar, light theme, secrets UI, open_app + calendar tools, map node demos
+
 ## Unreleased
