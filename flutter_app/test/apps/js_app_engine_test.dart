@@ -3,12 +3,15 @@
 // in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/health_service.dart';
+import 'package:fa/services/home_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -150,6 +153,64 @@ final class _FakeHealthApi implements HealthApi {
   }
 }
 
+/// Fake [HomeApi] for the `fa.home` bridge tests — the host-side tests
+/// never touch the real method channel.
+final class _FakeHomeApi implements HomeApi {
+  final powerCalls = <({String id, bool on})>[];
+  final brightnessCalls = <({String id, int value})>[];
+  final temperatureCalls = <({String id, double celsius})>[];
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<List<HomeAccessory>> listAccessories() async => const [
+    (
+      id: 'a-light',
+      name: 'Ceiling Light',
+      room: 'Living Room',
+      homeName: 'My Home',
+      category: 'lightbulb',
+      reachable: true,
+      isOn: true,
+      brightness: 80,
+      targetTemperature: null,
+    ),
+    (
+      id: 'a-thermo',
+      name: 'Thermostat',
+      room: 'Hallway',
+      homeName: 'My Home',
+      category: 'thermostat',
+      reachable: true,
+      isOn: null,
+      brightness: null,
+      targetTemperature: 21.5,
+    ),
+  ];
+
+  @override
+  Future<void> setPower({required String id, required bool on}) async {
+    powerCalls.add((id: id, on: on));
+  }
+
+  @override
+  Future<void> setBrightness({required String id, required int value}) async {
+    brightnessCalls.add((id: id, value: value));
+  }
+
+  @override
+  Future<void> setTargetTemperature({
+    required String id,
+    required double celsius,
+  }) async {
+    temperatureCalls.add((id: id, celsius: celsius));
+  }
+}
+
 /// Smoke test for the real JS backend (flutter_js / JavaScriptCore on the
 /// macOS test host): boots the engine, expects a render tree, and checks the
 /// fa-bridge permission gates.
@@ -181,6 +242,14 @@ void main() {
     bundled: false,
     fallbackId: 'demo',
   );
+
+  /// Waits until the app exported state (the bridge calls cross real
+  /// platform channels, so a single fixed settle can race under load).
+  Future<void> waitForState(JsAppEngine engine) async {
+    for (var i = 0; i < 40 && engine.exportedState == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+  }
 
   testWidgets('engine renders the initial tree and exports state', (
     tester,
@@ -625,6 +694,106 @@ void main() {
     });
   });
 
+  testWidgets('fa.home is gated by the homekit permission', (tester) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.home.list().then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      // Without the permission the bridge answers with a permission error.
+      final deniedHome = _FakeHomeApi();
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        home: deniedHome,
+      );
+      try {
+        await denied.start();
+        await Future<void>.delayed(settle);
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('__error'),
+        );
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('homekit permission'),
+        );
+        expect(deniedHome.powerCalls, isEmpty);
+      } finally {
+        await denied.dispose();
+      }
+
+      // With it, the accessories come from the HomeApi.
+      final grantedHome = _FakeHomeApi();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(homekit: true),
+        home: grantedHome,
+      );
+      try {
+        await granted.start();
+        await Future<void>.delayed(settle);
+        final result = jsonEncode(granted.exportedState?['result']);
+        expect(result, contains('Ceiling Light'));
+        expect(result, contains('Living Room'));
+        expect(result, contains('"brightness":80'));
+        expect(result, contains('"targetTemperature":21.5'));
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('granted fa.home writes reach the HomeApi (legacy homekit '
+      'form included)', (tester) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.home.setPower({id: 'a-light', on: false}).then(function(power) {
+    jsr.fa.home.setBrightness({id: 'a-light', value: 60}).then(function(bright) {
+      jsr.fa.homekit('setTemperature', {id: 'a-thermo', celsius: 22.5}).then(function(temp) {
+        jsr.exportState({power: power, bright: bright, temp: temp});
+      });
+    });
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final home = _FakeHomeApi();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(homekit: true),
+        home: home,
+      );
+      try {
+        await granted.start();
+        await Future<void>.delayed(settle);
+        expect(home.powerCalls, [(id: 'a-light', on: false)]);
+        expect(home.brightnessCalls, [(id: 'a-light', value: 60)]);
+        expect(home.temperatureCalls, [(id: 'a-thermo', celsius: 22.5)]);
+        final state = granted.exportedState!;
+        expect(jsonEncode(state['power']), contains('"on":false'));
+        expect(jsonEncode(state['bright']), contains('"brightness":60'));
+        expect(jsonEncode(state['temp']), contains('"temperature":22.5'));
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
   testWidgets('fa.calendar write methods are gated by the permission', (
     tester,
   ) async {
@@ -841,4 +1010,231 @@ void main() {
       }
     });
   });
+
+  testWidgets('fa.asr.record is gated by the microphone permission', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.asr.record({seconds: 1}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      // Without the permission the bridge answers with a permission error.
+      final deniedAsr = _FakeAsrApi();
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        asr: deniedAsr,
+      );
+      try {
+        await denied.start();
+        await waitForState(denied);
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('__error'),
+        );
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('microphone permission'),
+        );
+        expect(deniedAsr.startCalls, 0);
+      } finally {
+        await denied.dispose();
+      }
+
+      // With it, the recording comes from the AsrApi (the engine waits the
+      // requested wall-clock second).
+      final grantedAsr = _FakeAsrApi();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(microphone: true),
+        asr: grantedAsr,
+      );
+      try {
+        await granted.start();
+        await waitForState(granted);
+        expect(grantedAsr.startCalls, 1);
+        expect(grantedAsr.stopCalls, 1);
+        final result = jsonEncode(granted.exportedState?['result']);
+        expect(result, contains('/tmp/fah-mic-test.m4a'));
+        expect(result, contains('"durationMs":5000'));
+        expect(result, contains('"sampleRate":44100'));
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.asr.record answers with the denial guidance when OS '
+      'access is denied', (tester) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.asr.record({seconds: 1}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final deniedOs = _FakeAsrApi()..granted = false;
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(microphone: true),
+        asr: deniedOs,
+      );
+      try {
+        await engine.start();
+        await waitForState(engine);
+        expect(
+          jsonEncode(engine.exportedState?['result']),
+          contains('microphone access was denied'),
+        );
+        expect(deniedOs.startCalls, 0);
+      } finally {
+        await engine.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.asr.transcribe is gated, rides the transcriber, and '
+      'guides when no endpoint is configured', (tester) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.asr.transcribe({path: '/tmp/fah-mic-test.m4a'}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      // Without the permission the bridge answers with a permission error.
+      final deniedAsr = _FakeAsrApi();
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        asr: deniedAsr,
+        asrTranscriber: _FakeAsrTranscriber(),
+      );
+      try {
+        await denied.start();
+        await waitForState(denied);
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('microphone permission'),
+        );
+        expect(deniedAsr.readPaths, isEmpty);
+      } finally {
+        await denied.dispose();
+      }
+
+      // With the permission but no configured endpoint, the error tells
+      // the user what to configure.
+      final noEndpoint = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(microphone: true),
+        asr: _FakeAsrApi(),
+      );
+      try {
+        await noEndpoint.start();
+        await waitForState(noEndpoint);
+        expect(
+          jsonEncode(noEndpoint.exportedState?['result']),
+          contains('No ASR-capable endpoint'),
+        );
+      } finally {
+        await noEndpoint.dispose();
+      }
+
+      // With both, the transcript comes from the transcriber.
+      final grantedAsr = _FakeAsrApi();
+      final transcriber = _FakeAsrTranscriber();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(microphone: true),
+        asr: grantedAsr,
+        asrTranscriber: transcriber,
+      );
+      try {
+        await granted.start();
+        await waitForState(granted);
+        expect(grantedAsr.readPaths, ['/tmp/fah-mic-test.m4a']);
+        expect(transcriber.calls, hasLength(1));
+        expect(transcriber.calls.single.filename, 'fah-mic-test.m4a');
+        expect(
+          jsonEncode(granted.exportedState?['result']),
+          contains('fake transcript'),
+        );
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+}
+
+/// Fake [AsrApi] for the `fa.asr` bridge tests — the host-side tests never
+/// touch the real method channel.
+final class _FakeAsrApi implements AsrApi {
+  bool granted = true;
+  int startCalls = 0;
+  int stopCalls = 0;
+  final readPaths = <String>[];
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => granted;
+
+  @override
+  Future<void> startRecording() async {
+    startCalls++;
+  }
+
+  @override
+  Future<AsrRecording> stopRecording() async {
+    stopCalls++;
+    return (path: '/tmp/fah-mic-test.m4a', durationMs: 5000, sampleRate: 44100);
+  }
+
+  @override
+  Future<Uint8List> readRecording(String path) async {
+    readPaths.add(path);
+    return Uint8List.fromList(const [1, 2, 3]);
+  }
+}
+
+/// Fake [AsrTranscriber] returning a fixed transcript.
+final class _FakeAsrTranscriber implements AsrTranscriber {
+  final calls = <({Uint8List bytes, String filename})>[];
+
+  @override
+  Future<String> transcribe({
+    required Uint8List bytes,
+    required String filename,
+  }) async {
+    calls.add((bytes: bytes, filename: filename));
+    return 'fake transcript';
+  }
 }

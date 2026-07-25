@@ -8,12 +8,16 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
+import 'package:fa/services/asr_service.dart';
+import 'package:fa/services/asr_tool.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/calendar_tool.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/contact_tool.dart';
 import 'package:fa/services/health_service.dart';
 import 'package:fa/services/health_tool.dart';
+import 'package:fa/services/home_service.dart';
+import 'package:fa/services/home_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -65,8 +69,8 @@ final class AgentConfig {
     required this.baseUrl,
     required this.apiKey,
     this.systemPrompt,
-    this.contextWindow = 128000,
-    this.maxTokens = 4096,
+    this.contextWindow = fallbackContextWindow,
+    this.maxTokens = fallbackMaxTokens,
     this.supportsImages,
   });
 
@@ -266,6 +270,28 @@ class AgentService extends ChangeNotifier {
       if (healthPlatformSupported) ...[
         healthSummaryTool(createHealthService()),
       ],
+      // Home control (iOS-only HomeKit via the `fah/home` channel; the
+      // tools themselves report a clean note where unsupported).
+      if (homePlatformSupported) ...[
+        homeDevicesTool(createHomeService()),
+        homePowerTool(createHomeService(), turnOn: true),
+        homePowerTool(createHomeService(), turnOn: false),
+        homeSetTool(createHomeService()),
+      ],
+      // Microphone recording (macOS/iOS via the `fah/mic` channel; the
+      // tool itself reports a clean note where unsupported). Pairs with
+      // transcribe_audio below.
+      if (asrPlatformSupported) micRecordTool(createAsrService(), env),
+      // Audio transcription via the active provider when it is an
+      // OpenAI-compatible endpoint (Whisper /audio/transcriptions) —
+      // transcribes mic_record takes and any audio file in the sandbox.
+      if (asrTranscribeConfig(
+            providerKind: config.providerKind,
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey,
+          )
+          case final transcribeConfig?)
+        transcribeAudioTool(env, transcribeConfig),
     ]);
     _toolRegistry = registry;
     _agent = Agent(

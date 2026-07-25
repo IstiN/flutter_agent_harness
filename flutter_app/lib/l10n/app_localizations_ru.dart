@@ -135,6 +135,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'jsr.fa.llm — разрешить приложению обращаться к подключённой модели';
 
   @override
+  String get appsPermissionMicrophone => 'Микрофон';
+
+  @override
+  String get appsPermissionMicrophoneDesc =>
+      'jsr.fa.asr — запись аудио и распознавание речи';
+
+  @override
   String get appsPermissionNetwork => 'Сеть';
 
   @override
@@ -282,6 +289,21 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get chatInputHint => 'Введите сообщение';
+
+  @override
+  String get chatMicDenied =>
+      'Доступ к микрофону запрещён. Разрешите его в системных настройках конфиденциальности (Конфиденциальность и безопасность → Микрофон) и попробуйте снова.';
+
+  @override
+  String chatMicError(Object error) {
+    return 'Ошибка голосового ввода: $error';
+  }
+
+  @override
+  String get chatMicStopTooltip => 'Остановить запись';
+
+  @override
+  String get chatMicTooltip => 'Голосовой ввод';
 
   @override
   String get chatRemoveAttachment => 'Удалить вложение';

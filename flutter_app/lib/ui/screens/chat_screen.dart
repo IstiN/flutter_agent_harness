@@ -19,6 +19,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/asr_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/ui/widgets/ask_ui.dart';
@@ -51,6 +52,8 @@ class ChatScreen extends StatefulWidget {
     this.uploadPicker,
     this.registry,
     this.lastConnectionStore,
+    this.asr,
+    this.asrTranscriber,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -86,6 +89,15 @@ class ChatScreen extends StatefulWidget {
   /// persistence (tests).
   final LastConnectionStore? lastConnectionStore;
 
+  /// Microphone backend for the composer's voice-input button; `null` uses
+  /// the platform service ([createAsrService]). Tests inject a fake.
+  final AsrApi? asr;
+
+  /// Transcriber for voice input; `null` derives one from the active
+  /// session's provider config at stop time (an OpenAI-compatible
+  /// endpoint). Tests inject a fake.
+  final AsrTranscriber? asrTranscriber;
+
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -112,7 +124,7 @@ Future<String> chatImageMessageSource(
   return file.path;
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   late final InMemoryChatController _chatController;
   final _textController = TextEditingController();
 
@@ -153,6 +165,101 @@ class _ChatScreenState extends State<ChatScreen> {
   late final UploadPicker? _uploadPicker =
       widget.uploadPicker ?? createUploadPicker();
 
+  /// Microphone backend for the composer's voice-input button.
+  late final AsrApi _asr = widget.asr ?? createAsrService();
+
+  /// Voice-input state: idle → recording → transcribing → idle.
+  bool _micRecording = false;
+  bool _micTranscribing = false;
+
+  /// Drives the red pulse of the recording-state mic button; runs only
+  /// while recording (a repeating animation would keep `pumpAndSettle`
+  /// from ever settling if left running). Created in [initState] — a
+  /// `late` field touched first in [dispose] would create a ticker while
+  /// the element is deactivating.
+  late final AnimationController _micPulse;
+
+  /// The transcriber for voice input: the injected one, or one derived
+  /// from the active session's provider config — resolved lazily so a
+  /// provider switch mid-session is picked up. Null means no ASR-capable
+  /// endpoint is configured.
+  AsrTranscriber? get _transcriber {
+    if (widget.asrTranscriber != null) return widget.asrTranscriber;
+    final config = widget.service.configForClone;
+    return whisperTranscriberFor(
+      providerKind: widget.service.providerKind,
+      baseUrl: config?.baseUrl ?? '',
+      apiKey: config?.apiKey ?? '',
+    );
+  }
+
+  /// Mic button tap: idle starts a recording (after the OS permission
+  /// prompt), recording stops it and transcribes the take into the input
+  /// field.
+  Future<void> _toggleMic() async {
+    if (_micTranscribing) return;
+    if (_micRecording) {
+      await _stopMic();
+      return;
+    }
+    try {
+      if (!await _asr.requestAccess()) {
+        if (mounted) _showSnack(context.l10n.chatMicDenied);
+        return;
+      }
+      await _asr.startRecording();
+    } on Object catch (e) {
+      if (mounted) _showSnack(context.l10n.chatMicError(e.toString()));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _micRecording = true);
+    _micPulse.repeat(reverse: true);
+  }
+
+  Future<void> _stopMic() async {
+    _micPulse.stop();
+    final AsrRecording recording;
+    try {
+      recording = await _asr.stopRecording();
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() => _micRecording = false);
+        _showSnack(context.l10n.chatMicError(e.toString()));
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _micRecording = false;
+      _micTranscribing = true;
+    });
+    try {
+      final transcriber = _transcriber;
+      if (transcriber == null) {
+        _showSnack(context.l10n.chatMicError(asrNoEndpointMessage));
+        return;
+      }
+      final bytes = await _asr.readRecording(recording.path);
+      final filename = recording.path.split(RegExp(r'[/\\]')).last;
+      final transcript = await transcriber.transcribe(
+        bytes: bytes,
+        filename: filename,
+      );
+      if (!mounted || transcript.isEmpty) return;
+      final current = _textController.text;
+      final spacer = current.isNotEmpty && !current.endsWith(' ') ? ' ' : '';
+      _textController.text = '$current$spacer$transcript';
+      _textController.selection = TextSelection.collapsed(
+        offset: _textController.text.length,
+      );
+    } on Object catch (e) {
+      if (mounted) _showSnack(context.l10n.chatMicError(e.toString()));
+    } finally {
+      if (mounted) setState(() => _micTranscribing = false);
+    }
+  }
+
   /// Opens the session/model sidebar: toggles the side panel on wide
   /// layouts, opens the drawer on narrow ones. [context] must be below the
   /// [Scaffold].
@@ -178,6 +285,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _micPulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
     _chatController = InMemoryChatController();
     _chatScrollController.addListener(_trackNearBottom);
     widget.manager.addListener(_onManagerChanged);
@@ -278,6 +389,11 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _syncDebounce?.cancel();
+    _micPulse.dispose();
+    if (_micRecording) {
+      // Best effort: never leave the native recorder running.
+      _asr.stopRecording().ignore();
+    }
     _textController.dispose();
     _chatScrollController.dispose();
     widget.manager.removeListener(_onManagerChanged);
@@ -1042,6 +1158,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       onSubmitted: _send,
                     ),
                   ),
+                  if (asrPlatformSupported) _buildMicButton(context),
                   const SizedBox(width: 4),
                   Container(
                     decoration: BoxDecoration(
@@ -1061,6 +1178,46 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// The composer's voice-input button: idle shows a mic (tap to record),
+  /// recording pulses red (tap again to stop + transcribe), transcribing
+  /// shows a spinner. Rendered only where [asrPlatformSupported].
+  Widget _buildMicButton(BuildContext context) {
+    final l10n = context.l10n;
+    if (_micTranscribing) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (_micRecording) {
+      final error = Theme.of(context).colorScheme.error;
+      return AnimatedBuilder(
+        animation: _micPulse,
+        builder: (context, child) => IconButton(
+          icon: Icon(
+            Icons.mic,
+            color: Color.lerp(
+              error,
+              error.withValues(alpha: 0.35),
+              _micPulse.value,
+            ),
+          ),
+          tooltip: l10n.chatMicStopTooltip,
+          onPressed: _toggleMic,
+        ),
+      );
+    }
+    return IconButton(
+      icon: const Icon(Icons.mic_none),
+      tooltip: l10n.chatMicTooltip,
+      onPressed: _toggleMic,
     );
   }
 

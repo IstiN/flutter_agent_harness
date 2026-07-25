@@ -1,7 +1,9 @@
+import AVFoundation
 import Contacts
 import EventKit
 import Flutter
 import HealthKit
+import HomeKit
 import UIKit
 
 @main
@@ -18,7 +20,9 @@ import UIKit
     registerCalendarChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerContactsChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerHealthChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerHomeChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerKeychainChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerMicChannel(messenger: engineBridge.applicationRegistrar.messenger())
   }
 }
 
@@ -774,4 +778,397 @@ private func healthSleepSeries(
     completion(entries)
   }
   healthStore.execute(query)
+}
+
+
+/// Shared manager for the `fah/home` channel (HMHomeManager is meant to be
+/// long-lived; creating it is also what triggers the OS home-data prompt).
+private let homeManager = HMHomeManager()
+
+/// Delegate for the `fah/home` channel: homes load asynchronously after the
+/// user answers the access prompt, so pending Flutter results wait here for
+/// `homeManagerDidUpdateHomes`.
+private final class HomeChannelDelegate: NSObject, HMHomeManagerDelegate {
+  var pendingResults: [FlutterResult] = []
+
+  func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
+    let results = pendingResults
+    pendingResults = []
+    for result in results {
+      DispatchQueue.main.async { result(homeAccessGranted()) }
+    }
+  }
+}
+
+private let homeChannelDelegate = HomeChannelDelegate()
+
+/// Whether the user granted home-data access. `.determined` only means the
+/// prompt was answered — access itself is the `.authorized` flag.
+private func homeAccessGranted() -> Bool {
+  homeManager.authorizationStatus.contains(.authorized)
+}
+
+/// The `fah/home` method channel: HomeKit home control (iOS only — there is
+/// no HomeKit framework on macOS). Methods: `isAvailable`, `requestAccess`,
+/// `listAccessories` returning a list of accessory maps ({id, name, room,
+/// homeName, category, reachable, isOn?, brightness?, targetTemperature?}),
+/// and the write methods `setPower` {id, on}, `setBrightness` {id, value},
+/// `setTargetTemperature` {id, celsius}. NSHomeKitUsageDescription is
+/// declared in Info.plist.
+private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/home",
+    binaryMessenger: messenger,
+  )
+  homeManager.delegate = homeChannelDelegate
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "isAvailable":
+      result(true)
+    case "requestAccess":
+      homeRequestAccess(result: result)
+    case "listAccessories":
+      homeListAccessories(result: result)
+    case "setPower":
+      let args = call.arguments as? [String: Any] ?? [:]
+      homeWriteCharacteristic(
+        id: args["id"] as? String ?? "",
+        type: HMCharacteristicTypePowerState,
+        value: args["on"] as? Bool ?? false,
+        result: result,
+      )
+    case "setBrightness":
+      let args = call.arguments as? [String: Any] ?? [:]
+      let value = (args["value"] as? NSNumber)?.intValue ?? -1
+      guard (0...100).contains(value) else {
+        result(
+          FlutterError(
+            code: "bad_args",
+            message: "value must be between 0 and 100",
+            details: nil,
+          ),
+        )
+        return
+      }
+      homeWriteCharacteristic(
+        id: args["id"] as? String ?? "",
+        type: HMCharacteristicTypeBrightness,
+        value: value,
+        result: result,
+      )
+    case "setTargetTemperature":
+      let args = call.arguments as? [String: Any] ?? [:]
+      guard let celsius = (args["celsius"] as? NSNumber)?.doubleValue else {
+        result(
+          FlutterError(
+            code: "bad_args",
+            message: "celsius is required",
+            details: nil,
+          ),
+        )
+        return
+      }
+      homeWriteCharacteristic(
+        id: args["id"] as? String ?? "",
+        type: HMCharacteristicTypeTargetTemperature,
+        value: celsius,
+        result: result,
+      )
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+/// Answers a `requestAccess` call. HomeKit has no explicit request API:
+/// touching `homes` on the manager is what makes the OS show its prompt
+/// (once), and the homes arrive via the delegate afterwards.
+private func homeRequestAccess(result: @escaping FlutterResult) {
+  if homeAccessGranted() {
+    result(true)
+    return
+  }
+  let status = homeManager.authorizationStatus
+  if status.contains(.determined) {
+    // The prompt was already answered (and denied or restricted).
+    result(false)
+    return
+  }
+  _ = homeManager.homes // triggers the OS prompt on first access
+  homeChannelDelegate.pendingResults.append(result)
+}
+
+/// One accessory as a Flutter-friendly map. Characteristic values
+/// (isOn/brightness/targetTemperature) are filled in by the read pass; an
+/// unreachable accessory keeps only the static fields.
+private func homeAccessoryMap(
+  _ accessory: HMAccessory,
+  room: String,
+  homeName: String,
+) -> [String: Any] {
+  [
+    "id": accessory.uniqueIdentifier.uuidString,
+    "name": accessory.name,
+    "room": room,
+    "homeName": homeName,
+    "category": homeCategory(accessory),
+    "reachable": accessory.isReachable,
+  ]
+}
+
+/// The category label the Dart side switches on: one of lightbulb / switch /
+/// outlet / thermostat, or the raw HomeKit category type otherwise.
+private func homeCategory(_ accessory: HMAccessory) -> String {
+  switch accessory.category.categoryType {
+  case HMAccessoryCategoryTypeLightbulb:
+    return "lightbulb"
+  case HMAccessoryCategoryTypeSwitch:
+    return "switch"
+  case HMAccessoryCategoryTypeOutlet:
+    return "outlet"
+  case HMAccessoryCategoryTypeThermostat:
+    return "thermostat"
+  default:
+    return accessory.category.categoryType
+  }
+}
+
+/// Finds the first characteristic of [type] across the accessory's services.
+private func homeCharacteristic(
+  _ accessory: HMAccessory,
+  type: String,
+) -> HMCharacteristic? {
+  for service in accessory.services {
+    for characteristic in service.characteristics
+    where characteristic.characteristicType == type {
+      return characteristic
+    }
+  }
+  return nil
+}
+
+/// All accessories across every home and room (including the room for the
+/// entire home) as (accessory, map) pairs. Empty when access is not granted
+/// (the Dart side requests access before calling).
+private func homeAllAccessories() -> [(HMAccessory, [String: Any])] {
+  guard homeAccessGranted() else { return [] }
+  var out: [(HMAccessory, [String: Any])] = []
+  for home in homeManager.homes {
+    var rooms = home.rooms
+    rooms.append(home.roomForEntireHome())
+    for room in rooms {
+      for accessory in room.accessories {
+        out.append((accessory, homeAccessoryMap(accessory, room: room.name, homeName: home.name)))
+      }
+    }
+  }
+  return out
+}
+
+/// Answers `listAccessories`: collects every accessory, then reads the power
+/// / brightness / target-temperature characteristics of the reachable ones
+/// in parallel and answers once. Empty when access is not granted.
+private func homeListAccessories(result: @escaping FlutterResult) {
+  let entries = homeAllAccessories()
+  guard !entries.isEmpty else {
+    result([[String: Any]]())
+    return
+  }
+  let lock = NSLock()
+  var maps = entries.map { $0.1 }
+  let group = DispatchGroup()
+  for (index, entry) in entries.enumerated() {
+    let (accessory, _) = entry
+    guard accessory.isReachable else { continue }
+    let reads: [(String, HMCharacteristic)] = [
+      ("isOn", HMCharacteristicTypePowerState),
+      ("brightness", HMCharacteristicTypeBrightness),
+      ("targetTemperature", HMCharacteristicTypeTargetTemperature),
+    ].compactMap { key, type in
+      homeCharacteristic(accessory, type: type).map { (key, $0) }
+    }
+    for (key, characteristic) in reads {
+      group.enter()
+      characteristic.readValue { error in
+        if error == nil, let value = characteristic.value {
+          lock.lock()
+          if let number = value as? NSNumber {
+            if key == "isOn" {
+              maps[index][key] = number.boolValue
+            } else {
+              maps[index][key] = number
+            }
+          }
+          lock.unlock()
+        }
+        group.leave()
+      }
+    }
+  }
+  group.notify(queue: .main) {
+    result(maps)
+  }
+}
+
+/// Writes [value] to the characteristic [type] of the accessory with [id];
+/// answers true or a FlutterError (denied / not_found / unsupported /
+/// write_failed).
+private func homeWriteCharacteristic(
+  id: String,
+  type: String,
+  value: Any,
+  result: @escaping FlutterResult,
+) {
+  guard homeAccessGranted() else {
+    result(
+      FlutterError(
+        code: "denied",
+        message: "home access was not granted",
+        details: nil,
+      ),
+    )
+    return
+  }
+  guard
+    let accessory = homeAllAccessories()
+      .first(where: { $0.0.uniqueIdentifier.uuidString == id })?.0
+  else {
+    result(
+      FlutterError(
+        code: "not_found",
+        message: "no accessory with this id",
+        details: nil,
+      ),
+    )
+    return
+  }
+  guard let characteristic = homeCharacteristic(accessory, type: type) else {
+    result(
+      FlutterError(
+        code: "unsupported",
+        message: "this accessory has no such characteristic",
+        details: nil,
+      ),
+    )
+    return
+  }
+  characteristic.writeValue(value) { error in
+    DispatchQueue.main.async {
+      if let error = error {
+        result(
+          FlutterError(
+            code: "write_failed",
+            message: error.localizedDescription,
+            details: nil,
+          ),
+        )
+      } else {
+        result(true)
+      }
+    }
+  }
+}
+
+/// The `fah/mic` method channel: microphone capture to a temporary .m4a
+/// file (AVAudioRecorder, AAC 44.1 kHz mono, auto-stop at 120 s — no
+/// streaming). Methods: `isAvailable`, `requestAccess`, `startRecording`,
+/// and `stopRecording` → {path, durationMs, sampleRate}. The usage string
+/// (NSMicrophoneUsageDescription) lives in Info.plist.
+private func registerMicChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/mic",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "isAvailable":
+      result(true)
+    case "requestAccess":
+      AVAudioSession.sharedInstance().requestRecordPermission { granted in
+        DispatchQueue.main.async { result(granted) }
+      }
+    case "startRecording":
+      result(micStartRecording())
+    case "stopRecording":
+      result(micStopRecording())
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+private var micRecorder: AVAudioRecorder?
+private var micStartedAt: Date?
+
+/// Longest single take in seconds — the recorder auto-stops there.
+private let micMaxRecordSeconds: TimeInterval = 120
+
+private func micStartRecording() -> Any {
+  guard micRecorder == nil else {
+    return FlutterError(
+      code: "busy",
+      message: "a recording is already in progress",
+      details: nil,
+    )
+  }
+  let session = AVAudioSession.sharedInstance()
+  do {
+    try session.setCategory(.record, mode: .default)
+    try session.setActive(true)
+  } catch {
+    return FlutterError(
+      code: "audio_session",
+      message: error.localizedDescription,
+      details: nil,
+    )
+  }
+  let url = FileManager.default.temporaryDirectory
+    .appendingPathComponent("fah-mic-\(UUID().uuidString).m4a")
+  let settings: [String: Any] = [
+    AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+    AVSampleRateKey: 44100,
+    AVNumberOfChannelsKey: 1,
+    AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+  ]
+  do {
+    let recorder = try AVAudioRecorder(url: url, settings: settings)
+    guard recorder.record(forDuration: micMaxRecordSeconds) else {
+      try? session.setActive(false)
+      return FlutterError(
+        code: "record_failed",
+        message: "the microphone could not start (permission denied?)",
+        details: nil,
+      )
+    }
+    micRecorder = recorder
+    micStartedAt = Date()
+    return true
+  } catch {
+    try? session.setActive(false)
+    return FlutterError(
+      code: "record_failed",
+      message: error.localizedDescription,
+      details: nil,
+    )
+  }
+}
+
+private func micStopRecording() -> Any {
+  guard let recorder = micRecorder else {
+    return FlutterError(
+      code: "not_recording",
+      message: "no recording is in progress",
+      details: nil,
+    )
+  }
+  recorder.stop()
+  let durationMs = Int(((micStartedAt.map { Date().timeIntervalSince($0) }) ?? 0) * 1000)
+  micRecorder = nil
+  micStartedAt = nil
+  try? AVAudioSession.sharedInstance().setActive(false)
+  return [
+    "path": recorder.url.path,
+    "durationMs": durationMs,
+    "sampleRate": 44100,
+  ]
 }

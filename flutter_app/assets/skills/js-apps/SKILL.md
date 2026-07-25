@@ -34,7 +34,7 @@ The host **watches the app files and reloads the running app automatically** as 
 3. **Register `jsr.onEvent`** — even if you handle few events.
 4. **Set the permissions the app actually needs** in `manifest.json`, and tell the user they may also need to enable them at runtime in the app's permissions dialog.
 5. **Never hand-edit `apps/<id>/storage.json`** — that file is owned by `jsr.storage`.
-6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase, calendar, contacts, map, health, homekit). Read their source before building something similar.
+6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase, calendar, contacts, map, health, homekit, voice-notes). Read their source before building something similar.
 
 ---
 
@@ -77,7 +77,8 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
   "homekit": false,
   "health": false,
   "contacts": false,
-  "calendar": false
+  "calendar": false,
+  "microphone": false
 }
 ```
 
@@ -91,10 +92,11 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `network` | ❌ | `true` to allow `jsr.fetchJson` (default: false) |
 | `allowedCommands` | ❌ | Array of shell commands allowed via `jsr.exec` (default: none) |
 | `llm` | ❌ | `true` to allow `jsr.fa.llm` / `jsr.fa.llm.chat` / `jsr.fa.llm.stream` (default: false) |
-| `homekit` | ❌ | `true` to allow `jsr.fa.homekit` (default: false) |
+| `homekit` | ❌ | `true` to allow `jsr.fa.home.*` (and the legacy `jsr.fa.homekit`) — HomeKit home control (iOS; default: false) |
 | `health` | ❌ | `true` to allow `jsr.fa.health.summary` — read-only HealthKit data (iOS; default: false) |
 | `contacts` | ❌ | `true` to allow `jsr.fa.contacts.*` — system contacts access (search + create/update/delete + call/sms; default: false) |
 | `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — system calendar access (read + create/update/delete; default: false) |
+| `microphone` | ❌ | `true` to allow `jsr.fa.asr.*` — microphone recording + speech-to-text (macOS/iOS; default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
 
@@ -456,17 +458,60 @@ jsr.fa.health.summary({ days: 7 }).then(function(result) {
 
 Days without data are omitted from each series. The Fa agent has a matching read-tier tool (`health_summary`), so users can also ask about their health data by chatting.
 
-### `jsr.fa.homekit(action, args)` → Promise
-Platform bridge. Requires the `homekit` manifest permission. **This is currently a stub**: it resolves with an error message until implemented on the host. Do not build apps that depend on it without warning the user. (Other `jsr.fa.health(action, …)` actions beyond `health.summary` are stubs the same way.)
-
-**Error convention**: bridge failures (permission denied, not implemented, platform error) come back as an object with an `__error` field — the same convention as `jsr.fetchJson`. Always check `result.__error` before using a result:
+### `jsr.fa.home.*` → Promise
+Home control via HomeKit (iOS — there is no HomeKit framework on macOS). Requires `"homekit": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS home-data prompt. All four methods share the same permission:
 
 ```javascript
-jsr.fa.homekit('listDevices', {}).then(function(result) {
+// List every accessory across all homes and rooms.
+jsr.fa.home.list().then(function(result) {
   if (result && result.__error) { jsr.showError(result.__error); return; }
-  renderDevices(result);
+  // result.accessories: [{ id, name, room, homeName, category, reachable,
+  //   isOn?, brightness?, targetTemperature? }]
+  // category is 'lightbulb' | 'switch' | 'outlet' | 'thermostat' (or the raw
+  // HomeKit category); the state fields are present only when the accessory
+  // exposes the matching characteristic.
+  renderRooms(result.accessories);
+});
+
+// Writes — id comes from the list. setPower answers {on}, setBrightness
+// {brightness}, setTemperature {temperature}; failures come back as
+// {__error}.
+jsr.fa.home.setPower({ id: accessoryId, on: true });
+jsr.fa.home.setBrightness({ id: accessoryId, value: 60 });   // 0–100
+jsr.fa.home.setTemperature({ id: accessoryId, celsius: 21.5 }); // °C
+```
+
+The legacy `jsr.fa.homekit(action, args)` form still works for the same actions (`'list'`/`'listDevices'`, `'setPower'`, `'setBrightness'`, `'setTemperature'`) — new apps should use `jsr.fa.home.*`. The Fa agent has matching tools (read-tier `home_devices`, write-tier `home_turn_on` / `home_turn_off` / `home_set`), so users can also control their home by chatting.
+
+**Error convention**: bridge failures (permission denied, unsupported platform, platform error) come back as an object with an `__error` field — the same convention as `jsr.fetchJson`. Always check `result.__error` before using a result:
+
+```javascript
+jsr.fa.home.list().then(function(result) {
+  if (result && result.__error) { jsr.showError(result.__error); return; }
+  renderDevices(result.accessories);
 });
 ```
+
+### `jsr.fa.asr.*` → Promise
+Microphone capture + speech-to-text (macOS/iOS). Requires `"microphone": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS microphone-access prompt. Both methods share the same permission:
+
+```javascript
+// Record — resolves with { path, durationMs, sampleRate }: a temporary
+// .m4a take of `seconds` (1–120, default 10).
+jsr.fa.asr.record({ seconds: 5 }).then(function(rec) {
+  if (rec && rec.__error) { jsr.showError(rec.__error); return; }
+  // Transcribe — resolves with { text }. Transcription rides the provider
+  // connected in the Fa settings when it is an OpenAI-compatible endpoint
+  // (Whisper /audio/transcriptions); without one the call answers with an
+  // actionable __error telling the user to configure an ASR-capable endpoint.
+  jsr.fa.asr.transcribe({ path: rec.path }).then(function(result) {
+    if (result && result.__error) { jsr.showError(result.__error); return; }
+    renderTranscript(result.text);
+  });
+});
+```
+
+The Fa agent has a matching write-tier tool (`mic_record`, which stages takes into the sandbox `recordings/` folder) plus the read-tier `transcribe_audio` tool, so users can also dictate and transcribe by chatting — the chat composer has a mic button riding the same bridge.
 
 ---
 
@@ -891,7 +936,8 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 | `contacts` | Contacts | System contacts via `jsr.fa.contacts.*`, search, detail card with call/SMS, add form + permission states | ❌ |
 | `map` | Map | OSM `map` node: preset markers, tap-to-pin, zoom controls | ✅ |
 | `health` | Health | HealthKit dashboard via `jsr.fa.health.summary` (steps/HR/sleep cards + charts), demo fallback | ❌ |
-| `homekit` | Home | `jsr.fa.homekit` bridge status + demo device panel with local toggles | ❌ |
+| `homekit` | Home | HomeKit control via `jsr.fa.home.*` — rooms, accessory cards, power/brightness/temperature controls + demo fallback | ❌ |
+| `voice-notes` | Voice Notes | Microphone record + transcript list via `jsr.fa.asr.*`, persisted via `jsr.storage` | ❌ |
 
 **Tip**: Before building a new app, always read the source of the most similar demo — especially for network fetch, storage, and theming patterns.
 
@@ -905,7 +951,7 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 4. **Storage is async** — `jsr.storage.get()` returns a Promise. Always use `.then()` before using the value.
 5. **`jsr.render()` replaces everything** — not additive; always render the complete UI tree.
 6. **After editing files, do nothing** — the app reloads automatically; the user can also hit Reload.
-7. **Network requires the manifest flag** — set `"network": true` or `fetchJson` fails; same for `llm`/`allowedCommands` and the `calendar`/`homekit`/`health`/`contacts` bridges. Tell the user to enable permissions in the app's permissions dialog when needed.
+7. **Network requires the manifest flag** — set `"network": true` or `fetchJson` fails; same for `llm`/`allowedCommands` and the `calendar`/`homekit`/`health`/`contacts`/`microphone` bridges. Tell the user to enable permissions in the app's permissions dialog when needed.
 8. **Always check `__error`** on results from `jsr.fetchJson` and the `jsr.fa.*` bridges before using the data.
 9. **Always call `jsr.exportState`** with meaningful state — it's what you (the agent) receive when the user talks to you from inside the app.
 10. **Timer cleanup** — save `setInterval` IDs and `clearInterval` when done.

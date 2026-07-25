@@ -314,6 +314,18 @@ abstract class AppLocalizations {
   /// **'jsr.fa.llm — let the app ask the connected model'**
   String get appsPermissionLlmDesc;
 
+  /// No description provided for @appsPermissionMicrophone.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone'**
+  String get appsPermissionMicrophone;
+
+  /// No description provided for @appsPermissionMicrophoneDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'jsr.fa.asr — record audio and transcribe speech'**
+  String get appsPermissionMicrophoneDesc;
+
   /// No description provided for @appsPermissionNetwork.
   ///
   /// In en, this message translates to:
@@ -559,6 +571,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Type a message'**
   String get chatInputHint;
+
+  /// No description provided for @chatMicDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone access was denied. Enable it in the system privacy settings (Privacy & Security → Microphone), then try again.'**
+  String get chatMicDenied;
+
+  /// No description provided for @chatMicError.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice input failed: {error}'**
+  String chatMicError(Object error);
+
+  /// No description provided for @chatMicStopTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop recording'**
+  String get chatMicStopTooltip;
+
+  /// No description provided for @chatMicTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice input'**
+  String get chatMicTooltip;
 
   /// No description provided for @chatRemoveAttachment.
   ///

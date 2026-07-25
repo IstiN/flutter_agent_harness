@@ -4,12 +4,15 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/health_service.dart';
+import 'package:fa/services/home_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -176,6 +179,101 @@ final class _FakeHealthApi implements HealthApi {
   );
 }
 
+/// Fake [AsrApi] so the voice-notes demo's bridge calls resolve without
+/// touching the real platform channel.
+final class _FakeAsrApi implements AsrApi {
+  int startCalls = 0;
+  int stopCalls = 0;
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<void> startRecording() async {
+    startCalls++;
+  }
+
+  @override
+  Future<AsrRecording> stopRecording() async {
+    stopCalls++;
+    return (path: '/tmp/fah-mic-test.m4a', durationMs: 1000, sampleRate: 44100);
+  }
+
+  @override
+  Future<Uint8List> readRecording(String path) async =>
+      Uint8List.fromList(const [1, 2, 3]);
+}
+
+/// Fake [AsrTranscriber] returning a fixed transcript.
+final class _FakeAsrTranscriber implements AsrTranscriber {
+  @override
+  Future<String> transcribe({
+    required Uint8List bytes,
+    required String filename,
+  }) async => 'fake transcript';
+}
+
+/// Fake [HomeApi] so the home demo's bridge calls resolve with real
+/// accessories without touching the real platform channel.
+final class _FakeHomeApi implements HomeApi {
+  final powerCalls = <({String id, bool on})>[];
+  final brightnessCalls = <({String id, int value})>[];
+  final temperatureCalls = <({String id, double celsius})>[];
+
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<List<HomeAccessory>> listAccessories() async => const [
+    (
+      id: 'a-light',
+      name: 'Ceiling Light',
+      room: 'Living Room',
+      homeName: 'My Home',
+      category: 'lightbulb',
+      reachable: true,
+      isOn: true,
+      brightness: 80,
+      targetTemperature: null,
+    ),
+    (
+      id: 'a-thermo',
+      name: 'Thermostat',
+      room: 'Hallway',
+      homeName: 'My Home',
+      category: 'thermostat',
+      reachable: true,
+      isOn: null,
+      brightness: null,
+      targetTemperature: 21.5,
+    ),
+  ];
+
+  @override
+  Future<void> setPower({required String id, required bool on}) async {
+    powerCalls.add((id: id, on: on));
+  }
+
+  @override
+  Future<void> setBrightness({required String id, required int value}) async {
+    brightnessCalls.add((id: id, value: value));
+  }
+
+  @override
+  Future<void> setTargetTemperature({
+    required String id,
+    required double celsius,
+  }) async {
+    temperatureCalls.add((id: id, celsius: celsius));
+  }
+}
+
 /// Smoke tests for the bundled demo apps under `assets/apps/`:
 /// manifest discovery/parse/permission flags for every seeded id, plus a
 /// real-engine boot of the bridge demos (calendar, map, health, homekit) —
@@ -228,6 +326,10 @@ void main() {
 
       final homekit = AppPermissions.fromJson(manifest('homekit'));
       expect(homekit.homekit, isTrue);
+
+      final voiceNotes = AppPermissions.fromJson(manifest('voice-notes'));
+      expect(voiceNotes.microphone, isTrue);
+      expect(voiceNotes.network, isFalse);
     });
   });
 
@@ -637,6 +739,167 @@ void main() {
           expect(
             jsonEncode(engine.exportedState?['devices']),
             contains('22.0°C'),
+          );
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('homekit renders real accessories and controls call the '
+        'bridge', (tester) async {
+      await tester.runAsync(() async {
+        final home = _FakeHomeApi();
+        final env = await envWithApp('homekit');
+        final engine = JsAppEngine(
+          app: app('homekit', const {'id': 'homekit', 'name': 'Home'}),
+          env: env,
+          permissions: const AppPermissions(homekit: true),
+          home: home,
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          expect(engine.exportedState?['loading'], isFalse);
+          expect(engine.exportedState?['bridgeAvailable'], isTrue);
+          expect(engine.exportedState?['bridgeError'], isNull);
+          expect(engine.exportedState?['demoData'], isFalse);
+          expect(engine.exportedState?['accessoryCount'], 2);
+          final tree = jsonEncode(engine.tree.value);
+          // Real rooms/accessories — no demo banner, no demo devices.
+          expect(tree, contains('LIVE'));
+          expect(tree, contains('Living Room'));
+          expect(tree, contains('Ceiling Light'));
+          expect(tree, contains('Hallway'));
+          expect(tree, contains('Thermostat'));
+          expect(tree, isNot(contains('DEMO — LOCAL STATE ONLY')));
+          expect(tree, isNot(contains('Front Door')));
+
+          // Toggling the light calls setPower on the HomeApi.
+          await engine.callEvent('power_a-light');
+          await Future<void>.delayed(settle);
+          expect(home.powerCalls, [(id: 'a-light', on: false)]);
+          expect(
+            jsonEncode(engine.exportedState?['accessories']),
+            contains('"status":"Off · 80%"'),
+          );
+
+          // Brightness and thermostat steppers call their writes.
+          await engine.callEvent('brightdown_a-light');
+          await Future<void>.delayed(settle);
+          expect(home.brightnessCalls, [(id: 'a-light', value: 70)]);
+          await engine.callEvent('tempup_a-thermo');
+          await Future<void>.delayed(settle);
+          expect(home.temperatureCalls, [(id: 'a-thermo', celsius: 22.0)]);
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('voice-notes records, transcribes, and persists the note', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final asr = _FakeAsrApi();
+        final env = await envWithApp('voice-notes');
+        // A 1-second take keeps the test fast (the app defaults to 5 s).
+        await env.writeFile(
+          'apps/voice-notes/storage.json',
+          '{"recordSeconds":1}',
+        );
+        final engine = JsAppEngine(
+          app: app('voice-notes', const {
+            'id': 'voice-notes',
+            'name': 'Voice Notes',
+          }),
+          env: env,
+          permissions: const AppPermissions(microphone: true),
+          asr: asr,
+          asrTranscriber: _FakeAsrTranscriber(),
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          expect(engine.tree.value, isNotNull);
+          expect(engine.exportedState?['noteCount'], 0);
+          expect(engine.exportedState?['busy'], isNull);
+
+          // Record a take: the bridge waits the wall-clock second, then
+          // the transcript is appended and persisted via jsr.storage.
+          // Poll — the bridge calls cross real platform channels.
+          await engine.callEvent('record_toggle');
+          for (
+            var i = 0;
+            i < 40 && engine.exportedState?['noteCount'] != 1;
+            i++
+          ) {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
+          expect(asr.startCalls, 1);
+          expect(asr.stopCalls, 1);
+          expect(engine.exportedState?['noteCount'], 1);
+          expect(engine.exportedState?['busy'], isNull);
+          expect(
+            jsonEncode(engine.exportedState?['notes']),
+            contains('fake transcript'),
+          );
+          final tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('fake transcript'));
+          final storage = await env.readTextFile(
+            'apps/voice-notes/storage.json',
+          );
+          expect(storage.valueOrNull, contains('fake transcript'));
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('voice-notes without the permission shows the grant card', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final asr = _FakeAsrApi();
+        final env = await envWithApp('voice-notes');
+        await env.writeFile(
+          'apps/voice-notes/storage.json',
+          '{"recordSeconds":1}',
+        );
+        final engine = JsAppEngine(
+          app: app('voice-notes', const {
+            'id': 'voice-notes',
+            'name': 'Voice Notes',
+          }),
+          env: env,
+          permissions: const AppPermissions(),
+          asr: asr,
+          asrTranscriber: _FakeAsrTranscriber(),
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          await engine.callEvent('record_toggle');
+          // The bridge call crosses real platform channels — poll instead
+          // of a fixed settle (races under load).
+          for (
+            var i = 0;
+            i < 40 && engine.exportedState?['error'] == null;
+            i++
+          ) {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
+          expect(asr.startCalls, 0);
+          expect(
+            engine.exportedState?['error'],
+            contains('microphone permission'),
+          );
+          expect(
+            jsonEncode(engine.tree.value),
+            contains('Microphone permission needed'),
           );
         } finally {
           await engine.dispose();

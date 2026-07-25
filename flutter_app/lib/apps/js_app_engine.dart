@@ -11,9 +11,11 @@ import 'package:http/http.dart' as http;
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/health_service.dart';
+import 'package:fa/services/home_service.dart';
 
 /// One chat message for the `jsr.fa.llm.chat/stream` bridge calls; [role] is
 /// `user`, `assistant`, or `system`.
@@ -28,9 +30,9 @@ typedef FaLlmHandler =
       void Function(String delta)? onDelta,
     });
 
-/// Handler for platform bridges still without a real backend (`homekit`,
-/// health actions other than `health.summary`). Receives the action name
-/// (`homekit.read`, `health.stepsToday`, …) and args.
+/// Handler for platform bridges still without a real backend (health
+/// actions other than `health.summary`). Receives the action name
+/// (`health.stepsToday`, …) and args.
 typedef FaPlatformHandler =
     Future<Object?> Function(String action, Map<String, Object?> args);
 
@@ -49,9 +51,15 @@ typedef FaPlatformHandler =
 ///   [ContactApi]; requests OS access on first use)
 /// - `jsr.fa.health.summary` → [AppPermissions.health] (real backend via
 ///   [HealthApi], iOS HealthKit; requests OS access on first use)
-/// - `jsr.fa.homekit` and other health actions → the matching flag (stubbed
-///   until the platform implementations land — a granted call answers "not
-///   available").
+/// - `jsr.fa.home.*` (and the legacy `jsr.fa.homekit(action, …)` calls) →
+///   [AppPermissions.homekit] (real backend via [HomeApi], iOS HomeKit;
+///   requests OS access on first use)
+/// - `jsr.fa.asr.record` / `jsr.fa.asr.transcribe` →
+///   [AppPermissions.microphone] (real backend via [AsrApi]; requests OS
+///   microphone access on first use; transcription rides the configured
+///   OpenAI-compatible endpoint via [AsrTranscriber])
+/// - other health actions → the matching flag (stubbed until the platform
+///   implementations land — a granted call answers "not available").
 class JsAppEngine {
   JsAppEngine({
     required this.app,
@@ -62,6 +70,9 @@ class JsAppEngine {
     this.calendar,
     this.contacts,
     this.health,
+    this.home,
+    this.asr,
+    this.asrTranscriber,
     this.initialTheme = const {},
     void Function(String line)? onLog,
   }) : _onLog = onLog;
@@ -87,6 +98,18 @@ class JsAppEngine {
   /// Health backend for `jsr.fa.health.summary`; `null` uses the platform
   /// service ([createHealthService] — a never-available stub on web).
   final HealthApi? health;
+
+  /// Home backend for `jsr.fa.home.*`; `null` uses the platform service
+  /// ([createHomeService] — a never-available stub on web).
+  final HomeApi? home;
+
+  /// Microphone backend for `jsr.fa.asr.*`; `null` uses the platform
+  /// service ([createAsrService] — a never-available stub on web).
+  final AsrApi? asr;
+
+  /// Transcriber for `jsr.fa.asr.transcribe`; `null` (no ASR-capable
+  /// endpoint configured) answers with an actionable error.
+  final AsrTranscriber? asrTranscriber;
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -251,6 +274,23 @@ jsr.fa.contacts.delete = function(args) { return jsr.fa.call('contacts.delete', 
 jsr.fa.contacts.call = function(args) { return jsr.fa.call('contacts.call', args); };
 jsr.fa.contacts.sms = function(args) { return jsr.fa.call('contacts.sms', args); };
 jsr.fa.health.summary = function(args) { return jsr.fa.call('health.summary', args); };
+// Home control (iOS HomeKit), gated on the `homekit` manifest flag. The
+// legacy jsr.fa.homekit(action, args) form above keeps working — its
+// actions route to the same backend.
+jsr.fa.home = {
+  list: function() { return jsr.fa.call('home.list', {}); },
+  setPower: function(args) { return jsr.fa.call('home.setPower', args); },
+  setBrightness: function(args) { return jsr.fa.call('home.setBrightness', args); },
+  setTemperature: function(args) { return jsr.fa.call('home.setTemperature', args); },
+};
+
+// Microphone capture + speech-to-text, gated on the `microphone` manifest
+// flag. record({seconds}) → {path, durationMs, sampleRate};
+// transcribe({path}) → {text}.
+jsr.fa.asr = {
+  record: function(args) { return jsr.fa.call('asr.record', args); },
+  transcribe: function(args) { return jsr.fa.call('asr.transcribe', args); },
+};
 
 // Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
 // a function reference, so the host pushes reserved 'llm.delta' events (see
@@ -442,6 +482,27 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'health.summary') {
         _resolve?.call(id, await _healthSummary(args));
+        return;
+      }
+      if (method == 'asr.record') {
+        _resolve?.call(id, await _asrRecord(args));
+        return;
+      }
+      if (method == 'asr.transcribe') {
+        _resolve?.call(id, await _asrTranscribe(args));
+        return;
+      }
+      // Home control (iOS HomeKit). `home.*` is the current surface; the
+      // legacy `homekit.<action>` calls route to the same handlers.
+      final homeAction = switch (method) {
+        'home.list' || 'homekit.list' || 'homekit.listDevices' => 'list',
+        'home.setPower' || 'homekit.setPower' => 'setPower',
+        'home.setBrightness' || 'homekit.setBrightness' => 'setBrightness',
+        'home.setTemperature' || 'homekit.setTemperature' => 'setTemperature',
+        _ => null,
+      };
+      if (homeAction != null) {
+        _resolve?.call(id, await _homeCall(homeAction, args));
         return;
       }
       // Back-navigation contract (see _faBootstrapJs): the app reports its
@@ -770,6 +831,127 @@ Object.defineProperty(jsr, 'onBack', {
       throw StateError(
         'health access was denied — enable it in the Health app '
         '(profile picture → Apps → Fa)',
+      );
+    }
+    return api;
+  }
+
+  /// `jsr.fa.home.*` (and the legacy `homekit.<action>`) bridge calls,
+  /// gated on the `homekit` permission. Actions: `list` → `{accessories:
+  /// [...]}`, `setPower` {id, on}, `setBrightness` {id, value},
+  /// `setTemperature` {id, celsius}.
+  Future<Map<String, Object?>> _homeCall(
+    String action,
+    Map<String, Object?> args,
+  ) async {
+    final api = await _gatedHome();
+    switch (action) {
+      case 'list':
+        return {
+          'accessories': [
+            for (final accessory in await api.listAccessories())
+              {
+                'id': accessory.id,
+                'name': accessory.name,
+                'room': accessory.room,
+                'homeName': accessory.homeName,
+                'category': accessory.category,
+                'reachable': accessory.reachable,
+                if (accessory.isOn != null) 'isOn': accessory.isOn,
+                if (accessory.brightness != null)
+                  'brightness': accessory.brightness,
+                if (accessory.targetTemperature != null)
+                  'targetTemperature': accessory.targetTemperature,
+              },
+          ],
+        };
+      case 'setPower':
+        final id = (args['id'] ?? '').toString();
+        if (id.isEmpty) throw StateError('id is required');
+        final on = args['on'] == true;
+        await api.setPower(id: id, on: on);
+        return {'on': on};
+      case 'setBrightness':
+        final id = (args['id'] ?? '').toString();
+        if (id.isEmpty) throw StateError('id is required');
+        final value = homeBrightness(args['value'] as num?);
+        await api.setBrightness(id: id, value: value);
+        return {'brightness': value};
+      case 'setTemperature':
+        final id = (args['id'] ?? '').toString();
+        if (id.isEmpty) throw StateError('id is required');
+        final celsius = homeTemperature(args['celsius'] as num?);
+        await api.setTargetTemperature(id: id, celsius: celsius);
+        return {'temperature': celsius};
+      default:
+        throw StateError('unknown home action "$action"');
+    }
+  }
+
+  /// The permission gate every `jsr.fa.home.*` bridge call shares: the
+  /// `homekit` permission, a platform backend, and OS access.
+  Future<HomeApi> _gatedHome() async {
+    if (!permissions.homekit) throw StateError(_denied('homekit'));
+    final api = home ?? createHomeService();
+    if (!await api.isAvailable) {
+      throw StateError('home control is not available on this platform');
+    }
+    if (!await api.requestAccess()) {
+      throw StateError(
+        'home access was denied — enable it in the system privacy '
+        'settings (Privacy & Security → HomeKit)',
+      );
+    }
+    return api;
+  }
+
+  /// `jsr.fa.asr.record({seconds?})` → `{path, durationMs, sampleRate}` —
+  /// records `seconds` (1–[asrMaxRecordSeconds], default 10) from the
+  /// microphone into a temporary .m4a, gated on the `microphone`
+  /// permission.
+  Future<Map<String, Object?>> _asrRecord(Map<String, Object?> args) async {
+    final api = await _gatedAsr();
+    final seconds = asrRecordSeconds(args['seconds'] as num?);
+    await api.startRecording();
+    await Future<void>.delayed(Duration(seconds: seconds));
+    final recording = await api.stopRecording();
+    return {
+      'path': recording.path,
+      'durationMs': recording.durationMs,
+      'sampleRate': recording.sampleRate,
+    };
+  }
+
+  /// `jsr.fa.asr.transcribe({path})` → `{text}` — transcribes a recording
+  /// (or any readable audio file) through the configured OpenAI-compatible
+  /// endpoint; without one the call answers with an actionable error.
+  Future<Map<String, Object?>> _asrTranscribe(Map<String, Object?> args) async {
+    final api = await _gatedAsr();
+    final path = (args['path'] ?? '').toString();
+    if (path.isEmpty) throw StateError('path is required');
+    final transcriber = asrTranscriber;
+    if (transcriber == null) throw StateError(asrNoEndpointMessage);
+    final bytes = await api.readRecording(path);
+    final filename = path.split(RegExp(r'[/\\]')).last;
+    return {
+      'text': await transcriber.transcribe(bytes: bytes, filename: filename),
+    };
+  }
+
+  /// The permission gate every `jsr.fa.asr.*` bridge call shares: the
+  /// `microphone` permission, a platform backend, and OS access.
+  Future<AsrApi> _gatedAsr() async {
+    if (!permissions.microphone) throw StateError(_denied('microphone'));
+    final api = asr ?? createAsrService();
+    if (!await api.isAvailable) {
+      throw StateError(
+        'microphone recording is not available on this platform',
+      );
+    }
+    if (!await api.requestAccess()) {
+      throw StateError(
+        'microphone access was denied — enable it in the system privacy '
+        'settings (Privacy & Security → Microphone)',
       );
     }
     return api;

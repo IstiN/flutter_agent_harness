@@ -1,27 +1,29 @@
 {
   "id": "homekit",
   "name": "Home",
-  "description": "HomeKit bridge status plus a demo smart-home control panel",
-  "version": "1.0.0",
+  "description": "Control HomeKit accessories — rooms, lights, switches, thermostats (iOS)",
+  "version": "1.1.0",
   "icon": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 3 L22 11 L19.5 11 L19.5 21 L14 21 L14 15 L10 15 L10 21 L4.5 21 L4.5 11 L2 11 Z' fill='#f59e0b'/></svg>",
   "allowedCommands": [],
   "network": false,
   "homekit": true,
   "cli": {
-    "summary": "HomeKit bridge status + demo device panel with local state",
+    "summary": "HomeKit home control: real rooms/accessories via jsr.fa.home, honest demo panel when the bridge is unavailable",
     "events": [
-      { "id": "retry", "description": "Retry the homekit bridge call" },
-      { "id": "toggle_<id>", "description": "Toggle a light or the lock" },
-      { "id": "temp_up", "description": "Raise the demo thermostat" },
-      { "id": "temp_down", "description": "Lower the demo thermostat" }
+      { "id": "retry", "description": "Re-query jsr.fa.home.list (retry or refresh)" },
+      { "id": "power_<id>", "description": "Toggle a real accessory on/off" },
+      { "id": "brightup_<id> / brightdown_<id>", "description": "Step a real light's brightness by 10" },
+      { "id": "tempup_<id> / tempdown_<id>", "description": "Step a real thermostat by 0.5°C" },
+      { "id": "toggle_<id>", "description": "Toggle a demo light or the lock (fallback panel)" },
+      { "id": "temp_up / temp_down", "description": "Adjust the demo thermostat (fallback panel)" }
     ],
     "read": {
-      "state": "yoloit app:state homekit — bridgeAvailable, devices",
+      "state": "yoloit app:state homekit — bridgeAvailable, accessories, devices",
       "snapshot": "yoloit app:snapshot homekit — full render JSON tree"
     },
     "examples": [
       "yoloit app:run homekit",
-      "yoloit app:execute homekit toggle_living-light",
+      "yoloit app:execute homekit power_<accessory-id>",
       "yoloit app:state homekit"
     ]
   }

@@ -1,3 +1,4 @@
+import AVFoundation
 import Cocoa
 import Contacts
 import EventKit
@@ -15,7 +16,9 @@ class MainFlutterWindow: NSWindow {
     registerCalendarChannel(registry: flutterViewController)
     registerContactsChannel(registry: flutterViewController)
     registerHealthChannel(registry: flutterViewController)
+    registerHomeChannel(registry: flutterViewController)
     registerKeychainChannel(registry: flutterViewController)
+    registerMicChannel(registry: flutterViewController)
 
     super.awakeFromNib()
   }
@@ -667,4 +670,131 @@ private func registerHealthChannel(registry: FlutterPluginRegistry) {
       result(FlutterMethodNotImplemented)
     }
   }
+}
+
+/// The `fah/home` method channel: there is no HomeKit framework on macOS, so
+/// the channel is registered but honestly reports every call as unsupported.
+/// The Dart side (`homePlatformSupported`) already gates home control to iOS
+/// and never gets here in practice.
+private func registerHomeChannel(registry: FlutterPluginRegistry) {
+  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+  let channel = FlutterMethodChannel(
+    name: "fah/home",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "isAvailable", "requestAccess":
+      result(false)
+    case "listAccessories", "setPower", "setBrightness", "setTargetTemperature":
+      result(
+        FlutterError(
+          code: "unsupported",
+          message: "HomeKit is not available on macOS",
+          details: nil,
+        ),
+      )
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+/// The `fah/mic` method channel: microphone capture to a temporary .m4a
+/// file (AVAudioRecorder, AAC 44.1 kHz mono, auto-stop at 120 s — no
+/// streaming). Methods: `isAvailable`, `requestAccess`, `startRecording`,
+/// and `stopRecording` → {path, durationMs, sampleRate}. Needs the
+/// `com.apple.security.device.audio-input` entitlement (sandbox) and the
+/// NSMicrophoneUsageDescription Info.plist string.
+private func registerMicChannel(registry: FlutterPluginRegistry) {
+  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+  let channel = FlutterMethodChannel(
+    name: "fah/mic",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "isAvailable":
+      result(true)
+    case "requestAccess":
+      switch AVCaptureDevice.authorizationStatus(for: .audio) {
+      case .authorized:
+        result(true)
+      case .notDetermined:
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+          DispatchQueue.main.async { result(granted) }
+        }
+      default:
+        result(false)
+      }
+    case "startRecording":
+      result(micStartRecording())
+    case "stopRecording":
+      result(micStopRecording())
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+private var micRecorder: AVAudioRecorder?
+private var micStartedAt: Date?
+
+/// Longest single take in seconds — the recorder auto-stops there.
+private let micMaxRecordSeconds: TimeInterval = 120
+
+private func micStartRecording() -> Any {
+  guard micRecorder == nil else {
+    return FlutterError(
+      code: "busy",
+      message: "a recording is already in progress",
+      details: nil,
+    )
+  }
+  let url = FileManager.default.temporaryDirectory
+    .appendingPathComponent("fah-mic-\(UUID().uuidString).m4a")
+  let settings: [String: Any] = [
+    AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+    AVSampleRateKey: 44100,
+    AVNumberOfChannelsKey: 1,
+    AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+  ]
+  do {
+    let recorder = try AVAudioRecorder(url: url, settings: settings)
+    guard recorder.record(forDuration: micMaxRecordSeconds) else {
+      return FlutterError(
+        code: "record_failed",
+        message: "the microphone could not start (permission denied?)",
+        details: nil,
+      )
+    }
+    micRecorder = recorder
+    micStartedAt = Date()
+    return true
+  } catch {
+    return FlutterError(
+      code: "record_failed",
+      message: error.localizedDescription,
+      details: nil,
+    )
+  }
+}
+
+private func micStopRecording() -> Any {
+  guard let recorder = micRecorder else {
+    return FlutterError(
+      code: "not_recording",
+      message: "no recording is in progress",
+      details: nil,
+    )
+  }
+  recorder.stop()
+  let durationMs = Int(((micStartedAt.map { Date().timeIntervalSince($0) }) ?? 0) * 1000)
+  micRecorder = nil
+  micStartedAt = nil
+  return [
+    "path": recorder.url.path,
+    "durationMs": durationMs,
+    "sampleRate": 44100,
+  ]
 }

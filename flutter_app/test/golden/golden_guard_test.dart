@@ -24,6 +24,7 @@ const _coverage = <String, String>{
   'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
   'lib/ui/screens/chat_screen.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',
+  'lib/ui/widgets/model_mark.dart': 'test/golden/widgets_golden_test.dart',
   'lib/ui/widgets/session_sidebar.dart': 'test/golden/sidebar_golden_test.dart',
   'lib/ui/widgets/file_browser.dart': 'test/golden/files_golden_test.dart',
   'lib/ui/widgets/file_preview.dart': 'test/golden/files_golden_test.dart',

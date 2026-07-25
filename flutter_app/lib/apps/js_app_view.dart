@@ -16,6 +16,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/asr_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
@@ -65,6 +66,7 @@ class JsAppView extends StatefulWidget {
     this.onSendToAgent,
     this.fsRevision,
     this.agentService,
+    this.asrTranscriber,
     this.mapTileProvider,
   });
 
@@ -73,6 +75,11 @@ class JsAppView extends StatefulWidget {
   final AppPermissionsStore permissionsStore;
   final FaLlmHandler? llmHandler;
   final FaPlatformHandler? platformHandler;
+
+  /// Transcriber behind the `jsr.fa.asr.transcribe` bridge call; `null`
+  /// derives one from [agentService]'s active provider (an
+  /// OpenAI-compatible endpoint), which may still resolve to none.
+  final AsrTranscriber? asrTranscriber;
 
   /// Optional tile provider for `map` nodes — tests inject an offline
   /// provider; null uses the runtime default (OSM over the network).
@@ -204,6 +211,7 @@ class _JsAppViewState extends State<JsAppView> {
         permissions: effective,
         llmHandler: widget.llmHandler,
         platformHandler: widget.platformHandler,
+        asrTranscriber: widget.asrTranscriber ?? _serviceAsrTranscriber(),
         initialTheme: initialTheme,
       );
       engine.onCloseRequested = _closeFromJs;
@@ -243,6 +251,20 @@ class _JsAppViewState extends State<JsAppView> {
       }
     }
     return null;
+  }
+
+  /// Derives the ASR transcriber from the active session's provider config;
+  /// null when no ASR-capable (OpenAI-compatible) endpoint is configured —
+  /// the bridge then answers with an actionable error.
+  AsrTranscriber? _serviceAsrTranscriber() {
+    final service = widget.agentService;
+    if (service == null) return null;
+    final config = service.configForClone;
+    return whisperTranscriberFor(
+      providerKind: service.providerKind,
+      baseUrl: config?.baseUrl ?? '',
+      apiKey: config?.apiKey ?? '',
+    );
   }
 
   /// Shows the mini reply sheet when a run ENDS with a new assistant text
@@ -828,7 +850,7 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      // Six toggles + title can exceed small window heights.
+      // Seven toggles + title can exceed small window heights.
       scrollable: true,
       title: Row(
         children: [
@@ -880,6 +902,12 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
             context.l10n.appsPermissionCalendarDesc,
             _current.calendar,
             (v) => _set(_current.copyWith(calendar: v)),
+          ),
+          _toggle(
+            context.l10n.appsPermissionMicrophone,
+            context.l10n.appsPermissionMicrophoneDesc,
+            _current.microphone,
+            (v) => _set(_current.copyWith(microphone: v)),
           ),
         ],
       ),

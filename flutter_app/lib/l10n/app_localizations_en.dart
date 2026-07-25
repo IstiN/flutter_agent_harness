@@ -134,6 +134,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'jsr.fa.llm — let the app ask the connected model';
 
   @override
+  String get appsPermissionMicrophone => 'Microphone';
+
+  @override
+  String get appsPermissionMicrophoneDesc =>
+      'jsr.fa.asr — record audio and transcribe speech';
+
+  @override
   String get appsPermissionNetwork => 'Network';
 
   @override
@@ -281,6 +288,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatInputHint => 'Type a message';
+
+  @override
+  String get chatMicDenied =>
+      'Microphone access was denied. Enable it in the system privacy settings (Privacy & Security → Microphone), then try again.';
+
+  @override
+  String chatMicError(Object error) {
+    return 'Voice input failed: $error';
+  }
+
+  @override
+  String get chatMicStopTooltip => 'Stop recording';
+
+  @override
+  String get chatMicTooltip => 'Voice input';
 
   @override
   String get chatRemoveAttachment => 'Remove attachment';
