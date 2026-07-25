@@ -389,6 +389,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesFolderAccessDenied => 'Could not get access to that folder.';
 
   @override
+  String filesICloudSyncDone(Object files, Object size, Object when) {
+    return 'Synced $files files ($size) — last sync $when';
+  }
+
+  @override
+  String filesICloudSyncFailed(Object error) {
+    return 'iCloud sync failed: $error';
+  }
+
+  @override
+  String get filesICloudSyncTooltip => 'Sync sessions and apps with iCloud';
+
+  @override
+  String get filesICloudSyncUnavailable =>
+      'iCloud sync is unavailable — enable iCloud Drive for Fa in Settings → Apple ID → iCloud';
+
+  @override
   String get filesListFolderError => 'Could not list folder';
 
   @override

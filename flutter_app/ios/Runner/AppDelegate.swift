@@ -22,9 +22,46 @@ import UserNotifications
     registerContactsChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerHealthChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerHomeChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerICloudChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerKeychainChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerMicChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerNotifyChannel(messenger: engineBridge.applicationRegistrar.messenger())
+  }
+}
+
+/// The `fah/icloud` method channel: iCloud Drive ubiquity container access
+/// for the session/apps sync. `containerUrl` → the absolute path of the
+/// container's Documents directory, or nil when iCloud is unavailable (not
+/// signed in, or the iCloud capability/container id missing from the
+/// provisioning profile). `syncStatus` → {available, containerUrl?}. The
+/// file copy itself happens Dart-side once the container URL is known.
+private func registerICloudChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/icloud",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "containerUrl":
+      iCloudContainerDocumentsPath { path in result(path) }
+    case "syncStatus":
+      iCloudContainerDocumentsPath { path in
+        result(["available": path != nil, "containerUrl": path as Any])
+      }
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+/// Resolves the ubiquity container's Documents directory, answering on the
+/// main thread. The lookup can block on first call, so it runs off the main
+/// thread. Nil when the iCloud capability or a signed-in account is missing.
+private func iCloudContainerDocumentsPath(completion: @escaping (String?) -> Void) {
+  DispatchQueue.global(qos: .userInitiated).async {
+    let url = FileManager.default.url(forUbiquityContainerIdentifier: nil)
+    let path = url?.appendingPathComponent("Documents").path
+    DispatchQueue.main.async { completion(path) }
   }
 }
 

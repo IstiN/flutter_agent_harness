@@ -746,6 +746,30 @@ abstract class AppLocalizations {
   /// **'Could not get access to that folder.'**
   String get filesFolderAccessDenied;
 
+  /// No description provided for @filesICloudSyncDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced {files} files ({size}) — last sync {when}'**
+  String filesICloudSyncDone(Object files, Object size, Object when);
+
+  /// No description provided for @filesICloudSyncFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'iCloud sync failed: {error}'**
+  String filesICloudSyncFailed(Object error);
+
+  /// No description provided for @filesICloudSyncTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync sessions and apps with iCloud'**
+  String get filesICloudSyncTooltip;
+
+  /// No description provided for @filesICloudSyncUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'iCloud sync is unavailable — enable iCloud Drive for Fa in Settings → Apple ID → iCloud'**
+  String get filesICloudSyncUnavailable;
+
   /// No description provided for @filesListFolderError.
   ///
   /// In en, this message translates to:

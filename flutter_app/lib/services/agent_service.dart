@@ -18,6 +18,8 @@ import 'package:fa/services/health_service.dart';
 import 'package:fa/services/health_tool.dart';
 import 'package:fa/services/home_service.dart';
 import 'package:fa/services/home_tool.dart';
+import 'package:fa/services/icloud_sync_service.dart';
+import 'package:fa/services/icloud_sync_tool.dart';
 import 'package:fa/services/notify_service.dart';
 import 'package:fa/services/notify_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
@@ -287,6 +289,11 @@ class AgentService extends ChangeNotifier {
       // Local notifications (macOS/iOS via the `fah/notify` channel; the
       // tool itself reports a clean note where unsupported).
       if (notifyPlatformSupported) notifyTool(createNotifyService()),
+      // iCloud Drive sync of the sandbox sessions/apps trees (macOS/iOS
+      // via the `fah/icloud` channel; manual trigger, last-write-wins by
+      // file mtime — the tool reports guidance when the container is
+      // unavailable).
+      if (icloudSyncSupported) icloudSyncTool(createICloudSyncService(env)),
       // Audio transcription via the active provider when it is an
       // OpenAI-compatible endpoint (Whisper /audio/transcriptions) —
       // transcribes mic_record takes and any audio file in the sandbox.

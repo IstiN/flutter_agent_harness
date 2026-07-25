@@ -13,5 +13,16 @@
 	     heart rate, sleep) for the health_summary tool + JS bridge. -->
 	<key>com.apple.developer.healthkit</key>
 	<true/>
+	<!-- fah/icloud channel: iCloud Drive ubiquity container (Documents)
+	     for syncing sessions/apps across devices. Requires the iCloud
+	     capability with container iCloud.dev.fa1.app on the App ID. -->
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudDocuments</string>
+	</array>
+	<key>com.apple.developer.ubiquity-containers</key>
+	<array>
+		<string>iCloud.dev.fa1.app</string>
+	</array>
 </dict>
 </plist>

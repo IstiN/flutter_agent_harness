@@ -391,6 +391,24 @@ class AppLocalizationsRu extends AppLocalizations {
       'Не удалось получить доступ к этой папке.';
 
   @override
+  String filesICloudSyncDone(Object files, Object size, Object when) {
+    return 'Синхронизировано файлов: $files ($size) — последняя синхронизация $when';
+  }
+
+  @override
+  String filesICloudSyncFailed(Object error) {
+    return 'Ошибка синхронизации iCloud: $error';
+  }
+
+  @override
+  String get filesICloudSyncTooltip =>
+      'Синхронизировать сессии и приложения с iCloud';
+
+  @override
+  String get filesICloudSyncUnavailable =>
+      'Синхронизация iCloud недоступна — включите iCloud Drive для Fa в Настройки → Apple ID → iCloud';
+
+  @override
   String get filesListFolderError => 'Не удалось прочитать содержимое папки';
 
   @override

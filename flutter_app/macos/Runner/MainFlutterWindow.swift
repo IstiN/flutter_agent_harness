@@ -18,6 +18,7 @@ class MainFlutterWindow: NSWindow {
     registerContactsChannel(registry: flutterViewController)
     registerHealthChannel(registry: flutterViewController)
     registerHomeChannel(registry: flutterViewController)
+    registerICloudChannel(registry: flutterViewController)
     registerKeychainChannel(registry: flutterViewController)
     registerMicChannel(registry: flutterViewController)
     registerNotifyChannel(registry: flutterViewController)
@@ -102,6 +103,43 @@ private func stopAccessing(bookmarkBase64: String) {
     )
   else { return }
   url.stopAccessingSecurityScopedResource()
+}
+
+/// The `fah/icloud` method channel: iCloud Drive ubiquity container access
+/// for the session/apps sync. `containerUrl` → the absolute path of the
+/// container's Documents directory, or nil when iCloud is unavailable (not
+/// signed in, or the iCloud capability/container id missing from the
+/// provisioning profile). `syncStatus` → {available, containerUrl?}. The
+/// file copy itself happens Dart-side once the container URL is known.
+private func registerICloudChannel(registry: FlutterPluginRegistry) {
+  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+  let channel = FlutterMethodChannel(
+    name: "fah/icloud",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "containerUrl":
+      iCloudContainerDocumentsPath { path in result(path) }
+    case "syncStatus":
+      iCloudContainerDocumentsPath { path in
+        result(["available": path != nil, "containerUrl": path as Any])
+      }
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+/// Resolves the ubiquity container's Documents directory, answering on the
+/// main thread. The lookup can block on first call, so it runs off the main
+/// thread. Nil when the iCloud capability or a signed-in account is missing.
+private func iCloudContainerDocumentsPath(completion: @escaping (String?) -> Void) {
+  DispatchQueue.global(qos: .userInitiated).async {
+    let url = FileManager.default.url(forUbiquityContainerIdentifier: nil)
+    let path = url?.appendingPathComponent("Documents").path
+    DispatchQueue.main.async { completion(path) }
+  }
 }
 
 /// Shared store for the `fah/calendar` channel (EventKit wants a long-lived

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/ui/widgets/file_preview.dart';
+import 'package:fa/services/icloud_sync_service.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
@@ -163,6 +164,12 @@ class _FileBrowserState extends State<FileBrowser> {
   late final UploadPicker? _picker =
       widget.uploadPicker ?? createUploadPicker();
 
+  /// iCloud sync backend behind the header's sync button; `null` off
+  /// macOS/iOS (web/Android), which hides the button. Manual trigger only.
+  late final ICloudSyncService? _iCloudSync = icloudSyncSupported
+      ? createICloudSyncService(widget.env)
+      : null;
+
   @override
   void initState() {
     super.initState();
@@ -294,6 +301,32 @@ class _FileBrowserState extends State<FileBrowser> {
       );
   }
 
+  /// Runs one iCloud merge of the sandbox sessions/apps trees and reports
+  /// the outcome as a snackbar (synced counts, or the unavailable guidance
+  /// when the ubiquity container is missing).
+  Future<void> _syncICloud() async {
+    final service = _iCloudSync;
+    if (service == null) return;
+    if (!await service.isAvailable()) {
+      if (mounted) _showSnack(context.l10n.filesICloudSyncUnavailable);
+      return;
+    }
+    try {
+      final report = await service.syncNow();
+      if (!mounted) return;
+      _showSnack(
+        context.l10n.filesICloudSyncDone(
+          report.filesCopied,
+          formatFileSize(report.bytesCopied),
+          formatICloudSyncTimestamp(report.syncedAt),
+        ),
+      );
+      await _load();
+    } on Object catch (e) {
+      if (mounted) _showSnack(context.l10n.filesICloudSyncFailed(e.toString()));
+    }
+  }
+
   /// Picks files and writes them into the currently viewed folder of the
   /// sandbox filesystem, so the agent can work with them right away.
   Future<void> _upload() async {
@@ -391,6 +424,12 @@ class _FileBrowserState extends State<FileBrowser> {
               icon: const Icon(Icons.upload_file),
               tooltip: context.l10n.filesUploadTooltip,
               onPressed: _upload,
+            ),
+          if (_iCloudSync != null)
+            IconButton(
+              icon: const Icon(Icons.cloud_sync_outlined),
+              tooltip: context.l10n.filesICloudSyncTooltip,
+              onPressed: _syncICloud,
             ),
           IconButton(
             icon: const Icon(Icons.refresh),
