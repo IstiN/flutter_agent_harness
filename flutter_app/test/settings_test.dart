@@ -254,7 +254,7 @@ void main() {
         'in-memory notice', (tester) async {
       await tester.pumpWidget(const MyApp());
 
-      expect(find.text('Connect to fah'), findsOneWidget);
+      expect(find.text('Connect to Fa'), findsOneWidget);
       // The closed picker shows the default selection; opening it lists all
       // built-in presets.
       expect(find.text('Provider'), findsOneWidget);
@@ -283,7 +283,7 @@ void main() {
 
       expect(find.text('API key is required'), findsOneWidget);
       // Still on the setup screen — no navigation happened.
-      expect(find.text('Connect to fah'), findsOneWidget);
+      expect(find.text('Connect to Fa'), findsOneWidget);
     });
 
     testWidgets('defaults to OpenRouter with a read-only base URL', (
@@ -364,7 +364,7 @@ void main() {
         find.textContaining('only available in the web build'),
         findsOneWidget,
       );
-      expect(find.text('Connect to fah'), findsOneWidget);
+      expect(find.text('Connect to Fa'), findsOneWidget);
     });
 
     testWidgets('a typed model is not clobbered by preset switching', (

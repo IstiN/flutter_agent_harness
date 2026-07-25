@@ -50,9 +50,10 @@ class FaAppMessage {
 }
 
 /// Full-screen host for one JS app: renders the JS-driven UI via
-/// [JsonWidgetRenderer], offers reload + permissions in the app bar, and a
-/// floating Fa button that sends the agent a message with the app's current
-/// state and a screenshot.
+/// [JsonWidgetRenderer], offers reload + permissions in the app bar (or in a
+/// floating overlay menu when the app's manifest asks for `chrome: 'full'`),
+/// and a floating Fa button that sends the agent a message with the app's
+/// current state and a screenshot.
 class JsAppView extends StatefulWidget {
   const JsAppView({
     super.key,
@@ -317,30 +318,36 @@ class _JsAppViewState extends State<JsAppView> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final fullChrome = widget.app.isFullChrome;
     return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            AppIcon(app: widget.app, env: widget.env, size: 24),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(widget.app.name, overflow: TextOverflow.ellipsis),
+      appBar: fullChrome
+          ? null
+          : AppBar(
+              title: Row(
+                children: [
+                  AppIcon(app: widget.app, env: widget.env, size: 24),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      widget.app.name,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.shield_outlined),
+                  tooltip: context.l10n.appsPermissionsTooltip,
+                  onPressed: _openPermissions,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: context.l10n.appsReloadTooltip,
+                  onPressed: _restart,
+                ),
+              ],
             ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.shield_outlined),
-            tooltip: context.l10n.appsPermissionsTooltip,
-            onPressed: _openPermissions,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: context.l10n.appsReloadTooltip,
-            onPressed: _restart,
-          ),
-        ],
-      ),
       body: Stack(
         children: [
           Positioned.fill(
@@ -352,6 +359,19 @@ class _JsAppViewState extends State<JsAppView> {
               ),
             ),
           ),
+          // Full chrome has no AppBar — permissions/reload live in a small
+          // floating menu so immersive apps (maps) keep the whole canvas.
+          if (fullChrome)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: _chromeMenu(theme),
+                ),
+              ),
+            ),
           if (widget.onSendToAgent != null) ...[
             Positioned(
               right: 16,
@@ -388,6 +408,50 @@ class _JsAppViewState extends State<JsAppView> {
                 ),
             ],
           ],
+        ],
+      ),
+    );
+  }
+
+  /// The floating app-controls menu used in full chrome: a semi-transparent
+  /// circular button (top-right) opening a popup with Permissions and
+  /// Reload — the same actions the header AppBar offers.
+  Widget _chromeMenu(ThemeData theme) {
+    return Material(
+      color: theme.colorScheme.surface.withValues(alpha: 0.65),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert),
+        onSelected: (value) {
+          switch (value) {
+            case 'permissions':
+              unawaited(_openPermissions());
+            case 'reload':
+              unawaited(_restart());
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'permissions',
+            child: Row(
+              children: [
+                const Icon(Icons.shield_outlined, size: 20),
+                const SizedBox(width: 12),
+                Text(context.l10n.appsPermissionsTooltip),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'reload',
+            child: Row(
+              children: [
+                const Icon(Icons.refresh, size: 20),
+                const SizedBox(width: 12),
+                Text(context.l10n.appsReloadTooltip),
+              ],
+            ),
+          ),
         ],
       ),
     );

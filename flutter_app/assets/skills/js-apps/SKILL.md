@@ -369,8 +369,8 @@ All nodes are plain JSON objects with a `type` field.
 | `sizedBox` | `width`, `height`, `child` | Fixed size box |
 | `safeArea` | `child` | Insets for notches/bars |
 | `aspectRatio` | `child`, `aspectRatio` | Force aspect ratio |
-| `listView` | `children`, `shrinkWrap`, `scrollDirection` | Scrollable list |
-| `gridView` | `children`, `crossAxisCount`, `crossAxisSpacing`, `mainAxisSpacing`, `childAspectRatio`, `padding` | Fixed-column grid |
+| `listView` | `children`, `shrinkWrap`, `scrollDirection`, `physics` | Scrollable list (set `shrinkWrap: false` + bounded height for long lists) |
+| `gridView` | `children`, `crossAxisCount`, `crossAxisSpacing`, `mainAxisSpacing`, `childAspectRatio`, `padding` | Fixed-column grid | (`shrinkWrap` default true, `physics` `never`\|`always`\|`platform` to enable scrolling)
 
 ### Display
 
@@ -395,6 +395,7 @@ All nodes are plain JSON objects with a `type` field.
 |------|-----------|-------------|
 | `button` | `label`, `onPressed`, `icon`, `color`, `textColor` | Elevated button |
 | `textField` | `hint`, `value`, `onSubmit`, `onChange`, `obscure` | Text input field |
+| `textArea` | `value`, `hint`, `minLines` (3), `maxLines` (8), `onChange`, `onSubmit` | Multiline text input (expands, then scrolls) |
 | `gestureDetector` | `child`, `onTap`, `onTapDown`, `onTapUp`, `onPanStart`, `onPanUpdate`, `onPanEnd` | Touch/gesture input with local coordinates |
 
 ### Animated (Implicit Animations)

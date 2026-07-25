@@ -794,9 +794,15 @@ void main() {
     await expectGolden(tester, 'apps_view_error');
   });
 
-  testWidgets('map app renders the bundled Map demo with offline tiles', (
-    tester,
-  ) async {
+  /// Pumps the bundled Map demo with offline tiles and snapshots it as
+  /// [golden]. [chromeOverride] pins the display chrome: the bundled
+  /// manifest declares `chrome: 'full'`, so the header-mode snapshot forces
+  /// `'header'` back on.
+  Future<void> mapGolden(
+    WidgetTester tester, {
+    required String golden,
+    String? chromeOverride,
+  }) async {
     await tester.runAsync(() async {
       final manifest =
           (jsonDecode(
@@ -804,6 +810,7 @@ void main() {
                   )
                   as Map)
               .cast<String, Object?>();
+      if (chromeOverride != null) manifest['chrome'] = chromeOverride;
       final env = MemoryExecutionEnv();
       await env.writeFile('apps/map/manifest.json', jsonEncode(manifest));
       await env.writeFile(
@@ -859,7 +866,25 @@ void main() {
     });
     // matchesGoldenFile needs its own runAsync — call it outside ours.
     await tester.pump();
-    await expectGolden(tester, 'apps_map_view');
+    await expectGolden(tester, golden);
+  }
+
+  testWidgets('map app renders the bundled Map demo with offline tiles', (
+    tester,
+  ) async {
+    // The bundled manifest asks for full chrome; pin the header chrome so
+    // this snapshot keeps covering the AppBar layout.
+    await mapGolden(tester, golden: 'apps_map_view', chromeOverride: 'header');
+  });
+
+  testWidgets('map app in full chrome floats the controls menu over the map', (
+    tester,
+  ) async {
+    // The manifest's own `chrome: 'full'`: no AppBar, a semi-transparent
+    // menu button floats top-right over the map canvas.
+    await mapGolden(tester, golden: 'apps_map_full');
+    expect(find.byType(AppBar), findsNothing);
+    expect(find.byIcon(Icons.more_vert), findsOneWidget);
   });
 }
 

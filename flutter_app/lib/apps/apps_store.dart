@@ -99,6 +99,7 @@ class JsAppInfo {
     required this.icon,
     required this.declaredPermissions,
     this.version = '1.0.0',
+    this.chrome = chromeHeader,
     this.bundled = false,
   });
 
@@ -113,6 +114,7 @@ class JsAppInfo {
       description: (json['description'] ?? '').toString(),
       icon: (json['icon'] ?? '📦').toString(),
       version: (json['version'] ?? '1.0.0').toString(),
+      chrome: json['chrome'] == chromeFull ? chromeFull : chromeHeader,
       declaredPermissions: AppPermissions.fromJson(json),
       bundled: bundled,
     );
@@ -124,6 +126,19 @@ class JsAppInfo {
   final String icon;
   final String version;
   final AppPermissions declaredPermissions;
+
+  /// Default display chrome: the app renders under a regular AppBar.
+  static const String chromeHeader = 'header';
+
+  /// Full-bleed display chrome: no AppBar; app controls float over the app.
+  static const String chromeFull = 'full';
+
+  /// Display chrome (NOT a permission): [chromeHeader] (default) or
+  /// [chromeFull]; unknown manifest values fall back to [chromeHeader].
+  final String chrome;
+
+  /// True when the app wants the full-bleed layout (see [chromeFull]).
+  bool get isFullChrome => chrome == chromeFull;
 
   /// True for demo apps seeded from bundled assets (read-only source).
   final bool bundled;

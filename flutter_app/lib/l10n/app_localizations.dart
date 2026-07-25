@@ -599,7 +599,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatTyping.
   ///
   /// In en, this message translates to:
-  /// **'fah is typing...'**
+  /// **'Fa is typing...'**
   String get chatTyping;
 
   /// No description provided for @chatUploadFailed.
@@ -1277,7 +1277,7 @@ abstract class AppLocalizations {
   /// No description provided for @setupAppBarTitle.
   ///
   /// In en, this message translates to:
-  /// **'Connect to fah'**
+  /// **'Connect to Fa'**
   String get setupAppBarTitle;
 
   /// No description provided for @sidebarAllApps.

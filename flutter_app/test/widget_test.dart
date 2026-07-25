@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   testWidgets('Setup screen asks for API key', (tester) async {
     await tester.pumpWidget(const MyApp());
-    expect(find.text('Connect to fah'), findsOneWidget);
+    expect(find.text('Connect to Fa'), findsOneWidget);
     expect(find.byType(TextField), findsWidgets);
     expect(find.text('Start chat'), findsOneWidget);
   });

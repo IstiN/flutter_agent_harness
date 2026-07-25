@@ -574,7 +574,7 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Connect to fah'), findsOneWidget);
+        expect(find.text('Connect to Fa'), findsOneWidget);
         expect(find.text('Ollama'), findsOneWidget);
         expect(_field(tester, 'Model id').controller!.text, 'gpt-oss:120b');
         // The key is empty again — session-only by policy.

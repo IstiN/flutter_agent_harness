@@ -306,7 +306,7 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
-  String get chatTyping => 'fah печатает...';
+  String get chatTyping => 'Fa печатает...';
 
   @override
   String chatUploadFailed(Object error) {
@@ -705,7 +705,7 @@ class AppLocalizationsRu extends AppLocalizations {
       'Работает полностью офлайн после скачивания · требуется WebGPU (Chrome/Edge/новые Safari) · веса ~0.5-4 ГБ кешируются в браузере';
 
   @override
-  String get setupAppBarTitle => 'Подключение к fah';
+  String get setupAppBarTitle => 'Подключение к Fa';
 
   @override
   String sidebarAllApps(Object count) {

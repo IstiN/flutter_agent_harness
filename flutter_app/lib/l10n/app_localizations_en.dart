@@ -305,7 +305,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get chatTyping => 'fah is typing...';
+  String get chatTyping => 'Fa is typing...';
 
   @override
   String chatUploadFailed(Object error) {
@@ -701,7 +701,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Runs fully offline after download · needs WebGPU (Chrome/Edge/newer Safari) · weights ~0.5-4 GB cached in your browser';
 
   @override
-  String get setupAppBarTitle => 'Connect to fah';
+  String get setupAppBarTitle => 'Connect to Fa';
 
   @override
   String sidebarAllApps(Object count) {

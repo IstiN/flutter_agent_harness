@@ -94,6 +94,35 @@ void main() {
     });
   });
 
+  group('JsAppInfo', () {
+    test('chrome flag parses with the header fallback', () {
+      final full = JsAppInfo.fromManifest(
+        const {'id': 'map', 'chrome': 'full'},
+        bundled: false,
+        fallbackId: 'map',
+      );
+      expect(full.chrome, JsAppInfo.chromeFull);
+      expect(full.isFullChrome, isTrue);
+
+      // Missing flag → default header chrome.
+      final missing = JsAppInfo.fromManifest(
+        const {'id': 'demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      expect(missing.chrome, JsAppInfo.chromeHeader);
+      expect(missing.isFullChrome, isFalse);
+
+      // Unknown values fall back to the header chrome.
+      final unknown = JsAppInfo.fromManifest(
+        const {'id': 'demo', 'chrome': 'sidebar'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      expect(unknown.chrome, JsAppInfo.chromeHeader);
+    });
+  });
+
   group('AppPermissionsStore', () {
     test('declared permissions apply without overrides', () async {
       final env = MemoryExecutionEnv();
