@@ -583,4 +583,15 @@
 - feat(example): calendar write — channel, agent tools, js bridge, demo editing
 - feat(example): back-swipe contract (jsr.onBack), privacy manifests + usage descriptions
 
+## 0.1.78
+
+- feat: Keychain key persistence (iOS/macOS), /models endpoint listing, model marks, site updates
+- refactor(example): dedupe cache sections into shared model_cache_section; bump runtime 0.4.11
+- feat(example): transcription slot wiring + read_video (frames → vision)
+- feat(example): media models config + generate_image/speak/generate_music tools + js bridge
+- feat(example): iCloud sync for sessions/apps (iOS; macOS pending signing)
+- feat(example): local push notifications — channel, notify tool, js bridge, reminders demo
+- feat(example): HomeKit control (iOS) + mic/ASR voice input
+- feat(example): HealthKit read (iOS), scene3d dep (0.4.10), Android readiness doc
+
 ## Unreleased
