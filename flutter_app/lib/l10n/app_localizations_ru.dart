@@ -97,6 +97,13 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsOpenChatTooltip => 'Открыть чат';
 
   @override
+  String get appsPermissionCalendar => 'Календарь';
+
+  @override
+  String get appsPermissionCalendarDesc =>
+      'jsr.fa.calendar — чтение событий системного календаря';
+
+  @override
   String get appsPermissionContacts => 'Контакты';
 
   @override
@@ -448,6 +455,48 @@ class AppLocalizationsRu extends AppLocalizations {
   String get gemmaStorageOnDevice => 'на этом устройстве';
 
   @override
+  String get keysDeleteBody =>
+      'Сохранённое значение удаляется с этого устройства. Значение из файла .env, если оно есть, снова вступит в силу.';
+
+  @override
+  String keysDeleteTitle(Object name) {
+    return 'Удалить $name?';
+  }
+
+  @override
+  String get keysSectionNote =>
+      'Значения никогда не показываются. Сохранённые ключи хранятся на этом устройстве; сессионные исчезают после перезагрузки.';
+
+  @override
+  String get keysSectionTitle => 'Ключи';
+
+  @override
+  String get keysSetButton => 'Задать';
+
+  @override
+  String keysSetDialogTitle(Object name) {
+    return 'Задать $name';
+  }
+
+  @override
+  String get keysSourceEnv => 'файл .env';
+
+  @override
+  String get keysSourceNone => 'не задан';
+
+  @override
+  String get keysSourceProviderSession => 'ключ провайдера · эта сессия';
+
+  @override
+  String get keysSourceSaved => 'сохранён';
+
+  @override
+  String get keysValueHint => 'Вставьте значение ключа';
+
+  @override
+  String get keysValueLabel => 'Значение';
+
+  @override
   String quickStartCachedLabel(Object bytes, Object size) {
     return '$size · $bytes в кеше';
   }
@@ -604,6 +653,18 @@ class AppLocalizationsRu extends AppLocalizations {
   String settingsStaleModelDevice(Object model) {
     return 'Ранее использованная модель ($model) удалена с этого устройства — выберите модель, чтобы скачать её снова.';
   }
+
+  @override
+  String get settingsThemeDark => 'Тёмная';
+
+  @override
+  String get settingsThemeLabel => 'Тема';
+
+  @override
+  String get settingsThemeLight => 'Светлая';
+
+  @override
+  String get settingsThemeSystem => 'Как в системе';
 
   @override
   String get settingsStartChat => 'Начать чат';

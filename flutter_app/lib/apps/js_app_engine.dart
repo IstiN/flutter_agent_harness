@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/services/calendar_service.dart';
 
 /// One-shot LLM completion used by the `jsr.fa.llm(prompt)` bridge call.
 typedef FaLlmHandler = Future<Object?> Function(String prompt);
@@ -28,6 +29,8 @@ typedef FaPlatformHandler =
 /// - `jsr.fetchJson` → [AppPermissions.network]
 /// - `jsr.exec(<shell>)` → command must be in [AppPermissions.allowedCommands]
 /// - `jsr.fa.llm` → [AppPermissions.llm]
+/// - `jsr.fa.calendar` → [AppPermissions.calendar] (real backend via
+///   [CalendarApi]; requests OS access on first use)
 /// - `jsr.fa.homekit/health/contacts` → the matching flag (stubbed until the
 ///   platform implementations land — a granted call answers "not available").
 class JsAppEngine {
@@ -37,6 +40,7 @@ class JsAppEngine {
     required this.permissions,
     this.llmHandler,
     this.platformHandler,
+    this.calendar,
     void Function(String line)? onLog,
   }) : _onLog = onLog;
 
@@ -45,6 +49,10 @@ class JsAppEngine {
   final AppPermissions permissions;
   final FaLlmHandler? llmHandler;
   final FaPlatformHandler? platformHandler;
+
+  /// Calendar backend for `jsr.fa.calendar`; `null` uses the platform
+  /// service ([createCalendarService] — a never-available stub on web).
+  final CalendarApi? calendar;
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -176,6 +184,7 @@ jsr.fa = {
   homekit: function(action, args) { return jsr.fa.call('homekit.' + action, args); },
   health: function(action, args) { return jsr.fa.call('health.' + action, args); },
   contacts: function(action, args) { return jsr.fa.call('contacts.' + action, args); },
+  calendar: function(args) { return jsr.fa.call('calendar.events', args); },
 };
 ''';
 
@@ -231,6 +240,10 @@ jsr.fa = {
         _resolve?.call(id, await handler((args['prompt'] ?? '').toString()));
         return;
       }
+      if (method == 'calendar.events') {
+        _resolve?.call(id, await _calendarEvents(args));
+        return;
+      }
       final prefix = method.split('.').first;
       final granted = switch (prefix) {
         'homekit' => permissions.homekit,
@@ -249,6 +262,43 @@ jsr.fa = {
     } on Object catch (error) {
       _resolve?.call(id, {'__error': error.toString()});
     }
+  }
+
+  /// `jsr.fa.calendar({date, days})` → `{events: [...]}` — read-only system
+  /// calendar access, gated on the `calendar` permission.
+  Future<Map<String, Object?>> _calendarEvents(
+    Map<String, Object?> args,
+  ) async {
+    if (!permissions.calendar) throw StateError(_denied('calendar'));
+    final api = calendar ?? createCalendarService();
+    if (!await api.isAvailable) {
+      throw StateError('calendar is not available on this platform');
+    }
+    if (!await api.requestAccess()) {
+      throw StateError(
+        'calendar access was denied — enable it in the system privacy '
+        'settings (Privacy & Security → Calendars)',
+      );
+    }
+    final range = calendarRange(
+      date: args['date']?.toString(),
+      days: (args['days'] as num?)?.toInt(),
+    );
+    final events = await api.events(start: range.start, end: range.end);
+    return {
+      'events': [
+        for (final event in events)
+          {
+            'title': event.title,
+            'startMs': event.start.millisecondsSinceEpoch,
+            'endMs': event.end.millisecondsSinceEpoch,
+            'allDay': event.allDay,
+            if (event.calendar != null) 'calendar': event.calendar,
+            if (event.location != null) 'location': event.location,
+            if (event.notes != null) 'notes': event.notes,
+          },
+      ],
+    };
   }
 
   String _denied(String what) =>

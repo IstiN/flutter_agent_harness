@@ -6,12 +6,12 @@
 /// app_icon.dart, apps_grid.dart, fa_work_bar.dart and js_app_view.dart.
 ///
 /// Everything runs on MemoryExecutionEnv with fixed manifests — no network,
-/// no real file system writes, no real JS engine. The grid seeds the six
+/// no real file system writes, no real JS engine. The grid seeds the ten
 /// bundled demo manifests (read from assets/apps/ on disk) plus twelve
 /// custom "agent-built" apps. The JsAppView coverage uses the deterministic
 /// start-error chrome (missing widget.js) instead of booting the
 /// JavaScriptCore backend; FaWorkBar states render over a hand-built
-/// calculator canvas. FaWorkBar owns an infinitely repeating pulse
+/// calculator canvas. FaWorkBar owns an infinitely repeating orbit
 /// animation, so its states are pumped frame-by-frame (never pumpAndSettle).
 ///
 /// Note: the golden font sandbox (Inter + JetBrainsMono only) has no emoji
@@ -231,7 +231,7 @@ Future<void> _writeApp(
   );
 }
 
-/// Seeds the six bundled demo apps (manifests read from assets/apps/ on
+/// Seeds the ten bundled demo apps (manifests read from assets/apps/ on
 /// disk) plus the custom apps into an in-memory env.
 Future<MemoryExecutionEnv> _seededEnv() async {
   final env = MemoryExecutionEnv();
@@ -312,9 +312,10 @@ AgentService _hungService() {
   );
 }
 
-/// pumpGolden without the pumpAndSettle: FaWorkBar's pulse animation repeats
-/// forever, so settling would time out. A fixed pump sequence keeps the
-/// animation phase identical between snapshot generation and comparison.
+/// pumpGolden without the pumpAndSettle: FaWorkBar's orbit animation repeats
+/// forever while the service streams, so settling would time out. A fixed
+/// pump sequence keeps the animation phase identical between snapshot
+/// generation and comparison.
 Future<void> _pumpFrames(
   WidgetTester tester,
   Widget child, {
@@ -479,7 +480,11 @@ Widget _workBarHost(AgentService service, MemoryExecutionEnv env) {
           left: 0,
           right: 0,
           bottom: 0,
-          child: FaWorkBar(service: service, onSend: (text) async {}),
+          child: FaWorkBar(
+            service: service,
+            onSend: (text) async {},
+            onExpand: () {},
+          ),
         ),
       ],
     ),

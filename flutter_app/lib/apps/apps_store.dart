@@ -21,6 +21,7 @@ class AppPermissions {
     this.homekit = false,
     this.health = false,
     this.contacts = false,
+    this.calendar = false,
   });
 
   factory AppPermissions.fromJson(Map<String, Object?> json) {
@@ -34,6 +35,7 @@ class AppPermissions {
       homekit: json['homekit'] == true,
       health: json['health'] == true,
       contacts: json['contacts'] == true,
+      calendar: json['calendar'] == true,
     );
   }
 
@@ -55,12 +57,16 @@ class AppPermissions {
   /// Contacts bridge (stub).
   final bool contacts;
 
+  /// Read-only system-calendar bridge (`jsr.fa.calendar`).
+  final bool calendar;
+
   AppPermissions copyWith({
     bool? network,
     bool? llm,
     bool? homekit,
     bool? health,
     bool? contacts,
+    bool? calendar,
   }) {
     return AppPermissions(
       network: network ?? this.network,
@@ -69,6 +75,7 @@ class AppPermissions {
       homekit: homekit ?? this.homekit,
       health: health ?? this.health,
       contacts: contacts ?? this.contacts,
+      calendar: calendar ?? this.calendar,
     );
   }
 
@@ -79,6 +86,7 @@ class AppPermissions {
     'homekit': homekit,
     'health': health,
     'contacts': contacts,
+    'calendar': calendar,
   };
 }
 
@@ -139,6 +147,7 @@ class EffectiveAppPermissions {
   bool get homekit => overrides?.homekit ?? declared.homekit;
   bool get health => overrides?.health ?? declared.health;
   bool get contacts => overrides?.contacts ?? declared.contacts;
+  bool get calendar => overrides?.calendar ?? declared.calendar;
   List<String> get allowedCommands => declared.allowedCommands;
 
   AppPermissions effective() => AppPermissions(
@@ -148,6 +157,7 @@ class EffectiveAppPermissions {
     homekit: homekit,
     health: health,
     contacts: contacts,
+    calendar: calendar,
   );
 }
 
@@ -234,6 +244,10 @@ class AppsStore {
     'crypto',
     'animation-showcase',
     'yolo-hello',
+    'calendar',
+    'map',
+    'health',
+    'homekit',
   ];
 
   /// The demo apps this store seeds (see [seedBundledApps]).

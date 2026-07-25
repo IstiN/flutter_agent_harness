@@ -91,10 +91,13 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/model_roles/provider_catalog.dart` — provider table; specs
   default `input: ['text','image']` (vision).
 - `flutter_app/` — Flutter chat example. Layout: `lib/main.dart`
-  (entrypoint + SetupScreen), `lib/ui/` (`app_theme.dart`,
+  (entrypoint + SetupScreen), `lib/ui/` (`app_theme.dart` — dark + light
+  palettes/themes, `FahColors.of(context)` resolves per brightness;
   `markdown_style.dart`, `screens/`, `widgets/`), `lib/services/` (agent
-  service, stores, upload, secrets, project mount, vision), `lib/sandbox/`
-  (env, shells, wasm, git, fs persistence), feature dirs
+  service, stores, upload, secrets, project mount, vision,
+  `theme_controller.dart` theme-mode persistence + `FahThemeScope`,
+  `session_keys_store.dart` user-saved keys + `SessionKeysScope`),
+  `lib/sandbox/` (env, shells, wasm, git, fs persistence), feature dirs
   `lib/apps|gemma|webllm|transformers_js|l10n/`. All lib-internal imports
   are absolute `package:fa/...` — no relative imports.
 - `flutter_app/lib/l10n/` — gen-l10n: `app_en.arb` + `app_ru.arb` →
@@ -111,11 +114,34 @@ factual: paths, commands, invariants — no essays.
 - `flutter_app/lib/services/project_mount_env.dart` — macOS project-folder
   mount (`/project` → user-picked host dir; security-scoped bookmarks in
   `project_mount.json`; stale bookmark = "pick again" warning).
-- `flutter_app/lib/apps/` — JS apps platform on `package:js_widget_runtime`:
-  apps live in env-shared `apps/<id>/{manifest.json,widget.js}`; permissions
-  in `apps_permissions.json` (network/allowedCommands/llm/homekit/health/
-  contacts — default denied); `jsr.fa.*` bridge over exec; the `js-apps`
-  skill seeds into `.fah/skills/` on startup.
+- `flutter_app/lib/apps/` — JS apps platform on `package:js_widget_runtime`
+  (≥0.4.5 — adds the `map` node: center/zoom/markers/polylines/fitBounds,
+  onTap/onMarkerTap): apps live in env-shared `apps/<id>/{manifest.json,
+  widget.js}`; permissions in `apps_permissions.json` (network/
+  allowedCommands/llm/homekit/health/contacts/calendar — default denied);
+  `jsr.fa.*` bridge over exec (`fa.llm`, `fa.calendar`; homekit/health/
+  contacts are gated "not available yet" stubs); the `js-apps` skill seeds
+  into `.fah/skills/` on startup. Bundled demos (seeded by
+  `AppsStore.demoAppIds`, assets in `flutter_app/assets/apps/`): calculator,
+  weather, stocks, crypto, animation-showcase, yolo-hello, calendar
+  (`jsr.fa.calendar`), map (`map` node), health + homekit (honest stub UX +
+  demo state). `open_app_tool.dart` registers the agent tool `open_app`
+  (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
+- `flutter_app/lib/services/calendar_service.dart` — read-only system
+  calendar: `CalendarApi` over the `fah/calendar` MethodChannel (EventKit in
+  `MainFlutterWindow.swift`/`AppDelegate.swift`; entitlement
+  `com.apple.security.personal-information.calendars`, both
+  NSCalendars*UsageDescription plist keys); stub = not-available on web.
+  Agent tool `calendar_events {date?, days?}` in `calendar_tool.dart`
+  (registered when `calendarPlatformSupported`); denial result points to
+  System Settings → Privacy → Calendars.
+- `flutter_app/lib/services/theme_controller.dart` — ThemeMode
+  (system/light/dark) persisted as `theme.json`; `app_theme.dart` has
+  `buildFahTheme()` (dark) + `buildFahThemeLight()`, widgets read colors via
+  `FahColors.of(context)` (never `FahPalette` directly in widgets).
+- `flutter_app/lib/services/session_keys_store.dart` — in-app secrets:
+  `session_keys.json` via the env (set/delete, never displays values);
+  the settings Keys section manages them.
 - `flutter_app/lib/services/last_connection.dart` — persists last connection
   (never API keys) as `last_connection.json`; pre-selects the settings form.
 - `flutter_app/lib/services/vision_models.dart` — `modelIdSuggestsVision`

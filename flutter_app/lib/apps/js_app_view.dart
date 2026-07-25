@@ -413,6 +413,8 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      // Six toggles + title can exceed small window heights.
+      scrollable: true,
       title: Row(
         children: [
           AppIcon(app: widget.app, env: widget.env, size: 22),
@@ -457,6 +459,12 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
             context.l10n.appsPermissionContactsDesc,
             _current.contacts,
             (v) => _set(_current.copyWith(contacts: v)),
+          ),
+          _toggle(
+            context.l10n.appsPermissionCalendar,
+            context.l10n.appsPermissionCalendarDesc,
+            _current.calendar,
+            (v) => _set(_current.copyWith(calendar: v)),
           ),
         ],
       ),

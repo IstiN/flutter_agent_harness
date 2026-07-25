@@ -15,6 +15,9 @@ import 'dart:typed_data';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/theme_controller.dart';
+import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -38,9 +41,10 @@ Future<void> _ensureMaterialIcons() async {
   await loader.load();
 }
 
-/// Pumps the settings form in the same frame `SettingsScreen` uses (app bar
-/// + padded scroll view), centered in a readable max-width column so the
-/// content fills wide frames instead of getting lost at the edge.
+/// Pumps [child] (the settings form by default) in the same frame
+/// `SettingsScreen` uses (app bar + padded scroll view), centered in a
+/// readable max-width column so the content fills wide frames instead of
+/// getting lost at the edge.
 ///
 /// The theme's `filledButtonTheme.textStyle` carries no `fontFamily` (the
 /// `styleFrom` textStyle replaces `labelLarge`), which falls back to the
@@ -50,15 +54,19 @@ Future<void> _pumpSettingsFrame(
   WidgetTester tester, {
   ProviderRegistry? registry,
   Size size = goldenSizeDesktop,
+  ThemeData? theme,
+  Widget? child,
 }) {
   return pumpGolden(
     tester,
-    AgentSettingsForm(
-      registry: registry,
-      connectLabel: 'Apply',
-      onConnect: (_) async {},
-    ),
+    child ??
+        AgentSettingsForm(
+          registry: registry,
+          connectLabel: 'Apply',
+          onConnect: (_) async {},
+        ),
     size: size,
+    theme: theme,
     wrap: (child) => Builder(
       builder: (context) {
         final theme = Theme.of(context);
@@ -186,6 +194,77 @@ void main() {
 
       expect(find.text('API key is required'), findsOneWidget);
       await expectGolden(tester, 'settings_validation');
+    });
+
+    testWidgets('hosted provider form — light theme', (tester) async {
+      await _pumpSettingsFrame(tester, theme: buildFahThemeLight());
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key'),
+        'sk-or-test-key',
+      );
+      await tester.pumpAndSettle();
+
+      // The light palette: white inputs on the gray page, darkened
+      // indigo/teal accents, dark text.
+      await expectGolden(tester, 'settings_hosted_light');
+    });
+
+    testWidgets('theme and keys sections', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      registry.rememberKey(provider.id, 'acme-secret');
+      final store = SessionKeysStore.inMemory({
+        'OPENROUTER_API_KEY': 'sk-or-saved',
+      });
+      await _pumpSettingsFrame(
+        tester,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ThemeModeSection(
+              controller: ThemeController.inMemory(FahThemeMode.dark),
+            ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 16),
+            KeysSection(store: store, registry: registry),
+          ],
+        ),
+      );
+
+      // The theme dropdown plus the key rows with their sources (saved /
+      // not set / provider session) — values are never shown.
+      await expectGolden(tester, 'settings_keys_theme');
+    });
+
+    testWidgets('theme and keys sections — light theme', (tester) async {
+      final store = SessionKeysStore.inMemory({
+        'OPENROUTER_API_KEY': 'sk-or-saved',
+      });
+      await _pumpSettingsFrame(
+        tester,
+        theme: buildFahThemeLight(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ThemeModeSection(
+              controller: ThemeController.inMemory(FahThemeMode.light),
+            ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 16),
+            KeysSection(store: store),
+          ],
+        ),
+      );
+
+      await expectGolden(tester, 'settings_keys_theme_light');
     });
   });
 }

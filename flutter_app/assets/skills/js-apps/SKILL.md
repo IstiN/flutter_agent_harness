@@ -16,8 +16,12 @@ JS apps live in the sandbox env folder `apps/<id>/`. You create and edit them wi
 ```
 1. write apps/my-app/manifest.json    metadata + permissions
 2. write apps/my-app/widget.js        ES5-style IIFE, jsr.* API
-3. tell the user to open the app in Fa's Apps section
+3. open it for the user: open_app(id="my-app") — or tell them to open it in Fa's Apps section
 ```
+
+### Opening apps for the user — the `open_app` tool
+
+You can open any installed app for the user with the `open_app` tool: pass the app id (its `apps/<id>` folder name) and the host navigates straight to the app. Use it when the user asks to see an app, or right after you create/fix one — "I've opened it for you" beats instructions. Unknown ids come back with the list of available ids.
 
 ### After editing — reload is automatic
 
@@ -30,7 +34,7 @@ The host **watches the app files and reloads the running app automatically** as 
 3. **Register `jsr.onEvent`** — even if you handle few events.
 4. **Set the permissions the app actually needs** in `manifest.json`, and tell the user they may also need to enable them at runtime in the app's permissions dialog.
 5. **Never hand-edit `apps/<id>/storage.json`** — that file is owned by `jsr.storage`.
-6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase). Read their source before building something similar.
+6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase, calendar, map, health, homekit). Read their source before building something similar.
 
 ---
 
@@ -72,7 +76,8 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
   "llm": false,
   "homekit": false,
   "health": false,
-  "contacts": false
+  "contacts": false,
+  "calendar": false
 }
 ```
 
@@ -89,6 +94,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `homekit` | ❌ | `true` to allow `jsr.fa.homekit` (default: false) |
 | `health` | ❌ | `true` to allow `jsr.fa.health` (default: false) |
 | `contacts` | ❌ | `true` to allow `jsr.fa.contacts` (default: false) |
+| `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — read-only system calendar access (default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
 
@@ -289,6 +295,17 @@ jsr.fa.llm('Summarize this text: ' + noteText).then(function(summary) {
 
 Use it for summarization, tagging, smart suggestions — anything that benefits from the user's connected model. Keep prompts self-contained (the call is stateless; there is no chat history).
 
+### `jsr.fa.calendar(args)` → Promise
+Read-only access to the user's system calendar (macOS/iOS). Requires `"calendar": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS calendar-access prompt. `args` is optional: `{date: 'YYYY-MM-DD', days: N}` — defaults to today, 1 day (max 31).
+
+```javascript
+jsr.fa.calendar({ date: '2026-07-25', days: 1 }).then(function(result) {
+  if (result && result.__error) { jsr.showError(result.__error); return; }
+  // result.events: [{ title, startMs, endMs, allDay, calendar?, location?, notes? }]
+  renderEvents(result.events);
+});
+```
+
 ### `jsr.fa.homekit(action, args)` / `jsr.fa.health(action, args)` / `jsr.fa.contacts(action, args)` → Promise
 Platform bridges. Each requires its matching manifest permission (`homekit` / `health` / `contacts`). **These are currently stubs**: they resolve with an error message until implemented on the host. Do not build apps that depend on them without warning the user.
 
@@ -378,6 +395,7 @@ All nodes are plain JSON objects with a `type` field.
 | Type | Key props | Description |
 |------|-----------|-------------|
 | `chart` | `data`, `color`, `fillColor`, `strokeWidth`, `height` | Sparkline chart (line graph) |
+| `map` | `center {lat,lng}`, `zoom`, `markers [{id,lat,lng,label?,color?}]`, `polylines`, `fitBounds`, `width`, `height` | OpenStreetMap (needs `network`) — `onTap` fires `{lat,lng}`, `onMarkerTap` fires `{id}`; `center`/`zoom` apply on creation only, so re-create the node to move the camera |
 | `path` | `path` (SVG path data), `progress`, `color`, `strokeWidth`, `cap`, `join` | SVG path stroke |
 | `absoluteFill` / `fill` | `color`, `child` | Expand to fill parent |
 | `video` | `src`, `autoPlay`, `loop`, `controls`, `fit`, `width`, `height` | Video player |
@@ -696,6 +714,10 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 | `stocks` | Stock Prices | Real-time stock quotes, textField + fetch | ✅ |
 | `yolo-hello` | Hello Animated | Interactive demo: bounce, gradient, gestures, RAF | ❌ |
 | `animation-showcase` | Animation Showcase | 7 animation demos: fade, morph, bounce, cards, drag, pulse, colors | ❌ |
+| `calendar` | Calendar | System calendar events via `jsr.fa.calendar`, day navigation + permission states | ❌ |
+| `map` | Map | OSM `map` node: preset markers, tap-to-pin, zoom controls | ✅ |
+| `health` | Health | `jsr.fa.health` bridge status + demo metrics dashboard | ❌ |
+| `homekit` | Home | `jsr.fa.homekit` bridge status + demo device panel with local toggles | ❌ |
 
 **Tip**: Before building a new app, always read the source of the most similar demo — especially for network fetch, storage, and theming patterns.
 
@@ -709,10 +731,11 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 4. **Storage is async** — `jsr.storage.get()` returns a Promise. Always use `.then()` before using the value.
 5. **`jsr.render()` replaces everything** — not additive; always render the complete UI tree.
 6. **After editing files, do nothing** — the app reloads automatically; the user can also hit Reload.
-7. **Network requires the manifest flag** — set `"network": true` or `fetchJson` fails; same for `llm`/`allowedCommands` and the `homekit`/`health`/`contacts` bridges. Tell the user to enable permissions in the app's permissions dialog when needed.
+7. **Network requires the manifest flag** — set `"network": true` or `fetchJson` fails; same for `llm`/`allowedCommands` and the `calendar`/`homekit`/`health`/`contacts` bridges. Tell the user to enable permissions in the app's permissions dialog when needed.
 8. **Always check `__error`** on results from `jsr.fetchJson` and the `jsr.fa.*` bridges before using the data.
 9. **Always call `jsr.exportState`** with meaningful state — it's what you (the agent) receive when the user talks to you from inside the app.
 10. **Timer cleanup** — save `setInterval` IDs and `clearInterval` when done.
 11. **Never hand-edit `apps/<id>/storage.json`** — it's owned by `jsr.storage`.
 12. **Write files with your write/edit tools** — never shell heredocs.
 13. **Study demo apps first** — read the closest match in `apps/` before writing new code.
+14. **Open apps for the user** — the `open_app` tool navigates the Fa UI to an app by id; use it after creating or fixing an app instead of telling the user where to tap.

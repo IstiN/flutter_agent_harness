@@ -96,6 +96,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsOpenChatTooltip => 'Open chat';
 
   @override
+  String get appsPermissionCalendar => 'Calendar';
+
+  @override
+  String get appsPermissionCalendarDesc =>
+      'jsr.fa.calendar — read your system calendar events';
+
+  @override
   String get appsPermissionContacts => 'Contacts';
 
   @override
@@ -444,6 +451,48 @@ class AppLocalizationsEn extends AppLocalizations {
   String get gemmaStorageOnDevice => 'on this device';
 
   @override
+  String get keysDeleteBody =>
+      'The saved value is removed from this device. A value from the .env file, if any, applies again.';
+
+  @override
+  String keysDeleteTitle(Object name) {
+    return 'Delete $name?';
+  }
+
+  @override
+  String get keysSectionNote =>
+      'Values are never displayed. Saved keys persist on this device; session keys are gone on reload.';
+
+  @override
+  String get keysSectionTitle => 'Keys';
+
+  @override
+  String get keysSetButton => 'Set';
+
+  @override
+  String keysSetDialogTitle(Object name) {
+    return 'Set $name';
+  }
+
+  @override
+  String get keysSourceEnv => 'env file';
+
+  @override
+  String get keysSourceNone => 'not set';
+
+  @override
+  String get keysSourceProviderSession => 'provider key · this session';
+
+  @override
+  String get keysSourceSaved => 'saved';
+
+  @override
+  String get keysValueHint => 'Paste the key value';
+
+  @override
+  String get keysValueLabel => 'Value';
+
+  @override
   String quickStartCachedLabel(Object bytes, Object size) {
     return '$size · $bytes cached';
   }
@@ -600,6 +649,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String settingsStaleModelDevice(Object model) {
     return 'The previously used model ($model) was removed from this device — pick a model to download it again.';
   }
+
+  @override
+  String get settingsThemeDark => 'Dark';
+
+  @override
+  String get settingsThemeLabel => 'Theme';
+
+  @override
+  String get settingsThemeLight => 'Light';
+
+  @override
+  String get settingsThemeSystem => 'System';
 
   @override
   String get settingsStartChat => 'Start chat';

@@ -104,13 +104,15 @@ class ProviderRegistry extends ChangeNotifier {
   String? keyFor(String id) => _sessionKeys[id];
 
   /// Remembers [key] for provider [id] for this session only; an empty key
-  /// forgets the entry. Never persisted.
+  /// forgets the entry. Never persisted. Notifies listeners so key-aware UI
+  /// (the settings Keys section) refreshes.
   void rememberKey(String id, String key) {
     if (key.isEmpty) {
       _sessionKeys.remove(id);
     } else {
       _sessionKeys[id] = key;
     }
+    notifyListeners();
   }
 
   /// Adds a provider and returns it (with its assigned [CustomProvider.id]).

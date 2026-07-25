@@ -6,12 +6,15 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/gemma/gemma_cache_section.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/theme_controller.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
@@ -38,6 +41,20 @@ String settingsEnv(String name, String fallback) {
     return dotenv.env[name]!;
   }
   return fallback;
+}
+
+/// Resolves a key default with the saved-keys store between `--dart-define`
+/// and `.env` (overlay semantics, like `DotEnvSecretsStore`): an explicitly
+/// saved key shadows the dev `.env`, a compile-time define shadows both.
+String settingsKeyEnv(String name, SessionKeysStore? keysStore) {
+  final dartValue = settingsDartDefines[name];
+  if (dartValue != null && dartValue.isNotEmpty) return dartValue;
+  final stored = keysStore?.valueOf(name);
+  if (stored != null && stored.isNotEmpty) return stored;
+  if (dotenv.isInitialized && dotenv.env.containsKey(name)) {
+    return dotenv.env[name]!;
+  }
+  return '';
 }
 
 /// A bring-your-own-key provider preset. Hosted presets talk to an
@@ -117,11 +134,14 @@ enum ProviderPreset {
 /// The provider picker mixes the built-in [ProviderPreset]s with user-added
 /// [CustomProvider]s from [registry]; "Add provider" saves a named
 /// OpenAI-compatible endpoint (name, base URL, model id) that persists
-/// across reloads (see [ProviderRegistry]). API keys are never persisted:
-/// for custom providers the key is remembered in memory for the session
-/// only, so a reload requires re-entering it. The key is optional for
-/// custom providers (built-in [ProviderPreset.custom] and saved
-/// [CustomProvider]s) — local llama.cpp/Ollama/LM Studio servers need none;
+/// across reloads (see [ProviderRegistry]). Keys typed into this form are
+/// remembered in memory for the session only (see
+/// [ProviderRegistry.rememberKey]); persisting a key is an explicit action
+/// in the settings Keys section (see [SessionKeysStore]), and saved keys
+/// prefill this form (see [AgentSettingsForm.keysStore]). The key is
+/// optional for custom providers (built-in [ProviderPreset.custom] and
+/// saved [CustomProvider]s) — local llama.cpp/Ollama/LM Studio servers need
+/// none;
 /// the hosted presets (OpenRouter, Ollama Cloud) still require one.
 class AgentSettingsForm extends StatefulWidget {
   const AgentSettingsForm({
@@ -130,6 +150,7 @@ class AgentSettingsForm extends StatefulWidget {
     this.connectLabel,
     this.registry,
     this.initialConnection,
+    this.keysStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -155,6 +176,11 @@ class AgentSettingsForm extends StatefulWidget {
   /// back to the default preset with a small note. `null` keeps the
   /// env-based defaults.
   final LastConnection? initialConnection;
+
+  /// The saved-keys store (see [SessionKeysStore]): key fields prefill from
+  /// it when neither `--dart-define` nor `.env` provides a value. `null`
+  /// keeps the env-only behavior (tests).
+  final SessionKeysStore? keysStore;
 
   /// Engine override for the on-device WebLLM provider (tests); defaults to
   /// the platform singleton.
@@ -241,7 +267,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     final preset = ProviderPreset.fromBaseUrl(initialUrl);
     _selection = preset;
     _keyController = TextEditingController(
-      text: settingsEnv('OPENROUTER_API_KEY', ''),
+      text: settingsKeyEnv('OPENROUTER_API_KEY', widget.keysStore),
     );
     _lastDefaultModel = preset.defaultModel;
     _modelController = TextEditingController(
@@ -251,7 +277,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _modelController.addListener(_onModelIdChanged);
     _urlController = TextEditingController(text: initialUrl);
     _hfTokenController = TextEditingController(
-      text: settingsEnv('HUGGINGFACE_TOKEN', ''),
+      text: settingsKeyEnv('HUGGINGFACE_TOKEN', widget.keysStore),
     );
     // The last connection wins over the env-based defaults; the key field is
     // never touched (keys are session-only and never persisted).
@@ -1439,6 +1465,337 @@ class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
   }
 }
 
+/// The settings "Theme" section: a dropdown over [FahThemeMode] bound to the
+/// app-wide [ThemeController] (explicit [controller], else the nearest
+/// [FahThemeScope]). Hidden when no controller is available (tests pumping
+/// the bare form).
+class ThemeModeSection extends StatelessWidget {
+  const ThemeModeSection({super.key, this.controller});
+
+  /// Controller override; falls back to the nearest [FahThemeScope].
+  final ThemeController? controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final controller = this.controller ?? FahThemeScope.maybeOf(context);
+    if (controller == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.l10n.settingsThemeLabel,
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<FahThemeMode>(
+              // The key forces the FormField to re-seed when the mode is
+              // changed from elsewhere.
+              key: ValueKey<FahThemeMode>(controller.mode),
+              initialValue: controller.mode,
+              isExpanded: true,
+              items: [
+                DropdownMenuItem(
+                  value: FahThemeMode.system,
+                  child: Text(context.l10n.settingsThemeSystem),
+                ),
+                DropdownMenuItem(
+                  value: FahThemeMode.light,
+                  child: Text(context.l10n.settingsThemeLight),
+                ),
+                DropdownMenuItem(
+                  value: FahThemeMode.dark,
+                  child: Text(context.l10n.settingsThemeDark),
+                ),
+              ],
+              onChanged: (mode) {
+                if (mode != null) controller.setMode(mode);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// The settings "Keys" section: lists the known key names
+/// ([knownKeyNames] plus anything saved) and every custom provider with a
+/// remembered session key, each with its source (`env file` / `saved` /
+/// `this session`) and set/delete actions. Values are never displayed;
+/// saving happens only on an explicit Set here (keys typed into the
+/// connection form stay session-only, see [ProviderRegistry.rememberKey]).
+///
+/// The store comes from [store] or the nearest [SessionKeysScope]; the
+/// whole section hides when neither a store nor a registry is available.
+class KeysSection extends StatelessWidget {
+  const KeysSection({super.key, this.store, this.registry});
+
+  /// Store override; falls back to the nearest [SessionKeysScope].
+  final SessionKeysStore? store;
+
+  /// The provider registry, for the per-provider session-key rows.
+  final ProviderRegistry? registry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final store = this.store ?? SessionKeysScope.maybeOf(context);
+    final registry = this.registry;
+    if (store == null && registry == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: Listenable.merge([?store, ?registry]),
+      builder: (context, _) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.l10n.keysSectionTitle,
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.l10n.keysSectionNote,
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            if (store != null)
+              for (final name in _listedNames(store))
+                _buildKeyRow(
+                  context,
+                  theme,
+                  title: name,
+                  source: _sourceFor(context, store, name),
+                  onSet: () => _setStoredKey(context, store, name),
+                  onDelete: store.has(name)
+                      ? () => _deleteStoredKey(context, store, name)
+                      : null,
+                ),
+            if (registry != null)
+              for (final provider in registry.providers)
+                if ((registry.keyFor(provider.id) ?? '').isNotEmpty)
+                  _buildKeyRow(
+                    context,
+                    theme,
+                    title: provider.name,
+                    source: context.l10n.keysSourceProviderSession,
+                    onSet: () => _setProviderKey(context, registry, provider),
+                    onDelete: () => registry.rememberKey(provider.id, ''),
+                  ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// [knownKeyNames] first, then any extra saved names, sorted.
+  static List<String> _listedNames(SessionKeysStore store) => [
+    ...knownKeyNames,
+    ...store.names.where((name) => !knownKeyNames.contains(name)),
+  ];
+
+  static String _sourceFor(
+    BuildContext context,
+    SessionKeysStore store,
+    String name,
+  ) {
+    final hasSaved = store.has(name);
+    final hasEnv = settingsEnv(name, '').isNotEmpty;
+    if (hasSaved && hasEnv) {
+      return '${context.l10n.keysSourceSaved} · ${context.l10n.keysSourceEnv}';
+    }
+    if (hasSaved) return context.l10n.keysSourceSaved;
+    if (hasEnv) return context.l10n.keysSourceEnv;
+    return context.l10n.keysSourceNone;
+  }
+
+  Widget _buildKeyRow(
+    BuildContext context,
+    ThemeData theme, {
+    required String title,
+    required String source,
+    VoidCallback? onSet,
+    VoidCallback? onDelete,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: FahPalette.mono(
+                    color: theme.colorScheme.onSurface,
+                    fontSize: 12,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(source, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+          if (onSet != null)
+            TextButton(
+              onPressed: onSet,
+              child: Text(context.l10n.keysSetButton),
+            ),
+          if (onDelete != null)
+            IconButton(
+              tooltip: context.l10n.commonDelete,
+              onPressed: onDelete,
+              icon: Icon(
+                Icons.delete_outline,
+                size: 18,
+                color: theme.colorScheme.error,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setStoredKey(
+    BuildContext context,
+    SessionKeysStore store,
+    String name,
+  ) async {
+    final value = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          KeyEditorDialog(title: context.l10n.keysSetDialogTitle(name)),
+    );
+    if (value == null || value.isEmpty) return;
+    await store.set(name, value);
+  }
+
+  Future<void> _deleteStoredKey(
+    BuildContext context,
+    SessionKeysStore store,
+    String name,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.l10n.keysDeleteTitle(name)),
+        content: Text(context.l10n.keysDeleteBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(context.l10n.commonCancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(context.l10n.commonDelete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await store.delete(name);
+  }
+
+  Future<void> _setProviderKey(
+    BuildContext context,
+    ProviderRegistry registry,
+    CustomProvider provider,
+  ) async {
+    final value = await showDialog<String>(
+      context: context,
+      builder: (_) => KeyEditorDialog(
+        title: context.l10n.keysSetDialogTitle(provider.name),
+      ),
+    );
+    if (value == null || value.isEmpty) return;
+    registry.rememberKey(provider.id, value);
+  }
+}
+
+/// The set-key dialog opened from [KeysSection]: collects a replacement
+/// value for a named key. Pops with the entered value, or `null` when
+/// cancelled or empty (an empty value never overwrites — use delete).
+class KeyEditorDialog extends StatefulWidget {
+  const KeyEditorDialog({super.key, required this.title});
+
+  /// Dialog title (`Set OPENROUTER_API_KEY`).
+  final String title;
+
+  @override
+  State<KeyEditorDialog> createState() => _KeyEditorDialogState();
+}
+
+class _KeyEditorDialogState extends State<KeyEditorDialog> {
+  final TextEditingController _valueController = TextEditingController();
+
+  @override
+  void dispose() {
+    _valueController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: _dialogContentWidth(context, 380),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _valueController,
+              decoration: InputDecoration(
+                labelText: context.l10n.keysValueLabel,
+                hintText: context.l10n.keysValueHint,
+              ),
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              autofocus: true,
+              onChanged: (_) => setState(() {}),
+              onSubmitted: _save,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              context.l10n.keysSectionNote,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.l10n.commonCancel),
+        ),
+        ListenableBuilder(
+          listenable: _valueController,
+          builder: (context, _) => FilledButton(
+            onPressed: _valueController.text.trim().isEmpty
+                ? null
+                : () => _save(_valueController.text),
+            child: Text(context.l10n.settingsSaveButton),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _save(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return;
+    Navigator.of(context).pop(trimmed);
+  }
+}
+
 /// The gear-icon screen from the chat screen (also opened from the session
 /// sidebar's model tile): reconfigure provider/model/key mid-session,
 /// manage saved providers, and manage the on-device model cache.
@@ -1492,6 +1849,7 @@ class SettingsScreen extends StatelessWidget {
                 connectLabel: context.l10n.settingsApplyButton,
                 registry: registry,
                 initialConnection: lastConnectionStore?.connection,
+                keysStore: SessionKeysScope.maybeOf(context),
                 webLlmEngine: webLlmEngine,
                 gemmaEngine: gemmaEngine,
                 transformersJsEngine: transformersJsEngine,
@@ -1501,6 +1859,14 @@ class SettingsScreen extends StatelessWidget {
                   if (context.mounted) Navigator.of(context).pop();
                 },
               ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              const ThemeModeSection(),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              KeysSection(registry: registry),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),

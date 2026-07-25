@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
@@ -312,5 +313,56 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('open_app: the screen installs the launcher and the tool '
+        'navigates to the app', (tester) async {
+      _useWideSurface(tester);
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/demo/manifest.json',
+        '{"id":"demo","name":"Demo App"}',
+      );
+      await env.writeFile(
+        'apps/demo/widget.js',
+        '(function(){jsr.render({type:"text",data:"hi"});})();',
+      );
+      final manager = _fakeManager(env);
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
+      await tester.pumpAndSettle();
+
+      // The chat screen installed its launcher: the tool is registered.
+      final service = manager.active!.service;
+      final tool = service.toolsForTest
+          .where((t) => t.name == 'open_app')
+          .cast<AgentTool>()
+          .single;
+
+      // Invoking it (as the agent loop would) pushes the app view — the same
+      // navigation a sidebar tap performs. The launcher is fire-and-forget
+      // (the push completes only when the user leaves the app), so give the
+      // navigation chain real time to reach Navigator.push. The JS engine
+      // booting in JsAppView must start inside runAsync: its JavaScriptCore
+      // runtime registers periodic timers, which have to be REAL timers —
+      // under fake time they never settle.
+      await tester.runAsync(() async {
+        await tool.execute({'id': 'demo'}, null, null);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await tester.pump();
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      // The route is pushed but its entrance transition runs on the fake
+      // clock, frozen inside runAsync — advance it now so the route comes
+      // onstage.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(JsAppView), findsOneWidget);
+
+      // Tear the route down on the real loop too, so the engine disposes.
+      await tester.runAsync(() async {
+        tester.state<NavigatorState>(find.byType(Navigator)).pop();
+        await tester.pump();
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+    });
   });
 }

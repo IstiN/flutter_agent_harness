@@ -12,6 +12,8 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -53,6 +55,8 @@ Future<void> main() async {
   debugPrint('[fah] provider registry loaded');
   final lastConnection = await LastConnectionStore.load(env);
   debugPrint('[fah] last connection loaded');
+  final themeController = await ThemeController.load(env);
+  final sessionKeys = await SessionKeysStore.load(env);
   // Analytics is strictly optional. On web with placeholder options
   // (`YOUR_*` — what CI builds) initializeApp above is skipped, and just
   // reading Firebase.apps can throw (no JS SDK loaded — seen on Safari,
@@ -71,6 +75,8 @@ Future<void> main() async {
       env: env,
       registry: registry,
       lastConnectionStore: lastConnection,
+      themeController: themeController,
+      sessionKeysStore: sessionKeys,
       analytics: analytics,
     ),
   );
@@ -82,6 +88,8 @@ class MyApp extends StatelessWidget {
     this.env,
     this.registry,
     this.lastConnectionStore,
+    this.themeController,
+    this.sessionKeysStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -100,6 +108,14 @@ class MyApp extends StatelessWidget {
   /// persistence (tests).
   final LastConnectionStore? lastConnectionStore;
 
+  /// The persisted appearance choice; `null` falls back to a shared
+  /// in-memory controller defaulting to [FahThemeMode.system] (tests).
+  final ThemeController? themeController;
+
+  /// The persisted saved-keys store; `null` skips the scope (the settings
+  /// Keys section and form prefill hide, tests).
+  final SessionKeysStore? sessionKeysStore;
+
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
   final WebLlmEngineApi? webLlmEngine;
@@ -110,40 +126,63 @@ class MyApp extends StatelessWidget {
   /// (e.g., tests or placeholder firebase_options.dart).
   final FirebaseAnalytics? analytics;
 
+  /// Fallback for [themeController] when none is injected (tests): a single
+  /// shared in-memory controller so every [MyApp] build sees the same one.
+  static final ThemeController _fallbackThemeController =
+      ThemeController.inMemory();
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Fa',
-      theme: buildFahTheme(),
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      navigatorObservers: analytics != null
-          ? [FirebaseAnalyticsObserver(analytics: analytics!)]
-          : const <NavigatorObserver>[],
-      home: SetupScreen(
-        env: env,
-        registry: registry,
-        lastConnectionStore: lastConnectionStore,
-        webLlmEngine: webLlmEngine,
-        gemmaEngine: gemmaEngine,
-        transformersJsEngine: transformersJsEngine,
-      ),
+    final theme = themeController ?? _fallbackThemeController;
+    final sessionKeys = sessionKeysStore;
+    Widget child = ListenableBuilder(
+      listenable: theme,
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'Fa',
+          theme: buildFahThemeLight(),
+          darkTheme: buildFahTheme(),
+          themeMode: theme.themeMode,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          navigatorObservers: analytics != null
+              ? [FirebaseAnalyticsObserver(analytics: analytics!)]
+              : const <NavigatorObserver>[],
+          home: SetupScreen(
+            env: env,
+            registry: registry,
+            lastConnectionStore: lastConnectionStore,
+            sessionKeysStore: sessionKeys,
+            webLlmEngine: webLlmEngine,
+            gemmaEngine: gemmaEngine,
+            transformersJsEngine: transformersJsEngine,
+          ),
+        );
+      },
     );
+    child = FahThemeScope(controller: theme, child: child);
+    if (sessionKeys != null) {
+      child = SessionKeysScope(store: sessionKeys, child: child);
+    }
+    return child;
   }
 }
 
 /// First-run screen: bring-your-own-key connection form (see
 /// [AgentSettingsForm]) with a one-tap "Downloaded models" quick start above
-/// it (see [DownloadedModelsQuickStart]). Keys are kept in memory only; saved
-/// custom providers persist (see [ProviderRegistry]) and are offered in the
-/// picker, and the last successful connection persists (see
-/// [LastConnectionStore]) and pre-selects the form.
+/// it (see [DownloadedModelsQuickStart]). Keys typed here stay in memory for
+/// the session (explicit saving happens in the settings Keys section, see
+/// [SessionKeysStore]); saved custom providers persist (see
+/// [ProviderRegistry]) and are offered in the picker, and the last
+/// successful connection persists (see [LastConnectionStore]) and
+/// pre-selects the form.
 class SetupScreen extends StatelessWidget {
   const SetupScreen({
     super.key,
     this.env,
     this.registry,
     this.lastConnectionStore,
+    this.sessionKeysStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -158,6 +197,10 @@ class SetupScreen extends StatelessWidget {
   /// The persisted last-connection store: pre-selects the form and is
   /// updated on every successful connect (quick start included).
   final LastConnectionStore? lastConnectionStore;
+
+  /// The persisted saved-keys store: prefills key fields not covered by
+  /// `--dart-define` or `.env` (see [SessionKeysStore]).
+  final SessionKeysStore? sessionKeysStore;
 
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
@@ -211,6 +254,7 @@ class SetupScreen extends StatelessWidget {
                 AgentSettingsForm(
                   registry: registry,
                   initialConnection: lastConnectionStore?.connection,
+                  keysStore: sessionKeysStore,
                   webLlmEngine: webLlmEngine,
                   gemmaEngine: gemmaEngine,
                   transformersJsEngine: transformersJsEngine,

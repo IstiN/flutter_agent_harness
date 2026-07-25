@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +9,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/apps/apps_grid.dart';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
@@ -161,7 +161,7 @@ class SessionSidebarState extends State<SessionSidebar> {
           onSendToAgent: sendAppMessageToAgent,
           fsRevision: service.fsRevision,
           agentService: service,
-          resolveAppService: _serviceForApp,
+          resolveAppService: (appId) => resolveAppBoundSession(_manager, appId),
         ),
       ),
     );
@@ -173,116 +173,19 @@ class SessionSidebarState extends State<SessionSidebar> {
     final permissionsStore = _permissionsStore;
     if (service == null || permissionsStore == null) return;
     widget.onAction?.call();
-    // An app with a bound session resumes it on open.
-    final appService = await _serviceForApp(app.id) ?? service;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => JsAppView(
-          app: app,
-          env: service.env,
-          permissionsStore: permissionsStore,
-          llmHandler: service.completeOnce,
-          onSendToAgent: sendAppMessageToAgent,
-          fsRevision: service.fsRevision,
-          agentService: appService,
-        ),
-      ),
+    await pushJsApp(
+      context,
+      manager: _manager,
+      app: app,
+      permissionsStore: permissionsStore,
     );
     await _loadApps();
   }
 
-  /// Resolves the session bound to [appId] (`apps/<id>/session.json`),
-  /// switching the manager to it. Returns null when no (valid) binding
-  /// exists — the caller then uses the active session or creates one.
-  Future<AgentService?> _serviceForApp(String appId) async {
-    final active = _manager.active?.service;
-    if (active == null) return null;
-    final raw = await active.env.readTextFile('apps/$appId/session.json');
-    final text = raw.valueOrNull;
-    if (text == null) return null;
-    String? boundId;
-    try {
-      boundId = (jsonDecode(text) as Map<String, dynamic>)['sessionId']
-          ?.toString();
-    } on FormatException {
-      return null;
-    }
-    if (boundId == null || boundId.isEmpty) return null;
-    // Already open in this app run?
-    for (final session in _manager.sessions) {
-      if (session.id == boundId) {
-        _manager.switchTo(boundId);
-        return session.service;
-      }
-    }
-    // Open it from disk.
-    final all = await active.listSessions();
-    for (final metadata in all) {
-      if (metadata.id == boundId) {
-        final managed = await _manager.openSession(
-          metadata,
-          config:
-              active.configForClone ??
-              AgentConfig(
-                providerKind: active.providerKind,
-                modelId: active.modelId,
-                baseUrl: '',
-                apiKey: '',
-              ),
-          serviceFactory: () => active.clone(),
-        );
-        return managed.service;
-      }
-    }
-    return null; // stale binding (session deleted)
-  }
-
-  /// Creates a fresh session dedicated to [appId] and records the binding.
-  Future<AgentService> _createSessionForApp(String appId) async {
-    final active = _manager.active!.service;
-    final config =
-        active.configForClone ??
-        AgentConfig(
-          providerKind: active.providerKind,
-          modelId: active.modelId,
-          baseUrl: '',
-          apiKey: '',
-        );
-    final managed = await _manager.createSession(
-      config: config,
-      serviceFactory: () async => active.clone(),
-    );
-    await active.env.writeFile(
-      'apps/$appId/session.json',
-      '{"sessionId":"${managed.id}"}',
-    );
-    return managed.service;
-  }
-
   /// Forwards an in-app Fa message (text + app state + screenshot) to the
-  /// session bound to the app (creating + binding one on first contact).
-  Future<void> sendAppMessageToAgent(FaAppMessage message) async {
-    final appId = message.appId;
-    final service = appId == null
-        ? _manager.active?.service
-        : (await _serviceForApp(appId) ?? await _createSessionForApp(appId));
-    if (service == null) return;
-    final buffer = StringBuffer(message.text);
-    final stateJson = message.appStateJson;
-    if (stateJson != null) {
-      buffer.write('\n\nCurrent app state:\n```json\n$stateJson\n```');
-    }
-    final screenshot = message.screenshot;
-    if (screenshot != null) {
-      await service.sendImage(
-        bytes: screenshot,
-        mimeType: 'image/png',
-        text: buffer.toString(),
-      );
-    } else {
-      await service.sendText(buffer.toString());
-    }
-  }
+  /// session bound to the app (see [forwardAppMessageToAgent]).
+  Future<void> sendAppMessageToAgent(FaAppMessage message) =>
+      forwardAppMessageToAgent(_manager, message);
 
   Future<void> _newSession() async {
     // The manager creates the new AgentService via its factory; the factory

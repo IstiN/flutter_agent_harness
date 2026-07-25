@@ -6,8 +6,35 @@ import 'dart:convert';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/services/calendar_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Fake [CalendarApi] for the `fa.calendar` bridge tests — the host-side
+/// tests never touch the real method channel.
+final class _FakeCalendarApi implements CalendarApi {
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<List<CalendarEvent>> events({
+    required DateTime start,
+    required DateTime end,
+  }) async => [
+    (
+      title: 'Standup',
+      start: DateTime(2026, 7, 25, 10),
+      end: DateTime(2026, 7, 25, 11),
+      allDay: false,
+      calendar: 'Work',
+      location: null,
+      notes: null,
+    ),
+  ];
+}
 
 /// Smoke test for the real JS backend (flutter_js / JavaScriptCore on the
 /// macOS test host): boots the engine, expects a render tree, and checks the
@@ -120,6 +147,63 @@ void main() {
         await granted.start();
         await Future<void>.delayed(settle);
         expect(granted.exportedState?['result'], 'pong:ping');
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.calendar is gated by the calendar permission', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.calendar({date: '2026-07-25'}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      // Without the permission the bridge answers with a permission error.
+      final denied = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        calendar: _FakeCalendarApi(),
+      );
+      try {
+        await denied.start();
+        await Future<void>.delayed(settle);
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('__error'),
+        );
+        expect(
+          jsonEncode(denied.exportedState?['result']),
+          contains('calendar permission'),
+        );
+      } finally {
+        await denied.dispose();
+      }
+
+      // With it, the events come from the CalendarApi.
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(calendar: true),
+        calendar: _FakeCalendarApi(),
+      );
+      try {
+        await granted.start();
+        await Future<void>.delayed(settle);
+        final result = jsonEncode(granted.exportedState?['result']);
+        expect(result, contains('Standup'));
+        expect(result, contains('Work'));
       } finally {
         await granted.dispose();
       }

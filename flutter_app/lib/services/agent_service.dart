@@ -5,7 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
+import 'package:fa/services/calendar_service.dart';
+import 'package:fa/services/calendar_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -230,18 +233,24 @@ class AgentService extends ChangeNotifier {
     // On-device backends have small context windows; keep only the core
     // coding tools so the tool-instruction block stays small.
     final isOnDevice = _isOnDeviceKind(config.providerKind);
+    final registry = ToolRegistry([
+      ...builtinTools(
+        env,
+        webSearch: isOnDevice ? null : webSearchConfig,
+        model: () => _agent.state.model,
+      ),
+      askTool(callback: _answerAskQuestions),
+      // Read-only system-calendar access (macOS/iOS via the `fah/calendar`
+      // channel; the tool itself reports a clean note where unsupported).
+      if (calendarPlatformSupported)
+        calendarEventsTool(createCalendarService()),
+    ]);
+    _toolRegistry = registry;
     _agent = Agent(
       model: config.toModel(),
       systemPrompt: _composeSystemPrompt(config),
       streamFunction: streamFunction ?? _streamFunctionFor(config),
-      toolRegistry: ToolRegistry([
-        ...builtinTools(
-          env,
-          webSearch: isOnDevice ? null : webSearchConfig,
-          model: () => _agent.state.model,
-        ),
-        askTool(callback: _answerAskQuestions),
-      ]),
+      toolRegistry: registry,
     );
     _attachRedactor(redactor);
     _attachApproval();
@@ -350,6 +359,42 @@ class AgentService extends ChangeNotifier {
   /// Material bottom sheet). `null` → ask calls resolve as cancelled, the
   /// safe headless default.
   AskCallback? askHandler;
+
+  /// The registry built in [_withEnv]; `null` for services constructed
+  /// around a pre-constructed [Agent] (tests), where the registry is owned
+  /// by the caller.
+  ToolRegistry? _toolRegistry;
+
+  /// UI hook that opens a JS app for the user — the chat screen installs it
+  /// and pushes the app's `JsAppView`. Setting a non-null launcher registers
+  /// the `open_app` tool (see `open_app_tool.dart`); setting `null`
+  /// unregisters it, the safe headless default.
+  AppLauncher? get appLauncher => _appLauncher;
+  AppLauncher? _appLauncher;
+
+  set appLauncher(AppLauncher? launcher) {
+    if (launcher == _appLauncher) return;
+    _appLauncher = launcher;
+    final registry = _toolRegistry;
+    if (registry != null) {
+      if (launcher == null) {
+        registry.unregister(openAppToolName);
+      } else {
+        registry.register(openAppTool(env, launcher: launcher));
+      }
+      _agent.state.tools = registry.tools;
+    } else {
+      // Pre-constructed agent (tests): mirror the registration on the
+      // advertised tool list — the tool's execute callback is self-contained.
+      final tools = _agent.state.tools
+          .where((tool) => tool.name != openAppToolName)
+          .toList();
+      if (launcher != null) {
+        tools.add(openAppTool(env, launcher: launcher));
+      }
+      _agent.state.tools = tools;
+    }
+  }
 
   /// Routes the ask tool's questions to the installed [askHandler].
   Future<List<AskAnswer>?> _answerAskQuestions(

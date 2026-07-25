@@ -16,6 +16,8 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
@@ -225,6 +227,9 @@ class _ChatScreenState extends State<ChatScreen> {
     // Same pattern for the ask tool: this screen renders the questions as a
     // modal bottom sheet; without a handler, ask calls resolve as cancelled.
     widget.service.askHandler = _handleAskQuestions;
+    // And for the open_app tool: this screen owns the Navigator, so it
+    // pushes the app's JsAppView; without a launcher the tool is absent.
+    widget.service.appLauncher = _launchApp;
   }
 
   void _unsubscribeFromService() {
@@ -237,6 +242,27 @@ class _ChatScreenState extends State<ChatScreen> {
     if (active.service.askHandler == _handleAskQuestions) {
       active.service.askHandler = null;
     }
+    if (active.service.appLauncher == _launchApp) {
+      active.service.appLauncher = null;
+    }
+  }
+
+  /// Opens a JS app for the user (the agent's `open_app` tool): the exact
+  /// navigation the sidebar's Apps section performs, pushed on this screen's
+  /// Navigator — the visible transition is the confirmation affordance.
+  ///
+  /// Fire-and-forget: [pushJsApp] awaits the pushed route, which completes
+  /// only when the user LEAVES the app — awaiting it here would block the
+  /// agent's tool call (and its result to the model) until then.
+  Future<void> _launchApp(JsAppInfo app) async {
+    if (!mounted) return;
+    unawaited(
+      pushJsApp(context, manager: widget.manager, app: app).catchError((
+        Object e,
+      ) {
+        debugPrint('open_app navigation failed: $e');
+      }),
+    );
   }
 
   Future<ApprovalDecision> _handleApprovalPrompt(ApprovalRequest request) {
@@ -647,14 +673,15 @@ class _ChatScreenState extends State<ChatScreen> {
       return const SizedBox.shrink();
     }
     final styleSheet = fahMarkdownStyleSheet(Theme.of(context));
+    final palette = FahColors.of(context);
 
     return Container(
       constraints: const BoxConstraints(maxWidth: 560),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: isSentByMe ? FahPalette.userBubble : FahPalette.panel,
+        color: isSentByMe ? palette.userBubble : palette.panel,
         border: Border.all(
-          color: isSentByMe ? FahPalette.userBubbleBorder : FahPalette.border,
+          color: isSentByMe ? palette.userBubbleBorder : palette.border,
         ),
         borderRadius: BorderRadius.circular(14),
       ),
@@ -698,7 +725,7 @@ class _ChatScreenState extends State<ChatScreen> {
               onTap: () => _showFullImage(context, source),
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  border: Border.all(color: FahPalette.border),
+                  border: Border.all(color: FahColors.of(context).border),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: image,
@@ -744,34 +771,30 @@ class _ChatScreenState extends State<ChatScreen> {
     final content = (metadata['content'] as String?) ?? '';
     final isError = (metadata['isError'] as bool?) ?? false;
     final role = metadata['role'] as String?;
+    final palette = FahColors.of(context);
 
     if (role == 'thinking') {
       return Container(
         margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: FahPalette.panelAlt.withValues(alpha: 0.5),
+          color: palette.panelAlt.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: FahPalette.border.withValues(alpha: 0.5)),
+          border: Border.all(color: palette.border.withValues(alpha: 0.5)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(
-              Icons.psychology_outlined,
-              size: 14,
-              color: FahPalette.dim,
-            ),
+            Icon(Icons.psychology_outlined, size: 14, color: palette.dim),
             const SizedBox(width: 6),
             Expanded(
               // Reasoning can run to thousands of lines (and small models
               // sometimes loop there) — collapse like long tool output.
               child: _CollapsibleToolOutput(
                 content: content,
-                style: FahPalette.mono(
-                  color: FahPalette.dim,
-                  fontSize: 12,
-                ).copyWith(fontStyle: FontStyle.italic),
+                style: palette
+                    .mono(color: palette.dim, fontSize: 12)
+                    .copyWith(fontStyle: FontStyle.italic),
               ),
             ),
           ],
@@ -783,12 +806,12 @@ class _ChatScreenState extends State<ChatScreen> {
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: FahPalette.panelAlt,
+        color: palette.panelAlt,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: isError
-              ? FahPalette.error.withValues(alpha: 0.45)
-              : FahPalette.border,
+              ? palette.error.withValues(alpha: 0.45)
+              : palette.border,
         ),
       ),
       child: Column(
@@ -800,15 +823,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 Icon(
                   isError ? Icons.close : Icons.check,
                   size: 14,
-                  color: isError ? FahPalette.error : FahPalette.teal,
+                  color: isError ? palette.error : palette.teal,
                 ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     '[ $toolName ]',
                     overflow: TextOverflow.ellipsis,
-                    style: FahPalette.mono(
-                      color: isError ? FahPalette.error : FahPalette.indigo,
+                    style: palette.mono(
+                      color: isError ? palette.error : palette.indigo,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
@@ -827,18 +850,18 @@ class _ChatScreenState extends State<ChatScreen> {
                       children: [
                         TextSpan(
                           text: r'$ ',
-                          style: FahPalette.mono(color: FahPalette.teal),
+                          style: palette.mono(color: palette.teal),
                         ),
                         TextSpan(
                           text: content,
-                          style: FahPalette.mono(color: FahPalette.dim),
+                          style: palette.mono(color: palette.dim),
                         ),
                       ],
                     ),
                   )
                 : _CollapsibleToolOutput(
                     content: content,
-                    style: FahPalette.mono(color: FahPalette.dim),
+                    style: palette.mono(color: palette.dim),
                   ),
         ],
       ),
@@ -851,11 +874,12 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildPendingAttachmentChip(int index) {
     final attachment = _pendingAttachments[index];
     final isImage = isInlineImageMimeType(attachment.mimeType);
+    final palette = FahColors.of(context);
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: FahPalette.panel,
-        border: Border.all(color: FahPalette.border),
+        color: palette.panel,
+        border: Border.all(color: palette.border),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -897,11 +921,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildComposer(BuildContext context) {
     final theme = Theme.of(context);
+    final palette = FahColors.of(context);
 
     return Container(
-      decoration: const BoxDecoration(
-        color: FahPalette.bg,
-        border: Border(top: BorderSide(color: FahPalette.border)),
+      decoration: BoxDecoration(
+        color: palette.bg,
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: SafeArea(
         top: false,
@@ -937,7 +962,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     Text(
                       context.l10n.chatTyping,
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: FahPalette.dim,
+                        color: palette.dim,
                       ),
                     ),
                   ],
@@ -957,10 +982,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           vertical: 10,
                         ),
                         decoration: BoxDecoration(
-                          color: FahPalette.userBubble.withValues(alpha: 0.6),
-                          border: Border.all(
-                            color: FahPalette.userBubbleBorder,
-                          ),
+                          color: palette.userBubble.withValues(alpha: 0.6),
+                          border: Border.all(color: palette.userBubbleBorder),
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Row(
@@ -974,11 +997,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Icon(
-                              Icons.schedule,
-                              size: 16,
-                              color: FahPalette.dim,
-                            ),
+                            Icon(Icons.schedule, size: 16, color: palette.dim),
                           ],
                         ),
                       ),
@@ -1025,13 +1044,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(width: 4),
                   Container(
-                    decoration: const BoxDecoration(
-                      gradient: FahPalette.brandGradient,
+                    decoration: BoxDecoration(
+                      gradient: palette.brandGradient,
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
                       icon: const Icon(Icons.send, size: 20),
-                      color: FahPalette.onAccent,
+                      color: palette.onAccent,
                       tooltip: context.l10n.chatSendTooltip,
                       onPressed: () => _send(_textController.text),
                     ),
@@ -1085,7 +1104,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
               composerBuilder: (_) => const SizedBox.shrink(),
             ),
-            theme: buildFahChatTheme(),
+            theme: Theme.of(context).brightness == Brightness.light
+                ? buildFahChatThemeLight()
+                : buildFahChatTheme(),
           ),
         ),
         _buildComposer(context),
@@ -1225,6 +1246,7 @@ class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
     if (!_isLong) {
       return Text(widget.content, style: widget.style);
     }
+    final palette = FahColors.of(context);
     final lines = widget.content.split('\n');
     final shown = _expanded
         ? lines
@@ -1243,14 +1265,14 @@ class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
               Icon(
                 _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                 size: 14,
-                color: FahPalette.indigo,
+                color: palette.indigo,
               ),
               const SizedBox(width: 4),
               Text(
                 _expanded
                     ? context.l10n.chatCollapse
                     : context.l10n.chatShowAll(lines.length.toString()),
-                style: FahPalette.mono(color: FahPalette.indigo, fontSize: 12),
+                style: palette.mono(color: palette.indigo, fontSize: 12),
               ),
             ],
           ),

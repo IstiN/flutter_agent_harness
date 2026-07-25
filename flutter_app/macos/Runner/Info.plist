@@ -30,6 +30,10 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Fa reads your calendar so the agent can answer questions about your schedule.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Fa reads your calendar so the agent can answer questions about your schedule.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

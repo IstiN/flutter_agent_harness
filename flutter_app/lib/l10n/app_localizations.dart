@@ -248,6 +248,18 @@ abstract class AppLocalizations {
   /// **'Open chat'**
   String get appsOpenChatTooltip;
 
+  /// No description provided for @appsPermissionCalendar.
+  ///
+  /// In en, this message translates to:
+  /// **'Calendar'**
+  String get appsPermissionCalendar;
+
+  /// No description provided for @appsPermissionCalendarDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'jsr.fa.calendar — read your system calendar events'**
+  String get appsPermissionCalendarDesc;
+
   /// No description provided for @appsPermissionContacts.
   ///
   /// In en, this message translates to:
@@ -818,6 +830,78 @@ abstract class AppLocalizations {
   /// **'on this device'**
   String get gemmaStorageOnDevice;
 
+  /// No description provided for @keysDeleteBody.
+  ///
+  /// In en, this message translates to:
+  /// **'The saved value is removed from this device. A value from the .env file, if any, applies again.'**
+  String get keysDeleteBody;
+
+  /// No description provided for @keysDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {name}?'**
+  String keysDeleteTitle(Object name);
+
+  /// No description provided for @keysSectionNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Values are never displayed. Saved keys persist on this device; session keys are gone on reload.'**
+  String get keysSectionNote;
+
+  /// No description provided for @keysSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Keys'**
+  String get keysSectionTitle;
+
+  /// No description provided for @keysSetButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Set'**
+  String get keysSetButton;
+
+  /// No description provided for @keysSetDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Set {name}'**
+  String keysSetDialogTitle(Object name);
+
+  /// No description provided for @keysSourceEnv.
+  ///
+  /// In en, this message translates to:
+  /// **'env file'**
+  String get keysSourceEnv;
+
+  /// No description provided for @keysSourceNone.
+  ///
+  /// In en, this message translates to:
+  /// **'not set'**
+  String get keysSourceNone;
+
+  /// No description provided for @keysSourceProviderSession.
+  ///
+  /// In en, this message translates to:
+  /// **'provider key · this session'**
+  String get keysSourceProviderSession;
+
+  /// No description provided for @keysSourceSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'saved'**
+  String get keysSourceSaved;
+
+  /// No description provided for @keysValueHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the key value'**
+  String get keysValueHint;
+
+  /// No description provided for @keysValueLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Value'**
+  String get keysValueLabel;
+
   /// No description provided for @quickStartCachedLabel.
   ///
   /// In en, this message translates to:
@@ -1099,6 +1183,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The previously used model ({model}) was removed from this device — pick a model to download it again.'**
   String settingsStaleModelDevice(Object model);
+
+  /// No description provided for @settingsThemeDark.
+  ///
+  /// In en, this message translates to:
+  /// **'Dark'**
+  String get settingsThemeDark;
+
+  /// No description provided for @settingsThemeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme'**
+  String get settingsThemeLabel;
+
+  /// No description provided for @settingsThemeLight.
+  ///
+  /// In en, this message translates to:
+  /// **'Light'**
+  String get settingsThemeLight;
+
+  /// No description provided for @settingsThemeSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get settingsThemeSystem;
 
   /// No description provided for @settingsStartChat.
   ///

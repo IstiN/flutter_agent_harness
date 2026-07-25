@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -64,8 +65,20 @@ Set<Color?> _bubbleColors(WidgetTester tester) {
 }
 
 void main() {
+  test('light theme mirrors the dark structure on the light palette', () {
+    final theme = buildFahThemeLight();
+    expect(theme.brightness, Brightness.light);
+    expect(theme.scaffoldBackgroundColor, FahLightPalette.bg);
+    expect(theme.colorScheme.primary, FahLightPalette.indigo);
+    expect(theme.colorScheme.secondary, FahLightPalette.teal);
+    expect(theme.colorScheme.surface, FahLightPalette.bgAlt);
+    expect(theme.dividerColor, FahLightPalette.border);
+  });
+
   testWidgets('app theme is dark and uses the landing palette', (tester) async {
-    await tester.pumpWidget(const MyApp());
+    await tester.pumpWidget(
+      MyApp(themeController: ThemeController.inMemory(FahThemeMode.dark)),
+    );
 
     final context = tester.element(find.byType(Scaffold));
     final theme = Theme.of(context);

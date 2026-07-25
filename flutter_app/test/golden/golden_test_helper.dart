@@ -57,12 +57,14 @@ Future<void> ensureGoldenFonts() async {
 /// Use [wrap] to customize the host (e.g. wrap in a `Scaffold` with an
 /// `AppBar`); the default centers the child on a scaffold body — for
 /// full-screen shots pass `wrap: (child) => child` with a child that is
-/// itself a `Scaffold`.
+/// itself a `Scaffold`. Pass [theme] (e.g. `buildFahThemeLight()`) for
+/// non-default theme variants.
 Future<void> pumpGolden(
   WidgetTester tester,
   Widget child, {
   Size size = goldenSizeTall,
   Locale locale = const Locale('en'),
+  ThemeData? theme,
   Widget Function(Widget child)? wrap,
 }) async {
   tester.view.physicalSize = size;
@@ -71,7 +73,7 @@ Future<void> pumpGolden(
   await tester.pumpWidget(
     MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: buildFahTheme(),
+      theme: theme ?? buildFahTheme(),
       locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,

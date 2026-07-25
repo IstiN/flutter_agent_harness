@@ -40,4 +40,35 @@ void main() {
     expect(networkTile, findsOneWidget);
     expect(tester.widget<SwitchListTile>(networkTile).value, isTrue);
   });
+
+  testWidgets('permissions dialog shows and toggles the calendar permission', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final app = JsAppInfo.fromManifest(
+      const {'id': 'demo', 'name': 'Demo', 'icon': '🧪'},
+      bundled: false,
+      fallbackId: 'demo',
+    );
+    final store = await AppPermissionsStore.load(env);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppPermissionsDialog(app: app, env: env, store: store),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final calendarTile = find.widgetWithText(SwitchListTile, 'Calendar');
+    expect(calendarTile, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(calendarTile).value, isFalse);
+
+    await tester.tap(calendarTile);
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<SwitchListTile>(calendarTile).value, isTrue);
+    expect(store.forApp(app).calendar, isTrue);
+  });
 }

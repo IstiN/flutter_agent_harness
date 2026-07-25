@@ -200,6 +200,51 @@ void main() {
       await expectGolden(tester, 'chat_empty');
     });
 
+    testWidgets('conversation — light theme', (tester) async {
+      final service = _fakeService(MemoryExecutionEnv());
+      service.messages
+        ..add(
+          FahChatMessage(
+            role: 'user',
+            content:
+                'the auth integration test fails after my refactor — can you '
+                'take a look?',
+          ),
+        )
+        ..add(
+          FahChatMessage(
+            role: 'assistant',
+            content:
+                'Found it — the test still calls the old two-argument '
+                '`signIn`:\n'
+                '\n'
+                '```dart\n'
+                'test(\'signs in anonymously\', () async {\n'
+                '  final session = await auth.signIn();\n'
+                '  expect(session.token, isNotNull);\n'
+                '});\n'
+                '```\n'
+                '\n'
+                'Patched `integration_test/auth_test.dart` — the suite is '
+                'green again.',
+          ),
+        );
+      final manager = FlutterSessionManager(
+        env: MemoryExecutionEnv(),
+        sessionsRoot: '/sessions',
+      )..addSession('fake-session', service);
+      await pumpGolden(
+        tester,
+        ChatScreen(manager: manager),
+        size: goldenSizeDesktop,
+        theme: buildFahThemeLight(),
+        wrap: (child) => child,
+      );
+      await tester.tap(find.byTooltip('Sessions & model'));
+      await tester.pumpAndSettle();
+      await expectGolden(tester, 'chat_conversation_light');
+    });
+
     testWidgets('hero: conversation with sidebar, tool call, code block, '
         'collapsed thinking', (tester) async {
       _mockBundledAppAssets();

@@ -88,6 +88,130 @@ void main() {
     expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
   });
 
+  testWidgets('orbit spins while streaming, stops when idle', (tester) async {
+    final service = hungService();
+    addTearDown(service.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: FaWorkBar(service: service)),
+      ),
+    );
+    final state = tester.state(find.byType(FaWorkBar));
+    final orbit =
+        (state as dynamic).debugOrbitController as AnimationController;
+    // Idle: no ticker running, no indicator in the tree.
+    expect(orbit.isAnimating, isFalse);
+    expect(find.byKey(const ValueKey('faWorkBarOrbit')), findsNothing);
+
+    await tester.runAsync(() async {
+      await service.sendText('work');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pump();
+    expect(service.isStreaming, isTrue);
+    expect(orbit.isAnimating, isTrue);
+
+    // The comet actually moves between frames.
+    double cometProgress() {
+      final paint = tester.widget<CustomPaint>(
+        find.descendant(
+          of: find.byKey(const ValueKey('faWorkBarOrbit')),
+          matching: find.byType(CustomPaint),
+        ),
+      );
+      return (paint.painter as dynamic).progress as double;
+    }
+
+    await tester.pump(const Duration(milliseconds: 300));
+    final a = cometProgress();
+    await tester.pump(const Duration(milliseconds: 300));
+    final b = cometProgress();
+    expect(b, isNot(a));
+
+    // Back to idle: the orbit halts (and the bar hides).
+    await tester.runAsync(() async {
+      service.abort();
+      for (var i = 0; i < 30 && service.isStreaming; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    });
+    await tester.pump();
+    expect(service.isStreaming, isFalse);
+    expect(orbit.isAnimating, isFalse);
+  });
+
+  testWidgets('pull-up past the threshold triggers expand', (tester) async {
+    final service = hungService();
+    addTearDown(service.dispose);
+    var expanded = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: FaWorkBar(service: service, onExpand: () => expanded++),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(() async {
+      await service.sendText('work');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pump();
+
+    // A short pull below the threshold only stretches the bar.
+    await tester.drag(
+      find.byKey(const ValueKey('faWorkBarHandle')),
+      const Offset(0, -30),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(expanded, 0);
+
+    // A full pull-up expands (same action as the expand button).
+    await tester.drag(
+      find.byKey(const ValueKey('faWorkBarHandle')),
+      const Offset(0, -120),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(expanded, 1);
+  });
+
+  testWidgets('pull-down past the threshold triggers collapse', (tester) async {
+    final service = hungService();
+    addTearDown(service.dispose);
+    var collapsed = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: FaWorkBar(
+              service: service,
+              onExpand: () {},
+              onCollapse: () => collapsed++,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(() async {
+      await service.sendText('work');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pump();
+
+    await tester.drag(
+      find.byKey(const ValueKey('faWorkBarHandle')),
+      const Offset(0, 120),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(collapsed, 1);
+  });
+
   testWidgets('follow-up input sends the message', (tester) async {
     final service = hungService();
     addTearDown(service.dispose);
