@@ -179,12 +179,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// the element is deactivating.
   late final AnimationController _micPulse;
 
-  /// The transcriber for voice input: the injected one, or one derived
-  /// from the active session's provider config — resolved lazily so a
-  /// provider switch mid-session is picked up. Null means no ASR-capable
-  /// endpoint is configured.
-  AsrTranscriber? get _transcriber {
+  /// The transcriber for voice input: the injected one, or one resolved
+  /// through the session's media gateway (the media_models.json
+  /// `transcription` slot, falling back to the active provider). Resolved
+  /// lazily per use so slot edits and a provider switch mid-session are
+  /// picked up. Null means no ASR-capable endpoint is configured.
+  Future<AsrTranscriber?> _resolveTranscriber() async {
     if (widget.asrTranscriber != null) return widget.asrTranscriber;
+    final gateway = widget.service.mediaGateway;
+    if (gateway != null) return whisperTranscriberForGateway(gateway);
+    // Services built around a pre-constructed agent (tests) have no
+    // gateway: fall back to the active provider's endpoint directly.
     final config = widget.service.configForClone;
     return whisperTranscriberFor(
       providerKind: widget.service.providerKind,
@@ -235,7 +240,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _micTranscribing = true;
     });
     try {
-      final transcriber = _transcriber;
+      final transcriber = await _resolveTranscriber();
+      if (!mounted) return;
       if (transcriber == null) {
         _showSnack(context.l10n.chatMicError(asrNoEndpointMessage));
         return;

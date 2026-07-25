@@ -27,12 +27,13 @@ final class MediaSlot {
   /// Video generation (reserved — no tool rides it yet).
   static const videoGeneration = 'videoGeneration';
 
-  /// Image reading / vision (reserved — the main connection's model is the
-  /// default; an override steers image input to a dedicated model).
+  /// Image reading / vision (`read_video`, `jsr.fa.media.readVideo` — the
+  /// main connection's model is the default when it accepts images; an
+  /// override steers frame analysis to a dedicated model).
   static const vision = 'vision';
 
-  /// Audio transcription (reserved — defaults to Whisper on the main
-  /// connection, like `transcribe_audio`).
+  /// Audio transcription (`transcribe_audio`, mic voice input,
+  /// `jsr.fa.asr.transcribe` — defaults to Whisper on the main connection).
   static const transcription = 'transcription';
 
   /// Every known slot name, in declaration order.

@@ -8,6 +8,9 @@ import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:fa/services/media_models_store.dart';
+import 'package:fa/services/media_tools.dart';
+
 export 'package:fa/services/asr_service_stub.dart'
     if (dart.library.io) 'package:fa/services/asr_service_io.dart';
 
@@ -60,10 +63,12 @@ int asrRecordSeconds(num? value, {int defaultSeconds = 10}) {
 /// [WhisperTranscriber].
 abstract interface class AsrTranscriber {
   /// Turns the audio [bytes] (named [filename] — endpoints key off the
-  /// extension) into a transcript.
+  /// extension) into a transcript. [language] is an optional ISO-639-1 hint
+  /// overriding the endpoint's configured default.
   Future<String> transcribe({
     required Uint8List bytes,
     required String filename,
+    String? language,
   });
 }
 
@@ -72,7 +77,8 @@ abstract interface class AsrTranscriber {
 const asrNoEndpointMessage =
     'No ASR-capable endpoint is configured — connect an OpenAI-compatible '
     'provider (one that serves Whisper /audio/transcriptions) in the Fa '
-    'settings, then try again.';
+    'settings, or add a "transcription" slot to media_models.json, then try '
+    'again.';
 
 /// The transcription endpoint for the active provider when it is an
 /// OpenAI-compatible one (the only provider kind that can serve Whisper
@@ -109,6 +115,30 @@ AsrTranscriber? whisperTranscriberFor({
   return WhisperTranscriber(config: config, httpClient: httpClient);
 }
 
+/// Resolves the [AsrTranscriber] through [gateway]'s
+/// [MediaSlot.transcription] slot: a dedicated ASR endpoint (e.g.
+/// `whisper-1` on a custom base URL) when one is configured in
+/// `media_models.json`, otherwise the active provider as today
+/// ([whisperTranscriberFor]). `null` — surface [asrNoEndpointMessage] —
+/// when neither yields a usable OpenAI-compatible endpoint. Resolved per
+/// call so slot edits and provider switches are picked up without a
+/// reconnect. [httpClient] is injectable for tests.
+Future<AsrTranscriber?> whisperTranscriberForGateway(
+  MediaGateway gateway, {
+  http.Client? httpClient,
+}) async {
+  final endpoint = await gateway.endpointFor(MediaSlot.transcription);
+  if (endpoint == null) return null;
+  return WhisperTranscriber(
+    config: TranscribeAudioConfig(
+      modelId: endpoint.modelId,
+      apiKey: endpoint.apiKey,
+      baseUrl: endpoint.baseUrl,
+    ),
+    httpClient: httpClient,
+  );
+}
+
 /// [AsrTranscriber] over a Whisper-compatible `/audio/transcriptions`
 /// endpoint (OpenAI, Groq, or a local whisper.cpp server) — the same wire
 /// shape as the harness's `transcribe_audio` tool.
@@ -127,6 +157,7 @@ final class WhisperTranscriber implements AsrTranscriber {
   Future<String> transcribe({
     required Uint8List bytes,
     required String filename,
+    String? language,
   }) async {
     final baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
     final request =
@@ -142,9 +173,11 @@ final class WhisperTranscriber implements AsrTranscriber {
             // the endpoints key off the filename extension instead.
             http.MultipartFile.fromBytes('file', bytes, filename: filename),
           );
-    final language = config.language;
-    if (language != null && language.isNotEmpty) {
-      request.fields['language'] = language;
+    final hint = (language == null || language.isEmpty)
+        ? config.language
+        : language;
+    if (hint != null && hint.isNotEmpty) {
+      request.fields['language'] = hint;
     }
 
     final client = httpClient ?? http.Client();

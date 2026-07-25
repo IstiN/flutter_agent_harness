@@ -9,6 +9,15 @@ import 'package:fa/services/asr_service.dart';
 /// Name of the agent tool that records a take from the microphone.
 const micRecordToolName = 'mic_record';
 
+/// Name of the agent tool that transcribes an audio file — kept identical
+/// to the harness's `transcribe_audio` tool, which [transcriptionTool]
+/// replaces in the app (the model-facing surface does not change).
+const transcribeAudioToolName = 'transcribe_audio';
+
+/// Resolves the transcriber for one `transcribe_audio` call; `null` means
+/// no ASR-capable endpoint is configured (see [asrNoEndpointMessage]).
+typedef AsrTranscriberResolver = Future<AsrTranscriber?> Function();
+
 /// Directory (relative to the env's working directory) recordings are
 /// staged into so the agent can read/transcribe them with its file tools.
 const micRecordingsDir = 'recordings';
@@ -100,6 +109,92 @@ AgentTool micRecordTool(
         '(${bytes.length} bytes, ${recording.sampleRate} Hz). '
         'Transcribe it with transcribe_audio.',
       );
+    },
+  );
+}
+
+/// Creates the `transcribe_audio` tool bound to [env], resolving the
+/// transcription endpoint per call through [resolveTranscriber] (the
+/// `media_models.json` `transcription` slot when configured, otherwise the
+/// active provider — see [whisperTranscriberForGateway]).
+///
+/// Mirrors the harness's `transcribeAudioTool` (same name, parameters, and
+/// file rules) but resolves the endpoint per call, so slot edits and
+/// provider switches take effect without a reconnect; when no ASR-capable
+/// endpoint resolves the tool answers with [asrNoEndpointMessage] instead
+/// of being absent. Tier read, like the harness tool.
+AgentTool transcriptionTool(
+  ExecutionEnv env,
+  AsrTranscriberResolver resolveTranscriber,
+) {
+  return AgentTool(
+    name: transcribeAudioToolName,
+    label: transcribeAudioToolName,
+    tier: ApprovalTier.read,
+    description:
+        'Transcribe a local audio file to text using a Whisper-compatible '
+        'transcription endpoint (the configured transcription slot, or the '
+        'connected provider when it is OpenAI-compatible). Returns the '
+        'transcript; the audio itself does not enter the chat context. '
+        'Supported formats: WAV, MP3, M4A, OGG, WebM, FLAC. Maximum file '
+        'size: 25MB.',
+    parameters: const {
+      'type': 'object',
+      'properties': {
+        'path': {
+          'type': 'string',
+          'description': 'Path to the audio file (relative or absolute)',
+        },
+        'language': {
+          'type': 'string',
+          'description':
+              'Optional ISO-639-1 language hint (e.g. "en", "de"); overrides '
+              'the configured default',
+        },
+      },
+      'required': ['path'],
+    },
+    execute: (arguments, cancelToken, onUpdate) async {
+      cancelToken?.throwIfCancelled();
+      final path = (arguments['path'] ?? '').toString();
+      final language = arguments['language']?.toString();
+
+      final filename = path.split(RegExp(r'[/\\]')).last;
+      final dot = filename.lastIndexOf('.');
+      final extension = dot >= 0
+          ? filename.substring(dot + 1).toLowerCase()
+          : '';
+      if (!supportedAudioExtensions.contains(extension)) {
+        throw StateError(
+          'Unsupported audio format: $filename (supported: '
+          '${(supportedAudioExtensions.toList()..sort()).join(', ')})',
+        );
+      }
+
+      final read = await env.readBinaryFile(path);
+      if (read.isErr) {
+        throw StateError('${read.errorOrNull}');
+      }
+      final bytes = read.valueOrNull!;
+      cancelToken?.throwIfCancelled();
+
+      if (bytes.length > maxTranscribeAudioBytes) {
+        throw StateError(
+          'Audio file too large: ${bytes.length} bytes exceeds the 25MB '
+          'transcription limit',
+        );
+      }
+
+      final transcriber = await resolveTranscriber();
+      if (transcriber == null) {
+        return ToolExecutionResult.text(asrNoEndpointMessage);
+      }
+      final transcript = await transcriber.transcribe(
+        bytes: bytes,
+        filename: filename,
+        language: language,
+      );
+      return ToolExecutionResult.text(transcript);
     },
   );
 }

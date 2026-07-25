@@ -18,6 +18,8 @@ import 'package:fa/services/health_service.dart';
 import 'package:fa/services/home_service.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
+import 'package:fa/services/video_service.dart';
+import 'package:fa/services/video_tool.dart';
 
 /// One chat message for the `jsr.fa.llm.chat/stream` bridge calls; [role] is
 /// `user`, `assistant`, or `system`.
@@ -67,9 +69,10 @@ typedef FaPlatformHandler =
 ///   [AppPermissions.notifications] (real backend via [NotifyApi]; requests
 ///   OS notification access on first use)
 /// - `jsr.fa.media.generateImage` / `jsr.fa.media.speak` /
-///   `jsr.fa.media.generateMusic` → [AppPermissions.media] (endpoint
-///   resolution via [MediaGateway] over `media_models.json` + the main
-///   connection, the same resolvers the agent's media tools use)
+///   `jsr.fa.media.generateMusic` / `jsr.fa.media.readVideo` →
+///   [AppPermissions.media] (endpoint resolution via [MediaGateway] over
+///   `media_models.json` + the main connection, the same resolvers the
+///   agent's media tools use; video reading via [VideoReader])
 /// - other health actions → the matching flag (stubbed until the platform
 ///   implementations land — a granted call answers "not available").
 class JsAppEngine {
@@ -87,6 +90,7 @@ class JsAppEngine {
     this.asrTranscriber,
     this.notify,
     this.mediaGateway,
+    this.videoReader,
     this.initialTheme = const {},
     void Function(String line)? onLog,
   }) : _onLog = onLog;
@@ -133,6 +137,11 @@ class JsAppEngine {
   /// `null` answers with an actionable "not available in this session"
   /// error.
   final MediaGateway? mediaGateway;
+
+  /// Video-reading backend for `jsr.fa.media.readVideo` (see [VideoReader]);
+  /// `null` answers with an actionable "not available in this session"
+  /// error.
+  final VideoReader? videoReader;
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -323,14 +332,16 @@ jsr.fa.notify = {
   cancel: function(args) { return jsr.fa.call('notify.cancel', args); },
 };
 
-// Media generation (image / TTS / music), gated on the `media` manifest
-// flag. Each resolves with {path, bytes, detail}: the file is saved in the
-// sandbox generated/ folder — reference it as file:<path> in image/audio
-// nodes.
+// Media generation (image / TTS / music) + video reading, gated on the
+// `media` manifest flag. The generation methods resolve with
+// {path, bytes, detail}: the file is saved in the sandbox generated/
+// folder — reference it as file:<path> in image/audio nodes. readVideo
+// resolves with {description} (frames never leave the host).
 jsr.fa.media = {
   generateImage: function(args) { return jsr.fa.call('media.generateImage', args); },
   speak: function(args) { return jsr.fa.call('media.speak', args); },
   generateMusic: function(args) { return jsr.fa.call('media.generateMusic', args); },
+  readVideo: function(args) { return jsr.fa.call('media.readVideo', args); },
 };
 
 // Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
@@ -551,6 +562,10 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'media.generateMusic') {
         _resolve?.call(id, await _mediaGenerateMusic(args));
+        return;
+      }
+      if (method == 'media.readVideo') {
+        _resolve?.call(id, await _mediaReadVideo(args));
         return;
       }
       // Home control (iOS HomeKit). `home.*` is the current surface; the
@@ -1104,7 +1119,39 @@ Object.defineProperty(jsr, 'onBack', {
     return file.toBridgeJson();
   }
 
-  /// The permission gate every `jsr.fa.media.*` bridge call shares: the
+  /// `jsr.fa.media.readVideo({path, frames?, question?})` → `{description}`
+  /// — video understanding on the configured vision endpoint, gated on the
+  /// same `media` permission. [VideoReader.describe] throws StateErrors
+  /// with actionable text; they cross the bridge as the rejection reason.
+  Future<Map<String, Object?>> _mediaReadVideo(
+    Map<String, Object?> args,
+  ) async {
+    if (!permissions.media) throw StateError(_denied('media'));
+    final reader = videoReader;
+    if (reader == null) {
+      throw StateError(
+        'video reading is not available in this session — connect a model '
+        'in the Fa settings first',
+      );
+    }
+    final path = (args['path'] ?? '').toString().trim();
+    if (path.isEmpty) throw StateError('path is required');
+    final exists = await env.exists(path);
+    if (exists.valueOrNull != true) {
+      throw StateError('no such file: $path');
+    }
+    // The platform extractor (AVAssetImageGenerator) works on host paths;
+    // the sandbox env maps the app-visible path.
+    final hostPath = (await env.absolutePath(path)).valueOrNull ?? path;
+    final description = await reader.describe(
+      path: hostPath,
+      frames: videoFramesCount(args['frames'] as num?),
+      question: args['question']?.toString(),
+    );
+    return {'description': description};
+  }
+
+  /// The permission gate the `jsr.fa.media.*` generation calls share: the
   /// `media` permission plus a session media gateway (endpoint resolution
   /// errors come from the gateway itself, with actionable text).
   MediaGateway _gatedMedia() {

@@ -26,6 +26,7 @@ import UserNotifications
     registerKeychainChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerMicChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerNotifyChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerVideoChannel(messenger: engineBridge.applicationRegistrar.messenger())
   }
 }
 
@@ -1210,6 +1211,73 @@ private func micStopRecording() -> Any {
     "durationMs": durationMs,
     "sampleRate": 44100,
   ]
+}
+
+/// The `fah/video` method channel: video frame extraction via
+/// AVAssetImageGenerator for the `read_video` tool / JS bridge.
+/// `extractFrames` {path, count} → [{bytes (jpeg, base64), positionMs}]
+/// sampled at the centers of `count` equal timeline slices (exact times,
+/// ±0.5 s tolerance). An unreadable/unseekable asset answers an empty list;
+/// individual frame failures are skipped (the Dart side treats an empty
+/// list as "not a readable video").
+private func registerVideoChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/video",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "extractFrames":
+      let args = call.arguments as? [String: Any] ?? [:]
+      let path = args["path"] as? String ?? ""
+      let count = (args["count"] as? NSNumber)?.intValue ?? 6
+      extractVideoFrames(path: path, count: count) { frames in
+        result(frames)
+      }
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+private func extractVideoFrames(
+  path: String,
+  count: Int,
+  completion: @escaping ([[String: Any]]) -> Void,
+) {
+  DispatchQueue.global(qos: .userInitiated).async {
+    guard FileManager.default.fileExists(atPath: path) else {
+      completion([])
+      return
+    }
+    let asset = AVAsset(url: URL(fileURLWithPath: path))
+    let durationSeconds = CMTimeGetSeconds(asset.duration)
+    guard durationSeconds.isFinite, durationSeconds > 0 else {
+      completion([])
+      return
+    }
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
+    generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
+    // Cap the frame size: each jpeg rides the vision request as base64.
+    generator.maximumSize = CGSize(width: 768, height: 768)
+    let n = max(1, min(count, 12))
+    var frames: [[String: Any]] = []
+    for index in 0..<n {
+      // Center of each equal slice — avoids the often-black first frame.
+      let position = durationSeconds * (Double(index) + 0.5) / Double(n)
+      let time = CMTime(seconds: position, preferredTimescale: 600)
+      guard let image = try? generator.copyCGImage(at: time, actualTime: nil),
+        let data = UIImage(cgImage: image).jpegData(compressionQuality: 0.8)
+      else { continue }
+      frames.append([
+        "bytes": data.base64EncodedString(),
+        "positionMs": Int((position * 1000).rounded()),
+      ])
+    }
+    completion(frames)
+  }
 }
 
 /// The `fah/notify` method channel: LOCAL user notifications via

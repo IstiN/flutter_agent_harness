@@ -214,6 +214,7 @@ final class _FakeAsrTranscriber implements AsrTranscriber {
   Future<String> transcribe({
     required Uint8List bytes,
     required String filename,
+    String? language,
   }) async => 'fake transcript';
 }
 

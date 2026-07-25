@@ -24,6 +24,8 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
 import 'package:fa/services/notify_tool.dart';
+import 'package:fa/services/video_service.dart';
+import 'package:fa/services/video_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -267,6 +269,17 @@ class AgentService extends ChangeNotifier {
       ),
       resolveKey: resolveSecretName,
     );
+    // Video reading: frames via the `fah/video` channel, described by the
+    // media_models.json `vision` slot (falling back to the main connection
+    // when its model accepts images — the settings checkbox wins over the
+    // id heuristic).
+    _videoReader = VideoReader(
+      video: createVideoService(),
+      gateway: _mediaGateway!,
+      mainSupportsImages: () =>
+          _config?.supportsImages ??
+          modelIdSuggestsVision(_agent.state.model.id),
+    );
     final registry = ToolRegistry([
       ...builtinTools(
         env,
@@ -315,16 +328,16 @@ class AgentService extends ChangeNotifier {
       // file mtime — the tool reports guidance when the container is
       // unavailable).
       if (icloudSyncSupported) icloudSyncTool(createICloudSyncService(env)),
-      // Audio transcription via the active provider when it is an
-      // OpenAI-compatible endpoint (Whisper /audio/transcriptions) —
-      // transcribes mic_record takes and any audio file in the sandbox.
-      if (asrTranscribeConfig(
-            providerKind: config.providerKind,
-            baseUrl: config.baseUrl,
-            apiKey: config.apiKey,
-          )
-          case final transcribeConfig?)
-        transcribeAudioTool(env, transcribeConfig),
+      // Audio transcription via the media_models.json `transcription` slot
+      // when configured, otherwise the active provider (Whisper
+      // /audio/transcriptions) — resolved per call, so slot edits and
+      // provider switches are picked up. Transcribes mic_record takes and
+      // any audio file in the sandbox.
+      if (!isOnDevice)
+        transcriptionTool(
+          env,
+          () => whisperTranscriberForGateway(_mediaGateway!),
+        ),
       // Media generation (image / TTS / music) against the per-modality
       // endpoints in media_models.json, falling back to the main
       // connection; the tools report an actionable error when the slot has
@@ -334,6 +347,10 @@ class AgentService extends ChangeNotifier {
         generateImageTool(_mediaGateway!),
         speakTool(_mediaGateway!),
         generateMusicTool(_mediaGateway!),
+        // Video reading through the `vision` slot (or the main connection
+        // when its model accepts images); frames come from the `fah/video`
+        // channel — the tool reports a clean note where unsupported.
+        readVideoTool(env, _videoReader!),
       ],
     ]);
     _toolRegistry = registry;
@@ -537,6 +554,12 @@ class AgentService extends ChangeNotifier {
   /// (tests).
   MediaGateway? get mediaGateway => _mediaGateway;
   MediaGateway? _mediaGateway;
+
+  /// Video reader behind the `read_video` tool, exposed for the
+  /// `jsr.fa.media.readVideo` bridge. `null` for services constructed
+  /// around a pre-constructed [Agent] (tests).
+  VideoReader? get videoReader => _videoReader;
+  VideoReader? _videoReader;
 
   /// Model id of the active backend (shorthand for the agent's current
   /// model; updated by [reconfigure]).

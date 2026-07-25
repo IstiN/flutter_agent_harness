@@ -18,6 +18,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/media_tools.dart';
+import 'package:fa/services/video_tool.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
@@ -69,6 +70,7 @@ class JsAppView extends StatefulWidget {
     this.agentService,
     this.asrTranscriber,
     this.mediaGateway,
+    this.videoReader,
     this.mapTileProvider,
   });
 
@@ -87,6 +89,11 @@ class JsAppView extends StatefulWidget {
   /// `null` derives it from [agentService] (the same gateway the agent's
   /// media tools use).
   final MediaGateway? mediaGateway;
+
+  /// Video-reading backend behind `jsr.fa.media.readVideo`; `null` derives
+  /// it from [agentService] (the same reader the agent's `read_video` tool
+  /// uses).
+  final VideoReader? videoReader;
 
   /// Optional tile provider for `map` nodes — tests inject an offline
   /// provider; null uses the runtime default (OSM over the network).
@@ -218,8 +225,9 @@ class _JsAppViewState extends State<JsAppView> {
         permissions: effective,
         llmHandler: widget.llmHandler,
         platformHandler: widget.platformHandler,
-        asrTranscriber: widget.asrTranscriber ?? _serviceAsrTranscriber(),
+        asrTranscriber: widget.asrTranscriber ?? await _serviceAsrTranscriber(),
         mediaGateway: widget.mediaGateway ?? widget.agentService?.mediaGateway,
+        videoReader: widget.videoReader ?? widget.agentService?.videoReader,
         initialTheme: initialTheme,
       );
       engine.onCloseRequested = _closeFromJs;
@@ -261,12 +269,15 @@ class _JsAppViewState extends State<JsAppView> {
     return null;
   }
 
-  /// Derives the ASR transcriber from the active session's provider config;
-  /// null when no ASR-capable (OpenAI-compatible) endpoint is configured —
-  /// the bridge then answers with an actionable error.
-  AsrTranscriber? _serviceAsrTranscriber() {
+  /// Derives the ASR transcriber through the session's media gateway (the
+  /// media_models.json `transcription` slot, falling back to the active
+  /// provider); null when no ASR-capable (OpenAI-compatible) endpoint is
+  /// configured — the bridge then answers with an actionable error.
+  Future<AsrTranscriber?> _serviceAsrTranscriber() async {
     final service = widget.agentService;
     if (service == null) return null;
+    final gateway = service.mediaGateway;
+    if (gateway != null) return whisperTranscriberForGateway(gateway);
     final config = service.configForClone;
     return whisperTranscriberFor(
       providerKind: service.providerKind,

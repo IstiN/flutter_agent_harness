@@ -74,8 +74,8 @@ class AppPermissions {
   /// system notifications.
   final bool notifications;
 
-  /// Media-generation bridge (`jsr.fa.media`) — image / TTS / music
-  /// generation on the configured media endpoints.
+  /// Media bridge (`jsr.fa.media`) — image / TTS / music generation and
+  /// video reading on the configured media endpoints.
   final bool media;
 
   AppPermissions copyWith({

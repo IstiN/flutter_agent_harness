@@ -9,6 +9,8 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/media_tools.dart';
+import 'package:fa/services/video_service.dart';
+import 'package:fa/services/video_tool.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -184,4 +186,171 @@ void main() {
       }
     });
   });
+
+  group('fa.media.readVideo', () {
+    const videoJs = '''
+(function() {
+  jsr.fa.media.readVideo({path: 'clip.mp4', frames: 4, question: 'What happens?'})
+    .then(function(result) {
+      jsr.exportState({result: result});
+    }, function(error) {
+      jsr.exportState({result: {__error: '' + error}});
+    });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''';
+
+    /// A reader over a fake extractor + a fake vision endpoint answering a
+    /// fixed chat-completions reply.
+    VideoReader fakeReader(MemoryExecutionEnv env, FakeVideoApi video) =>
+        VideoReader(
+          video: video,
+          gateway: MediaGateway(
+            env: env,
+            fallback: () => const MediaFallback(
+              providerKind: 'openai-completions',
+              baseUrl: 'https://api.test/v1',
+              modelId: 'gpt-5',
+              apiKey: 'sk-main',
+            ),
+            store: MediaModelsStore.inMemory(),
+          ),
+          httpClient: http_testing.MockClient((request) async {
+            return http.Response(
+              jsonEncode({
+                'choices': [
+                  {
+                    'message': {'content': 'A robot dances.'},
+                  },
+                ],
+              }),
+              200,
+            );
+          }),
+        );
+
+    testWidgets('is denied without the media permission', (tester) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', videoJs);
+        await env.writeFile('clip.mp4', 'x');
+        final video = FakeVideoApi();
+
+        final denied = JsAppEngine(
+          app: app(),
+          env: env,
+          permissions: const AppPermissions(),
+          videoReader: fakeReader(env, video),
+        );
+        try {
+          await denied.start();
+          await Future<void>.delayed(settle);
+          final result = jsonEncode(denied.exportedState?['result']);
+          expect(result, contains('__error'));
+          expect(result, contains('media permission'));
+          expect(video.extractCalls, isEmpty);
+        } finally {
+          await denied.dispose();
+        }
+      });
+    });
+
+    testWidgets('with the permission but no session reader answers with an '
+        'actionable error', (tester) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', videoJs);
+        await env.writeFile('clip.mp4', 'x');
+
+        final noReader = JsAppEngine(
+          app: app(),
+          env: env,
+          permissions: const AppPermissions(media: true),
+        );
+        try {
+          await noReader.start();
+          await Future<void>.delayed(settle);
+          expect(
+            jsonEncode(noReader.exportedState?['result']),
+            contains('not available'),
+          );
+        } finally {
+          await noReader.dispose();
+        }
+      });
+    });
+
+    testWidgets('with the permission resolves with the vision description', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', videoJs);
+        await env.writeFile('clip.mp4', 'x');
+        final video = FakeVideoApi();
+
+        final granted = JsAppEngine(
+          app: app(),
+          env: env,
+          permissions: const AppPermissions(media: true),
+          videoReader: fakeReader(env, video),
+        );
+        try {
+          await granted.start();
+          await Future<void>.delayed(settle);
+          expect(video.extractCalls.single.count, 4);
+          final result = granted.exportedState?['result'] as Map;
+          expect(result['description'], 'A robot dances.');
+        } finally {
+          await granted.dispose();
+        }
+      });
+    });
+
+    testWidgets('a missing video file rejects with an actionable error', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', videoJs);
+
+        final granted = JsAppEngine(
+          app: app(),
+          env: env,
+          permissions: const AppPermissions(media: true),
+          videoReader: fakeReader(env, FakeVideoApi()),
+        );
+        try {
+          await granted.start();
+          await Future<void>.delayed(settle);
+          expect(
+            jsonEncode(granted.exportedState?['result']),
+            contains('no such file: clip.mp4'),
+          );
+        } finally {
+          await granted.dispose();
+        }
+      });
+    });
+  });
+}
+
+/// Configurable fake [VideoApi] for the readVideo bridge tests.
+final class FakeVideoApi implements VideoApi {
+  bool available = true;
+  final extractCalls = <({String path, int count})>[];
+
+  @override
+  Future<bool> get isAvailable async => available;
+
+  @override
+  Future<List<VideoFrame>> extractFrames({
+    required String path,
+    required int count,
+  }) async {
+    extractCalls.add((path: path, count: count));
+    return [
+      (bytes: Uint8List.fromList([1, 2, 3]), positionMs: 0),
+    ];
+  }
 }
