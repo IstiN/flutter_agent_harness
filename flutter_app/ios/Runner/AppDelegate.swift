@@ -1013,7 +1013,10 @@ private func healthSleepSeries(
 
 /// Shared manager for the `fah/home` channel (HMHomeManager is meant to be
 /// long-lived; creating it is also what triggers the OS home-data prompt).
-private let homeManager = HMHomeManager()
+/// NOT named `homeManager`: HMHomeManagerDelegate's members
+/// (`homeManager(_:didAdd:…)`) shadow a global with that name inside the
+/// delegate class — Swift then fails with "cannot find in scope".
+fileprivate let homeKitManager = HMHomeManager()
 
 /// Delegate for the `fah/home` channel: homes load asynchronously after the
 /// user answers the access prompt, so pending Flutter results wait here for
@@ -1024,7 +1027,7 @@ private final class HomeChannelDelegate: NSObject, HMHomeManagerDelegate {
   /// `requestAccess` results waiting for the prompt answer.
   var pendingResults: [FlutterResult] = []
   /// Closures waiting for the first homes load: with access granted long
-  /// ago `requestAccess` answers immediately while `homeManager.homes` is
+  /// ago `requestAccess` answers immediately while `homeKitManager.homes` is
   /// still empty, so the first list call waits here (answered with what we
   /// have after [homesWaitTimeout]).
   var homesWaiters: [() -> Void] = []
@@ -1063,7 +1066,7 @@ private final class HomeChannelDelegate: NSObject, HMHomeManagerDelegate {
       if !homesWaiters.isEmpty {
         NSLog(
           "[fah/home] homes wait timed out — answering with "
-            + "\(homeManager.homes.count) home(s)",
+            + "\(homeKitManager.homes.count) home(s)",
         )
       }
       flushHomesWaiters()
@@ -1081,7 +1084,7 @@ private final class HomeChannelDelegate: NSObject, HMHomeManagerDelegate {
   private func pollAccessAnswer() {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
       guard !pendingResults.isEmpty else { return }
-      if homeManager.authorizationStatus.contains(.determined) {
+      if homeKitManager.authorizationStatus.contains(.determined) {
         // The prompt was answered — granted or denied, answer either way.
         answerAccessResults()
         return
@@ -1114,7 +1117,7 @@ private let homeChannelDelegate = HomeChannelDelegate()
 /// Whether the user granted home-data access. `.determined` only means the
 /// prompt was answered — access itself is the `.authorized` flag.
 private func homeAccessGranted() -> Bool {
-  homeManager.authorizationStatus.contains(.authorized)
+  homeKitManager.authorizationStatus.contains(.authorized)
 }
 
 /// The `fah/home` method channel: HomeKit home control (iOS only — there is
@@ -1136,14 +1139,14 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
     name: "fah/home",
     binaryMessenger: messenger,
   )
-  homeManager.delegate = homeChannelDelegate
+  homeKitManager.delegate = homeChannelDelegate
   channel.setMethodCallHandler { call, result in
     let args = call.arguments as? [String: Any] ?? [:]
     switch call.method {
     case "isAvailable":
       NSLog(
         "[fah/home] isAvailable: "
-          + "authorizationStatus=\(homeManager.authorizationStatus.rawValue)",
+          + "authorizationStatus=\(homeKitManager.authorizationStatus.rawValue)",
       )
       result(true)
     case "requestAccess":
@@ -1257,19 +1260,19 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
 private func homeRequestAccess(result: @escaping FlutterResult) {
   NSLog(
     "[fah/home] requestAccess: "
-      + "authorizationStatus=\(homeManager.authorizationStatus.rawValue)",
+      + "authorizationStatus=\(homeKitManager.authorizationStatus.rawValue)",
   )
   if homeAccessGranted() {
     result(true)
     return
   }
-  let status = homeManager.authorizationStatus
+  let status = homeKitManager.authorizationStatus
   if status.contains(.determined) {
     // The prompt was already answered (and denied or restricted).
     result(false)
     return
   }
-  _ = homeManager.homes // triggers the OS prompt on first access
+  _ = homeKitManager.homes // triggers the OS prompt on first access
   homeChannelDelegate.waitForAccessAnswer(result: result)
 }
 
@@ -1279,7 +1282,7 @@ private func homeRequestAccess(result: @escaping FlutterResult) {
 /// wait for the first `homeManagerDidUpdateHomes` instead (the delegate
 /// answers with what we have after a timeout).
 private func homeRunWhenHomesReady(_ work: @escaping () -> Void) {
-  if homeAccessGranted(), homeManager.homes.isEmpty {
+  if homeAccessGranted(), homeKitManager.homes.isEmpty {
     NSLog("[fah/home] access granted but homes not loaded yet — waiting")
     homeChannelDelegate.whenHomesLoaded(work)
   } else {
@@ -1289,15 +1292,15 @@ private func homeRunWhenHomesReady(_ work: @escaping () -> Void) {
 
 /// The homes matching [homeId] (all of them when nil).
 private func homeHomes(homeId: String?) -> [HMHome] {
-  guard let homeId else { return homeManager.homes }
-  return homeManager.homes.filter { $0.uniqueIdentifier.uuidString == homeId }
+  guard let homeId else { return homeKitManager.homes }
+  return homeKitManager.homes.filter { $0.uniqueIdentifier.uuidString == homeId }
 }
 
 /// Answers `listHomes`: one map per home. Empty when access is not granted.
 private func homeListHomes() -> [[String: Any]] {
   guard homeAccessGranted() else { return [] }
-  NSLog("[fah/home] listHomes: \(homeManager.homes.count) home(s)")
-  return homeManager.homes.map { home in
+  NSLog("[fah/home] listHomes: \(homeKitManager.homes.count) home(s)")
+  return homeKitManager.homes.map { home in
     [
       "id": home.uniqueIdentifier.uuidString,
       "name": home.name,
@@ -1360,7 +1363,7 @@ private func homeExecuteScene(id: String, result: @escaping FlutterResult) {
     )
     return
   }
-  for home in homeManager.homes {
+  for home in homeKitManager.homes {
     guard
       let actionSet = home.actionSets.first(where: {
         $0.uniqueIdentifier.uuidString == id
