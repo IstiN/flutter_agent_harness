@@ -629,4 +629,11 @@
 - fix(example): in-app Fa stays in the bottom sheet on first contact
 - chore(deps): update AI integration deps (firebase, flutter_gemma, js_widget_runtime) and sqlite3; migrate sqlite3 dispose -> close
 
+## 0.1.86
+
+- fix(example): regenerate iOS Podfile.lock (Firebase 12.x + media players)
+- feat(example): calendar recurrence, alarms, calendars, span, and url
+- fix(providers): thinking — dedupe reasoning vs reasoning_details + tail collapse
+- feat(example): inline audio/video playback for sandbox media in chat
+
 ## Unreleased
