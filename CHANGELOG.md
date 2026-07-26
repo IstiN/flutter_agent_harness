@@ -617,4 +617,8 @@
 - chore(example): pin js_widget_runtime ^0.4.13 (image UA fix)
 - fix(providers): dedupe overlapping/cumulative reasoning chunks in openai-completions thinking stream
 
+## 0.1.84
+
+- feat(example): preset default-model override + two-step media slot flow
+
 ## Unreleased
