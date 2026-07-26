@@ -1,0 +1,107 @@
+name: Store Metadata & Screenshots
+
+# Uploads App Store metadata and screenshots for the Fa app (no binary):
+# the fastlane `app_store` lanes assemble the committed store goldens
+# (flutter_app/test/goldens/store/) and the metadata
+# (flutter_app/fastlane/metadata/ + store_artefacts/metadata/ changelogs)
+# and push them to App Store Connect via deliver.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ios_content:
+        description: 'iOS: what to deploy'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none             # skip iOS entirely
+          - all              # metadata + screenshots
+          - metadata_only    # texts/descriptions only
+          - screenshots_only # screenshots only
+      macos_content:
+        description: 'macOS: what to deploy'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none             # skip macOS entirely
+          - all              # metadata + screenshots
+          - metadata_only    # texts/descriptions only
+          - screenshots_only # screenshots only
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: iOS App Store metadata & screenshots
+    runs-on: macos-latest
+    if: github.event.inputs.ios_content != 'none' && github.event.inputs.ios_content != ''
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install fastlane
+        working-directory: flutter_app
+        run: bundle install
+
+      - name: Deploy iOS App Store content
+        working-directory: flutter_app
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+          IOS_BUNDLE_ID: dev.fa1.app
+        run: |
+          set -euo pipefail
+          case "${{ github.event.inputs.ios_content }}" in
+            metadata_only)
+              export IOS_DEPLOY_METADATA="true" IOS_DEPLOY_SCREENSHOTS="false" ;;
+            screenshots_only)
+              export IOS_DEPLOY_METADATA="false" IOS_DEPLOY_SCREENSHOTS="true" ;;
+            *)
+              export IOS_DEPLOY_METADATA="true" IOS_DEPLOY_SCREENSHOTS="true" ;;
+          esac
+          bundle exec fastlane ios app_store
+
+  macos:
+    name: macOS App Store metadata & screenshots
+    runs-on: macos-latest
+    if: github.event.inputs.macos_content != 'none' && github.event.inputs.macos_content != ''
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install fastlane
+        working-directory: flutter_app
+        run: bundle install
+
+      - name: Deploy macOS App Store content
+        working-directory: flutter_app
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+          MACOS_BUNDLE_ID: dev.fa1.app
+        run: |
+          set -euo pipefail
+          case "${{ github.event.inputs.macos_content }}" in
+            metadata_only)
+              export MACOS_DEPLOY_METADATA="true" MACOS_DEPLOY_SCREENSHOTS="false" ;;
+            screenshots_only)
+              export MACOS_DEPLOY_METADATA="false" MACOS_DEPLOY_SCREENSHOTS="true" ;;
+            *)
+              export MACOS_DEPLOY_METADATA="true" MACOS_DEPLOY_SCREENSHOTS="true" ;;
+          esac
+          bundle exec fastlane mac app_store
