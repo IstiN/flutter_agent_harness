@@ -636,4 +636,12 @@
 - fix(providers): thinking — dedupe reasoning vs reasoning_details + tail collapse
 - feat(example): inline audio/video playback for sandbox media in chat
 
+## 0.1.87
+
+- fix(example): iOS build — HMHomeManagerDelegate members shadow the homeManager global
+- feat(example): HomeKit maximum API, empty-homes race fix, shareable debug logs
+- feat(example): privacy-first analytics facade (Firebase Analytics)
+- fix(example): contacts — system back steps out of detail, transient call hint
+- feat(example): rename sessions, arbitrary agent keys, persist approval mode
+
 ## Unreleased
