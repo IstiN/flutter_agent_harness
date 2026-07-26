@@ -1020,9 +1020,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             const SizedBox(width: 6),
             Expanded(
               // Reasoning can run to thousands of lines (and small models
-              // sometimes loop there) — collapse like long tool output.
+              // sometimes loop there) — collapse like long tool output, but
+              // keep the NEWEST reasoning visible (the tail, not the head).
               child: _CollapsibleToolOutput(
                 content: content,
+                showTail: true,
                 style: palette
                     .mono(color: palette.dim, fontSize: 12)
                     .copyWith(fontStyle: FontStyle.italic),
@@ -1526,10 +1528,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 /// lines with an expand/collapse toggle — keeps the transcript scannable
 /// while the full output stays one tap away.
 class _CollapsibleToolOutput extends StatefulWidget {
-  const _CollapsibleToolOutput({required this.content, required this.style});
+  const _CollapsibleToolOutput({
+    required this.content,
+    required this.style,
+    this.showTail = false,
+  });
 
   final String content;
   final TextStyle style;
+
+  /// Collapse to the LAST lines instead of the first — used for thinking
+  /// bubbles, where the newest reasoning matters more than the preamble.
+  final bool showTail;
 
   /// Outputs longer than this collapse by default.
   static const int collapsedLineCount = 8;
@@ -1558,6 +1568,14 @@ class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
     final lines = widget.content.split('\n');
     final shown = _expanded
         ? lines
+        : widget.showTail
+        ? lines
+              .skip(
+                lines.length > _CollapsibleToolOutput.collapsedLineCount
+                    ? lines.length - _CollapsibleToolOutput.collapsedLineCount
+                    : 0,
+              )
+              .toList()
         : lines.take(_CollapsibleToolOutput.collapsedLineCount).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -419,17 +419,30 @@ AssistantMessageEventStream streamOpenAICompletions(
                 // nemotron) as reasoning_details text entries instead of a
                 // plain `reasoning` delta field — surface those as thinking
                 // too, otherwise the turn looks silent.
+                //
+                // Gemini models send BOTH: a `reasoning` delta field AND
+                // reasoning_details text carrying the SAME content (as
+                // cumulative snapshots) — writing both stutters
+                // ("The The user user…"). Run the text through the same
+                // overlap dedupe as the reasoning field: identical or
+                // snapshot content collapses to the new suffix only.
                 final detailText = detail['text'];
                 if (detailText is String && detailText.isNotEmpty) {
                   final block = ensureThinkingBlock('reasoning_details');
-                  block.thinking.write(detailText);
-                  eventStream.push(
-                    ThinkingDeltaEvent(
-                      contentIndex: contentIndex(block),
-                      delta: detailText,
-                      partial: snapshot(),
-                    ),
+                  final detailDelta = _dedupeOverlap(
+                    block.thinking,
+                    detailText,
                   );
+                  if (detailDelta.isNotEmpty) {
+                    block.thinking.write(detailDelta);
+                    eventStream.push(
+                      ThinkingDeltaEvent(
+                        contentIndex: contentIndex(block),
+                        delta: detailDelta,
+                        partial: snapshot(),
+                      ),
+                    );
+                  }
                 }
               }
             }

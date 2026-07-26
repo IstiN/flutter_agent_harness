@@ -431,4 +431,34 @@ void main() {
       expect(service.isStreaming, isFalse);
     });
   });
+
+  group('ChatScreen thinking bubble', () {
+    testWidgets('collapsed thinking shows the TAIL of the reasoning', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = _fakeManager(env);
+      manager.active!.service.messages.add(
+        FahChatMessage(
+          role: 'thinking',
+          content: [
+            for (var i = 1; i <= 14; i++) 'reasoning line $i',
+          ].join('\n'),
+        ),
+      );
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
+      await tester.pumpAndSettle();
+
+      // Collapsed: the newest reasoning (lines 7-14) is visible, the
+      // preamble is not.
+      expect(find.textContaining('reasoning line 14'), findsOneWidget);
+      expect(find.textContaining('reasoning line 7'), findsOneWidget);
+      expect(find.textContaining('reasoning line 6'), findsNothing);
+
+      // Expand shows everything.
+      await tester.tap(find.text('Show all (14)'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('reasoning line 1\n'), findsOneWidget);
+    });
+  });
 }

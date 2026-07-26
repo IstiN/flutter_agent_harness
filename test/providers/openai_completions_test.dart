@@ -365,6 +365,92 @@ void main() {
       expect(events.last, isA<DoneEvent>());
     });
 
+    test(
+      'dedupes the reasoning field against reasoning_details text (gemini)',
+      () async {
+        // Gemini via OpenRouter sends BOTH: a `reasoning` delta field AND
+        // reasoning_details text entries with the same content (as cumulative
+        // snapshots). Writing both stutters ("The The user user…") — the
+        // overlap dedupe must collapse the second channel.
+        final client = sseClient(
+          sseBody([
+            {
+              'choices': [
+                {
+                  'delta': {
+                    'reasoning': 'The',
+                    'reasoning_details': [
+                      {'type': 'reasoning.text', 'text': 'The', 'index': 0},
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              'choices': [
+                {
+                  'delta': {
+                    'reasoning': ' user',
+                    'reasoning_details': [
+                      {
+                        'type': 'reasoning.text',
+                        'text': 'The user',
+                        'index': 0,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              'choices': [
+                {
+                  'delta': {
+                    'reasoning': ' asks',
+                    'reasoning_details': [
+                      {
+                        'type': 'reasoning.text',
+                        'text': 'The user asks',
+                        'index': 0,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              'choices': [
+                {
+                  'delta': {'content': 'answer'},
+                },
+              ],
+            },
+            {
+              'choices': [
+                {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+              ],
+            },
+            'data: [DONE]\n\n',
+          ]),
+        );
+
+        final stream = streamOpenAICompletions(
+          openRouterModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+
+        final events = await stream.toList();
+        expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
+        final thinkingDeltas = events.whereType<ThinkingDeltaEvent>().toList();
+        final thinkingPartial =
+            thinkingDeltas.last.partial.content.first as ThinkingContent;
+        expect(thinkingPartial.thinking, 'The user asks');
+        expect(events.last, isA<DoneEvent>());
+      },
+    );
+
     test('parses usage incl. cached tokens and OpenRouter cost', () async {
       final client = sseClient(
         sseBody([
