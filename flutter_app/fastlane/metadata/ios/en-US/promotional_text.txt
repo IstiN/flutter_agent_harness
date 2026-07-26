@@ -1,0 +1,1 @@
+Chat with any AI provider, run a sandboxed coding agent, let it build mini-apps, and generate images, speech, and music — privacy-first, keys in your Keychain.

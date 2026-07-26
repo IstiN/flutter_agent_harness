@@ -319,3 +319,17 @@ tests are done right:
   `_wire_compile_wasm` — Podfiles force-load + `-exported_symbol` +
   `STRIP_STYLE=non-global`, else white screen on TestFlight). Pods cached
   keyed by `Podfile.lock`.
+- App Store content pipeline (no binary): store screenshots are COMMITTED
+  goldens from `flutter_app/test/golden/store_screenshots_test.dart` (frame +
+  inline en/ru copy in `store_marketing_frame.dart`) at
+  `flutter_app/test/goldens/store/{en,ru}/{ios,ipad,mac}/` — regenerate with
+  `flutter test test/golden/store_screenshots_test.dart --update-goldens`,
+  then open every PNG. Store copy lives in
+  `flutter_app/fastlane/metadata/{ios,macos}/{en-US,ru-RU}/` (the lanes strip
+  name.txt/subtitle.txt — App Info is not editable post-release); release
+  notes come from the latest `## […]` section of
+  `store_artefacts/metadata/{en,ru}/changelog.md`. Upload: `fastlane ios
+  app_store` / `fastlane mac app_store` in `flutter_app` (env gates
+  `IOS_DEPLOY_METADATA`/`IOS_DEPLOY_SCREENSHOTS`/`MACOS_DEPLOY_*`; ASC API key
+  env secrets) or the `store-metadata.yml` workflow (`ios_content`/
+  `macos_content` inputs: none/metadata_only/screenshots_only/all).

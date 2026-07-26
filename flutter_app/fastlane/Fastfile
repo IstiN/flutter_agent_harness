@@ -23,6 +23,111 @@ def asc_api_key
   )
 end
 
+# App Store locale map for the store pipeline: fastlane/metadata folder →
+# App Store Connect locale. Golden screenshots live one level below under
+# the plain language code (test/goldens/store/<en|ru>/<ios|ipad|mac>).
+def store_locale_map
+  { "en-US" => "en-US", "ru-RU" => "ru" }
+end
+
+# Latest "## [version]" section of store_artefacts/metadata/<lang>/changelog.md.
+def store_latest_changelog(lang)
+  file_path = File.expand_path("../../store_artefacts/metadata/#{lang}/changelog.md", __dir__)
+  return "" unless File.exist?(file_path)
+  content = File.read(file_path)
+  match = content.match(/## \[.*?\][^\n]*\n(.*?)(?=\n## \[|\z)/m)
+  match ? match[1].strip : ""
+end
+
+def store_pubspec_version
+  pubspec_path = File.expand_path("../pubspec.yaml", __dir__)
+  return "1.0.0" unless File.exist?(pubspec_path)
+  match = File.read(pubspec_path).match(/version:\s+([0-9.]+)/)
+  match ? match[1] : "1.0.0"
+end
+
+# Builds a temp metadata dir for deliver from fastlane/metadata/<platform_key>/
+# with App Store locale names, release_notes.txt from the store_artefacts
+# changelogs (en fallback per locale), and WITHOUT name.txt/subtitle.txt —
+# App Info is not editable once the app is released, and deliver would fail.
+def build_store_metadata_dir(platform_key:, out_dir:)
+  FileUtils.rm_rf(out_dir)
+  FileUtils.mkdir_p(out_dir)
+  store_locale_map.each do |src_locale, as_locale|
+    src = "metadata/#{platform_key}/#{src_locale}"
+    FileUtils.cp_r(src, "#{out_dir}/#{as_locale}") if Dir.exist?(src)
+  end
+  en_notes = store_latest_changelog("en")
+  ru_notes = store_latest_changelog("ru")
+  store_locale_map.each_value do |as_locale|
+    dir = "#{out_dir}/#{as_locale}"
+    FileUtils.mkdir_p(dir)
+    notes = as_locale == "ru" && !ru_notes.empty? ? ru_notes : en_notes
+    File.write("#{dir}/release_notes.txt", notes)
+    FileUtils.rm_f("#{dir}/name.txt")
+    FileUtils.rm_f("#{dir}/subtitle.txt")
+  end
+end
+
+# Copies committed store goldens (flutter_app/test/goldens/store/<lang>/<device>)
+# into the deliver screenshots folder with App Store locale names, falling
+# back to English when a locale has no localized screenshots.
+def copy_store_screenshots(device:, suffix:, out_root:)
+  goldens = File.expand_path("../test/goldens/store", __dir__)
+  store_locale_map.each do |src_locale, as_locale|
+    lang = src_locale.split("-").first.downcase
+    dir = "#{out_root}/#{as_locale}"
+    FileUtils.mkdir_p(dir)
+    files = Dir.glob("#{goldens}/#{lang}/#{device}/*.png").sort.first(10)
+    if files.empty?
+      files = Dir.glob("#{goldens}/en/#{device}/*.png").sort.first(10)
+      UI.message("No #{device} screenshots for #{as_locale}, using en fallback") unless files.empty?
+    end
+    files.each do |f|
+      FileUtils.cp(f, "#{dir}/#{File.basename(f, ".*")}#{suffix}.png")
+    end
+  end
+end
+
+# Directly updates App Store version localizations via the Spaceship API.
+# Fallback when deliver fails because App Info is not editable.
+def upload_version_metadata_via_api(metadata_dir:, bundle_id:, platform:)
+  require "spaceship"
+
+  app = Spaceship::ConnectAPI::App.find(bundle_id)
+  if app.nil?
+    UI.error("Could not find app with bundle_id: #{bundle_id}")
+    return
+  end
+
+  version = app.get_edit_app_store_version(platform: platform)
+  if version.nil?
+    UI.important("No editable version found for #{bundle_id} on #{platform} - skipping")
+    return
+  end
+
+  locs = version.get_app_store_version_localizations
+  updated = 0
+  locs.each do |loc|
+    locale_dir = File.join(metadata_dir, loc.locale)
+    attrs = {}
+    {
+      "release_notes"    => :whatsNew,
+      "description"      => :description,
+      "keywords"         => :keywords,
+      "promotional_text" => :promotionalText
+    }.each do |file_name, attr_key|
+      file_path = File.join(locale_dir, "#{file_name}.txt")
+      attrs[attr_key] = File.read(file_path).strip if File.exist?(file_path)
+    end
+    unless attrs.empty?
+      loc.update(attributes: attrs)
+      updated += 1
+    end
+  end
+  UI.success("Updated #{updated} locale(s) version metadata via Spaceship API")
+end
+
 platform :ios do
   desc "Build iOS IPA only (for CI split build/submit pattern)"
   lane :build_only do
@@ -101,6 +206,97 @@ platform :ios do
       notify_external_testers: false
     )
   end
+
+  desc "Deploy iOS App Store metadata and screenshots (no binary)"
+  lane :app_store do
+    # IOS_DEPLOY_METADATA=false → skip texts/descriptions
+    # IOS_DEPLOY_SCREENSHOTS=false → skip screenshots
+    do_metadata    = ENV.fetch("IOS_DEPLOY_METADATA",    "true") == "true"
+    do_screenshots = ENV.fetch("IOS_DEPLOY_SCREENSHOTS", "true") == "true"
+    UI.message("App Store deploy: metadata=#{do_metadata}, screenshots=#{do_screenshots}")
+
+    metadata_dir = "metadata/ios_deliver"
+    build_store_metadata_dir(platform_key: "ios", out_dir: metadata_dir)
+
+    if do_screenshots
+      UI.message("Copying store goldens to the screenshots folder...")
+      # iPhone 6.9" (1290x2796) — accepted for all iPhone sizes; iPad Pro 13".
+      copy_store_screenshots(device: "ios", suffix: "_iphone69", out_root: "screenshots")
+      copy_store_screenshots(device: "ipad", suffix: "_ipadPro", out_root: "screenshots")
+    end
+
+    api_key = asc_api_key
+    bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"
+    version_name = store_pubspec_version
+
+    # Step 1: metadata only (fast, reliable)
+    if do_metadata
+      begin
+        deliver(
+          app_identifier: bundle_id,
+          api_key: api_key,
+          metadata_path: File.expand_path(metadata_dir),
+          screenshots_path: File.expand_path("screenshots"),
+          skip_binary_upload: true,
+          skip_app_version_update: true,
+          app_version: version_name,
+          force: true,
+          submit_for_review: false,
+          automatic_release: false,
+          phased_release: false,
+          skip_screenshots: true,
+          run_precheck_before_submit: false,
+          version_check_wait_retry_limit: 1
+        )
+        UI.success("iOS metadata uploaded successfully!")
+      rescue => e
+        if e.message.include?("Cannot update languages") || e.message.include?("Cannot find edit app info")
+          UI.important("deliver failed (App Info not editable) - uploading version metadata directly via Spaceship API...")
+          upload_version_metadata_via_api(
+            metadata_dir: File.expand_path(metadata_dir),
+            bundle_id: bundle_id,
+            platform: Spaceship::ConnectAPI::Platform::IOS
+          )
+        else
+          raise
+        end
+      end
+    else
+      UI.message("Skipping metadata upload (IOS_DEPLOY_METADATA=false)")
+    end
+
+    # Step 2: screenshots separately — Apple's API returns 500 intermittently,
+    # so screenshot errors never fail the lane.
+    if do_screenshots
+      begin
+        deliver(
+          app_identifier: bundle_id,
+          api_key: api_key,
+          metadata_path: File.expand_path(metadata_dir),
+          screenshots_path: File.expand_path("screenshots"),
+          skip_binary_upload: true,
+          skip_app_version_update: true,
+          app_version: version_name,
+          force: true,
+          submit_for_review: false,
+          automatic_release: false,
+          phased_release: false,
+          skip_metadata: true,
+          overwrite_screenshots: true,
+          run_precheck_before_submit: false,
+          screenshot_processing_timeout: 30,
+          version_check_wait_retry_limit: 2
+        )
+        UI.success("iOS screenshots uploaded successfully!")
+      rescue => e
+        UI.important("Screenshot upload encountered Apple API errors: #{e.message}")
+        UI.important("Screenshots may still have been uploaded — check App Store Connect.")
+        UI.important("Continuing without failing the pipeline...")
+      end
+    else
+      UI.message("Skipping screenshots upload (IOS_DEPLOY_SCREENSHOTS=false)")
+    end
+  end
 end
 
 platform :mac do
@@ -118,5 +314,94 @@ platform :mac do
       distribute_external: false,
       notify_external_testers: false
     )
+  end
+
+  desc "Deploy macOS App Store metadata and screenshots (no binary)"
+  lane :app_store do
+    # MACOS_DEPLOY_METADATA=false → skip texts/descriptions
+    # MACOS_DEPLOY_SCREENSHOTS=false → skip screenshots
+    do_metadata    = ENV.fetch("MACOS_DEPLOY_METADATA",    "true") == "true"
+    do_screenshots = ENV.fetch("MACOS_DEPLOY_SCREENSHOTS", "true") == "true"
+    UI.message("Mac App Store deploy: metadata=#{do_metadata}, screenshots=#{do_screenshots}")
+
+    metadata_dir = "metadata/mac_deliver"
+    build_store_metadata_dir(platform_key: "macos", out_dir: metadata_dir)
+
+    if do_screenshots
+      UI.message("Copying macOS store goldens to the screenshots folder...")
+      # Separate folder from the iOS lane: deliver classifies by resolution.
+      copy_store_screenshots(device: "mac", suffix: "_mac", out_root: "screenshots_mac")
+    end
+
+    api_key = asc_api_key
+    bundle_id = ENV["MACOS_BUNDLE_ID"] || "dev.fa1.app"
+    version_name = store_pubspec_version
+
+    if do_metadata
+      begin
+        deliver(
+          app_identifier: bundle_id,
+          api_key: api_key,
+          platform: "osx",
+          metadata_path: File.expand_path(metadata_dir),
+          screenshots_path: File.expand_path("screenshots_mac"),
+          skip_binary_upload: true,
+          skip_app_version_update: true,
+          app_version: version_name,
+          force: true,
+          submit_for_review: false,
+          automatic_release: false,
+          phased_release: false,
+          skip_screenshots: true,
+          run_precheck_before_submit: false,
+          version_check_wait_retry_limit: 1
+        )
+        UI.success("macOS metadata uploaded successfully!")
+      rescue => e
+        if e.message.include?("Cannot update languages") || e.message.include?("Cannot find edit app info") || e.message.include?("cannot create a new version") || e.message.include?("You cannot create a new version")
+          UI.important("deliver failed (App Info not editable) - uploading version metadata directly via Spaceship API...")
+          upload_version_metadata_via_api(
+            metadata_dir: File.expand_path(metadata_dir),
+            bundle_id: bundle_id,
+            platform: Spaceship::ConnectAPI::Platform::MAC_OS
+          )
+        else
+          raise
+        end
+      end
+    else
+      UI.message("Skipping metadata upload (MACOS_DEPLOY_METADATA=false)")
+    end
+
+    if do_screenshots
+      begin
+        deliver(
+          app_identifier: bundle_id,
+          api_key: api_key,
+          platform: "osx",
+          metadata_path: File.expand_path(metadata_dir),
+          screenshots_path: File.expand_path("screenshots_mac"),
+          skip_binary_upload: true,
+          skip_app_version_update: true,
+          app_version: version_name,
+          force: true,
+          submit_for_review: false,
+          automatic_release: false,
+          phased_release: false,
+          skip_metadata: true,
+          overwrite_screenshots: true,
+          run_precheck_before_submit: false,
+          screenshot_processing_timeout: 30,
+          version_check_wait_retry_limit: 2
+        )
+        UI.success("macOS screenshots uploaded successfully!")
+      rescue => e
+        UI.important("macOS screenshot upload encountered Apple API errors: #{e.message}")
+        UI.important("Screenshots may still have been uploaded — check App Store Connect.")
+        UI.important("Continuing without failing the pipeline...")
+      end
+    else
+      UI.message("Skipping screenshots upload (MACOS_DEPLOY_SCREENSHOTS=false)")
+    end
   end
 end

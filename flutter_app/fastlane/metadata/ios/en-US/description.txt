@@ -1,0 +1,35 @@
+Fa is a personal AI agent that lives on your phone and your Mac. Chat with any OpenAI-compatible provider, run a real sandboxed coding agent, let it build mini-apps for you, and generate images, speech, and music — privacy-first, with your keys in the Keychain.
+
+ANY PROVIDER, YOUR KEYS
+- OpenRouter, OpenAI, Anthropic, Google, Ollama — any OpenAI-compatible endpoint
+- Add custom providers with your own base URL and models
+- On-device models (Gemma, WebLLM) for offline, zero-key chats
+- API keys stay in the iOS/macOS Keychain — never in config files, never uploaded
+
+A REAL AGENT, NOT JUST A CHAT
+- Fa thinks out loud: watch live reasoning, tool calls, and results
+- Sandboxed shell, file system, git, Python, Lua, SQLite, and JavaScript
+- Reads, writes, and patches code; searches the web; fetches pages
+- Approval tiers keep you in control of every write and command
+
+MINI-APPS ON DEMAND
+- Ask Fa to build an app — calculator, maps, notes, trackers — and it appears in your sidebar
+- Mini-apps can use your calendar, contacts, HomeKit devices, and Health data (with your permission)
+- Keep chatting with Fa right inside the app to refine it
+
+MEDIA GENERATION
+- Generate images inline in the chat
+- Text-to-speech and music generation with per-slot media models
+- Play audio and video right in the conversation
+
+YOUR DATA, YOUR DEVICE
+- Privacy-first analytics: no message text, no keys, no file contents — ever
+- Sessions stored locally, with optional iCloud sync
+- Rename sessions, branch conversations, rewind and checkpoint
+
+WORK THE WAY YOU LIKE
+- Dark and light themes, English and Russian UI
+- iPhone, iPad, and Mac — one app, one agent
+- Free and open source: bring your own key, pay only your provider
+
+Fa is the agent that works for you — on your hardware, under your rules.
