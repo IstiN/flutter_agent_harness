@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -71,6 +72,10 @@ Finder _sidebarListTiles() => find.descendant(
   of: find.byType(SessionSidebar),
   matching: find.byType(ListTile),
 );
+
+StreamFunction _hungResponse() {
+  return (model, context, {cancelToken}) => AssistantMessageEventStream();
+}
 
 void main() {
   group('chatImageMessageSource', () {
@@ -363,6 +368,53 @@ void main() {
         await tester.pump();
         await Future<void>.delayed(const Duration(milliseconds: 300));
       });
+    });
+
+    testWidgets('the composer send button becomes stop while streaming', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      final service = AgentService(
+        agent: Agent(
+          model: Model(
+            id: 'test-model',
+            api: 'test-api',
+            provider: 'test',
+            baseUrl: 'https://example.com',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          systemPrompt: 'You are fah.',
+          streamFunction: _hungResponse(),
+          toolRegistry: ToolRegistry(const []),
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+        config: AgentConfig(
+          providerKind: 'test',
+          modelId: 'test-model',
+          baseUrl: 'https://example.com',
+          apiKey: '',
+        ),
+      );
+      manager.addSession('hung', service);
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
+      await tester.pumpAndSettle();
+
+      unawaited(service.sendText('hello'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(service.isStreaming, isTrue);
+      // App bar stop + composer stop.
+      expect(find.byIcon(Icons.stop), findsNWidgets(2));
+
+      await tester.tap(find.byIcon(Icons.stop).last);
+      await tester.pumpAndSettle();
+      expect(service.isStreaming, isFalse);
     });
   });
 }

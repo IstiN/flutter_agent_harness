@@ -1172,10 +1172,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
-                      icon: const Icon(Icons.send, size: 20),
+                      icon: Icon(
+                        _isStreaming ? Icons.stop : Icons.send,
+                        size: 20,
+                      ),
                       color: palette.onAccent,
-                      tooltip: context.l10n.chatSendTooltip,
-                      onPressed: () => _send(_textController.text),
+                      tooltip: _isStreaming
+                          ? context.l10n.chatAbortTooltip
+                          : context.l10n.chatSendTooltip,
+                      onPressed: _isStreaming
+                          ? widget.service.abort
+                          : () => _send(_textController.text),
                     ),
                   ),
                 ],

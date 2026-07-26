@@ -253,6 +253,10 @@ class Agent {
   /// Remove all queued steering messages.
   void clearSteeringQueue() => _steeringQueue.clear();
 
+  /// Drain the steering queue and return its messages (abort path: the
+  /// queued steers must land in the transcript, not vanish).
+  List<Message> drainSteeringQueue() => _steeringQueue.drain();
+
   /// Remove all queued follow-up messages.
   void clearFollowUpQueue() => _followUpQueue.clear();
 

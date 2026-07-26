@@ -344,6 +344,38 @@ void main() {
       expect(service.messages.where((m) => m.role == 'assistant'), isNotEmpty);
     });
 
+    test('abort drains the steer queue into the transcript instead of '
+        'dropping it', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      final first = service.sendText('one');
+      await service.sendText('two');
+      expect(service.pendingSteerTexts, contains('two'));
+
+      service.abort();
+      await first;
+      await service.waitForIdle();
+
+      // The queued message is no longer pending but is NOT lost: it lands
+      // in the transcript as a user message (pi's abort behavior).
+      expect(service.pendingSteerTexts, isEmpty);
+      expect(
+        service.messages.where((m) => m.role == 'user').map((m) => m.content),
+        contains('two'),
+      );
+
+      // And the next prompt runs cleanly with it in context.
+      await service.sendText('three');
+      await service.waitForIdle();
+      expect(service.messages.last.role, 'assistant');
+    });
+
     test('a failing session append neither duplicates failure events nor '
         'blocks the UI', () async {
       final env = _FailingSessionAppendEnv(MemoryExecutionEnv());
