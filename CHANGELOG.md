@@ -621,4 +621,12 @@
 
 - feat(example): preset default-model override + two-step media slot flow
 
+## 0.1.85
+
+- feat(example): render sandbox images in chat — markdown imageBuilder + inline generate_image tiles
+- feat(example): expand Fa chat in place inside JS app views
+- fix(example): macOS pods — platform 14.0 + regenerated lock (Firebase 12.x)
+- fix(example): in-app Fa stays in the bottom sheet on first contact
+- chore(deps): update AI integration deps (firebase, flutter_gemma, js_widget_runtime) and sqlite3; migrate sqlite3 dispose -> close
+
 ## Unreleased
