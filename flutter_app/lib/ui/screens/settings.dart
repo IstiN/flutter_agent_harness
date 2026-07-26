@@ -23,7 +23,7 @@ import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/services/vision_models.dart';
-import 'package:fa/ui/screens/media_slot_editor_page.dart';
+import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
@@ -326,9 +326,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _keyController = TextEditingController(
       text: settingsKeyEnv('OPENROUTER_API_KEY', widget.keysStore),
     );
-    _lastDefaultModel = preset.defaultModel;
+    _lastDefaultModel = _presetDefaultModel(preset);
     _modelController = TextEditingController(
-      text: settingsEnv('MODEL_ID', preset.defaultModel),
+      text: settingsEnv('MODEL_ID', _presetDefaultModel(preset)),
     );
     _vision = modelIdSuggestsVision(_modelController.text);
     _modelController.addListener(_onModelIdChanged);
@@ -448,6 +448,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     });
   }
 
+  /// The default model of [preset]: the registry's saved preset-model
+  /// override when there is one, the preset's built-in default otherwise.
+  String _presetDefaultModel(ProviderPreset preset) =>
+      _registry.presetModelOverride(preset.name) ?? preset.defaultModel;
+
   void _applyPreset(ProviderPreset preset) {
     _selection = preset;
     _visionOverridden = false;
@@ -457,11 +462,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
     // Follow the preset's default model only while the user has not typed
     // a custom one (still empty or equal to the previous default).
+    final defaultModel = _presetDefaultModel(preset);
     final current = _modelController.text.trim();
     if (current.isEmpty || current == _lastDefaultModel) {
-      _modelController.text = preset.defaultModel;
+      _modelController.text = defaultModel;
     }
-    _lastDefaultModel = preset.defaultModel;
+    _lastDefaultModel = defaultModel;
     _staleModelNote = null;
     _error = null;
   }
@@ -542,7 +548,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         _urlController.text = baseUrl;
         _modelController.text = connection.modelId.isNotEmpty
             ? connection.modelId
-            : preset.defaultModel;
+            : _presetDefaultModel(preset);
         _lastDefaultModel = _modelController.text;
     }
   }
@@ -1708,9 +1714,9 @@ class _KeyEditorDialogState extends State<KeyEditorDialog> {
 
 /// The settings "Media models" section: one row per [MediaSlot] showing the
 /// effective endpoint — the slot's override (`model · host`) or the main
-/// connection fallback. Tapping a row pushes the full-screen
-/// [MediaSlotEditorPage]; its Clear action removes the override, restoring
-/// the fallback.
+/// connection fallback. Tapping a row pushes the two-step flow
+/// ([MediaSlotProviderPickerPage] → [MediaSlotModelPage]); picking "Same as
+/// main connection" removes the override, restoring the fallback.
 ///
 /// The store comes from [store] or the nearest [MediaModelsScope]; the whole
 /// section hides when no store is available (tests pumping the bare form).
@@ -1861,7 +1867,7 @@ class MediaModelsSection extends StatelessWidget {
   ) async {
     final result = await Navigator.of(context).push<MediaSlotEditorResult>(
       MaterialPageRoute(
-        builder: (_) => MediaSlotEditorPage(
+        builder: (_) => MediaSlotProviderPickerPage(
           slot: slot,
           title: context.l10n.mediaModelsEditTitle(
             slotLabelFor(context.l10n, slot),

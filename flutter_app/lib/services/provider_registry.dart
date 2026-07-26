@@ -97,6 +97,12 @@ class ProviderRegistry extends ChangeNotifier {
   final List<CustomProvider> _providers = [];
   final Map<String, String> _sessionKeys = {};
 
+  /// User-chosen default models for the built-in hosted presets, keyed by
+  /// the preset's name string (`'openrouter'`, …) — the registry is a
+  /// service and must not import the UI layer where the preset enum lives.
+  /// Persisted next to `providers` in the same envelope.
+  final Map<String, String> _presetModels = {};
+
   /// The secure-store key name backing [baseUrl]'s key:
   /// `FA_KEY_API_ACME_COM`, `FA_KEY_LOCALHOST_11434`.
   static String keyNameFor(String baseUrl) {
@@ -131,6 +137,40 @@ class ProviderRegistry extends ChangeNotifier {
 
   /// The session-only API key remembered for provider [id], if any.
   String? keyFor(String id) => _sessionKeys[id];
+
+  /// The session key whose secure-store name is [keyName] (see
+  /// [keyNameFor]): the remembered key of the first provider whose endpoint
+  /// maps to that name. Lets named-key consumers (media slot `apiKeyName`
+  /// references) reach custom-provider session keys.
+  String? keyValueForName(String keyName) {
+    for (final provider in _providers) {
+      if (ProviderRegistry.keyNameFor(provider.baseUrl) == keyName) {
+        final key = _sessionKeys[provider.id];
+        if (key != null && key.isNotEmpty) return key;
+      }
+    }
+    return null;
+  }
+
+  /// The user-chosen default model for the preset named [presetKey]
+  /// (`'openrouter'`, …), if one was saved; null means "use the preset's
+  /// built-in default".
+  String? presetModelOverride(String presetKey) => _presetModels[presetKey];
+
+  /// Saves [modelId] as the default model of the preset named [presetKey];
+  /// null/empty clears the override (the preset's built-in default applies
+  /// again). Persists and notifies.
+  Future<void> setPresetModelOverride(String presetKey, String? modelId) async {
+    final trimmed = modelId?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      if (_presetModels.remove(presetKey) == null) return;
+    } else {
+      if (_presetModels[presetKey] == trimmed) return;
+      _presetModels[presetKey] = trimmed;
+    }
+    await _save();
+    notifyListeners();
+  }
 
   /// Remembers [key] for provider [id]; an empty key forgets the entry.
   /// With a Keychain backend the key persists there (host-scoped name);
@@ -229,6 +269,18 @@ class ProviderRegistry extends ChangeNotifier {
                     (entry as Map).cast<String, dynamic>(),
                   ),
               ]);
+            _presetModels
+              ..clear()
+              ..addAll({
+                // Unknown/absent keys load as empty; non-string values are
+                // ignored (a hand-edited file must not crash boot).
+                if (decoded['presetModels'] is Map)
+                  for (final entry in (decoded['presetModels'] as Map).entries)
+                    if (entry.key is String &&
+                        entry.value is String &&
+                        (entry.value as String).isNotEmpty)
+                      entry.key as String: entry.value as String,
+              });
           }
         }
       } on Object {
@@ -260,6 +312,7 @@ class ProviderRegistry extends ChangeNotifier {
         jsonEncode({
           'version': _version,
           'providers': [for (final p in _providers) p.toJson()],
+          if (_presetModels.isNotEmpty) 'presetModels': _presetModels,
         }),
       );
     } on Object {

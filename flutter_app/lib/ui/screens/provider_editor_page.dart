@@ -154,7 +154,9 @@ final class ProviderEditorResult {
 ///   ([hasSavedKey] shows a note). A Delete action pops
 ///   [ProviderEditorResult.delete].
 /// - **preset** ([preset] set): a hosted preset (OpenRouter, Ollama Cloud)
-///   — name/URL/model are read-only, only the key is editable.
+///   — name/URL are read-only; the default model (seeded from the
+///   registry's preset override when [registry] is given, falling back to
+///   the preset's built-in default) and the key are editable.
 ///
 /// Pops with a [ProviderEditorResult], or `null` when cancelled.
 class ProviderEditorPage extends StatefulWidget {
@@ -164,12 +166,13 @@ class ProviderEditorPage extends StatefulWidget {
     this.preset,
     this.initial,
     this.hasSavedKey = false,
+    this.registry,
   });
 
   /// App bar title (`Add provider` / `Edit provider` / the preset label).
   final String title;
 
-  /// Hosted-preset view mode: the fixed fields render read-only.
+  /// Hosted-preset view mode: the name/URL fields render read-only.
   final ProviderPreset? preset;
 
   /// The provider being edited; `null` when adding a new one.
@@ -178,6 +181,10 @@ class ProviderEditorPage extends StatefulWidget {
   /// Whether a key is already stored for this provider (edit/preset modes):
   /// the write-only key field shows a "leave empty to keep it" note.
   final bool hasSavedKey;
+
+  /// The provider registry: in preset mode the model field seeds from its
+  /// preset-model override when one was saved.
+  final ProviderRegistry? registry;
 
   @override
   State<ProviderEditorPage> createState() => _ProviderEditorPageState();
@@ -216,7 +223,9 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
       if (preset != null) {
         _nameController.text = preset.labelFor(context);
         _urlController.text = preset.baseUrl ?? '';
-        _modelController.text = preset.defaultModel;
+        _modelController.text =
+            widget.registry?.presetModelOverride(preset.name) ??
+            preset.defaultModel;
       }
     }
   }
@@ -313,7 +322,6 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
               const SizedBox(height: 12),
               TextField(
                 controller: _modelController,
-                enabled: !_isPreset,
                 decoration: InputDecoration(
                   labelText: _isPreset
                       ? context.l10n.settingsModelIdLabel

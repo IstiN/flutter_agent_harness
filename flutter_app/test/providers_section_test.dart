@@ -184,12 +184,16 @@ void main() {
       expect(find.text('Acme'), findsNothing);
     });
 
-    testWidgets('preset editor: fields are read-only, the key saves into '
-        'the saved-keys store', (tester) async {
+    testWidgets('preset editor: name/URL are read-only, the model and key '
+        'save', (tester) async {
       final keysStore = SessionKeysStore.inMemory();
+      final registry = ProviderRegistry.inMemory();
       await _pump(
         tester,
-        SessionKeysScope(store: keysStore, child: const ProvidersSection()),
+        SessionKeysScope(
+          store: keysStore,
+          child: ProvidersSection(registry: registry),
+        ),
       );
 
       await tester.tap(find.text('OpenRouter'));
@@ -200,12 +204,51 @@ void main() {
         tester.widget<TextField>(_editorField('Base URL')).enabled,
         isFalse,
       );
+      // The model field is editable (TextField.enabled is nullable — null
+      // means the default, enabled) and prefilled with the preset default.
+      final modelField = tester.widget<TextField>(_editorField('Model id'));
+      expect(modelField.enabled ?? true, isTrue);
+      expect(modelField.controller!.text, 'openai/gpt-4o-mini');
 
+      await tester.enterText(_editorField('Model id'), 'anthropic/claude');
       await tester.enterText(_editorField('API key (optional)'), 'sk-or-new');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
       expect(keysStore.valueOf('OPENROUTER_API_KEY'), 'sk-or-new');
+      expect(
+        registry.presetModelOverride(ProviderPreset.openrouter.name),
+        'anthropic/claude',
+      );
+    });
+
+    testWidgets('preset editor: a saved override prefills the model, saving '
+        'the built-in default clears it', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.setPresetModelOverride(
+        ProviderPreset.openrouter.name,
+        'anthropic/claude',
+      );
+      await _pump(tester, ProvidersSection(registry: registry));
+
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(_editorField('Model id')).controller!.text,
+        'anthropic/claude',
+      );
+
+      await tester.enterText(
+        _editorField('Model id'),
+        ProviderPreset.openrouter.defaultModel,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        registry.presetModelOverride(ProviderPreset.openrouter.name),
+        isNull,
+      );
     });
   });
 
@@ -340,6 +383,55 @@ void main() {
       expect(service.modelId, 'gpt-oss:120b');
       expect(service.activeBaseUrl, 'https://ollama.com/v1');
       expect(find.text('gpt-oss:120b · Ollama'), findsOneWidget);
+    });
+
+    testWidgets('a saved preset-model override prefills the model page', (
+      tester,
+    ) async {
+      final keysStore = SessionKeysStore.inMemory({
+        'OLLAMA_API_KEY': 'sk-ollama',
+      });
+      final registry = ProviderRegistry.inMemory();
+      await registry.setPresetModelOverride(
+        ProviderPreset.ollamaCloud.name,
+        'qwen3:32b',
+      );
+      final service = _fakeService();
+      await service.initialize();
+      await tester.pumpWidget(
+        SessionKeysScope(
+          store: keysStore,
+          child: MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: DefaultChatModelSection(
+                  service: service,
+                  registry: registry,
+                  modelsFetcher: _someModels,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('test-model · example.com'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ollama'));
+      await tester.pumpAndSettle();
+      // The override wins over the preset's built-in default.
+      expect(
+        tester
+            .widget<TextField>(find.widgetWithText(TextField, 'Model id'))
+            .controller!
+            .text,
+        'qwen3:32b',
+      );
+      await tester.tap(find.text('Apply'));
+      await tester.pumpAndSettle();
+
+      expect(service.modelId, 'qwen3:32b');
+      expect(service.activeBaseUrl, 'https://ollama.com/v1');
     });
 
     testWidgets('a hosted provider without a key fails validation', (

@@ -30,6 +30,8 @@ import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
@@ -177,9 +179,16 @@ class AgentService extends ChangeNotifier {
   /// [env] overrides the platform env — the app passes its shared instance
   /// so the provider registry and the agent (and, on web, the IndexedDB
   /// snapshot persistence) all operate on one filesystem.
+  ///
+  /// [sessionKeys] / [providerRegistry] widen the named-secret resolution
+  /// (media slot `apiKeyName` references) beyond the `.env` secrets store:
+  /// user-saved keys (Keychain / `session_keys.json`) and custom-provider
+  /// session keys resolve too.
   static Future<AgentService> create({
     required AgentConfig config,
     ExecutionEnv? env,
+    SessionKeysStore? sessionKeys,
+    ProviderRegistry? providerRegistry,
   }) async {
     final resolvedEnv = env ?? await createPlatformEnv();
     final secretsStore = createSecretsStore();
@@ -209,7 +218,10 @@ class AgentService extends ChangeNotifier {
       config: config,
       redactor: redactor,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
-      resolveSecretName: (name) async => secrets[name],
+      resolveSecretName: (name) async =>
+          secrets[name] ??
+          sessionKeys?.valueOf(name) ??
+          providerRegistry?.keyValueForName(name),
       promptSuffix: promptSuffix,
     );
   }
@@ -564,7 +576,8 @@ class AgentService extends ChangeNotifier {
   late String _activeApiKey;
 
   /// Resolver for named secrets (media slot `apiKeyName` references);
-  /// `AgentService.create` wires it to the secrets store.
+  /// `AgentService.create` wires it to the `.env` secrets store, the
+  /// saved-keys store, and the provider registry's session keys.
   final MediaKeyResolver? _resolveSecretName;
 
   /// Media generation gateway shared by the `generate_image` / `speak` /

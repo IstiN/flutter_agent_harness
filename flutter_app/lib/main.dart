@@ -309,7 +309,12 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       );
       await manager.createSession(
         config: config,
-        serviceFactory: () => AgentService.create(config: config, env: env),
+        serviceFactory: () => AgentService.create(
+          config: config,
+          env: env,
+          sessionKeys: widget.sessionKeysStore,
+          providerRegistry: widget.registry,
+        ),
       );
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(
@@ -404,7 +409,12 @@ class SetupScreen extends StatelessWidget {
     );
     await manager.createSession(
       config: config,
-      serviceFactory: () => AgentService.create(config: config, env: env),
+      serviceFactory: () => AgentService.create(
+        config: config,
+        env: env,
+        sessionKeys: sessionKeysStore,
+        providerRegistry: registry,
+      ),
     );
     // Connected — remember where we landed for the next boot (non-secret;
     // the key never reaches the store). Saved before navigation: the push

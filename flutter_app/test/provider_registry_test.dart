@@ -194,6 +194,81 @@ void main() {
       expect(a, isNot(equals(c)));
       expect(a.hashCode, b.hashCode);
     });
+
+    test('preset model overrides persist and reload', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      expect(registry.presetModelOverride('openrouter'), isNull);
+
+      await registry.setPresetModelOverride('openrouter', 'anthropic/claude');
+      expect(registry.presetModelOverride('openrouter'), 'anthropic/claude');
+
+      final reloaded = await ProviderRegistry.load(env);
+      expect(reloaded.presetModelOverride('openrouter'), 'anthropic/claude');
+      // Overrides ride the same envelope as the providers.
+      final raw = (await env.readTextFile(
+        '${env.cwd}/${ProviderRegistry.fileName}',
+      )).valueOrNull!;
+      expect(raw, contains('"presetModels"'));
+      expect(raw, contains('anthropic/claude'));
+    });
+
+    test('clearing a preset model override removes it', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      await registry.setPresetModelOverride('openrouter', 'anthropic/claude');
+      await registry.setPresetModelOverride('openrouter', null);
+      expect(registry.presetModelOverride('openrouter'), isNull);
+      // An empty string clears too.
+      await registry.setPresetModelOverride('openrouter', 'm');
+      await registry.setPresetModelOverride('openrouter', '');
+      expect(registry.presetModelOverride('openrouter'), isNull);
+
+      final reloaded = await ProviderRegistry.load(env);
+      expect(reloaded.presetModelOverride('openrouter'), isNull);
+    });
+
+    test('preset model overrides notify listeners', () async {
+      final registry = ProviderRegistry.inMemory();
+      var notifications = 0;
+      registry.addListener(() => notifications++);
+      await registry.setPresetModelOverride('openrouter', 'm1');
+      expect(notifications, 1);
+      // A no-op set (same value) does not notify.
+      await registry.setPresetModelOverride('openrouter', 'm1');
+      expect(notifications, 1);
+      await registry.setPresetModelOverride('openrouter', null);
+      expect(notifications, 2);
+    });
+
+    test('a file without presetModels loads with none', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        '${env.cwd}/providers.json',
+        '{"version": 1, "providers": []}',
+      );
+      final registry = await ProviderRegistry.load(env);
+      expect(registry.presetModelOverride('openrouter'), isNull);
+    });
+
+    test('keyValueForName resolves a provider session key by its host-scoped '
+        'name', () async {
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      expect(registry.keyValueForName('FA_KEY_ACME_EXAMPLE'), isNull);
+
+      registry.rememberKey(provider.id, 'sk-acme');
+      expect(registry.keyValueForName('FA_KEY_ACME_EXAMPLE'), 'sk-acme');
+      // Unknown names resolve to null.
+      expect(registry.keyValueForName('FA_KEY_OTHER_EXAMPLE'), isNull);
+
+      registry.rememberKey(provider.id, '');
+      expect(registry.keyValueForName('FA_KEY_ACME_EXAMPLE'), isNull);
+    });
   });
 
   group('ProviderRegistry with a Keychain backend', () {

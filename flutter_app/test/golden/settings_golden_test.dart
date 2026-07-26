@@ -1,6 +1,6 @@
 /// Golden (screenshot) tests for `lib/ui/screens/settings.dart` and the
 /// providers-first settings pages (`provider_editor_page.dart`,
-/// `providers_section.dart`, `media_slot_editor_page.dart`) — plus the BYOK
+/// `providers_section.dart`, `media_slot_picker_page.dart`) — plus the BYOK
 /// connection form (`AgentSettingsForm`) shared by the setup screen and the
 /// on-device route of the default-chat-model flow. Fakes and pump patterns
 /// mirror `test/settings_test.dart` (in-memory `ProviderRegistry`, no
@@ -23,7 +23,7 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/screens/media_slot_editor_page.dart';
+import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -364,51 +364,56 @@ void main() {
       await expectGolden(tester, 'settings_model_picker');
     });
 
-    testWidgets('media slot editor page', (tester) async {
+    testWidgets('media slot provider picker page', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
       await pumpGolden(
         tester,
         size: goldenSizeDesktop,
-        wrap: (child) => Builder(
-          builder: (context) {
-            final theme = Theme.of(context);
-            // See _pumpSettingsFrame: pin the FilledButton font to Inter.
-            return Theme(
-              data: theme.copyWith(
-                filledButtonTheme: FilledButtonThemeData(
-                  style: theme.filledButtonTheme.style?.copyWith(
-                    textStyle: const WidgetStatePropertyAll(
-                      TextStyle(
-                        fontFamily: 'Inter',
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              child: child,
-            );
-          },
-        ),
-        const MediaSlotEditorPage(
+        wrap: _wrapPage,
+        MediaSlotProviderPickerPage(
           slot: MediaSlot.imageGeneration,
           title: 'Edit Image generation',
           mainBaseUrl: 'https://openrouter.ai/api/v1',
-          initial: MediaSlotOverride(
+          initial: const MediaSlotOverride(
             providerKind: 'openai-completions',
             baseUrl: 'https://openrouter.ai/api/v1',
             modelId: 'gpt-image-1',
           ),
+          registry: registry,
           modelsFetcher: _editorModels,
         ),
       );
-      // Fire the debounced /models fetch and let the chips rebuild.
-      await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpAndSettle();
 
-      // Full-screen editor: the provider picker (OpenRouter selected), the
-      // prefilled model field, the Clear/Save actions, and the capability
-      // chips derived from the endpoint's /models list.
-      await expectGolden(tester, 'settings_media_editor');
+      // The provider list: the main connection row, the hosted presets (the
+      // override's OpenRouter checked), the saved provider, the add row.
+      await expectGolden(tester, 'settings_media_provider_picker');
+    });
+
+    testWidgets('media slot model page', (tester) async {
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: _wrapPage,
+        const MediaSlotModelPage(
+          slot: MediaSlot.imageGeneration,
+          provider: ProviderPreset.openrouter,
+          initialModel: 'gpt-image-1',
+          modelsFetcher: _editorModels,
+        ),
+      );
+      // The post-frame /models fetch feeds the chips and the quick select.
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      // The provider header, the prefilled model field, the Save action,
+      // and the capability chips derived from the endpoint's /models list.
+      await expectGolden(tester, 'settings_media_model_page');
     });
 
     testWidgets('theme and keys sections', (tester) async {

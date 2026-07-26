@@ -1,6 +1,6 @@
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
-import 'package:fa/ui/screens/media_slot_editor_page.dart';
+import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -68,7 +68,7 @@ void main() {
       expect(find.text('Same as main connection'), findsNWidgets(6));
     });
 
-    testWidgets('editor page saves an override and the row updates', (
+    testWidgets('the flow saves an override and the row updates', (
       tester,
     ) async {
       final store = MediaModelsStore.inMemory();
@@ -79,17 +79,15 @@ void main() {
 
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
-      expect(find.byType(MediaSlotEditorPage), findsOneWidget);
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
       expect(find.text('Edit Image generation'), findsOneWidget);
-      // No Clear button before an override exists.
-      expect(find.text('Clear'), findsNothing);
+      // No override yet → the main connection row is checked.
+      expect(find.byIcon(Icons.check), findsOneWidget);
 
-      // The slot references a provider (picked by name), not a raw URL.
-      expect(find.text('Main connection'), findsOneWidget);
-      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.tap(find.text('OpenRouter'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('OpenRouter').last);
-      await tester.pumpAndSettle();
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+
       await tester.enterText(
         find.widgetWithText(TextField, 'Model id'),
         'gpt-image-1',
@@ -100,8 +98,10 @@ void main() {
       final saved = store.overrideFor(MediaSlot.imageGeneration);
       expect(saved, isNotNull);
       expect(saved!.modelId, 'gpt-image-1');
-      // The provider's resolved URL is what gets stored.
+      // The provider's resolved URL is what gets stored…
       expect(saved.baseUrl, 'https://openrouter.ai/api/v1');
+      // …with the hosted preset's well-known key NAME (never a value).
+      expect(saved.apiKeyName, 'OPENROUTER_API_KEY');
       // …but the row summarizes with the provider name, never the URL.
       expect(find.text('gpt-image-1 · OpenRouter'), findsOneWidget);
       expect(find.text('Same as main connection'), findsNWidgets(5));
@@ -128,12 +128,14 @@ void main() {
 
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.tap(find.text('Acme'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Acme').last);
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Model id'),
+      // The custom provider's own model prefills the field.
+      expect(
+        tester
+            .widget<TextField>(find.widgetWithText(TextField, 'Model id'))
+            .controller!
+            .text,
         'acme-img',
       );
       await tester.tap(find.text('Save'));
@@ -141,10 +143,13 @@ void main() {
 
       final saved = store.overrideFor(MediaSlot.imageGeneration)!;
       expect(saved.baseUrl, 'https://acme.example/v1');
+      expect(saved.modelId, 'acme-img');
+      // Custom providers store their host-scoped key name.
+      expect(saved.apiKeyName, 'FA_KEY_ACME_EXAMPLE');
       expect(find.text('acme-img · Acme'), findsOneWidget);
     });
 
-    testWidgets('editor page saves via the endpoint model picker', (
+    testWidgets('the model page picks from the endpoint model list', (
       tester,
     ) async {
       final store = MediaModelsStore.inMemory();
@@ -155,9 +160,13 @@ void main() {
 
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
-      // The debounced fetch feeds the quick select.
-      expect(find.byType(MediaSlotEditorPage), findsOneWidget);
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
 
+      // The preset's default model prefills — clear it so the typed text
+      // does not filter the quick select.
+      await tester.enterText(find.widgetWithText(TextField, 'Model id'), '');
       await tester.tap(find.widgetWithText(TextField, 'Model id'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('dall-e-3'));
@@ -182,6 +191,8 @@ void main() {
 
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
 
       // gpt-image-1/dall-e-3 → image, tts-1 → TTS, gpt-4o → vision.
       expect(
@@ -204,6 +215,8 @@ void main() {
 
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
 
       expect(
         find.text("This endpoint's models suggest support for:"),
@@ -211,32 +224,7 @@ void main() {
       );
     });
 
-    testWidgets('the main connection provider resolves to its default URL', (
-      tester,
-    ) async {
-      final store = MediaModelsStore.inMemory();
-      await _pump(
-        tester,
-        MediaModelsSection(store: store, modelsFetcher: _noModels),
-      );
-
-      await tester.tap(find.text('Text-to-speech'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Model id'),
-        'tts-1',
-      );
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-
-      // No service in this harness → the OpenAI default applies.
-      expect(
-        store.overrideFor(MediaSlot.audioTts)!.baseUrl,
-        MediaModelsStore.defaultBaseUrl,
-      );
-    });
-
-    testWidgets('clear restores the fallback summary', (tester) async {
+    testWidgets('the main connection row clears the override', (tester) async {
       final store = MediaModelsStore.inMemory();
       await store.setOverride(MediaSlot.imageGeneration, _override());
       await _pump(
@@ -248,15 +236,16 @@ void main() {
 
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
-      expect(find.text('Clear'), findsOneWidget);
-      await tester.tap(find.text('Clear'));
+      // The override's provider is checked, not the main connection row.
+      await tester.tap(find.text('Main connection'));
       await tester.pumpAndSettle();
 
       expect(store.overrideFor(MediaSlot.imageGeneration), isNull);
       expect(find.text('Same as main connection'), findsNWidgets(6));
     });
 
-    testWidgets('apiKeyName collects a name, never a value', (tester) async {
+    testWidgets('the row summary shows model + provider name, never the key '
+        'name', (tester) async {
       final store = MediaModelsStore.inMemory();
       await store.setOverride(
         MediaSlot.transcription,
@@ -267,29 +256,8 @@ void main() {
         MediaModelsSection(store: store, modelsFetcher: _noModels),
       );
 
-      // The row summary shows model + provider name, never the key name.
       expect(find.text('whisper-1 · OpenRouter'), findsOneWidget);
       expect(find.textContaining('OPENAI_API_KEY'), findsNothing);
-
-      await tester.tap(find.text('Transcription'));
-      await tester.pumpAndSettle();
-      final keyNameField = tester.widget<TextField>(
-        find.widgetWithText(TextField, 'API key name (optional)'),
-      );
-      // The field holds the NAME (not obscured, not a secret value).
-      expect(keyNameField.controller?.text, 'OPENAI_API_KEY');
-      expect(keyNameField.obscureText, isFalse);
-
-      await tester.enterText(
-        find.widgetWithText(TextField, 'API key name (optional)'),
-        'GROQ_API_KEY',
-      );
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-      expect(
-        store.overrideFor(MediaSlot.transcription)!.apiKeyName,
-        'GROQ_API_KEY',
-      );
     });
   });
 }

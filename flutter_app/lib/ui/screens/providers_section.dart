@@ -14,7 +14,7 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
-import 'package:fa/ui/screens/media_slot_editor_page.dart';
+import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -148,6 +148,7 @@ class ProvidersSection extends StatelessWidget {
 
   Future<void> _editPreset(BuildContext context, ProviderPreset preset) async {
     final keysStore = SessionKeysScope.maybeOf(context);
+    final registry = this.registry;
     final keyName = hostedProviderKeyName(preset);
     final result = await Navigator.of(context).push<ProviderEditorResult>(
       MaterialPageRoute(
@@ -156,10 +157,21 @@ class ProvidersSection extends StatelessWidget {
           preset: preset,
           hasSavedKey:
               keyName != null && settingsKeyEnv(keyName, keysStore).isNotEmpty,
+          registry: registry,
         ),
       ),
     );
-    if (result == null || result.apiKey.isEmpty || keyName == null) return;
+    if (result == null) return;
+    // The preset's default model is user-editable: persist the override,
+    // clearing it when the field is empty or back to the built-in default.
+    if (registry != null) {
+      final model = result.modelId;
+      await registry.setPresetModelOverride(
+        preset.name,
+        model.isEmpty || model == preset.defaultModel ? null : model,
+      );
+    }
+    if (result.apiKey.isEmpty || keyName == null) return;
     await keysStore?.set(keyName, result.apiKey);
   }
 
@@ -622,7 +634,10 @@ class _DefaultModelPickerPageState extends State<DefaultModelPickerPage> {
     super.initState();
     _modelController = TextEditingController(
       text: switch (widget.provider) {
-        ProviderPreset preset => preset.defaultModel,
+        // A saved preset-model override wins over the built-in default.
+        ProviderPreset preset =>
+          widget.registry?.presetModelOverride(preset.name) ??
+              preset.defaultModel,
         CustomProvider custom => custom.modelId,
         _ => '',
       },
