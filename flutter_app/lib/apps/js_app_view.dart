@@ -24,6 +24,7 @@ import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_theme.dart';
@@ -143,6 +144,11 @@ class _JsAppViewState extends State<JsAppView> {
 
   /// The reply the user dismissed — never re-shown for the same text.
   String? _dismissedReplyText;
+
+  /// Whether the expanded in-place Fa chat panel is showing; while true it
+  /// supersedes the compact chrome (work bar, reply sheet, floating Fa
+  /// button).
+  bool _faChatExpanded = false;
 
   /// The last theme map handed to the engine (JSON-encoded for cheap
   /// change detection in [didChangeDependencies]).
@@ -491,30 +497,31 @@ class _JsAppViewState extends State<JsAppView> {
                     ),
                   ),
                 if (widget.onSendToAgent != null) ...[
-                  Positioned(
-                    right: 16,
-                    bottom: 16,
-                    child: FloatingActionButton.small(
-                      heroTag: 'fa-${widget.app.id}',
-                      tooltip: context.l10n.appsAskFaTooltip,
-                      onPressed: _openFaSheet,
-                      child: const FaMark(size: 18),
-                    ),
-                  ),
-                  if (_agentService != null) ...[
+                  if (!_faChatExpanded)
                     Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: FaWorkBar(
-                        service: _agentService!,
-                        onSend: _sendFaMessage,
-                        // Expand-to-chat always leaves the app (an explicit tap,
-                        // not a back gesture) — pop directly, bypassing canPop.
-                        onExpand: () => Navigator.of(context).pop(),
+                      right: 16,
+                      bottom: 16,
+                      child: FloatingActionButton.small(
+                        heroTag: 'fa-${widget.app.id}',
+                        tooltip: context.l10n.appsAskFaTooltip,
+                        onPressed: _openFaSheet,
+                        child: const FaMark(size: 18),
                       ),
                     ),
-                    if (_faReply != null)
+                  if (_agentService != null) ...[
+                    if (!_faChatExpanded)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: FaWorkBar(
+                          service: _agentService!,
+                          onSend: _sendFaMessage,
+                          onExpand: () =>
+                              setState(() => _faChatExpanded = true),
+                        ),
+                      ),
+                    if (!_faChatExpanded && _faReply != null)
                       Positioned(
                         left: 0,
                         right: 0,
@@ -522,8 +529,22 @@ class _JsAppViewState extends State<JsAppView> {
                         child: FaReplySheet(
                           service: _agentService!,
                           reply: _faReply!,
-                          onExpand: () => Navigator.of(context).pop(),
+                          onExpand: () =>
+                              setState(() => _faChatExpanded = true),
                           onDismiss: _dismissFaReply,
+                        ),
+                      ),
+                    if (_faChatExpanded)
+                      Positioned.fill(
+                        child: FaChatOverlay(
+                          service: _agentService!,
+                          onSend: _sendFaMessage,
+                          onCollapse: () =>
+                              setState(() => _faChatExpanded = false),
+                          // Expand-to-full-chat always leaves the app (an
+                          // explicit tap, not a back gesture) — pop directly,
+                          // bypassing canPop.
+                          onOpenFullChat: () => Navigator.of(context).pop(),
                         ),
                       ),
                   ],
@@ -625,7 +646,7 @@ class _JsAppViewState extends State<JsAppView> {
 /// Mini reply sheet shown above the [FaWorkBar] when the bound session's
 /// run ends with a new assistant text message: a compact card with the Fa
 /// mark, the reply rendered as Markdown (the chat's style sheet, capped at
-/// five lines with a soft fade at the cut), tap-to-open-chat and a dismiss
+/// five lines with a soft fade at the cut), tap-to-expand-chat and a dismiss
 /// button. It slides up and fades in (~200 ms) on appearance; the work bar
 /// stays the progress indicator while the run streams.
 class FaReplySheet extends StatefulWidget {
@@ -644,8 +665,7 @@ class FaReplySheet extends StatefulWidget {
   /// The assistant reply text (Markdown).
   final String reply;
 
-  /// Opens the full chat (typically pops the app view) when the card body
-  /// is tapped.
+  /// Expands the in-place chat panel when the card body is tapped.
   final VoidCallback? onExpand;
 
   /// Dismisses the sheet until the next reply.

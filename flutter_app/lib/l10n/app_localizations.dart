@@ -200,6 +200,18 @@ abstract class AppLocalizations {
   /// **'Ask Fa about this app'**
   String get appsAskFaTooltip;
 
+  /// No description provided for @appsChatEmptyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing here yet — ask Fa about this app.'**
+  String get appsChatEmptyHint;
+
+  /// No description provided for @appsCollapseChatTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse chat'**
+  String get appsCollapseChatTooltip;
+
   /// No description provided for @appsDismissReplyTooltip.
   ///
   /// In en, this message translates to:
@@ -253,6 +265,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open chat'**
   String get appsOpenChatTooltip;
+
+  /// No description provided for @appsOpenFullChatTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Open full chat'**
+  String get appsOpenFullChatTooltip;
 
   /// No description provided for @appsPermissionCalendar.
   ///

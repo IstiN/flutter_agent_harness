@@ -70,6 +70,13 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsAskFaTooltip => 'Спросить Fa об этом приложении';
 
   @override
+  String get appsChatEmptyHint =>
+      'Пока пусто — спросите Fa об этом приложении.';
+
+  @override
+  String get appsCollapseChatTooltip => 'Свернуть чат';
+
+  @override
   String get appsDismissReplyTooltip => 'Скрыть';
 
   @override
@@ -98,6 +105,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get appsOpenChatTooltip => 'Открыть чат';
+
+  @override
+  String get appsOpenFullChatTooltip => 'Открыть полный чат';
 
   @override
   String get appsPermissionCalendar => 'Календарь';

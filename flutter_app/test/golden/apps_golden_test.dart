@@ -27,6 +27,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_grid.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/l10n/app_localizations.dart';
@@ -545,6 +546,49 @@ Widget _replySheetHost(
   );
 }
 
+/// A JsAppView-like scaffold with the expanded in-place Fa chat overlay
+/// docked over the mock app canvas: header (handle, Fa mark, actions), a
+/// realistic transcript (user bubble, Markdown answer, thinking note, tool
+/// line, system line) and the composer. The service is idle, so the footer
+/// work bar stays hidden and the frame is static.
+Widget _chatOverlayHost(AgentService service, MemoryExecutionEnv env) {
+  final calcApp = _app(const {
+    'id': 'calculator',
+    'name': 'Calculator',
+    'icon': 'icon.svg',
+  }, fallbackId: 'calculator');
+  return Scaffold(
+    appBar: AppBar(
+      title: Row(
+        children: [
+          AppIcon(app: calcApp, env: env, size: 24),
+          const SizedBox(width: 8),
+          const Flexible(
+            child: Text('Calculator', overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
+      actions: [
+        IconButton(icon: const Icon(Icons.shield_outlined), onPressed: () {}),
+        IconButton(icon: const Icon(Icons.refresh), onPressed: () {}),
+      ],
+    ),
+    body: Stack(
+      children: [
+        Positioned.fill(child: _calculatorCanvas()),
+        Positioned.fill(
+          child: FaChatOverlay(
+            service: service,
+            onSend: (text) async {},
+            onCollapse: () {},
+            onOpenFullChat: () {},
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 Widget _iconTile(String label, Widget icon) {
   return Column(
     mainAxisSize: MainAxisSize.min,
@@ -737,6 +781,40 @@ void main() {
       wrap: (child) => child,
     );
     await expectGolden(tester, 'apps_fa_reply_sheet_light');
+  });
+
+  testWidgets('expanded Fa chat overlay with a transcript', (tester) async {
+    // Real file IO must run outside the FakeAsync test zone.
+    final env = (await tester.runAsync(_seededEnv))!;
+    final service = _hungService(); // idle: the footer work bar stays hidden
+    addTearDown(service.dispose);
+    service.messages.addAll([
+      FahChatMessage(
+        role: 'user',
+        content: 'Make the operator keys indigo and grow the display.',
+      ),
+      FahChatMessage(
+        role: 'thinking',
+        content: 'Picking the brand indigo for operators, 40px display…',
+      ),
+      FahChatMessage(
+        role: 'tool',
+        content: 'patched widget.js',
+        toolName: 'edit',
+      ),
+      FahChatMessage(
+        role: 'system',
+        content: '[edit] apps/calculator/widget.js',
+      ),
+      FahChatMessage(role: 'assistant', content: _faReply),
+    ]);
+    await pumpGolden(
+      tester,
+      _chatOverlayHost(service, env),
+      size: goldenSizeDesktop,
+      wrap: (child) => child,
+    );
+    await expectGolden(tester, 'apps_fa_chat_overlay');
   });
 
   testWidgets('app permissions dialog with a persisted override', (

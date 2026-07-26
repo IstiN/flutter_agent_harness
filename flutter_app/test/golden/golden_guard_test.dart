@@ -39,6 +39,7 @@ const _coverage = <String, String>{
   'lib/apps/app_icon.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/apps_grid.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/fa_work_bar.dart': 'test/golden/apps_golden_test.dart',
+  'lib/apps/fa_chat_overlay.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/js_app_view.dart': 'test/golden/apps_golden_test.dart',
   'lib/ui/widgets/downloaded_models_quick_start.dart':
       'test/golden/sections_golden_test.dart',

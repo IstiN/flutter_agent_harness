@@ -69,6 +69,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsAskFaTooltip => 'Ask Fa about this app';
 
   @override
+  String get appsChatEmptyHint => 'Nothing here yet — ask Fa about this app.';
+
+  @override
+  String get appsCollapseChatTooltip => 'Collapse chat';
+
+  @override
   String get appsDismissReplyTooltip => 'Dismiss';
 
   @override
@@ -97,6 +103,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appsOpenChatTooltip => 'Open chat';
+
+  @override
+  String get appsOpenFullChatTooltip => 'Open full chat';
 
   @override
   String get appsPermissionCalendar => 'Calendar';

@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
@@ -258,7 +259,7 @@ void main() {
     expect(find.textContaining('buttons are teal'), findsOneWidget);
   });
 
-  testWidgets('tapping the card expands to the chat (pops the app view)', (
+  testWidgets('tapping the card expands the in-place chat overlay', (
     tester,
   ) async {
     final service = _scriptedService(const ['Done — the buttons are purple.']);
@@ -310,9 +311,27 @@ void main() {
     await _completeRun(tester, service);
     expect(find.byType(FaReplySheet), findsOneWidget);
 
-    // Tap the card body (not the close button): same navigation as the
-    // work bar's expand.
+    // Tap the card body (not the close button): the expanded chat overlay
+    // opens in place — the app view stays put and the sheet is superseded.
     await tester.tap(find.textContaining('buttons are purple'));
+    await tester.pumpAndSettle();
+    expect(find.byType(JsAppView), findsOneWidget);
+    expect(find.byType(FaChatOverlay), findsOneWidget);
+    expect(find.byType(FaReplySheet), findsNothing);
+    // The floating Fa button is hidden while the overlay is up.
+    expect(find.byType(FloatingActionButton), findsNothing);
+
+    // Collapse brings the compact chrome back; open-full-chat keeps the old
+    // pop-to-chat behavior as a secondary option.
+    await tester.tap(find.byIcon(Icons.keyboard_arrow_down));
+    await tester.pumpAndSettle();
+    expect(find.byType(FaChatOverlay), findsNothing);
+    expect(find.byType(FaReplySheet), findsOneWidget);
+
+    await tester.tap(find.textContaining('buttons are purple'));
+    await tester.pumpAndSettle();
+    expect(find.byType(FaChatOverlay), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.open_in_new));
     await tester.pumpAndSettle();
     expect(find.byType(JsAppView), findsNothing);
   });
