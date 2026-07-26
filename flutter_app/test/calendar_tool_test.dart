@@ -46,7 +46,10 @@ final class FakeCalendarApi implements CalendarApi {
   }) async {
     lastStart = start;
     lastEnd = end;
-    return eventsToReturn;
+    // Range-filtered like the real EventKit predicate.
+    return eventsToReturn
+        .where((e) => e.end.isAfter(start) && e.start.isBefore(end))
+        .toList();
   }
 
   @override
@@ -92,13 +95,15 @@ String _textOf(ToolExecutionResult result) =>
 void main() {
   group('calendarEventsTool', () {
     test('defaults to today and renders a readable list', () async {
+      final today = DateTime.now();
+      final day = DateTime(today.year, today.month, today.day);
       final calendar = FakeCalendarApi(
         events: [
           (
             id: 'ev-standup',
             title: 'Standup',
-            start: DateTime(2026, 7, 25, 10),
-            end: DateTime(2026, 7, 25, 11),
+            start: day.add(const Duration(hours: 10)),
+            end: day.add(const Duration(hours: 11)),
             allDay: false,
             calendar: 'Work',
             location: 'Office',
@@ -107,8 +112,8 @@ void main() {
           (
             id: 'ev-gym',
             title: 'Gym',
-            start: DateTime(2026, 7, 25, 18, 30),
-            end: DateTime(2026, 7, 25, 19, 30),
+            start: day.add(const Duration(hours: 18, minutes: 30)),
+            end: day.add(const Duration(hours: 19, minutes: 30)),
             allDay: false,
             calendar: null,
             location: null,
@@ -308,7 +313,10 @@ void main() {
       expect(calendar.updatedTitle, 'Gym (evening)');
       expect(calendar.updatedStart, DateTime(2026, 7, 25, 19));
       expect(calendar.updatedEnd, DateTime(2026, 7, 25, 20));
-      expect(_textOf(result), contains('Updated 19:00–20:00 Gym (evening)'));
+      expect(
+        _textOf(result),
+        contains('Updated 2026-07-25 19:00–20:00 Gym (evening)'),
+      );
     });
 
     test('matches by 1-based index and keeps untouched fields', () async {
@@ -371,7 +379,80 @@ void main() {
       );
 
       expect(calendar.deletedIds, ['ev-standup']);
-      expect(_textOf(result), contains('Deleted 10:00–11:00 Standup'));
+      expect(
+        _textOf(result),
+        contains('Deleted 2026-07-25 10:00–11:00 Standup'),
+      );
+    });
+
+    test('a match on another day is found within ±7 days', () async {
+      final calendar = FakeCalendarApi(
+        events: [
+          (
+            id: 'ev-training',
+            title: 'Visit training',
+            start: DateTime(2026, 7, 27, 18),
+            end: DateTime(2026, 7, 27, 19),
+            allDay: false,
+            calendar: 'Calendar',
+            location: null,
+            notes: null,
+          ),
+        ],
+      );
+      final tool = calendarDeleteTool(calendar);
+
+      final result = await tool.execute(
+        const {'date': '2026-07-26', 'match': 'visit training'},
+        null,
+        null,
+      );
+
+      expect(calendar.deletedIds, ['ev-training']);
+      expect(
+        _textOf(result),
+        contains('Deleted 2026-07-27 18:00–19:00 Visit training'),
+      );
+    });
+
+    test('several matches within ±7 days ask for the exact date', () async {
+      final calendar = FakeCalendarApi(
+        events: [
+          (
+            id: 'ev-a',
+            title: 'Visit training',
+            start: DateTime(2026, 7, 27, 18),
+            end: DateTime(2026, 7, 27, 19),
+            allDay: false,
+            calendar: null,
+            location: null,
+            notes: null,
+          ),
+          (
+            id: 'ev-b',
+            title: 'Visit training',
+            start: DateTime(2026, 7, 29, 18),
+            end: DateTime(2026, 7, 29, 19),
+            allDay: false,
+            calendar: null,
+            location: null,
+            notes: null,
+          ),
+        ],
+      );
+      final tool = calendarDeleteTool(calendar);
+
+      final result = await tool.execute(
+        const {'date': '2026-07-26', 'match': 'visit training'},
+        null,
+        null,
+      );
+
+      expect(calendar.deletedIds, isEmpty);
+      final text = _textOf(result);
+      expect(text, contains('pass the exact date'));
+      expect(text, contains('2026-07-27'));
+      expect(text, contains('2026-07-29'));
     });
 
     test('unknown title errors and lists the day', () async {

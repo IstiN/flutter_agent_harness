@@ -199,7 +199,7 @@ AgentTool calendarUpdateTool(CalendarApi calendar) {
         notes: notes,
       );
       return ToolExecutionResult.text(
-        'Updated ${_renderEvent((id: event.id, title: title, start: start, end: end, allDay: allDay, calendar: event.calendar, location: location, notes: notes))}.',
+        'Updated ${_renderEvent((id: event.id, title: title, start: start, end: end, allDay: allDay, calendar: event.calendar, location: location, notes: notes), showDate: true)}.',
       );
     },
   );
@@ -240,7 +240,9 @@ AgentTool calendarDeleteTool(CalendarApi calendar) {
       if (found.error != null) return ToolExecutionResult.text(found.error!);
       final event = found.event!;
       await calendar.deleteEvent(id: event.id);
-      return ToolExecutionResult.text('Deleted ${_renderEvent(event)}.');
+      return ToolExecutionResult.text(
+        'Deleted ${_renderEvent(event, showDate: true)}.',
+      );
     },
   );
 }
@@ -300,7 +302,33 @@ Future<_FindResult> _find(
   final matches = sorted
       .where((event) => event.title.toLowerCase().contains(needle))
       .toList();
-  if (matches.isEmpty) return (event: null, error: notFound());
+  if (matches.isEmpty) {
+    // The event is often on ANOTHER day than the one shown (the read tool
+    // defaults to today) — retry over the surrounding week before giving up.
+    final wide = (
+      start: range.start.subtract(const Duration(days: 7)),
+      end: range.end.add(const Duration(days: 7)),
+    );
+    final wideEvents = await calendar.events(start: wide.start, end: wide.end);
+    final wideMatches =
+        (wideEvents
+            .where((event) => event.title.toLowerCase().contains(needle))
+            .toList()
+          ..sort((a, b) => a.start.compareTo(b.start)));
+    if (wideMatches.length == 1) {
+      return (event: wideMatches.single, error: null);
+    }
+    if (wideMatches.isNotEmpty) {
+      final lines = [
+        'No event matching "$matchText" on $day, but several match '
+            'within ±7 days — pass the exact date:',
+        for (final event in wideMatches)
+          '- ${_renderEvent(event, showDate: true)}',
+      ];
+      return (event: null, error: lines.join('\n'));
+    }
+    return (event: null, error: notFound());
+  }
   if (matches.length > 1) {
     final lines = [
       'Several events match "$matchText" on $day — be more specific:',
@@ -323,16 +351,20 @@ String _render(
   if (sorted.isEmpty) return 'No events on $span.';
   final lines = [
     'Events for $span:',
-    for (final event in sorted) '- ${_renderEvent(event)}',
+    // Multi-day spans carry the date on every row — an agent matching a
+    // title must learn WHICH day the event is on, not just the time.
+    for (final event in sorted) '- ${_renderEvent(event, showDate: days > 1)}',
   ];
   return lines.join('\n');
 }
 
-String _renderEvent(CalendarEvent event) {
+String _renderEvent(CalendarEvent event, {bool showDate = false}) {
   final when = event.allDay
       ? 'all day'
       : '${_timeLabel(event.start)}–${_timeLabel(event.end)}';
-  final buffer = StringBuffer('$when ${event.title}');
+  final buffer = StringBuffer();
+  if (showDate) buffer.write('${_dateLabel(event.start)} ');
+  buffer.write('$when ${event.title}');
   final calendar = event.calendar;
   if (calendar != null && calendar.isNotEmpty) buffer.write(' ($calendar)');
   final location = event.location;
