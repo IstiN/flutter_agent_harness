@@ -341,6 +341,17 @@ platform :mac do
     bundle_id = ENV["MACOS_BUNDLE_ID"] || "dev.fa1.app"
     version_name = store_pubspec_version
 
+    # Preflight: without an editable (prepare-for-submission) macOS version in
+    # App Store Connect, deliver dies on Apple's opaque "Server error got 500"
+    # while resolving the version — check first and report instead of forcing.
+    mac_app = Spaceship::ConnectAPI::App.find(bundle_id)
+    mac_version = mac_app&.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
+    if mac_version.nil?
+      UI.important("No editable macOS App Store version for #{bundle_id}.")
+      UI.important("Create the macOS #{version_name} version in App Store Connect (app page → macOS → '+ Version') and re-run — skipping the macOS upload.")
+      next
+    end
+
     if do_metadata
       begin
         deliver(
