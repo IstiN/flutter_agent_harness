@@ -36,16 +36,22 @@ class MainFlutterWindow: NSWindow {
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
-    registerProjectFolderChannel(registry: flutterViewController)
-    registerCalendarChannel(registry: flutterViewController)
-    registerContactsChannel(registry: flutterViewController)
-    registerHealthChannel(registry: flutterViewController)
-    registerHomeChannel(registry: flutterViewController)
-    registerICloudChannel(registry: flutterViewController)
-    registerKeychainChannel(registry: flutterViewController)
-    registerMicChannel(registry: flutterViewController)
-    registerNotifyChannel(registry: flutterViewController)
-    registerVideoChannel(registry: flutterViewController)
+    // Custom channels register against the ENGINE's binary messenger — in
+    // current Flutter macOS, FlutterViewController conforms only to
+    // FlutterPluginRegistry, so casting it to FlutterBinaryMessenger fails
+    // and silently dropped every custom channel (permissions, keychain,
+    // mic, …) on macOS.
+    let messenger = flutterViewController.engine.binaryMessenger
+    registerProjectFolderChannel(messenger: messenger)
+    registerCalendarChannel(messenger: messenger)
+    registerContactsChannel(messenger: messenger)
+    registerHealthChannel(messenger: messenger)
+    registerHomeChannel(messenger: messenger)
+    registerICloudChannel(messenger: messenger)
+    registerKeychainChannel(messenger: messenger)
+    registerMicChannel(messenger: messenger)
+    registerNotifyChannel(messenger: messenger)
+    registerVideoChannel(messenger: messenger)
 
     super.awakeFromNib()
   }
@@ -54,8 +60,7 @@ class MainFlutterWindow: NSWindow {
 /// The `fah/project_folder` method channel: native directory picking via
 /// NSOpenPanel plus security-scoped bookmark lifecycle, so a user-selected
 /// project folder stays accessible to the sandboxed app across restarts.
-private func registerProjectFolderChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerProjectFolderChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/project_folder",
     binaryMessenger: messenger,
@@ -135,8 +140,7 @@ private func stopAccessing(bookmarkBase64: String) {
 /// signed in, or the iCloud capability/container id missing from the
 /// provisioning profile). `syncStatus` → {available, containerUrl?}. The
 /// file copy itself happens Dart-side once the container URL is known.
-private func registerICloudChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerICloudChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/icloud",
     binaryMessenger: messenger,
@@ -174,8 +178,7 @@ private let calendarEventStore = EKEventStore()
 /// via EventKit. Methods: `isAvailable`, `requestAccess`, `events` with
 /// {startMs, endMs} returning a list of event maps, plus the write methods
 /// `createEvent` / `updateEvent` / `deleteEvent`.
-private func registerCalendarChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerCalendarChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/calendar",
     binaryMessenger: messenger,
@@ -390,8 +393,7 @@ private func calendarDeleteEvent(args: [String: Any]) -> Any {
 /// as a name→value map), `set` {name, value}, and `delete` {name}. Values
 /// never leave the device (AfterFirstUnlockThisDeviceOnly — no iCloud
 /// backup of secrets). Works inside the app sandbox for app-private items.
-private func registerKeychainChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerKeychainChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/keychain",
     binaryMessenger: messenger,
@@ -431,9 +433,11 @@ private func keychainQuery(_ name: String? = nil) -> [String: Any] {
 }
 
 private func keychainReadAll() -> [String: String] {
+  // macOS's file-based keychain rejects kSecReturnData combined with
+  // kSecMatchLimitAll (errSecParam -50), so list attributes first and fetch
+  // each value with a single-item data query.
   var query = keychainQuery()
   query[kSecReturnAttributes as String] = true
-  query[kSecReturnData as String] = true
   query[kSecMatchLimit as String] = kSecMatchLimitAll
   var item: CFTypeRef?
   guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
@@ -441,9 +445,14 @@ private func keychainReadAll() -> [String: String] {
   else { return [:] }
   var out: [String: String] = [:]
   for entry in entries {
-    if let account = entry[kSecAttrAccount as String] as? String,
-      let data = entry[kSecValueData as String] as? Data,
-      let value = String(data: data, encoding: .utf8)
+    guard let account = entry[kSecAttrAccount as String] as? String else { continue }
+    var dataQuery = keychainQuery(account)
+    dataQuery[kSecReturnData as String] = true
+    dataQuery[kSecMatchLimit as String] = kSecMatchLimitOne
+    var data: CFTypeRef?
+    if SecItemCopyMatching(dataQuery as CFDictionary, &data) == errSecSuccess,
+      let bytes = data as? Data,
+      let value = String(data: bytes, encoding: .utf8)
     {
       out[account] = value
     }
@@ -494,8 +503,7 @@ private let contactKeys: [CNKeyDescriptor] = [
 /// ({id, name, phones, emails}), the write methods `createContact` /
 /// `updateContact` / `deleteContact`, and `openUrl` ({url}) which opens
 /// `tel:`/`sms:` URLs for the call/SMS flows.
-private func registerContactsChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerContactsChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/contacts",
     binaryMessenger: messenger,
@@ -756,8 +764,7 @@ private func contactsOpenUrl(_ urlString: String) -> Any {
 /// the channel is registered but honestly reports every call as
 /// unsupported. The Dart side (`healthPlatformSupported`) already gates
 /// health to iOS and never gets here in practice.
-private func registerHealthChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerHealthChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/health",
     binaryMessenger: messenger,
@@ -784,8 +791,7 @@ private func registerHealthChannel(registry: FlutterPluginRegistry) {
 /// the channel is registered but honestly reports every call as unsupported.
 /// The Dart side (`homePlatformSupported`) already gates home control to iOS
 /// and never gets here in practice.
-private func registerHomeChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/home",
     binaryMessenger: messenger,
@@ -814,8 +820,7 @@ private func registerHomeChannel(registry: FlutterPluginRegistry) {
 /// and `stopRecording` → {path, durationMs, sampleRate}. Needs the
 /// `com.apple.security.device.audio-input` entitlement (sandbox) and the
 /// NSMicrophoneUsageDescription Info.plist string.
-private func registerMicChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerMicChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/mic",
     binaryMessenger: messenger,
@@ -914,8 +919,7 @@ private func micStopRecording() -> Any {
 /// ±0.5 s tolerance). An unreadable/unseekable asset answers an empty list;
 /// individual frame failures are skipped (the Dart side treats an empty
 /// list as "not a readable video").
-private func registerVideoChannel(registry: FlutterPluginRegistry) {
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
+private func registerVideoChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/video",
     binaryMessenger: messenger,
@@ -1007,9 +1011,8 @@ private let faNotificationDelegate = FaNotificationDelegate()
 /// otherwise a one-shot UNTimeIntervalNotificationTrigger — no repeats),
 /// `cancel` {id}, and `cancelAll`. UserNotifications works inside the app
 /// sandbox — no entitlement is needed (unlike calendar/contacts/mic).
-private func registerNotifyChannel(registry: FlutterPluginRegistry) {
+private func registerNotifyChannel(messenger: FlutterBinaryMessenger) {
   UNUserNotificationCenter.current().delegate = faNotificationDelegate
-  guard let messenger = registry as? FlutterBinaryMessenger else { return }
   let channel = FlutterMethodChannel(
     name: "fah/notify",
     binaryMessenger: messenger,

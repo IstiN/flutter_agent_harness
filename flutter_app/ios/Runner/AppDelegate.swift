@@ -111,9 +111,12 @@ private func keychainQuery(_ name: String? = nil) -> [String: Any] {
 }
 
 private func keychainReadAll() -> [String: String] {
+  // Keep this identical to the macOS implementation: list attributes first
+  // and fetch each value with a single-item data query. The combined
+  // kSecReturnData + kSecMatchLimitAll query fails with errSecParam on
+  // macOS, and the two-step form works on both platforms.
   var query = keychainQuery()
   query[kSecReturnAttributes as String] = true
-  query[kSecReturnData as String] = true
   query[kSecMatchLimit as String] = kSecMatchLimitAll
   var item: CFTypeRef?
   guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
@@ -121,9 +124,14 @@ private func keychainReadAll() -> [String: String] {
   else { return [:] }
   var out: [String: String] = [:]
   for entry in entries {
-    if let account = entry[kSecAttrAccount as String] as? String,
-      let data = entry[kSecValueData as String] as? Data,
-      let value = String(data: data, encoding: .utf8)
+    guard let account = entry[kSecAttrAccount as String] as? String else { continue }
+    var dataQuery = keychainQuery(account)
+    dataQuery[kSecReturnData as String] = true
+    dataQuery[kSecMatchLimit as String] = kSecMatchLimitOne
+    var data: CFTypeRef?
+    if SecItemCopyMatching(dataQuery as CFDictionary, &data) == errSecSuccess,
+      let bytes = data as? Data,
+      let value = String(data: bytes, encoding: .utf8)
     {
       out[account] = value
     }
