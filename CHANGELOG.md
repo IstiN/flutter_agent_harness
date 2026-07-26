@@ -606,4 +606,15 @@
 
 - fix(example): browser-ish UA for network images (runtime 0.4.13) + url image probes
 
+## 0.1.83
+
+- fix(example): drop the robot icon + Model header from the sidebar
+- fix(example): macOS keychain read + dead platform channels
+- feat(example): providers-first settings — provider editor page, default chat model flow, provider-based media slots
+- feat(example): providers-first settings — provider editor page, default chat model flow, provider-based media slots
+- fix(example): contacts list scroll + live search; paged full-list search with phone matching for dedup
+- fix(example): composer stop button while streaming; abort drains steer queue into transcript
+- chore(example): pin js_widget_runtime ^0.4.13 (image UA fix)
+- fix(providers): dedupe overlapping/cumulative reasoning chunks in openai-completions thinking stream
+
 ## Unreleased
