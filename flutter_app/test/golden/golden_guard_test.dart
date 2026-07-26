@@ -22,6 +22,8 @@ import 'package:flutter_test/flutter_test.dart';
 const _coverage = <String, String>{
   'lib/main.dart': 'test/golden/setup_golden_test.dart',
   'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/media_slot_editor_page.dart':
+      'test/golden/settings_golden_test.dart',
   'lib/ui/screens/chat_screen.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/model_mark.dart': 'test/golden/widgets_golden_test.dart',

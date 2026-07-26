@@ -199,6 +199,28 @@ Agent _createAgent(
 
 void main() {
   group('AgentService', () {
+    test(
+      'a pre-constructed agent keeps its custom system prompt on send',
+      () async {
+        final env = MemoryExecutionEnv();
+        final agent = _createAgent(_singleTextResponse('ok'));
+        agent.state.systemPrompt = 'custom prompt without a date';
+        final service = AgentService(
+          agent: agent,
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        // Runs re-compose the prompt only for config-built services; manual
+        // agents (tests, embedders) are left untouched.
+        expect(agent.state.systemPrompt, 'custom prompt without a date');
+      },
+    );
+
     test('sendText appends user and assistant messages', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(

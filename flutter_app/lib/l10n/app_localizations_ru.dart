@@ -554,6 +554,58 @@ class AppLocalizationsRu extends AppLocalizations {
   String get keysValueLabel => 'Значение';
 
   @override
+  String get mediaModelsApiKeyNameHelper =>
+      'Имя сохранённого ключа (см. «Ключи») — никогда сам ключ. Пусто — ключ основного подключения.';
+
+  @override
+  String get mediaModelsApiKeyNameLabel => 'Имя ключа API (необязательно)';
+
+  @override
+  String get mediaModelsCapabilitiesNote =>
+      'Модели этого эндпоинта поддерживают:';
+
+  @override
+  String get mediaModelsClearButton => 'Сбросить';
+
+  @override
+  String mediaModelsEditTitle(Object slot) {
+    return 'Изменить: $slot';
+  }
+
+  @override
+  String get mediaModelsFallbackSummary => 'Как основное подключение';
+
+  @override
+  String mediaModelsOverrideSummary(Object host, Object modelId) {
+    return '$modelId · $host';
+  }
+
+  @override
+  String get mediaModelsSectionNote =>
+      'Запросы изображений, аудио, видео и транскрипции используют основное подключение, если слот не переопределён.';
+
+  @override
+  String get mediaModelsSectionTitle => 'Медиамодели';
+
+  @override
+  String get mediaModelsSlotAudioTts => 'Синтез речи';
+
+  @override
+  String get mediaModelsSlotImageGeneration => 'Генерация изображений';
+
+  @override
+  String get mediaModelsSlotMusicGeneration => 'Генерация музыки';
+
+  @override
+  String get mediaModelsSlotTranscription => 'Транскрипция';
+
+  @override
+  String get mediaModelsSlotVideoGeneration => 'Генерация видео';
+
+  @override
+  String get mediaModelsSlotVision => 'Зрение (чтение изображений)';
+
+  @override
   String quickStartCachedLabel(Object bytes, Object size) {
     return '$size · $bytes в кеше';
   }

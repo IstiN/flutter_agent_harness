@@ -14,16 +14,30 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/media_slot_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
+
+/// The editor page's `/models` fetch: image, TTS and vision ids so the
+/// capability chips render.
+Future<ModelsEndpointInfo> _editorModels(
+  String baseUrl, {
+  required String apiKey,
+}) async => (
+  const ['gpt-image-1', 'dall-e-3', 'tts-1', 'gpt-4o'],
+  const <String, int>{},
+  const <String, int>{},
+);
 
 /// Loads the MaterialIcons font from the local Flutter SDK so icon glyphs
 /// (dropdown chevrons, add/lock/info icons) render instead of tofu boxes.
@@ -207,6 +221,69 @@ void main() {
       // The light palette: white inputs on the gray page, darkened
       // indigo/teal accents, dark text.
       await expectGolden(tester, 'settings_hosted_light');
+    });
+
+    testWidgets('media models section', (tester) async {
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.imageGeneration,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          modelId: 'gpt-image-1',
+        ),
+      );
+      await _pumpSettingsFrame(tester, child: MediaModelsSection(store: store));
+
+      // One row per slot: the overridden image slot shows `model · host`,
+      // the rest fall back to the main connection.
+      await expectGolden(tester, 'settings_media_models');
+    });
+
+    testWidgets('media slot editor page', (tester) async {
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: (child) => Builder(
+          builder: (context) {
+            final theme = Theme.of(context);
+            // See _pumpSettingsFrame: pin the FilledButton font to Inter.
+            return Theme(
+              data: theme.copyWith(
+                filledButtonTheme: FilledButtonThemeData(
+                  style: theme.filledButtonTheme.style?.copyWith(
+                    textStyle: const WidgetStatePropertyAll(
+                      TextStyle(
+                        fontFamily: 'Inter',
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              child: child,
+            );
+          },
+        ),
+        const MediaSlotEditorPage(
+          slot: MediaSlot.imageGeneration,
+          title: 'Edit Image generation',
+          mainBaseUrl: 'https://openrouter.ai/api/v1',
+          initial: MediaSlotOverride(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            modelId: 'gpt-image-1',
+          ),
+          modelsFetcher: _editorModels,
+        ),
+      );
+      // Fire the debounced /models fetch and let the chips rebuild.
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      // Full-screen editor: prefilled fields, the Clear/Save actions, and
+      // the capability chips derived from the endpoint's /models list.
+      await expectGolden(tester, 'settings_media_editor');
     });
 
     testWidgets('theme and keys sections', (tester) async {

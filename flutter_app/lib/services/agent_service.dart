@@ -904,6 +904,12 @@ class AgentService extends ChangeNotifier {
   void _runWithTimeout(Future<void> Function() startRun) {
     final Future<void> run;
     try {
+      // Multi-day sessions: re-compose the prompt so the model sees
+      // TODAY's date, not the session creation date.
+      final config = _config;
+      if (config != null) {
+        _agent.state.systemPrompt = _composeSystemPrompt(config);
+      }
       _armIdleWatchdog();
       run = startRun();
     } on Object catch (e) {

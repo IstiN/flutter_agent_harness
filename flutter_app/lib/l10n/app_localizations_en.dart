@@ -549,6 +549,58 @@ class AppLocalizationsEn extends AppLocalizations {
   String get keysValueLabel => 'Value';
 
   @override
+  String get mediaModelsApiKeyNameHelper =>
+      'Name of a saved key (see Keys) — never the key itself. Empty reuses the main connection\'s key.';
+
+  @override
+  String get mediaModelsApiKeyNameLabel => 'API key name (optional)';
+
+  @override
+  String get mediaModelsCapabilitiesNote =>
+      'This endpoint\'s models suggest support for:';
+
+  @override
+  String get mediaModelsClearButton => 'Clear';
+
+  @override
+  String mediaModelsEditTitle(Object slot) {
+    return 'Edit $slot';
+  }
+
+  @override
+  String get mediaModelsFallbackSummary => 'Same as main connection';
+
+  @override
+  String mediaModelsOverrideSummary(Object host, Object modelId) {
+    return '$modelId · $host';
+  }
+
+  @override
+  String get mediaModelsSectionNote =>
+      'Image, audio, video and transcription calls use the main connection unless a slot overrides it.';
+
+  @override
+  String get mediaModelsSectionTitle => 'Media models';
+
+  @override
+  String get mediaModelsSlotAudioTts => 'Text-to-speech';
+
+  @override
+  String get mediaModelsSlotImageGeneration => 'Image generation';
+
+  @override
+  String get mediaModelsSlotMusicGeneration => 'Music generation';
+
+  @override
+  String get mediaModelsSlotTranscription => 'Transcription';
+
+  @override
+  String get mediaModelsSlotVideoGeneration => 'Video generation';
+
+  @override
+  String get mediaModelsSlotVision => 'Vision (image reading)';
+
+  @override
   String quickStartCachedLabel(Object bytes, Object size) {
     return '$size · $bytes cached';
   }

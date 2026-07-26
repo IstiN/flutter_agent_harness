@@ -1,6 +1,8 @@
 import 'package:fa/services/media_models_store.dart';
+import 'package:fa/ui/screens/media_slot_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Future<void> _pump(WidgetTester tester, Widget child) {
@@ -10,6 +12,23 @@ Future<void> _pump(WidgetTester tester, Widget child) {
     ),
   );
 }
+
+/// A `/models` fetch that reports no models (the manual-entry path).
+Future<ModelsEndpointInfo> _noModels(
+  String baseUrl, {
+  required String apiKey,
+}) async => (const <String>[], const <String, int>{}, const <String, int>{});
+
+/// A `/models` fetch reporting image, TTS and vision models (the picker and
+/// capability-hints path).
+Future<ModelsEndpointInfo> _someModels(
+  String baseUrl, {
+  required String apiKey,
+}) async => (
+  const ['gpt-image-1', 'dall-e-3', 'tts-1', 'gpt-4o'],
+  const <String, int>{},
+  const <String, int>{},
+);
 
 MediaSlotOverride _override({
   String baseUrl = 'https://openrouter.ai/api/v1',
@@ -33,7 +52,10 @@ void main() {
       tester,
     ) async {
       final store = MediaModelsStore.inMemory();
-      await _pump(tester, MediaModelsSection(store: store));
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
 
       expect(find.text('Media models'), findsOneWidget);
       expect(find.text('Image generation'), findsOneWidget);
@@ -45,13 +67,18 @@ void main() {
       expect(find.text('Same as main connection'), findsNWidgets(6));
     });
 
-    testWidgets('editor saves an override and the row updates', (tester) async {
+    testWidgets('editor page saves an override and the row updates', (
+      tester,
+    ) async {
       final store = MediaModelsStore.inMemory();
-      await _pump(tester, MediaModelsSection(store: store));
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
 
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
-      expect(find.byType(MediaSlotEditorDialog), findsOneWidget);
+      expect(find.byType(MediaSlotEditorPage), findsOneWidget);
       expect(find.text('Edit Image generation'), findsOneWidget);
       // No Clear button before an override exists.
       expect(find.text('Clear'), findsNothing);
@@ -75,11 +102,81 @@ void main() {
       expect(find.text('Same as main connection'), findsNWidgets(5));
     });
 
+    testWidgets('editor page saves via the endpoint model picker', (
+      tester,
+    ) async {
+      final store = MediaModelsStore.inMemory();
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _someModels),
+      );
+
+      await tester.tap(find.text('Image generation'));
+      await tester.pumpAndSettle();
+      // The debounced fetch feeds the quick select.
+      expect(find.byType(MediaSlotEditorPage), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextField, 'Model id'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('dall-e-3'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      final saved = store.overrideFor(MediaSlot.imageGeneration);
+      expect(saved, isNotNull);
+      expect(saved!.modelId, 'dall-e-3');
+    });
+
+    testWidgets('capability hints reflect the endpoint model metadata', (
+      tester,
+    ) async {
+      final store = MediaModelsStore.inMemory();
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _someModels),
+      );
+
+      await tester.tap(find.text('Image generation'));
+      await tester.pumpAndSettle();
+
+      // gpt-image-1/dall-e-3 → image, tts-1 → TTS, gpt-4o → vision.
+      expect(
+        find.text("This endpoint's models suggest support for:"),
+        findsOneWidget,
+      );
+      expect(find.text('Text-to-speech'), findsOneWidget);
+      expect(find.text('Vision (image reading)'), findsOneWidget);
+      expect(find.text('Music generation'), findsNothing);
+    });
+
+    testWidgets('no capability hints when the endpoint has no /models', (
+      tester,
+    ) async {
+      final store = MediaModelsStore.inMemory();
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
+
+      await tester.tap(find.text('Image generation'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text("This endpoint's models suggest support for:"),
+        findsNothing,
+      );
+    });
+
     testWidgets('empty base URL falls back to the main connection default', (
       tester,
     ) async {
       final store = MediaModelsStore.inMemory();
-      await _pump(tester, MediaModelsSection(store: store));
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
 
       await tester.tap(find.text('Text-to-speech'));
       await tester.pumpAndSettle();
@@ -100,7 +197,10 @@ void main() {
     testWidgets('clear restores the fallback summary', (tester) async {
       final store = MediaModelsStore.inMemory();
       await store.setOverride(MediaSlot.imageGeneration, _override());
-      await _pump(tester, MediaModelsSection(store: store));
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
 
       expect(find.text('gpt-image-1 · openrouter.ai'), findsOneWidget);
 
@@ -120,7 +220,10 @@ void main() {
         MediaSlot.transcription,
         _override(modelId: 'whisper-1', apiKeyName: 'OPENAI_API_KEY'),
       );
-      await _pump(tester, MediaModelsSection(store: store));
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
 
       // The row summary shows model + host only, never the key name.
       expect(find.text('whisper-1 · openrouter.ai'), findsOneWidget);

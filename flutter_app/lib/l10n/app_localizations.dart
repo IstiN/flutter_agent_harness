@@ -992,6 +992,96 @@ abstract class AppLocalizations {
   /// **'Value'**
   String get keysValueLabel;
 
+  /// No description provided for @mediaModelsApiKeyNameHelper.
+  ///
+  /// In en, this message translates to:
+  /// **'Name of a saved key (see Keys) — never the key itself. Empty reuses the main connection\'s key.'**
+  String get mediaModelsApiKeyNameHelper;
+
+  /// No description provided for @mediaModelsApiKeyNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'API key name (optional)'**
+  String get mediaModelsApiKeyNameLabel;
+
+  /// No description provided for @mediaModelsCapabilitiesNote.
+  ///
+  /// In en, this message translates to:
+  /// **'This endpoint\'s models suggest support for:'**
+  String get mediaModelsCapabilitiesNote;
+
+  /// No description provided for @mediaModelsClearButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get mediaModelsClearButton;
+
+  /// No description provided for @mediaModelsEditTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit {slot}'**
+  String mediaModelsEditTitle(Object slot);
+
+  /// No description provided for @mediaModelsFallbackSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Same as main connection'**
+  String get mediaModelsFallbackSummary;
+
+  /// No description provided for @mediaModelsOverrideSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{modelId} · {host}'**
+  String mediaModelsOverrideSummary(Object host, Object modelId);
+
+  /// No description provided for @mediaModelsSectionNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Image, audio, video and transcription calls use the main connection unless a slot overrides it.'**
+  String get mediaModelsSectionNote;
+
+  /// No description provided for @mediaModelsSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Media models'**
+  String get mediaModelsSectionTitle;
+
+  /// No description provided for @mediaModelsSlotAudioTts.
+  ///
+  /// In en, this message translates to:
+  /// **'Text-to-speech'**
+  String get mediaModelsSlotAudioTts;
+
+  /// No description provided for @mediaModelsSlotImageGeneration.
+  ///
+  /// In en, this message translates to:
+  /// **'Image generation'**
+  String get mediaModelsSlotImageGeneration;
+
+  /// No description provided for @mediaModelsSlotMusicGeneration.
+  ///
+  /// In en, this message translates to:
+  /// **'Music generation'**
+  String get mediaModelsSlotMusicGeneration;
+
+  /// No description provided for @mediaModelsSlotTranscription.
+  ///
+  /// In en, this message translates to:
+  /// **'Transcription'**
+  String get mediaModelsSlotTranscription;
+
+  /// No description provided for @mediaModelsSlotVideoGeneration.
+  ///
+  /// In en, this message translates to:
+  /// **'Video generation'**
+  String get mediaModelsSlotVideoGeneration;
+
+  /// No description provided for @mediaModelsSlotVision.
+  ///
+  /// In en, this message translates to:
+  /// **'Vision (image reading)'**
+  String get mediaModelsSlotVision;
+
   /// No description provided for @quickStartCachedLabel.
   ///
   /// In en, this message translates to:

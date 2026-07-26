@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:http/http.dart' as http;
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 
@@ -16,6 +15,7 @@ import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
@@ -23,6 +23,7 @@ import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/services/vision_models.dart';
+import 'package:fa/ui/screens/media_slot_editor_page.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
 import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -59,34 +60,6 @@ String settingsKeyEnv(String name, SessionKeysStore? keysStore) {
     return dotenv.env[name]!;
   }
   return '';
-}
-
-/// The production [ModelsEndpointFetcher]: GETs `<baseUrl>/models` (OpenAI
-/// shape, bearer key when present) and parses it with the shared harness
-/// parser (ids, context windows, output caps). Failures return empty info —
-/// free-text model entry keeps working.
-Future<ModelsEndpointInfo> _defaultModelsEndpointFetcher(
-  String baseUrl, {
-  required String apiKey,
-}) async {
-  try {
-    final uri = Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models');
-    final response = await http
-        .get(
-          uri,
-          headers: {
-            'Accept': 'application/json',
-            if (apiKey.isNotEmpty) 'authorization': 'Bearer $apiKey',
-          },
-        )
-        .timeout(const Duration(seconds: 15));
-    if (response.statusCode != 200) {
-      return (const <String>[], const <String, int>{}, const <String, int>{});
-    }
-    return parseModelsResponse(response.body);
-  } on Object {
-    return (const <String>[], const <String, int>{}, const <String, int>{});
-  }
 }
 
 /// The key-storage notes match the platform: on iOS/macOS saved keys land
@@ -391,7 +364,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (mounted) setState(() => _modelsLoading = true);
     try {
       final key = _keyController.text.trim();
-      final fetch = widget.modelsFetcher ?? _defaultModelsEndpointFetcher;
+      final fetch = widget.modelsFetcher ?? defaultModelsEndpointFetcher;
       final (ids, windows, caps) = await fetch(baseUrl, apiKey: key);
       if (!mounted || generation != _modelsFetchGeneration) return;
       setState(() {
@@ -1987,9 +1960,167 @@ class _KeyEditorDialogState extends State<KeyEditorDialog> {
   }
 }
 
+/// The settings "Media models" section: one row per [MediaSlot] showing the
+/// effective endpoint — the slot's override (`model · host`) or the main
+/// connection fallback. Tapping a row pushes the full-screen
+/// [MediaSlotEditorPage]; its Clear action removes the override, restoring
+/// the fallback.
+///
+/// The store comes from [store] or the nearest [MediaModelsScope]; the whole
+/// section hides when no store is available (tests pumping the bare form).
+/// [service] supplies the main connection's base URL for the editor's
+/// placeholder/default.
+class MediaModelsSection extends StatelessWidget {
+  const MediaModelsSection({
+    super.key,
+    this.store,
+    this.service,
+    this.modelsFetcher,
+  });
+
+  /// Store override; falls back to the nearest [MediaModelsScope].
+  final MediaModelsStore? store;
+
+  /// The active connection, for the editor's base-URL placeholder/default.
+  final AgentService? service;
+
+  /// `/models` fetch override (tests), forwarded to the editor page.
+  final ModelsEndpointFetcher? modelsFetcher;
+
+  static const _slotIcons = <String, IconData>{
+    MediaSlot.imageGeneration: Icons.image_outlined,
+    MediaSlot.audioTts: Icons.record_voice_over_outlined,
+    MediaSlot.musicGeneration: Icons.music_note_outlined,
+    MediaSlot.videoGeneration: Icons.videocam_outlined,
+    MediaSlot.vision: Icons.visibility_outlined,
+    MediaSlot.transcription: Icons.transcribe_outlined,
+  };
+
+  /// The localized label for [slot] (the raw name for unknown slots).
+  static String slotLabelFor(AppLocalizations l10n, String slot) =>
+      switch (slot) {
+        MediaSlot.imageGeneration => l10n.mediaModelsSlotImageGeneration,
+        MediaSlot.audioTts => l10n.mediaModelsSlotAudioTts,
+        MediaSlot.musicGeneration => l10n.mediaModelsSlotMusicGeneration,
+        MediaSlot.videoGeneration => l10n.mediaModelsSlotVideoGeneration,
+        MediaSlot.vision => l10n.mediaModelsSlotVision,
+        MediaSlot.transcription => l10n.mediaModelsSlotTranscription,
+        _ => slot,
+      };
+
+  /// The host part of [baseUrl] for the row summary (the raw string when it
+  /// does not parse as a URI with a host).
+  static String _hostOf(String baseUrl) {
+    final host = Uri.tryParse(baseUrl)?.host ?? '';
+    return host.isEmpty ? baseUrl : host;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final store = this.store ?? MediaModelsScope.maybeOf(context);
+    if (store == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.l10n.mediaModelsSectionTitle,
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.l10n.mediaModelsSectionNote,
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            for (final slot in MediaSlot.all)
+              _buildSlotRow(context, theme, store, slot),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSlotRow(
+    BuildContext context,
+    ThemeData theme,
+    MediaModelsStore store,
+    String slot,
+  ) {
+    final override = store.overrideFor(slot);
+    final summary = override == null
+        ? context.l10n.mediaModelsFallbackSummary
+        : context.l10n.mediaModelsOverrideSummary(
+            _hostOf(override.baseUrl),
+            override.modelId,
+          );
+    return InkWell(
+      onTap: () => _editSlot(context, store, slot),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Icon(
+              _slotIcons[slot] ?? Icons.tune,
+              size: 20,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(slotLabelFor(context.l10n, slot)),
+                  Text(
+                    summary,
+                    style: theme.textTheme.bodySmall,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editSlot(
+    BuildContext context,
+    MediaModelsStore store,
+    String slot,
+  ) async {
+    final result = await Navigator.of(context).push<MediaSlotEditorResult>(
+      MaterialPageRoute(
+        builder: (_) => MediaSlotEditorPage(
+          slot: slot,
+          title: context.l10n.mediaModelsEditTitle(
+            slotLabelFor(context.l10n, slot),
+          ),
+          initial: store.overrideFor(slot),
+          mainBaseUrl: service?.activeBaseUrl ?? '',
+          modelsFetcher: modelsFetcher,
+        ),
+      ),
+    );
+    if (result == null) return;
+    await store.setOverride(slot, result.cleared ? null : result.override);
+  }
+}
+
 /// The gear-icon screen from the chat screen (also opened from the session
-/// sidebar's model tile): reconfigure provider/model/key mid-session,
-/// manage saved providers, and manage the on-device model cache.
+/// sidebar's model tile): per-slot media model overrides (top section),
+/// reconfigure provider/model/key mid-session, manage saved providers, and
+/// manage the on-device model cache.
 /// Applying swaps the backend of [service] via [AgentService.reconfigure] —
 /// the visible transcript, the sandbox filesystem, and the current session
 /// all survive.
@@ -2036,6 +2167,10 @@ class SettingsScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              MediaModelsSection(service: service),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
               AgentSettingsForm(
                 connectLabel: context.l10n.settingsApplyButton,
                 registry: registry,
