@@ -1010,6 +1010,12 @@ abstract class AppLocalizations {
   /// **'Value'**
   String get keysValueLabel;
 
+  /// No description provided for @mediaFileMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Media file not found'**
+  String get mediaFileMissing;
+
   /// No description provided for @mediaModelsApiKeyNameHelper.
   ///
   /// In en, this message translates to:
@@ -1105,6 +1111,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Vision (image reading)'**
   String get mediaModelsSlotVision;
+
+  /// No description provided for @mediaMuteTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get mediaMuteTooltip;
+
+  /// No description provided for @mediaPauseTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause'**
+  String get mediaPauseTooltip;
+
+  /// No description provided for @mediaPlayTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Play'**
+  String get mediaPlayTooltip;
+
+  /// No description provided for @mediaUnmuteTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get mediaUnmuteTooltip;
+
+  /// No description provided for @mediaVideoUnsupportedWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'Video playback is not supported in the web build'**
+  String get mediaVideoUnsupportedWeb;
 
   /// No description provided for @quickStartCachedLabel.
   ///

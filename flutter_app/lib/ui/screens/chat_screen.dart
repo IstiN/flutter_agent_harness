@@ -30,6 +30,7 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/services/upload.dart';
@@ -55,6 +56,8 @@ class ChatScreen extends StatefulWidget {
     this.lastConnectionStore,
     this.asr,
     this.asrTranscriber,
+    this.audioControllerFactory,
+    this.videoControllerFactory,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -98,6 +101,16 @@ class ChatScreen extends StatefulWidget {
   /// session's provider config at stop time (an OpenAI-compatible
   /// endpoint). Tests inject a fake.
   final AsrTranscriber? asrTranscriber;
+
+  /// Playback engine factory for inline audio players (sandbox-generated
+  /// `speak`/`generate_music`/`.mp3…` media); null uses the real
+  /// `audioplayers`-backed controller. Tests/goldens inject fakes.
+  final SandboxAudioControllerFactory? audioControllerFactory;
+
+  /// Playback engine factory for inline video players (`.mp4`/`.mov`/
+  /// `.webm` sandbox media); null uses the real `video_player`-backed
+  /// controller. Tests/goldens inject fakes.
+  final SandboxVideoControllerFactory? videoControllerFactory;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -831,6 +844,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         sizedImageBuilder: _images.sizedImageBuilder(
           onImageTap: (bytes) => showFahImagePreview(context, bytes),
         ),
+        // Audio/video sandbox links open a small inline-player dialog.
+        onTapLink: _onMarkdownLink,
       ),
     );
   }
@@ -911,6 +926,61 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   static String? _generatedImagePath(String content) =>
       _generatedImagePathPattern.firstMatch(content)?.group(1);
 
+  /// Extracts the saved sandbox path from a `speak` / `generate_music`
+  /// tool result (`Speech saved to <path> …` / `Music saved to <path> …`);
+  /// null for errors or any other text.
+  static String? _generatedAudioPath(String toolName, String content) {
+    final prefix = switch (toolName) {
+      speakToolName => 'Speech saved to ',
+      generateMusicToolName => 'Music saved to ',
+      _ => null,
+    };
+    if (prefix == null || !content.startsWith(prefix)) return null;
+    return mediaPathInText(content, audioFileExtensions);
+  }
+
+  /// The sandbox media path a successful tool result should render an
+  /// inline player for: explicit for `speak`/`generate_music`, otherwise
+  /// any path-like token with a media extension (`.mp3/.wav/.m4a` → audio,
+  /// `.mp4/.mov/.webm` → video). The `read` tool is NEVER sniffed — it
+  /// legitimately prints file paths as text (same exclusion as images).
+  static ({SandboxMediaKind kind, String path})? _toolMedia(
+    String? toolName,
+    String content,
+    bool isError,
+  ) {
+    if (toolName == null || toolName == 'read' || isError) return null;
+    final audioPath = _generatedAudioPath(toolName, content);
+    if (audioPath != null) {
+      return (kind: SandboxMediaKind.audio, path: audioPath);
+    }
+    final fallbackAudio = mediaPathInText(content, audioFileExtensions);
+    if (fallbackAudio != null) {
+      return (kind: SandboxMediaKind.audio, path: fallbackAudio);
+    }
+    final videoPath = mediaPathInText(content, videoFileExtensions);
+    if (videoPath != null) {
+      return (kind: SandboxMediaKind.video, path: videoPath);
+    }
+    return null;
+  }
+
+  /// `onTapLink` for chat Markdown: audio/video sandbox links open a small
+  /// player dialog (flutter_markdown has no custom link renderer — only
+  /// images render inline). Other links stay dead, as before.
+  void _onMarkdownLink(String text, String? href, String title) {
+    if (href == null) return;
+    final kind = sandboxMediaKind(href);
+    if (kind == null) return;
+    showFahMediaDialog(
+      context,
+      bytes: _images.load(href),
+      kind: kind,
+      audioControllerFactory: widget.audioControllerFactory,
+      videoControllerFactory: widget.videoControllerFactory,
+    );
+  }
+
   Widget _buildCustomMessage(
     BuildContext context,
     CustomMessage message,
@@ -930,6 +1000,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final generatedImagePath = toolName == generateImageToolName
         ? _generatedImagePath(content)
         : null;
+    // speak/generate_music (and any non-read tool result mentioning a
+    // media path) get an inline audio/video player under the tile.
+    final toolMedia = _toolMedia(toolName, content, isError);
 
     if (role == 'thinking') {
       return Container(
@@ -1030,6 +1103,24 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   path: generatedImagePath,
                   onTap: (bytes) => showFahImagePreview(context, bytes),
                 ),
+              ),
+            ),
+          if (toolMedia != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: switch (toolMedia.kind) {
+                  SandboxMediaKind.audio => SandboxAudioPlayer(
+                    bytes: _images.load(toolMedia.path),
+                    controllerFactory: widget.audioControllerFactory,
+                  ),
+                  SandboxMediaKind.video => SandboxVideoPlayer(
+                    path: toolMedia.path,
+                    bytes: _images.load(toolMedia.path),
+                    controllerFactory: widget.videoControllerFactory,
+                  ),
+                },
               ),
             ),
         ],

@@ -25,6 +25,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/media_player.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -37,6 +38,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'golden_test_helper.dart';
+import '../fake_media_controllers.dart';
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
@@ -458,6 +460,80 @@ void main() {
         await tester.pumpAndSettle();
       });
       await expectGolden(tester, 'chat_generated_image');
+    });
+
+    testWidgets('generated media — audio player under the speak tile and a '
+        'video player under a bash tile', (tester) async {
+      final env = MemoryExecutionEnv();
+      final fakeBytes = Uint8List.fromList(List<int>.filled(64, 7));
+      await env.writeBinaryFile('generated/speech-1.mp3', fakeBytes);
+      await env.writeBinaryFile('generated/clip-1.mp4', fakeBytes);
+      final service = _fakeService(env);
+      service.messages
+        ..add(
+          FahChatMessage(
+            role: 'user',
+            content: 'say hi out loud, then render a 2s teal clip',
+          ),
+        )
+        ..add(
+          FahChatMessage(
+            role: 'tool',
+            toolName: 'speak',
+            content:
+                'Speech saved to generated/speech-1.mp3 '
+                '(64 bytes, voice "alloy", ~0s).',
+          ),
+        )
+        ..add(
+          FahChatMessage(
+            role: 'tool',
+            toolName: 'bash',
+            content: 'rendered generated/clip-1.mp4 (64 bytes)',
+          ),
+        )
+        ..add(
+          FahChatMessage(
+            role: 'assistant',
+            content: 'Done — the voice line and the clip are above.',
+          ),
+        );
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
+
+      tester.view.physicalSize = goldenSizeWide;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      // The env reads + controller creation resolve on the real event loop
+      // (same dance as the generated-image shot); the players themselves are
+      // deterministic fakes (paused at 0:00, fixed 0:07 duration).
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: buildFahTheme(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ChatScreen(
+              manager: manager,
+              audioControllerFactory: (bytes) => FakeAudioController(),
+              videoControllerFactory: (path, bytes) => FakeVideoController(),
+            ),
+          ),
+        );
+        for (var i = 0; i < 8; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          await tester.pump();
+        }
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Sessions & model'));
+        await tester.pumpAndSettle();
+      });
+      expect(find.byType(SandboxAudioPlayer), findsOneWidget);
+      expect(find.byType(SandboxVideoPlayer), findsOneWidget);
+      expect(find.text('0:00 / 0:07'), findsOneWidget);
+      await expectGolden(tester, 'chat_generated_media');
     });
   });
 

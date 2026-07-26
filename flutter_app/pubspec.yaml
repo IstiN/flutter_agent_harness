@@ -92,6 +92,12 @@ dependencies:
   # see lib/ui/widgets/html_preview_web.dart).
   webview_flutter: ^4.14.1
 
+  # Inline playback of sandbox-generated media in the chat (see
+  # lib/ui/widgets/media_player.dart): audio plays from in-memory bytes,
+  # video from a temp file (video is not supported in the web build).
+  audioplayers: ^6.8.1
+  video_player: ^2.13.0
+
   # Firebase: analytics across iOS, Android, macOS, and web.
   firebase_core: ^4.12.1
   firebase_analytics: ^12.4.5

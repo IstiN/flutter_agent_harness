@@ -120,6 +120,21 @@ factual: paths, commands, invariants — no essays.
   markdown. `generate_image` tool tiles also render the saved image inline
   (path parsed from the result text, which itself teaches the model the
   `![image](<path>)` convention).
+- `flutter_app/lib/ui/widgets/media_player.dart` — inline audio/video
+  playback of sandbox media: `SandboxAudioPlayer` (play/pause, seek slider,
+  `m:ss / m:ss`) and `SandboxVideoPlayer` (bounded tap-to-toggle surface,
+  progress bar, mute) behind injectable `SandboxAudioController`/
+  `SandboxVideoController` abstractions (tests/goldens inject fakes via
+  `ChatScreen(audioControllerFactory:/videoControllerFactory:)`, real
+  defaults wrap `audioplayers` (`BytesSource` — no file needed) and
+  `video_player` (bytes staged to a temp file; web build shows an honest
+  "not supported" note). Wired in `chat_screen.dart` for `speak`/
+  `generate_music` results plus a `.mp3/.wav/.m4a` (audio) / `.mp4/.mov/
+  .webm` (video) extension fallback for any NON-`read`, non-error tool
+  result; markdown media links open a `showFahMediaDialog` player dialog
+  (`onTapLink` — flutter_markdown has no custom link renderer) in the chat
+  screen and the Fa chat overlay. Bytes load through the same memoized
+  `SandboxImageResolver.load`.
 - `flutter_app/lib/l10n/` — gen-l10n: `app_en.arb` + `app_ru.arb` →
   `AppLocalizations` (generated, never edit; `flutter gen-l10n`). UI copy
   via `context.l10n.<key>` (`l10n_ext.dart`); locale follows system.

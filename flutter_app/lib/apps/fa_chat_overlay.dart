@@ -13,6 +13,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/apps/fa_work_bar.dart';
+import 'package:fa/ui/widgets/media_player.dart';
 
 /// Expanded in-place Fa chat panel for a JS app view: anchored to the bottom
 /// of the view's stack (full width, ~92% of its height), it shows the bound
@@ -306,6 +307,18 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
             sizedImageBuilder: _images.sizedImageBuilder(
               onImageTap: (bytes) => showFahImagePreview(context, bytes),
             ),
+            // Audio/video sandbox links open a small inline-player dialog
+            // (same behavior as the full chat screen).
+            onTapLink: (text, href, title) {
+              if (href == null) return;
+              final kind = sandboxMediaKind(href);
+              if (kind == null) return;
+              showFahMediaDialog(
+                context,
+                bytes: _images.load(href),
+                kind: kind,
+              );
+            },
           ),
         );
       case 'thinking':

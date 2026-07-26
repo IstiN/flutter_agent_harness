@@ -564,6 +564,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get keysValueLabel => 'Значение';
 
   @override
+  String get mediaFileMissing => 'Медиафайл не найден';
+
+  @override
   String get mediaModelsApiKeyNameHelper =>
       'Имя сохранённого ключа (см. «Ключи») — никогда сам ключ. Пусто — ключ основного подключения.';
 
@@ -617,6 +620,22 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get mediaModelsSlotVision => 'Зрение (чтение изображений)';
+
+  @override
+  String get mediaMuteTooltip => 'Выключить звук';
+
+  @override
+  String get mediaPauseTooltip => 'Пауза';
+
+  @override
+  String get mediaPlayTooltip => 'Воспроизвести';
+
+  @override
+  String get mediaUnmuteTooltip => 'Включить звук';
+
+  @override
+  String get mediaVideoUnsupportedWeb =>
+      'Воспроизведение видео не поддерживается в веб-сборке';
 
   @override
   String quickStartCachedLabel(Object bytes, Object size) {

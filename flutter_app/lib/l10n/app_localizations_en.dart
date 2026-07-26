@@ -558,6 +558,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get keysValueLabel => 'Value';
 
   @override
+  String get mediaFileMissing => 'Media file not found';
+
+  @override
   String get mediaModelsApiKeyNameHelper =>
       'Name of a saved key (see Keys) — never the key itself. Empty reuses the main connection\'s key.';
 
@@ -611,6 +614,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get mediaModelsSlotVision => 'Vision (image reading)';
+
+  @override
+  String get mediaMuteTooltip => 'Mute';
+
+  @override
+  String get mediaPauseTooltip => 'Pause';
+
+  @override
+  String get mediaPlayTooltip => 'Play';
+
+  @override
+  String get mediaUnmuteTooltip => 'Unmute';
+
+  @override
+  String get mediaVideoUnsupportedWeb =>
+      'Video playback is not supported in the web build';
 
   @override
   String quickStartCachedLabel(Object bytes, Object size) {
