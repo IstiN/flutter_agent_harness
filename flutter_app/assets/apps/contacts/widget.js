@@ -250,8 +250,10 @@
     if (error) return errorCard();
     if (!results.length) return emptyState();
     return {
-      type: 'column', crossAxisAlignment: 'stretch',
-      children: results.map(contactRow),
+      type: 'expanded', child: {
+        type: 'listView', shrinkWrap: false,
+        children: results.map(contactRow),
+      },
     };
   }
 
@@ -363,6 +365,7 @@
   function handleEvent(actionId, payload) {
     if (actionId === 'search_change') {
       query = (payload && payload.value) || '';
+      search();
     } else if (actionId === 'search_submit') {
       search();
     } else if (actionId === 'retry') {

@@ -23,8 +23,11 @@ final class _UnavailableContactApi implements ContactApi {
   Future<bool> requestAccess() async => false;
 
   @override
-  Future<List<Contact>> searchContacts({required String query}) async =>
-      const [];
+  Future<List<Contact>> searchContacts({
+    required String query,
+    int limit = 200,
+    int offset = 0,
+  }) async => const [];
 
   @override
   Future<String> createContact({

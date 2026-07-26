@@ -45,7 +45,11 @@ final class FakeContactApi implements ContactApi {
   }
 
   @override
-  Future<List<Contact>> searchContacts({required String query}) async {
+  Future<List<Contact>> searchContacts({
+    required String query,
+    int limit = 200,
+    int offset = 0,
+  }) async {
     lastQuery = query;
     if (query.isEmpty) return contactsToReturn;
     final needle = query.toLowerCase();

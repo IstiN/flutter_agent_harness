@@ -510,7 +510,11 @@ private func registerContactsChannel(registry: FlutterPluginRegistry) {
       }
     case "searchContacts":
       let args = call.arguments as? [String: Any] ?? [:]
-      result(contactsSearch(query: args["query"] as? String ?? ""))
+      result(contactsSearch(
+        query: args["query"] as? String ?? "",
+        limit: args["limit"] as? Int ?? 200,
+        offset: args["offset"] as? Int ?? 0,
+      ))
     case "createContact":
       let args = call.arguments as? [String: Any] ?? [:]
       result(contactsCreate(args: args))
@@ -549,22 +553,47 @@ private func contactMap(_ contact: CNContact) -> [String: Any] {
 /// Name matches as Flutter-friendly maps (capped at 50); an empty query
 /// lists the first contacts. Empty when access is not granted (the Dart
 /// side requests access before calling).
-private func contactsSearch(query: String) -> [[String: Any]] {
+private func contactsSearch(
+  query: String,
+  limit: Int,
+  offset: Int,
+) -> [[String: Any]] {
   guard contactsAccessGranted() else { return [] }
   var matches: [[String: Any]] = []
+  let digits = String(query.filter { $0.isNumber })
   do {
     if query.isEmpty {
+      // Full address book, paged — the dedup/cleanup workflow needs it.
+      let request = CNContactFetchRequest(keysToFetch: contactKeys)
+      var index = 0
+      try contactStore.enumerateContacts(with: request) { contact, stop in
+        if index >= offset {
+          matches.append(contactMap(contact))
+          if matches.count >= limit { stop.pointee = true }
+        }
+        index += 1
+      }
+    } else if digits.count >= 3 {
+      // Digit queries match names AND phone-number digits (dedup by number).
       let request = CNContactFetchRequest(keysToFetch: contactKeys)
       try contactStore.enumerateContacts(with: request) { contact, stop in
-        matches.append(contactMap(contact))
-        if matches.count >= 50 { stop.pointee = true }
+        let nameMatch =
+          contact.givenName.localizedCaseInsensitiveContains(query)
+          || contact.familyName.localizedCaseInsensitiveContains(query)
+        let phoneMatch = contact.phoneNumbers.contains {
+          String($0.value.stringValue.filter { $0.isNumber }).contains(digits)
+        }
+        if nameMatch || phoneMatch {
+          matches.append(contactMap(contact))
+          if matches.count >= limit { stop.pointee = true }
+        }
       }
     } else {
       let predicate = CNContact.predicateForContacts(matchingName: query)
       matches = try contactStore.unifiedContacts(
         matching: predicate,
         keysToFetch: contactKeys,
-      ).prefix(50).map(contactMap)
+      ).dropFirst(offset).prefix(limit).map(contactMap)
     }
   } catch {
     return []

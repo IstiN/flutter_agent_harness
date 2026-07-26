@@ -45,9 +45,11 @@ AgentTool contactsSearchTool(ContactApi contacts) {
     // Reading contacts mutates nothing.
     tier: ApprovalTier.read,
     description:
-        "Search the user's system contacts (read-only). Use for questions "
-        'like "what is Anna\'s phone number?" or before contacts_call/'
-        'contacts_sms. Returns matching contacts with phone numbers and '
+        "Search the user's system contacts (read-only). Matches names "
+        'case-insensitively, and phone numbers when the query has 3+ digits '
+        '(use it to find duplicates by number). An empty query lists the '
+        'whole address book — for dedup/cleanup, page through it with '
+        'limit/offset. Returns matching contacts with phone numbers and '
         'emails.',
     parameters: const {
       'type': 'object',
@@ -55,8 +57,16 @@ AgentTool contactsSearchTool(ContactApi contacts) {
         'query': {
           'type': 'string',
           'description':
-              'Name (or part of it) to search for, case-insensitive '
-              '(default: empty — lists the first contacts)',
+              'Name fragment, or phone digits (default: empty — lists all '
+              'contacts, paged)',
+        },
+        'limit': {
+          'type': 'integer',
+          'description': 'Max contacts to return (default 200)',
+        },
+        'offset': {
+          'type': 'integer',
+          'description': 'Skip this many contacts for paging (default 0)',
         },
       },
     },
@@ -64,7 +74,17 @@ AgentTool contactsSearchTool(ContactApi contacts) {
       final unavailable = await _unavailable(contacts);
       if (unavailable != null) return ToolExecutionResult.text(unavailable);
       final query = (arguments['query'] ?? '').toString().trim();
-      final found = await contacts.searchContacts(query: query);
+      final limit = arguments['limit'] is num
+          ? (arguments['limit'] as num).toInt()
+          : 200;
+      final offset = arguments['offset'] is num
+          ? (arguments['offset'] as num).toInt()
+          : 0;
+      final found = await contacts.searchContacts(
+        query: query,
+        limit: limit,
+        offset: offset,
+      );
       return ToolExecutionResult.text(_render(found, query));
     },
   );

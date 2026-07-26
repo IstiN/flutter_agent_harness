@@ -410,7 +410,7 @@ jsr.fa.calendar.delete({ id: eventId });
 The Fa agent has matching tools (`calendar_add` / `calendar_update` / `calendar_delete`, plus read-only `calendar_events`), so users can also manage events by chatting — the write tools follow a list-then-confirm flow.
 
 ### `jsr.fa.contacts.search(args)` → Promise
-Access to the user's system contacts (macOS/iOS). Requires `"contacts": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS contacts-access prompt. `args` is optional: `{query: 'anna'}` — a case-insensitive name match; empty lists the first contacts (max 50).
+Access to the user's system contacts (macOS/iOS). Requires `"contacts": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS contacts-access prompt. `args` is optional: `{query: 'anna'}` — a case-insensitive name match; a query with 3+ digits also matches phone numbers (handy for dedup-by-number). An empty query lists the WHOLE address book — page it with `{query: '', limit: 200, offset: 0}`.
 
 ```javascript
 jsr.fa.contacts.search({ query: 'anna' }).then(function(result) {

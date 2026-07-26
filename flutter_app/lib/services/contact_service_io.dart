@@ -38,12 +38,18 @@ final class MethodChannelContactApi implements ContactApi {
   }
 
   @override
-  Future<List<Contact>> searchContacts({required String query}) async {
+  Future<List<Contact>> searchContacts({
+    required String query,
+    int limit = 200,
+    int offset = 0,
+  }) async {
     if (!contactsPlatformSupported) return const [];
     final List<dynamic>? raw;
     try {
       raw = await _channel.invokeListMethod<dynamic>('searchContacts', {
         'query': query,
+        'limit': limit,
+        'offset': offset,
       });
     } on MissingPluginException {
       return const [];

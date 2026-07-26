@@ -91,7 +91,11 @@ final class _FakeContactApi implements ContactApi {
   Future<bool> requestAccess() async => true;
 
   @override
-  Future<List<Contact>> searchContacts({required String query}) async => [
+  Future<List<Contact>> searchContacts({
+    required String query,
+    int limit = 200,
+    int offset = 0,
+  }) async => [
     (
       id: 'c-anna',
       name: 'Anna Ivanova',

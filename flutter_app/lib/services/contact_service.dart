@@ -29,7 +29,14 @@ abstract interface class ContactApi {
 
   /// Contacts whose name contains [query] (case-insensitive); an empty
   /// query lists the first contacts. Empty when access is denied.
-  Future<List<Contact>> searchContacts({required String query});
+  /// Searches by name (and by phone digits when [query] has 3+ digits).
+  /// An empty [query] lists the whole address book, paged by
+  /// [limit]/[offset] — the dedup/cleanup workflow pages through it.
+  Future<List<Contact>> searchContacts({
+    required String query,
+    int limit = 200,
+    int offset = 0,
+  });
 
   /// Creates a contact and returns its new platform id.
   Future<String> createContact({

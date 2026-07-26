@@ -102,7 +102,11 @@ final class _FakeContactApi implements ContactApi {
   Future<bool> requestAccess() async => true;
 
   @override
-  Future<List<Contact>> searchContacts({required String query}) async {
+  Future<List<Contact>> searchContacts({
+    required String query,
+    int limit = 200,
+    int offset = 0,
+  }) async {
     const all = [
       (
         id: 'c-anna',
@@ -545,6 +549,9 @@ void main() {
             contains('Anna Ivanova'),
           );
 
+          // The results list is a scrollable listView.
+          expect(jsonEncode(engine.tree.value), contains('"listView"'));
+
           // Tapping a result opens the detail card with call/SMS buttons.
           await engine.callEvent('contact_0');
           await Future<void>.delayed(settle);
@@ -553,10 +560,9 @@ void main() {
           expect(tree, contains('Call'));
           expect(tree, contains('SMS'));
 
-          // A name query re-searches through the bridge.
+          // A name query re-searches live on change (no submit needed).
           await engine.callEvent('back_list');
           await engine.callEvent('search_change', {'value': 'bob'});
-          await engine.callEvent('search_submit');
           await Future<void>.delayed(settle);
           expect(engine.exportedState?['resultCount'], 1);
           expect(

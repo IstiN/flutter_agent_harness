@@ -727,14 +727,21 @@ Object.defineProperty(jsr, 'onBack', {
     return api;
   }
 
-  /// `jsr.fa.contacts.search({query?})` → `{contacts: [...]}` — system
-  /// contacts access, gated on the `contacts` permission.
+  /// `jsr.fa.contacts.search({query?, limit?, offset?})` → `{contacts: [...]}`
+  /// — system contacts access, gated on the `contacts` permission. An empty
+  /// query lists the whole address book, paged.
   Future<Map<String, Object?>> _contactsSearch(
     Map<String, Object?> args,
   ) async {
     final api = await _gatedContacts();
     final query = (args['query'] ?? '').toString().trim();
-    final found = await api.searchContacts(query: query);
+    final limit = args['limit'] is num ? (args['limit'] as num).toInt() : 200;
+    final offset = args['offset'] is num ? (args['offset'] as num).toInt() : 0;
+    final found = await api.searchContacts(
+      query: query,
+      limit: limit,
+      offset: offset,
+    );
     return {
       'contacts': [for (final contact in found) _contactMap(contact)],
     };
