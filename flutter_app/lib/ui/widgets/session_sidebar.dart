@@ -296,22 +296,7 @@ class SessionSidebarState extends State<SessionSidebar> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Row(
-            children: [
-              Icon(Icons.smart_toy_outlined, size: 20, color: theme.hintColor),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  context.l10n.sidebarModelHeader,
-                  style: theme.textTheme.titleMedium,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
           child: _buildModelCard(theme),
         ),
         const SizedBox(height: 8),
