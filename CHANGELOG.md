@@ -594,4 +594,12 @@
 - feat(example): HomeKit control (iOS) + mic/ASR voice input
 - feat(example): HealthKit read (iOS), scene3d dep (0.4.10), Android readiness doc
 
+## 0.1.79
+
+- fix: commit the missing modifications from models-config and media UI (autostash unstaging)
+- feat(example): per-run date refresh, media models full-screen editor with /models picker
+- fix(example): dead onPressed buttons (runtime 0.4.12), calendar date-labeled lists + ±7d match, mic e2e probes
+- fix(example): current date in system prompt, foreground notification banners, contacts openUrl errors
+- feat: CLI models-config (models: config + /models set|remove|config) + media models settings UI
+
 ## Unreleased
