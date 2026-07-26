@@ -602,4 +602,8 @@
 - fix(example): current date in system prompt, foreground notification banners, contacts openUrl errors
 - feat: CLI models-config (models: config + /models set|remove|config) + media models settings UI
 
+## 0.1.82
+
+- fix(example): browser-ish UA for network images (runtime 0.4.13) + url image probes
+
 ## Unreleased
