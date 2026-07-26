@@ -1,8 +1,11 @@
-/// Golden (screenshot) tests for `lib/ui/screens/settings.dart` — the BYOK
+/// Golden (screenshot) tests for `lib/ui/screens/settings.dart` and the
+/// providers-first settings pages (`provider_editor_page.dart`,
+/// `providers_section.dart`, `media_slot_editor_page.dart`) — plus the BYOK
 /// connection form (`AgentSettingsForm`) shared by the setup screen and the
-/// in-chat settings dialog. Fakes and pump patterns mirror
-/// `test/settings_test.dart` (in-memory `ProviderRegistry`, no engines
-/// needed: no test connects, so no network/file/JS backends are touched).
+/// on-device route of the default-chat-model flow. Fakes and pump patterns
+/// mirror `test/settings_test.dart` (in-memory `ProviderRegistry`, no
+/// engines needed: no test connects, so no network/file/JS backends are
+/// touched).
 ///
 /// Every shot pumps the form inside a realistic app frame — a `Scaffold`
 /// with the settings `AppBar`, the form centered in a max-width column —
@@ -14,12 +17,15 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/media_slot_editor_page.dart';
+import 'package:fa/ui/screens/provider_editor_page.dart';
+import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -113,6 +119,53 @@ Future<void> _pumpSettingsFrame(
     ),
   );
 }
+
+/// A minimal [AgentService] for the sections that show the active
+/// connection (never connected: no network/file/JS backends are touched).
+AgentService _fakeService({
+  String baseUrl = 'https://openrouter.ai/api/v1',
+  String provider = 'openai-completions',
+  String modelId = 'openai/gpt-4o-mini',
+}) {
+  return AgentService(
+    agent: Agent(
+      model: Model(
+        id: modelId,
+        api: 'test-api',
+        provider: provider,
+        baseUrl: baseUrl,
+        contextWindow: 100000,
+        maxTokens: 4096,
+      ),
+      systemPrompt: 'You are fah.',
+      streamFunction: (model, context, {cancelToken}) =>
+          AssistantMessageEventStream()..end(),
+      toolRegistry: ToolRegistry(const []),
+    ),
+    env: MemoryExecutionEnv(),
+    sessionsRoot: '/sessions',
+  );
+}
+
+/// Wraps a full-screen page with the FilledButton font pinned to Inter (see
+/// [_pumpSettingsFrame]).
+Widget _wrapPage(Widget child) => Builder(
+  builder: (context) {
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(
+        filledButtonTheme: FilledButtonThemeData(
+          style: theme.filledButtonTheme.style?.copyWith(
+            textStyle: const WidgetStatePropertyAll(
+              TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+      ),
+      child: child,
+    );
+  },
+);
 
 /// Opens the provider dropdown and picks the entry labelled [label]
 /// (verbatim from `test/settings_test.dart`).
@@ -235,9 +288,80 @@ void main() {
       );
       await _pumpSettingsFrame(tester, child: MediaModelsSection(store: store));
 
-      // One row per slot: the overridden image slot shows `model · host`,
-      // the rest fall back to the main connection.
+      // One row per slot: the overridden image slot shows
+      // `model · provider name`, the rest fall back to the main connection.
       await expectGolden(tester, 'settings_media_models');
+    });
+
+    testWidgets('providers-first settings list', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      final service = _fakeService();
+      await _pumpSettingsFrame(
+        tester,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ProvidersSection(service: service, registry: registry),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 16),
+            DefaultChatModelSection(service: service, registry: registry),
+          ],
+        ),
+      );
+
+      // The Providers section on top (the OpenRouter preset marked current,
+      // one saved provider, the add row) and the Default chat model row.
+      await expectGolden(tester, 'settings_providers');
+    });
+
+    testWidgets('provider editor page', (tester) async {
+      const provider = CustomProvider(
+        id: 'p1',
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: _wrapPage,
+        const ProviderEditorPage(
+          title: 'Edit provider',
+          initial: provider,
+          hasSavedKey: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Full-screen editor: prefilled fields, the write-only key field with
+      // the keep-key note, and the Delete/Save actions.
+      await expectGolden(tester, 'settings_provider_editor');
+    });
+
+    testWidgets('default model picker page', (tester) async {
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: _wrapPage,
+        DefaultModelPickerPage(
+          provider: ProviderPreset.openrouter,
+          onApply: (_) async {},
+          modelsFetcher: _editorModels,
+        ),
+      );
+      // The post-frame /models fetch feeds the quick select.
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      // The provider header, the prefilled model field and Apply.
+      await expectGolden(tester, 'settings_model_picker');
     });
 
     testWidgets('media slot editor page', (tester) async {
@@ -281,8 +405,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpAndSettle();
 
-      // Full-screen editor: prefilled fields, the Clear/Save actions, and
-      // the capability chips derived from the endpoint's /models list.
+      // Full-screen editor: the provider picker (OpenRouter selected), the
+      // prefilled model field, the Clear/Save actions, and the capability
+      // chips derived from the endpoint's /models list.
       await expectGolden(tester, 'settings_media_editor');
     });
 

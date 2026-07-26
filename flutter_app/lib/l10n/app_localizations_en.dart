@@ -571,6 +571,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mediaModelsFallbackSummary => 'Same as main connection';
 
   @override
+  String get mediaModelsMainConnection => 'Main connection';
+
+  @override
   String mediaModelsOverrideSummary(Object host, Object modelId) {
     return '$modelId · $host';
   }
@@ -664,6 +667,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Calls go straight from your browser to ollama.com, which currently does not send CORS headers — browser calls fail. Use OpenRouter here, or pick Ollama from the mobile/desktop app instead.';
 
   @override
+  String get settingsDefaultChatModelTitle => 'Default chat model';
+
+  @override
   String get settingsDeleteButton => 'Delete';
 
   @override
@@ -691,6 +697,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsEditorKeyNoteSecure =>
       'Name, URL and model are saved; the key is stored in the Keychain on this device.';
+
+  @override
+  String get settingsEditorKeepKeyNote =>
+      'A key is saved for this provider — leave the field empty to keep it.';
 
   @override
   String get settingsHfTokenHint => 'hf_… — needed if the repo is gated';
@@ -721,6 +731,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelIdLabel => 'Model id';
 
   @override
+  String get settingsModelIdOptionalLabel => 'Model id (optional)';
+
+  @override
   String get settingsModelIdRequired => 'Model id is required';
 
   @override
@@ -731,6 +744,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsOnDeviceModelLabel => 'On-device model';
+
+  @override
+  String get settingsPickModelTitle => 'Choose model';
+
+  @override
+  String get settingsPickProviderTitle => 'Choose provider';
 
   @override
   String get settingsPresetCustom => 'Custom';
@@ -755,10 +774,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsProviderLabel => 'Provider';
 
   @override
+  String settingsProviderModelSummary(Object model, Object provider) {
+    return '$model · $provider';
+  }
+
+  @override
   String get settingsProviderNameHint => 'My provider';
 
   @override
   String get settingsProviderNameLabel => 'Name';
+
+  @override
+  String get settingsProvidersSectionTitle => 'Providers';
 
   @override
   String get settingsSaveButton => 'Save';

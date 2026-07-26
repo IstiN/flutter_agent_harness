@@ -9,6 +9,7 @@ import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -74,10 +75,10 @@ Future<void> _tapConnect(WidgetTester tester, String label) async {
   await tester.pump();
 }
 
-/// A TextField inside the provider add/edit dialog.
+/// A TextField inside the full-screen provider add/edit page.
 Finder _editorField(String label) {
   return find.descendant(
-    of: find.byType(ProviderEditorDialog),
+    of: find.byType(ProviderEditorPage),
     matching: find.widgetWithText(TextField, label),
   );
 }
@@ -469,14 +470,14 @@ void main() {
 
       await tester.tap(find.text('Add provider'));
       await tester.pumpAndSettle();
-      expect(find.byType(ProviderEditorDialog), findsOneWidget);
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
 
       await tester.enterText(_editorField('Name'), 'Acme');
       await tester.enterText(
         _editorField('Base URL'),
         'https://acme.example/v1',
       );
-      await tester.enterText(_editorField('Model id'), 'acme-1');
+      await tester.enterText(_editorField('Model id (optional)'), 'acme-1');
       // The key stays empty: the editor marks it optional and a keyless
       // provider saves fine (local servers need no key).
       expect(_editorField('API key (optional)'), findsOneWidget);
@@ -492,9 +493,9 @@ void main() {
         'https://acme.example/v1',
       );
       expect(_field(tester, 'Model id').controller!.text, 'acme-1');
-      // Custom providers offer edit/delete; built-ins never do.
+      // Custom providers offer edit; deletion lives in the editor page.
       expect(find.text('Edit'), findsOneWidget);
-      expect(find.text('Delete'), findsOneWidget);
+      expect(find.text('Delete'), findsNothing);
       expect(
         find.textContaining(
           'The provider definition (name, URL, model) is '
@@ -644,7 +645,7 @@ void main() {
         'Acme',
       );
 
-      await tester.enterText(_editorField('Model id'), 'acme-2');
+      await tester.enterText(_editorField('Model id (optional)'), 'acme-2');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
@@ -663,6 +664,10 @@ void main() {
       await _pumpForm(tester, registry);
       await _selectProvider(tester, 'Acme');
 
+      // Deletion lives in the full-screen editor page.
+      await tester.tap(find.text('Edit'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
       expect(find.text('Delete Acme?'), findsOneWidget);
@@ -684,9 +689,8 @@ void main() {
   });
 
   group('Chat screen settings gear', () {
-    testWidgets('opens the settings screen with the cache section', (
-      tester,
-    ) async {
+    testWidgets('opens the settings screen with the providers section and '
+        'the cache section', (tester) async {
       final service = _fakeService();
       await service.initialize();
       final manager = FlutterSessionManager(
@@ -700,11 +704,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Settings'), findsOneWidget);
+      // Providers first, then the default chat model.
+      expect(find.text('Providers'), findsOneWidget);
       expect(find.text('OpenRouter'), findsOneWidget);
       expect(find.text('Add provider'), findsOneWidget);
-      expect(find.textContaining('never persisted'), findsOneWidget);
-      expect(find.textContaining('gone on reload'), findsOneWidget);
-      expect(find.text('Apply'), findsOneWidget);
+      expect(find.text('Default chat model'), findsOneWidget);
+      expect(find.text('test-model · example.com'), findsOneWidget);
       // Host build: the WebLLM stub is unavailable, so the downloaded-
       // models cache section collapses to the platform note.
       expect(
@@ -713,7 +718,7 @@ void main() {
       );
     });
 
-    testWidgets('screen validates the key without touching the network', (
+    testWidgets('a hosted provider without a key fails validation on apply', (
       tester,
     ) async {
       final service = _fakeService();
@@ -727,48 +732,84 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
-      await _tapConnect(tester, 'Apply');
+
+      // The default-chat-model flow: pick Ollama (hosted, key required)…
+      await tester.tap(find.text('test-model · example.com'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ollama'));
+      await tester.pumpAndSettle();
+      // …and apply without a saved key.
+      await tester.tap(find.text('Apply'));
+      await tester.pump();
 
       expect(find.text('API key is required'), findsOneWidget);
     });
 
-    testWidgets('applying saves the last connection (never the key)', (
+    testWidgets('applying a picked model saves the last connection', (
       tester,
     ) async {
       final env = MemoryExecutionEnv();
       final store = await LastConnectionStore.load(env);
+      final registry = ProviderRegistry.inMemory();
       final service = _fakeService();
       await service.initialize();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
         ..addSession('fake-session', service);
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(manager: manager, lastConnectionStore: store),
+          home: ChatScreen(
+            manager: manager,
+            registry: registry,
+            lastConnectionStore: store,
+          ),
         ),
       );
       await tester.pumpAndSettle();
 
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
-      await _selectProvider(tester, 'Ollama');
+
+      // Add a keyless local provider through the Providers section.
+      await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Local');
       await tester.enterText(
-        find.widgetWithText(TextField, 'API key'),
-        'sk-apply-test',
+        find.widgetWithText(TextField, 'Base URL'),
+        'http://localhost:8080/v1',
       );
-      await _tapConnect(tester, 'Apply');
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id (optional)'),
+        'llama3',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(find.text('Local'), findsOneWidget);
+
+      // The default-chat-model flow: pick the provider, apply its model.
+      await tester.tap(find.text('test-model · example.com'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Local'));
+      await tester.pumpAndSettle();
+      // The provider's model id prefills the model page.
+      expect(
+        tester
+            .widget<TextField>(find.widgetWithText(TextField, 'Model id'))
+            .controller!
+            .text,
+        'llama3',
+      );
+      await tester.tap(find.text('Apply'));
       await tester.pumpAndSettle();
 
-      // Dialog closed and the connection was saved.
-      expect(find.text('Settings'), findsNothing);
+      // Back on the settings screen; the connection was reconfigured and
+      // saved.
+      expect(find.text('Settings'), findsOneWidget);
+      expect(find.text('llama3 · Local'), findsOneWidget);
       final connection = store.connection;
       expect(connection, isNotNull);
       expect(connection!.providerKind, 'openai-completions');
-      expect(connection.modelId, 'gpt-oss:120b');
-      expect(connection.baseUrl, 'https://ollama.com/v1');
-      final raw = (await env.readTextFile(
-        '${env.cwd}/${LastConnectionStore.fileName}',
-      )).valueOrNull!;
-      expect(raw, isNot(contains('sk-apply-test')));
+      expect(connection.modelId, 'llama3');
+      expect(connection.baseUrl, 'http://localhost:8080/v1');
     });
   });
 

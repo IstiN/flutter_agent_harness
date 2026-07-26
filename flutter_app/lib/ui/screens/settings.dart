@@ -24,6 +24,8 @@ import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/screens/media_slot_editor_page.dart';
+import 'package:fa/ui/screens/provider_editor_page.dart';
+import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
 import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -175,6 +177,7 @@ class AgentSettingsForm extends StatefulWidget {
     this.connectLabel,
     this.registry,
     this.initialConnection,
+    this.initialProvider,
     this.keysStore,
     this.webLlmEngine,
     this.gemmaEngine,
@@ -202,6 +205,11 @@ class AgentSettingsForm extends StatefulWidget {
   /// back to the default preset with a small note. `null` keeps the
   /// env-based defaults.
   final LastConnection? initialConnection;
+
+  /// A provider preset to pre-select (the settings default-chat-model
+  /// flow's on-device route), overriding the env-based defaults.
+  /// [initialConnection], when also given, still wins.
+  final ProviderPreset? initialProvider;
 
   /// The saved-keys store (see [SessionKeysStore]): key fields prefill from
   /// it when neither `--dart-define` nor `.env` provides a value. `null`
@@ -330,6 +338,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     );
     // The last connection wins over the env-based defaults; the key field is
     // never touched (keys are session-only and never persisted).
+    final forcedProvider = widget.initialProvider;
+    if (forcedProvider != null) _applyPreset(forcedProvider);
     final connection = widget.initialConnection;
     if (connection != null) _applyLastConnection(connection);
     // The endpoint's model list feeds the model field's quick select;
@@ -650,12 +660,13 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   }
 
   Future<void> _addProvider() async {
-    final result = await showDialog<ProviderEditorResult>(
-      context: context,
-      builder: (_) =>
-          ProviderEditorDialog(title: context.l10n.settingsAddProvider),
+    final result = await Navigator.of(context).push<ProviderEditorResult>(
+      MaterialPageRoute(
+        builder: (_) =>
+            ProviderEditorPage(title: context.l10n.settingsAddProvider),
+      ),
     );
-    if (result == null) return;
+    if (result == null || result.deleted) return;
     final provider = await _registry.add(
       name: result.name,
       baseUrl: result.baseUrl,
@@ -670,15 +681,21 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   Future<void> _editProvider() async {
     final selection = _selection;
     if (selection is! CustomProvider) return;
-    final result = await showDialog<ProviderEditorResult>(
-      context: context,
-      builder: (_) => ProviderEditorDialog(
-        title: context.l10n.settingsEditProviderTitle,
-        initial: selection,
-        initialKey: _registry.keyFor(selection.id),
+    final result = await Navigator.of(context).push<ProviderEditorResult>(
+      MaterialPageRoute(
+        builder: (_) => ProviderEditorPage(
+          title: context.l10n.settingsEditProviderTitle,
+          initial: selection,
+          hasSavedKey: (_registry.keyFor(selection.id) ?? '').isNotEmpty,
+        ),
       ),
     );
     if (result == null) return;
+    if (result.deleted) {
+      // _onRegistryChanged resets the selection to OpenRouter.
+      await _registry.remove(selection.id);
+      return;
+    }
     final updated = CustomProvider(
       id: selection.id,
       name: result.name,
@@ -690,31 +707,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       _registry.rememberKey(updated.id, result.apiKey);
     }
     setState(() => _applyCustomProvider(updated));
-  }
-
-  Future<void> _deleteProvider() async {
-    final selection = _selection;
-    if (selection is! CustomProvider) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(context.l10n.settingsDeleteProviderTitle(selection.name)),
-        content: Text(context.l10n.settingsDeleteProviderBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(context.l10n.settingsCancelButton),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(context.l10n.settingsDeleteButton),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    // _onRegistryChanged resets the selection to OpenRouter.
-    await _registry.remove(selection.id);
   }
 
   Future<void> _connect() async {
@@ -1017,13 +1009,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
                 onPressed: _loading ? null : _editProvider,
                 child: Text(context.l10n.settingsEditButton),
               ),
-              TextButton(
-                onPressed: _loading ? null : _deleteProvider,
-                style: TextButton.styleFrom(
-                  foregroundColor: theme.colorScheme.error,
-                ),
-                child: Text(context.l10n.settingsDeleteButton),
-              ),
             ],
           ],
         ),
@@ -1051,72 +1036,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             enableSuggestions: false,
           ),
           const SizedBox(height: 12),
-          RawAutocomplete<String>(
-            textEditingController: _modelController,
+          ModelIdAutocompleteField(
+            controller: _modelController,
             focusNode: _modelFocusNode,
-            // Quick select over the endpoint's /models list, filtered by
-            // the typed text; any custom id stays valid (free text).
-            optionsBuilder: (value) {
-              final query = value.text.trim().toLowerCase();
-              if (query.isEmpty) return _endpointModels;
-              return _endpointModels.where(
-                (id) => id.toLowerCase().contains(query),
-              );
-            },
-            onSelected: (id) => _modelController.text = id,
-            fieldViewBuilder:
-                (context, controller, focusNode, onFieldSubmitted) {
-                  return TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    decoration: InputDecoration(
-                      labelText: context.l10n.settingsModelIdLabel,
-                      helperText: _modelsLoading
-                          ? context.l10n.settingsModelsFetching
-                          : null,
-                      suffixIcon: _modelsLoading
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            )
-                          : null,
-                    ),
-                  );
-                },
-            optionsViewBuilder: (context, onSelected, options) {
-              return Align(
-                alignment: Alignment.topLeft,
-                child: Material(
-                  elevation: 4,
-                  borderRadius: BorderRadius.circular(8),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxHeight: 240,
-                      maxWidth: 440,
-                    ),
-                    child: ListView.builder(
-                      padding: EdgeInsets.zero,
-                      shrinkWrap: true,
-                      itemCount: options.length,
-                      itemBuilder: (context, index) {
-                        final option = options.elementAt(index);
-                        return ListTile(
-                          dense: true,
-                          title: Text(option),
-                          onTap: () => onSelected(option),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              );
-            },
+            models: _endpointModels,
+            loading: _modelsLoading,
           ),
           CheckboxListTile(
             value: _vision,
@@ -1446,184 +1370,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             overflow: TextOverflow.ellipsis,
           ),
         ],
-      ],
-    );
-  }
-}
-
-/// The values collected by the add/edit-provider dialog.
-///
-/// [apiKey] is optional; when given it is remembered in memory for the
-/// session only (see [ProviderRegistry.rememberKey]) — never persisted.
-final class ProviderEditorResult {
-  /// Creates an editor result.
-  const ProviderEditorResult({
-    required this.name,
-    required this.baseUrl,
-    required this.modelId,
-    required this.apiKey,
-  });
-
-  /// Display name in the provider picker.
-  final String name;
-
-  /// OpenAI-compatible endpoint.
-  final String baseUrl;
-
-  /// Default model id.
-  final String modelId;
-
-  /// Session-only API key (may be empty).
-  final String apiKey;
-}
-
-/// The add/edit dialog for a [CustomProvider]. With [initial] set it edits
-/// that provider, otherwise it collects a new one. Pops with a
-/// [ProviderEditorResult], or `null` when cancelled.
-class ProviderEditorDialog extends StatefulWidget {
-  const ProviderEditorDialog({
-    super.key,
-    required this.title,
-    this.initial,
-    this.initialKey,
-  });
-
-  /// Dialog title (`Add provider` / `Edit provider`).
-  final String title;
-
-  /// The provider being edited; `null` when adding a new one.
-  final CustomProvider? initial;
-
-  /// The session key prefill (edit mode); leave empty to keep the current
-  /// key.
-  final String? initialKey;
-
-  @override
-  State<ProviderEditorDialog> createState() => _ProviderEditorDialogState();
-}
-
-class _ProviderEditorDialogState extends State<ProviderEditorDialog> {
-  late final TextEditingController _nameController;
-  late final TextEditingController _urlController;
-  late final TextEditingController _modelController;
-  late final TextEditingController _keyController;
-
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _nameController = TextEditingController(text: widget.initial?.name ?? '');
-    _urlController = TextEditingController(text: widget.initial?.baseUrl ?? '');
-    _modelController = TextEditingController(
-      text: widget.initial?.modelId ?? '',
-    );
-    _keyController = TextEditingController(text: widget.initialKey ?? '');
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _urlController.dispose();
-    _modelController.dispose();
-    _keyController.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    final name = _nameController.text.trim();
-    final baseUrl = _urlController.text.trim();
-    final modelId = _modelController.text.trim();
-    if (name.isEmpty) {
-      setState(() => _error = context.l10n.settingsNameRequired);
-      return;
-    }
-    if (baseUrl.isEmpty) {
-      setState(() => _error = context.l10n.settingsBaseUrlRequired);
-      return;
-    }
-    if (modelId.isEmpty) {
-      setState(() => _error = context.l10n.settingsModelIdRequired);
-      return;
-    }
-    Navigator.of(context).pop(
-      ProviderEditorResult(
-        name: name,
-        baseUrl: baseUrl,
-        modelId: modelId,
-        apiKey: _keyController.text.trim(),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: _dialogContentWidth(context, 380),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _nameController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsProviderNameLabel,
-                  hintText: context.l10n.settingsProviderNameHint,
-                ),
-                autofocus: true,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _urlController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsBaseUrlLabel,
-                  hintText: 'https://example.com/v1',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _modelController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsModelIdLabel,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _keyController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsApiKeyOptionalLabel,
-                  helperText: context.l10n.settingsApiKeyLocalHelper,
-                ),
-                obscureText: true,
-                autocorrect: false,
-                enableSuggestions: false,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                settingsEditorKeyNoteFor(context.l10n),
-                style: theme.textTheme.bodySmall,
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
-              ],
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.l10n.settingsCancelButton),
-        ),
-        FilledButton(
-          onPressed: _save,
-          child: Text(context.l10n.settingsSaveButton),
-        ),
       ],
     );
   }
@@ -1975,6 +1721,7 @@ class MediaModelsSection extends StatelessWidget {
     super.key,
     this.store,
     this.service,
+    this.registry,
     this.modelsFetcher,
   });
 
@@ -1983,6 +1730,11 @@ class MediaModelsSection extends StatelessWidget {
 
   /// The active connection, for the editor's base-URL placeholder/default.
   final AgentService? service;
+
+  /// The provider registry: slot rows summarize overrides with the
+  /// provider NAME (never the URL), and the slot editor lists the saved
+  /// custom providers. `null` summarizes unknown URLs by host.
+  final ProviderRegistry? registry;
 
   /// `/models` fetch override (tests), forwarded to the editor page.
   final ModelsEndpointFetcher? modelsFetcher;
@@ -2052,10 +1804,18 @@ class MediaModelsSection extends StatelessWidget {
     String slot,
   ) {
     final override = store.overrideFor(slot);
+    // Overrides are summarized with the provider NAME, never the raw URL;
+    // an override whose URL matches no known provider falls back to the
+    // host (a hand-edited store file).
+    final provider = override == null
+        ? null
+        : providerForBaseUrl(override.baseUrl, registry);
     final summary = override == null
         ? context.l10n.mediaModelsFallbackSummary
         : context.l10n.mediaModelsOverrideSummary(
-            _hostOf(override.baseUrl),
+            provider != null
+                ? providerDisplayName(context, provider)
+                : _hostOf(override.baseUrl),
             override.modelId,
           );
     return InkWell(
@@ -2108,6 +1868,7 @@ class MediaModelsSection extends StatelessWidget {
           ),
           initial: store.overrideFor(slot),
           mainBaseUrl: service?.activeBaseUrl ?? '',
+          registry: registry,
           modelsFetcher: modelsFetcher,
         ),
       ),
@@ -2118,12 +1879,14 @@ class MediaModelsSection extends StatelessWidget {
 }
 
 /// The gear-icon screen from the chat screen (also opened from the session
-/// sidebar's model tile): per-slot media model overrides (top section),
-/// reconfigure provider/model/key mid-session, manage saved providers, and
-/// manage the on-device model cache.
-/// Applying swaps the backend of [service] via [AgentService.reconfigure] —
-/// the visible transcript, the sandbox filesystem, and the current session
-/// all survive.
+/// sidebar's model tile): providers-first — the Providers section (hosted
+/// presets + saved custom providers, the current one marked), the Default
+/// chat model flow (pick a provider, pick its model → the main connection
+/// is reconfigured), per-slot media model overrides, theme, keys, approval
+/// mode, and the on-device model caches.
+/// Applying a chat model swaps the backend of [service] via
+/// [AgentService.reconfigure] — the visible transcript, the sandbox
+/// filesystem, and the current session all survive.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
     super.key,
@@ -2133,16 +1896,18 @@ class SettingsScreen extends StatelessWidget {
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
+    this.modelsFetcher,
   });
 
-  /// The service whose backend the form reconfigures.
+  /// The service whose backend the default-chat-model flow reconfigures.
   final AgentService service;
 
-  /// The user-added providers shown in the form's picker.
+  /// The user-added providers shown in the Providers section and the
+  /// pickers.
   final ProviderRegistry? registry;
 
-  /// The last-connection store: prefills the form and is updated on every
-  /// successful apply (see [LastConnectionStore]).
+  /// The last-connection store: updated on every successful apply (see
+  /// [LastConnectionStore]).
   final LastConnectionStore? lastConnectionStore;
 
   /// Engine override for the downloaded-models section (tests); defaults to
@@ -2157,6 +1922,10 @@ class SettingsScreen extends StatelessWidget {
   /// cache section (tests); defaults to the platform singleton.
   final TransformersJsEngineApi? transformersJsEngine;
 
+  /// `/models` fetch override (tests), forwarded to the default-chat-model
+  /// flow and the media slot editor.
+  final ModelsEndpointFetcher? modelsFetcher;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2167,23 +1936,26 @@ class SettingsScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MediaModelsSection(service: service),
+              ProvidersSection(service: service, registry: registry),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              AgentSettingsForm(
-                connectLabel: context.l10n.settingsApplyButton,
+              DefaultChatModelSection(
+                service: service,
                 registry: registry,
-                initialConnection: lastConnectionStore?.connection,
-                keysStore: SessionKeysScope.maybeOf(context),
+                lastConnectionStore: lastConnectionStore,
+                modelsFetcher: modelsFetcher,
                 webLlmEngine: webLlmEngine,
                 gemmaEngine: gemmaEngine,
                 transformersJsEngine: transformersJsEngine,
-                onConnect: (config) async {
-                  await service.reconfigure(config);
-                  await lastConnectionStore?.saveFromConfig(config);
-                  if (context.mounted) Navigator.of(context).pop();
-                },
+              ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              MediaModelsSection(
+                service: service,
+                registry: registry,
+                modelsFetcher: modelsFetcher,
               ),
               const SizedBox(height: 24),
               const Divider(),
@@ -2300,6 +2072,92 @@ class _VisionBadge extends StatelessWidget {
           color: theme.colorScheme.onTertiaryContainer,
         ),
       ),
+    );
+  }
+}
+
+/// The model-id field with the `/models` quick select shared by the
+/// connection form, the media slot editor, and the default-chat-model
+/// picker: a free-text field whose autocomplete options are the endpoint's
+/// model ids, filtered by the typed text (any custom id stays valid).
+/// While [loading] the field shows the fetching helper and a spinner.
+class ModelIdAutocompleteField extends StatelessWidget {
+  const ModelIdAutocompleteField({
+    super.key,
+    required this.controller,
+    required this.focusNode,
+    required this.models,
+    required this.loading,
+  });
+
+  /// The model id being edited (also receives the picked option).
+  final TextEditingController controller;
+
+  /// The field's focus node (drives the quick-select overlay).
+  final FocusNode focusNode;
+
+  /// The endpoint's `/models` ids feeding the quick select.
+  final List<String> models;
+
+  /// Whether a `/models` fetch is in flight.
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return RawAutocomplete<String>(
+      textEditingController: controller,
+      focusNode: focusNode,
+      optionsBuilder: (value) {
+        final query = value.text.trim().toLowerCase();
+        if (query.isEmpty) return models;
+        return models.where((id) => id.toLowerCase().contains(query));
+      },
+      onSelected: (id) => controller.text = id,
+      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+        return TextField(
+          controller: controller,
+          focusNode: focusNode,
+          decoration: InputDecoration(
+            labelText: context.l10n.settingsModelIdLabel,
+            helperText: loading ? context.l10n.settingsModelsFetching : null,
+            suffixIcon: loading
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : null,
+          ),
+        );
+      },
+      optionsViewBuilder: (context, onSelected, options) {
+        return Align(
+          alignment: Alignment.topLeft,
+          child: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(8),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240, maxWidth: 440),
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                itemCount: options.length,
+                itemBuilder: (context, index) {
+                  final option = options.elementAt(index);
+                  return ListTile(
+                    dense: true,
+                    title: Text(option),
+                    onTap: () => onSelected(option),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

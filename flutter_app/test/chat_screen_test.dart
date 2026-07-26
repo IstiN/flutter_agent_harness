@@ -7,6 +7,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -141,7 +142,17 @@ void main() {
 
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
         ..addSession('fake-session', service);
-      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(manager: manager, registry: registry),
+        ),
+      );
       await tester.pumpAndSettle();
 
       // The model card shows the current backend.
@@ -157,24 +168,27 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Settings'), findsOneWidget);
 
-      await tester.enterText(
-        find.widgetWithText(TextField, 'API key'),
-        'sk-test',
-      );
+      // The default-chat-model flow: pick the provider, enter a model,
+      // apply (keyless custom endpoint — no key needed).
+      await tester.tap(find.text('test-model · example.com'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Acme'));
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextField, 'Model id'),
         'new-model-2',
       );
-      await tester.ensureVisible(find.text('Apply'));
-      await tester.pumpAndSettle();
       await tester.tap(find.text('Apply'));
       await tester.pumpAndSettle();
 
       // The backend switched…
       expect(service.providerKind, 'openai-completions');
       expect(service.modelId, 'new-model-2');
-      expect(find.text('Settings'), findsNothing);
-      // …and the visible transcript survived.
+      // …the flow returned to the settings screen…
+      expect(find.text('Settings'), findsOneWidget);
+      // …and back in the chat the visible transcript survived.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
       expect(service.messages, hasLength(2));
       expect(service.messages[0].content, 'hello');
     });

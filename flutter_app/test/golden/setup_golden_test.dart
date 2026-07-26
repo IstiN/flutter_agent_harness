@@ -299,7 +299,7 @@ void main() {
     await expectGolden(tester, 'setup_prefilled_hosted_desktop');
   });
 
-  testWidgets('a saved custom provider is re-selected with edit/delete', (
+  testWidgets('a saved custom provider is re-selected with the edit action', (
     tester,
   ) async {
     final registry = ProviderRegistry.inMemory();

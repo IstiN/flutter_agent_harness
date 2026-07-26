@@ -1028,6 +1028,12 @@ abstract class AppLocalizations {
   /// **'Same as main connection'**
   String get mediaModelsFallbackSummary;
 
+  /// No description provided for @mediaModelsMainConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Main connection'**
+  String get mediaModelsMainConnection;
+
   /// No description provided for @mediaModelsOverrideSummary.
   ///
   /// In en, this message translates to:
@@ -1196,6 +1202,12 @@ abstract class AppLocalizations {
   /// **'Calls go straight from your browser to ollama.com, which currently does not send CORS headers — browser calls fail. Use OpenRouter here, or pick Ollama from the mobile/desktop app instead.'**
   String get settingsCorsNoteOllama;
 
+  /// No description provided for @settingsDefaultChatModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Default chat model'**
+  String get settingsDefaultChatModelTitle;
+
   /// No description provided for @settingsDeleteButton.
   ///
   /// In en, this message translates to:
@@ -1243,6 +1255,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Name, URL and model are saved; the key is stored in the Keychain on this device.'**
   String get settingsEditorKeyNoteSecure;
+
+  /// No description provided for @settingsEditorKeepKeyNote.
+  ///
+  /// In en, this message translates to:
+  /// **'A key is saved for this provider — leave the field empty to keep it.'**
+  String get settingsEditorKeepKeyNote;
 
   /// No description provided for @settingsHfTokenHint.
   ///
@@ -1292,6 +1310,12 @@ abstract class AppLocalizations {
   /// **'Model id'**
   String get settingsModelIdLabel;
 
+  /// No description provided for @settingsModelIdOptionalLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model id (optional)'**
+  String get settingsModelIdOptionalLabel;
+
   /// No description provided for @settingsModelIdRequired.
   ///
   /// In en, this message translates to:
@@ -1315,6 +1339,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'On-device model'**
   String get settingsOnDeviceModelLabel;
+
+  /// No description provided for @settingsPickModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose model'**
+  String get settingsPickModelTitle;
+
+  /// No description provided for @settingsPickProviderTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose provider'**
+  String get settingsPickProviderTitle;
 
   /// No description provided for @settingsPresetCustom.
   ///
@@ -1358,6 +1394,12 @@ abstract class AppLocalizations {
   /// **'Provider'**
   String get settingsProviderLabel;
 
+  /// No description provided for @settingsProviderModelSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{model} · {provider}'**
+  String settingsProviderModelSummary(Object model, Object provider);
+
   /// No description provided for @settingsProviderNameHint.
   ///
   /// In en, this message translates to:
@@ -1369,6 +1411,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Name'**
   String get settingsProviderNameLabel;
+
+  /// No description provided for @settingsProvidersSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Providers'**
+  String get settingsProvidersSectionTitle;
 
   /// No description provided for @settingsSaveButton.
   ///

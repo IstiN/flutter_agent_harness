@@ -1,4 +1,5 @@
 import 'package:fa/services/media_models_store.dart';
+import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/media_slot_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
@@ -83,13 +84,15 @@ void main() {
       // No Clear button before an override exists.
       expect(find.text('Clear'), findsNothing);
 
+      // The slot references a provider (picked by name), not a raw URL.
+      expect(find.text('Main connection'), findsOneWidget);
+      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OpenRouter').last);
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextField, 'Model id'),
         'gpt-image-1',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Base URL'),
-        'https://openrouter.ai/api/v1',
       );
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
@@ -97,9 +100,48 @@ void main() {
       final saved = store.overrideFor(MediaSlot.imageGeneration);
       expect(saved, isNotNull);
       expect(saved!.modelId, 'gpt-image-1');
+      // The provider's resolved URL is what gets stored.
       expect(saved.baseUrl, 'https://openrouter.ai/api/v1');
-      expect(find.text('gpt-image-1 · openrouter.ai'), findsOneWidget);
+      // …but the row summarizes with the provider name, never the URL.
+      expect(find.text('gpt-image-1 · OpenRouter'), findsOneWidget);
       expect(find.text('Same as main connection'), findsNWidgets(5));
+    });
+
+    testWidgets('a custom provider is picked by name and saved as its URL', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-img',
+      );
+      final store = MediaModelsStore.inMemory();
+      await _pump(
+        tester,
+        MediaModelsSection(
+          store: store,
+          registry: registry,
+          modelsFetcher: _noModels,
+        ),
+      );
+
+      await tester.tap(find.text('Image generation'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Acme').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'acme-img',
+      );
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      final saved = store.overrideFor(MediaSlot.imageGeneration)!;
+      expect(saved.baseUrl, 'https://acme.example/v1');
+      expect(find.text('acme-img · Acme'), findsOneWidget);
     });
 
     testWidgets('editor page saves via the endpoint model picker', (
@@ -169,7 +211,7 @@ void main() {
       );
     });
 
-    testWidgets('empty base URL falls back to the main connection default', (
+    testWidgets('the main connection provider resolves to its default URL', (
       tester,
     ) async {
       final store = MediaModelsStore.inMemory();
@@ -202,7 +244,7 @@ void main() {
         MediaModelsSection(store: store, modelsFetcher: _noModels),
       );
 
-      expect(find.text('gpt-image-1 · openrouter.ai'), findsOneWidget);
+      expect(find.text('gpt-image-1 · OpenRouter'), findsOneWidget);
 
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
@@ -225,8 +267,8 @@ void main() {
         MediaModelsSection(store: store, modelsFetcher: _noModels),
       );
 
-      // The row summary shows model + host only, never the key name.
-      expect(find.text('whisper-1 · openrouter.ai'), findsOneWidget);
+      // The row summary shows model + provider name, never the key name.
+      expect(find.text('whisper-1 · OpenRouter'), findsOneWidget);
       expect(find.textContaining('OPENAI_API_KEY'), findsNothing);
 
       await tester.tap(find.text('Transcription'));

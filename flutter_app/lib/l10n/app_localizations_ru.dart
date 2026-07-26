@@ -576,6 +576,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get mediaModelsFallbackSummary => 'Как основное подключение';
 
   @override
+  String get mediaModelsMainConnection => 'Основное подключение';
+
+  @override
   String mediaModelsOverrideSummary(Object host, Object modelId) {
     return '$modelId · $host';
   }
@@ -669,6 +672,9 @@ class AppLocalizationsRu extends AppLocalizations {
       'Запросы идут напрямую из браузера на ollama.com, который сейчас не отправляет заголовки CORS, — вызовы из браузера завершаются ошибкой. Используйте здесь OpenRouter или выберите Ollama в мобильном/десктопном приложении.';
 
   @override
+  String get settingsDefaultChatModelTitle => 'Модель чата по умолчанию';
+
+  @override
   String get settingsDeleteButton => 'Удалить';
 
   @override
@@ -696,6 +702,10 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get settingsEditorKeyNoteSecure =>
       'Имя, URL и модель сохраняются; ключ хранится в Keychain на этом устройстве.';
+
+  @override
+  String get settingsEditorKeepKeyNote =>
+      'Для этого провайдера сохранён ключ — оставьте поле пустым, чтобы не менять его.';
 
   @override
   String get settingsHfTokenHint => 'hf_… — нужен, если репозиторий закрытый';
@@ -726,6 +736,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsModelIdLabel => 'ID модели';
 
   @override
+  String get settingsModelIdOptionalLabel => 'ID модели (необязательно)';
+
+  @override
   String get settingsModelIdRequired => 'Требуется ID модели';
 
   @override
@@ -736,6 +749,12 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsOnDeviceModelLabel => 'Модель на устройстве';
+
+  @override
+  String get settingsPickModelTitle => 'Выбор модели';
+
+  @override
+  String get settingsPickProviderTitle => 'Выбор провайдера';
 
   @override
   String get settingsPresetCustom => 'Пользовательский';
@@ -760,10 +779,18 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsProviderLabel => 'Провайдер';
 
   @override
+  String settingsProviderModelSummary(Object model, Object provider) {
+    return '$model · $provider';
+  }
+
+  @override
   String get settingsProviderNameHint => 'Мой провайдер';
 
   @override
   String get settingsProviderNameLabel => 'Имя';
+
+  @override
+  String get settingsProvidersSectionTitle => 'Провайдеры';
 
   @override
   String get settingsSaveButton => 'Сохранить';

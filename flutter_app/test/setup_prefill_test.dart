@@ -254,9 +254,10 @@ void main() {
       );
 
       expect(find.text('Acme'), findsOneWidget);
-      // The registry match (not the bare custom preset) brings edit/delete.
+      // The registry match (not the bare custom preset) brings the edit
+      // action; deletion lives in the editor page.
       expect(find.text('Edit'), findsOneWidget);
-      expect(find.text('Delete'), findsOneWidget);
+      expect(find.text('Delete'), findsNothing);
     });
 
     testWidgets('a cached WebLLM model is pre-selected without a note', (
