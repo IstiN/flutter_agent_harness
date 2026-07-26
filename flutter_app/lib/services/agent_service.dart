@@ -161,6 +161,10 @@ class AgentService extends ChangeNotifier {
        _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
+    // Seed the active endpoint from the model (reconfigure overwrites it) so
+    // endpoint-aware UI never reads an uninitialized late field.
+    _activeBaseUrl = _agent.state.model.baseUrl;
+    _activeApiKey = '';
     _redactor = redactor;
     _attachRedactor(redactor);
     _attachApproval();
