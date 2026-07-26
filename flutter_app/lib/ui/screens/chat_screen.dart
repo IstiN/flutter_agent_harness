@@ -15,6 +15,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/analytics.dart';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
@@ -641,6 +642,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           mimeType: mimeTypeForUploadName(clean),
         ));
       });
+      AppAnalytics.instance.uploadAdded(1);
     } on Object catch (e) {
       if (mounted) {
         _showSnack(context.l10n.chatAttachError(e.toString(), clean));
@@ -686,6 +688,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// this screen's service in place (see [AgentService.reconfigure]) — the
   /// visible transcript survives the backend switch.
   Future<void> _openSettings() async {
+    AppAnalytics.instance.settingsOpened();
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SettingsScreen(
@@ -703,6 +706,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final pending = List.of(_pendingAttachments);
     setState(() => _pendingAttachments.clear());
     _textController.clear();
+    // Metadata only (never the text, never the files).
+    AppAnalytics.instance.messageSent(
+      hasAttachments: pending.isNotEmpty,
+      textLength: trimmed.length,
+    );
 
     try {
       if (pending.isEmpty) {

@@ -11,6 +11,7 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/sandbox/env_factory.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/keychain_store.dart';
@@ -80,6 +81,8 @@ Future<void> main() async {
   } on Object catch (error) {
     debugPrint('[fah] analytics unavailable, continuing without: $error');
   }
+  AppAnalytics.installFirebase(analytics);
+  AppAnalytics.instance.appStart(analyticsAvailable: analytics != null);
   debugPrint('[fah] starting runApp');
   runApp(
     MyApp(
@@ -317,6 +320,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
         ),
       );
       if (!mounted) return;
+      AppAnalytics.instance.bootstrapResult('chat');
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute(
           builder: (_) => ChatScreen(
@@ -329,19 +333,29 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
     } on Object {
       // A failed restore (endpoint down, key rejected) lands on the setup
       // form — prefilled by the same last-connection record.
-      if (mounted) setState(() => _config = null);
+      if (mounted) {
+        AppAnalytics.instance.bootstrapResult('setup_restore_failed');
+        setState(() => _config = null);
+      }
     }
   }
 
-  Widget _buildSetupScreen() => SetupScreen(
-    env: widget.env,
-    registry: widget.registry,
-    lastConnectionStore: widget.lastConnectionStore,
-    sessionKeysStore: widget.sessionKeysStore,
-    webLlmEngine: widget.webLlmEngine,
-    gemmaEngine: widget.gemmaEngine,
-    transformersJsEngine: widget.transformersJsEngine,
-  );
+  Widget _buildSetupScreen() {
+    AppAnalytics.instance.setupShown(
+      widget.lastConnectionStore?.connection != null
+          ? 'restore_unavailable'
+          : 'first_run',
+    );
+    return SetupScreen(
+      env: widget.env,
+      registry: widget.registry,
+      lastConnectionStore: widget.lastConnectionStore,
+      sessionKeysStore: widget.sessionKeysStore,
+      webLlmEngine: widget.webLlmEngine,
+      gemmaEngine: widget.gemmaEngine,
+      transformersJsEngine: widget.transformersJsEngine,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
