@@ -30,6 +30,7 @@ final class CliConfig {
     this.modelRoles,
     this.ttsr,
     this.customProviders = const [],
+    this.models,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -65,6 +66,11 @@ final class CliConfig {
           'customProviders must be a list, got: $other',
         ),
       },
+      // The models section (media slot overrides + custom model
+      // definitions) is parsed strictly too.
+      models: map['models'] == null
+          ? null
+          : ModelsConfig.fromYaml(map['models']),
     );
   }
 
@@ -101,6 +107,12 @@ final class CliConfig {
   /// in the `/provider` picker and appended to by the `/provider custom`
   /// wizard. Parsed strictly: a malformed entry throws [ConfigException].
   final List<CustomProviderEntry> customProviders;
+
+  /// Optional models config (`models:` yaml section): per-slot media model
+  /// overrides (managed by `/models set`/`/models remove`) and named custom
+  /// model definitions (`/model <name>` targets). Parsed strictly: a schema
+  /// error throws [ConfigException]. `null` means the section is absent.
+  final ModelsConfig? models;
 
   String toYaml() {
     final buffer = StringBuffer()
@@ -142,6 +154,10 @@ final class CliConfig {
         }
         buffer.write('    modelId: ${entry.modelId}\n');
       }
+    }
+    final modelsConfig = models;
+    if (modelsConfig != null && !modelsConfig.isEmpty) {
+      buffer.write(modelsConfig.toYaml());
     }
     return buffer.toString();
   }

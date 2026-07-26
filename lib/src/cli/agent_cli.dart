@@ -141,6 +141,8 @@ final class AgentCliConfig {
     this.alwaysAllowTools = const {},
     this.modelRolesResolver,
     this.ttsr,
+    this.modelsConfig,
+    this.onModelsConfigChanged,
     this.onModelChanged,
     this.onProviderChanged,
     this.secureKeys,
@@ -183,6 +185,17 @@ final class AgentCliConfig {
   /// project rules file). When set and enabled, a [TtsrController] watches
   /// the agent's streams and drives abort/inject/retry on rule matches.
   final TtsrConfig? ttsr;
+
+  /// The live models config (the `models:` section of `~/.fah/config.yaml`),
+  /// shared with the executable: `/models set`/`/models remove` mutate its
+  /// media slot overrides and `/model <name>` resolves its custom model
+  /// definitions; the host persists it after [onModelsConfigChanged]. Null
+  /// (web, tests without one) disables the models-config commands.
+  final ModelsConfig? modelsConfig;
+
+  /// Called when the models config changes (`/models set`,
+  /// `/models remove`) so the executable can persist it.
+  final void Function()? onModelsConfigChanged;
 
   /// Called when the user switches the active model via `/model`.
   final void Function(Model model)? onModelChanged;
@@ -1911,7 +1924,7 @@ class AgentCli {
       case '/model':
         await _handleModelCommand(rest);
       case '/models':
-        await _listModels(rest);
+        await _handleModelsCommand(rest);
       case '/model-edit':
         _handleModelEdit(rest);
       case '/provider':
@@ -2352,7 +2365,8 @@ class AgentCli {
     '/tasks': '[cancel <id>] — list background agents',
     '/skills': 'list discovered skills (invoke with /skill:<name>)',
     '/model': '<provider/model> — select model (opens selector)',
-    '/models': '[filter] — list known models for the current provider',
+    '/models':
+        '[filter] | config | set <slot> <model> [baseUrl] | remove <slot>',
     '/model-edit':
         '[contextWindow|maxTokens <n>] — show or override token limits',
     '/provider': '[name] [baseUrl] [token] | custom — switch provider/endpoint',

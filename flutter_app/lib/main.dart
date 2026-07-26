@@ -17,6 +17,7 @@ import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
@@ -66,6 +67,7 @@ Future<void> main() async {
   debugPrint('[fah] last connection loaded');
   final themeController = await ThemeController.load(env);
   final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
+  final mediaModels = await MediaModelsStore.load(env);
   // Analytics is strictly optional. On web with placeholder options
   // (`YOUR_*` — what CI builds) initializeApp above is skipped, and just
   // reading Firebase.apps can throw (no JS SDK loaded — seen on Safari,
@@ -86,6 +88,7 @@ Future<void> main() async {
       lastConnectionStore: lastConnection,
       themeController: themeController,
       sessionKeysStore: sessionKeys,
+      mediaModelsStore: mediaModels,
       analytics: analytics,
     ),
   );
@@ -99,6 +102,7 @@ class MyApp extends StatelessWidget {
     this.lastConnectionStore,
     this.themeController,
     this.sessionKeysStore,
+    this.mediaModelsStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -125,6 +129,10 @@ class MyApp extends StatelessWidget {
   /// Keys section and form prefill hide, tests).
   final SessionKeysStore? sessionKeysStore;
 
+  /// The persisted media-model overrides store; `null` skips the scope (the
+  /// settings Media models section hides, tests).
+  final MediaModelsStore? mediaModelsStore;
+
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
   final WebLlmEngineApi? webLlmEngine;
@@ -144,6 +152,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = themeController ?? _fallbackThemeController;
     final sessionKeys = sessionKeysStore;
+    final mediaModels = mediaModelsStore;
     Widget child = ListenableBuilder(
       listenable: theme,
       builder: (context, _) {
@@ -186,6 +195,9 @@ class MyApp extends StatelessWidget {
     child = FahThemeScope(controller: theme, child: child);
     if (sessionKeys != null) {
       child = SessionKeysScope(store: sessionKeys, child: child);
+    }
+    if (mediaModels != null) {
+      child = MediaModelsScope(store: mediaModels, child: child);
     }
     return child;
   }

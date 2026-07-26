@@ -829,6 +829,12 @@ Future<void> main(List<String> args) async {
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
       modelRolesResolver: rolesResolver,
+      // The live models config (`models:` section): `/models set`/`remove`
+      // mutate its media slot overrides and `/model <name>` resolves its
+      // custom model definitions — persisted via persistConfig. An absent
+      // section starts as an empty config so the commands always work.
+      modelsConfig: saved.models ?? ModelsConfig(),
+      onModelsConfigChanged: () async => persistConfig(),
       homeDir: home,
       // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
       // with project rules (.fah/rules.yaml), project first.
@@ -889,6 +895,8 @@ Future<void> main(List<String> args) async {
         // Saved custom providers (the live registry the CLI mutates).
         customProviders:
             cli.config.customProviders?.entries ?? saved.customProviders,
+        // Models config (the live instance `/models set`/`remove` mutates).
+        models: cli.config.modelsConfig ?? saved.models,
       ),
     );
   };

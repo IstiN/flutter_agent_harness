@@ -160,6 +160,34 @@ MODEL ROLES (~/.fah/config.yaml)
   With no roles: section the CLI runs the single --provider/--model pair.
   /model lists the resolved roles and chains.
 
+MODELS CONFIG (~/.fah/config.yaml)
+  The optional models: section carries per-slot media model overrides (the
+  same slot schema the Flutter app uses — a slot without an override falls
+  back to the main connection) and named custom model definitions:
+
+    models:
+      slots:                       # imageGeneration, audioTts,
+                                   # musicGeneration, videoGeneration,
+                                   # vision, transcription
+        vision:
+          providerKind: openai-completions
+          baseUrl: https://api.openai.com/v1
+          modelId: gpt-4o
+          apiKeyName: OPENAI_API_KEY   # optional; key NAME, never the value
+      custom:                      # /model <name> switch targets
+        fast:
+          provider: openai             # catalog provider name
+          baseUrl: https://api.openai.com/v1
+          model: gpt-4o-mini
+          contextWindow: 128000        # optional; also maxTokens, input
+
+  In the REPL, /models config shows the effective configuration,
+  /models set <slot> <model> [baseUrl] pins a media slot (the base URL
+  defaults to the main connection's endpoint), /models remove <slot>
+  returns a slot to the main connection — both persisted into the models:
+  section. /model <custom-name> switches provider, endpoint, and model in
+  one step using a models.custom definition.
+
 PROMPTS
   Modes: the system prompt comes from the active mode — code (default),
   architect, review. Select with --mode or switch live with /mode, /code,
@@ -278,7 +306,17 @@ SKILLS AND CONTEXT FILES
   ~/.fah/AGENTS.md) are merged into the system prompt, closest last, with
   a 32 KiB leaf-first budget.
   /model [id|?|N]    show model/roles, pick from known models, or switch
-  /models [filter]   list known models for the current provider
+                     (a models.custom definition name switches provider,
+                     endpoint, and model in one step)
+  /models [filter]   list known models for the current provider;
+  /models config     show the effective models: configuration (media slot
+                     overrides + custom model definitions)
+  /models set <slot> <model> [baseUrl]
+                     pin a media slot to a model (persisted); the base URL
+                     defaults to the main connection's endpoint
+  /models remove <slot>
+                     drop a media slot override (persisted; the slot falls
+                     back to the main connection)
   /model-edit [contextWindow|maxTokens <n>]
                      show or override the active model's token limits for
                      this session (an endpoint-reported window from /models
@@ -310,8 +348,9 @@ SKILLS AND CONTEXT FILES
 CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,
                        approvalMode, allowedTools, plus the prompts:, roles:,
-                       modelOverrides:, retry:, and ttsr: sections. Invalid
-                       roles/ttsr/prompts sections fail loudly at startup.
+                       modelOverrides:, retry:, ttsr:, and models: sections.
+                       Invalid roles/ttsr/prompts/models sections fail
+                       loudly at startup.
   .fah/packages.yaml   project plugin configuration
   .fah/rules.yaml      project TTSR stream rules
   .fah/lsp.json        project LSP server map

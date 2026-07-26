@@ -5,6 +5,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The per-modality model slots [MediaModelsStore] manages.
@@ -37,14 +38,11 @@ final class MediaSlot {
   static const transcription = 'transcription';
 
   /// Every known slot name, in declaration order.
-  static const all = [
-    imageGeneration,
-    audioTts,
-    musicGeneration,
-    videoGeneration,
-    vision,
-    transcription,
-  ];
+  ///
+  /// Derived from the harness's `mediaModelSlotIds` (the shared schema the
+  /// CLI's `models:` config section also uses) — the constants above must
+  /// stay string-identical to that list.
+  static const all = mediaModelSlotIds;
 }
 
 /// A per-slot endpoint override: where ONE media modality is served when the
@@ -359,4 +357,20 @@ class MediaModelsStore extends ChangeNotifier {
       // Best effort: a failed write must not break the settings UI.
     }
   }
+}
+
+/// Provides the app's [MediaModelsStore] to the widget tree (the settings
+/// Media models section) without threading it through every intermediate
+/// widget — the [SessionKeysScope] pattern.
+class MediaModelsScope extends InheritedNotifier<MediaModelsStore> {
+  /// Creates a scope exposing [store].
+  const MediaModelsScope({
+    super.key,
+    required MediaModelsStore store,
+    required super.child,
+  }) : super(notifier: store);
+
+  /// The nearest store, or `null` outside the app shell (tests).
+  static MediaModelsStore? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<MediaModelsScope>()?.notifier;
 }

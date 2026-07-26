@@ -785,6 +785,136 @@ extension on AgentCli {
     return all.where((id) => id.toLowerCase().contains(lower)).toList();
   }
 
+  /// `/models [filter]` | `config` | `set <slot> <model> [baseUrl]` |
+  /// `remove <slot>` — a bare or filtered invocation lists the endpoint's
+  /// models; the `config`/`set`/`remove` subcommands show and manage the
+  /// media slot overrides of the `models:` config section (persisted by the
+  /// host).
+  Future<void> _handleModelsCommand(String rest) async {
+    final trimmed = rest.trim();
+    final split = trimmed.indexOf(RegExp(r'\s'));
+    final head = split < 0 ? trimmed : trimmed.substring(0, split);
+    final tail = split < 0 ? '' : trimmed.substring(split + 1).trim();
+    switch (head) {
+      case 'config':
+        _printModelsConfig();
+      case 'set':
+        _setModelsSlot(tail);
+      case 'remove':
+        _removeModelsSlot(tail);
+      default:
+        await _listModels(trimmed);
+    }
+  }
+
+  /// `/models config`: the effective models configuration — the main
+  /// connection, every media slot (override or main-connection fallback),
+  /// and the custom model definitions `/model <name>` can switch to.
+  void _printModelsConfig() {
+    final models = config.modelsConfig;
+    final current = _agent.state.model;
+    io.writeln(
+      'main connection: ${current.id} '
+      '(${current.provider} @ ${current.baseUrl})',
+    );
+    io.writeln('media slots (no override = main connection):');
+    for (final slot in mediaModelSlotIds) {
+      final override = models?.slots[slot];
+      if (override == null) {
+        io.writeln('  $slot: main connection');
+      } else {
+        final key = override.apiKeyName == null
+            ? ''
+            : ' · key: ${override.apiKeyName}';
+        io.writeln(
+          '  $slot: ${override.modelId} @ ${override.baseUrl} '
+          '(${override.providerKind})$key',
+        );
+      }
+    }
+    final custom = models?.custom ?? const <String, CustomModelDefinition>{};
+    if (custom.isEmpty) {
+      io.writeln(
+        'custom models: none (define under models.custom in '
+        '~/.fah/config.yaml)',
+      );
+    } else {
+      io.writeln('custom models (switch with /model <name>):');
+      for (final entry in custom.entries) {
+        final def = entry.value;
+        io.writeln(
+          '  ${entry.key}: ${def.model} (${def.provider} @ ${def.baseUrl})',
+        );
+      }
+    }
+    io.writeln(
+      _style.dim('persisted in the models: section of ~/.fah/config.yaml'),
+    );
+  }
+
+  /// `/models set <slot> <model> [baseUrl]`: pins one media slot to a model.
+  /// The base URL defaults to the main connection's endpoint; the provider
+  /// kind is always `openai-completions` (the media tools' wire format).
+  void _setModelsSlot(String args) {
+    final parts = args
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.length < 2 || parts.length > 3) {
+      io.writeln('usage: /models set <slot> <model> [baseUrl]');
+      return;
+    }
+    final slot = parts[0];
+    if (!mediaModelSlotIds.contains(slot)) {
+      io.writeln(
+        'unknown slot: $slot (slots: ${mediaModelSlotIds.join(', ')})',
+      );
+      return;
+    }
+    final models = config.modelsConfig;
+    if (models == null) {
+      io.writeln('models config is unavailable on this host');
+      return;
+    }
+    final baseUrl = parts.length == 3 ? parts[2] : _agent.state.model.baseUrl;
+    models.setSlotOverride(
+      slot,
+      MediaSlotModelConfig(
+        providerKind: 'openai-completions',
+        baseUrl: baseUrl,
+        modelId: parts[1],
+      ),
+    );
+    io.writeln('slot $slot → ${parts[1]} @ $baseUrl (openai-completions)');
+    config.onModelsConfigChanged?.call();
+  }
+
+  /// `/models remove <slot>`: drops a media slot override, returning the
+  /// slot to the main-connection fallback.
+  void _removeModelsSlot(String slot) {
+    if (slot.isEmpty) {
+      io.writeln('usage: /models remove <slot>');
+      return;
+    }
+    if (!mediaModelSlotIds.contains(slot)) {
+      io.writeln(
+        'unknown slot: $slot (slots: ${mediaModelSlotIds.join(', ')})',
+      );
+      return;
+    }
+    final models = config.modelsConfig;
+    if (models == null) {
+      io.writeln('models config is unavailable on this host');
+      return;
+    }
+    if (!models.removeSlotOverride(slot)) {
+      io.writeln('no override for slot $slot');
+      return;
+    }
+    io.writeln('slot $slot → main connection');
+    config.onModelsConfigChanged?.call();
+  }
+
   Future<void> _handleModelCommand(String rest) async {
     final trimmed = rest.trim();
     if (trimmed == '?') {
@@ -812,7 +942,86 @@ extension on AgentCli {
       await _switchModel(lastList[number - 1]);
       return;
     }
+    // A custom model definition from the models: config section resolves
+    // before plain model ids (its provider/endpoint/token limits come from
+    // the definition, not the current connection).
+    final custom = config.modelsConfig?.custom[trimmed];
+    if (custom != null) {
+      await _switchToCustomModel(trimmed, custom);
+      return;
+    }
     await _switchModel(trimmed);
+  }
+
+  /// `/model <name>` where [name] is a custom model definition from the
+  /// `models:` config section: switches provider, endpoint, and model in one
+  /// step. Roles mode pins the default chain; legacy mode rebuilds the
+  /// stream function like `/provider` (key resolves from the catalog env
+  /// names / secure store — never from the config file).
+  Future<void> _switchToCustomModel(
+    String name,
+    CustomModelDefinition def,
+  ) async {
+    // fromYaml validates the provider against the catalog.
+    final spec = catalogProvider(def.provider)!;
+    final rolesResolver = config.modelRolesResolver;
+    if (rolesResolver != null) {
+      rolesResolver.setDefaultChain([
+        ModelRef(
+          provider: spec.name,
+          modelId: def.model,
+          baseUrl: def.baseUrl,
+          contextWindow: def.contextWindow,
+          maxTokens: def.maxTokens,
+        ),
+      ]);
+      rolesResolver.applyToAgent(_agent);
+      _streamFunction = _agent.streamFunction;
+    } else {
+      final key = _providerKeyFor(spec, def.baseUrl) ?? '';
+      _providerKind = spec.kind;
+      _apiKey = key;
+      _explicitToken = false;
+      _streamFunction = providerStreamFunction(spec.kind, key);
+      _agent.streamFunction = _streamFunction;
+      final built = buildCatalogModel(
+        spec.name,
+        def.model,
+        baseUrl: def.baseUrl,
+        contextWindow: def.contextWindow,
+        maxTokens: def.maxTokens,
+      );
+      final modalities = def.input;
+      _agent.state.model = modalities == null
+          ? built
+          : Model(
+              id: built.id,
+              name: built.name,
+              api: built.api,
+              provider: built.provider,
+              baseUrl: built.baseUrl,
+              reasoning: built.reasoning,
+              input: modalities,
+              cost: built.cost,
+              contextWindow: built.contextWindow,
+              maxTokens: built.maxTokens,
+              headers: built.headers,
+              compat: built.compat,
+            );
+    }
+    _activeCustomName = null;
+    // The cached model list belongs to the previous provider/endpoint.
+    _modelCache = const [];
+    _modelContextWindows = const {};
+    _modelMaxTokens = const {};
+    _lastModelList = null;
+    unawaited(_refreshModelCache());
+    await _session?.appendModelChange(provider: spec.name, modelId: def.model);
+    io.writeln('switched model to $name (${def.model} @ ${def.baseUrl})');
+    if (rolesResolver == null) {
+      io.writeln('  ${_providerKeyLine(spec, def.baseUrl, explicit: false)}');
+    }
+    config.onModelChanged?.call(_agent.state.model);
   }
 
   Future<void> _switchModel(String modelId) async {

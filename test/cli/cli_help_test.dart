@@ -69,6 +69,16 @@ void main() {
       'retry:',
       'smol',
       'retriesPerEntry',
+      // Models config (media slots + custom model definitions).
+      'models:',
+      'imageGeneration',
+      'audioTts',
+      'musicGeneration',
+      'videoGeneration',
+      'transcription',
+      '/models config',
+      '/models set <slot> <model> [baseUrl]',
+      '/models remove <slot>',
       // Prompts.
       'prompts:',
       'cli/mode_code',

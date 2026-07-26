@@ -45,7 +45,12 @@ factual: paths, commands, invariants — no essays.
   fallback chains, key rotation (`ApiKeyRing` over `NAME`/`NAME_2`/…), 429
   mid-turn take-over (`FallbackStreamFunction`, never silent). Config:
   `roles:`/`modelOverrides:`/`retry:` in `~/.fah/config.yaml` (invalid
-  schema = `ConfigException`).
+  schema = `ConfigException`). Also the shared models config:
+  `media_model_slots.dart` (media slot names/fields shared with the app's
+  `MediaModelsStore` + strict yaml slot entry) and `models_config.dart`
+  (the `models:` section — per-slot media overrides + named custom model
+  definitions `/model <name>` resolves; mutable like the custom-provider
+  registry, persisted by the host).
 - `lib/src/ttsr/` — time-traveling stream rules: regex matched against
   streaming deltas; on match abort, inject rule bodies as hidden
   `<system-interrupt>` message, retry after 50ms. Persisted via
@@ -74,7 +79,11 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/cli/` — REPL machinery: `/provider [name] [baseUrl] [token] |
   custom` (guided wizard in `provider_flow.dart` + `provider_commands.dart`;
   `/models` fetched for openai-like endpoints), custom providers in the
-  `customProviders:` section of `~/.fah/config.yaml`. Keys: env first, then
+  `customProviders:` section of `~/.fah/config.yaml`. `/models` also manages
+  the `models:` section: `/models config`/`set <slot> <model> [baseUrl]`/
+  `remove <slot>` for media slot overrides (persisted via
+  `onModelsConfigChanged`), and `/model <name>` resolves `models.custom`
+  definitions. Keys: env first, then
   secure store (`lib/src/secrets/secure_key_store*.dart` — Keychain /
   Secret Service / PasswordVault, IO backends only in `lib/io.dart`),
   preloaded into `SecureKeyCache`; resolution order env → `FA_KEY_<HOST>`

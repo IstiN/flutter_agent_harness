@@ -20,6 +20,8 @@ library;
 
 export 'fallback_stream.dart';
 export 'key_rotation.dart';
+export 'media_model_slots.dart';
 export 'model_resolver.dart';
+export 'models_config.dart';
 export 'provider_catalog.dart';
 export 'roles_config.dart';
