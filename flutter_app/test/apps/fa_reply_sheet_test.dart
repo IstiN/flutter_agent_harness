@@ -87,7 +87,10 @@ Future<void> _pumpView(WidgetTester tester, AgentService service) async {
         ),
         env: env,
         permissionsStore: permissions,
-        onSendToAgent: (message) => service.sendText(message.text),
+        onSendToAgent: (message) async {
+          await service.sendText(message.text);
+          return service;
+        },
         agentService: service,
       ),
     ),
@@ -285,8 +288,10 @@ void main() {
                       ),
                       env: env,
                       permissionsStore: permissions,
-                      onSendToAgent: (message) =>
-                          service.sendText(message.text),
+                      onSendToAgent: (message) async {
+                        await service.sendText(message.text);
+                        return service;
+                      },
                       agentService: service,
                     ),
                   ),
@@ -310,5 +315,65 @@ void main() {
     await tester.tap(find.textContaining('buttons are purple'));
     await tester.pumpAndSettle();
     expect(find.byType(JsAppView), findsNothing);
+  });
+
+  testWidgets('send rebinds the Fa chrome to the session that received it', (
+    tester,
+  ) async {
+    // First-contact flow: the view opened with the ACTIVE session, but the
+    // forwarder created/used the app's bound session — the reply sheet must
+    // follow the bound session, not the one passed at construction.
+    final activeService = _scriptedService(const ['active reply']);
+    final boundService = _scriptedService(const ['bound reply']);
+    addTearDown(activeService.dispose);
+    addTearDown(boundService.dispose);
+    final env = MemoryExecutionEnv();
+    await env.writeFile(
+      'apps/demo/manifest.json',
+      jsonEncode(const {'id': 'demo', 'name': 'Demo', 'icon': _icon}),
+    );
+    final permissions = await AppPermissionsStore.load(env);
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: JsAppView(
+          app: JsAppInfo.fromManifest(
+            const {'id': 'demo', 'name': 'Demo', 'icon': _icon},
+            bundled: false,
+            fallbackId: 'demo',
+          ),
+          env: env,
+          permissionsStore: permissions,
+          agentService: activeService,
+          onSendToAgent: (message) async {
+            await boundService.sendText(message.text);
+            return boundService;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.runAsync(() async {
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(find.byType(TextField), 'make it teal');
+      await tester.pump();
+      await tester.tap(find.byType(FilledButton));
+      // The send path's screenshot capture times out (5 s real) in the test
+      // environment before the forwarder runs — wait it out, then let the
+      // scripted run finish.
+      for (var i = 0; i < 70; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+      }
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.byType(FaReplySheet), findsOneWidget);
+    expect(find.textContaining('bound reply'), findsOneWidget);
   });
 }

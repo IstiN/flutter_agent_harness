@@ -100,8 +100,12 @@ class JsAppView extends StatefulWidget {
   final TileProvider? mapTileProvider;
 
   /// Called with the composed Fa message; typically forwards to
-  /// `AgentService.sendImage`/`sendText` of the active session.
-  final Future<void> Function(FaAppMessage message)? onSendToAgent;
+  /// `AgentService.sendImage`/`sendText` of the app-bound session. Returns
+  /// the session service that actually received the message — on first
+  /// contact that is a NEWLY created app-bound session — so the view can
+  /// rebind its Fa chrome (work bar, reply sheet) to it; null keeps the
+  /// current binding.
+  final Future<AgentService?> Function(FaAppMessage message)? onSendToAgent;
 
   /// Bumped when the agent edits files (AgentService.fsRevision) — the app
   /// reloads itself so agent-written code shows up live.
@@ -122,6 +126,13 @@ class _JsAppViewState extends State<JsAppView> {
   bool _faSheetOpen = false;
   Timer? _reloadDebounce;
   int _lastFsRevision = -1;
+
+  /// The session service the Fa chrome (work bar, reply sheet) listens to.
+  /// Seeded from [JsAppView.agentService]; rebound to the service returned
+  /// by [JsAppView.onSendToAgent] when a send lands in a different session
+  /// (first contact creates the app-bound session — without the rebind the
+  /// bar never shows and the reply is lost to the chat screen).
+  AgentService? _agentService;
 
   /// The reply shown on the mini reply sheet; null while it is hidden.
   String? _faReply;
@@ -144,9 +155,10 @@ class _JsAppViewState extends State<JsAppView> {
   @override
   void initState() {
     super.initState();
+    _agentService = widget.agentService;
     widget.fsRevision?.addListener(_onFsRevision);
-    widget.agentService?.addListener(_onAgentServiceEvent);
-    _seenReplyText = _lastAssistantText(widget.agentService);
+    _agentService?.addListener(_onAgentServiceEvent);
+    _seenReplyText = _lastAssistantText(_agentService);
     unawaited(_restart());
   }
 
@@ -171,19 +183,37 @@ class _JsAppViewState extends State<JsAppView> {
       oldWidget.fsRevision?.removeListener(_onFsRevision);
       widget.fsRevision?.addListener(_onFsRevision);
     }
-    if (oldWidget.agentService != widget.agentService) {
-      oldWidget.agentService?.removeListener(_onAgentServiceEvent);
-      widget.agentService?.addListener(_onAgentServiceEvent);
+    if (oldWidget.agentService != widget.agentService &&
+        widget.agentService != _agentService) {
+      _bindAgentService(widget.agentService);
+    }
+  }
+
+  /// Moves the Fa chrome's listener + reply tracking to [service].
+  ///
+  /// [fromSend] marks the rebind after OUR send: the run may legitimately
+  /// be over already (fast providers) or still streaming — either way the
+  /// latest assistant text is the answer the user is waiting for, so the
+  /// reply history is NOT pre-seeded as seen and the current state is
+  /// evaluated immediately (a finished run shows its reply at once; a
+  /// streaming run is caught by the listener when it ends).
+  void _bindAgentService(AgentService? service, {bool fromSend = false}) {
+    if (service == _agentService) return;
+    _agentService?.removeListener(_onAgentServiceEvent);
+    _agentService = service;
+    _agentService?.addListener(_onAgentServiceEvent);
+    setState(() {
       _faReply = null;
       _dismissedReplyText = null;
-      _seenReplyText = _lastAssistantText(widget.agentService);
-    }
+      _seenReplyText = fromSend ? null : _lastAssistantText(service);
+    });
+    if (fromSend) _onAgentServiceEvent();
   }
 
   @override
   void dispose() {
     widget.fsRevision?.removeListener(_onFsRevision);
-    widget.agentService?.removeListener(_onAgentServiceEvent);
+    _agentService?.removeListener(_onAgentServiceEvent);
     _reloadDebounce?.cancel();
     unawaited(_engine?.dispose() ?? Future.value());
     super.dispose();
@@ -248,7 +278,11 @@ class _JsAppViewState extends State<JsAppView> {
           _boundaryKey.currentContext?.findRenderObject()
               as RenderRepaintBoundary?;
       if (boundary == null) return null;
-      final image = await boundary.toImage(pixelRatio: 1.5);
+      // Best effort: a hung capture (headless/test environments) must never
+      // eat the user's message — the timeout lands in the catch below.
+      final image = await boundary
+          .toImage(pixelRatio: 1.5)
+          .timeout(const Duration(seconds: 5));
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
       image.dispose();
       return bytes?.buffer.asUint8List();
@@ -290,7 +324,7 @@ class _JsAppViewState extends State<JsAppView> {
   /// message; while the run streams the [FaWorkBar] is the indicator and the
   /// sheet stays hidden.
   void _onAgentServiceEvent() {
-    final service = widget.agentService;
+    final service = _agentService;
     if (service == null || !mounted) return;
     if (service.isStreaming) {
       if (_faReply != null) setState(() => _faReply = null);
@@ -322,7 +356,7 @@ class _JsAppViewState extends State<JsAppView> {
     final state = _engine?.exportedState;
     final screenshot = await _captureScreenshot();
     if (!mounted) return;
-    await onSend(
+    final used = await onSend(
       FaAppMessage(
         text: trimmed,
         appId: widget.app.id,
@@ -331,6 +365,12 @@ class _JsAppViewState extends State<JsAppView> {
         screenshot: screenshot,
       ),
     );
+    // First contact creates the app-bound session: rebind the Fa chrome so
+    // the work bar and the reply sheet follow the session that actually
+    // received the message.
+    if (mounted && used != null && used != _agentService) {
+      _bindAgentService(used, fromSend: true);
+    }
   }
 
   Future<void> _openFaSheet() async {
@@ -461,13 +501,13 @@ class _JsAppViewState extends State<JsAppView> {
                       child: const FaMark(size: 18),
                     ),
                   ),
-                  if (widget.agentService != null) ...[
+                  if (_agentService != null) ...[
                     Positioned(
                       left: 0,
                       right: 0,
                       bottom: 0,
                       child: FaWorkBar(
-                        service: widget.agentService!,
+                        service: _agentService!,
                         onSend: _sendFaMessage,
                         // Expand-to-chat always leaves the app (an explicit tap,
                         // not a back gesture) — pop directly, bypassing canPop.
@@ -480,7 +520,7 @@ class _JsAppViewState extends State<JsAppView> {
                         right: 0,
                         bottom: 0,
                         child: FaReplySheet(
-                          service: widget.agentService!,
+                          service: _agentService!,
                           reply: _faReply!,
                           onExpand: () => Navigator.of(context).pop(),
                           onDismiss: _dismissFaReply,

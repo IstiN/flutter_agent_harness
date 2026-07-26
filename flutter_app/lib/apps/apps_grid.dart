@@ -38,7 +38,7 @@ class AppsGridView extends StatefulWidget {
   final AppsStore? appsStore;
   final FaLlmHandler? llmHandler;
   final FaPlatformHandler? platformHandler;
-  final Future<void> Function(FaAppMessage message)? onSendToAgent;
+  final Future<AgentService?> Function(FaAppMessage message)? onSendToAgent;
   final ValueNotifier<int>? fsRevision;
 
   /// The active session's service — forwarded to [JsAppView] so the compact

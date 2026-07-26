@@ -91,7 +91,10 @@ Future<AgentService> createAppBoundSession(
 
 /// Forwards an in-app Fa message (text + app state + theme + screenshot) to
 /// the session bound to the app (creating + binding one on first contact).
-Future<void> forwardAppMessageToAgent(
+/// Returns the session service that received the message — on first contact
+/// that is the NEWLY created app-bound session, not the one the caller may
+/// already hold — or null when there is no session to talk to.
+Future<AgentService?> forwardAppMessageToAgent(
   FlutterSessionManager manager,
   FaAppMessage message,
 ) async {
@@ -100,7 +103,7 @@ Future<void> forwardAppMessageToAgent(
       ? manager.active?.service
       : (await resolveAppBoundSession(manager, appId) ??
             await createAppBoundSession(manager, appId));
-  if (service == null) return;
+  if (service == null) return null;
   final buffer = StringBuffer(message.text);
   final stateJson = message.appStateJson;
   if (stateJson != null) {
@@ -120,6 +123,7 @@ Future<void> forwardAppMessageToAgent(
   } else {
     await service.sendText(buffer.toString());
   }
+  return service;
 }
 
 /// Pushes the [JsAppView] for [app] — the exact navigation the sidebar's

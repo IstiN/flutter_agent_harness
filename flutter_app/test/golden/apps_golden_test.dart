@@ -786,7 +786,7 @@ void main() {
         }, fallbackId: 'broken'),
         env: env,
         permissionsStore: permissions,
-        onSendToAgent: (message) async {},
+        onSendToAgent: (message) async => null,
       ),
       size: goldenSizeWide,
       wrap: (child) => child,
@@ -837,7 +837,7 @@ void main() {
             env: env,
             permissionsStore: permissions,
             mapTileProvider: _SolidTileProvider(tileBytes),
-            onSendToAgent: (message) async {},
+            onSendToAgent: (message) async => null,
           ),
         ),
       );

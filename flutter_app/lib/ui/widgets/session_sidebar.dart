@@ -185,7 +185,7 @@ class SessionSidebarState extends State<SessionSidebar> {
 
   /// Forwards an in-app Fa message (text + app state + screenshot) to the
   /// session bound to the app (see [forwardAppMessageToAgent]).
-  Future<void> sendAppMessageToAgent(FaAppMessage message) =>
+  Future<AgentService?> sendAppMessageToAgent(FaAppMessage message) =>
       forwardAppMessageToAgent(_manager, message);
 
   Future<void> _newSession() async {
