@@ -93,8 +93,8 @@ dependencies:
   webview_flutter: ^4.14.1
 
   # Firebase: analytics across iOS, Android, macOS, and web.
-  firebase_core: ^3.6.0
-  firebase_analytics: ^11.3.3
+  firebase_core: ^4.12.1
+  firebase_analytics: ^12.4.5
 
 dev_dependencies:
   flutter_test:

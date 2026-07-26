@@ -34,7 +34,7 @@ void main() {
     for (var i = 1; i <= 30; i++) {
       db.execute('INSERT INTO big (val) VALUES (?)', ['row$i']);
     }
-    db.dispose();
+    db.close();
 
     env = LocalExecutionEnv(cwd: tempDir.path);
     tool = readFileTool(env, sqlite: const Sqlite3Engine());
@@ -218,8 +218,8 @@ void main() {
     for (var i = 0; i < 1100; i++) {
       insert.execute(['v$i']);
     }
-    insert.dispose();
-    db.dispose();
+    insert.close();
+    db.close();
 
     final result = await tool.execute(
       {'path': 'huge.db?q=SELECT * FROM t'},
