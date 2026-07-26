@@ -250,7 +250,11 @@ platform :ios do
         )
         UI.success("iOS metadata uploaded successfully!")
       rescue => e
-        if e.message.include?("Cannot update languages") || e.message.include?("Cannot find edit app info")
+        if e.message.strip == "No data" || e.message.include?("fetch_app_store_review_detail")
+          # Known first-version deliver bug (fastlane#20538): the review-detail
+          # fetch crashes AFTER the localized metadata was already uploaded.
+          UI.important("deliver hit the first-version 'No data' review-detail bug after uploading metadata — continuing.")
+        elsif e.message.include?("Cannot update languages") || e.message.include?("Cannot find edit app info")
           UI.important("deliver failed (App Info not editable) - uploading version metadata directly via Spaceship API...")
           upload_version_metadata_via_api(
             metadata_dir: File.expand_path(metadata_dir),
@@ -358,7 +362,11 @@ platform :mac do
         )
         UI.success("macOS metadata uploaded successfully!")
       rescue => e
-        if e.message.include?("Cannot update languages") || e.message.include?("Cannot find edit app info") || e.message.include?("cannot create a new version") || e.message.include?("You cannot create a new version")
+        if e.message.strip == "No data" || e.message.include?("fetch_app_store_review_detail")
+          # Known first-version deliver bug (fastlane#20538): the review-detail
+          # fetch crashes AFTER the localized metadata was already uploaded.
+          UI.important("deliver hit the first-version 'No data' review-detail bug after uploading metadata — continuing.")
+        elsif e.message.include?("Cannot update languages") || e.message.include?("Cannot find edit app info") || e.message.include?("cannot create a new version") || e.message.include?("You cannot create a new version")
           UI.important("deliver failed (App Info not editable) - uploading version metadata directly via Spaceship API...")
           upload_version_metadata_via_api(
             metadata_dir: File.expand_path(metadata_dir),
