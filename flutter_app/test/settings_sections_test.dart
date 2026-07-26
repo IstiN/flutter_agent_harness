@@ -147,6 +147,75 @@ void main() {
       expect(registry.keyFor(provider.id), isNull);
       expect(find.text('Acme'), findsNothing);
     });
+
+    testWidgets('add-key dialog validates, normalizes, and saves', (
+      tester,
+    ) async {
+      final store = SessionKeysStore.inMemory({'GITHUB_TOKEN': 'ghp_existing'});
+      await _pump(tester, KeysSection(store: store));
+
+      await tester.tap(find.text('Add key'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AddKeyDialog), findsOneWidget);
+
+      final nameField = find.byType(TextField).first;
+      final valueField = find.byType(TextField).last;
+
+      // Save stays disabled while either field is empty.
+      expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Save'))
+            .onPressed,
+        isNull,
+      );
+
+      // An invalid name shape is rejected inline, nothing is saved.
+      await tester.enterText(nameField, '1bad name');
+      await tester.enterText(valueField, 'secret');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('starting with a letter'), findsOneWidget);
+      expect(store.names, ['GITHUB_TOKEN']);
+
+      // A duplicate (case-insensitive) is rejected inline.
+      await tester.enterText(nameField, 'github_token');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(find.text('A key with this name already exists.'), findsOneWidget);
+      expect(store.names, ['GITHUB_TOKEN']);
+
+      // A valid name is uppercase-normalized, saved, and listed.
+      await tester.enterText(nameField, 'gitlab_token');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(store.valueOf('GITLAB_TOKEN'), 'secret');
+      expect(find.text('GITLAB_TOKEN'), findsOneWidget);
+      // The value is never displayed.
+      expect(find.textContaining('secret'), findsNothing);
+    });
+
+    testWidgets('add-key dialog rejects duplicates of the known names', (
+      tester,
+    ) async {
+      final store = SessionKeysStore.inMemory();
+      await _pump(tester, KeysSection(store: store));
+
+      await tester.tap(find.text('Add key'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextField).first,
+        'openrouter_api_key',
+      );
+      await tester.enterText(find.byType(TextField).last, 'secret');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(find.text('A key with this name already exists.'), findsOneWidget);
+      expect(store.names, isEmpty);
+    });
   });
 
   group('AgentSettingsForm key prefill', () {

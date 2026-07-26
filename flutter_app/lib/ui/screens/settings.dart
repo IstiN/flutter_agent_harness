@@ -8,6 +8,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/gemma/gemma_cache_section.dart';
@@ -382,6 +383,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         _endpointContextWindows = windows;
         _endpointMaxTokens = caps;
       });
+      AppAnalytics.instance.modelsFetchResult(ids.length);
     } on Object {
       if (mounted && generation == _modelsFetchGeneration) {
         setState(() {
@@ -682,6 +684,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       _registry.rememberKey(provider.id, result.apiKey);
     }
     setState(() => _applyCustomProvider(provider));
+    AppAnalytics.instance.providerSaved('add');
   }
 
   Future<void> _editProvider() async {
@@ -700,6 +703,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (result.deleted) {
       // _onRegistryChanged resets the selection to OpenRouter.
       await _registry.remove(selection.id);
+      AppAnalytics.instance.providerSaved('delete');
       return;
     }
     final updated = CustomProvider(
@@ -713,6 +717,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       _registry.rememberKey(updated.id, result.apiKey);
     }
     setState(() => _applyCustomProvider(updated));
+    AppAnalytics.instance.providerSaved('edit');
   }
 
   Future<void> _connect() async {
@@ -750,6 +755,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       _error = null;
     });
     try {
+      AppAnalytics.instance.modelPickedFromSuggestions(
+        fromSuggestions: _endpointModels.contains(model),
+      );
       await widget.onConnect(
         AgentConfig(
           providerKind: 'openai-completions',
@@ -764,6 +772,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           supportsImages: _vision,
         ),
       );
+      AppAnalytics.instance.connectResult(
+        success: true,
+        providerKind: 'openai-completions',
+        isCustomProvider: _selection is CustomProvider,
+        isOnDevice: false,
+      );
       // Connected: keep the key for this session so reopening settings (or
       // re-picking the provider) prefills it. Never persisted.
       final selection = _selection;
@@ -771,6 +785,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         _registry.rememberKey(selection.id, key);
       }
     } catch (e) {
+      AppAnalytics.instance.connectResult(
+        success: false,
+        providerKind: 'openai-completions',
+        isCustomProvider: _selection is CustomProvider,
+        isOnDevice: false,
+      );
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -1442,7 +1462,9 @@ class ThemeModeSection extends StatelessWidget {
 /// The settings "Keys" section: lists the known key names
 /// ([knownKeyNames] plus anything saved) and every custom provider with a
 /// remembered session key, each with its source (`env file` / `saved` /
-/// `this session`) and set/delete actions. Values are never displayed;
+/// `this session`) and set/delete actions. The "Add key" action saves an
+/// arbitrary named key (see [AddKeyDialog]) — saved names are advertised to
+/// the agent as available `$NAME` env vars. Values are never displayed;
 /// saving happens only on an explicit Set here (keys typed into the
 /// connection form stay session-only, see [ProviderRegistry.rememberKey]).
 ///
@@ -1470,9 +1492,21 @@ class KeysSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              context.l10n.keysSectionTitle,
-              style: theme.textTheme.titleSmall,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.l10n.keysSectionTitle,
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ),
+                if (store != null)
+                  TextButton.icon(
+                    onPressed: () => _addKey(context, store),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: Text(context.l10n.keysAddButton),
+                  ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(
@@ -1590,7 +1624,24 @@ class KeysSection extends StatelessWidget {
     );
     if (value == null || value.isEmpty) return;
     await store.set(name, value);
+    AppAnalytics.instance.keyAction('set', name);
   }
+
+  /// Opens the add-key dialog for an arbitrary key name (e.g.
+  /// `GITHUB_TOKEN`) so the agent can reference it as `$NAME` in shell
+  /// commands; the saved names are listed in the agent's system prompt.
+  Future<void> _addKey(BuildContext context, SessionKeysStore store) async {
+    final entry = await showDialog<({String name, String value})>(
+      context: context,
+      builder: (_) => AddKeyDialog(isDuplicate: _isListedName(store)),
+    );
+    if (entry == null) return;
+    await store.set(entry.name, entry.value);
+  }
+
+  /// Names that already have a row: the known names plus everything saved.
+  static bool Function(String) _isListedName(SessionKeysStore store) =>
+      (name) => knownKeyNames.contains(name) || store.has(name);
 
   Future<void> _deleteStoredKey(
     BuildContext context,
@@ -1616,6 +1667,7 @@ class KeysSection extends StatelessWidget {
     );
     if (confirmed != true) return;
     await store.delete(name);
+    AppAnalytics.instance.keyAction('delete', name);
   }
 
   Future<void> _setProviderKey(
@@ -1709,6 +1761,111 @@ class _KeyEditorDialogState extends State<KeyEditorDialog> {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return;
     Navigator.of(context).pop(trimmed);
+  }
+}
+
+/// The add-key dialog opened from [KeysSection]: collects an arbitrary key
+/// name (validated against [namePattern], uppercase-normalized, duplicates
+/// rejected via [isDuplicate]) plus its (obscured) value. Pops with the
+/// `(name, value)` record, or `null` when cancelled.
+class AddKeyDialog extends StatefulWidget {
+  const AddKeyDialog({super.key, required this.isDuplicate});
+
+  /// The accepted name shape (shell-env style, e.g. `GITHUB_TOKEN`).
+  static final RegExp namePattern = RegExp(r'^[A-Z][A-Z0-9_]*$');
+
+  /// Whether a (normalized) name already has a row in the Keys section.
+  final bool Function(String name) isDuplicate;
+
+  @override
+  State<AddKeyDialog> createState() => _AddKeyDialogState();
+}
+
+class _AddKeyDialogState extends State<AddKeyDialog> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _valueController = TextEditingController();
+
+  /// The validation error under the name field; `null` while valid/untried.
+  String? _nameError;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _valueController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(context.l10n.keysAddDialogTitle),
+      content: SizedBox(
+        width: _dialogContentWidth(context, 380),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: InputDecoration(
+                labelText: context.l10n.keysAddNameLabel,
+                hintText: context.l10n.keysAddNameHint,
+                errorText: _nameError,
+              ),
+              autocorrect: false,
+              enableSuggestions: false,
+              autofocus: true,
+              onChanged: (_) => setState(() => _nameError = null),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _valueController,
+              decoration: InputDecoration(
+                labelText: context.l10n.keysValueLabel,
+                hintText: context.l10n.keysValueHint,
+              ),
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _save(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.l10n.commonCancel),
+        ),
+        ListenableBuilder(
+          listenable: Listenable.merge([_nameController, _valueController]),
+          builder: (context, _) => FilledButton(
+            onPressed:
+                _nameController.text.trim().isEmpty ||
+                    _valueController.text.trim().isEmpty
+                ? null
+                : _save,
+            child: Text(context.l10n.settingsSaveButton),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _save() {
+    final name = _nameController.text.trim().toUpperCase();
+    final value = _valueController.text.trim();
+    if (value.isEmpty) return;
+    if (!AddKeyDialog.namePattern.hasMatch(name)) {
+      setState(() => _nameError = context.l10n.keysAddNameInvalid);
+      return;
+    }
+    if (widget.isDuplicate(name)) {
+      setState(() => _nameError = context.l10n.keysAddNameDuplicate);
+      return;
+    }
+    Navigator.of(context).pop((name: name, value: value));
   }
 }
 

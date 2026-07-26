@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/apps/apps_grid.dart';
 import 'package:fa/apps/app_icon.dart';
@@ -12,6 +13,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/widgets/model_mark.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -36,6 +38,7 @@ class SessionSidebar extends StatefulWidget {
     this.onAction,
     this.registry,
     this.lastConnectionStore,
+    this.sessionNamesStore,
   });
 
   /// The multi-session manager backing the model card and the session list.
@@ -54,6 +57,11 @@ class SessionSidebar extends StatefulWidget {
   /// persistence (tests).
   final LastConnectionStore? lastConnectionStore;
 
+  /// The user-given session titles (see [SessionNamesStore]); `null` loads
+  /// the store from the active service's env lazily (the rename affordance
+  /// appears once loaded).
+  final SessionNamesStore? sessionNamesStore;
+
   @override
   State<SessionSidebar> createState() => SessionSidebarState();
 }
@@ -70,13 +78,43 @@ class SessionSidebarState extends State<SessionSidebar> {
   List<JsAppInfo>? _apps;
   AppPermissionsStore? _permissionsStore;
 
+  /// The user-given session titles overlay; `null` until loaded (or when no
+  /// service/env is available — rows then show only derived names and no
+  /// rename affordance).
+  SessionNamesStore? _namesStore;
+
   FlutterSessionManager get _manager => widget.manager;
 
   @override
   void initState() {
     super.initState();
+    _namesStore = widget.sessionNamesStore;
+    _namesStore?.addListener(_onNamesChanged);
+    if (_namesStore == null) unawaited(_loadNamesStore());
     _reload();
     unawaited(_loadApps());
+  }
+
+  @override
+  void dispose() {
+    _namesStore?.removeListener(_onNamesChanged);
+    super.dispose();
+  }
+
+  void _onNamesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Loads the session-titles store from the active service's env when the
+  /// widget wasn't given one (the app shell path).
+  Future<void> _loadNamesStore() async {
+    final service = _manager.active?.service;
+    if (service == null) return;
+    final store = await SessionNamesStore.load(service.env);
+    if (!mounted || _namesStore != null) return;
+    setState(() {
+      _namesStore = store..addListener(_onNamesChanged);
+    });
   }
 
   Future<void> _reload() async {
@@ -211,6 +249,7 @@ class SessionSidebarState extends State<SessionSidebar> {
     }
     if (!mounted) return;
     widget.onAction?.call();
+    AppAnalytics.instance.sessionAction('new');
     await _reload();
   }
 
@@ -218,6 +257,7 @@ class SessionSidebarState extends State<SessionSidebar> {
     if (session.id != _manager.activeId) {
       _manager.switchTo(session.id);
       if (!mounted) return;
+      AppAnalytics.instance.sessionAction('switch');
     }
     widget.onAction?.call();
     await _reload();
@@ -248,6 +288,7 @@ class SessionSidebarState extends State<SessionSidebar> {
     final wasActive = session.id == _manager.activeId;
     try {
       await _manager.closeSession(session.id, deleteFile: true);
+      AppAnalytics.instance.sessionAction('delete');
     } on Object catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -266,6 +307,60 @@ class SessionSidebarState extends State<SessionSidebar> {
     if (!mounted) return;
     if (wasActive) widget.onAction?.call();
     await _reload();
+  }
+
+  /// The displayed title for a session: the user-given one when set, else
+  /// the derived `session <id8>` name.
+  String _sessionTitle(String sessionId) =>
+      _namesStore?.titleFor(sessionId) ??
+      context.l10n.sidebarSessionTitle(sessionId.substring(0, 8));
+
+  /// Opens the rename dialog for a session row (Save / Clear / Cancel).
+  Future<void> _renameSession(String sessionId) async {
+    final store = _namesStore;
+    if (store == null) return;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameSessionDialog(
+        initialTitle: store.titleFor(sessionId) ?? '',
+        derivedName: context.l10n.sidebarSessionTitle(
+          sessionId.substring(0, 8),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    if (action == _RenameSessionDialog.clearAction) {
+      await store.rename(sessionId);
+    } else {
+      await store.rename(sessionId, action);
+    }
+  }
+
+  /// The per-row trailing actions: rename (once the titles store is
+  /// available) + delete, kept compact to match the dense tiles.
+  Widget _rowActions({required VoidCallback onDelete, VoidCallback? onRename}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (onRename != null)
+          IconButton(
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            tooltip: context.l10n.sidebarRenameSessionTooltip,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: onRename,
+          ),
+        IconButton(
+          icon: const Icon(Icons.delete_outline, size: 18),
+          tooltip: context.l10n.sidebarDeleteSessionTooltip,
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          onPressed: onDelete,
+        ),
+      ],
+    );
   }
 
   Future<void> _switchModel() async {
@@ -515,22 +610,19 @@ class SessionSidebarState extends State<SessionSidebar> {
   /// restores it via [FlutterSessionManager.openSession].
   Widget _buildPersistedTile(ThemeData theme, SessionMetadata metadata) {
     final model = metadata.metadata?['model']?.toString() ?? '';
+    final namesStore = _namesStore;
     return ListTile(
       dense: true,
       leading: const Icon(Icons.history, size: 18),
-      title: Text(
-        context.l10n.sidebarSessionTitle(metadata.id.substring(0, 8)),
-        overflow: TextOverflow.ellipsis,
-      ),
+      title: Text(_sessionTitle(metadata.id), overflow: TextOverflow.ellipsis),
       subtitle: Text(
         model.isNotEmpty ? model : metadata.cwd,
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.bodySmall?.copyWith(color: FahPalette.dim),
       ),
-      trailing: IconButton(
-        icon: const Icon(Icons.delete_outline, size: 18),
-        tooltip: context.l10n.sidebarDeleteSessionTooltip,
-        onPressed: () => _deletePersisted(metadata),
+      trailing: _rowActions(
+        onDelete: () => _deletePersisted(metadata),
+        onRename: namesStore == null ? null : () => _renameSession(metadata.id),
       ),
       onTap: () => _openPersisted(metadata),
     );
@@ -569,6 +661,7 @@ class SessionSidebarState extends State<SessionSidebar> {
     final active = session.id == _manager.activeId;
     final model = session.service.modelId;
     final streaming = session.service.isStreaming;
+    final namesStore = _namesStore;
     return ListTile(
       dense: true,
       selected: active,
@@ -582,21 +675,87 @@ class SessionSidebarState extends State<SessionSidebar> {
             : Icons.chat_bubble_outline,
         size: 18,
       ),
-      title: Text(
-        context.l10n.sidebarSessionTitle(session.id.substring(0, 8)),
-        overflow: TextOverflow.ellipsis,
-      ),
+      title: Text(_sessionTitle(session.id), overflow: TextOverflow.ellipsis),
       subtitle: Text(
         model.isNotEmpty ? model : context.l10n.sidebarNoModel,
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.bodySmall?.copyWith(color: FahPalette.dim),
       ),
-      trailing: IconButton(
-        icon: const Icon(Icons.delete_outline, size: 18),
-        tooltip: context.l10n.sidebarDeleteSessionTooltip,
-        onPressed: () => _delete(session),
+      trailing: _rowActions(
+        onDelete: () => _delete(session),
+        onRename: namesStore == null ? null : () => _renameSession(session.id),
       ),
       onTap: () => _open(session),
     );
   }
+}
+
+/// The rename dialog opened from a session row: a prefilled name field with
+/// Save / Clear / Cancel. Pops with the entered title, [clearAction] for
+/// Clear, or `null` when cancelled. An empty Save also clears (handled by
+/// [SessionNamesStore.rename]).
+class _RenameSessionDialog extends StatefulWidget {
+  const _RenameSessionDialog({
+    required this.initialTitle,
+    required this.derivedName,
+  });
+
+  /// Sentinel pop result for the Clear action.
+  static const clearAction = '\u{0}clear';
+
+  /// The current custom title (empty when the row shows the derived name).
+  final String initialTitle;
+
+  /// The fallback name shown as the field hint (`session <id8>`).
+  final String derivedName;
+
+  @override
+  State<_RenameSessionDialog> createState() => _RenameSessionDialogState();
+}
+
+class _RenameSessionDialogState extends State<_RenameSessionDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialTitle,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(context.l10n.sidebarRenameDialogTitle),
+      content: TextField(
+        controller: _controller,
+        decoration: InputDecoration(
+          labelText: context.l10n.sidebarRenameNameLabel,
+          hintText: widget.derivedName,
+          helperText: context.l10n.sidebarRenameHint,
+        ),
+        autocorrect: false,
+        autofocus: true,
+        onSubmitted: _save,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(_RenameSessionDialog.clearAction),
+          child: Text(context.l10n.sidebarRenameClear),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.l10n.sidebarCancel),
+        ),
+        FilledButton(
+          onPressed: () => _save(_controller.text),
+          child: Text(context.l10n.settingsSaveButton),
+        ),
+      ],
+    );
+  }
+
+  void _save(String value) => Navigator.of(context).pop(value.trim());
 }

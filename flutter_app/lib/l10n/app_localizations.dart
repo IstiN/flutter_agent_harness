@@ -938,6 +938,42 @@ abstract class AppLocalizations {
   /// **'on this device'**
   String get gemmaStorageOnDevice;
 
+  /// No description provided for @keysAddButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Add key'**
+  String get keysAddButton;
+
+  /// No description provided for @keysAddDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add key'**
+  String get keysAddDialogTitle;
+
+  /// No description provided for @keysAddNameDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'A key with this name already exists.'**
+  String get keysAddNameDuplicate;
+
+  /// No description provided for @keysAddNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'GITHUB_TOKEN'**
+  String get keysAddNameHint;
+
+  /// No description provided for @keysAddNameInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Use A–Z, 0–9 and underscores, starting with a letter.'**
+  String get keysAddNameInvalid;
+
+  /// No description provided for @keysAddNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get keysAddNameLabel;
+
   /// No description provided for @keysDeleteBody.
   ///
   /// In en, this message translates to:
@@ -1693,6 +1729,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Refresh sessions'**
   String get sidebarRefreshSessionsTooltip;
+
+  /// No description provided for @sidebarRenameClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get sidebarRenameClear;
+
+  /// No description provided for @sidebarRenameDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename session'**
+  String get sidebarRenameDialogTitle;
+
+  /// No description provided for @sidebarRenameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'An empty name restores the default one.'**
+  String get sidebarRenameHint;
+
+  /// No description provided for @sidebarRenameNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get sidebarRenameNameLabel;
+
+  /// No description provided for @sidebarRenameSessionTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename session'**
+  String get sidebarRenameSessionTooltip;
 
   /// No description provided for @sidebarRetry.
   ///

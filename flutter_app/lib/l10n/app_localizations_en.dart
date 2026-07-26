@@ -516,6 +516,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get gemmaStorageOnDevice => 'on this device';
 
   @override
+  String get keysAddButton => 'Add key';
+
+  @override
+  String get keysAddDialogTitle => 'Add key';
+
+  @override
+  String get keysAddNameDuplicate => 'A key with this name already exists.';
+
+  @override
+  String get keysAddNameHint => 'GITHUB_TOKEN';
+
+  @override
+  String get keysAddNameInvalid =>
+      'Use A–Z, 0–9 and underscores, starting with a letter.';
+
+  @override
+  String get keysAddNameLabel => 'Name';
+
+  @override
   String get keysDeleteBody =>
       'The saved value is removed from this device. A value from the .env file, if any, applies again.';
 
@@ -938,6 +957,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sidebarRefreshSessionsTooltip => 'Refresh sessions';
+
+  @override
+  String get sidebarRenameClear => 'Clear';
+
+  @override
+  String get sidebarRenameDialogTitle => 'Rename session';
+
+  @override
+  String get sidebarRenameHint => 'An empty name restores the default one.';
+
+  @override
+  String get sidebarRenameNameLabel => 'Name';
+
+  @override
+  String get sidebarRenameSessionTooltip => 'Rename session';
 
   @override
   String get sidebarRetry => 'Retry';

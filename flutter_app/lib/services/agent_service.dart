@@ -8,6 +8,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
+import 'package:fa/services/approval_mode_store.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/asr_tool.dart';
 import 'package:fa/services/calendar_service.dart';
@@ -158,8 +159,13 @@ class AgentService extends ChangeNotifier {
     this._config,
     String promptSuffix = '',
     Duration? responseTimeout,
+    ApprovalMode? initialApprovalMode,
   }) : _promptSuffix = promptSuffix,
        _resolveSecretName = null,
+       _approvalModeStore = null,
+       approval = ApprovalManager(
+         mode: initialApprovalMode ?? ApprovalMode.write,
+       ),
        _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
@@ -192,7 +198,9 @@ class AgentService extends ChangeNotifier {
   }) async {
     final resolvedEnv = env ?? await createPlatformEnv();
     final secretsStore = createSecretsStore();
-    final secrets = await secretsStore.readAll();
+    final secrets = mergeSecrets(await secretsStore.readAll(), sessionKeys);
+    final approvalModeStore = ApprovalModeStore(resolvedEnv);
+    final savedApprovalMode = await approvalModeStore.load();
     final redactor = SecretRedactor.fromSecrets(secrets);
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
@@ -218,12 +226,35 @@ class AgentService extends ChangeNotifier {
       config: config,
       redactor: redactor,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
+      initialApprovalMode: savedApprovalMode,
+      approvalModeStore: approvalModeStore,
       resolveSecretName: (name) async =>
           secrets[name] ??
           sessionKeys?.valueOf(name) ??
           providerRegistry?.keyValueForName(name),
       promptSuffix: promptSuffix,
     );
+  }
+
+  /// Merges the named secrets the agent runs with: [dotenv] (the `.env`
+  /// secrets store) first, then the user-saved [sessionKeys] entries
+  /// OVERRIDE on conflict — an explicit save in the settings Keys section
+  /// wins over the dev `.env`. The merged map feeds the bash environment
+  /// ([SecretsExecutionEnv]), the [SecretRedactor], and the system prompt's
+  /// "Available secret env vars" name list.
+  @visibleForTesting
+  static Map<String, String> mergeSecrets(
+    Map<String, String> dotenv,
+    SessionKeysStore? sessionKeys,
+  ) {
+    final merged = Map<String, String>.of(dotenv);
+    if (sessionKeys != null) {
+      for (final name in sessionKeys.names) {
+        final value = sessionKeys.valueOf(name);
+        if (value != null && value.isNotEmpty) merged[name] = value;
+      }
+    }
+    return merged;
   }
 
   /// Writes bundled agent skills (see `assets/skills/`) into the env's
@@ -254,9 +285,15 @@ class AgentService extends ChangeNotifier {
     StreamFunction? streamFunction,
     MediaKeyResolver? resolveSecretName,
     String promptSuffix = '',
+    ApprovalMode? initialApprovalMode,
+    ApprovalModeStore? approvalModeStore,
   }) : _config = config,
        _resolveSecretName = resolveSecretName,
        _promptSuffix = promptSuffix,
+       _approvalModeStore = approvalModeStore,
+       approval = ApprovalManager(
+         mode: initialApprovalMode ?? ApprovalMode.write,
+       ),
        sessionsRoot = '${env.cwd}/sessions',
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
     _providerKind = config.providerKind;
@@ -482,8 +519,14 @@ class AgentService extends ChangeNotifier {
   /// The approval gate attached to the agent. Default mode is
   /// [ApprovalMode.write] — read-only tools run freely, mutating and shell
   /// tools prompt — switchable at runtime via [setApprovalMode] (settings
-  /// dialog) and persisted nowhere (session-scoped).
-  final ApprovalManager approval = ApprovalManager(mode: ApprovalMode.write);
+  /// dialog). Services built by [AgentService.create] seed it from the
+  /// persisted choice (see [ApprovalModeStore]) and write every change
+  /// through; the pre-constructed-Agent path (tests) keeps the default.
+  final ApprovalManager approval;
+
+  /// The persisted approval-mode store ([AgentService.create] path only);
+  /// [setApprovalMode] writes through fire-and-forget.
+  final ApprovalModeStore? _approvalModeStore;
 
   /// UI hook rendering the approval prompt (the chat screen installs a
   /// Material dialog). `null` → prompt-policy calls are denied.
@@ -543,11 +586,15 @@ class AgentService extends ChangeNotifier {
   @visibleForTesting
   List<Tool> get toolsForTest => _agent.state.tools;
 
-  /// Switches the approval mode (settings dialog's mode selector).
+  /// Switches the approval mode (settings dialog's mode selector) and
+  /// persists the choice when a store is wired (fire-and-forget — the UI
+  /// never blocks on the write).
   void setApprovalMode(ApprovalMode mode) {
     if (approval.mode == mode) return;
     approval.mode = mode;
     notifyListeners();
+    final store = _approvalModeStore;
+    if (store != null) unawaited(store.save(mode));
   }
 
   late final Agent _agent;
@@ -1043,6 +1090,10 @@ class AgentService extends ChangeNotifier {
       redactor: _redactor,
       streamFunction: _agent.streamFunction,
       resolveSecretName: _resolveSecretName,
+      // Clones inherit the CURRENT approval mode (not a fresh disk read) and
+      // share the store so their mode changes persist too.
+      initialApprovalMode: approval.mode,
+      approvalModeStore: _approvalModeStore,
     );
   }
 

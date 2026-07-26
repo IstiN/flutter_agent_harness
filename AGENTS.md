@@ -197,7 +197,29 @@ factual: paths, commands, invariants — no essays.
   migrate once), elsewhere `session_keys.json` via the env (set/delete,
   never displays values); the settings Keys section manages them.
   `provider_registry.dart` custom-provider keys ride the same Keychain
-  backend (host-scoped `FA_KEY_<HOST>` names, like the CLI).
+  backend (host-scoped `FA_KEY_<HOST>` names, like the CLI). The Keys
+  section's "Add key" dialog saves arbitrary names
+  (`^[A-Z][A-Z0-9_]*$`, uppercase-normalized, duplicates rejected);
+  `AgentService.create` merges saved keys into the agent secrets — dotenv
+  first, saved keys OVERRIDE on conflict (bash env, redactor, system-prompt
+  name list all flow from the merged map).
+- `flutter_app/lib/services/session_names_store.dart` — user-given session
+  titles (`session_names.json` envelope in `ExecutionEnv.cwd`, keyed by
+  session id; the session repo has no header-update API, so renames are an
+  app-side overlay). The sidebar's per-row edit affordance opens the
+  rename dialog (Save/Clear; empty clears → derived `session <id8>` name).
+- `flutter_app/lib/services/approval_mode_store.dart` — the tool-approval
+  mode persisted as `approval_mode.json`; `AgentService.create` seeds
+  `approval` from it, `setApprovalMode` writes through (fire-and-forget),
+  `clone()` inherits the CURRENT mode (never a fresh read).
+- `flutter_app/lib/services/analytics.dart` — `AppAnalytics` facade over
+  Firebase Analytics (global instance, noop without Firebase; tests install
+  a recorder sink): app start, bootstrap outcome, setup shown, connect
+  result (provider kind/custom/on-device, success only), provider
+  add/edit/delete, models fetch count bucket, suggestion-vs-free-text model
+  pick, message sent (attachment flag + length bucket — never content),
+  session new/switch/delete, settings opened, key set/delete (names only),
+  upload count. Privacy rule: never keys, message text, or file contents.
 - `flutter_app/lib/services/last_connection.dart` — persists last connection
   (never API keys) as `last_connection.json`; at boot `restorableBootConfig`
   (main.dart) rebuilds the AgentConfig (custom-provider key → saved hosted

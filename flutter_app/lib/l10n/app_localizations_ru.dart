@@ -522,6 +522,25 @@ class AppLocalizationsRu extends AppLocalizations {
   String get gemmaStorageOnDevice => 'на этом устройстве';
 
   @override
+  String get keysAddButton => 'Добавить ключ';
+
+  @override
+  String get keysAddDialogTitle => 'Добавить ключ';
+
+  @override
+  String get keysAddNameDuplicate => 'Ключ с таким именем уже существует.';
+
+  @override
+  String get keysAddNameHint => 'GITHUB_TOKEN';
+
+  @override
+  String get keysAddNameInvalid =>
+      'Используйте A–Z, 0–9 и подчёркивания, начиная с буквы.';
+
+  @override
+  String get keysAddNameLabel => 'Имя';
+
+  @override
   String get keysDeleteBody =>
       'Сохранённое значение удаляется с этого устройства. Значение из файла .env, если оно есть, снова вступит в силу.';
 
@@ -944,6 +963,21 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get sidebarRefreshSessionsTooltip => 'Обновить сессии';
+
+  @override
+  String get sidebarRenameClear => 'Сбросить';
+
+  @override
+  String get sidebarRenameDialogTitle => 'Переименовать сессию';
+
+  @override
+  String get sidebarRenameHint => 'Пустое имя вернёт название по умолчанию.';
+
+  @override
+  String get sidebarRenameNameLabel => 'Название';
+
+  @override
+  String get sidebarRenameSessionTooltip => 'Переименовать сессию';
 
   @override
   String get sidebarRetry => 'Повторить';
