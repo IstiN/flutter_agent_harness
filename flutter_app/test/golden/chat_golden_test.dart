@@ -398,6 +398,67 @@ void main() {
       });
       await expectGolden(tester, 'chat_image');
     });
+
+    testWidgets('generated image — inline under the tool tile and in the '
+        'markdown reply', (tester) async {
+      final env = MemoryExecutionEnv();
+      await env.writeBinaryFile('generated/image-1.png', _tinyPngBytes);
+      final service = _fakeService(env);
+      service.messages
+        ..add(
+          FahChatMessage(
+            role: 'user',
+            content: 'draw me a teal-to-indigo gradient swatch',
+          ),
+        )
+        ..add(
+          FahChatMessage(
+            role: 'tool',
+            toolName: 'generate_image',
+            content:
+                'Generated image saved to generated/image-1.png '
+                '(618 bytes, 1024x1024). Reference it as '
+                '![image](generated/image-1.png) to display it inline in '
+                'the chat.',
+          ),
+        )
+        ..add(
+          FahChatMessage(
+            role: 'assistant',
+            content:
+                'Here is the swatch:\n\n'
+                '![teal-to-indigo gradient swatch](generated/image-1.png)',
+          ),
+        );
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
+
+      tester.view.physicalSize = goldenSizeWide;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      // The env read + image codec resolve on the real event loop; each
+      // resolved image needs another layout pass before it can paint.
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: buildFahTheme(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ChatScreen(manager: manager),
+          ),
+        );
+        for (var i = 0; i < 8; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          await tester.pump();
+        }
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Sessions & model'));
+        await tester.pumpAndSettle();
+      });
+      await expectGolden(tester, 'chat_generated_image');
+    });
   });
 
   group('FaMark goldens', () {

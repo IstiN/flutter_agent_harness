@@ -332,8 +332,9 @@ AgentTool generateImageTool(MediaGateway gateway) {
         'Generate an image from a text prompt. Uses the configured '
         'imageGeneration endpoint (media_models.json override, or the '
         'connected provider when it is OpenAI-compatible). Saves a PNG into '
-        'the sandbox generated/ folder and returns its path — show it to '
-        'the user or reference it from a JS app.',
+        'the sandbox generated/ folder and returns its path — reference it '
+        'in your reply as ![alt](<path>) to display it inline in the chat, '
+        'or from a JS app.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -358,7 +359,9 @@ AgentTool generateImageTool(MediaGateway gateway) {
         );
         return ToolExecutionResult.text(
           'Generated image saved to ${file.path} '
-          '(${file.bytes.length} bytes, ${file.detail}).',
+          '(${file.bytes.length} bytes, ${file.detail}). '
+          'Reference it as ![image](${file.path}) to display it inline in '
+          'the chat.',
         );
       } on Object catch (error) {
         return ToolExecutionResult.text(_errorText(error));

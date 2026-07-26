@@ -27,6 +27,7 @@ import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/media_tools.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/widgets/session_sidebar.dart';
@@ -134,6 +135,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// the library only auto-scrolls on inserts, not on in-place updates.
   final _chatScrollController = ScrollController();
   bool _userNearBottom = true;
+
+  /// Loads sandbox images referenced from Markdown / `generate_image` tool
+  /// results through the active session's env (memoized — see
+  /// [SandboxImageResolver]).
+  SandboxImageResolver? _sandboxImages;
+
+  SandboxImageResolver get _images {
+    final env = widget.service.env;
+    final resolver = _sandboxImages;
+    if (resolver == null || resolver.env != env) {
+      return _sandboxImages = SandboxImageResolver(env);
+    }
+    return resolver;
+  }
 
   final _user = const User(id: 'user', name: 'Me');
   final _assistant = const User(id: 'assistant', name: 'Fa');
@@ -811,6 +826,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         data: message.text,
         selectable: true,
         styleSheet: styleSheet,
+        // Sandbox paths (`![alt](generated/x.png)`) load through the
+        // session env; taps open the fullscreen preview.
+        sizedImageBuilder: _images.sizedImageBuilder(
+          onImageTap: (bytes) => showFahImagePreview(context, bytes),
+        ),
       ),
     );
   }
@@ -881,6 +901,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
+  /// Extracts the saved sandbox path from a `generate_image` tool result
+  /// (`Generated image saved to <path> (<n> bytes, …)`); null for errors
+  /// or any other text.
+  static final _generatedImagePathPattern = RegExp(
+    r'Generated image saved to (\S+\.png)',
+  );
+
+  static String? _generatedImagePath(String content) =>
+      _generatedImagePathPattern.firstMatch(content)?.group(1);
+
   Widget _buildCustomMessage(
     BuildContext context,
     CustomMessage message,
@@ -894,6 +924,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final isError = (metadata['isError'] as bool?) ?? false;
     final role = metadata['role'] as String?;
     final palette = FahColors.of(context);
+    // generate_image results carry the saved sandbox path — show the image
+    // inline under the tool tile instead of waiting for the model to
+    // reference it. Errors ("Error: …") simply don't match.
+    final generatedImagePath = toolName == generateImageToolName
+        ? _generatedImagePath(content)
+        : null;
 
     if (role == 'thinking') {
       return Container(
@@ -985,6 +1021,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     content: content,
                     style: palette.mono(color: palette.dim),
                   ),
+          if (generatedImagePath != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 280),
+                child: _images.image(
+                  path: generatedImagePath,
+                  onTap: (bytes) => showFahImagePreview(context, bytes),
+                ),
+              ),
+            ),
         ],
       ),
     );

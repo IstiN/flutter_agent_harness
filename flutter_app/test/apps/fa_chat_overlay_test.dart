@@ -3,6 +3,8 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/apps/fa_chat_overlay.dart';
@@ -235,5 +237,50 @@ void main() {
     await tester.pump();
 
     expect(find.text('latest answer'), findsOneWidget);
+  });
+
+  testWidgets('assistant markdown renders sandbox images from the env', (
+    tester,
+  ) async {
+    // A 2×2 teal/indigo PNG (76 bytes), generated once offline.
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAE0lEQVR4nGPQvbIfiBga'
+      'e34AEQAw3weL9bEH6gAAAABJRU5ErkJggg==',
+    );
+    final service = _scriptedService(const []);
+    addTearDown(service.dispose);
+    await service.env.writeBinaryFile(
+      'generated/x.png',
+      Uint8List.fromList(png),
+    );
+    service.messages.add(
+      FahChatMessage(
+        role: 'assistant',
+        content: 'Here it is:\n\n![teal pixel](generated/x.png)',
+      ),
+    );
+    await _pumpOverlay(tester, service);
+
+    // The env read + image codec resolve on the real event loop; each
+    // resolved image needs another layout pass.
+    await tester.runAsync(() async {
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await tester.pump();
+      }
+    });
+    await tester.pump();
+
+    final image = find.byWidgetPredicate(
+      (widget) => widget is Image && widget.image is MemoryImage,
+    );
+    expect(image, findsOneWidget);
+
+    // Tap opens the fullscreen preview.
+    await tester.tap(image);
+    await tester.pumpAndSettle();
+    expect(find.byType(InteractiveViewer), findsOneWidget);
+    Navigator.of(tester.element(find.byType(InteractiveViewer))).pop();
+    await tester.pumpAndSettle();
   });
 }

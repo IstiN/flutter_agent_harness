@@ -111,6 +111,15 @@ factual: paths, commands, invariants — no essays.
   shells, wasm, git, fs persistence), feature dirs
   `lib/apps|gemma|webllm|transformers_js|l10n/`. All lib-internal imports
   are absolute `package:fa/...` — no relative imports.
+- `flutter_app/lib/ui/markdown_style.dart` — beyond
+  `fahMarkdownStyleSheet`: `SandboxImageResolver`/`fahSandboxImageBuilder`
+  render markdown images with sandbox paths (`![alt](generated/x.png)`,
+  leading `/` stripped) by loading bytes via `env.readBinaryFile` (memoized
+  per surface, dim placeholder on failure, tap → `showFahImagePreview`
+  fullscreen dialog); wired into the chat screen and the Fa chat overlay
+  markdown. `generate_image` tool tiles also render the saved image inline
+  (path parsed from the result text, which itself teaches the model the
+  `![image](<path>)` convention).
 - `flutter_app/lib/l10n/` — gen-l10n: `app_en.arb` + `app_ru.arb` →
   `AppLocalizations` (generated, never edit; `flutter gen-l10n`). UI copy
   via `context.l10n.<key>` (`l10n_ext.dart`); locale follows system.

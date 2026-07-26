@@ -67,6 +67,19 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
   double _dragOffset = 0;
   bool _dragging = false;
 
+  /// Loads sandbox images referenced from Markdown through the bound
+  /// session's env (memoized — see [SandboxImageResolver]).
+  SandboxImageResolver? _sandboxImages;
+
+  SandboxImageResolver get _images {
+    final env = widget.service.env;
+    final resolver = _sandboxImages;
+    if (resolver == null || resolver.env != env) {
+      return _sandboxImages = SandboxImageResolver(env);
+    }
+    return resolver;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -288,6 +301,11 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
           child: MarkdownBody(
             data: m.content,
             styleSheet: fahMarkdownStyleSheet(theme),
+            // Sandbox paths (`![alt](generated/x.png)`) load through the
+            // session env; taps open the fullscreen preview.
+            sizedImageBuilder: _images.sizedImageBuilder(
+              onImageTap: (bytes) => showFahImagePreview(context, bytes),
+            ),
           ),
         );
       case 'thinking':

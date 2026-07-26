@@ -71,6 +71,8 @@ void main() {
       expect(text, contains('.png'));
       expect(text, contains('3 bytes'));
       final path = RegExp(r'generated/\S+\.png').firstMatch(text)![0]!;
+      // The result teaches the model the inline-display convention.
+      expect(text, contains('Reference it as ![image]($path)'));
       final saved = await env.readBinaryFile(path);
       expect(saved.valueOrNull, [1, 2, 3]);
     });
