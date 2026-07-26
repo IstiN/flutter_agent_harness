@@ -21,6 +21,11 @@ import 'package:flutter_test/flutter_test.dart';
 final class _FakeCalendarApi implements CalendarApi {
   final created = <({String title, DateTime start, DateTime end})>[];
   final deletedIds = <String>[];
+  String? createdCalendar;
+  String? createdUrl;
+  List<int>? createdAlarms;
+  CalendarRecurrence? createdRecurrence;
+  final deletedSpans = <CalendarSpan>[];
 
   @override
   Future<bool> get isAvailable async => true;
@@ -42,7 +47,22 @@ final class _FakeCalendarApi implements CalendarApi {
       calendar: 'Work',
       location: null,
       notes: null,
+      url: null,
+      alarms: const [10],
+      recurrence: (
+        frequency: 'weekly',
+        interval: 1,
+        daysOfWeek: const ['MO', 'WE', 'FR'],
+        daysOfMonth: null,
+        until: null,
+        count: 10,
+      ),
     ),
+  ];
+
+  @override
+  Future<List<CalendarInfo>> calendars() async => const [
+    (title: 'Work', source: 'Outlook', writable: true),
   ];
 
   @override
@@ -54,8 +74,15 @@ final class _FakeCalendarApi implements CalendarApi {
     String? calendar,
     String? location,
     String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
   }) async {
     created.add((title: title, start: start, end: end));
+    createdCalendar = calendar;
+    createdUrl = url;
+    createdAlarms = alarms;
+    createdRecurrence = recurrence;
     return 'fake-id-${created.length}';
   }
 
@@ -69,11 +96,20 @@ final class _FakeCalendarApi implements CalendarApi {
     String? calendar,
     String? location,
     String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
+    bool removeRecurrence = false,
+    CalendarSpan span = CalendarSpan.thisEvent,
   }) async {}
 
   @override
-  Future<void> deleteEvent({required String id}) async {
+  Future<void> deleteEvent({
+    required String id,
+    CalendarSpan span = CalendarSpan.thisEvent,
+  }) async {
     deletedIds.add(id);
+    deletedSpans.add(span);
   }
 }
 
@@ -630,6 +666,58 @@ void main() {
         final result = jsonEncode(granted.exportedState?['result']);
         expect(result, contains('Standup'));
         expect(result, contains('Work'));
+        // Recurrence + alarms ride the events rows too.
+        expect(result, contains('"frequency":"weekly"'));
+        expect(result, contains('"daysOfWeek":["MO","WE","FR"]'));
+        expect(result, contains('"count":10'));
+        expect(result, contains('"alarms":[10]'));
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.calendar create forwards recurrence/alarms/calendar/url', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.calendar.create({
+    title: 'Gym', date: '2026-07-27', startHour: 18,
+    calendar: 'Work', url: 'https://gym.example.com', alarms: [10, 60],
+    recurrence: {frequency: 'weekly', daysOfWeek: ['MO', 'WE'], until: '2026-12-31'},
+  }).then(function(result) {
+    jsr.exportState({created: result});
+    jsr.fa.calendar.delete({id: 'ev-standup', span: 'future'}).then(function(deleteResult) {
+      jsr.exportState({created: result, deleted: deleteResult});
+    });
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final calendar = _FakeCalendarApi();
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(calendar: true),
+        calendar: calendar,
+      );
+      try {
+        await granted.start();
+        await Future<void>.delayed(settle);
+        expect(calendar.created, hasLength(1));
+        expect(calendar.createdCalendar, 'Work');
+        expect(calendar.createdUrl, 'https://gym.example.com');
+        expect(calendar.createdAlarms, [10, 60]);
+        final rule = calendar.createdRecurrence!;
+        expect(rule.frequency, 'weekly');
+        expect(rule.daysOfWeek, ['MO', 'WE']);
+        expect(rule.until, DateTime(2026, 12, 31));
+        expect(calendar.deletedIds, ['ev-standup']);
+        expect(calendar.deletedSpans, [CalendarSpan.future]);
       } finally {
         await granted.dispose();
       }

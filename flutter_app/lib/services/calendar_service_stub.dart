@@ -29,6 +29,9 @@ final class _UnavailableCalendarApi implements CalendarApi {
   }) async => const [];
 
   @override
+  Future<List<CalendarInfo>> calendars() async => const [];
+
+  @override
   Future<String> createEvent({
     required String title,
     required DateTime start,
@@ -37,6 +40,9 @@ final class _UnavailableCalendarApi implements CalendarApi {
     String? calendar,
     String? location,
     String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
   }) => throw StateError(
     'The system calendar is not supported on this platform.',
   );
@@ -51,12 +57,20 @@ final class _UnavailableCalendarApi implements CalendarApi {
     String? calendar,
     String? location,
     String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
+    bool removeRecurrence = false,
+    CalendarSpan span = CalendarSpan.thisEvent,
   }) => throw StateError(
     'The system calendar is not supported on this platform.',
   );
 
   @override
-  Future<void> deleteEvent({required String id}) => throw StateError(
+  Future<void> deleteEvent({
+    required String id,
+    CalendarSpan span = CalendarSpan.thisEvent,
+  }) => throw StateError(
     'The system calendar is not supported on this platform.',
   );
 }

@@ -162,14 +162,24 @@ factual: paths, commands, invariants — no essays.
   (`jsr.fa.calendar`), map (`map` node), health + homekit (honest stub UX +
   demo state). `open_app_tool.dart` registers the agent tool `open_app`
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
-- `flutter_app/lib/services/calendar_service.dart` — read-only system
-  calendar: `CalendarApi` over the `fah/calendar` MethodChannel (EventKit in
-  `MainFlutterWindow.swift`/`AppDelegate.swift`; entitlement
-  `com.apple.security.personal-information.calendars`, both
+- `flutter_app/lib/services/calendar_service.dart` — system calendar:
+  `CalendarApi` over the `fah/calendar` MethodChannel (EventKit in
+  `MainFlutterWindow.swift`/`AppDelegate.swift` — MIRRORED, edit both;
+  entitlement `com.apple.security.personal-information.calendars`, both
   NSCalendars*UsageDescription plist keys); stub = not-available on web.
-  Agent tool `calendar_events {date?, days?}` in `calendar_tool.dart`
-  (registered when `calendarPlatformSupported`); denial result points to
-  System Settings → Privacy → Calendars.
+  Agent tools in `calendar_tool.dart` (registered when
+  `calendarPlatformSupported`): `calendar_events {date?, days?}` (rows carry
+  recurrence/alarm/url hints), `calendar_calendars` (title, source account,
+  writable), and the write-tier `calendar_add` / `calendar_update` /
+  `calendar_delete`. Writes support `recurrence`
+  ({frequency, interval?, daysOfWeek? MO..SU weekly-only, daysOfMonth?
+  monthly-only, until|count — at most one end; validated by
+  `parseCalendarRecurrence` in calendar_service.dart, removed on update via
+  `'none'`/`{}`), `alarms` (minutes before start; replace-on-update),
+  `calendar` (target calendar title), `span` (`this`/`future` → `EKSpan`)
+  on update/delete, and `url`. Denial result points to System Settings →
+  Privacy → Calendars. The `jsr.fa.calendar` bridge
+  (`js_app_engine.dart`) passes the same fields through.
 - macOS window chrome: `MainFlutterWindow.swift` uses the modern unified
   titlebar (`titlebarAppearsTransparent`, hidden title,
   `fullSizeContentView`, `toolbarStyle = .unifiedCompact`, window

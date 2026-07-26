@@ -176,8 +176,9 @@ private let calendarEventStore = EKEventStore()
 
 /// The `fah/calendar` method channel: access to the user's system calendar
 /// via EventKit. Methods: `isAvailable`, `requestAccess`, `events` with
-/// {startMs, endMs} returning a list of event maps, plus the write methods
-/// `createEvent` / `updateEvent` / `deleteEvent`.
+/// {startMs, endMs} returning a list of event maps, `calendars` listing the
+/// event calendars, plus the write methods `createEvent` / `updateEvent` /
+/// `deleteEvent` (recurrence, alarms, url, span supported).
 private func registerCalendarChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/calendar",
@@ -194,6 +195,8 @@ private func registerCalendarChannel(messenger: FlutterBinaryMessenger) {
       let startMs = (args["startMs"] as? NSNumber)?.int64Value ?? 0
       let endMs = (args["endMs"] as? NSNumber)?.int64Value ?? 0
       result(calendarEvents(startMs: startMs, endMs: endMs))
+    case "calendars":
+      result(calendarCalendars())
     case "createEvent":
       let args = call.arguments as? [String: Any] ?? [:]
       result(calendarCreateEvent(args: args))
@@ -252,7 +255,69 @@ private func calendarEvents(startMs: Int64, endMs: Int64) -> [[String: Any]] {
     if let calendar = event.calendar?.title { map["calendar"] = calendar }
     if let location = event.location { map["location"] = location }
     if let notes = event.notes { map["notes"] = notes }
+    if let url = event.url { map["url"] = url.absoluteString }
+    if let alarms = event.alarms, !alarms.isEmpty {
+      // Minutes BEFORE the start (relativeOffset is negative seconds).
+      map["alarms"] = alarms.map { Int((-$0.relativeOffset) / 60) }
+    }
+    if let rule = event.recurrenceRules?.first {
+      map["recurrence"] = calendarRecurrenceSummary(rule)
+    }
     return map
+  }
+}
+
+/// The event calendars as Flutter-friendly maps ({title, source, writable});
+/// empty when access is not granted.
+private func calendarCalendars() -> [[String: Any]] {
+  guard calendarWriteAccessGranted() else { return [] }
+  return calendarEventStore.calendars(for: .event).map { calendar in
+    [
+      "title": calendar.title,
+      "source": calendar.source.title,
+      "writable": calendar.allowsContentModifications,
+    ]
+  }
+}
+
+/// Compact recurrence summary for the `events` map: {frequency, interval,
+/// daysOfWeek?, daysOfMonth?, untilMs?|count?} — the Dart side renders it.
+private func calendarRecurrenceSummary(_ rule: EKRecurrenceRule) -> [String: Any] {
+  var summary: [String: Any] = ["interval": max(1, rule.interval)]
+  switch rule.frequency {
+  case .daily: summary["frequency"] = "daily"
+  case .weekly: summary["frequency"] = "weekly"
+  case .monthly: summary["frequency"] = "monthly"
+  case .yearly: summary["frequency"] = "yearly"
+  @unknown default: summary["frequency"] = "daily"
+  }
+  if let days = rule.daysOfTheWeek, !days.isEmpty {
+    summary["daysOfWeek"] = days.map { calendarWeekdayCode($0.dayOfTheWeek) }
+  }
+  if let days = rule.daysOfTheMonth, !days.isEmpty {
+    summary["daysOfMonth"] = days.map { $0.intValue }
+  }
+  if let end = rule.recurrenceEnd {
+    if let date = end.endDate {
+      summary["untilMs"] = Int64(date.timeIntervalSince1970 * 1000)
+    } else if end.occurrenceCount > 0 {
+      summary["count"] = end.occurrenceCount
+    }
+  }
+  return summary
+}
+
+/// Two-letter weekday code (`MO`..`SU`) matching the Dart-side convention.
+private func calendarWeekdayCode(_ weekday: EKWeekday) -> String {
+  switch weekday {
+  case .monday: return "MO"
+  case .tuesday: return "TU"
+  case .wednesday: return "WE"
+  case .thursday: return "TH"
+  case .friday: return "FR"
+  case .saturday: return "SA"
+  case .sunday: return "SU"
+  @unknown default: return "MO"
   }
 }
 
@@ -267,7 +332,10 @@ private func calendarWriteAccessGranted() -> Bool {
 }
 
 /// Applies the shared write fields ({title, startMs, endMs, allDay,
-/// calendar, location, notes}) to [event]; only present keys are applied.
+/// calendar, location, notes, url, alarms, recurrence|removeRecurrence}) to
+/// [event]; only present keys are applied. A present alarms list REPLACES
+/// the alarms ([] clears them); a present recurrence map replaces the rule
+/// and removeRecurrence=true drops it.
 private func calendarApplyWriteFields(args: [String: Any], to event: EKEvent) {
   if let title = args["title"] as? String { event.title = title }
   if let startMs = (args["startMs"] as? NSNumber)?.int64Value {
@@ -279,6 +347,19 @@ private func calendarApplyWriteFields(args: [String: Any], to event: EKEvent) {
   if let allDay = args["allDay"] as? Bool { event.isAllDay = allDay }
   if let location = args["location"] as? String { event.location = location }
   if let notes = args["notes"] as? String { event.notes = notes }
+  if let urlString = args["url"] as? String {
+    event.url = urlString.isEmpty ? nil : URL(string: urlString)
+  }
+  if let minutes = args["alarms"] as? [NSNumber] {
+    event.alarms = minutes.map { EKAlarm(relativeOffset: -$0.doubleValue * 60) }
+  }
+  if let recurrence = args["recurrence"] as? [String: Any] {
+    if let rule = calendarRecurrenceRule(args: recurrence) {
+      event.recurrenceRules = [rule]
+    }
+  } else if args["removeRecurrence"] as? Bool == true {
+    event.recurrenceRules = nil
+  }
   if let name = args["calendar"] as? String,
     let match = calendarEventStore.calendars(for: .event)
       .first(where: { $0.title == name })
@@ -287,8 +368,61 @@ private func calendarApplyWriteFields(args: [String: Any], to event: EKEvent) {
   }
 }
 
+/// Builds an EKRecurrenceRule from {frequency, interval?, daysOfWeek?,
+/// daysOfMonth?, untilMs?|count?}; nil when the frequency is unknown (the
+/// Dart side validates the combinations before they get here).
+private func calendarRecurrenceRule(args: [String: Any]) -> EKRecurrenceRule? {
+  let frequency: EKRecurrenceFrequency
+  switch args["frequency"] as? String {
+  case "daily": frequency = .daily
+  case "weekly": frequency = .weekly
+  case "monthly": frequency = .monthly
+  case "yearly": frequency = .yearly
+  default: return nil
+  }
+  let interval = max(1, (args["interval"] as? NSNumber)?.intValue ?? 1)
+  var daysOfWeek: [EKRecurrenceDayOfWeek]? = nil
+  if let codes = args["daysOfWeek"] as? [String], !codes.isEmpty {
+    daysOfWeek = codes.compactMap { code -> EKRecurrenceDayOfWeek? in
+      switch code {
+      case "MO": return EKRecurrenceDayOfWeek(.monday)
+      case "TU": return EKRecurrenceDayOfWeek(.tuesday)
+      case "WE": return EKRecurrenceDayOfWeek(.wednesday)
+      case "TH": return EKRecurrenceDayOfWeek(.thursday)
+      case "FR": return EKRecurrenceDayOfWeek(.friday)
+      case "SA": return EKRecurrenceDayOfWeek(.saturday)
+      case "SU": return EKRecurrenceDayOfWeek(.sunday)
+      default: return nil
+      }
+    }
+  }
+  let daysOfMonth = (args["daysOfMonth"] as? [NSNumber])?.filter {
+    $0.intValue >= 1 && $0.intValue <= 31
+  }
+  var end: EKRecurrenceEnd? = nil
+  if let untilMs = (args["untilMs"] as? NSNumber)?.int64Value {
+    end = EKRecurrenceEnd(
+      end: Date(timeIntervalSince1970: TimeInterval(untilMs) / 1000),
+    )
+  } else if let count = (args["count"] as? NSNumber)?.intValue, count > 0 {
+    end = EKRecurrenceEnd(occurrenceCount: count)
+  }
+  return EKRecurrenceRule(
+    recurrenceWith: frequency,
+    interval: interval,
+    daysOfTheWeek: daysOfWeek,
+    daysOfTheMonth: daysOfMonth,
+    monthsOfTheYear: nil,
+    weeksOfTheYear: nil,
+    daysOfTheYear: nil,
+    setPositions: nil,
+    end: end,
+  )
+}
+
 /// Creates an event from {title, startMs, endMs, allDay?, calendar?,
-/// location?, notes?} and returns the new event id (or a FlutterError).
+/// location?, notes?, url?, alarms?, recurrence?} and returns the new event
+/// id (or a FlutterError).
 private func calendarCreateEvent(args: [String: Any]) -> Any {
   guard calendarWriteAccessGranted() else {
     return FlutterError(
@@ -346,8 +480,9 @@ private func calendarUpdateEvent(args: [String: Any]) -> Any {
     )
   }
   calendarApplyWriteFields(args: args, to: event)
+  let span: EKSpan = (args["span"] as? String) == "future" ? .futureEvents : .thisEvent
   do {
-    try calendarEventStore.save(event, span: .thisEvent, commit: true)
+    try calendarEventStore.save(event, span: span, commit: true)
     return true
   } catch {
     return FlutterError(
@@ -359,6 +494,8 @@ private func calendarUpdateEvent(args: [String: Any]) -> Any {
 }
 
 /// Deletes the event with args["id"]; returns true or a FlutterError.
+/// args["span"] "future" also removes the later occurrences of a recurring
+/// event (default: only this one).
 private func calendarDeleteEvent(args: [String: Any]) -> Any {
   guard calendarWriteAccessGranted() else {
     return FlutterError(
@@ -377,7 +514,8 @@ private func calendarDeleteEvent(args: [String: Any]) -> Any {
     )
   }
   do {
-    try calendarEventStore.remove(event, span: .thisEvent, commit: true)
+    let span: EKSpan = (args["span"] as? String) == "future" ? .futureEvents : .thisEvent
+    try calendarEventStore.remove(event, span: span, commit: true)
     return true
   } catch {
     return FlutterError(

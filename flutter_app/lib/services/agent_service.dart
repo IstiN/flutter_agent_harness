@@ -307,6 +307,7 @@ class AgentService extends ChangeNotifier {
       // the tools themselves report a clean note where unsupported).
       if (calendarPlatformSupported) ...[
         calendarEventsTool(createCalendarService()),
+        calendarCalendarsTool(createCalendarService()),
         calendarAddTool(createCalendarService()),
         calendarUpdateTool(createCalendarService()),
         calendarDeleteTool(createCalendarService()),

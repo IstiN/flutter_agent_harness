@@ -74,7 +74,65 @@ final class MethodChannelCalendarApi implements CalendarApi {
       calendar: textOf('calendar'),
       location: textOf('location'),
       notes: textOf('notes'),
+      url: textOf('url'),
+      alarms: (map['alarms'] as List?)
+          ?.map((entry) => (entry as num).toInt())
+          .toList(),
+      recurrence: _parseRecurrence(map['recurrence']),
     );
+  }
+
+  static CalendarRecurrence? _parseRecurrence(Object? raw) {
+    if (raw is! Map) return null;
+    final frequency = raw['frequency']?.toString();
+    if (frequency == null || frequency.isEmpty) return null;
+    final untilMs = (raw['untilMs'] as num?)?.toInt();
+    return (
+      frequency: frequency,
+      interval: (raw['interval'] as num?)?.toInt() ?? 1,
+      daysOfWeek: (raw['daysOfWeek'] as List?)
+          ?.map((entry) => entry.toString())
+          .toList(),
+      daysOfMonth: (raw['daysOfMonth'] as List?)
+          ?.map((entry) => (entry as num).toInt())
+          .toList(),
+      until: untilMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(untilMs),
+      count: (raw['count'] as num?)?.toInt(),
+    );
+  }
+
+  static Map<String, Object?> _recurrenceMap(CalendarRecurrence rule) => {
+    'frequency': rule.frequency,
+    'interval': rule.interval,
+    if (rule.daysOfWeek != null) 'daysOfWeek': rule.daysOfWeek,
+    if (rule.daysOfMonth != null) 'daysOfMonth': rule.daysOfMonth,
+    if (rule.until != null) 'untilMs': rule.until!.millisecondsSinceEpoch,
+    if (rule.count != null) 'count': rule.count,
+  };
+
+  static String _spanName(CalendarSpan span) =>
+      span == CalendarSpan.future ? 'future' : 'this';
+
+  @override
+  Future<List<CalendarInfo>> calendars() async {
+    if (!calendarPlatformSupported) return const [];
+    final List<dynamic>? raw;
+    try {
+      raw = await _channel.invokeListMethod<dynamic>('calendars');
+    } on MissingPluginException {
+      return const [];
+    }
+    return [
+      for (final entry in raw ?? const [])
+        if (entry is Map)
+          (
+            title: entry['title']?.toString() ?? '',
+            source: entry['source']?.toString() ?? '',
+            writable: entry['writable'] == true,
+          ),
+    ];
   }
 
   @override
@@ -86,6 +144,9 @@ final class MethodChannelCalendarApi implements CalendarApi {
     String? calendar,
     String? location,
     String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
   }) async {
     _ensureSupported();
     try {
@@ -97,6 +158,9 @@ final class MethodChannelCalendarApi implements CalendarApi {
         'calendar': ?calendar,
         'location': ?location,
         'notes': ?notes,
+        'url': ?url,
+        'alarms': ?alarms,
+        if (recurrence != null) 'recurrence': _recurrenceMap(recurrence),
       });
       return id ?? '';
     } on MissingPluginException {
@@ -114,6 +178,11 @@ final class MethodChannelCalendarApi implements CalendarApi {
     String? calendar,
     String? location,
     String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
+    bool removeRecurrence = false,
+    CalendarSpan span = CalendarSpan.thisEvent,
   }) async {
     _ensureSupported();
     try {
@@ -126,6 +195,11 @@ final class MethodChannelCalendarApi implements CalendarApi {
         'calendar': ?calendar,
         'location': ?location,
         'notes': ?notes,
+        'url': ?url,
+        'alarms': ?alarms,
+        if (recurrence != null) 'recurrence': _recurrenceMap(recurrence),
+        if (removeRecurrence) 'removeRecurrence': true,
+        'span': _spanName(span),
       });
     } on MissingPluginException {
       throw _unsupported();
@@ -133,10 +207,16 @@ final class MethodChannelCalendarApi implements CalendarApi {
   }
 
   @override
-  Future<void> deleteEvent({required String id}) async {
+  Future<void> deleteEvent({
+    required String id,
+    CalendarSpan span = CalendarSpan.thisEvent,
+  }) async {
     _ensureSupported();
     try {
-      await _channel.invokeMethod<void>('deleteEvent', {'id': id});
+      await _channel.invokeMethod<void>('deleteEvent', {
+        'id': id,
+        'span': _spanName(span),
+      });
     } on MissingPluginException {
       throw _unsupported();
     }

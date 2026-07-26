@@ -637,13 +637,25 @@ Object.defineProperty(jsr, 'onBack', {
             if (event.calendar != null) 'calendar': event.calendar,
             if (event.location != null) 'location': event.location,
             if (event.notes != null) 'notes': event.notes,
+            if (event.url != null) 'url': event.url,
+            if (event.alarms != null) 'alarms': event.alarms,
+            if (event.recurrence case final rule?)
+              'recurrence': {
+                'frequency': rule.frequency,
+                'interval': rule.interval,
+                if (rule.daysOfWeek != null) 'daysOfWeek': rule.daysOfWeek,
+                if (rule.daysOfMonth != null) 'daysOfMonth': rule.daysOfMonth,
+                if (rule.until != null) 'until': calendarDayLabel(rule.until!),
+                if (rule.count != null) 'count': rule.count,
+              },
           },
       ],
     };
   }
 
   /// `jsr.fa.calendar.create({title, date, startHour, endHour, allDay,
-  /// location, notes})` → `{id}` — same `calendar` permission gate.
+  /// location, notes, url, calendar, alarms, recurrence})` → `{id}` —
+  /// same `calendar` permission gate.
   Future<Map<String, Object?>> _calendarCreate(
     Map<String, Object?> args,
   ) async {
@@ -661,14 +673,19 @@ Object.defineProperty(jsr, 'onBack', {
       start: slot.start,
       end: slot.end,
       allDay: slot.allDay,
+      calendar: args['calendar']?.toString(),
       location: args['location']?.toString(),
       notes: args['notes']?.toString(),
+      url: args['url']?.toString(),
+      alarms: parseCalendarAlarms(args['alarms']),
+      recurrence: parseCalendarRecurrence(args['recurrence']).rule,
     );
     return {'id': id};
   }
 
-  /// `jsr.fa.calendar.update({id, ...same fields})` → `{updated: true}`;
-  /// only the supplied fields change.
+  /// `jsr.fa.calendar.update({id, ...same fields, span})` → `{updated: true}`;
+  /// only the supplied fields change (`recurrence: 'none'`/`{}` removes the
+  /// rule, `alarms: []` clears the reminders).
   Future<Map<String, Object?>> _calendarUpdate(
     Map<String, Object?> args,
   ) async {
@@ -687,26 +704,33 @@ Object.defineProperty(jsr, 'onBack', {
             allDay: args['allDay'] == true,
           )
         : null;
+    final recurrence = parseCalendarRecurrence(args['recurrence']);
     await api.updateEvent(
       id: id,
       title: args['title']?.toString(),
       start: slot?.start,
       end: slot?.end,
       allDay: slot?.allDay,
+      calendar: args['calendar']?.toString(),
       location: args['location']?.toString(),
       notes: args['notes']?.toString(),
+      url: args['url']?.toString(),
+      alarms: parseCalendarAlarms(args['alarms']),
+      recurrence: recurrence.rule,
+      removeRecurrence: recurrence.remove,
+      span: parseCalendarSpan(args['span']),
     );
     return {'updated': true};
   }
 
-  /// `jsr.fa.calendar.delete({id})` → `{deleted: true}`.
+  /// `jsr.fa.calendar.delete({id, span})` → `{deleted: true}`.
   Future<Map<String, Object?>> _calendarDelete(
     Map<String, Object?> args,
   ) async {
     final api = await _gatedCalendar();
     final id = (args['id'] ?? '').toString();
     if (id.isEmpty) throw StateError('id is required');
-    await api.deleteEvent(id: id);
+    await api.deleteEvent(id: id, span: parseCalendarSpan(args['span']));
     return {'deleted': true};
   }
 

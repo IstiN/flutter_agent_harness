@@ -64,7 +64,8 @@ class AppPermissions {
   /// Contacts bridge (stub).
   final bool contacts;
 
-  /// Read-only system-calendar bridge (`jsr.fa.calendar`).
+  /// System-calendar bridge (`jsr.fa.calendar` — events, create, update,
+  /// delete).
   final bool calendar;
 
   /// Microphone bridge (`jsr.fa.asr`) — record audio and transcribe speech.

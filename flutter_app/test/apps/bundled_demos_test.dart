@@ -43,6 +43,9 @@ final class _FakeCalendarApi implements CalendarApi {
       calendar: 'Work',
       location: 'Room 3',
       notes: null,
+      url: null,
+      alarms: null,
+      recurrence: null,
     ),
     (
       id: 'ev-lunch',
@@ -53,8 +56,14 @@ final class _FakeCalendarApi implements CalendarApi {
       calendar: 'Personal',
       location: null,
       notes: null,
+      url: null,
+      alarms: null,
+      recurrence: null,
     ),
   ];
+
+  @override
+  Future<List<CalendarInfo>> calendars() async => const [];
 
   @override
   Future<String> createEvent({
@@ -65,6 +74,9 @@ final class _FakeCalendarApi implements CalendarApi {
     String? calendar,
     String? location,
     String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
   }) async {
     created.add((title: title, start: start, end: end));
     return 'fake-id-${created.length}';
@@ -80,10 +92,18 @@ final class _FakeCalendarApi implements CalendarApi {
     String? calendar,
     String? location,
     String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
+    bool removeRecurrence = false,
+    CalendarSpan span = CalendarSpan.thisEvent,
   }) async {}
 
   @override
-  Future<void> deleteEvent({required String id}) async {
+  Future<void> deleteEvent({
+    required String id,
+    CalendarSpan span = CalendarSpan.thisEvent,
+  }) async {
     deletedIds.add(id);
   }
 }

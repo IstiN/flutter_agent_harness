@@ -9,6 +9,9 @@ import 'package:fa/services/calendar_service.dart';
 /// Name of the agent tool that reads the user's system calendar.
 const calendarEventsToolName = 'calendar_events';
 
+/// Name of the agent tool that lists the user's calendars.
+const calendarCalendarsToolName = 'calendar_calendars';
+
 /// Names of the agent tools that write to the user's system calendar.
 const calendarAddToolName = 'calendar_add';
 const calendarUpdateToolName = 'calendar_update';
@@ -75,6 +78,39 @@ AgentTool calendarEventsTool(CalendarApi calendar) {
   );
 }
 
+/// Creates the `calendar_calendars` tool bound to [calendar].
+///
+/// Read-only: lists the event calendars (title, source account, writable
+/// flag) so the agent can target a specific one with the `calendar`
+/// argument of the write tools.
+AgentTool calendarCalendarsTool(CalendarApi calendar) {
+  return AgentTool(
+    name: calendarCalendarsToolName,
+    label: 'calendar_calendars',
+    tier: ApprovalTier.read,
+    description:
+        "List the user's calendars (title, source account like iCloud or "
+        'Outlook, and whether each is writable). Use before calendar_add / '
+        'calendar_update to pick the `calendar` argument when the user '
+        'names an account.',
+    parameters: const {'type': 'object', 'properties': {}},
+    execute: (arguments, cancelToken, onUpdate) async {
+      final unavailable = await _unavailable(calendar);
+      if (unavailable != null) return ToolExecutionResult.text(unavailable);
+      final calendars = await calendar.calendars();
+      if (calendars.isEmpty) return ToolExecutionResult.text('No calendars.');
+      final lines = [
+        'Calendars:',
+        for (final entry in calendars)
+          '- ${entry.title}'
+              '${entry.source.isEmpty ? '' : ' (${entry.source})'}'
+              '${entry.writable ? '' : ' [read-only]'}',
+      ];
+      return ToolExecutionResult.text(lines.join('\n'));
+    },
+  );
+}
+
 /// The hour-of-day arguments the write tools share: `allDay`, or
 /// `startHour` (+ optional `endHour`) on top of a `date` day.
 const _slotProperties = {
@@ -98,7 +134,56 @@ const _slotProperties = {
   },
   'location': {'type': 'string', 'description': 'Optional location'},
   'notes': {'type': 'string', 'description': 'Optional notes'},
+  'url': {
+    'type': 'string',
+    'description': 'Optional URL attached to the event',
+  },
+  'calendar': {
+    'type': 'string',
+    'description':
+        'Target calendar title (see calendar_calendars; unknown or absent '
+        'falls back to the default calendar)',
+  },
+  'alarms': {
+    'type': 'array',
+    'items': {'type': 'integer'},
+    'description':
+        'Reminders as minutes BEFORE the start, e.g. [10, 60]. On update, '
+        'passing alarms replaces the existing ones ([] clears them)',
+  },
+  'recurrence': {
+    'type': 'object',
+    'description':
+        'Repeat rule: {frequency: "daily"|"weekly"|"monthly"|"yearly" '
+        '(required), interval: int >= 1 (default 1), daysOfWeek: '
+        '["MO","TU","WE","TH","FR","SA","SU"] (weekly only; default: the '
+        'start date\'s weekday), daysOfMonth: [1-31] (monthly only), '
+        'until: "YYYY-MM-DD", count: int >= 1} — at most one of '
+        'until/count. On update, pass "none" or {} to remove the rule',
+  },
 };
+
+/// The `span` argument of `calendar_update` / `calendar_delete`.
+const _spanProperty = {
+  'type': 'string',
+  'enum': ['this', 'future'],
+  'description':
+      'For recurring events: "this" changes only the matched occurrence '
+      '(default), "future" also the later ones',
+};
+
+/// Validates the recurrence/alarms/span arguments, answering with the
+/// [StateError] text when invalid. Returns null when everything parses.
+String? _validationError(Map<String, dynamic> arguments) {
+  try {
+    parseCalendarRecurrence(arguments['recurrence']);
+    parseCalendarAlarms(arguments['alarms']);
+    parseCalendarSpan(arguments['span']);
+    return null;
+  } on StateError catch (error) {
+    return 'Error: ${error.message}';
+  }
+}
 
 /// Creates the `calendar_add` tool bound to [calendar].
 ///
@@ -111,8 +196,8 @@ AgentTool calendarAddTool(CalendarApi calendar) {
     tier: ApprovalTier.write,
     description:
         "Add an event to the user's system calendar. Confirm the details "
-        'with the user before calling. Returns the created event with its '
-        'id.',
+        'with the user before calling. Supports recurrence, alarms, a '
+        'target calendar, and a URL. Returns the created event with its id.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -128,17 +213,25 @@ AgentTool calendarAddTool(CalendarApi calendar) {
       if (title.isEmpty) {
         return ToolExecutionResult.text('Error: title is required.');
       }
+      final invalid = _validationError(arguments);
+      if (invalid != null) return ToolExecutionResult.text(invalid);
       final slot = _slot(arguments);
+      final recurrence = parseCalendarRecurrence(arguments['recurrence']);
+      final alarms = parseCalendarAlarms(arguments['alarms']);
       final id = await calendar.createEvent(
         title: title,
         start: slot.start,
         end: slot.end,
         allDay: slot.allDay,
+        calendar: _text(arguments, 'calendar'),
         location: _text(arguments, 'location'),
         notes: _text(arguments, 'notes'),
+        url: _text(arguments, 'url'),
+        alarms: alarms,
+        recurrence: recurrence.rule,
       );
       return ToolExecutionResult.text(
-        'Created ${_renderEvent((id: id, title: title, start: slot.start, end: slot.end, allDay: slot.allDay, calendar: null, location: _text(arguments, 'location'), notes: _text(arguments, 'notes')))} (id: $id).',
+        'Created ${_renderEvent((id: id, title: title, start: slot.start, end: slot.end, allDay: slot.allDay, calendar: _text(arguments, 'calendar'), location: _text(arguments, 'location'), notes: _text(arguments, 'notes'), url: _text(arguments, 'url'), alarms: alarms, recurrence: recurrence.rule))} (id: $id).',
       );
     },
   );
@@ -157,7 +250,10 @@ AgentTool calendarUpdateTool(CalendarApi calendar) {
         "Update an event in the user's system calendar. First list the day "
         'with calendar_events, then call this with `match` set to the '
         'event title (or its 1-based index in that list) and only the '
-        'fields to change. Confirm the change with the user beforehand.',
+        'fields to change. Confirm the change with the user beforehand. '
+        'Pass recurrence "none" (or {}) to remove a repeat rule, alarms [] '
+        'to clear reminders, and span "future" to apply the change to the '
+        'matched and later occurrences.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -169,12 +265,15 @@ AgentTool calendarUpdateTool(CalendarApi calendar) {
               'index in the calendar_events list for `date` (required)',
         },
         'title': {'type': 'string', 'description': 'New title'},
+        'span': _spanProperty,
       },
       'required': ['match'],
     },
     execute: (arguments, cancelToken, onUpdate) async {
       final unavailable = await _unavailable(calendar);
       if (unavailable != null) return ToolExecutionResult.text(unavailable);
+      final invalid = _validationError(arguments);
+      if (invalid != null) return ToolExecutionResult.text(invalid);
       final found = await _find(calendar, arguments);
       if (found.error != null) return ToolExecutionResult.text(found.error!);
       final event = found.event!;
@@ -187,19 +286,30 @@ AgentTool calendarUpdateTool(CalendarApi calendar) {
       final start = slot?.start ?? event.start;
       final end = slot?.end ?? event.end;
       final allDay = slot?.allDay ?? event.allDay;
+      final calendarName = _text(arguments, 'calendar') ?? event.calendar;
       final location = _text(arguments, 'location') ?? event.location;
       final notes = _text(arguments, 'notes') ?? event.notes;
+      final url = _text(arguments, 'url') ?? event.url;
+      final recurrence = parseCalendarRecurrence(arguments['recurrence']);
+      final alarms = parseCalendarAlarms(arguments['alarms']);
+      final span = parseCalendarSpan(arguments['span']);
       await calendar.updateEvent(
         id: event.id,
         title: title,
         start: start,
         end: end,
         allDay: allDay,
+        calendar: calendarName,
         location: location,
         notes: notes,
+        url: url,
+        alarms: alarms,
+        recurrence: recurrence.rule,
+        removeRecurrence: recurrence.remove,
+        span: span,
       );
       return ToolExecutionResult.text(
-        'Updated ${_renderEvent((id: event.id, title: title, start: start, end: end, allDay: allDay, calendar: event.calendar, location: location, notes: notes), showDate: true)}.',
+        'Updated ${_renderEvent((id: event.id, title: title, start: start, end: end, allDay: allDay, calendar: calendarName, location: location, notes: notes, url: url, alarms: alarms ?? event.alarms, recurrence: recurrence.rule ?? (recurrence.remove ? null : event.recurrence)), showDate: true)}.',
       );
     },
   );
@@ -219,7 +329,9 @@ AgentTool calendarDeleteTool(CalendarApi calendar) {
         "Delete an event from the user's system calendar. List-then-confirm "
         'flow: first list the day with calendar_events, confirm the exact '
         'event with the user, then call this with `match` set to the event '
-        'title (or its 1-based index in that list). Deletion is permanent.',
+        'title (or its 1-based index in that list). Deletion is permanent. '
+        'For recurring events, span "future" deletes the matched and later '
+        'occurrences.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -230,16 +342,20 @@ AgentTool calendarDeleteTool(CalendarApi calendar) {
               'Which event: title text (case-insensitive) or its 1-based '
               'index in the calendar_events list for `date` (required)',
         },
+        'span': _spanProperty,
       },
       'required': ['match'],
     },
     execute: (arguments, cancelToken, onUpdate) async {
       final unavailable = await _unavailable(calendar);
       if (unavailable != null) return ToolExecutionResult.text(unavailable);
+      final invalid = _validationError(arguments);
+      if (invalid != null) return ToolExecutionResult.text(invalid);
       final found = await _find(calendar, arguments);
       if (found.error != null) return ToolExecutionResult.text(found.error!);
       final event = found.event!;
-      await calendar.deleteEvent(id: event.id);
+      final span = parseCalendarSpan(arguments['span']);
+      await calendar.deleteEvent(id: event.id, span: span);
       return ToolExecutionResult.text(
         'Deleted ${_renderEvent(event, showDate: true)}.',
       );
@@ -369,6 +485,18 @@ String _renderEvent(CalendarEvent event, {bool showDate = false}) {
   if (calendar != null && calendar.isNotEmpty) buffer.write(' ($calendar)');
   final location = event.location;
   if (location != null && location.isNotEmpty) buffer.write(' @ $location');
+  final recurrence = event.recurrence;
+  if (recurrence != null) buffer.write(' [${_renderRecurrence(recurrence)}]');
+  final alarms = event.alarms;
+  if (alarms != null && alarms.isNotEmpty) {
+    final sorted = [...alarms]..sort();
+    final label = sorted.map((minutes) => '${minutes}m').join(', ');
+    buffer.write(
+      sorted.length == 1 ? ' [alarm $label before]' : ' [alarms $label before]',
+    );
+  }
+  final url = event.url;
+  if (url != null && url.isNotEmpty) buffer.write(' [url: $url]');
   final notes = event.notes;
   if (notes != null && notes.trim().isNotEmpty) {
     var firstLine = notes.trim().split('\n').first;
@@ -378,10 +506,33 @@ String _renderEvent(CalendarEvent event, {bool showDate = false}) {
   return buffer.toString();
 }
 
-String _dateLabel(DateTime date) =>
-    '${date.year.toString().padLeft(4, '0')}-'
-    '${date.month.toString().padLeft(2, '0')}-'
-    '${date.day.toString().padLeft(2, '0')}';
+/// Compact recurrence hint, e.g. `recurs weekly MO,TH until 2026-12-31`
+/// or `recurs every 2 weeks ×10`.
+String _renderRecurrence(CalendarRecurrence rule) {
+  final buffer = StringBuffer('recurs ');
+  final interval = rule.interval;
+  switch (rule.frequency) {
+    case 'daily':
+      buffer.write(interval > 1 ? 'every $interval days' : 'daily');
+    case 'weekly':
+      buffer.write(interval > 1 ? 'every $interval weeks' : 'weekly');
+      final days = rule.daysOfWeek;
+      if (days != null && days.isNotEmpty) buffer.write(' ${days.join(',')}');
+    case 'monthly':
+      buffer.write(interval > 1 ? 'every $interval months' : 'monthly');
+      final days = rule.daysOfMonth;
+      if (days != null && days.isNotEmpty) {
+        buffer.write(' on ${days.join(',')}');
+      }
+    case 'yearly':
+      buffer.write(interval > 1 ? 'every $interval years' : 'yearly');
+  }
+  if (rule.until != null) buffer.write(' until ${_dateLabel(rule.until!)}');
+  if (rule.count != null) buffer.write(' ×${rule.count}');
+  return buffer.toString();
+}
+
+String _dateLabel(DateTime date) => calendarDayLabel(date);
 
 String _timeLabel(DateTime time) =>
     '${time.hour.toString().padLeft(2, '0')}:'

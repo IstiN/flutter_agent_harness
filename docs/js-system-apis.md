@@ -20,8 +20,9 @@ reuses the exec Promise machinery.
 - `jsr.fa.call(method, args)` — generic dispatcher.
 - `jsr.fa.llm(prompt)` → string. Real; needs a connected `llmHandler`,
   otherwise "LLM is not connected".
-- `jsr.fa.calendar(args)` → `{events: [...]}` (read-only; maps to
-  `calendar.events` internally). Real backend via `CalendarApi`.
+- `jsr.fa.calendar(args)` → `{events: [...]}` (maps to `calendar.events`
+  internally); `.create` / `.update` / `.delete` write (recurrence, alarms,
+  calendar, span, url supported). Real backend via `CalendarApi`.
 - `jsr.fa.homekit(action, args)`, `jsr.fa.health(action, args)`,
   `jsr.fa.contacts(action, args)` — dispatch to the injectable
   `FaPlatformHandler` (`js_app_engine.dart:21`). When no handler is wired the
