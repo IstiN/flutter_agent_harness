@@ -89,6 +89,23 @@ def copy_store_screenshots(device:, suffix:, out_root:)
   end
 end
 
+# Apple's Connect API 500s in bursts (even seconds apart on identical
+# requests) — retry the block a few times on "Server error got 500".
+def with_apple_retries(attempts: 3, delay: 25)
+  tries = 0
+  begin
+    tries += 1
+    yield
+  rescue => e
+    if e.message.include?("Server error got 500") && tries < attempts
+      UI.important("Apple API 500 (attempt #{tries}/#{attempts}) — retrying in #{delay}s...")
+      sleep(delay)
+      retry
+    end
+    raise
+  end
+end
+
 # Directly updates App Store version localizations via the Spaceship API.
 # Fallback when deliver fails because App Info is not editable.
 def upload_version_metadata_via_api(metadata_dir:, bundle_id:, platform:)
@@ -232,22 +249,24 @@ platform :ios do
     # Step 1: metadata only (fast, reliable)
     if do_metadata
       begin
-        deliver(
-          app_identifier: bundle_id,
-          api_key: api_key,
-          metadata_path: File.expand_path(metadata_dir),
-          screenshots_path: File.expand_path("screenshots"),
-          skip_binary_upload: true,
-          skip_app_version_update: true,
-          app_version: version_name,
-          force: true,
-          submit_for_review: false,
-          automatic_release: false,
-          phased_release: false,
-          skip_screenshots: true,
-          run_precheck_before_submit: false,
-          version_check_wait_retry_limit: 1
-        )
+        with_apple_retries do
+          deliver(
+            app_identifier: bundle_id,
+            api_key: api_key,
+            metadata_path: File.expand_path(metadata_dir),
+            screenshots_path: File.expand_path("screenshots"),
+            skip_binary_upload: true,
+            skip_app_version_update: true,
+            app_version: version_name,
+            force: true,
+            submit_for_review: false,
+            automatic_release: false,
+            phased_release: false,
+            skip_screenshots: true,
+            run_precheck_before_submit: false,
+            version_check_wait_retry_limit: 1
+          )
+        end
         UI.success("iOS metadata uploaded successfully!")
       rescue => e
         if e.message.strip == "No data" || e.message.include?("fetch_app_store_review_detail")
@@ -273,24 +292,26 @@ platform :ios do
     # so screenshot errors never fail the lane.
     if do_screenshots
       begin
-        deliver(
-          app_identifier: bundle_id,
-          api_key: api_key,
-          metadata_path: File.expand_path(metadata_dir),
-          screenshots_path: File.expand_path("screenshots"),
-          skip_binary_upload: true,
-          skip_app_version_update: true,
-          app_version: version_name,
-          force: true,
-          submit_for_review: false,
-          automatic_release: false,
-          phased_release: false,
-          skip_metadata: true,
-          overwrite_screenshots: true,
-          run_precheck_before_submit: false,
-          screenshot_processing_timeout: 30,
-          version_check_wait_retry_limit: 2
-        )
+        with_apple_retries do
+          deliver(
+            app_identifier: bundle_id,
+            api_key: api_key,
+            metadata_path: File.expand_path(metadata_dir),
+            screenshots_path: File.expand_path("screenshots"),
+            skip_binary_upload: true,
+            skip_app_version_update: true,
+            app_version: version_name,
+            force: true,
+            submit_for_review: false,
+            automatic_release: false,
+            phased_release: false,
+            skip_metadata: true,
+            overwrite_screenshots: true,
+            run_precheck_before_submit: false,
+            screenshot_processing_timeout: 30,
+            version_check_wait_retry_limit: 2
+          )
+        end
         UI.success("iOS screenshots uploaded successfully!")
       rescue => e
         UI.important("Screenshot upload encountered Apple API errors: #{e.message}")
@@ -344,33 +365,53 @@ platform :mac do
     # Preflight: without an editable (prepare-for-submission) macOS version in
     # App Store Connect, deliver dies on Apple's opaque "Server error got 500"
     # while resolving the version — check first and report instead of forcing.
-    mac_app = Spaceship::ConnectAPI::App.find(bundle_id)
-    mac_version = mac_app&.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
+    # Apple's API also 500s intermittently, so probe twice before concluding.
+    mac_version = nil
+    preflight_error = nil
+    2.times do |attempt|
+      begin
+        mac_app = Spaceship::ConnectAPI::App.find(bundle_id)
+        mac_version = mac_app&.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
+        preflight_error = nil
+        break
+      rescue => e
+        preflight_error = e
+        UI.important("ASC preflight attempt #{attempt + 1} failed: #{e.message}")
+        sleep(20)
+      end
+    end
     if mac_version.nil?
-      UI.important("No editable macOS App Store version for #{bundle_id}.")
-      UI.important("Create the macOS #{version_name} version in App Store Connect (app page → macOS → '+ Version') and re-run — skipping the macOS upload.")
+      if preflight_error
+        UI.important("Could not verify the macOS App Store version for #{bundle_id} (Apple API errors) — re-run the workflow later.")
+      else
+        UI.important("No editable macOS App Store version for #{bundle_id}.")
+        UI.important("Create the macOS #{version_name} version in App Store Connect (app page → macOS → '+ Version') and re-run.")
+      end
+      UI.important("Skipping the macOS upload without failing the pipeline.")
       next
     end
 
     if do_metadata
       begin
-        deliver(
-          app_identifier: bundle_id,
-          api_key: api_key,
-          platform: "osx",
-          metadata_path: File.expand_path(metadata_dir),
-          screenshots_path: File.expand_path("screenshots_mac"),
-          skip_binary_upload: true,
-          skip_app_version_update: true,
-          app_version: version_name,
-          force: true,
-          submit_for_review: false,
-          automatic_release: false,
-          phased_release: false,
-          skip_screenshots: true,
-          run_precheck_before_submit: false,
-          version_check_wait_retry_limit: 1
-        )
+        with_apple_retries do
+          deliver(
+            app_identifier: bundle_id,
+            api_key: api_key,
+            platform: "osx",
+            metadata_path: File.expand_path(metadata_dir),
+            screenshots_path: File.expand_path("screenshots_mac"),
+            skip_binary_upload: true,
+            skip_app_version_update: true,
+            app_version: version_name,
+            force: true,
+            submit_for_review: false,
+            automatic_release: false,
+            phased_release: false,
+            skip_screenshots: true,
+            run_precheck_before_submit: false,
+            version_check_wait_retry_limit: 1
+          )
+        end
         UI.success("macOS metadata uploaded successfully!")
       rescue => e
         if e.message.strip == "No data" || e.message.include?("fetch_app_store_review_detail")
@@ -394,25 +435,27 @@ platform :mac do
 
     if do_screenshots
       begin
-        deliver(
-          app_identifier: bundle_id,
-          api_key: api_key,
-          platform: "osx",
-          metadata_path: File.expand_path(metadata_dir),
-          screenshots_path: File.expand_path("screenshots_mac"),
-          skip_binary_upload: true,
-          skip_app_version_update: true,
-          app_version: version_name,
-          force: true,
-          submit_for_review: false,
-          automatic_release: false,
-          phased_release: false,
-          skip_metadata: true,
-          overwrite_screenshots: true,
-          run_precheck_before_submit: false,
-          screenshot_processing_timeout: 30,
-          version_check_wait_retry_limit: 2
-        )
+        with_apple_retries do
+          deliver(
+            app_identifier: bundle_id,
+            api_key: api_key,
+            platform: "osx",
+            metadata_path: File.expand_path(metadata_dir),
+            screenshots_path: File.expand_path("screenshots_mac"),
+            skip_binary_upload: true,
+            skip_app_version_update: true,
+            app_version: version_name,
+            force: true,
+            submit_for_review: false,
+            automatic_release: false,
+            phased_release: false,
+            skip_metadata: true,
+            overwrite_screenshots: true,
+            run_precheck_before_submit: false,
+            screenshot_processing_timeout: 30,
+            version_check_wait_retry_limit: 2
+          )
+        end
         UI.success("macOS screenshots uploaded successfully!")
       rescue => e
         UI.important("macOS screenshot upload encountered Apple API errors: #{e.message}")
