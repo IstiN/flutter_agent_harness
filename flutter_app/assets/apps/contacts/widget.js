@@ -331,6 +331,14 @@
         ? String(result.__error)
         : 'Calling ' + contact.name + '…';
       render();
+      // The native dialer/confirmation owns the outcome from here — the
+      // hint must not linger after the user returns (call OR cancel).
+      setTimeout(function() {
+        if (notice === 'Calling ' + contact.name + '…') {
+          notice = null;
+          render();
+        }
+      }, 4000);
     }, function(e) {
       notice = String(e);
       render();
@@ -412,6 +420,18 @@
 
   jsr.onEvent(handleEvent);
   jsr.onThemeChange(function(theme) { t = theme; render(); });
+  // System back (iOS edge swipe, Android back): step out of the detail
+  // card / add form / SMS box first; only the list view lets the app close.
+  jsr.onBack = function() {
+    if (selected !== null || form !== null || smsOpen) {
+      selected = null;
+      form = null;
+      smsOpen = false;
+      render();
+      return true;
+    }
+    return false;
+  };
   jsr.setTitle('Contacts');
   search();
 })();
