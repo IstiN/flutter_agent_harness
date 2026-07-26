@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:fa/l10n/app_localizations.dart';
@@ -9,6 +10,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/gemma/gemma_cache_section.dart';
@@ -2149,10 +2151,50 @@ class SettingsScreen extends StatelessWidget {
                 GemmaCacheSection(engine: gemmaEngine),
               ],
               const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              const DebugLogsSection(),
+              const SizedBox(height: 24),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The settings "Debug logs" row: copies the in-app debug log ([AppLog] —
+/// the tee'd `debugPrint` traffic plus tagged subsystem logs) to the
+/// clipboard so the user can paste it into a bug report. Deliberately
+/// quiet: one icon-button row at the bottom of the screen.
+class DebugLogsSection extends StatelessWidget {
+  const DebugLogsSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return Row(
+      children: [
+        IconButton(
+          icon: const Icon(Icons.bug_report_outlined),
+          tooltip: context.l10n.settingsCopyDebugLogs,
+          onPressed: () => _copyLogs(context),
+        ),
+        Expanded(
+          child: Text(
+            context.l10n.settingsCopyDebugLogs,
+            style: TextStyle(color: colors.dim, fontSize: 13),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _copyLogs(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: AppLog.dump()));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.l10n.settingsDebugLogsCopied)),
     );
   }
 }

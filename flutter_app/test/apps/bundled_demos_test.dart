@@ -288,7 +288,24 @@ final class _FakeHomeApi implements HomeApi {
   Future<bool> requestAccess() async => true;
 
   @override
-  Future<List<HomeAccessory>> listAccessories() async => const [
+  Future<List<HomeInfo>> listHomes() async => const [
+    (
+      id: 'h-1',
+      name: 'My Home',
+      primary: true,
+      roomCount: 2,
+      accessoryCount: 2,
+    ),
+  ];
+
+  @override
+  Future<List<HomeRoom>> listRooms({String? homeId}) async => const [];
+
+  @override
+  Future<List<HomeAccessory>> listAccessories({
+    String? homeId,
+    String? roomId,
+  }) async => const [
     (
       id: 'a-light',
       name: 'Ceiling Light',
@@ -299,6 +316,7 @@ final class _FakeHomeApi implements HomeApi {
       isOn: true,
       brightness: 80,
       targetTemperature: null,
+      services: [],
     ),
     (
       id: 'a-thermo',
@@ -310,8 +328,26 @@ final class _FakeHomeApi implements HomeApi {
       isOn: null,
       brightness: null,
       targetTemperature: 21.5,
+      services: [],
     ),
   ];
+
+  @override
+  Future<HomeAccessory> readAccessory({required String id}) async =>
+      (await listAccessories()).firstWhere((accessory) => accessory.id == id);
+
+  @override
+  Future<void> writeCharacteristic({
+    required String id,
+    required String type,
+    required Object value,
+  }) async {}
+
+  @override
+  Future<List<HomeScene>> listScenes({String? homeId}) async => const [];
+
+  @override
+  Future<void> executeScene({required String id}) async {}
 
   @override
   Future<void> setPower({required String id, required bool on}) async {

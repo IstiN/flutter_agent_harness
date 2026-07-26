@@ -1286,6 +1286,18 @@ abstract class AppLocalizations {
   /// **'Any OpenAI-compatible endpoint. The provider must allow browser (CORS) requests — api.anthropic.com does not, so reach Anthropic models via OpenRouter instead.'**
   String get settingsCorsNoteCustom;
 
+  /// No description provided for @settingsCopyDebugLogs.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy debug logs'**
+  String get settingsCopyDebugLogs;
+
+  /// No description provided for @settingsDebugLogsCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Debug logs copied to clipboard'**
+  String get settingsDebugLogsCopied;
+
   /// No description provided for @settingsCorsNoteOllama.
   ///
   /// In en, this message translates to:

@@ -5,11 +5,29 @@
 export 'package:fa/services/home_service_stub.dart'
     if (dart.library.io) 'package:fa/services/home_service_io.dart';
 
+/// One readable/writable HomeKit characteristic. [type] is the raw HomeKit
+/// characteristic type string (e.g. `powerState`, `brightness`); [value] is
+/// the last read value (bool/num/String) when it was read.
+typedef HomeCharacteristic = ({
+  String type,
+  Object? value,
+  bool readable,
+  bool writable,
+});
+
+/// One HomeKit service of an accessory with its characteristics.
+typedef HomeServiceInfo = ({
+  String type,
+  String name,
+  List<HomeCharacteristic> characteristics,
+});
+
 /// One HomeKit accessory. [category] is one of `lightbulb`, `switch`,
 /// `outlet`, `thermostat`, or the raw HomeKit category type for anything
 /// else. The state fields are present only when the accessory exposed the
 /// matching characteristic: [isOn] (power state), [brightness] (0–100),
-/// [targetTemperature] (°C).
+/// [targetTemperature] (°C). [services] is the full service/characteristic
+/// breakdown (values read for reachable accessories).
 typedef HomeAccessory = ({
   String id,
   String name,
@@ -20,6 +38,33 @@ typedef HomeAccessory = ({
   bool? isOn,
   int? brightness,
   double? targetTemperature,
+  List<HomeServiceInfo> services,
+});
+
+/// One HomeKit home.
+typedef HomeInfo = ({
+  String id,
+  String name,
+  bool primary,
+  int roomCount,
+  int accessoryCount,
+});
+
+/// One room in a HomeKit home.
+typedef HomeRoom = ({
+  String id,
+  String name,
+  String homeName,
+  int accessoryCount,
+});
+
+/// One HomeKit action set (scene).
+typedef HomeScene = ({
+  String id,
+  String name,
+  String homeName,
+  int actionCount,
+  bool executing,
 });
 
 /// Access to the user's smart home (HomeKit on iOS — there is no HomeKit
@@ -36,9 +81,34 @@ abstract interface class HomeApi {
   /// stored decision). True when accessories may be listed and controlled.
   Future<bool> requestAccess();
 
-  /// Every accessory across all homes and rooms; empty when access is
-  /// denied.
-  Future<List<HomeAccessory>> listAccessories();
+  /// Every home the user has; empty when access is denied.
+  Future<List<HomeInfo>> listHomes();
+
+  /// Every room (optionally limited to the home with [homeId]); empty when
+  /// access is denied.
+  Future<List<HomeRoom>> listRooms({String? homeId});
+
+  /// Every accessory across all homes and rooms (optionally limited to
+  /// [homeId] / [roomId]); empty when access is denied.
+  Future<List<HomeAccessory>> listAccessories({String? homeId, String? roomId});
+
+  /// Re-reads every readable characteristic of the accessory with [id] and
+  /// returns it with fresh values.
+  Future<HomeAccessory> readAccessory({required String id});
+
+  /// Writes [value] (bool/num/String) to ANY writable characteristic of the
+  /// accessory with [id], addressed by its HomeKit [type] string.
+  Future<void> writeCharacteristic({
+    required String id,
+    required String type,
+    required Object value,
+  });
+
+  /// Every action set (scene), optionally limited to [homeId].
+  Future<List<HomeScene>> listScenes({String? homeId});
+
+  /// Executes the action set (scene) with [id].
+  Future<void> executeScene({required String id});
 
   /// Switches the accessory with [id] on or off.
   Future<void> setPower({required String id, required bool on});

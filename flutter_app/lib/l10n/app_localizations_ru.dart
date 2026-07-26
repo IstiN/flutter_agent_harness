@@ -716,6 +716,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'Любая OpenAI-совместимая конечная точка. Провайдер должен разрешать браузерные (CORS) запросы — api.anthropic.com их не разрешает, поэтому к моделям Anthropic обращайтесь через OpenRouter.';
 
   @override
+  String get settingsCopyDebugLogs => 'Скопировать логи отладки';
+
+  @override
+  String get settingsDebugLogsCopied =>
+      'Логи отладки скопированы в буфер обмена';
+
+  @override
   String get settingsCorsNoteOllama =>
       'Запросы идут напрямую из браузера на ollama.com, который сейчас не отправляет заголовки CORS, — вызовы из браузера завершаются ошибкой. Используйте здесь OpenRouter или выберите Ollama в мобильном/десктопном приложении.';
 

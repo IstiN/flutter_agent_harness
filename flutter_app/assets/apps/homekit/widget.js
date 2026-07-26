@@ -7,6 +7,7 @@
   var loading = true;
   var bridgeError = null;
   var accessories = null; // real accessories from the bridge
+  var homes = null; // real homes from the bridge (home.homes())
   var notice = null;
 
   // Demo devices — local-only state, never real accessories.
@@ -38,6 +39,10 @@
   function checkBridge() {
     loading = true;
     render();
+    jsr.fa.home.homes().then(function(result) {
+      homes = (result && !result.__error && result.homes) || null;
+      render();
+    }, function() { /* the list call below reports the bridge error */ });
     jsr.fa.home.list().then(function(result) {
       loading = false;
       if (result && result.__error) {
@@ -91,7 +96,12 @@
         type: 'column', crossAxisAlignment: 'start', children: [
           { type: 'text',
             data: loading ? 'Checking the HomeKit bridge…'
-              : connected ? 'HomeKit connected'
+              : connected
+                ? 'HomeKit connected' +
+                  (homes && homes.length
+                    ? ' — ' + homes.map(function(h) { return h.name; })
+                        .join(', ')
+                    : '')
               : 'HomeKit bridge not available',
             style: { color: t.text, fontSize: 13, fontWeight: 'w600' } },
           bridgeError

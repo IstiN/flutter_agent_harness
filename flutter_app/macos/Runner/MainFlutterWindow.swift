@@ -938,7 +938,9 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
     switch call.method {
     case "isAvailable", "requestAccess":
       result(false)
-    case "listAccessories", "setPower", "setBrightness", "setTargetTemperature":
+    case "listHomes", "listRooms", "listAccessories", "readAccessory",
+      "writeCharacteristic", "listScenes", "executeScene", "setPower",
+      "setBrightness", "setTargetTemperature":
       result(
         FlutterError(
           code: "unsupported",

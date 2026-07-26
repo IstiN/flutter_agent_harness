@@ -23,6 +23,7 @@ final class FakeHomeApi implements HomeApi {
   final powerCalls = <({String id, bool on})>[];
   final brightnessCalls = <({String id, int value})>[];
   final temperatureCalls = <({String id, double celsius})>[];
+  final writeCalls = <({String id, String type, Object value})>[];
 
   static const _defaultAccessories = <HomeAccessory>[
     (
@@ -35,6 +36,7 @@ final class FakeHomeApi implements HomeApi {
       isOn: true,
       brightness: 80,
       targetTemperature: null,
+      services: [],
     ),
     (
       id: 'a-thermo',
@@ -46,6 +48,7 @@ final class FakeHomeApi implements HomeApi {
       isOn: null,
       brightness: null,
       targetTemperature: 21.5,
+      services: [],
     ),
     (
       id: 'a-switch',
@@ -57,6 +60,7 @@ final class FakeHomeApi implements HomeApi {
       isOn: false,
       brightness: null,
       targetTemperature: null,
+      services: [],
     ),
   ];
 
@@ -70,7 +74,35 @@ final class FakeHomeApi implements HomeApi {
   }
 
   @override
-  Future<List<HomeAccessory>> listAccessories() async => accessoriesToReturn;
+  Future<List<HomeInfo>> listHomes() async => const [];
+
+  @override
+  Future<List<HomeRoom>> listRooms({String? homeId}) async => const [];
+
+  @override
+  Future<List<HomeAccessory>> listAccessories({
+    String? homeId,
+    String? roomId,
+  }) async => accessoriesToReturn;
+
+  @override
+  Future<HomeAccessory> readAccessory({required String id}) async =>
+      accessoriesToReturn.firstWhere((accessory) => accessory.id == id);
+
+  @override
+  Future<void> writeCharacteristic({
+    required String id,
+    required String type,
+    required Object value,
+  }) async {
+    writeCalls.add((id: id, type: type, value: value));
+  }
+
+  @override
+  Future<List<HomeScene>> listScenes({String? homeId}) async => const [];
+
+  @override
+  Future<void> executeScene({required String id}) async {}
 
   @override
   Future<void> setPower({required String id, required bool on}) async {
@@ -208,6 +240,7 @@ void main() {
             isOn: false,
             brightness: null,
             targetTemperature: null,
+            services: const [],
           ),
         ],
       );

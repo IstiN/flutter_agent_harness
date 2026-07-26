@@ -200,6 +200,8 @@ final class _FakeHomeApi implements HomeApi {
   final powerCalls = <({String id, bool on})>[];
   final brightnessCalls = <({String id, int value})>[];
   final temperatureCalls = <({String id, double celsius})>[];
+  final writeCalls = <({String id, String type, Object value})>[];
+  final executedScenes = <String>[];
 
   @override
   Future<bool> get isAvailable async => true;
@@ -208,7 +210,27 @@ final class _FakeHomeApi implements HomeApi {
   Future<bool> requestAccess() async => true;
 
   @override
-  Future<List<HomeAccessory>> listAccessories() async => const [
+  Future<List<HomeInfo>> listHomes() async => const [
+    (
+      id: 'h-1',
+      name: 'My Home',
+      primary: true,
+      roomCount: 2,
+      accessoryCount: 2,
+    ),
+  ];
+
+  @override
+  Future<List<HomeRoom>> listRooms({String? homeId}) async => const [
+    (id: 'r-1', name: 'Living Room', homeName: 'My Home', accessoryCount: 1),
+    (id: 'r-2', name: 'Hallway', homeName: 'My Home', accessoryCount: 1),
+  ];
+
+  @override
+  Future<List<HomeAccessory>> listAccessories({
+    String? homeId,
+    String? roomId,
+  }) async => const [
     (
       id: 'a-light',
       name: 'Ceiling Light',
@@ -219,6 +241,16 @@ final class _FakeHomeApi implements HomeApi {
       isOn: true,
       brightness: 80,
       targetTemperature: null,
+      services: [
+        (
+          type: 'lightbulb',
+          name: 'Lightbulb',
+          characteristics: [
+            (type: 'powerState', value: true, readable: true, writable: true),
+            (type: 'brightness', value: 80, readable: true, writable: true),
+          ],
+        ),
+      ],
     ),
     (
       id: 'a-thermo',
@@ -230,8 +262,41 @@ final class _FakeHomeApi implements HomeApi {
       isOn: null,
       brightness: null,
       targetTemperature: 21.5,
+      services: [],
     ),
   ];
+
+  @override
+  Future<HomeAccessory> readAccessory({required String id}) async =>
+      (await listAccessories()).firstWhere(
+        (accessory) => accessory.id == id,
+        orElse: () => throw StateError('no accessory with this id'),
+      );
+
+  @override
+  Future<void> writeCharacteristic({
+    required String id,
+    required String type,
+    required Object value,
+  }) async {
+    writeCalls.add((id: id, type: type, value: value));
+  }
+
+  @override
+  Future<List<HomeScene>> listScenes({String? homeId}) async => const [
+    (
+      id: 's-1',
+      name: 'Good Night',
+      homeName: 'My Home',
+      actionCount: 3,
+      executing: false,
+    ),
+  ];
+
+  @override
+  Future<void> executeScene({required String id}) async {
+    executedScenes.add(id);
+  }
 
   @override
   Future<void> setPower({required String id, required bool on}) async {
@@ -883,6 +948,101 @@ void main() {
         expect(jsonEncode(state['temp']), contains('"temperature":22.5'));
       } finally {
         await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.home exposes homes, rooms, scenes, read and the generic '
+      'write', (tester) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.home.homes().then(function(homes) {
+    jsr.fa.home.rooms({}).then(function(rooms) {
+      jsr.fa.home.list({homeId: 'h-1'}).then(function(list) {
+        jsr.fa.home.read({id: 'a-light'}).then(function(read) {
+          jsr.fa.home.write({id: 'a-light', type: 'hue', value: 120}).then(function(wrote) {
+            jsr.fa.home.scenes({}).then(function(scenes) {
+              jsr.fa.home.executeScene({id: 's-1'}).then(function(executed) {
+                jsr.exportState({
+                  homes: homes, rooms: rooms, list: list, read: read,
+                  wrote: wrote, scenes: scenes, executed: executed,
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final home = _FakeHomeApi();
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(homekit: true),
+        home: home,
+      );
+      try {
+        await engine.start();
+        await Future<void>.delayed(settle);
+        final state = engine.exportedState!;
+        expect(jsonEncode(state['homes']), contains('"name":"My Home"'));
+        expect(jsonEncode(state['homes']), contains('"primary":true'));
+        expect(jsonEncode(state['rooms']), contains('"Living Room"'));
+        // The list carries the services/characteristics breakdown.
+        final list = jsonEncode(state['list']);
+        expect(list, contains('"services"'));
+        expect(list, contains('"type":"powerState"'));
+        expect(list, contains('"writable":true'));
+        // read returns a single accessory with fresh values.
+        expect(jsonEncode(state['read']), contains('"id":"a-light"'));
+        // write reaches the generic characteristic write.
+        expect(home.writeCalls, [(id: 'a-light', type: 'hue', value: 120)]);
+        expect(jsonEncode(state['wrote']), contains('"written":true'));
+        expect(jsonEncode(state['scenes']), contains('"Good Night"'));
+        expect(home.executedScenes, ['s-1']);
+        expect(jsonEncode(state['executed']), contains('"executed":true'));
+      } finally {
+        await engine.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.home surfaces HomeApi failures as bridge errors', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.home.read({id: 'missing'}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(homekit: true),
+        home: _FakeHomeApi(),
+      );
+      try {
+        await engine.start();
+        await Future<void>.delayed(settle);
+        final result = jsonEncode(engine.exportedState?['result']);
+        expect(result, contains('__error'));
+        expect(result, contains('no accessory'));
+      } finally {
+        await engine.dispose();
       }
     });
   });

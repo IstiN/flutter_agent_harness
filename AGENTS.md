@@ -154,14 +154,33 @@ factual: paths, commands, invariants — no essays.
   onTap/onMarkerTap): apps live in env-shared `apps/<id>/{manifest.json,
   widget.js}`; permissions in `apps_permissions.json` (network/
   allowedCommands/llm/homekit/health/contacts/calendar — default denied);
-  `jsr.fa.*` bridge over exec (`fa.llm`, `fa.calendar`; homekit/health/
-  contacts are gated "not available yet" stubs); the `js-apps` skill seeds
+  `jsr.fa.*` bridge over exec (`fa.llm`, `fa.calendar`, `fa.home.*`,
+  `fa.health.*`, `fa.asr.*`, `fa.notify.*`; contacts is a gated "not
+  available yet" stub); the `js-apps` skill seeds
   into `.fah/skills/` on startup. Bundled demos (seeded by
   `AppsStore.demoAppIds`, assets in `flutter_app/assets/apps/`): calculator,
   weather, stocks, crypto, animation-showcase, yolo-hello, calendar
-  (`jsr.fa.calendar`), map (`map` node), health + homekit (honest stub UX +
-  demo state). `open_app_tool.dart` registers the agent tool `open_app`
+  (`jsr.fa.calendar`), map (`map` node), health + homekit (real bridge on
+  iOS, honest demo-panel fallback elsewhere). `open_app_tool.dart` registers
+  the agent tool `open_app`
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
+- `flutter_app/lib/services/home_service.dart` — smart home: `HomeApi` over
+  the `fah/home` MethodChannel (HomeKit in `AppDelegate.swift`, iOS only;
+  the macOS channel answers unsupported): `listHomes`/`listRooms`/
+  `listAccessories` (with the full services/characteristics breakdown +
+  isOn/brightness/targetTemperature conveniences), `readAccessory`,
+  `writeCharacteristic` (ANY writable characteristic by HomeKit type
+  string), `listScenes`/`executeScene`, and the setPower/setBrightness/
+  setTargetTemperature aliases. The delegate waits for the first
+  `homeManagerDidUpdateHomes` (5 s cap) when access was granted but homes
+  have not loaded yet, and polls the authorization status so a denied
+  prompt answers `false` instead of hanging. JS surface `jsr.fa.home.*`
+  mirrors it (`docs/js-system-apis.md`); agent tools in `home_tool.dart`
+  (`home_devices`, `home_turn_on`/`home_turn_off`, `home_set`).
+- `flutter_app/lib/services/app_log.dart` — process-wide debug log: ring
+  buffer (2000 lines) + best-effort persistence to `logs/app.log` under
+  `ExecutionEnv.cwd` (rewritten with its tail past 1 MB). `main.dart` tees
+  `debugPrint` into it; settings has a "Copy debug logs" row.
 - `flutter_app/lib/services/calendar_service.dart` — system calendar:
   `CalendarApi` over the `fah/calendar` MethodChannel (EventKit in
   `MainFlutterWindow.swift`/`AppDelegate.swift` — MIRRORED, edit both;

@@ -1017,11 +1017,90 @@ private let homeManager = HMHomeManager()
 
 /// Delegate for the `fah/home` channel: homes load asynchronously after the
 /// user answers the access prompt, so pending Flutter results wait here for
-/// `homeManagerDidUpdateHomes`.
+/// `homeManagerDidUpdateHomes` — and a deny, which reports `.determined`
+/// without `.authorized` and may never deliver a homes update, is caught by
+/// polling the authorization status.
 private final class HomeChannelDelegate: NSObject, HMHomeManagerDelegate {
+  /// `requestAccess` results waiting for the prompt answer.
   var pendingResults: [FlutterResult] = []
+  /// Closures waiting for the first homes load: with access granted long
+  /// ago `requestAccess` answers immediately while `homeManager.homes` is
+  /// still empty, so the first list call waits here (answered with what we
+  /// have after [homesWaitTimeout]).
+  var homesWaiters: [() -> Void] = []
+  /// Remaining half-second polls while waiting for the prompt answer.
+  private var accessPollsLeft = 0
+
+  /// How long a read call waits for the first homes load before answering
+  /// with what we have (usually an empty list).
+  let homesWaitTimeout: TimeInterval = 5
 
   func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
+    NSLog(
+      "[fah/home] homeManagerDidUpdateHomes: \(manager.homes.count) home(s), "
+        + "authorizationStatus=\(manager.authorizationStatus.rawValue)",
+    )
+    answerAccessResults()
+    flushHomesWaiters()
+  }
+
+  /// Adds [result] to the pending `requestAccess` answers and polls for the
+  /// prompt outcome — without the poll a deny would hang the Flutter side
+  /// forever (no homes update fires).
+  func waitForAccessAnswer(result: @escaping FlutterResult) {
+    pendingResults.append(result)
+    accessPollsLeft = 240 // two minutes of half-second polls
+    pollAccessAnswer()
+  }
+
+  /// Runs [work] once the homes have loaded, or after [homesWaitTimeout]
+  /// with whatever is there (the delegate's homes update flushes early).
+  func whenHomesLoaded(_ work: @escaping () -> Void) {
+    let first = homesWaiters.isEmpty
+    homesWaiters.append(work)
+    guard first else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + homesWaitTimeout) { [self] in
+      if !homesWaiters.isEmpty {
+        NSLog(
+          "[fah/home] homes wait timed out — answering with "
+            + "\(homeManager.homes.count) home(s)",
+        )
+      }
+      flushHomesWaiters()
+    }
+  }
+
+  private func flushHomesWaiters() {
+    let waiters = homesWaiters
+    homesWaiters = []
+    for waiter in waiters {
+      DispatchQueue.main.async(execute: waiter)
+    }
+  }
+
+  private func pollAccessAnswer() {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+      guard !pendingResults.isEmpty else { return }
+      if homeManager.authorizationStatus.contains(.determined) {
+        // The prompt was answered — granted or denied, answer either way.
+        answerAccessResults()
+        return
+      }
+      accessPollsLeft -= 1
+      if accessPollsLeft <= 0 {
+        NSLog("[fah/home] requestAccess timed out waiting for the prompt")
+        let results = pendingResults
+        pendingResults = []
+        for result in results {
+          result(false)
+        }
+        return
+      }
+      pollAccessAnswer()
+    }
+  }
+
+  private func answerAccessResults() {
     let results = pendingResults
     pendingResults = []
     for result in results {
@@ -1040,9 +1119,16 @@ private func homeAccessGranted() -> Bool {
 
 /// The `fah/home` method channel: HomeKit home control (iOS only — there is
 /// no HomeKit framework on macOS). Methods: `isAvailable`, `requestAccess`,
-/// `listAccessories` returning a list of accessory maps ({id, name, room,
-/// homeName, category, reachable, isOn?, brightness?, targetTemperature?}),
-/// and the write methods `setPower` {id, on}, `setBrightness` {id, value},
+/// `listHomes` → [{id, name, primary, roomCount, accessoryCount}],
+/// `listRooms` {homeId?} → [{id, name, homeName, accessoryCount}],
+/// `listAccessories` {homeId?, roomId?} → [{id, name, room, homeName,
+/// category, reachable, isOn?, brightness?, targetTemperature?, services:
+/// [{type, name, characteristics: [{type, value?, readable, writable}]}]}],
+/// `readAccessory` {id} → one accessory map with freshly-read values,
+/// `writeCharacteristic` {id, type, value} writing ANY writable
+/// characteristic by its HomeKit type string, `listScenes` {homeId?} →
+/// [{id, name, homeName, actionCount, executing}], `executeScene` {id}, and
+/// the convenience writes `setPower` {id, on}, `setBrightness` {id, value},
 /// `setTargetTemperature` {id, celsius}. NSHomeKitUsageDescription is
 /// declared in Info.plist.
 private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
@@ -1052,23 +1138,75 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
   )
   homeManager.delegate = homeChannelDelegate
   channel.setMethodCallHandler { call, result in
+    let args = call.arguments as? [String: Any] ?? [:]
     switch call.method {
     case "isAvailable":
+      NSLog(
+        "[fah/home] isAvailable: "
+          + "authorizationStatus=\(homeManager.authorizationStatus.rawValue)",
+      )
       result(true)
     case "requestAccess":
       homeRequestAccess(result: result)
+    case "listHomes":
+      homeRunWhenHomesReady { result(homeListHomes()) }
+    case "listRooms":
+      homeRunWhenHomesReady {
+        result(homeListRooms(homeId: args["homeId"] as? String))
+      }
     case "listAccessories":
-      homeListAccessories(result: result)
+      homeRunWhenHomesReady {
+        homeListAccessories(
+          homeId: args["homeId"] as? String,
+          roomId: args["roomId"] as? String,
+          result: result,
+        )
+      }
+    case "readAccessory":
+      homeRunWhenHomesReady {
+        homeReadAccessory(id: args["id"] as? String ?? "", result: result)
+      }
+    case "writeCharacteristic":
+      guard
+        let type = args["type"] as? String,
+        !type.isEmpty,
+        let value = args["value"]
+      else {
+        result(
+          FlutterError(
+            code: "bad_args",
+            message: "type and value are required",
+            details: nil,
+          ),
+        )
+        return
+      }
+      homeRunWhenHomesReady {
+        homeWriteCharacteristic(
+          id: args["id"] as? String ?? "",
+          type: type,
+          value: value,
+          result: result,
+        )
+      }
+    case "listScenes":
+      homeRunWhenHomesReady {
+        result(homeListScenes(homeId: args["homeId"] as? String))
+      }
+    case "executeScene":
+      homeRunWhenHomesReady {
+        homeExecuteScene(id: args["id"] as? String ?? "", result: result)
+      }
     case "setPower":
-      let args = call.arguments as? [String: Any] ?? [:]
-      homeWriteCharacteristic(
-        id: args["id"] as? String ?? "",
-        type: HMCharacteristicTypePowerState,
-        value: args["on"] as? Bool ?? false,
-        result: result,
-      )
+      homeRunWhenHomesReady {
+        homeWriteCharacteristic(
+          id: args["id"] as? String ?? "",
+          type: HMCharacteristicTypePowerState,
+          value: args["on"] as? Bool ?? false,
+          result: result,
+        )
+      }
     case "setBrightness":
-      let args = call.arguments as? [String: Any] ?? [:]
       let value = (args["value"] as? NSNumber)?.intValue ?? -1
       guard (0...100).contains(value) else {
         result(
@@ -1080,14 +1218,15 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
         )
         return
       }
-      homeWriteCharacteristic(
-        id: args["id"] as? String ?? "",
-        type: HMCharacteristicTypeBrightness,
-        value: value,
-        result: result,
-      )
+      homeRunWhenHomesReady {
+        homeWriteCharacteristic(
+          id: args["id"] as? String ?? "",
+          type: HMCharacteristicTypeBrightness,
+          value: value,
+          result: result,
+        )
+      }
     case "setTargetTemperature":
-      let args = call.arguments as? [String: Any] ?? [:]
       guard let celsius = (args["celsius"] as? NSNumber)?.doubleValue else {
         result(
           FlutterError(
@@ -1098,12 +1237,14 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
         )
         return
       }
-      homeWriteCharacteristic(
-        id: args["id"] as? String ?? "",
-        type: HMCharacteristicTypeTargetTemperature,
-        value: celsius,
-        result: result,
-      )
+      homeRunWhenHomesReady {
+        homeWriteCharacteristic(
+          id: args["id"] as? String ?? "",
+          type: HMCharacteristicTypeTargetTemperature,
+          value: celsius,
+          result: result,
+        )
+      }
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -1114,6 +1255,10 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
 /// touching `homes` on the manager is what makes the OS show its prompt
 /// (once), and the homes arrive via the delegate afterwards.
 private func homeRequestAccess(result: @escaping FlutterResult) {
+  NSLog(
+    "[fah/home] requestAccess: "
+      + "authorizationStatus=\(homeManager.authorizationStatus.rawValue)",
+  )
   if homeAccessGranted() {
     result(true)
     return
@@ -1125,12 +1270,136 @@ private func homeRequestAccess(result: @escaping FlutterResult) {
     return
   }
   _ = homeManager.homes // triggers the OS prompt on first access
-  homeChannelDelegate.pendingResults.append(result)
+  homeChannelDelegate.waitForAccessAnswer(result: result)
 }
 
-/// One accessory as a Flutter-friendly map. Characteristic values
-/// (isOn/brightness/targetTemperature) are filled in by the read pass; an
-/// unreachable accessory keeps only the static fields.
+/// Runs [work] once the homes have loaded. HMHomeManager delivers the homes
+/// asynchronously, so with access granted long ago (requestAccess answers
+/// immediately) the first read call would otherwise see `homes == []` —
+/// wait for the first `homeManagerDidUpdateHomes` instead (the delegate
+/// answers with what we have after a timeout).
+private func homeRunWhenHomesReady(_ work: @escaping () -> Void) {
+  if homeAccessGranted(), homeManager.homes.isEmpty {
+    NSLog("[fah/home] access granted but homes not loaded yet — waiting")
+    homeChannelDelegate.whenHomesLoaded(work)
+  } else {
+    work()
+  }
+}
+
+/// The homes matching [homeId] (all of them when nil).
+private func homeHomes(homeId: String?) -> [HMHome] {
+  guard let homeId else { return homeManager.homes }
+  return homeManager.homes.filter { $0.uniqueIdentifier.uuidString == homeId }
+}
+
+/// Answers `listHomes`: one map per home. Empty when access is not granted.
+private func homeListHomes() -> [[String: Any]] {
+  guard homeAccessGranted() else { return [] }
+  NSLog("[fah/home] listHomes: \(homeManager.homes.count) home(s)")
+  return homeManager.homes.map { home in
+    [
+      "id": home.uniqueIdentifier.uuidString,
+      "name": home.name,
+      "primary": home.isPrimary,
+      "roomCount": home.rooms.count,
+      "accessoryCount": home.accessories.count,
+    ]
+  }
+}
+
+/// Answers `listRooms`: one map per room across the matching homes. Empty
+/// when access is not granted.
+private func homeListRooms(homeId: String?) -> [[String: Any]] {
+  guard homeAccessGranted() else { return [] }
+  var out: [[String: Any]] = []
+  for home in homeHomes(homeId: homeId) {
+    for room in home.rooms {
+      out.append([
+        "id": room.uniqueIdentifier.uuidString,
+        "name": room.name,
+        "homeName": home.name,
+        "accessoryCount": room.accessories.count,
+      ])
+    }
+  }
+  NSLog("[fah/home] listRooms: \(out.count) room(s)")
+  return out
+}
+
+/// Answers `listScenes`: one map per action set across the matching homes.
+/// Empty when access is not granted.
+private func homeListScenes(homeId: String?) -> [[String: Any]] {
+  guard homeAccessGranted() else { return [] }
+  var out: [[String: Any]] = []
+  for home in homeHomes(homeId: homeId) {
+    for actionSet in home.actionSets {
+      out.append([
+        "id": actionSet.uniqueIdentifier.uuidString,
+        "name": actionSet.name,
+        "homeName": home.name,
+        "actionCount": actionSet.actions.count,
+        "executing": actionSet.isExecuting,
+      ])
+    }
+  }
+  NSLog("[fah/home] listScenes: \(out.count) scene(s)")
+  return out
+}
+
+/// Answers `executeScene`: runs the action set with [id]; true or a
+/// FlutterError (denied / not_found / execute_failed).
+private func homeExecuteScene(id: String, result: @escaping FlutterResult) {
+  guard homeAccessGranted() else {
+    result(
+      FlutterError(
+        code: "denied",
+        message: "home access was not granted",
+        details: nil,
+      ),
+    )
+    return
+  }
+  for home in homeManager.homes {
+    guard
+      let actionSet = home.actionSets.first(where: {
+        $0.uniqueIdentifier.uuidString == id
+      })
+    else { continue }
+    home.executeActionSet(actionSet) { error in
+      DispatchQueue.main.async {
+        if let error {
+          NSLog(
+            "[fah/home] executeActionSet \(actionSet.name) failed: "
+              + error.localizedDescription,
+          )
+          result(
+            FlutterError(
+              code: "execute_failed",
+              message: error.localizedDescription,
+              details: nil,
+            ),
+          )
+        } else {
+          NSLog("[fah/home] executeActionSet \(actionSet.name): ok")
+          result(true)
+        }
+      }
+    }
+    return
+  }
+  result(
+    FlutterError(
+      code: "not_found",
+      message: "no scene with this id",
+      details: nil,
+    ),
+  )
+}
+
+/// One accessory as a Flutter-friendly map with the static fields only —
+/// [homeFullAccessoryMap] adds the state conveniences and the services
+/// breakdown from the (possibly just-refreshed) characteristic values.
 private func homeAccessoryMap(
   _ accessory: HMAccessory,
   room: String,
@@ -1177,66 +1446,210 @@ private func homeCharacteristic(
   return nil
 }
 
-/// All accessories across every home and room (including the room for the
-/// entire home) as (accessory, map) pairs. Empty when access is not granted
-/// (the Dart side requests access before calling).
-private func homeAllAccessories() -> [(HMAccessory, [String: Any])] {
+/// All accessories across the matching homes and rooms (including the room
+/// for the entire home) as (accessory, map) pairs. Empty when access is not
+/// granted (the Dart side requests access before calling).
+private func homeAllAccessories(
+  homeId: String? = nil,
+  roomId: String? = nil,
+) -> [(HMAccessory, [String: Any])] {
   guard homeAccessGranted() else { return [] }
   var out: [(HMAccessory, [String: Any])] = []
-  for home in homeManager.homes {
+  let homes = homeHomes(homeId: homeId)
+  for home in homes {
     var rooms = home.rooms
     rooms.append(home.roomForEntireHome())
     for room in rooms {
+      if let roomId, room.uniqueIdentifier.uuidString != roomId { continue }
       for accessory in room.accessories {
         out.append((accessory, homeAccessoryMap(accessory, room: room.name, homeName: home.name)))
       }
     }
+    NSLog(
+      "[fah/home] home \"\(home.name)\": \(home.accessories.count) "
+        + "accessory(ies), \(home.rooms.count) room(s)",
+    )
   }
+  NSLog(
+    "[fah/home] accessories: \(out.count) across \(homes.count) home(s)",
+  )
   return out
 }
 
-/// Answers `listAccessories`: collects every accessory, then reads the power
-/// / brightness / target-temperature characteristics of the reachable ones
-/// in parallel and answers once. Empty when access is not granted.
-private func homeListAccessories(result: @escaping FlutterResult) {
-  let entries = homeAllAccessories()
+/// One service with its characteristics as a Flutter-friendly map.
+/// Characteristic values are included when [includeValues] (reachable
+/// accessories only) and channel-safe (Bool/Number/String).
+private func homeServiceMap(
+  _ service: HMService,
+  includeValues: Bool,
+) -> [String: Any] {
+  [
+    "type": service.serviceType,
+    "name": service.name,
+    "characteristics": service.characteristics.map { characteristic in
+      var map: [String: Any] = [
+        "type": characteristic.characteristicType,
+        "readable": characteristic.properties.contains(
+          HMCharacteristicPropertyReadable,
+        ),
+        "writable": characteristic.properties.contains(
+          HMCharacteristicPropertyWritable,
+        ),
+      ]
+      if includeValues, let value = homeFlutterValue(characteristic.value) {
+        map["value"] = value
+      }
+      return map
+    },
+  ]
+}
+
+/// Converts a characteristic value to a channel-safe type (Number/String —
+/// boolean NSNumbers cross the standard codec as Dart bools); anything else
+/// is dropped (the map then omits `value`).
+private func homeFlutterValue(_ value: Any?) -> Any? {
+  if let number = value as? NSNumber { return number }
+  if let string = value as? String { return string }
+  return nil
+}
+
+/// The full accessory map: the static fields, the flat isOn / brightness /
+/// targetTemperature conveniences (read from the current characteristic
+/// values), and the whole `services` breakdown.
+private func homeFullAccessoryMap(
+  _ accessory: HMAccessory,
+  room: String,
+  homeName: String,
+) -> [String: Any] {
+  var map = homeAccessoryMap(accessory, room: room, homeName: homeName)
+  if let characteristic = homeCharacteristic(
+    accessory,
+    type: HMCharacteristicTypePowerState,
+  ), let number = characteristic.value as? NSNumber {
+    map["isOn"] = number.boolValue
+  }
+  if let characteristic = homeCharacteristic(
+    accessory,
+    type: HMCharacteristicTypeBrightness,
+  ), let number = characteristic.value as? NSNumber {
+    map["brightness"] = number
+  }
+  if let characteristic = homeCharacteristic(
+    accessory,
+    type: HMCharacteristicTypeTargetTemperature,
+  ), let number = characteristic.value as? NSNumber {
+    map["targetTemperature"] = number
+  }
+  map["services"] = accessory.services.map {
+    homeServiceMap($0, includeValues: accessory.isReachable)
+  }
+  return map
+}
+
+/// Every readable characteristic of [accessory].
+private func homeReadableCharacteristics(
+  _ accessory: HMAccessory,
+) -> [HMCharacteristic] {
+  accessory.services.flatMap { service in
+    service.characteristics.filter {
+      $0.properties.contains(HMCharacteristicPropertyReadable)
+    }
+  }
+}
+
+/// Answers `listAccessories`: collects every accessory, then reads every
+/// readable characteristic of the reachable ones in parallel (the maps are
+/// built from the refreshed values once the reads land). Empty when access
+/// is not granted.
+private func homeListAccessories(
+  homeId: String?,
+  roomId: String?,
+  result: @escaping FlutterResult,
+) {
+  let entries = homeAllAccessories(homeId: homeId, roomId: roomId)
   guard !entries.isEmpty else {
     result([[String: Any]]())
     return
   }
-  let lock = NSLock()
-  var maps = entries.map { $0.1 }
   let group = DispatchGroup()
-  for (index, entry) in entries.enumerated() {
-    let (accessory, _) = entry
+  for (accessory, _) in entries {
     guard accessory.isReachable else { continue }
-    let reads: [(String, HMCharacteristic)] = [
-      ("isOn", HMCharacteristicTypePowerState),
-      ("brightness", HMCharacteristicTypeBrightness),
-      ("targetTemperature", HMCharacteristicTypeTargetTemperature),
-    ].compactMap { key, type in
-      homeCharacteristic(accessory, type: type).map { (key, $0) }
-    }
-    for (key, characteristic) in reads {
+    for characteristic in homeReadableCharacteristics(accessory) {
       group.enter()
       characteristic.readValue { error in
-        if error == nil, let value = characteristic.value {
-          lock.lock()
-          if let number = value as? NSNumber {
-            if key == "isOn" {
-              maps[index][key] = number.boolValue
-            } else {
-              maps[index][key] = number
-            }
-          }
-          lock.unlock()
+        if let error {
+          NSLog(
+            "[fah/home] readValue \(characteristic.characteristicType) on "
+              + "\(accessory.name) failed: \(error.localizedDescription)",
+          )
         }
         group.leave()
       }
     }
   }
   group.notify(queue: .main) {
-    result(maps)
+    result(
+      entries.map { entry in
+        homeFullAccessoryMap(
+          entry.0,
+          room: entry.1["room"] as? String ?? "",
+          homeName: entry.1["homeName"] as? String ?? "",
+        )
+      },
+    )
+  }
+}
+
+/// Answers `readAccessory`: re-reads every readable characteristic of the
+/// accessory with [id] and answers its full map with fresh values, or a
+/// FlutterError (denied / not_found).
+private func homeReadAccessory(id: String, result: @escaping FlutterResult) {
+  guard homeAccessGranted() else {
+    result(
+      FlutterError(
+        code: "denied",
+        message: "home access was not granted",
+        details: nil,
+      ),
+    )
+    return
+  }
+  guard
+    let (accessory, map) = homeAllAccessories()
+      .first(where: { $0.0.uniqueIdentifier.uuidString == id })
+  else {
+    result(
+      FlutterError(
+        code: "not_found",
+        message: "no accessory with this id",
+        details: nil,
+      ),
+    )
+    return
+  }
+  let group = DispatchGroup()
+  if accessory.isReachable {
+    for characteristic in homeReadableCharacteristics(accessory) {
+      group.enter()
+      characteristic.readValue { error in
+        if let error {
+          NSLog(
+            "[fah/home] readValue \(characteristic.characteristicType) on "
+              + "\(accessory.name) failed: \(error.localizedDescription)",
+          )
+        }
+        group.leave()
+      }
+    }
+  }
+  group.notify(queue: .main) {
+    result(
+      homeFullAccessoryMap(
+        accessory,
+        room: map["room"] as? String ?? "",
+        homeName: map["homeName"] as? String ?? "",
+      ),
+    )
   }
 }
 
@@ -1285,6 +1698,10 @@ private func homeWriteCharacteristic(
   characteristic.writeValue(value) { error in
     DispatchQueue.main.async {
       if let error = error {
+        NSLog(
+          "[fah/home] writeValue \(type) on \(accessory.name) failed: "
+            + error.localizedDescription,
+        )
         result(
           FlutterError(
             code: "write_failed",

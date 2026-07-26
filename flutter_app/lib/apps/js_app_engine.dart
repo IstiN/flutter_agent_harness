@@ -12,6 +12,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/asr_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/health_service.dart';
@@ -310,7 +311,13 @@ jsr.fa.health.summary = function(args) { return jsr.fa.call('health.summary', ar
 // legacy jsr.fa.homekit(action, args) form above keeps working — its
 // actions route to the same backend.
 jsr.fa.home = {
-  list: function() { return jsr.fa.call('home.list', {}); },
+  homes: function() { return jsr.fa.call('home.homes', {}); },
+  rooms: function(args) { return jsr.fa.call('home.rooms', args); },
+  list: function(args) { return jsr.fa.call('home.list', args); },
+  read: function(args) { return jsr.fa.call('home.read', args); },
+  write: function(args) { return jsr.fa.call('home.write', args); },
+  scenes: function(args) { return jsr.fa.call('home.scenes', args); },
+  executeScene: function(args) { return jsr.fa.call('home.executeScene', args); },
   setPower: function(args) { return jsr.fa.call('home.setPower', args); },
   setBrightness: function(args) { return jsr.fa.call('home.setBrightness', args); },
   setTemperature: function(args) { return jsr.fa.call('home.setTemperature', args); },
@@ -571,7 +578,13 @@ Object.defineProperty(jsr, 'onBack', {
       // Home control (iOS HomeKit). `home.*` is the current surface; the
       // legacy `homekit.<action>` calls route to the same handlers.
       final homeAction = switch (method) {
+        'home.homes' || 'homekit.homes' => 'homes',
+        'home.rooms' || 'homekit.rooms' => 'rooms',
         'home.list' || 'homekit.list' || 'homekit.listDevices' => 'list',
+        'home.read' || 'homekit.read' => 'read',
+        'home.write' || 'homekit.write' => 'write',
+        'home.scenes' || 'homekit.scenes' => 'scenes',
+        'home.executeScene' || 'homekit.executeScene' => 'executeScene',
         'home.setPower' || 'homekit.setPower' => 'setPower',
         'home.setBrightness' || 'homekit.setBrightness' => 'setBrightness',
         'home.setTemperature' || 'homekit.setTemperature' => 'setTemperature',
@@ -944,55 +957,168 @@ Object.defineProperty(jsr, 'onBack', {
   }
 
   /// `jsr.fa.home.*` (and the legacy `homekit.<action>`) bridge calls,
-  /// gated on the `homekit` permission. Actions: `list` → `{accessories:
-  /// [...]}`, `setPower` {id, on}, `setBrightness` {id, value},
-  /// `setTemperature` {id, celsius}.
+  /// gated on the `homekit` permission. Actions: `homes` → `{homes: [{id,
+  /// name, primary, roomCount, accessoryCount}]}`, `rooms` {homeId?} →
+  /// `{rooms: [{id, name, homeName, accessoryCount}]}`, `list` {homeId?,
+  /// roomId?} → `{accessories: [...]}` (each with the flat isOn/brightness/
+  /// targetTemperature conveniences plus a `services` array of {type, name,
+  /// characteristics: [{type, value?, readable, writable}]}), `read` {id} →
+  /// `{accessory: ...}` with fresh values, `write` {id, type, value} →
+  /// `{written: true}` (ANY writable characteristic by HomeKit type
+  /// string), `scenes` {homeId?} → `{scenes: [{id, name, homeName,
+  /// actionCount, executing}]}`, `executeScene` {id} → `{executed: true}`,
+  /// and the thin aliases `setPower` {id, on}, `setBrightness` {id, value},
+  /// `setTemperature` {id, celsius}. List sizes and failures are mirrored
+  /// into [AppLog] under the `home` tag.
   Future<Map<String, Object?>> _homeCall(
     String action,
     Map<String, Object?> args,
   ) async {
     final api = await _gatedHome();
-    switch (action) {
-      case 'list':
-        return {
-          'accessories': [
-            for (final accessory in await api.listAccessories())
+    try {
+      switch (action) {
+        case 'homes':
+          final homes = await api.listHomes();
+          AppLog.i('home', 'bridge homes → ${homes.length}');
+          return {
+            'homes': [
+              for (final home in homes)
+                {
+                  'id': home.id,
+                  'name': home.name,
+                  'primary': home.primary,
+                  'roomCount': home.roomCount,
+                  'accessoryCount': home.accessoryCount,
+                },
+            ],
+          };
+        case 'rooms':
+          final rooms = await api.listRooms(
+            homeId: _optionalString(args, 'homeId'),
+          );
+          AppLog.i('home', 'bridge rooms → ${rooms.length}');
+          return {
+            'rooms': [
+              for (final room in rooms)
+                {
+                  'id': room.id,
+                  'name': room.name,
+                  'homeName': room.homeName,
+                  'accessoryCount': room.accessoryCount,
+                },
+            ],
+          };
+        case 'list':
+          final accessories = await api.listAccessories(
+            homeId: _optionalString(args, 'homeId'),
+            roomId: _optionalString(args, 'roomId'),
+          );
+          AppLog.i('home', 'bridge list → ${accessories.length} accessories');
+          return {
+            'accessories': [
+              for (final accessory in accessories) _homeAccessoryMap(accessory),
+            ],
+          };
+        case 'read':
+          return {
+            'accessory': _homeAccessoryMap(
+              await api.readAccessory(id: _requiredId(args)),
+            ),
+          };
+        case 'write':
+          final id = _requiredId(args);
+          final type = (args['type'] ?? '').toString();
+          if (type.isEmpty) throw StateError('type is required');
+          final value = args['value'];
+          if (value == null) throw StateError('value is required');
+          await api.writeCharacteristic(id: id, type: type, value: value);
+          return {'written': true};
+        case 'scenes':
+          final scenes = await api.listScenes(
+            homeId: _optionalString(args, 'homeId'),
+          );
+          AppLog.i('home', 'bridge scenes → ${scenes.length}');
+          return {
+            'scenes': [
+              for (final scene in scenes)
+                {
+                  'id': scene.id,
+                  'name': scene.name,
+                  'homeName': scene.homeName,
+                  'actionCount': scene.actionCount,
+                  'executing': scene.executing,
+                },
+            ],
+          };
+        case 'executeScene':
+          await api.executeScene(id: _requiredId(args));
+          return {'executed': true};
+        case 'setPower':
+          final id = _requiredId(args);
+          final on = args['on'] == true;
+          await api.setPower(id: id, on: on);
+          return {'on': on};
+        case 'setBrightness':
+          final id = _requiredId(args);
+          final value = homeBrightness(args['value'] as num?);
+          await api.setBrightness(id: id, value: value);
+          return {'brightness': value};
+        case 'setTemperature':
+          final id = _requiredId(args);
+          final celsius = homeTemperature(args['celsius'] as num?);
+          await api.setTargetTemperature(id: id, celsius: celsius);
+          return {'temperature': celsius};
+        default:
+          throw StateError('unknown home action "$action"');
+      }
+    } on Object catch (error) {
+      AppLog.i('home', 'bridge $action failed: $error');
+      rethrow;
+    }
+  }
+
+  /// One accessory as the bridge map: the flat conveniences plus the full
+  /// service/characteristic breakdown.
+  Map<String, Object?> _homeAccessoryMap(HomeAccessory accessory) => {
+    'id': accessory.id,
+    'name': accessory.name,
+    'room': accessory.room,
+    'homeName': accessory.homeName,
+    'category': accessory.category,
+    'reachable': accessory.reachable,
+    if (accessory.isOn != null) 'isOn': accessory.isOn,
+    if (accessory.brightness != null) 'brightness': accessory.brightness,
+    if (accessory.targetTemperature != null)
+      'targetTemperature': accessory.targetTemperature,
+    'services': [
+      for (final service in accessory.services)
+        {
+          'type': service.type,
+          'name': service.name,
+          'characteristics': [
+            for (final characteristic in service.characteristics)
               {
-                'id': accessory.id,
-                'name': accessory.name,
-                'room': accessory.room,
-                'homeName': accessory.homeName,
-                'category': accessory.category,
-                'reachable': accessory.reachable,
-                if (accessory.isOn != null) 'isOn': accessory.isOn,
-                if (accessory.brightness != null)
-                  'brightness': accessory.brightness,
-                if (accessory.targetTemperature != null)
-                  'targetTemperature': accessory.targetTemperature,
+                'type': characteristic.type,
+                if (characteristic.value != null) 'value': characteristic.value,
+                'readable': characteristic.readable,
+                'writable': characteristic.writable,
               },
           ],
-        };
-      case 'setPower':
-        final id = (args['id'] ?? '').toString();
-        if (id.isEmpty) throw StateError('id is required');
-        final on = args['on'] == true;
-        await api.setPower(id: id, on: on);
-        return {'on': on};
-      case 'setBrightness':
-        final id = (args['id'] ?? '').toString();
-        if (id.isEmpty) throw StateError('id is required');
-        final value = homeBrightness(args['value'] as num?);
-        await api.setBrightness(id: id, value: value);
-        return {'brightness': value};
-      case 'setTemperature':
-        final id = (args['id'] ?? '').toString();
-        if (id.isEmpty) throw StateError('id is required');
-        final celsius = homeTemperature(args['celsius'] as num?);
-        await api.setTargetTemperature(id: id, celsius: celsius);
-        return {'temperature': celsius};
-      default:
-        throw StateError('unknown home action "$action"');
-    }
+        },
+    ],
+  };
+
+  /// The required `id` argument every single-accessory home call shares.
+  String _requiredId(Map<String, Object?> args) {
+    final id = (args['id'] ?? '').toString();
+    if (id.isEmpty) throw StateError('id is required');
+    return id;
+  }
+
+  /// An optional string argument, null when missing or empty.
+  String? _optionalString(Map<String, Object?> args, String key) {
+    final value = (args[key] ?? '').toString();
+    return value.isEmpty ? null : value;
   }
 
   /// The permission gate every `jsr.fa.home.*` bridge call shares: the

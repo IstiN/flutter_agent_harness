@@ -463,23 +463,37 @@ jsr.fa.health.summary({ days: 7 }).then(function(result) {
 Days without data are omitted from each series. The Fa agent has a matching read-tier tool (`health_summary`), so users can also ask about their health data by chatting.
 
 ### `jsr.fa.home.*` → Promise
-Home control via HomeKit (iOS — there is no HomeKit framework on macOS). Requires `"homekit": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS home-data prompt. All four methods share the same permission:
+Home control via HomeKit (iOS — there is no HomeKit framework on macOS). Requires `"homekit": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS home-data prompt. All methods share the same permission:
 
 ```javascript
-// List every accessory across all homes and rooms.
+// Homes and rooms.
+jsr.fa.home.homes();              // { homes: [{ id, name, primary, roomCount, accessoryCount }] }
+jsr.fa.home.rooms({ homeId });    // { rooms: [{ id, name, homeName, accessoryCount }] } — homeId optional
+
+// List accessories (homeId / roomId filters optional).
 jsr.fa.home.list().then(function(result) {
   if (result && result.__error) { jsr.showError(result.__error); return; }
   // result.accessories: [{ id, name, room, homeName, category, reachable,
-  //   isOn?, brightness?, targetTemperature? }]
+  //   isOn?, brightness?, targetTemperature?, services: [{ type, name,
+  //   characteristics: [{ type, value?, readable, writable }] }] }]
   // category is 'lightbulb' | 'switch' | 'outlet' | 'thermostat' (or the raw
-  // HomeKit category); the state fields are present only when the accessory
-  // exposes the matching characteristic.
+  // HomeKit category); values are read for reachable accessories.
   renderRooms(result.accessories);
 });
 
-// Writes — id comes from the list. setPower answers {on}, setBrightness
-// {brightness}, setTemperature {temperature}; failures come back as
-// {__error}.
+// Fresh values for one accessory.
+jsr.fa.home.read({ id: accessoryId });  // { accessory: …same shape… }
+
+// Write ANY writable characteristic by its HomeKit type string.
+jsr.fa.home.write({ id: accessoryId, type: 'powerState', value: true });  // { written: true }
+
+// Scenes (HomeKit action sets).
+jsr.fa.home.scenes({ homeId });         // { scenes: [{ id, name, homeName, actionCount, executing }] }
+jsr.fa.home.executeScene({ id: sceneId });  // { executed: true }
+
+// Convenience writes — id comes from the list. setPower answers {on},
+// setBrightness {brightness}, setTemperature {temperature}; failures come
+// back as {__error}.
 jsr.fa.home.setPower({ id: accessoryId, on: true });
 jsr.fa.home.setBrightness({ id: accessoryId, value: 60 });   // 0–100
 jsr.fa.home.setTemperature({ id: accessoryId, celsius: 21.5 }); // °C

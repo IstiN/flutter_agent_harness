@@ -159,12 +159,37 @@ Android TODO (Kotlin handler in `MainActivity.kt`, manifest permissions):
 | LLM completion | `jsr.fa.llm` | `llm` | `llmHandler` (host LLM) | n/a (the host *is* the agent) | works |
 | Calendar read | `jsr.fa.calendar` | `calendar` | EventKit via `fah/calendar` (macOS/iOS) | `calendar_events` | works |
 | Calendar write | — | — | — | — | missing (same channel, add `create/delete`) |
-| HomeKit | `jsr.fa.homekit.*` | `homekit` | stub (`platformHandler` unwired) | — | stub |
-| Health | `jsr.fa.health.*` | `health` | stub | — | stub |
+| HomeKit | `jsr.fa.home.*` (legacy `jsr.fa.homekit(action, …)`) | `homekit` | HomeKit via `fah/home` (iOS only; macOS channel answers unsupported) | `home_devices`, `home_turn_on`/`home_turn_off`, `home_set` | works |
+| Health | `jsr.fa.health.*` | `health` | HealthKit via `fah/health` (iOS) | `health_summary` | works |
 | Contacts | `jsr.fa.contacts.*` | `contacts` | stub | — | stub |
-| Home (rename) | — | — | — | — | design: rename `homekit` → `home` domain before shipping, keep flag name |
-| Mic / audio record | — | — | — | — | missing |
-| TTS | — | — | — | — | missing (could start Dart-only via `flutter_tts`, no Swift channel) |
+| Mic / audio record | `jsr.fa.asr.*` | `microphone` | AVAudioRecorder via `fah/mic` (iOS/macOS) | — | works |
+| TTS | `speak` media tool | `media` | media models | `speak` | works |
+
+### The `jsr.fa.home.*` surface (iOS HomeKit)
+
+All gated on the `homekit` manifest flag; every call runs the permission →
+platform → OS-access gate and resolves with `{__error}` on failure.
+
+- `home.homes()` → `{homes: [{id, name, primary, roomCount, accessoryCount}]}`
+- `home.rooms({homeId?})` → `{rooms: [{id, name, homeName, accessoryCount}]}`
+- `home.list({homeId?, roomId?})` → `{accessories: [{id, name, room,
+  homeName, category, reachable, isOn?, brightness?, targetTemperature?,
+  services: [{type, name, characteristics: [{type, value?, readable,
+  writable}]}]}]}` (characteristic values are read for reachable
+  accessories; `category` is `lightbulb`/`switch`/`outlet`/`thermostat` or
+  the raw HomeKit type)
+- `home.read({id})` → `{accessory: …}` — one accessory with freshly-read
+  characteristic values
+- `home.write({id, type, value})` → `{written: true}` — writes ANY writable
+  characteristic by its HomeKit type string (bool/number/string)
+- `home.scenes({homeId?})` → `{scenes: [{id, name, homeName, actionCount,
+  executing}]}`; `home.executeScene({id})` → `{executed: true}`
+- Thin aliases: `home.setPower({id, on})`, `home.setBrightness({id,
+  value})`, `home.setTemperature({id, celsius})`
+
+Native-side diagnostics are `NSLog("[fah/home] …")`; the Dart service and
+the bridge mirror them into the in-app log (settings → Copy debug logs).
+
 | Network | `jsr.fetchJson` | `network` | `http` package | `web_fetch`/`web_search` (core) | works |
 | Shell exec | `jsr.exec` | `allowedCommands` | `ExecutionEnv.exec` | core `bash` | works |
 

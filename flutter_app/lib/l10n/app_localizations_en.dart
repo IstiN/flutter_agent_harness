@@ -710,6 +710,12 @@ class AppLocalizationsEn extends AppLocalizations {
       'Any OpenAI-compatible endpoint. The provider must allow browser (CORS) requests — api.anthropic.com does not, so reach Anthropic models via OpenRouter instead.';
 
   @override
+  String get settingsCopyDebugLogs => 'Copy debug logs';
+
+  @override
+  String get settingsDebugLogsCopied => 'Debug logs copied to clipboard';
+
+  @override
   String get settingsCorsNoteOllama =>
       'Calls go straight from your browser to ollama.com, which currently does not send CORS headers — browser calls fail. Use OpenRouter here, or pick Ollama from the mobile/desktop app instead.';
 

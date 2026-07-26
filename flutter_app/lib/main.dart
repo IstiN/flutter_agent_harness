@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'dart:async' show unawaited;
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
@@ -35,6 +36,13 @@ import 'package:fa/firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Tee debug output into the in-app log (settings → copy debug logs); the
+  // original debugPrint still runs, so console output is unchanged.
+  final originalDebugPrint = debugPrint;
+  debugPrint = (message, {wrapWidth}) {
+    originalDebugPrint(message, wrapWidth: wrapWidth);
+    if (message != null) AppLog.i('debug', message);
+  };
   final options = DefaultFirebaseOptions.currentPlatform;
   if (!options.apiKey.startsWith('YOUR_')) {
     await Firebase.initializeApp(options: options);
@@ -59,6 +67,8 @@ Future<void> main() async {
   // snapshot; two envs would clobber each other's persisted filesystem).
   final env = await createPlatformEnv();
   debugPrint('[fah] platform env created: ${env.runtimeType}, cwd=${env.cwd}');
+  // From here the in-app log also persists to logs/app.log in the sandbox.
+  AppLog.attach(env);
   // iOS/macOS persist API keys in the platform Keychain (see
   // [KeychainStore]); other platforms fall back to file/session storage.
   const keychain = KeychainStore();
