@@ -409,8 +409,17 @@ class AgentService extends ChangeNotifier {
       commandSection,
     );
     final names = redactor?.names ?? const <String>[];
-    if (names.isEmpty) return base;
-    return '$base\n\nAvailable secret env vars: ${names.join(', ')} — '
+    final now = DateTime.now();
+    final offset = now.timeZoneOffset;
+    final sign = offset.isNegative ? '-' : '+';
+    final hh = offset.inHours.abs().toString().padLeft(2, '0');
+    final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+    final dated =
+        '$base\n\nCurrent date and time: ${now.toIso8601String()} '
+        '(local device time, UTC$sign$hh:$mm). Use this for any date- or '
+        'time-relative reasoning ("today", "tomorrow", "this week").';
+    if (names.isEmpty) return dated;
+    return '$dated\n\nAvailable secret env vars: ${names.join(', ')} — '
         'reference them as \$NAME in shell commands; never ask the user for '
         'their values and never print them.';
   }
@@ -538,6 +547,12 @@ class AgentService extends ChangeNotifier {
   /// `webllm`, ...). Updated by [reconfigure].
   String get providerKind => _providerKind;
   late String _providerKind;
+
+  /// Base URL of the active backend, tracked alongside [_providerKind] and
+  /// updated by [reconfigure]; empty for the on-device providers. The
+  /// settings Media models section uses it as the editor's
+  /// placeholder/default.
+  String get activeBaseUrl => _activeBaseUrl;
 
   /// Base URL and API key of the active backend, tracked alongside
   /// [_providerKind] so the media gateway's fallback follows [reconfigure].

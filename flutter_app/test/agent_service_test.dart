@@ -1067,6 +1067,15 @@ void main() {
       expect(prompt, contains('Custom base.'));
       expect(prompt, contains('host machine'));
     });
+
+    test('the prompt carries the current date and timezone', () {
+      final prompt = AgentService.effectiveSystemPromptForTest(config(), null);
+      expect(prompt, contains('Current date and time:'));
+      expect(prompt, contains('local device time, UTC'));
+      expect(prompt, contains('time-relative reasoning'));
+      final year = DateTime.now().year.toString();
+      expect(prompt, contains(year));
+    });
   });
 
   group('auto-compaction', () {

@@ -703,8 +703,23 @@ private func contactsDelete(args: [String: Any]) -> Any {
 
 /// Opens a `tel:`/`sms:` URL with the system handler; false when the URL
 /// is malformed or the system refuses it.
-private func contactsOpenUrl(_ urlString: String) -> Bool {
-  guard let url = URL(string: urlString) else { return false }
+private func contactsOpenUrl(_ urlString: String) -> Any {
+  guard let url = URL(string: urlString) else {
+    return FlutterError(
+      code: "bad_url",
+      message: "Cannot parse URL: \(urlString)",
+      details: nil,
+    )
+  }
+  guard NSWorkspace.shared.urlForApplication(toOpen: url) != nil else {
+    return FlutterError(
+      code: "no_handler",
+      message:
+        "No app on this Mac can open \(url.scheme ?? urlString) links "
+        + "(no phone/messaging handler configured)",
+      details: nil,
+    )
+  }
   return NSWorkspace.shared.open(url)
 }
 
@@ -939,6 +954,24 @@ private func extractVideoFrames(
 }
 
 /// The `fah/notify` method channel: LOCAL user notifications via
+/// Shows banners for notifications delivered while the app is in the
+/// foreground — iOS/macOS suppress them by default, which made scheduled
+/// reminders look like they never fired.
+private final class FaNotificationDelegate: NSObject,
+  UNUserNotificationCenterDelegate
+{
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler:
+      @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    completionHandler([.banner, .sound, .badge])
+  }
+}
+
+private let faNotificationDelegate = FaNotificationDelegate()
+
 /// UNUserNotificationCenter — no remote pushes, no background modes.
 /// Methods: `requestAccess`, `schedule` {title, body, id?, delaySeconds?}
 /// answering the scheduled id (immediate when delaySeconds is absent/zero,
@@ -946,6 +979,7 @@ private func extractVideoFrames(
 /// `cancel` {id}, and `cancelAll`. UserNotifications works inside the app
 /// sandbox — no entitlement is needed (unlike calendar/contacts/mic).
 private func registerNotifyChannel(registry: FlutterPluginRegistry) {
+  UNUserNotificationCenter.current().delegate = faNotificationDelegate
   guard let messenger = registry as? FlutterBinaryMessenger else { return }
   let channel = FlutterMethodChannel(
     name: "fah/notify",

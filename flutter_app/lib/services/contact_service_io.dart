@@ -133,6 +133,9 @@ final class MethodChannelContactApi implements ContactApi {
       return opened ?? false;
     } on MissingPluginException {
       throw _unsupported();
+    } on PlatformException catch (e) {
+      // e.g. no Phone/Messages handler on this device (Simulator).
+      throw StateError(e.message ?? 'Cannot open $url');
     }
   }
 

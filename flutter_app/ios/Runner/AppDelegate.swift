@@ -605,8 +605,23 @@ private func contactsDelete(args: [String: Any]) -> Any {
 
 /// Opens a `tel:`/`sms:` URL with the system handler; false when the URL
 /// is malformed (the open itself completes asynchronously).
-private func contactsOpenUrl(_ urlString: String) -> Bool {
-  guard let url = URL(string: urlString) else { return false }
+private func contactsOpenUrl(_ urlString: String) -> Any {
+  guard let url = URL(string: urlString) else {
+    return FlutterError(
+      code: "bad_url",
+      message: "Cannot parse URL: \(urlString)",
+      details: nil,
+    )
+  }
+  guard UIApplication.shared.canOpenURL(url) else {
+    return FlutterError(
+      code: "no_handler",
+      message:
+        "No app on this device can open \(url.scheme ?? urlString) links "
+        + "(the Phone/Messages app is unavailable — e.g. on the Simulator)",
+      details: nil,
+    )
+  }
   UIApplication.shared.open(url, options: [:]) { _ in }
   return true
 }
@@ -1281,12 +1296,31 @@ private func extractVideoFrames(
 }
 
 /// The `fah/notify` method channel: LOCAL user notifications via
+/// Shows banners for notifications delivered while the app is in the
+/// foreground — iOS/macOS suppress them by default, which made scheduled
+/// reminders look like they never fired.
+private final class FaNotificationDelegate: NSObject,
+  UNUserNotificationCenterDelegate
+{
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler:
+      @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    completionHandler([.banner, .sound, .badge])
+  }
+}
+
+private let faNotificationDelegate = FaNotificationDelegate()
+
 /// UNUserNotificationCenter — no remote pushes, no background modes.
 /// Methods: `requestAccess`, `schedule` {title, body, id?, delaySeconds?}
 /// answering the scheduled id (immediate when delaySeconds is absent/zero,
 /// otherwise a one-shot UNTimeIntervalNotificationTrigger — no repeats),
 /// `cancel` {id}, and `cancelAll`.
 private func registerNotifyChannel(messenger: FlutterBinaryMessenger) {
+  UNUserNotificationCenter.current().delegate = faNotificationDelegate
   let channel = FlutterMethodChannel(
     name: "fah/notify",
     binaryMessenger: messenger,
