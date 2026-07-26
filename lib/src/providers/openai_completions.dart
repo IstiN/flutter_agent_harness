@@ -347,16 +347,24 @@ AssistantMessageEventStream streamOpenAICompletions(
             }
           }
           if (foundReasoningField != null) {
-            final reasoningDelta = delta[foundReasoningField] as String;
+            var reasoningDelta = delta[foundReasoningField] as String;
             final block = ensureThinkingBlock(foundReasoningField);
-            block.thinking.write(reasoningDelta);
-            eventStream.push(
-              ThinkingDeltaEvent(
-                contentIndex: contentIndex(block),
-                delta: reasoningDelta,
-                partial: snapshot(),
-              ),
-            );
+            // Some OpenAI-compatible relays send the reasoning as overlapping
+            // fragments (sliding window) or full snapshots so far instead of
+            // clean deltas — appending those verbatim stutters
+            // ("Продродололжжж…"). Trim the overlap: the longest prefix of
+            // the chunk that already sits at the tail of what we have.
+            reasoningDelta = _dedupeOverlap(block.thinking, reasoningDelta);
+            if (reasoningDelta.isNotEmpty) {
+              block.thinking.write(reasoningDelta);
+              eventStream.push(
+                ThinkingDeltaEvent(
+                  contentIndex: contentIndex(block),
+                  delta: reasoningDelta,
+                  partial: snapshot(),
+                ),
+              );
+            }
           }
 
           final toolCalls = delta['tool_calls'];
@@ -871,4 +879,25 @@ Object? _tryJsonDecode(String text) {
   } on FormatException {
     return null;
   }
+}
+
+/// Trims the longest prefix of [delta] that is already present at the tail
+/// of [current] (overlapping/sliding-window reasoning chunks and full
+/// snapshots-so-far both collapse to the new suffix only). Returns the part
+/// of [delta] that still needs appending. Overlap search is capped at 64
+/// chars and requires at least 2 — a single repeated character is almost
+/// always real text, not a window seam.
+String _dedupeOverlap(StringBuffer current, String delta) {
+  if (current.isEmpty || delta.isEmpty) return delta;
+  final text = current.toString();
+  // Full snapshot first: the chunk starts with everything we already have.
+  if (delta.startsWith(text)) return delta.substring(text.length);
+  var maxK = text.length < delta.length ? text.length : delta.length;
+  if (maxK > 64) maxK = 64;
+  for (var k = maxK; k >= 2; k--) {
+    if (text.endsWith(delta.substring(0, k))) {
+      return delta.substring(k);
+    }
+  }
+  return delta;
 }

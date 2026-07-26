@@ -204,6 +204,52 @@ void main() {
       expect(done.message.content.single, isA<ToolCall>());
     });
 
+    test('dedupes cumulative and overlapping reasoning chunks', () async {
+      List<Map<String, dynamic>> chunks(Iterable<String> texts) => [
+        for (final text in texts)
+          {
+            'choices': [
+              {
+                'delta': {'reasoning': text},
+              },
+            ],
+          },
+      ];
+
+      Future<String> thinkingOf(Iterable<String> texts) async {
+        final client = sseClient(
+          sseBody([
+            ...chunks(texts),
+            {
+              'choices': [
+                {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+              ],
+            },
+            'data: [DONE]\n\n',
+          ]),
+        );
+        final stream = streamOpenAICompletions(
+          openRouterModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+        final events = await stream.toList();
+        final end = events.whereType<ThinkingEndEvent>().single;
+        return end.content;
+      }
+
+      // Full-snapshot relays: every chunk repeats everything so far.
+      expect(await thinkingOf(['при', 'прив', 'привет']), 'привет');
+      // Sliding-window relays: every chunk overlaps the previous tail.
+      expect(
+        await thinkingOf(['Прод', 'родол', 'олжжж', 'жаем']),
+        'Продолжжжжаем',
+      );
+      // Clean incremental deltas pass through untouched.
+      expect(await thinkingOf(['let me ', 'think']), 'let me think');
+    });
+
     test('streams reasoning deltas as thinking blocks', () async {
       final client = sseClient(
         sseBody([
