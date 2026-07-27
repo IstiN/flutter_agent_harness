@@ -330,6 +330,11 @@ tests are done right:
 
 ## Commits and releases
 
+- Commit identity: human/AI contributors commit as `ai.teammate
+  <agent.ai.native@gmail.com>` (history was rewritten to it — set
+  `git config user.name ai.teammate` + `git config user.email
+  agent.ai.native@gmail.com` repo-locally). Release commits from
+  `scripts/auto_release.sh` stay `github-actions[bot]`.
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
 - Every push to `main` auto-releases a patch to pub.dev
