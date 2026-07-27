@@ -25,7 +25,14 @@ dependencies:
 
   # JS apps platform: runs JavaScript widgets and renders them as native
   # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
-  js_widget_runtime: ^0.4.13
+  # Pinned to a git ref: 5c3a733 fixes a use-after-free where a queued
+  # callEvent evaluated into a disposed JSContextGroup (TestFlight SIGSEGV
+  # in JSC::JSLock::lock); switch back to a pub version once one >0.4.20
+  # ships with it.
+  js_widget_runtime:
+    git:
+      url: https://github.com/IstiN/flutter_js_widget_runtime.git
+      ref: 5c3a733eff2884364ba0f3264616d95af944d5ff
 
   # TileProvider type for injecting offline map tiles (tests, custom hosts).
   flutter_map: ^8.2.2
