@@ -160,37 +160,49 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = FahColors.of(context);
+    // The same panel as the collapsed FaWorkBar, grown: identical side and
+    // bottom margins, radius, surface, border, and shadow — one component
+    // in two states, never two stacked cards.
     return Align(
       alignment: Alignment.bottomCenter,
       child: FractionallySizedBox(
         widthFactor: 1,
         heightFactor: 0.92,
-        child: Container(
-          decoration: BoxDecoration(
-            color: colors.panelAlt.withValues(alpha: 0.97),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            border: Border.all(color: colors.border),
-            boxShadow: const [
-              BoxShadow(
-                color: Colors.black38,
-                blurRadius: 20,
-                offset: Offset(0, -4),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: colors.panelAlt.withValues(alpha: 0.97),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+                bottom: Radius.circular(16),
               ),
-            ],
-          ),
-          child: Material(
-            type: MaterialType.transparency,
-            child: Column(
-              children: [
-                _buildHeader(colors),
-                Divider(height: 1, color: colors.border),
-                Expanded(child: _buildTranscript(theme, colors)),
-                FaWorkBar(
-                  service: widget.service,
-                  onCollapse: widget.onCollapse,
+              border: Border.all(color: colors.border),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black38,
+                  blurRadius: 12,
+                  offset: Offset(0, 4),
                 ),
-                _buildComposer(colors),
               ],
+            ),
+            child: Material(
+              type: MaterialType.transparency,
+              child: Column(
+                children: [
+                  _buildHeader(colors),
+                  Divider(height: 1, color: colors.border),
+                  Expanded(child: _buildTranscript(theme, colors)),
+                  Divider(height: 1, color: colors.border),
+                  FaWorkBar(
+                    service: widget.service,
+                    onCollapse: widget.onCollapse,
+                    embedded: true,
+                  ),
+                  _buildComposer(colors),
+                ],
+              ),
             ),
           ),
         ),

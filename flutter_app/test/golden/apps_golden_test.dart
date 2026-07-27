@@ -841,6 +841,39 @@ void main() {
     await expectGolden(tester, 'apps_fa_chat_overlay');
   });
 
+  testWidgets('Fa chat overlay while streaming: the status row is INSIDE the '
+      'panel (never a second card)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final service = _hungService();
+    addTearDown(service.dispose);
+    service.messages.addAll([
+      FahChatMessage(
+        role: 'user',
+        content: 'Make the operator keys indigo and grow the display.',
+      ),
+      FahChatMessage(role: 'thinking', content: 'Adjusting the pad layout…'),
+      FahChatMessage(
+        role: 'assistant',
+        content: 'Done — indigo operators, bigger display.',
+      ),
+    ]);
+    await pumpGolden(
+      tester,
+      _chatOverlayHost(service, env),
+      size: goldenSizeDesktop,
+      wrap: (child) => child,
+    );
+    await tester.runAsync(() async {
+      await service.sendText('work');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pump();
+    expect(service.isStreaming, isTrue);
+    // The embedded work bar contributes its status row inline — the panel
+    // stays one card (this is the "2 panels" regression guard).
+    await expectGolden(tester, 'apps_fa_chat_overlay_streaming');
+  });
+
   testWidgets('app permissions dialog with a persisted override', (
     tester,
   ) async {

@@ -30,6 +30,7 @@ class FaWorkBar extends StatefulWidget {
     this.onSend,
     this.onExpand,
     this.onCollapse,
+    this.embedded = false,
   });
 
   final AgentService service;
@@ -46,6 +47,12 @@ class FaWorkBar extends StatefulWidget {
   /// pull-down drag on the bar; leave null where the bar is not hosted
   /// inside the expanded chat.
   final VoidCallback? onCollapse;
+
+  /// Inline mode: the bar renders its content WITHOUT the floating-card
+  /// chrome (margin, rounded border, shadow) so a host — the expanded
+  /// [FaChatOverlay] — can place it inside its own panel. The collapsed
+  /// standalone bar keeps the card look; one visual component either way.
+  final bool embedded;
 
   @override
   State<FaWorkBar> createState() => _FaWorkBarState();
@@ -196,24 +203,28 @@ class _FaWorkBarState extends State<FaWorkBar>
             curve: Curves.easeOut,
             transform: Matrix4.translationValues(0, _dragOffset, 0),
             child: Container(
-              margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              margin: widget.embedded
+                  ? EdgeInsets.zero
+                  : const EdgeInsets.fromLTRB(12, 0, 12, 12),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: colors.panelAlt.withValues(alpha: 0.97),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: colors.border),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black38,
-                    blurRadius: 12,
-                    offset: Offset(0, 4),
-                  ),
-                ],
-              ),
+              decoration: widget.embedded
+                  ? null
+                  : BoxDecoration(
+                      color: colors.panelAlt.withValues(alpha: 0.97),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: colors.border),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Colors.black38,
+                          blurRadius: 12,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
+                    ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (canDrag)
+                  if (canDrag && !widget.embedded)
                     Center(
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 6),
