@@ -155,6 +155,32 @@ factual: paths, commands, invariants — no essays.
   styled `[ tool ]` tiles with the private collapsible output block,
   `$`-prompt system lines, and inline generated-image/audio/video under
   tool tiles. Never fork message rendering — extend this widget.
+- `flutter_app/lib/ui/screens/app_launcher_screen.dart` — the narrow-layout
+  home (< `kWideLayoutBreakpoint` in chat_screen.dart; `faHomeScreen` in
+  main.dart picks it over `ChatScreen` in `_boot()` + `SetupScreen._connect`).
+  iOS-home-screen square grid of the JS apps (fsRevision-refreshed like
+  `AppsGridView`) plus Settings/Files system tiles; long-press drag&drop:
+  center-band drop on an app groups both into a folder (edge drop reorders,
+  drop on a folder adds), folder tap opens a floating panel (rename/dissolve
+  buttons, drag-out-to-ungroup onto the barrier). Tile layout persists via
+  `LauncherLayoutStore` (`lib/services/launcher_layout_store.dart`,
+  `launcher_layout.json`, mirrors `SessionNamesStore`: ordered keys
+  `app:<id>`/`system:*`/`folder:<id>`, `syncApps` reconciles with installed
+  apps, corrupt file → defaults). Its Stack hosts the `SessionChatSheet`.
+- `flutter_app/lib/apps/session_chat_sheet.dart` — the session chat bottom
+  sheet over the launcher (FaChatOverlay pattern/constants): collapsed =
+  floating Fa button bottom-right (the `FaWorkBar` takes its place while
+  streaming); expanded = 92% sheet with drag-handle header (session title
+  via `SessionNamesStore`, 3-dots menu: New session / Open full chat /
+  Collapse), a horizontal PageView over `manager.sessions` wired to
+  `manager.switchTo`, `FaWorkBar(embedded:)`, and the shared
+  `ChatMessageTile` transcript + `ChatComposer`. Pull-down (48px / 300px/s)
+  collapses.
+- `flutter_app/lib/ui/widgets/chat_composer.dart` — THE chat composer
+  (attachment chips/staging, mic voice input, steer queue, send/stop),
+  extracted from `chat_screen.dart`; `ChatScreen` delegates to it and the
+  session chat sheet reuses it. Composer changes must keep the chat goldens
+  pixel-identical.
 - `flutter_app/lib/l10n/` — gen-l10n: `app_en.arb` + `app_ru.arb` →
   `AppLocalizations` (generated, never edit; `flutter gen-l10n`). UI copy
   via `context.l10n.<key>` (`l10n_ext.dart`); locale follows system.
