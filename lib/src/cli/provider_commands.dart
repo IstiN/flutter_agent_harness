@@ -607,22 +607,41 @@ extension on AgentCli {
   ///    `/provider` and the custom-provider wizard write);
   /// 3. legacy env-name store entries, written by older versions.
   /// Null when the host exposes no values (tests, web) or nothing is set.
+  /// Resolves the API key for [spec] at [baseUrl]. For the spec's DEFAULT
+  /// hosted endpoint: env value → host-scoped store key → legacy env-name
+  /// store key (documented order). For ANY OTHER endpoint: only the
+  /// endpoint-scoped store keys (the active custom entry's key name, then
+  /// the host-scoped one) — the spec's env names (`OPENROUTER_API_KEY` &
+  /// friends) describe the default endpoint and must never hijack a custom
+  /// one (the user's OpenRouter key silently serving api.aiin.by).
   String? _providerKeyFor(ProviderSpec spec, String baseUrl) {
     final read = config.envVarValue;
     final keys = config.secureKeys;
-    for (final name in spec.apiKeyEnvNames) {
-      final value = read?.call(name);
-      if (value != null && value.isNotEmpty && value != keys?.read(name)) {
-        return value;
+    if (baseUrl == spec.defaultBaseUrl) {
+      for (final name in spec.apiKeyEnvNames) {
+        final value = read?.call(name);
+        if (value != null && value.isNotEmpty && value != keys?.read(name)) {
+          return value;
+        }
       }
+      if (keys != null) {
+        final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
+        if (scoped != null && scoped.isNotEmpty) return scoped;
+        for (final name in spec.apiKeyEnvNames) {
+          final value = keys.read(name);
+          if (value != null && value.isNotEmpty) return value;
+        }
+      }
+      return null;
     }
     if (keys != null) {
+      final entryKey = _activeCustomKeyName();
+      if (entryKey != null) {
+        final entryValue = keys.read(entryKey);
+        if (entryValue != null && entryValue.isNotEmpty) return entryValue;
+      }
       final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
       if (scoped != null && scoped.isNotEmpty) return scoped;
-      for (final name in spec.apiKeyEnvNames) {
-        final value = keys.read(name);
-        if (value != null && value.isNotEmpty) return value;
-      }
     }
     return null;
   }
@@ -640,25 +659,39 @@ extension on AgentCli {
     if (explicit) return 'key: provided';
     final read = config.envVarValue;
     final keys = config.secureKeys;
-    for (final name in spec.apiKeyEnvNames) {
-      final value = read?.call(name);
-      if (value != null && value.isNotEmpty && value != keys?.read(name)) {
-        return 'key: $name';
+    if (baseUrl == spec.defaultBaseUrl) {
+      for (final name in spec.apiKeyEnvNames) {
+        final value = read?.call(name);
+        if (value != null && value.isNotEmpty && value != keys?.read(name)) {
+          return 'key: $name';
+        }
       }
+      if (keys != null) {
+        final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
+        if (keys.read(scopedName) != null) {
+          return 'key: $scopedName (${keys.label ?? 'secure store'})';
+        }
+        for (final name in spec.apiKeyEnvNames) {
+          if (keys.read(name) != null) {
+            return 'key: $name (${keys.label ?? 'secure store'})';
+          }
+        }
+      }
+      return 'key: no key found (want ${spec.apiKeyEnvNames.first})';
     }
+    // A custom endpoint never shows the spec's env names as its key (see
+    // _providerKeyFor) — only the endpoint-scoped store keys count.
     if (keys != null) {
+      final entryKey = _activeCustomKeyName();
+      if (entryKey != null && keys.read(entryKey) != null) {
+        return 'key: $entryKey (${keys.label ?? 'secure store'})';
+      }
       final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
       if (keys.read(scopedName) != null) {
         return 'key: $scopedName (${keys.label ?? 'secure store'})';
       }
-      for (final name in spec.apiKeyEnvNames) {
-        if (keys.read(name) != null) {
-          return 'key: $name (${keys.label ?? 'secure store'})';
-        }
-      }
     }
-    if (baseUrl != spec.defaultBaseUrl) return 'key: none (keyless endpoint)';
-    return 'key: no key found (want ${spec.apiKeyEnvNames.first})';
+    return 'key: none (keyless endpoint)';
   }
 
   // ------------------------------------------------------------- models

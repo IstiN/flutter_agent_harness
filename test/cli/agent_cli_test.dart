@@ -1062,7 +1062,7 @@ void main() {
     );
     final run = cli.run();
 
-    io.sendLine('/provider openai http://127.0.0.1:1/v1');
+    io.sendLine('/provider openai');
     await _waitFor(() => changes.isNotEmpty);
     io.sendLine('/exit');
     await run;
@@ -1071,7 +1071,8 @@ void main() {
     expect(io.out.toString(), contains('key: OPENAI_API_KEY (fake store)'));
   });
 
-  test('/provider key order: env beats scoped, scoped beats legacy', () async {
+  test('/provider key order: env beats scoped on the default endpoint, '
+      'scoped wins on custom endpoints', () async {
     final fake = _FakeStreamFunction([_textTurn('ok')]);
     final store = _FakeSecureKeyStore();
     final cache = SecureKeyCache(store);
@@ -1079,12 +1080,11 @@ void main() {
     await cache.save('OPENAI_API_KEY', 'legacy-key');
     await cache.save('FA_KEY_127_0_0_1_1', 'scoped-key');
     final changes = <(String, String)>[];
-    String? envValue = 'env-key';
     final cli = cliFor(
       fake.call,
       secureKeys: cache,
       envVarValue: (name) {
-        if (name == 'OPENAI_API_KEY') return envValue;
+        if (name == 'OPENAI_API_KEY') return 'env-key';
         if (name == 'FA_KEY_127_0_0_1_1') return cache.read(name);
         return null;
       },
@@ -1092,18 +1092,22 @@ void main() {
     );
     final run = cli.run();
 
-    io.sendLine('/provider openai http://127.0.0.1:1/v1');
+    // Default hosted endpoint: env wins over scoped and legacy.
+    io.sendLine('/provider openai');
     await _waitFor(() => changes.isNotEmpty);
     expect(changes.removeLast().$2, 'env-key');
 
-    // Without the env var the scoped entry wins over the legacy one.
-    envValue = null;
+    // Custom endpoint, env still set: the env name must NOT hijack it.
     io.sendLine('/provider openai http://127.0.0.1:1/v1');
+    await _waitFor(() => changes.isNotEmpty);
+    expect(changes.removeLast().$2, 'scoped-key');
+
+    io.sendLine('/provider openai http://127.0.0.1:2/v1');
     await _waitFor(() => changes.isNotEmpty);
     io.sendLine('/exit');
     await run;
 
-    expect(changes.removeLast().$2, 'scoped-key');
+    expect(changes.removeLast().$2, '');
   });
 
   test('/provider custom runs the guided openai-like setup', () async {

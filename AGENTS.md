@@ -97,9 +97,10 @@ factual: paths, commands, invariants — no essays.
   definitions. Keys: env first, then
   secure store (`lib/src/secrets/secure_key_store*.dart` — Keychain /
   Secret Service / PasswordVault, IO backends only in `lib/io.dart`),
-  preloaded into `SecureKeyCache`; resolution order env → `FA_KEY_<HOST>`
-  → `FA_KEY_<HOST>_<NAME>` → legacy; `/key set` writes store-only, never
-  config.
+  preloaded into `SecureKeyCache`. Resolution: the spec's DEFAULT endpoint
+  gets env → `FA_KEY_<HOST>` → `FA_KEY_<HOST>_<NAME>` → legacy; any other
+  endpoint resolves ONLY its scoped store keys (env names never hijack a
+  custom endpoint); `/key set` writes store-only, never config.
 - `lib/src/prompts/prompt_overrides.dart` — `prompts:` config section maps
   prompt names to file path or inline text; strict validation; flags
   `--system-prompt(-file)` > config > built-in.
