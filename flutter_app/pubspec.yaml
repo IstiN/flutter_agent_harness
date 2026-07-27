@@ -109,6 +109,8 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.0
+  # LatLng for the hand-built map canvas in the store screenshot goldens.
+  latlong2: ^0.9.1
   # Fake WebViewPlatform for golden tests of lib/ui/widgets/html_preview_stub.dart.
   webview_flutter_platform_interface: ^2.15.1
 

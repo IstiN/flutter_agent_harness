@@ -15,55 +15,61 @@ import 'package:flutter/material.dart';
 
 /// Localized marketing copy per store screenshot: screen name → language →
 /// (headline, subtitle). English is the fallback for missing languages.
+///
+/// The five frames tell one story ("Makar's week"): a parent asks Fa to
+/// plan their kid's week, Fa books recurring calendar events and draws a
+/// birthday card, the events show up in the calendar app, a follow-up edit
+/// happens without leaving the map app, and the settings frame closes with
+/// the provider story.
 const kStoreCopy = <String, Map<String, (String, String)>>{
   'store_chat': {
     'en': (
-      'Your personal AI agent',
-      'Ask anything — Fa thinks, calls tools, and shows every step',
+      'Ask in plain words',
+      'Fa plans and schedules — events, artwork and a voice summary',
     ),
     'ru': (
-      'Ваш личный ИИ-агент',
-      'Спросите что угодно — Fa рассуждает и показывает каждый шаг',
+      'Просите по-человечески',
+      'Fa планирует и записывает: события, открытка и голосовая сводка',
     ),
   },
-  'store_sidebar': {
+  'store_calendar': {
     'en': (
-      'Apps and sessions, side by side',
-      'Mini-apps the agent builds for you, next to every conversation',
+      'Recurring events and alarms',
+      'Speech therapy Mon & Thu, swimming on Saturday — right in your calendar',
     ),
     'ru': (
-      'Приложения и сессии рядом',
-      'Мини-приложения от агента — рядом с каждым диалогом',
+      'Повторяющиеся события и напоминания',
+      'Логопед по пн и чт, плавание по субботам — прямо в вашем календаре',
     ),
   },
-  'store_js_app': {
+  'store_apps': {
     'en': (
-      'Mini-apps built on demand',
-      'Fa writes real apps — calculators, maps, calendars — right inside the chat',
+      'Mini-apps for everything',
+      'Contacts, calendar, home and more — next to every conversation',
     ),
     'ru': (
-      'Мини-приложения по запросу',
-      'Fa пишет настоящие приложения прямо в чате',
+      'Мини-приложения для всего',
+      'Контакты, календарь, умный дом — рядом с каждым диалогом',
+    ),
+  },
+  'store_inapp': {
+    'en': (
+      'Fa lives inside every app',
+      '“Move swimming to 11:30” — chat and edit without leaving the app',
+    ),
+    'ru': (
+      'Fa живёт в каждом приложении',
+      '«Перенеси плавание на 11:30» — чат и правки, не выходя из приложения',
     ),
   },
   'store_providers': {
     'en': (
-      'Any provider, your keys',
-      'OpenAI-compatible endpoints and on-device models — keys stay in the Keychain',
+      'Any provider — keys stay in the Keychain',
+      'OpenRouter, local Ollama or your own endpoint, cloud or on-device',
     ),
     'ru': (
-      'Любой провайдер, ваши ключи',
-      'OpenAI-совместимые API и локальные модели, ключи в Keychain',
-    ),
-  },
-  'store_media': {
-    'en': (
-      'Images, speech and music',
-      'Dedicated media models per slot — configured once, stored securely',
-    ),
-    'ru': (
-      'Изображения, речь и музыка',
-      'Медиа-модели для каждого слота — настройка раз и навсегда',
+      'Любой провайдер — ключи в Keychain',
+      'OpenRouter, локальный Ollama или свой сервер, облако или on-device',
     ),
   },
 };
