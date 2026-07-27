@@ -657,4 +657,8 @@
 
 - fix(deps): revert sqlite3 to ^2.9.4 — 3.x build hooks break dart compile
 
+## 0.1.90
+
+- fix(example): set the App Store copyright field in the deliver lanes
+
 ## Unreleased
