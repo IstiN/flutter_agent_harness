@@ -1035,8 +1035,10 @@ private final class HomeChannelDelegate: NSObject, HMHomeManagerDelegate {
   private var accessPollsLeft = 0
 
   /// How long a read call waits for the first homes load before answering
-  /// with what we have (usually an empty list).
-  let homesWaitTimeout: TimeInterval = 5
+  /// with what we have (usually an empty list). The first delivery after a
+  /// fresh grant can take a while (HomeKit syncs the home graph from iCloud),
+  /// so this is deliberately generous — a fast delegate flush wins anyway.
+  let homesWaitTimeout: TimeInterval = 15
 
   func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
     NSLog(

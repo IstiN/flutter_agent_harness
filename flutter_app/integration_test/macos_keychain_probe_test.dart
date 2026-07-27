@@ -126,4 +126,27 @@ void main() {
       reason: 'occurrences survived the span-future delete',
     );
   });
+
+  /// Foreground-banner check: schedules a notification with a 5s trigger
+  /// while the app stays frontmost — the banner must appear on screen (the
+  /// FaNotificationDelegate willPresent path). Watch the screen; the test
+  /// itself asserts only the channel round-trip.
+  testWidgets('notify schedules a foreground banner (watch the screen)', (
+    tester,
+  ) async {
+    const channel = MethodChannel('fah/notify');
+    final granted = await channel.invokeMethod<bool>('requestAccess');
+    print('[notify] requestAccess=$granted');
+    final id = await channel.invokeMethod<String>('schedule', {
+      'title': 'Fa notify probe',
+      'body': 'foreground banner check — did you see me?',
+      'delaySeconds': 5,
+    });
+    print('[notify] scheduled id=$id — banner should appear in ~5s');
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(seconds: 9));
+    });
+    await channel.invokeMethod<bool>('cancelAll');
+    expect(id, isNotNull);
+  });
 }
