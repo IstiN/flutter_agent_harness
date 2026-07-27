@@ -158,6 +158,8 @@
   "keysSourceSaved": "сохранён",
   "keysValueHint": "Вставьте значение ключа",
   "keysValueLabel": "Значение",
+  "launcherChatActionsTooltip": "Действия чата",
+  "launcherChatEmptyHint": "Пока пусто — спросите Fa о чём угодно.",
   "launcherDissolveFolder": "Убрать папку",
   "launcherFolderDefaultName": "Папка",
   "launcherFolderNameHint": "Название папки",

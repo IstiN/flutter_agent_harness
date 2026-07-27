@@ -15,7 +15,6 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         RequestSecretResult;
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
@@ -29,19 +28,17 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/ui/widgets/ask_ui.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
-import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/services/upload.dart';
-import 'package:fa/services/upload_picker_stub.dart'
-    if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 
 /// Minimum body width (logical px) at which the side panels (sessions/model
 /// on the left, files on the right) become persistent, collapsible panels
@@ -147,7 +144,6 @@ Future<String> chatImageMessageSource(
 
 class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   late final InMemoryChatController _chatController;
-  final _textController = TextEditingController();
 
   /// Own scroll controller for the message list (injected via
   /// [Builders.chatAnimatedListBuilder]) so the follow-tail logic can track
@@ -175,14 +171,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final _tool = const User(id: 'tool', name: 'tool');
   final _system = const User(id: 'system', name: 'system');
 
-  /// Files attached in the composer but not sent yet. They are staged into
-  /// the sandbox `uploads/` folder at PICK time (see
-  /// [AgentService.stageAttachment]) — attaching never sends anything by
-  /// itself; on send the message references the staged [path]s plus the
-  /// typed text.
-  final List<({String name, String path, Uint8List bytes, String mimeType})>
-  _pendingAttachments = [];
-
   List<Message> _lastSynced = [];
   Timer? _syncDebounce;
   bool _isSyncing = false;
@@ -194,112 +182,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
-
-  /// Arbitrary-file picker for the attach sheet's "Attach file" entry;
-  /// `null` off the web, which hides the entry.
-  late final UploadPicker? _uploadPicker =
-      widget.uploadPicker ?? createUploadPicker();
-
-  /// Microphone backend for the composer's voice-input button.
-  late final AsrApi _asr = widget.asr ?? createAsrService();
-
-  /// Voice-input state: idle → recording → transcribing → idle.
-  bool _micRecording = false;
-  bool _micTranscribing = false;
-
-  /// Drives the red pulse of the recording-state mic button; runs only
-  /// while recording (a repeating animation would keep `pumpAndSettle`
-  /// from ever settling if left running). Created in [initState] — a
-  /// `late` field touched first in [dispose] would create a ticker while
-  /// the element is deactivating.
-  late final AnimationController _micPulse;
-
-  /// The transcriber for voice input: the injected one, or one resolved
-  /// through the session's media gateway (the media_models.json
-  /// `transcription` slot, falling back to the active provider). Resolved
-  /// lazily per use so slot edits and a provider switch mid-session are
-  /// picked up. Null means no ASR-capable endpoint is configured.
-  Future<AsrTranscriber?> _resolveTranscriber() async {
-    if (widget.asrTranscriber != null) return widget.asrTranscriber;
-    final gateway = widget.service.mediaGateway;
-    if (gateway != null) return whisperTranscriberForGateway(gateway);
-    // Services built around a pre-constructed agent (tests) have no
-    // gateway: fall back to the active provider's endpoint directly.
-    final config = widget.service.configForClone;
-    return whisperTranscriberFor(
-      providerKind: widget.service.providerKind,
-      baseUrl: config?.baseUrl ?? '',
-      apiKey: config?.apiKey ?? '',
-    );
-  }
-
-  /// Mic button tap: idle starts a recording (after the OS permission
-  /// prompt), recording stops it and transcribes the take into the input
-  /// field.
-  Future<void> _toggleMic() async {
-    if (_micTranscribing) return;
-    if (_micRecording) {
-      await _stopMic();
-      return;
-    }
-    try {
-      if (!await _asr.requestAccess()) {
-        if (mounted) _showSnack(context.l10n.chatMicDenied);
-        return;
-      }
-      await _asr.startRecording();
-    } on Object catch (e) {
-      if (mounted) _showSnack(context.l10n.chatMicError(e.toString()));
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _micRecording = true);
-    _micPulse.repeat(reverse: true);
-  }
-
-  Future<void> _stopMic() async {
-    _micPulse.stop();
-    final AsrRecording recording;
-    try {
-      recording = await _asr.stopRecording();
-    } on Object catch (e) {
-      if (mounted) {
-        setState(() => _micRecording = false);
-        _showSnack(context.l10n.chatMicError(e.toString()));
-      }
-      return;
-    }
-    if (!mounted) return;
-    setState(() {
-      _micRecording = false;
-      _micTranscribing = true;
-    });
-    try {
-      final transcriber = await _resolveTranscriber();
-      if (!mounted) return;
-      if (transcriber == null) {
-        _showSnack(context.l10n.chatMicError(asrNoEndpointMessage));
-        return;
-      }
-      final bytes = await _asr.readRecording(recording.path);
-      final filename = recording.path.split(RegExp(r'[/\\]')).last;
-      final transcript = await transcriber.transcribe(
-        bytes: bytes,
-        filename: filename,
-      );
-      if (!mounted || transcript.isEmpty) return;
-      final current = _textController.text;
-      final spacer = current.isNotEmpty && !current.endsWith(' ') ? ' ' : '';
-      _textController.text = '$current$spacer$transcript';
-      _textController.selection = TextSelection.collapsed(
-        offset: _textController.text.length,
-      );
-    } on Object catch (e) {
-      if (mounted) _showSnack(context.l10n.chatMicError(e.toString()));
-    } finally {
-      if (mounted) setState(() => _micTranscribing = false);
-    }
-  }
 
   /// Opens the session/model sidebar: toggles the side panel on wide
   /// layouts, opens the drawer on narrow ones. [context] must be below the
@@ -326,10 +208,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _micPulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    );
     _chatController = InMemoryChatController();
     _chatScrollController.addListener(_trackNearBottom);
     widget.manager.addListener(_onManagerChanged);
@@ -445,12 +323,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _syncDebounce?.cancel();
-    _micPulse.dispose();
-    if (_micRecording) {
-      // Best effort: never leave the native recorder running.
-      _asr.stopRecording().ignore();
-    }
-    _textController.dispose();
     _chatScrollController.dispose();
     widget.manager.removeListener(_onManagerChanged);
     _unsubscribeFromService();
@@ -632,53 +504,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     };
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: source);
-    if (picked == null) return;
-    final bytes = await picked.readAsBytes();
-    await _stagePending(picked.name, bytes);
-  }
-
-  /// Stages one picked file into `uploads/` right away and adds a pending
-  /// chip for it. Failures surface as a snackbar — nothing is staged and
-  /// nothing is sent.
-  Future<void> _stagePending(String name, Uint8List bytes) async {
-    final clean = sanitizeUploadName(name).split('/').last;
-    if (clean.isEmpty) {
-      _showSnack(context.l10n.chatAttachNoName(name));
-      return;
-    }
-    try {
-      final path = await widget.service.stageAttachment(
-        name: clean,
-        bytes: bytes,
-      );
-      if (!mounted) return;
-      setState(() {
-        _pendingAttachments.add((
-          name: clean,
-          path: path,
-          bytes: bytes,
-          mimeType: mimeTypeForUploadName(clean),
-        ));
-      });
-      AppAnalytics.instance.uploadAdded(1);
-    } on Object catch (e) {
-      if (mounted) {
-        _showSnack(context.l10n.chatAttachError(e.toString(), clean));
-      }
-    }
-  }
-
-  void _removePendingAttachment(int index) {
-    final removed = _pendingAttachments[index];
-    setState(() => _pendingAttachments.removeAt(index));
-    // The file was staged at pick time; removing the chip drops it again
-    // (best effort — a leftover in uploads/ is harmless).
-    unawaited(widget.service.discardStagedAttachment(removed.path));
-  }
-
   /// Copies the whole session transcript to the clipboard as plain text.
   Future<void> _copySession() async {
     final buffer = StringBuffer();
@@ -716,124 +541,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           service: widget.service,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _send(String text) async {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty && _pendingAttachments.isEmpty) return;
-    final pending = List.of(_pendingAttachments);
-    setState(() => _pendingAttachments.clear());
-    _textController.clear();
-    // Metadata only (never the text, never the files).
-    AppAnalytics.instance.messageSent(
-      hasAttachments: pending.isNotEmpty,
-      textLength: trimmed.length,
-    );
-
-    try {
-      if (pending.isEmpty) {
-        await widget.service.sendText(trimmed);
-        return;
-      }
-
-      // Attachments were staged into <cwd>/uploads/ at pick time; the
-      // outgoing message references the sandbox paths so the agent reads the
-      // files with its tools (see AgentService.sendAttachments).
-      await widget.service.sendAttachments(
-        attachments: [
-          for (final attachment in pending)
-            (
-              path: attachment.path,
-              bytes: attachment.bytes,
-              mimeType: attachment.mimeType,
-            ),
-        ],
-        text: trimmed,
-      );
-    } on Object catch (e) {
-      // The send itself failed before the run started: hand the chips and
-      // the typed text back so nothing the user composed is lost.
-      if (mounted) {
-        setState(() => _pendingAttachments.addAll(pending));
-        _textController.text = trimmed;
-        _showSnack(context.l10n.chatSendError(e.toString()));
-      }
-    }
-  }
-
-  /// Picks arbitrary files and stages them as pending attachments (web
-  /// only; elsewhere the picker is `null`). Staging happens immediately —
-  /// the chips wait in the composer until the user sends (see [_send]).
-  Future<void> _attachFiles() async {
-    final picker = _uploadPicker;
-    if (picker == null) return;
-    final List<UploadFile> picked;
-    try {
-      picked = await picker.pick();
-    } on Object catch (e) {
-      if (mounted) _showSnack(context.l10n.chatUploadFailed(e.toString()));
-      return;
-    }
-    if (picked.isEmpty || !mounted) return;
-
-    final sizeError = uploadBatchSizeError(
-      picked,
-      message: (total, max) => context.l10n.uploadTooLarge(max, total),
-    );
-    if (sizeError != null) {
-      _showSnack(sizeError);
-      return;
-    }
-
-    for (final file in picked) {
-      await _stagePending(file.name, file.bytes);
-    }
-  }
-
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
-      );
-  }
-
-  void _showAttachmentSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: Text(context.l10n.chatGallery),
-              onTap: () {
-                Navigator.of(context).pop();
-                _pickImage(ImageSource.gallery);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: Text(context.l10n.chatCamera),
-              onTap: () {
-                Navigator.of(context).pop();
-                _pickImage(ImageSource.camera);
-              },
-            ),
-            if (_uploadPicker != null)
-              ListTile(
-                leading: const Icon(Icons.upload_file),
-                title: Text(context.l10n.chatAttachFile),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _attachFiles();
-                },
-              ),
-          ],
         ),
       ),
     );
@@ -946,250 +653,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  /// One pending attachment in the composer: a thumbnail for decodable
-  /// raster images, an icon + name + size chip otherwise (SVG previews stay
-  /// generic — see [isInlineImageMimeType]), each with a remove affordance.
-  Widget _buildPendingAttachmentChip(int index) {
-    final attachment = _pendingAttachments[index];
-    final isImage = isInlineImageMimeType(attachment.mimeType);
-    final palette = FahColors.of(context);
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: palette.panel,
-        border: Border.all(color: palette.border),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (isImage)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Image.memory(
-                attachment.bytes,
-                height: 48,
-                width: 48,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) =>
-                    const Icon(Icons.broken_image_outlined, size: 24),
-              ),
-            )
-          else ...[
-            const Icon(Icons.insert_drive_file_outlined, size: 18),
-            const SizedBox(width: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 200),
-              child: Text(
-                '${attachment.name.split('/').last} · '
-                '${formatFileSize(attachment.bytes.length)}',
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-          IconButton(
-            icon: const Icon(Icons.close, size: 18),
-            tooltip: context.l10n.chatRemoveAttachment,
-            onPressed: () => _removePendingAttachment(index),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildComposer(BuildContext context) {
-    final theme = Theme.of(context);
-    final palette = FahColors.of(context);
-
-    return Container(
-      decoration: BoxDecoration(
-        color: palette.bg,
-        border: Border(top: BorderSide(color: palette.border)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_pendingAttachments.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (var i = 0; i < _pendingAttachments.length; i++)
-                        _buildPendingAttachmentChip(i),
-                    ],
-                  ),
-                ),
-              ),
-            if (_isStreaming)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Row(
-                  children: [
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      context.l10n.chatTyping,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: palette.dim,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            if (widget.service.pendingSteerTexts.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (final pending in widget.service.pendingSteerTexts)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: palette.userBubble.withValues(alpha: 0.6),
-                          border: Border.all(color: palette.userBubbleBorder),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                pending,
-                                style: theme.textTheme.bodyMedium,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Icon(Icons.schedule, size: 16, color: palette.dim),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.add),
-                    tooltip: context.l10n.chatAttachTooltip,
-                    onPressed: _showAttachmentSheet,
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _textController,
-                      decoration: InputDecoration(
-                        hintText: context.l10n.chatInputHint,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        border: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(24)),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(24)),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(24)),
-                          borderSide: BorderSide.none,
-                        ),
-                        filled: true,
-                      ),
-                      maxLines: 5,
-                      minLines: 1,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: _send,
-                    ),
-                  ),
-                  if (asrPlatformSupported) _buildMicButton(context),
-                  const SizedBox(width: 4),
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: palette.brandGradient,
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
-                      icon: Icon(
-                        _isStreaming ? Icons.stop : Icons.send,
-                        size: 20,
-                      ),
-                      color: palette.onAccent,
-                      tooltip: _isStreaming
-                          ? context.l10n.chatAbortTooltip
-                          : context.l10n.chatSendTooltip,
-                      onPressed: _isStreaming
-                          ? widget.service.abort
-                          : () => _send(_textController.text),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// The composer's voice-input button: idle shows a mic (tap to record),
-  /// recording pulses red (tap again to stop + transcribe), transcribing
-  /// shows a spinner. Rendered only where [asrPlatformSupported].
-  Widget _buildMicButton(BuildContext context) {
-    final l10n = context.l10n;
-    if (_micTranscribing) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 12),
-        child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-    if (_micRecording) {
-      final error = Theme.of(context).colorScheme.error;
-      return AnimatedBuilder(
-        animation: _micPulse,
-        builder: (context, child) => IconButton(
-          icon: Icon(
-            Icons.mic,
-            color: Color.lerp(
-              error,
-              error.withValues(alpha: 0.35),
-              _micPulse.value,
-            ),
-          ),
-          tooltip: l10n.chatMicStopTooltip,
-          onPressed: _toggleMic,
-        ),
-      );
-    }
-    return IconButton(
-      icon: const Icon(Icons.mic_none),
-      tooltip: l10n.chatMicTooltip,
-      onPressed: _toggleMic,
-    );
-  }
-
   Widget _buildChatBody(BuildContext context) {
     return Column(
       children: [
@@ -1235,7 +698,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 : buildFahChatTheme(),
           ),
         ),
-        _buildComposer(context),
+        ChatComposer(
+          service: widget.service,
+          uploadPicker: widget.uploadPicker,
+          asr: widget.asr,
+          asrTranscriber: widget.asrTranscriber,
+        ),
       ],
     );
   }

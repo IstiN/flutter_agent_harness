@@ -583,6 +583,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get keysValueLabel => 'Значение';
 
   @override
+  String get launcherChatActionsTooltip => 'Действия чата';
+
+  @override
+  String get launcherChatEmptyHint => 'Пока пусто — спросите Fa о чём угодно.';
+
+  @override
   String get launcherDissolveFolder => 'Убрать папку';
 
   @override

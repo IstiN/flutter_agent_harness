@@ -577,6 +577,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get keysValueLabel => 'Value';
 
   @override
+  String get launcherChatActionsTooltip => 'Chat actions';
+
+  @override
+  String get launcherChatEmptyHint => 'Nothing here yet — ask Fa anything.';
+
+  @override
   String get launcherDissolveFolder => 'Remove folder';
 
   @override

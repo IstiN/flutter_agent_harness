@@ -1046,6 +1046,18 @@ abstract class AppLocalizations {
   /// **'Value'**
   String get keysValueLabel;
 
+  /// No description provided for @launcherChatActionsTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat actions'**
+  String get launcherChatActionsTooltip;
+
+  /// No description provided for @launcherChatEmptyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing here yet — ask Fa anything.'**
+  String get launcherChatEmptyHint;
+
   /// No description provided for @launcherDissolveFolder.
   ///
   /// In en, this message translates to:

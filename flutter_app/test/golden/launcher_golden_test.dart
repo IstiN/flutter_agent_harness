@@ -7,11 +7,15 @@
 /// no emoji glyphs (see `apps_golden_test.dart`).
 library;
 
+import 'dart:async';
+
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,7 +40,7 @@ StreamFunction _singleTextResponse(String text) {
   };
 }
 
-AgentService _fakeService(ExecutionEnv env) {
+AgentService _fakeService(ExecutionEnv env, [StreamFunction? streamFunction]) {
   return AgentService(
     agent: Agent(
       model: Model(
@@ -48,7 +52,7 @@ AgentService _fakeService(ExecutionEnv env) {
         maxTokens: 4096,
       ),
       systemPrompt: 'You are fah.',
-      streamFunction: _singleTextResponse('ok'),
+      streamFunction: streamFunction ?? _singleTextResponse('ok'),
       toolRegistry: ToolRegistry(const []),
     ),
     env: env,
@@ -60,6 +64,31 @@ AgentService _fakeService(ExecutionEnv env) {
       apiKey: '',
     ),
   );
+}
+
+/// A hung stream honoring aborts (the apps_golden_test.dart pattern): the
+/// provider stream stays open until aborted, so `isStreaming` stays true.
+StreamFunction _hungResponse() {
+  fn(Model model, dynamic context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final partial = AssistantMessage(
+      content: const [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime(2026),
+    );
+    stream.push(StartEvent(partial: partial));
+    cancelToken?.onCancel.then((_) {
+      stream.push(ErrorEvent(reason: StopReason.aborted, error: partial));
+      stream.end();
+    });
+    return stream; // stays open until aborted
+  }
+
+  return fn;
 }
 
 /// A rounded-square badge icon with a white glyph shape (renders with the
@@ -146,16 +175,24 @@ AppsStore _appsStore(MemoryExecutionEnv env) => AppsStore(
 
 /// Pumps the launcher as the full app home at phone size. [folders] seeds a
 /// pre-made folder layout (default: the four apps + system tiles).
+/// [sessions] maps session ids to seeded transcript messages (the LAST id
+/// is the active session).
 Future<void> _pumpLauncher(
   WidgetTester tester, {
   Locale locale = const Locale('en'),
   List<String>? order,
   List<LauncherFolder>? folders,
-  AgentService? service,
+  Map<String, List<FahChatMessage>>? sessions,
+  StreamFunction? streamFunction,
 }) async {
   final env = await _seededEnv();
-  final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-    ..addSession('fake-session', service ?? _fakeService(env));
+  final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+  for (final entry
+      in (sessions ?? const {'fake-session': <FahChatMessage>[]}).entries) {
+    final service = _fakeService(env, streamFunction);
+    service.messages.addAll(entry.value);
+    manager.addSession(entry.key, service);
+  }
   await pumpGolden(
     tester,
     AppLauncherScreen(
@@ -216,6 +253,98 @@ void main() {
       await tester.tap(find.text('Writing'));
       await tester.pumpAndSettle();
       await expectGolden(tester, 'launcher_folder_open');
+    });
+  });
+
+  group('SessionChatSheet goldens (over the launcher)', () {
+    /// The seeded conversation for the expanded-sheet shots.
+    Map<String, List<FahChatMessage>> twoSessions() => {
+      'sess-a': [
+        FahChatMessage(role: 'user', content: 'remind me what we decided'),
+        FahChatMessage(
+          role: 'assistant',
+          content: 'We ship the launcher first, the chat sheet second.',
+        ),
+      ],
+      'sess-b': [
+        FahChatMessage(
+          role: 'user',
+          content: 'build me a tiny dice roller app',
+        ),
+        FahChatMessage(
+          role: 'tool',
+          toolName: 'write',
+          content: 'apps/dice/widget.js (342 bytes)',
+        ),
+        FahChatMessage(
+          role: 'assistant',
+          content:
+              'Done — **Dice Roller** is on your home grid now. Tap it to '
+              'roll d4…d20.',
+        ),
+      ],
+    };
+
+    Future<void> expandSheet(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('sessionChatFaButton')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('sheet collapsed while streaming shows the work bar', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        sessions: {'sess-b': twoSessions()['sess-b']!},
+        streamFunction: _hungResponse(),
+      );
+      // Start the run, then freeze on fixed frames: the work bar's orbit
+      // animation repeats forever, so pumpAndSettle would time out.
+      final service = tester
+          .widget<AppLauncherScreen>(find.byType(AppLauncherScreen))
+          .manager
+          .active!
+          .service;
+      await tester.runAsync(() async {
+        unawaited(service.sendText('roll a d20'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await expectGolden(tester, 'launcher_sheet_streaming');
+    });
+
+    testWidgets('sheet expanded — transcript, header, composer', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester, sessions: twoSessions());
+      await expandSheet(tester);
+      expect(find.byType(SessionChatSheet), findsOneWidget);
+      expect(find.byType(ChatComposer), findsOneWidget);
+      await expectGolden(tester, 'launcher_sheet_expanded');
+    });
+
+    testWidgets('sheet expanded — ru', (tester) async {
+      await _pumpLauncher(
+        tester,
+        locale: const Locale('ru'),
+        sessions: twoSessions(),
+      );
+      await expandSheet(tester);
+      await expectGolden(tester, 'launcher_sheet_expanded_ru');
+    });
+
+    testWidgets('sheet pager — second session', (tester) async {
+      await _pumpLauncher(tester, sessions: twoSessions());
+      await expandSheet(tester);
+      await tester.fling(
+        find.byKey(const ValueKey('sessionChatPager')),
+        const Offset(-300, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('session sess-a'), findsOneWidget);
+      await expectGolden(tester, 'launcher_sheet_pager2');
     });
   });
 }

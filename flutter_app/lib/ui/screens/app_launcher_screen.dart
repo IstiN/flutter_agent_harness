@@ -10,15 +10,20 @@ import 'package:flutter/material.dart';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
+import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_names_store.dart';
+import 'package:fa/services/upload.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/ui/widgets/media_player.dart';
 
 /// iOS-home-screen-style apps launcher: the app's home on narrow layouts
 /// (the wide layout keeps the classic chat home). A dynamic square grid of
@@ -40,6 +45,12 @@ class AppLauncherScreen extends StatefulWidget {
     this.lastConnectionStore,
     this.layoutStore,
     this.appsStore,
+    this.sessionNamesStore,
+    this.uploadPicker,
+    this.asr,
+    this.asrTranscriber,
+    this.audioControllerFactory,
+    this.videoControllerFactory,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -57,6 +68,26 @@ class AppLauncherScreen extends StatefulWidget {
 
   /// App discovery/seeding; tests inject one with canned assets.
   final AppsStore? appsStore;
+
+  /// The user-given session titles shown in the chat sheet header;
+  /// forwarded to [SessionChatSheet].
+  final SessionNamesStore? sessionNamesStore;
+
+  /// File chooser for the chat sheet's composer; forwarded to
+  /// [SessionChatSheet].
+  final UploadPicker? uploadPicker;
+
+  /// Microphone backend override for the chat sheet's composer (tests).
+  final AsrApi? asr;
+
+  /// Transcriber override for the chat sheet's composer (tests).
+  final AsrTranscriber? asrTranscriber;
+
+  /// Playback engine factory for inline audio in the chat sheet transcript.
+  final SandboxAudioControllerFactory? audioControllerFactory;
+
+  /// Playback engine factory for inline video in the chat sheet transcript.
+  final SandboxVideoControllerFactory? videoControllerFactory;
 
   @override
   State<AppLauncherScreen> createState() => _AppLauncherScreenState();
@@ -298,6 +329,19 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         child: Stack(
           children: [
             _buildGridArea(colors),
+            // The collapsed session chat (Fa button / streaming work bar)
+            // and, expanded, the 92% session sheet with the pager.
+            SessionChatSheet(
+              manager: widget.manager,
+              registry: widget.registry,
+              lastConnectionStore: widget.lastConnectionStore,
+              sessionNamesStore: widget.sessionNamesStore,
+              uploadPicker: widget.uploadPicker,
+              asr: widget.asr,
+              asrTranscriber: widget.asrTranscriber,
+              audioControllerFactory: widget.audioControllerFactory,
+              videoControllerFactory: widget.videoControllerFactory,
+            ),
             if (_openFolderId != null) ...[
               _buildFolderBarrier(colors),
               _buildFolderPanel(colors),
