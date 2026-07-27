@@ -98,10 +98,16 @@ abstract interface class HomeApi {
 
   /// Writes [value] (bool/num/String) to ANY writable characteristic of the
   /// accessory with [id], addressed by its HomeKit [type] string.
+  ///
+  /// Bridge sub-devices can share one [id] (duplicate `uniqueIdentifier`s);
+  /// [name]/[room] disambiguate the write target then (see the native
+  /// routing note on [setPower]).
   Future<void> writeCharacteristic({
     required String id,
     required String type,
     required Object value,
+    String? name,
+    String? room,
   });
 
   /// Every action set (scene), optionally limited to [homeId].
@@ -111,15 +117,36 @@ abstract interface class HomeApi {
   Future<void> executeScene({required String id});
 
   /// Switches the accessory with [id] on or off.
-  Future<void> setPower({required String id, required bool on});
+  ///
+  /// Bridge sub-devices (Aqara/Mi) can report the SAME [id] for many
+  /// accessories; when [name]/[room] are given the native side narrows the
+  /// id matches by them (and falls back to a name+room match when the id
+  /// matches nothing), so the write lands on the accessory the caller
+  /// actually resolved. Callers that listed the accessory first should
+  /// always pass them.
+  Future<void> setPower({
+    required String id,
+    required bool on,
+    String? name,
+    String? room,
+  });
 
-  /// Sets the brightness (0–100) of the accessory with [id].
-  Future<void> setBrightness({required String id, required int value});
+  /// Sets the brightness (0–100) of the accessory with [id]; [name]/[room]
+  /// disambiguate duplicate bridge ids (see [setPower]).
+  Future<void> setBrightness({
+    required String id,
+    required int value,
+    String? name,
+    String? room,
+  });
 
-  /// Sets the target temperature (°C) of the accessory with [id].
+  /// Sets the target temperature (°C) of the accessory with [id];
+  /// [name]/[room] disambiguate duplicate bridge ids (see [setPower]).
   Future<void> setTargetTemperature({
     required String id,
     required double celsius,
+    String? name,
+    String? room,
   });
 }
 

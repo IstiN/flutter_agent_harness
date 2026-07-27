@@ -1134,7 +1134,9 @@ private func homeAccessGranted() -> Bool {
 /// characteristic by its HomeKit type string, `listScenes` {homeId?} →
 /// [{id, name, homeName, actionCount, executing}], `executeScene` {id}, and
 /// the convenience writes `setPower` {id, on}, `setBrightness` {id, value},
-/// `setTargetTemperature` {id, celsius}. NSHomeKitUsageDescription is
+/// `setTargetTemperature` {id, celsius}. All four writes accept optional
+/// {name, room} narrowing for duplicate bridge ids (see
+/// homeWriteCharacteristic). NSHomeKitUsageDescription is
 /// declared in Info.plist.
 private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
@@ -1191,6 +1193,8 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
           id: args["id"] as? String ?? "",
           type: type,
           value: value,
+          name: args["name"] as? String,
+          room: args["room"] as? String,
           result: result,
         )
       }
@@ -1208,6 +1212,8 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
           id: args["id"] as? String ?? "",
           type: HMCharacteristicTypePowerState,
           value: args["on"] as? Bool ?? false,
+          name: args["name"] as? String,
+          room: args["room"] as? String,
           result: result,
         )
       }
@@ -1228,6 +1234,8 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
           id: args["id"] as? String ?? "",
           type: HMCharacteristicTypeBrightness,
           value: value,
+          name: args["name"] as? String,
+          room: args["room"] as? String,
           result: result,
         )
       }
@@ -1247,6 +1255,8 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
           id: args["id"] as? String ?? "",
           type: HMCharacteristicTypeTargetTemperature,
           value: celsius,
+          name: args["name"] as? String,
+          room: args["room"] as? String,
           result: result,
         )
       }
@@ -1658,13 +1668,37 @@ private func homeReadAccessory(id: String, result: @escaping FlutterResult) {
   }
 }
 
-/// Writes [value] to the characteristic [type] of the accessory with [id];
-/// answers true or a FlutterError (denied / not_found / unsupported /
+/// Narrows [candidates] by a case-insensitive [text] against [field]; an
+/// exact match wins over partial (contains) matches.
+private func homeNarrowAccessories(
+  _ candidates: [(HMAccessory, [String: Any])],
+  text: String,
+  by field: ((HMAccessory, [String: Any])) -> String,
+) -> [(HMAccessory, [String: Any])] {
+  let needle = text.lowercased()
+  let exact = candidates.filter {
+    field($0).lowercased() == needle
+  }
+  if !exact.isEmpty { return exact }
+  return candidates.filter { field($0).lowercased().contains(needle) }
+}
+
+/// Writes [value] to the characteristic [type] of an accessory; answers
+/// true or a FlutterError (denied / not_found / ambiguous / unsupported /
 /// write_failed).
+///
+/// Routing: candidates are the accessories whose `uniqueIdentifier` equals
+/// [id] (bridge sub-devices — Aqara/Mi — can share ONE id across many
+/// accessories). More than one candidate narrows by [name], then by [room]
+/// (case-insensitive, an exact match wins over partial). An id matching
+/// nothing falls back to a name+room match, so a renamed/re-paired
+/// accessory still resolves. The write only proceeds on a single survivor.
 private func homeWriteCharacteristic(
   id: String,
   type: String,
   value: Any,
+  name: String? = nil,
+  room: String? = nil,
   result: @escaping FlutterResult,
 ) {
   guard homeAccessGranted() else {
@@ -1677,10 +1711,47 @@ private func homeWriteCharacteristic(
     )
     return
   }
-  guard
-    let accessory = homeAllAccessories()
-      .first(where: { $0.0.uniqueIdentifier.uuidString == id })?.0
-  else {
+  let all = homeAllAccessories()
+  var candidates = all.filter { $0.0.uniqueIdentifier.uuidString == id }
+  if candidates.count > 1, let name, !name.isEmpty {
+    let narrowed = homeNarrowAccessories(candidates, text: name) { $0.0.name }
+    if !narrowed.isEmpty { candidates = narrowed }
+  }
+  if candidates.count > 1, let room, !room.isEmpty {
+    let narrowed = homeNarrowAccessories(candidates, text: room) {
+      $0.1["room"] as? String ?? ""
+    }
+    if !narrowed.isEmpty { candidates = narrowed }
+  }
+  if candidates.isEmpty {
+    // The id matched nothing (renamed/re-paired accessory) — fall back to
+    // the name+room match the caller resolved when listing.
+    var named = all
+    if let name, !name.isEmpty {
+      named = homeNarrowAccessories(named, text: name) { $0.0.name }
+    }
+    if let room, !room.isEmpty {
+      named = homeNarrowAccessories(named, text: room) {
+        $0.1["room"] as? String ?? ""
+      }
+    }
+    candidates = named
+  }
+  guard candidates.count <= 1 else {
+    NSLog(
+      "[fah/home] write \(type): id \(id) matches \(candidates.count) "
+        + "accessories (name: \(name ?? "-"), room: \(room ?? "-"))",
+    )
+    result(
+      FlutterError(
+        code: "ambiguous",
+        message: "this id matches several accessories — pass name/room",
+        details: nil,
+      ),
+    )
+    return
+  }
+  guard let accessory = candidates.first?.0 else {
     result(
       FlutterError(
         code: "not_found",

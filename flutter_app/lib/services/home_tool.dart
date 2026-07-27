@@ -60,13 +60,25 @@ AgentTool homeDevicesTool(HomeApi home) {
   );
 }
 
-/// The `match` parameter schema the control tools share.
+/// The `match`/`room`/`home` parameter schema the control tools share.
 const _matchProperties = {
   'match': {
     'type': 'string',
     'description':
         'Which accessory: name text (case-insensitive) as listed by '
-        'home_devices (required)',
+        'home_devices, or the full accessory UUID (required)',
+  },
+  'room': {
+    'type': 'string',
+    'description':
+        'Room name text (case-insensitive) narrowing `match` when several '
+        'accessories share the name',
+  },
+  'home': {
+    'type': 'string',
+    'description':
+        'Home name text (case-insensitive) narrowing `match` when several '
+        'accessories share the name',
   },
 };
 
@@ -83,7 +95,8 @@ AgentTool homePowerTool(HomeApi home, {required bool turnOn}) {
     description:
         'Turn ${turnOn ? 'on' : 'off'} a smart-home accessory (light, '
         'switch, outlet — iOS HomeKit). First list with home_devices, '
-        'then call this with `match` set to the accessory name.',
+        'then call this with `match` set to the accessory name or UUID; '
+        'add `room`/`home` when several accessories share the name.',
     parameters: const {
       'type': 'object',
       'properties': {..._matchProperties},
@@ -100,7 +113,12 @@ AgentTool homePowerTool(HomeApi home, {required bool turnOn}) {
           '${accessory.name} has no on/off control.',
         );
       }
-      await home.setPower(id: accessory.id, on: turnOn);
+      await home.setPower(
+        id: accessory.id,
+        on: turnOn,
+        name: accessory.name,
+        room: accessory.room,
+      );
       return ToolExecutionResult.text(
         'Turned ${turnOn ? 'on' : 'off'} ${_renderName(accessory)}.'
         '${_unreachableNote(accessory)}',
@@ -122,8 +140,9 @@ AgentTool homeSetTool(HomeApi home) {
     description:
         'Set the brightness of a light (0-100) or the target temperature '
         'of a thermostat (°C) — iOS HomeKit. First list with home_devices, '
-        'then call this with `match` set to the accessory name and exactly '
-        'one of `brightness` / `temperature`.',
+        'then call this with `match` set to the accessory name or UUID '
+        '(add `room`/`home` when names collide) and exactly one of '
+        '`brightness` / `temperature`.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -159,7 +178,12 @@ AgentTool homeSetTool(HomeApi home) {
           );
         }
         final value = homeBrightness(arguments['brightness'] as num?);
-        await home.setBrightness(id: accessory.id, value: value);
+        await home.setBrightness(
+          id: accessory.id,
+          value: value,
+          name: accessory.name,
+          room: accessory.room,
+        );
         return ToolExecutionResult.text(
           'Set ${_renderName(accessory)} to $value% brightness.'
           '${_unreachableNote(accessory)}',
@@ -171,7 +195,12 @@ AgentTool homeSetTool(HomeApi home) {
         );
       }
       final celsius = homeTemperature(arguments['temperature'] as num?);
-      await home.setTargetTemperature(id: accessory.id, celsius: celsius);
+      await home.setTargetTemperature(
+        id: accessory.id,
+        celsius: celsius,
+        name: accessory.name,
+        room: accessory.room,
+      );
       return ToolExecutionResult.text(
         'Set ${_renderName(accessory)} to ${celsius.toStringAsFixed(1)}°C.'
         '${_unreachableNote(accessory)}',
@@ -183,9 +212,12 @@ AgentTool homeSetTool(HomeApi home) {
 /// Result of [_find]: either the matched [accessory] or an [error] text.
 typedef _FindResult = ({HomeAccessory? accessory, String? error});
 
-/// Resolves the `match` argument to a single accessory: an exact
-/// (case-insensitive) name match wins over partial matches; an ambiguous or
-/// unknown match answers with a recoverable error.
+/// Resolves the `match` argument to a single accessory: a full UUID
+/// matches by id, otherwise an exact (case-insensitive) name match wins
+/// over partial matches. The optional `room`/`home` arguments narrow the
+/// candidates (case-insensitive, exact wins over partial); an ambiguous or
+/// unknown match answers with a recoverable error that teaches the escape
+/// hatches.
 Future<_FindResult> _find(HomeApi home, Map<String, dynamic> arguments) async {
   final matchText = (arguments['match'] ?? '').toString().trim();
   if (matchText.isEmpty) {
@@ -193,17 +225,23 @@ Future<_FindResult> _find(HomeApi home, Map<String, dynamic> arguments) async {
   }
   final accessories = await home.listAccessories();
   final needle = matchText.toLowerCase();
-  final exact = accessories
-      .where((accessory) => accessory.name.toLowerCase() == needle)
+  // A full UUID targets by id (bridge sub-devices may share it — the
+  // room/home filters below still narrow then).
+  var candidates = accessories
+      .where((accessory) => accessory.id.toLowerCase() == needle)
       .toList();
-  if (exact.length == 1) return (accessory: exact.single, error: null);
-  final partial = accessories
-      .where((accessory) => accessory.name.toLowerCase().contains(needle))
-      .toList();
-  if (exact.isEmpty && partial.length == 1) {
-    return (accessory: partial.single, error: null);
+  if (candidates.isEmpty) {
+    final exact = accessories
+        .where((accessory) => accessory.name.toLowerCase() == needle)
+        .toList();
+    candidates = exact.isNotEmpty
+        ? exact
+        : accessories
+              .where(
+                (accessory) => accessory.name.toLowerCase().contains(needle),
+              )
+              .toList();
   }
-  final candidates = exact.isNotEmpty ? exact : partial;
   if (candidates.isEmpty) {
     return (
       accessory: null,
@@ -212,11 +250,55 @@ Future<_FindResult> _find(HomeApi home, Map<String, dynamic> arguments) async {
           'home_devices first.',
     );
   }
+  final roomText = (arguments['room'] ?? '').toString().trim();
+  if (roomText.isNotEmpty) {
+    final narrowed = _narrow(candidates, roomText, (a) => a.room);
+    if (narrowed.isEmpty) {
+      final rooms = {for (final accessory in candidates) accessory.room};
+      return (
+        accessory: null,
+        error: 'No accessory in room "$roomText" — rooms: ${rooms.join(', ')}.',
+      );
+    }
+    candidates = narrowed;
+  }
+  final homeText = (arguments['home'] ?? '').toString().trim();
+  if (homeText.isNotEmpty) {
+    final narrowed = _narrow(candidates, homeText, (a) => a.homeName);
+    if (narrowed.isEmpty) {
+      final homes = {for (final accessory in candidates) accessory.homeName};
+      return (
+        accessory: null,
+        error: 'No accessory in home "$homeText" — homes: ${homes.join(', ')}.',
+      );
+    }
+    candidates = narrowed;
+  }
+  if (candidates.length == 1) {
+    return (accessory: candidates.single, error: null);
+  }
   final lines = [
-    'Several accessories match "$matchText" — be more specific:',
+    'Several accessories match "$matchText" — pass room (or a UUID):',
     for (final accessory in candidates) '- ${_renderName(accessory)}',
   ];
   return (accessory: null, error: lines.join('\n'));
+}
+
+/// Narrows [candidates] by a case-insensitive [text] against [field]; an
+/// exact match wins over partial (contains) matches.
+List<HomeAccessory> _narrow(
+  List<HomeAccessory> candidates,
+  String text,
+  String Function(HomeAccessory) field,
+) {
+  final needle = text.toLowerCase();
+  final exact = candidates
+      .where((accessory) => field(accessory).toLowerCase() == needle)
+      .toList();
+  if (exact.isNotEmpty) return exact;
+  return candidates
+      .where((accessory) => field(accessory).toLowerCase().contains(needle))
+      .toList();
 }
 
 String _render(List<HomeAccessory> accessories) {
@@ -251,7 +333,12 @@ String _renderAccessory(HomeAccessory accessory) {
     if (!accessory.reachable) 'unreachable',
   ];
   final state = parts.isEmpty ? '' : ' — ${parts.join(', ')}';
-  return '${accessory.name} (${accessory.category})$state';
+  // The short id lets the agent target by full UUID when names/rooms
+  // collide (home_devices is the only place ids are shown).
+  final shortId = accessory.id.length <= 8
+      ? accessory.id
+      : accessory.id.substring(0, 8);
+  return '${accessory.name} (${accessory.category}, id: $shortId)$state';
 }
 
 String _renderName(HomeAccessory accessory) =>

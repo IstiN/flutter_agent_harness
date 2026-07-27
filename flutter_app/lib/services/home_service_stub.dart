@@ -46,6 +46,8 @@ final class _UnavailableHomeApi implements HomeApi {
     required String id,
     required String type,
     required Object value,
+    String? name,
+    String? room,
   }) => throw _unsupported();
 
   @override
@@ -55,16 +57,26 @@ final class _UnavailableHomeApi implements HomeApi {
   Future<void> executeScene({required String id}) => throw _unsupported();
 
   @override
-  Future<void> setPower({required String id, required bool on}) =>
-      throw _unsupported();
+  Future<void> setPower({
+    required String id,
+    required bool on,
+    String? name,
+    String? room,
+  }) => throw _unsupported();
 
   @override
-  Future<void> setBrightness({required String id, required int value}) =>
-      throw _unsupported();
+  Future<void> setBrightness({
+    required String id,
+    required int value,
+    String? name,
+    String? room,
+  }) => throw _unsupported();
 
   @override
   Future<void> setTargetTemperature({
     required String id,
     required double celsius,
+    String? name,
+    String? room,
   }) => throw _unsupported();
 }

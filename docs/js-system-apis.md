@@ -188,6 +188,11 @@ platform → OS-access gate and resolves with `{__error}` on failure.
 - Thin aliases: `home.setPower({id, on})`, `home.setBrightness({id,
   value})`, `home.setTemperature({id, celsius})`
 
+Every write (`write`/`setPower`/`setBrightness`/`setTemperature`) accepts
+optional `name`/`room`: bridge sub-devices can share one `id`, and the
+native side narrows id matches by name+room (falling back to a name+room
+match when the id matches nothing) — pass them from the listed accessory.
+
 Native-side diagnostics are `NSLog("[fah/home] …")`; the Dart service and
 the bridge mirror them into the in-app log (settings → Copy debug logs).
 

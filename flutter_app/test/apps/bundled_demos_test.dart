@@ -277,9 +277,11 @@ final class _FakeNotifyApi implements NotifyApi {
 /// Fake [HomeApi] so the home demo's bridge calls resolve with real
 /// accessories without touching the real platform channel.
 final class _FakeHomeApi implements HomeApi {
-  final powerCalls = <({String id, bool on})>[];
-  final brightnessCalls = <({String id, int value})>[];
-  final temperatureCalls = <({String id, double celsius})>[];
+  final powerCalls = <({String id, bool on, String? name, String? room})>[];
+  final brightnessCalls =
+      <({String id, int value, String? name, String? room})>[];
+  final temperatureCalls =
+      <({String id, double celsius, String? name, String? room})>[];
 
   @override
   Future<bool> get isAvailable async => true;
@@ -341,6 +343,8 @@ final class _FakeHomeApi implements HomeApi {
     required String id,
     required String type,
     required Object value,
+    String? name,
+    String? room,
   }) async {}
 
   @override
@@ -350,21 +354,33 @@ final class _FakeHomeApi implements HomeApi {
   Future<void> executeScene({required String id}) async {}
 
   @override
-  Future<void> setPower({required String id, required bool on}) async {
-    powerCalls.add((id: id, on: on));
+  Future<void> setPower({
+    required String id,
+    required bool on,
+    String? name,
+    String? room,
+  }) async {
+    powerCalls.add((id: id, on: on, name: name, room: room));
   }
 
   @override
-  Future<void> setBrightness({required String id, required int value}) async {
-    brightnessCalls.add((id: id, value: value));
+  Future<void> setBrightness({
+    required String id,
+    required int value,
+    String? name,
+    String? room,
+  }) async {
+    brightnessCalls.add((id: id, value: value, name: name, room: room));
   }
 
   @override
   Future<void> setTargetTemperature({
     required String id,
     required double celsius,
+    String? name,
+    String? room,
   }) async {
-    temperatureCalls.add((id: id, celsius: celsius));
+    temperatureCalls.add((id: id, celsius: celsius, name: name, room: room));
   }
 }
 
@@ -879,7 +895,14 @@ void main() {
           // Toggling the light calls setPower on the HomeApi.
           await engine.callEvent('power_a-light');
           await Future<void>.delayed(settle);
-          expect(home.powerCalls, [(id: 'a-light', on: false)]);
+          expect(home.powerCalls, [
+            (
+              id: 'a-light',
+              on: false,
+              name: 'Ceiling Light',
+              room: 'Living Room',
+            ),
+          ]);
           expect(
             jsonEncode(engine.exportedState?['accessories']),
             contains('"status":"Off · 80%"'),
@@ -888,10 +911,24 @@ void main() {
           // Brightness and thermostat steppers call their writes.
           await engine.callEvent('brightdown_a-light');
           await Future<void>.delayed(settle);
-          expect(home.brightnessCalls, [(id: 'a-light', value: 70)]);
+          expect(home.brightnessCalls, [
+            (
+              id: 'a-light',
+              value: 70,
+              name: 'Ceiling Light',
+              room: 'Living Room',
+            ),
+          ]);
           await engine.callEvent('tempup_a-thermo');
           await Future<void>.delayed(settle);
-          expect(home.temperatureCalls, [(id: 'a-thermo', celsius: 22.0)]);
+          expect(home.temperatureCalls, [
+            (
+              id: 'a-thermo',
+              celsius: 22.0,
+              name: 'Thermostat',
+              room: 'Hallway',
+            ),
+          ]);
         } finally {
           await engine.dispose();
         }

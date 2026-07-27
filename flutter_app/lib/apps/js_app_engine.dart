@@ -974,7 +974,9 @@ Object.defineProperty(jsr, 'onBack', {
   /// string), `scenes` {homeId?} → `{scenes: [{id, name, homeName,
   /// actionCount, executing}]}`, `executeScene` {id} → `{executed: true}`,
   /// and the thin aliases `setPower` {id, on}, `setBrightness` {id, value},
-  /// `setTemperature` {id, celsius}. List sizes and failures are mirrored
+  /// `setTemperature` {id, celsius}. Every write accepts optional
+  /// {name, room} narrowing for duplicate bridge ids (see
+  /// [HomeApi.setPower]). List sizes and failures are mirrored
   /// into [AppLog] under the `home` tag.
   Future<Map<String, Object?>> _homeCall(
     String action,
@@ -1037,7 +1039,13 @@ Object.defineProperty(jsr, 'onBack', {
           if (type.isEmpty) throw StateError('type is required');
           final value = args['value'];
           if (value == null) throw StateError('value is required');
-          await api.writeCharacteristic(id: id, type: type, value: value);
+          await api.writeCharacteristic(
+            id: id,
+            type: type,
+            value: value,
+            name: _optionalString(args, 'name'),
+            room: _optionalString(args, 'room'),
+          );
           return {'written': true};
         case 'scenes':
           final scenes = await api.listScenes(
@@ -1062,17 +1070,32 @@ Object.defineProperty(jsr, 'onBack', {
         case 'setPower':
           final id = _requiredId(args);
           final on = args['on'] == true;
-          await api.setPower(id: id, on: on);
+          await api.setPower(
+            id: id,
+            on: on,
+            name: _optionalString(args, 'name'),
+            room: _optionalString(args, 'room'),
+          );
           return {'on': on};
         case 'setBrightness':
           final id = _requiredId(args);
           final value = homeBrightness(args['value'] as num?);
-          await api.setBrightness(id: id, value: value);
+          await api.setBrightness(
+            id: id,
+            value: value,
+            name: _optionalString(args, 'name'),
+            room: _optionalString(args, 'room'),
+          );
           return {'brightness': value};
         case 'setTemperature':
           final id = _requiredId(args);
           final celsius = homeTemperature(args['celsius'] as num?);
-          await api.setTargetTemperature(id: id, celsius: celsius);
+          await api.setTargetTemperature(
+            id: id,
+            celsius: celsius,
+            name: _optionalString(args, 'name'),
+            room: _optionalString(args, 'room'),
+          );
           return {'temperature': celsius};
         default:
           throw StateError('unknown home action "$action"');

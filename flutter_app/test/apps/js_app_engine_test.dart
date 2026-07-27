@@ -197,10 +197,13 @@ final class _FakeHealthApi implements HealthApi {
 /// Fake [HomeApi] for the `fa.home` bridge tests — the host-side tests
 /// never touch the real method channel.
 final class _FakeHomeApi implements HomeApi {
-  final powerCalls = <({String id, bool on})>[];
-  final brightnessCalls = <({String id, int value})>[];
-  final temperatureCalls = <({String id, double celsius})>[];
-  final writeCalls = <({String id, String type, Object value})>[];
+  final powerCalls = <({String id, bool on, String? name, String? room})>[];
+  final brightnessCalls =
+      <({String id, int value, String? name, String? room})>[];
+  final temperatureCalls =
+      <({String id, double celsius, String? name, String? room})>[];
+  final writeCalls =
+      <({String id, String type, Object value, String? name, String? room})>[];
   final executedScenes = <String>[];
 
   @override
@@ -278,8 +281,10 @@ final class _FakeHomeApi implements HomeApi {
     required String id,
     required String type,
     required Object value,
+    String? name,
+    String? room,
   }) async {
-    writeCalls.add((id: id, type: type, value: value));
+    writeCalls.add((id: id, type: type, value: value, name: name, room: room));
   }
 
   @override
@@ -299,21 +304,33 @@ final class _FakeHomeApi implements HomeApi {
   }
 
   @override
-  Future<void> setPower({required String id, required bool on}) async {
-    powerCalls.add((id: id, on: on));
+  Future<void> setPower({
+    required String id,
+    required bool on,
+    String? name,
+    String? room,
+  }) async {
+    powerCalls.add((id: id, on: on, name: name, room: room));
   }
 
   @override
-  Future<void> setBrightness({required String id, required int value}) async {
-    brightnessCalls.add((id: id, value: value));
+  Future<void> setBrightness({
+    required String id,
+    required int value,
+    String? name,
+    String? room,
+  }) async {
+    brightnessCalls.add((id: id, value: value, name: name, room: room));
   }
 
   @override
   Future<void> setTargetTemperature({
     required String id,
     required double celsius,
+    String? name,
+    String? room,
   }) async {
-    temperatureCalls.add((id: id, celsius: celsius));
+    temperatureCalls.add((id: id, celsius: celsius, name: name, room: room));
   }
 }
 
@@ -939,15 +956,69 @@ void main() {
       try {
         await granted.start();
         await Future<void>.delayed(settle);
-        expect(home.powerCalls, [(id: 'a-light', on: false)]);
-        expect(home.brightnessCalls, [(id: 'a-light', value: 60)]);
-        expect(home.temperatureCalls, [(id: 'a-thermo', celsius: 22.5)]);
+        expect(home.powerCalls, [
+          (id: 'a-light', on: false, name: null, room: null),
+        ]);
+        expect(home.brightnessCalls, [
+          (id: 'a-light', value: 60, name: null, room: null),
+        ]);
+        expect(home.temperatureCalls, [
+          (id: 'a-thermo', celsius: 22.5, name: null, room: null),
+        ]);
         final state = granted.exportedState!;
         expect(jsonEncode(state['power']), contains('"on":false'));
         expect(jsonEncode(state['bright']), contains('"brightness":60'));
         expect(jsonEncode(state['temp']), contains('"temperature":22.5'));
       } finally {
         await granted.dispose();
+      }
+    });
+  });
+
+  testWidgets('fa.home forwards name/room on writes (duplicate bridge ids)', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.home.setPower({id: 'bridge-id', on: false, name: 'Свет', room: 'Кухня'}).then(function(power) {
+    jsr.fa.home.write({id: 'bridge-id', type: 'brightness', value: 40, name: 'Свет', room: 'Кухня'}).then(function(wrote) {
+      jsr.exportState({power: power, wrote: wrote});
+    });
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final home = _FakeHomeApi();
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(homekit: true),
+        home: home,
+      );
+      try {
+        await engine.start();
+        await Future<void>.delayed(settle);
+        expect(home.powerCalls, [
+          (id: 'bridge-id', on: false, name: 'Свет', room: 'Кухня'),
+        ]);
+        expect(home.writeCalls, [
+          (
+            id: 'bridge-id',
+            type: 'brightness',
+            value: 40,
+            name: 'Свет',
+            room: 'Кухня',
+          ),
+        ]);
+        expect(
+          jsonEncode(engine.exportedState!['power']),
+          contains('"on":false'),
+        );
+      } finally {
+        await engine.dispose();
       }
     });
   });
@@ -1002,7 +1073,9 @@ void main() {
         // read returns a single accessory with fresh values.
         expect(jsonEncode(state['read']), contains('"id":"a-light"'));
         // write reaches the generic characteristic write.
-        expect(home.writeCalls, [(id: 'a-light', type: 'hue', value: 120)]);
+        expect(home.writeCalls, [
+          (id: 'a-light', type: 'hue', value: 120, name: null, room: null),
+        ]);
         expect(jsonEncode(state['wrote']), contains('"written":true'));
         expect(jsonEncode(state['scenes']), contains('"Good Night"'));
         expect(home.executedScenes, ['s-1']);

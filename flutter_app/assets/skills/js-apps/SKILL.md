@@ -493,8 +493,10 @@ jsr.fa.home.executeScene({ id: sceneId });  // { executed: true }
 
 // Convenience writes — id comes from the list. setPower answers {on},
 // setBrightness {brightness}, setTemperature {temperature}; failures come
-// back as {__error}.
-jsr.fa.home.setPower({ id: accessoryId, on: true });
+// back as {__error}. Every write accepts optional name/room from the
+// listed accessory — pass them: bridge sub-devices can share one id, and
+// the native side narrows by name+room.
+jsr.fa.home.setPower({ id: accessoryId, on: true, name: a.name, room: a.room });
 jsr.fa.home.setBrightness({ id: accessoryId, value: 60 });   // 0–100
 jsr.fa.home.setTemperature({ id: accessoryId, celsius: 21.5 }); // °C
 ```

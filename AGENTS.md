@@ -205,9 +205,17 @@ factual: paths, commands, invariants — no essays.
   setTargetTemperature aliases. The delegate waits for the first
   `homeManagerDidUpdateHomes` (5 s cap) when access was granted but homes
   have not loaded yet, and polls the authorization status so a denied
-  prompt answers `false` instead of hanging. JS surface `jsr.fa.home.*`
+  prompt answers `false` instead of hanging. All four writes take optional
+  `name`/`room`: bridge sub-devices (Aqara/Mi) can share ONE
+  `uniqueIdentifier`, so the native write routing narrows id matches by
+  name+room (case-insensitive, exact > partial) and falls back to a
+  name+room match when the id matches nothing; still-ambiguous = clean
+  error, never a first-match write. JS surface `jsr.fa.home.*`
   mirrors it (`docs/js-system-apis.md`); agent tools in `home_tool.dart`
-  (`home_devices`, `home_turn_on`/`home_turn_off`, `home_set`).
+  (`home_devices`, `home_turn_on`/`home_turn_off`, `home_set`) — `match`
+  accepts a name or a full UUID, optional `room`/`home` args narrow
+  duplicate names (the ambiguity error teaches both escape hatches), and
+  `home_devices` shows each accessory's short id (first 8 chars).
 - `flutter_app/lib/services/app_log.dart` — process-wide debug log: ring
   buffer (2000 lines) + best-effort persistence to `logs/app.log` under
   `ExecutionEnv.cwd` (rewritten with its tail past 1 MB). `main.dart` tees

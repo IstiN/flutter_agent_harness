@@ -497,7 +497,7 @@
     var a = findAccessory(id);
     if (!a || !a.reachable) return;
     if (actionId.indexOf('power_') === 0) {
-      write(jsr.fa.home.setPower({ id: id, on: !a.isOn }), function() {
+      write(jsr.fa.home.setPower({ id: id, on: !a.isOn, name: a.name, room: a.room }), function() {
         a.isOn = !a.isOn;
       });
       return;
@@ -505,7 +505,7 @@
     if (actionId.indexOf('brightup_') === 0 || actionId.indexOf('brightdown_') === 0) {
       var delta = actionId.indexOf('brightup_') === 0 ? 10 : -10;
       var value = Math.min(100, Math.max(0, (a.brightness || 0) + delta));
-      write(jsr.fa.home.setBrightness({ id: id, value: value }), function() {
+      write(jsr.fa.home.setBrightness({ id: id, value: value, name: a.name, room: a.room }), function() {
         a.brightness = value;
       });
       return;
@@ -513,7 +513,7 @@
     if (actionId.indexOf('tempup_') === 0 || actionId.indexOf('tempdown_') === 0) {
       var step = actionId.indexOf('tempup_') === 0 ? 0.5 : -0.5;
       var celsius = Math.round(((a.targetTemperature || 20) + step) * 10) / 10;
-      write(jsr.fa.home.setTemperature({ id: id, celsius: celsius }), function() {
+      write(jsr.fa.home.setTemperature({ id: id, celsius: celsius, name: a.name, room: a.room }), function() {
         a.targetTemperature = celsius;
       });
     }

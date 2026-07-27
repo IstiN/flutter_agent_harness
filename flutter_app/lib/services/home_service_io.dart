@@ -117,6 +117,8 @@ final class MethodChannelHomeApi implements HomeApi {
     required String id,
     required String type,
     required Object value,
+    String? name,
+    String? room,
   }) async {
     _ensureSupported();
     try {
@@ -124,6 +126,8 @@ final class MethodChannelHomeApi implements HomeApi {
         'id': id,
         'type': type,
         'value': value,
+        'name': ?name,
+        'room': ?room,
       });
       AppLog.i('home', 'writeCharacteristic $type → ok ($id)');
     } on MissingPluginException {
@@ -167,22 +171,39 @@ final class MethodChannelHomeApi implements HomeApi {
   }
 
   @override
-  Future<void> setPower({required String id, required bool on}) async {
+  Future<void> setPower({
+    required String id,
+    required bool on,
+    String? name,
+    String? room,
+  }) async {
     _ensureSupported();
     try {
-      await _channel.invokeMethod<void>('setPower', {'id': id, 'on': on});
+      await _channel.invokeMethod<void>('setPower', {
+        'id': id,
+        'on': on,
+        'name': ?name,
+        'room': ?room,
+      });
     } on MissingPluginException {
       throw _unsupported();
     }
   }
 
   @override
-  Future<void> setBrightness({required String id, required int value}) async {
+  Future<void> setBrightness({
+    required String id,
+    required int value,
+    String? name,
+    String? room,
+  }) async {
     _ensureSupported();
     try {
       await _channel.invokeMethod<void>('setBrightness', {
         'id': id,
         'value': value,
+        'name': ?name,
+        'room': ?room,
       });
     } on MissingPluginException {
       throw _unsupported();
@@ -193,12 +214,16 @@ final class MethodChannelHomeApi implements HomeApi {
   Future<void> setTargetTemperature({
     required String id,
     required double celsius,
+    String? name,
+    String? room,
   }) async {
     _ensureSupported();
     try {
       await _channel.invokeMethod<void>('setTargetTemperature', {
         'id': id,
         'celsius': celsius,
+        'name': ?name,
+        'room': ?room,
       });
     } on MissingPluginException {
       throw _unsupported();
