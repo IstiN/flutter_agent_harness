@@ -693,4 +693,8 @@
 - refactor(example): share chat message rendering with the in-app Fa overlay + full state goldens
 - fix(example): Fa panel is one bottom sheet, never two stacked cards
 
+## 0.1.96
+
+- fix(example): Home + Health apps scroll — root column → listView
+
 ## Unreleased
