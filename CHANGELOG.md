@@ -687,4 +687,10 @@
 - fix: video download auth on own-origin urls + provider key name dedupe + keychain preflight
 - fix(cli): fa update misdetects a native binary in pub-cache as pub-global
 
+## 0.1.95
+
+- fix(example): pin js_widget_runtime to git fix for JSC use-after-free (TestFlight crash)
+- refactor(example): share chat message rendering with the in-app Fa overlay + full state goldens
+- fix(example): Fa panel is one bottom sheet, never two stacked cards
+
 ## Unreleased
