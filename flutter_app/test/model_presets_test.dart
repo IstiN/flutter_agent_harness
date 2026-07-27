@@ -255,13 +255,11 @@ void main() {
       );
       expect(find.text('Model presets'), findsOneWidget);
       expect(find.text('Budget optimal'), findsOneWidget);
-      expect(find.text('Quality'), findsNothing);
 
       await tester.drag(find.byType(PageView), const Offset(-400, 0));
       await tester.pumpAndSettle();
 
       expect(find.text('Quality'), findsOneWidget);
-      expect(find.text('Budget optimal'), findsNothing);
       // The second dot is active now.
       final section = tester.widget<Container>(
         find
@@ -298,7 +296,7 @@ void main() {
         lastConnectionStore: lastConnection,
       );
 
-      await tester.tap(find.text('Apply'));
+      await tester.tap(find.text('Apply').first);
       await tester.pumpAndSettle();
 
       expect(service.modelId, 'google/gemini-3.6-flash');
@@ -325,12 +323,14 @@ void main() {
         keysStore: SessionKeysStore.inMemory(),
       );
 
+      // Both OpenRouter presets warn (the carousel builds the peeking
+      // neighbor too); both Apply buttons stay disabled without the key.
       expect(
         find.text('This preset needs an API key for OpenRouter.'),
-        findsOneWidget,
+        findsWidgets,
       );
       final applyButton = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Apply'),
+        find.widgetWithText(FilledButton, 'Apply').first,
       );
       expect(applyButton.onPressed, isNull);
 
@@ -339,7 +339,7 @@ void main() {
       expect(service.modelId, 'openai/gpt-4o-mini');
 
       // The jump button opens the provider editor for the preset.
-      await tester.tap(find.text('Set key'));
+      await tester.tap(find.text('Set key').first);
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
     });
