@@ -178,6 +178,11 @@ class _FaWorkBarState extends State<FaWorkBar>
       listenable: widget.service,
       builder: (context, _) {
         if (!widget.service.isStreaming) return const SizedBox.shrink();
+        // Theme-aware (FahColors): the bar is the COLLAPSED state of the
+        // FaChatOverlay — same surface, border, and shadow language, so
+        // light themes no longer get a dark bar and the two states read as
+        // one component.
+        final colors = FahColors.of(context);
         final canDrag = widget.onExpand != null || widget.onCollapse != null;
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -194,11 +199,9 @@ class _FaWorkBarState extends State<FaWorkBar>
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: FahPalette.panelAlt.withValues(alpha: 0.96),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: FahPalette.indigo.withValues(alpha: 0.4),
-                ),
+                color: colors.panelAlt.withValues(alpha: 0.97),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: colors.border),
                 boxShadow: const [
                   BoxShadow(
                     color: Colors.black38,
@@ -219,7 +222,7 @@ class _FaWorkBarState extends State<FaWorkBar>
                           width: 36,
                           height: 4,
                           decoration: BoxDecoration(
-                            color: FahPalette.dim.withValues(alpha: 0.5),
+                            color: colors.dim.withValues(alpha: 0.5),
                             borderRadius: BorderRadius.circular(2),
                           ),
                         ),
@@ -238,7 +241,7 @@ class _FaWorkBarState extends State<FaWorkBar>
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: FahPalette.mono(
-                            color: FahPalette.dim,
+                            color: colors.dim,
                             fontSize: 12,
                           ),
                         ),
@@ -247,14 +250,14 @@ class _FaWorkBarState extends State<FaWorkBar>
                         icon: const Icon(Icons.open_in_full, size: 16),
                         tooltip: context.l10n.appsOpenChatTooltip,
                         visualDensity: VisualDensity.compact,
-                        color: FahPalette.dim,
+                        color: colors.dim,
                         onPressed: widget.onExpand,
                       ),
                       IconButton(
                         icon: const Icon(Icons.stop_circle_outlined, size: 18),
                         tooltip: context.l10n.appsStopTooltip,
                         visualDensity: VisualDensity.compact,
-                        color: FahPalette.error,
+                        color: colors.error,
                         onPressed: widget.service.abort,
                       ),
                     ],
@@ -270,8 +273,8 @@ class _FaWorkBarState extends State<FaWorkBar>
                             decoration: InputDecoration(
                               isDense: true,
                               hintText: context.l10n.appsFollowUpHint,
-                              hintStyle: const TextStyle(
-                                color: FahPalette.dim,
+                              hintStyle: TextStyle(
+                                color: colors.dim,
                                 fontSize: 13,
                               ),
                               border: OutlineInputBorder(
@@ -279,7 +282,7 @@ class _FaWorkBarState extends State<FaWorkBar>
                                 borderSide: BorderSide.none,
                               ),
                               filled: true,
-                              fillColor: Colors.black26,
+                              fillColor: colors.dim.withValues(alpha: 0.12),
                               contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 10,
                                 vertical: 8,
@@ -293,7 +296,7 @@ class _FaWorkBarState extends State<FaWorkBar>
                           icon: const Icon(Icons.send, size: 16),
                           tooltip: context.l10n.appsSendTooltip,
                           visualDensity: VisualDensity.compact,
-                          color: FahPalette.indigo,
+                          color: colors.indigo,
                           onPressed: _sending ? null : () => unawaited(_send()),
                         ),
                       ],

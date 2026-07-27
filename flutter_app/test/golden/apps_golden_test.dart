@@ -323,6 +323,7 @@ Future<void> _pumpFrames(
   WidgetTester tester,
   Widget child, {
   Size size = goldenSizeDesktop,
+  ThemeData? theme,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -330,7 +331,7 @@ Future<void> _pumpFrames(
   await tester.pumpWidget(
     MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: buildFahTheme(),
+      theme: theme ?? buildFahTheme(),
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -748,6 +749,29 @@ void main() {
     await tester.enterText(find.byType(TextField), 'make it purple');
     await tester.pump();
     await expectGolden(tester, 'apps_work_bar_streaming');
+  });
+
+  testWidgets('work bar streaming in the light theme matches the app', (
+    tester,
+  ) async {
+    // Real file IO must run outside the FakeAsync test zone.
+    final env = (await tester.runAsync(_seededEnv))!;
+    final service = _hungService();
+    addTearDown(service.dispose);
+    await _pumpFrames(
+      tester,
+      _workBarHost(service, env),
+      theme: buildFahThemeLight(),
+    );
+    await tester.runAsync(() async {
+      await service.sendText('work');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pump();
+    expect(service.isStreaming, isTrue);
+    await tester.enterText(find.byType(TextField), 'make it purple');
+    await tester.pump();
+    await expectGolden(tester, 'apps_work_bar_streaming_light');
   });
 
   testWidgets('mini Fa reply sheet after a completed run (dark)', (
