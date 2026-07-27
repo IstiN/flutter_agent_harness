@@ -33,28 +33,75 @@ String? _assetName() {
 
 /// How this fa was installed: a release binary, a `dart pub global`
 /// activation, or a source/dev run (update/uninstall refuse the latter).
-enum _InstallKind { binary, pubGlobal, devRun }
+enum InstallKind { binary, pubGlobal, devRun }
 
-final class _Install {
-  const _Install(this.kind, this.executable);
-  final _InstallKind kind;
+/// The detected install (kind + executable path).
+final class Install {
+  /// Creates the install descriptor.
+  const Install(this.kind, this.executable);
+
+  /// How this fa was installed.
+  final InstallKind kind;
 
   /// The executable to replace/remove (binary installs only).
   final String executable;
 }
 
-_Install _detectInstall() {
-  final script = Platform.script.toFilePath();
-  if (script.endsWith('.dart')) {
-    return _Install(_InstallKind.devRun, script);
+/// Magic bytes of native executables: Mach-O (32/64-bit + fat), ELF, PE.
+bool _isNativeExecutable(String path) {
+  final file = File(path);
+  if (!file.existsSync()) return false;
+  final bytes = file.openSync().readSync(4);
+  const machO = [
+    [0xFE, 0xED, 0xFA, 0xCE],
+    [0xFE, 0xED, 0xFA, 0xCF],
+    [0xCE, 0xFA, 0xED, 0xFE],
+    [0xCF, 0xFA, 0xED, 0xFE],
+    [0xCA, 0xFE, 0xBA, 0xBE],
+  ];
+  for (final magic in machO) {
+    if (bytes[0] == magic[0] &&
+        bytes[1] == magic[1] &&
+        bytes[2] == magic[2] &&
+        bytes[3] == magic[3]) {
+      return true;
+    }
   }
-  final exe = Platform.resolvedExecutable;
-  final lower = exe.toLowerCase();
-  if (lower.contains('pub-cache') || lower.contains(r'pub\cache')) {
-    return _Install(_InstallKind.pubGlobal, exe);
+  if (bytes[0] == 0x7F &&
+      bytes[1] == 0x45 &&
+      bytes[2] == 0x4C &&
+      bytes[3] == 0x46) {
+    return true; // ELF
   }
-  return _Install(_InstallKind.binary, exe);
+  return bytes[0] == 0x4D && bytes[1] == 0x5A; // PE (MZ)
 }
+
+/// Classifies the install from the two platform paths (injectable for
+/// tests): a `.dart` script is a dev run; a pub-cache path holding a pub
+/// snapshot is a pub-global activation; anything else — including a NATIVE
+/// AOT binary placed under pub-cache (installer/manual swap), which pub
+/// cannot rebuild over ("Failed to decode data using encoding 'utf-8'") —
+/// is a release binary.
+Install classifyInstall({
+  required String scriptPath,
+  required String executablePath,
+}) {
+  if (scriptPath.endsWith('.dart')) {
+    return Install(InstallKind.devRun, scriptPath);
+  }
+  final lower = executablePath.toLowerCase();
+  if (lower.contains('pub-cache') || lower.contains(r'pub\cache')) {
+    if (!_isNativeExecutable(executablePath)) {
+      return Install(InstallKind.pubGlobal, executablePath);
+    }
+  }
+  return Install(InstallKind.binary, executablePath);
+}
+
+Install _detectInstall() => classifyInstall(
+  scriptPath: Platform.script.toFilePath(),
+  executablePath: Platform.resolvedExecutable,
+);
 
 /// Fetches the latest release tag (e.g. `v0.1.44`). The HTML permalink's
 /// 302 is tried first (the API's unauthenticated rate limit is easy to hit
@@ -97,7 +144,7 @@ int _compareVersions(String a, String b) {
 /// Windows). Pub-global installs re-activate; dev runs are refused.
 Future<int> runSelfUpdate({required String currentVersion}) async {
   final install = _detectInstall();
-  if (install.kind == _InstallKind.devRun) {
+  if (install.kind == InstallKind.devRun) {
     _warn('fa update works for installed binaries, not source runs.');
     return 1;
   }
@@ -117,7 +164,7 @@ Future<int> runSelfUpdate({required String currentVersion}) async {
       return 0;
     }
 
-    if (install.kind == _InstallKind.pubGlobal) {
+    if (install.kind == InstallKind.pubGlobal) {
       _say('updating via dart pub global activate…');
       // A stale or half-written snapshot: pub believes a NEWER spec than the
       // running binary, so a plain activate no-ops (or chokes decoding the
@@ -215,7 +262,7 @@ Future<bool> _confirm(String question) async {
 /// optional second confirmation for the `~/.fah` data directory.
 Future<int> runSelfUninstall() async {
   final install = _detectInstall();
-  if (install.kind == _InstallKind.devRun) {
+  if (install.kind == InstallKind.devRun) {
     _warn('fa uninstall works for installed binaries, not source runs.');
     return 1;
   }
@@ -225,7 +272,7 @@ Future<int> runSelfUninstall() async {
     return 1;
   }
 
-  if (install.kind == _InstallKind.pubGlobal) {
+  if (install.kind == InstallKind.pubGlobal) {
     _say('deactivating via dart pub global…');
     final result = await Process.run('dart', [
       'pub',
