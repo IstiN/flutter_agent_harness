@@ -6,11 +6,11 @@ import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
+import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/ui/widgets/media_player.dart';
@@ -32,6 +32,8 @@ class FaChatOverlay extends StatefulWidget {
     this.onSend,
     this.onCollapse,
     this.onOpenFullChat,
+    this.audioControllerFactory,
+    this.videoControllerFactory,
   });
 
   /// The session whose transcript and streaming status the panel shows.
@@ -47,6 +49,14 @@ class FaChatOverlay extends StatefulWidget {
 
   /// Leaves the app view for the full chat screen.
   final VoidCallback? onOpenFullChat;
+
+  /// Playback engine factory for inline audio players in the transcript
+  /// (handed to [ChatMessageTile]); null uses the real controller.
+  final SandboxAudioControllerFactory? audioControllerFactory;
+
+  /// Playback engine factory for inline video players in the transcript
+  /// (handed to [ChatMessageTile]); null uses the real controller.
+  final SandboxVideoControllerFactory? videoControllerFactory;
 
   @override
   State<FaChatOverlay> createState() => _FaChatOverlayState();
@@ -281,99 +291,24 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
           itemCount: messages.length,
-          itemBuilder: (context, index) =>
-              _messageTile(theme, colors, messages[index]),
+          itemBuilder: (context, index) => _messageTile(messages[index]),
         );
       },
     );
   }
 
-  Widget _messageTile(ThemeData theme, FahColors colors, FahChatMessage m) {
-    switch (m.role) {
-      case 'user':
-        return Align(
-          alignment: Alignment.centerRight,
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 560),
-            margin: const EdgeInsets.only(left: 48, bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: colors.userBubble,
-              border: Border.all(color: colors.userBubbleBorder),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Text(
-              m.content,
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 13),
-            ),
-          ),
-        );
-      case 'assistant':
-        return Padding(
-          padding: const EdgeInsets.only(right: 24, bottom: 8),
-          child: MarkdownBody(
-            data: m.content,
-            styleSheet: fahMarkdownStyleSheet(theme),
-            // Sandbox paths (`![alt](generated/x.png)`) load through the
-            // session env; taps open the fullscreen preview.
-            sizedImageBuilder: _images.sizedImageBuilder(
-              onImageTap: (bytes) => showFahImagePreview(context, bytes),
-            ),
-            // Audio/video sandbox links open a small inline-player dialog
-            // (same behavior as the full chat screen).
-            onTapLink: (text, href, title) {
-              if (href == null) return;
-              final kind = sandboxMediaKind(href);
-              if (kind == null) return;
-              showFahMediaDialog(
-                context,
-                bytes: _images.load(href),
-                kind: kind,
-              );
-            },
-          ),
-        );
-      case 'thinking':
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Text(
-            m.content,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.dim,
-              fontStyle: FontStyle.italic,
-            ),
-          ),
-        );
-      case 'tool':
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            '[${m.toolName}] ✓',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: colors.mono(
-              color: m.isError ? colors.error : colors.dim,
-              fontSize: 12,
-            ),
-          ),
-        );
-      default: // 'system' and anything else
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            m.content.split('\n').first,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.dim,
-              fontSize: 11,
-            ),
-          ),
-        );
-    }
+  // One renderer for every chat surface: the overlay delegates to the same
+  // ChatMessageTile the full chat screen uses (compact spacing for the
+  // panel), so tool tiles, thinking bubbles, sandbox images and inline
+  // media players look identical in both.
+  Widget _messageTile(FahChatMessage m) {
+    return ChatMessageTile(
+      message: m,
+      images: _images,
+      compact: true,
+      audioControllerFactory: widget.audioControllerFactory,
+      videoControllerFactory: widget.videoControllerFactory,
+    );
   }
 
   Widget _buildComposer(FahColors colors) {
@@ -396,7 +331,9 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
                     borderSide: BorderSide.none,
                   ),
                   filled: true,
-                  fillColor: Colors.black26,
+                  // Theme-aware fill (the panel color): the hardcoded
+                  // black26 read as a heavy gray bar in the light theme.
+                  fillColor: colors.panel,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 10,
                     vertical: 8,

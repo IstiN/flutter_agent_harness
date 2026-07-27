@@ -147,6 +147,14 @@ factual: paths, commands, invariants — no essays.
   (`onTapLink` — flutter_markdown has no custom link renderer) in the chat
   screen and the Fa chat overlay. Bytes load through the same memoized
   `SandboxImageResolver.load`.
+- `flutter_app/lib/ui/widgets/chat_message_tile.dart` — the ONE transcript
+  message renderer, shared by the chat screen (its `flutter_chat_ui`
+  builders delegate) and the in-app Fa chat overlay (`compact: true` for
+  tighter panel padding): user/assistant Markdown bubbles (sandbox images
+  via `SandboxImageResolver`, selectable), tail-collapsed thinking bubble,
+  styled `[ tool ]` tiles with the private collapsible output block,
+  `$`-prompt system lines, and inline generated-image/audio/video under
+  tool tiles. Never fork message rendering — extend this widget.
 - `flutter_app/lib/l10n/` — gen-l10n: `app_en.arb` + `app_ru.arb` →
   `AppLocalizations` (generated, never edit; `flutter gen-l10n`). UI copy
   via `context.l10n.<key>` (`l10n_ext.dart`); locale follows system.

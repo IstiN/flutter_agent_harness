@@ -15,7 +15,6 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         RequestSecretResult;
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -33,9 +32,9 @@ import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
-import 'package:fa/services/media_tools.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:fa/ui/widgets/session_sidebar.dart';
@@ -839,6 +838,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
+  // Text and custom (tool/thinking/system) messages share one renderer
+  // with the in-app Fa chat overlay — see ChatMessageTile.
   Widget _buildTextMessage(
     BuildContext context,
     TextMessage message,
@@ -846,36 +847,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     required bool isSentByMe,
     MessageGroupStatus? groupStatus,
   }) {
-    // Empty assistant bubbles (model returned no text) render as nothing —
-    // they would otherwise show as a blank gray rectangle between tool calls.
-    if (message.text.trim().isEmpty && !isSentByMe) {
-      return const SizedBox.shrink();
-    }
-    final styleSheet = fahMarkdownStyleSheet(Theme.of(context));
-    final palette = FahColors.of(context);
-
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 560),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: isSentByMe ? palette.userBubble : palette.panel,
-        border: Border.all(
-          color: isSentByMe ? palette.userBubbleBorder : palette.border,
-        ),
-        borderRadius: BorderRadius.circular(14),
+    return ChatMessageTile(
+      message: FahChatMessage(
+        role: isSentByMe ? 'user' : 'assistant',
+        content: message.text,
       ),
-      child: MarkdownBody(
-        data: message.text,
-        selectable: true,
-        styleSheet: styleSheet,
-        // Sandbox paths (`![alt](generated/x.png)`) load through the
-        // session env; taps open the fullscreen preview.
-        sizedImageBuilder: _images.sizedImageBuilder(
-          onImageTap: (bytes) => showFahImagePreview(context, bytes),
-        ),
-        // Audio/video sandbox links open a small inline-player dialog.
-        onTapLink: _onMarkdownLink,
-      ),
+      images: _images,
+      audioControllerFactory: widget.audioControllerFactory,
+      videoControllerFactory: widget.videoControllerFactory,
     );
   }
 
@@ -945,71 +924,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  /// Extracts the saved sandbox path from a `generate_image` tool result
-  /// (`Generated image saved to <path> (<n> bytes, …)`); null for errors
-  /// or any other text.
-  static final _generatedImagePathPattern = RegExp(
-    r'Generated image saved to (\S+\.png)',
-  );
-
-  static String? _generatedImagePath(String content) =>
-      _generatedImagePathPattern.firstMatch(content)?.group(1);
-
-  /// Extracts the saved sandbox path from a `speak` / `generate_music`
-  /// tool result (`Speech saved to <path> …` / `Music saved to <path> …`);
-  /// null for errors or any other text.
-  static String? _generatedAudioPath(String toolName, String content) {
-    final prefix = switch (toolName) {
-      speakToolName => 'Speech saved to ',
-      generateMusicToolName => 'Music saved to ',
-      _ => null,
-    };
-    if (prefix == null || !content.startsWith(prefix)) return null;
-    return mediaPathInText(content, audioFileExtensions);
-  }
-
-  /// The sandbox media path a successful tool result should render an
-  /// inline player for: explicit for `speak`/`generate_music`, otherwise
-  /// any path-like token with a media extension (`.mp3/.wav/.m4a` → audio,
-  /// `.mp4/.mov/.webm` → video). The `read` tool is NEVER sniffed — it
-  /// legitimately prints file paths as text (same exclusion as images).
-  static ({SandboxMediaKind kind, String path})? _toolMedia(
-    String? toolName,
-    String content,
-    bool isError,
-  ) {
-    if (toolName == null || toolName == 'read' || isError) return null;
-    final audioPath = _generatedAudioPath(toolName, content);
-    if (audioPath != null) {
-      return (kind: SandboxMediaKind.audio, path: audioPath);
-    }
-    final fallbackAudio = mediaPathInText(content, audioFileExtensions);
-    if (fallbackAudio != null) {
-      return (kind: SandboxMediaKind.audio, path: fallbackAudio);
-    }
-    final videoPath = mediaPathInText(content, videoFileExtensions);
-    if (videoPath != null) {
-      return (kind: SandboxMediaKind.video, path: videoPath);
-    }
-    return null;
-  }
-
-  /// `onTapLink` for chat Markdown: audio/video sandbox links open a small
-  /// player dialog (flutter_markdown has no custom link renderer — only
-  /// images render inline). Other links stay dead, as before.
-  void _onMarkdownLink(String text, String? href, String title) {
-    if (href == null) return;
-    final kind = sandboxMediaKind(href);
-    if (kind == null) return;
-    showFahMediaDialog(
-      context,
-      bytes: _images.load(href),
-      kind: kind,
-      audioControllerFactory: widget.audioControllerFactory,
-      videoControllerFactory: widget.videoControllerFactory,
-    );
-  }
-
   Widget _buildCustomMessage(
     BuildContext context,
     CustomMessage message,
@@ -1018,144 +932,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     MessageGroupStatus? groupStatus,
   }) {
     final metadata = message.metadata ?? const {};
-    final toolName = metadata['toolName'] as String?;
-    final content = (metadata['content'] as String?) ?? '';
-    final isError = (metadata['isError'] as bool?) ?? false;
-    final role = metadata['role'] as String?;
-    final palette = FahColors.of(context);
-    // generate_image results carry the saved sandbox path — show the image
-    // inline under the tool tile instead of waiting for the model to
-    // reference it. Errors ("Error: …") simply don't match.
-    final generatedImagePath = toolName == generateImageToolName
-        ? _generatedImagePath(content)
-        : null;
-    // speak/generate_music (and any non-read tool result mentioning a
-    // media path) get an inline audio/video player under the tile.
-    final toolMedia = _toolMedia(toolName, content, isError);
-
-    if (role == 'thinking') {
-      return Container(
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: palette.panelAlt.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: palette.border.withValues(alpha: 0.5)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.psychology_outlined, size: 14, color: palette.dim),
-            const SizedBox(width: 6),
-            Expanded(
-              // Reasoning can run to thousands of lines (and small models
-              // sometimes loop there) — collapse like long tool output, but
-              // keep the NEWEST reasoning visible (the tail, not the head).
-              child: _CollapsibleToolOutput(
-                content: content,
-                showTail: true,
-                style: palette
-                    .mono(color: palette.dim, fontSize: 12)
-                    .copyWith(fontStyle: FontStyle.italic),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: palette.panelAlt,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isError
-              ? palette.error.withValues(alpha: 0.45)
-              : palette.border,
-        ),
+    return ChatMessageTile(
+      message: FahChatMessage(
+        role: (metadata['role'] as String?) ?? 'system',
+        content: (metadata['content'] as String?) ?? '',
+        toolName: metadata['toolName'] as String?,
+        isError: (metadata['isError'] as bool?) ?? false,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (toolName != null) ...[
-            Row(
-              children: [
-                Icon(
-                  isError ? Icons.close : Icons.check,
-                  size: 14,
-                  color: isError ? palette.error : palette.teal,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '[ $toolName ]',
-                    overflow: TextOverflow.ellipsis,
-                    style: palette.mono(
-                      color: isError ? palette.error : palette.indigo,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (content.isNotEmpty) const SizedBox(height: 6),
-          ],
-          if (content.isNotEmpty)
-            toolName == null
-                // System rows (e.g. tool-call echoes) read like shell input:
-                // a teal `$` prompt followed by dim mono text.
-                ? Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: r'$ ',
-                          style: palette.mono(color: palette.teal),
-                        ),
-                        TextSpan(
-                          text: content,
-                          style: palette.mono(color: palette.dim),
-                        ),
-                      ],
-                    ),
-                  )
-                : _CollapsibleToolOutput(
-                    content: content,
-                    style: palette.mono(color: palette.dim),
-                  ),
-          if (generatedImagePath != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 280),
-                child: _images.image(
-                  path: generatedImagePath,
-                  onTap: (bytes) => showFahImagePreview(context, bytes),
-                ),
-              ),
-            ),
-          if (toolMedia != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: switch (toolMedia.kind) {
-                  SandboxMediaKind.audio => SandboxAudioPlayer(
-                    bytes: _images.load(toolMedia.path),
-                    controllerFactory: widget.audioControllerFactory,
-                  ),
-                  SandboxMediaKind.video => SandboxVideoPlayer(
-                    path: toolMedia.path,
-                    bytes: _images.load(toolMedia.path),
-                    controllerFactory: widget.videoControllerFactory,
-                  ),
-                },
-              ),
-            ),
-        ],
-      ),
+      images: _images,
+      audioControllerFactory: widget.audioControllerFactory,
+      videoControllerFactory: widget.videoControllerFactory,
     );
   }
 
@@ -1549,90 +1335,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ],
         ],
       ),
-    );
-  }
-}
-
-/// Tool-output block that caps long dumps (file reads, big writes) at a few
-/// lines with an expand/collapse toggle — keeps the transcript scannable
-/// while the full output stays one tap away.
-class _CollapsibleToolOutput extends StatefulWidget {
-  const _CollapsibleToolOutput({
-    required this.content,
-    required this.style,
-    this.showTail = false,
-  });
-
-  final String content;
-  final TextStyle style;
-
-  /// Collapse to the LAST lines instead of the first — used for thinking
-  /// bubbles, where the newest reasoning matters more than the preamble.
-  final bool showTail;
-
-  /// Outputs longer than this collapse by default.
-  static const int collapsedLineCount = 8;
-  static const int longLineThreshold = 12;
-  static const int longCharThreshold = 700;
-
-  @override
-  State<_CollapsibleToolOutput> createState() => _CollapsibleToolOutputState();
-}
-
-class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
-  bool _expanded = false;
-
-  bool get _isLong {
-    final lines = widget.content.split('\n');
-    return lines.length > _CollapsibleToolOutput.longLineThreshold ||
-        widget.content.length > _CollapsibleToolOutput.longCharThreshold;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_isLong) {
-      return Text(widget.content, style: widget.style);
-    }
-    final palette = FahColors.of(context);
-    final lines = widget.content.split('\n');
-    final shown = _expanded
-        ? lines
-        : widget.showTail
-        ? lines
-              .skip(
-                lines.length > _CollapsibleToolOutput.collapsedLineCount
-                    ? lines.length - _CollapsibleToolOutput.collapsedLineCount
-                    : 0,
-              )
-              .toList()
-        : lines.take(_CollapsibleToolOutput.collapsedLineCount).toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(shown.join('\n'), style: widget.style),
-        const SizedBox(height: 4),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => setState(() => _expanded = !_expanded),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                size: 14,
-                color: palette.indigo,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                _expanded
-                    ? context.l10n.chatCollapse
-                    : context.l10n.chatShowAll(lines.length.toString()),
-                style: palette.mono(color: palette.indigo, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

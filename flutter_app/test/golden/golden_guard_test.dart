@@ -41,6 +41,7 @@ const _coverage = <String, String>{
   'lib/ui/widgets/ask_ui.dart': 'test/golden/dialogs_golden_test.dart',
   'lib/ui/widgets/secret_request_sheet.dart':
       'test/golden/dialogs_golden_test.dart',
+  'lib/ui/widgets/chat_message_tile.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/app_icon.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/apps_grid.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/fa_work_bar.dart': 'test/golden/apps_golden_test.dart',

@@ -3,7 +3,8 @@
 // in the LICENSE file.
 
 /// Golden (screenshot) tests for the JS apps platform widgets:
-/// app_icon.dart, apps_grid.dart, fa_work_bar.dart and js_app_view.dart.
+/// app_icon.dart, apps_grid.dart, fa_work_bar.dart, fa_chat_overlay.dart,
+/// js_app_view.dart and the shared ui/widgets/chat_message_tile.dart.
 ///
 /// Everything runs on MemoryExecutionEnv with fixed manifests — no network,
 /// no real file system writes, no real JS engine. The grid seeds the bundled
@@ -31,6 +32,8 @@ import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/ui/widgets/chat_message_tile.dart';
+import 'package:fa/ui/widgets/media_player.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -39,6 +42,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
+import '../fake_media_controllers.dart';
 
 // --- Inline SVG icons (single-quoted XML so they embed in JSON manifests) --
 
@@ -270,7 +274,8 @@ JsAppInfo _app(Map<String, Object?> manifest, {String fallbackId = 'demo'}) {
 
 /// The hung-streaming service from test/apps/fa_work_bar_test.dart: the
 /// provider stream stays open until aborted, so `isStreaming` stays true.
-AgentService _hungService() {
+/// [env] overrides the sandbox (goldens seed generated media into it).
+AgentService _hungService([MemoryExecutionEnv? env]) {
   fn(Model model, dynamic context, {cancelToken}) {
     final stream = AssistantMessageEventStream();
     final partial = AssistantMessage(
@@ -304,7 +309,7 @@ AgentService _hungService() {
       streamFunction: fn,
       toolRegistry: ToolRegistry(const []),
     ),
-    env: MemoryExecutionEnv(),
+    env: env ?? MemoryExecutionEnv(),
     sessionsRoot: '/sessions',
     config: AgentConfig(
       providerKind: 'test',
@@ -549,10 +554,16 @@ Widget _replySheetHost(
 
 /// A JsAppView-like scaffold with the expanded in-place Fa chat overlay
 /// docked over the mock app canvas: header (handle, Fa mark, actions), a
-/// realistic transcript (user bubble, Markdown answer, thinking note, tool
-/// line, system line) and the composer. The service is idle, so the footer
-/// work bar stays hidden and the frame is static.
-Widget _chatOverlayHost(AgentService service, MemoryExecutionEnv env) {
+/// realistic transcript and the composer. [colors] picks the dark (default)
+/// or light app canvas; the controller factories let goldens inject
+/// deterministic media players (see test/fake_media_controllers.dart).
+Widget _chatOverlayHost(
+  AgentService service,
+  MemoryExecutionEnv env, {
+  FahColors colors = FahColors.dark,
+  SandboxAudioControllerFactory? audioControllerFactory,
+  SandboxVideoControllerFactory? videoControllerFactory,
+}) {
   final calcApp = _app(const {
     'id': 'calculator',
     'name': 'Calculator',
@@ -576,13 +587,15 @@ Widget _chatOverlayHost(AgentService service, MemoryExecutionEnv env) {
     ),
     body: Stack(
       children: [
-        Positioned.fill(child: _calculatorCanvas()),
+        Positioned.fill(child: _calculatorCanvas(colors)),
         Positioned.fill(
           child: FaChatOverlay(
             service: service,
             onSend: (text) async {},
             onCollapse: () {},
             onOpenFullChat: () {},
+            audioControllerFactory: audioControllerFactory,
+            videoControllerFactory: videoControllerFactory,
           ),
         ),
       ],
@@ -618,6 +631,48 @@ const _faReply =
     'The pad keeps a 10px rhythm between rows and the whole card sits on '
     'the raised panel, so it reads like one instrument.\n\n'
     'Want a history tape or haptic ticks next?';
+
+/// The transcript both expanded-overlay idle shots (dark + light) render.
+void _seedOverlayTranscript(AgentService service) {
+  service.messages.addAll([
+    FahChatMessage(
+      role: 'user',
+      content: 'Make the operator keys indigo and grow the display.',
+    ),
+    FahChatMessage(
+      role: 'thinking',
+      content: 'Picking the brand indigo for operators, 40px display…',
+    ),
+    FahChatMessage(
+      role: 'tool',
+      content: 'patched widget.js',
+      toolName: 'edit',
+    ),
+    FahChatMessage(role: 'system', content: '[edit] apps/calculator/widget.js'),
+    FahChatMessage(role: 'assistant', content: _faReply),
+  ]);
+}
+
+/// A 256×40 teal→indigo gradient swatch PNG (574 bytes), generated once
+/// offline and embedded so the rich-overlay snapshot never touches network
+/// or assets. Wide-and-short on purpose: rendered `fitWidth` it stays ~44px
+/// high, so the whole rich transcript fits the panel frame.
+final Uint8List _wideSwatchPngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAQAAAAAoCAIAAACemLPeAAACBUlEQVR4'
+  'nO3T6TrUARTAYTdESBKSpAlJN4bSvihpL+20URnbjH0wxjJoIaWk0p7W'
+  'c55z/nMDvv6e572FNy19rj19NjATdslwRrJDTZvOjCm1QUx2uQnRbTIT'
+  'okeNm0hmPJJlxqJuVPSK7BHTlx1L6d84HBgacINiMEcMmKGcfrepb9j1'
+  'ipiLxnKjIypiRnN71GbRPea6RFx1xvPUuOowibxwYotpn3BPxKTIf2ym'
+  '8h8F2qYLUlqT7qGYKRQPzGzhfbf13py7K56qFlXU8kw1m+dFd9Q2cfuF'
+  'uyXm1c35YrVQfCNw/aXYbq4tuibxSpRcNa9LrgQuL+0wl8Qbd1G8LRUX'
+  'zHLpebfz3Dt3VqyoRhVqfB86k/Ih1KB2idMf3SmxqupXy9SnspOBE59F'
+  'uTguvrhj4quoOGq+VRwJHP6+2xwSP9RB87PyQMpaZZ3bs/+X2yd+q1pV'
+  'VfunqiZQ/dfsrf6XRgACEIAABCAAAQhAAAIQgAAEIAABCEAAAhCAAAQg'
+  'AAEIQAACEIAABCAAAQhAAAIQgAAEIAABCEAAAhCAAAQgAAEIQAACEIAA'
+  'BCAAAQhAAAIQgAAEIAABCEAAAhCAAAQgAAEIQAACEIAABCAAAQhAAAIQ'
+  'gAAEIAABCEAAAhCAAAQgAAEIQAACEIAABCAAAQhAAAIQgAAEIAABCEAA'
+  'AhCAAOsL8B9aD4YZ7cz62AAAAABJRU5ErkJggg==',
+);
 
 void main() {
   setUpAll(ensureGoldenFonts);
@@ -812,26 +867,7 @@ void main() {
     final env = (await tester.runAsync(_seededEnv))!;
     final service = _hungService(); // idle: the footer work bar stays hidden
     addTearDown(service.dispose);
-    service.messages.addAll([
-      FahChatMessage(
-        role: 'user',
-        content: 'Make the operator keys indigo and grow the display.',
-      ),
-      FahChatMessage(
-        role: 'thinking',
-        content: 'Picking the brand indigo for operators, 40px display…',
-      ),
-      FahChatMessage(
-        role: 'tool',
-        content: 'patched widget.js',
-        toolName: 'edit',
-      ),
-      FahChatMessage(
-        role: 'system',
-        content: '[edit] apps/calculator/widget.js',
-      ),
-      FahChatMessage(role: 'assistant', content: _faReply),
-    ]);
+    _seedOverlayTranscript(service);
     await pumpGolden(
       tester,
       _chatOverlayHost(service, env),
@@ -839,6 +875,37 @@ void main() {
       wrap: (child) => child,
     );
     await expectGolden(tester, 'apps_fa_chat_overlay');
+  });
+
+  testWidgets('expanded Fa chat overlay with a transcript (light theme)', (
+    tester,
+  ) async {
+    // Real file IO must run outside the FakeAsync test zone.
+    final env = (await tester.runAsync(_seededEnv))!;
+    final service = _hungService();
+    addTearDown(service.dispose);
+    _seedOverlayTranscript(service);
+    await pumpGolden(
+      tester,
+      _chatOverlayHost(service, env, colors: FahColors.light),
+      size: goldenSizeDesktop,
+      theme: buildFahThemeLight(),
+      wrap: (child) => child,
+    );
+    await expectGolden(tester, 'apps_fa_chat_overlay_light');
+  });
+
+  testWidgets('the overlay transcript renders through the shared '
+      'ChatMessageTile', (tester) async {
+    final env = MemoryExecutionEnv();
+    final service = _hungService();
+    addTearDown(service.dispose);
+    _seedOverlayTranscript(service);
+    await _pumpFrames(tester, _chatOverlayHost(service, env));
+    // One shared tile per transcript message — the same widget the full
+    // chat screen builds (tool tiles, thinking bubble, markdown bubbles).
+    expect(find.byType(ChatMessageTile), findsNWidgets(5));
+    expect(find.text('[ edit ]'), findsOneWidget);
   });
 
   testWidgets('Fa chat overlay while streaming: the status row is INSIDE the '
@@ -872,6 +939,189 @@ void main() {
     // The embedded work bar contributes its status row inline — the panel
     // stays one card (this is the "2 panels" regression guard).
     await expectGolden(tester, 'apps_fa_chat_overlay_streaming');
+  });
+
+  testWidgets('Fa chat overlay while streaming in the light theme', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final service = _hungService();
+    addTearDown(service.dispose);
+    service.messages.addAll([
+      FahChatMessage(
+        role: 'user',
+        content: 'Make the operator keys indigo and grow the display.',
+      ),
+      FahChatMessage(role: 'thinking', content: 'Adjusting the pad layout…'),
+      FahChatMessage(
+        role: 'assistant',
+        content: 'Done — indigo operators, bigger display.',
+      ),
+    ]);
+    await pumpGolden(
+      tester,
+      _chatOverlayHost(service, env, colors: FahColors.light),
+      size: goldenSizeDesktop,
+      theme: buildFahThemeLight(),
+      wrap: (child) => child,
+    );
+    await tester.runAsync(() async {
+      await service.sendText('work');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pump();
+    expect(service.isStreaming, isTrue);
+    await expectGolden(tester, 'apps_fa_chat_overlay_streaming_light');
+  });
+
+  /// Pumps the expanded overlay with a transcript that exercises every rich
+  /// branch of the shared renderer — a tool tile with collapsible output, a
+  /// tail-collapsed thinking bubble, an inline sandbox image under a
+  /// `generate_image` tile and an inline audio player (deterministic fake,
+  /// paused at 0:00) — and snapshots it as [golden]. The collapsible toggle
+  /// label is localized, so [locale] produces visibly different frames
+  /// (en + ru variants).
+  Future<void> richOverlayGolden(
+    WidgetTester tester, {
+    required Locale locale,
+    required String golden,
+  }) async {
+    // Real file IO must run outside the FakeAsync test zone.
+    final env = (await tester.runAsync(() async {
+      final env = await _seededEnv();
+      await env.writeBinaryFile('generated/swatch.png', _wideSwatchPngBytes);
+      await env.writeBinaryFile(
+        'generated/speech-1.mp3',
+        Uint8List.fromList(List<int>.filled(64, 7)),
+      );
+      return env;
+    }))!;
+    final service = _hungService(env); // idle: the frame is static
+    addTearDown(service.dispose);
+    service.messages.addAll([
+      FahChatMessage(
+        role: 'user',
+        content:
+            'Read the pad source, tweak the theme, then show me a swatch '
+            'and say it is done.',
+      ),
+      FahChatMessage(
+        role: 'thinking',
+        content: [
+          for (var i = 1; i <= 14; i++) 'reasoning line $i — pad layout notes',
+        ].join('\n'),
+      ),
+      FahChatMessage(
+        role: 'tool',
+        toolName: 'read',
+        // >700 chars over five lines: the output collapses (char threshold)
+        // to those five lines plus the expand toggle — compact enough to
+        // keep the thinking bubble, image and player in the same frame.
+        content: [
+          for (var i = 1; i <= 5; i++)
+            '$i  const key$i = CalcKey(theme: indigo); // brand indigo '
+                'operators, 40px display, gradient equals key, haptic ticks '
+                '— theme tokens across the pad',
+        ].join('\n'),
+      ),
+      FahChatMessage(
+        role: 'tool',
+        toolName: 'generate_image',
+        content:
+            'Generated image saved to generated/swatch.png '
+            '(574 bytes, 256x40). Reference it as '
+            '![image](generated/swatch.png) to display it inline in the chat.',
+      ),
+      FahChatMessage(
+        role: 'tool',
+        toolName: 'speak',
+        content:
+            'Speech saved to generated/speech-1.mp3 '
+            '(64 bytes, voice "alloy", ~0s).',
+      ),
+      FahChatMessage(
+        role: 'assistant',
+        content:
+            'All done — operators are **indigo**, the swatch sits under the '
+            'image tile and the voice line is ready above.',
+      ),
+    ]);
+
+    tester.view.physicalSize = goldenSizeDesktop;
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // The env reads + image codec + controller creation resolve on the real
+    // event loop; each resolved image needs another layout pass before it
+    // can paint (same dance as the chat_generated_image shot).
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: buildFahTheme(),
+          locale: locale,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: _chatOverlayHost(
+            service,
+            env,
+            audioControllerFactory: (bytes) => FakeAudioController(),
+            videoControllerFactory: (path, bytes) => FakeVideoController(),
+          ),
+        ),
+      );
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await tester.pump();
+      }
+      // The transcript is taller than the panel; a completed run leaves the
+      // overlay pinned to the END (its auto-scroll on new content), which is
+      // also where the audio player and the inline image live. The lazy
+      // ListView underestimates its extent until the tail items build, so
+      // jump in a loop until it converges.
+      for (var i = 0; i < 4; i++) {
+        final position = tester
+            .state<ScrollableState>(find.byType(Scrollable).first)
+            .position;
+        position.jumpTo(position.maxScrollExtent);
+        await tester.pump();
+      }
+      // The freshly revealed player's async load needs real event-loop
+      // turns before it renders the paused 0:00 / 0:07 state.
+      for (var i = 0; i < 4; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+    });
+    expect(find.byType(SandboxAudioPlayer), findsOneWidget);
+    expect(find.text('0:00 / 0:07'), findsOneWidget);
+    // Long outputs arrive collapsed (head for tools, tail for thinking):
+    // the newest reasoning line is visible, the oldest collapsed away, and
+    // the two expand toggles render next to the header's collapse arrow.
+    expect(find.textContaining('reasoning line 14'), findsOneWidget);
+    expect(find.textContaining('reasoning line 1 —'), findsNothing);
+    expect(find.byIcon(Icons.keyboard_arrow_down), findsNWidgets(3));
+    await expectGolden(tester, golden);
+  }
+
+  testWidgets('expanded Fa chat overlay with rich content: tool tiles, '
+      'collapsed thinking, inline image and audio player', (tester) async {
+    await richOverlayGolden(
+      tester,
+      locale: const Locale('en'),
+      golden: 'apps_fa_chat_overlay_rich',
+    );
+  });
+
+  testWidgets('expanded Fa chat overlay with rich content (ru)', (
+    tester,
+  ) async {
+    await richOverlayGolden(
+      tester,
+      locale: const Locale('ru'),
+      golden: 'apps_fa_chat_overlay_rich_ru',
+    );
   });
 
   testWidgets('app permissions dialog with a persisted override', (

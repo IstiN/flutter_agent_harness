@@ -118,10 +118,17 @@ void main() {
     ]);
     await _pumpOverlay(tester, service);
 
-    expect(find.text('make it purple'), findsOneWidget);
+    // The overlay renders through the shared ChatMessageTile: user/assistant
+    // as Markdown bubbles, thinking as an italic note, tools as styled
+    // `[ name ]` tiles, system rows as `$ …` shell lines.
+    expect(find.textContaining('make it purple'), findsOneWidget);
     expect(find.textContaining('weighing purples'), findsOneWidget);
-    expect(find.text('[edit] ✓'), findsOneWidget);
-    expect(find.text('[edit] widget.js'), findsOneWidget);
+    expect(find.text('[ edit ]'), findsOneWidget);
+    expect(find.text('patched widget.js'), findsOneWidget);
+    expect(
+      find.textContaining('[edit] widget.js', findRichText: true),
+      findsOneWidget,
+    );
     expect(find.textContaining('Done — now'), findsOneWidget);
   });
 
