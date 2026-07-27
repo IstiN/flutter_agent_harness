@@ -10,6 +10,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/ui/widgets/ask_ui.dart';
+import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -53,7 +54,11 @@ ThemeData _goldenTheme() {
 /// pumpGolden's twin with [_goldenTheme]: the modal routes under test are
 /// pushed above `home`, so a theme override must live on the MaterialApp
 /// itself (pumpGolden's `wrap` cannot reach dialogs/sheets).
-Future<void> _pumpDialogHost(WidgetTester tester, Widget child) async {
+Future<void> _pumpDialogHost(
+  WidgetTester tester,
+  Widget child, {
+  Locale locale = const Locale('en'),
+}) async {
   tester.view.physicalSize = goldenSizeDesktop;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -61,7 +66,7 @@ Future<void> _pumpDialogHost(WidgetTester tester, Widget child) async {
     MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: _goldenTheme(),
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: child,
@@ -265,9 +270,10 @@ class _ChatHostState extends State<_ChatHost> {
 /// settles the entry animation.
 Future<void> _pumpOpened(
   WidgetTester tester,
-  Future<void> Function(BuildContext context) open,
-) async {
-  await _pumpDialogHost(tester, _ChatHost(open: open));
+  Future<void> Function(BuildContext context) open, {
+  Locale locale = const Locale('en'),
+}) async {
+  await _pumpDialogHost(tester, _ChatHost(open: open), locale: locale);
   await tester.pumpAndSettle();
 }
 
@@ -342,6 +348,37 @@ void main() {
       await tester.tap(find.text('Gamma'));
       await tester.pumpAndSettle();
       await expectGolden(tester, 'dialogs_ask_multi');
+    });
+
+    testWidgets('secret request sheet: prefilled name, entered value', (
+      tester,
+    ) async {
+      await _pumpOpened(
+        tester,
+        (context) => showSecretRequestSheet(
+          context,
+          'GITHUB_TOKEN',
+          'I need a GitHub token to push the branch and open the pull '
+              'request. Create a fine-grained token with repo access.',
+        ),
+      );
+      await tester.enterText(find.byType(TextField).at(1), 'ghp_golden-value');
+      await tester.pumpAndSettle();
+      await expectGolden(tester, 'dialogs_secret_request');
+    });
+
+    testWidgets('secret request sheet: russian locale', (tester) async {
+      await _pumpOpened(
+        tester,
+        (context) => showSecretRequestSheet(
+          context,
+          'OPENAI_API_KEY',
+          'Мне нужен ключ OpenAI, чтобы перегенерировать иллюстрации '
+              'для отчёта.',
+        ),
+        locale: const Locale('ru'),
+      );
+      await expectGolden(tester, 'dialogs_secret_request_ru');
     });
   });
 }

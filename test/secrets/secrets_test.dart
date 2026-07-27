@@ -285,6 +285,47 @@ void main() {
       expect(shell.lastOptions, isNull);
     });
 
+    test('addSecrets merges into the live map for later exec calls', () async {
+      final shell = _RecordingShell();
+      final env = SecretsExecutionEnv(
+        MemoryExecutionEnv(cwd: '/', shell: shell),
+        const {'SECRET': 's3cr3t-value'},
+      );
+      await env.exec('x');
+      expect(shell.lastOptions!.env, {'SECRET': 's3cr3t-value'});
+      env.addSecrets(const {'NEW_KEY': 'n3w-value'});
+      await env.exec('x');
+      expect(shell.lastOptions!.env, {
+        'SECRET': 's3cr3t-value',
+        'NEW_KEY': 'n3w-value',
+      });
+    });
+
+    test('addSecrets replaces an existing entry', () async {
+      final shell = _RecordingShell();
+      final env = SecretsExecutionEnv(
+        MemoryExecutionEnv(cwd: '/', shell: shell),
+        const {'SECRET': 'old-value'},
+      );
+      env.addSecrets(const {'SECRET': 'new-value'});
+      await env.exec('x');
+      expect(shell.lastOptions!.env, {'SECRET': 'new-value'});
+    });
+
+    test('per-call env still wins over runtime-added secrets', () async {
+      final shell = _RecordingShell();
+      final env = SecretsExecutionEnv(
+        MemoryExecutionEnv(cwd: '/', shell: shell),
+        const {},
+      );
+      env.addSecrets(const {'NEW_KEY': 'n3w-value'});
+      await env.exec(
+        'x',
+        options: ShellExecOptions(env: const {'NEW_KEY': 'override'}),
+      );
+      expect(shell.lastOptions!.env, {'NEW_KEY': 'override'});
+    });
+
     test('filesystem operations delegate to the wrapped env', () async {
       final env = SecretsExecutionEnv(MemoryExecutionEnv(cwd: '/'), const {
         'SECRET': 's3cr3t-value',

@@ -1,10 +1,14 @@
 /// [ExecutionEnv] decorator that injects secrets into shell executions.
 ///
-/// Wraps any [ExecutionEnv] and merges a fixed secret map into
+/// Wraps any [ExecutionEnv] and merges a secret map into
 /// [ShellExecOptions.env] on every [exec], so `$NAME` expands inside the
 /// sandbox shell (WASM, in-memory, or local) without the values ever
 /// entering the agent context. Pair with `SecretRedactor` (which masks the
 /// values in tool results) for the full secrets flow.
+///
+/// The map is live: [addSecrets] merges entries at runtime (e.g. a key the
+/// user grants mid-session through the `request_secret` tool), and later
+/// [exec] calls pick them up.
 library;
 
 import 'dart:typed_data';
@@ -15,13 +19,20 @@ import 'execution_env.dart';
 final class SecretsExecutionEnv implements ExecutionEnv {
   /// Creates a decorator over [delegate] injecting [secrets] (name → value).
   SecretsExecutionEnv(this._delegate, Map<String, String> secrets)
-    : _secrets = Map.unmodifiable(secrets);
+    : _secrets = Map.of(secrets);
 
   final ExecutionEnv _delegate;
   final Map<String, String> _secrets;
 
   /// The wrapped environment.
   ExecutionEnv get delegate => _delegate;
+
+  /// Merges [secrets] into the injected map at runtime; later [exec] calls
+  /// see them. Per-call [ShellExecOptions.env] entries still win over the
+  /// injected secrets.
+  void addSecrets(Map<String, String> secrets) {
+    _secrets.addAll(secrets);
+  }
 
   @override
   String get cwd => _delegate.cwd;

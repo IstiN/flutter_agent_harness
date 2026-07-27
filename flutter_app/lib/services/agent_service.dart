@@ -162,6 +162,8 @@ class AgentService extends ChangeNotifier {
     ApprovalMode? initialApprovalMode,
   }) : _promptSuffix = promptSuffix,
        _resolveSecretName = null,
+       _secretsEnv = null,
+       _sessionKeys = null,
        _approvalModeStore = null,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -219,10 +221,14 @@ class AgentService extends ChangeNotifier {
       if (formatSkillsForPrompt(skills).isNotEmpty)
         formatSkillsForPrompt(skills),
     ].join('\n\n');
+    // Always wrap: the `request_secret` tool injects user-granted keys into
+    // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
+    // must be in place even when the boot-time secret set is empty.
+    final secretsEnv = SecretsExecutionEnv(resolvedEnv, secrets);
     return AgentService._withEnv(
-      env: secrets.isEmpty
-          ? resolvedEnv
-          : SecretsExecutionEnv(resolvedEnv, secrets),
+      env: secretsEnv,
+      secretsEnv: secretsEnv,
+      sessionKeys: sessionKeys,
       config: config,
       redactor: redactor,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
@@ -284,11 +290,15 @@ class AgentService extends ChangeNotifier {
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
     MediaKeyResolver? resolveSecretName,
+    SecretsExecutionEnv? secretsEnv,
+    SessionKeysStore? sessionKeys,
     String promptSuffix = '',
     ApprovalMode? initialApprovalMode,
     ApprovalModeStore? approvalModeStore,
   }) : _config = config,
        _resolveSecretName = resolveSecretName,
+       _secretsEnv = secretsEnv,
+       _sessionKeys = sessionKeys,
        _promptSuffix = promptSuffix,
        _approvalModeStore = approvalModeStore,
        approval = ApprovalManager(
@@ -340,6 +350,10 @@ class AgentService extends ChangeNotifier {
         model: () => _agent.state.model,
       ),
       askTool(callback: _answerAskQuestions),
+      // Secret requests: the agent asks the user for a missing credential
+      // through the chat screen's bottom sheet; a grant is persisted into
+      // the Keys store and made live (see [_handleSecretRequest]).
+      requestSecretTool(callback: _handleSecretRequest),
       // System-calendar access (macOS/iOS via the `fah/calendar` channel;
       // the tools themselves report a clean note where unsupported).
       if (calendarPlatformSupported) ...[
@@ -497,9 +511,12 @@ class AgentService extends ChangeNotifier {
   ) => _effectiveSystemPrompt(config, redactor);
 
   /// Composes redaction hooks onto the agent so secret values never reach
-  /// the model, the transcript, or the session files.
+  /// the model, the transcript, or the session files. Attached even for an
+  /// empty redactor: `request_secret` grants register values at runtime and
+  /// must be masked from that point on (an empty redactor's hooks are a
+  /// cheap pass-through).
   void _attachRedactor(SecretRedactor? redactor) {
-    if (redactor == null || redactor.isEmpty) return;
+    if (redactor == null) return;
     attachSecretRedactor(_agent, redactor);
   }
 
@@ -536,6 +553,24 @@ class AgentService extends ChangeNotifier {
   /// Material bottom sheet). `null` → ask calls resolve as cancelled, the
   /// safe headless default.
   AskCallback? askHandler;
+
+  /// UI hook rendering the `request_secret` prompt (the chat screen installs
+  /// a Material bottom sheet). `null` → the request resolves as declined,
+  /// the safe headless default.
+  RequestSecretCallback? secretRequestHandler;
+
+  /// The live secrets wrapper around [env] ([AgentService.create] path);
+  /// `request_secret` grants are injected here so later bash calls see them.
+  /// `null` for services built around a pre-constructed [Agent] (tests) or
+  /// when [env] was not wrapped — the tool still works, the value just is
+  /// not injected into the shell environment.
+  final SecretsExecutionEnv? _secretsEnv;
+
+  /// The user-saved keys store ([AgentService.create] path); `request_secret`
+  /// grants persist here. `null` for the pre-constructed-[Agent] path — the
+  /// tool still works, the value just is not persisted (the result text
+  /// reflects that via [RequestSecretResult.persisted]).
+  final SessionKeysStore? _sessionKeys;
 
   /// The registry built in [_withEnv]; `null` for services constructed
   /// around a pre-constructed [Agent] (tests), where the registry is owned
@@ -582,9 +617,43 @@ class AgentService extends ChangeNotifier {
     return handler(questions);
   }
 
+  /// Routes the `request_secret` tool to the installed
+  /// [secretRequestHandler] and makes a grant live: persisted into the Keys
+  /// store, injected into the running shell environment, and registered with
+  /// the redactor — so the next run's system-prompt name list, bash `$NAME`
+  /// expansion, and transcript redaction all pick it up.
+  Future<RequestSecretResult?> _handleSecretRequest(
+    String name,
+    String reason,
+  ) async {
+    final handler = secretRequestHandler;
+    if (handler == null) return null;
+    final result = await handler(name, reason);
+    if (result == null) return null;
+    // Services built around a pre-constructed Agent (tests) may have none of
+    // these; the grant still applies for the caller, it just is not
+    // persisted or injected — [RequestSecretResult.persisted] reflects that.
+    await _sessionKeys?.set(result.name, result.value);
+    _secretsEnv?.addSecrets({result.name: result.value});
+    _redactor?.register(result.name, result.value);
+    return RequestSecretResult(
+      name: result.name,
+      value: result.value,
+      persisted: _sessionKeys != null,
+    );
+  }
+
   /// Exposes the agent's registered tools to tests (ask-tool wiring checks).
   @visibleForTesting
   List<Tool> get toolsForTest => _agent.state.tools;
+
+  /// Exposes the live secrets env to tests (`request_secret` grant checks).
+  @visibleForTesting
+  SecretsExecutionEnv? get secretsEnvForTest => _secretsEnv;
+
+  /// Exposes the redactor to tests (runtime secret registration checks).
+  @visibleForTesting
+  SecretRedactor? get redactorForTest => _redactor;
 
   /// Switches the approval mode (settings dialog's mode selector) and
   /// persists the choice when a store is wired (fire-and-forget — the UI
@@ -668,7 +737,10 @@ class AgentService extends ChangeNotifier {
   /// The project-folder mount note for the system prompt (macOS): tells the
   /// model where the mounted project lives for file tools and the shell.
   String? _projectMountNote() {
-    final env = this.env;
+    // [AgentService.create] always wraps the shared env in
+    // [SecretsExecutionEnv]; look through it for the mount env.
+    var env = this.env;
+    if (env is SecretsExecutionEnv) env = env.delegate;
     if (env is! ProjectMountEnv) return null;
     final root = env.mountedRoot;
     if (root == null) return null;
@@ -1090,6 +1162,10 @@ class AgentService extends ChangeNotifier {
       redactor: _redactor,
       streamFunction: _agent.streamFunction,
       resolveSecretName: _resolveSecretName,
+      // Clones share the live secrets env and the Keys store, so a
+      // `request_secret` grant in one session is live and persisted for all.
+      secretsEnv: _secretsEnv,
+      sessionKeys: _sessionKeys,
       // Clones inherit the CURRENT approval mode (not a fresh disk read) and
       // share the store so their mode changes persist too.
       initialApprovalMode: approval.mode,

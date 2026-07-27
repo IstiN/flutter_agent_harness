@@ -7,7 +7,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show ApprovalDecision, ApprovalRequest, AskAnswer, AskQuestion;
+    show
+        ApprovalDecision,
+        ApprovalRequest,
+        AskAnswer,
+        AskQuestion,
+        RequestSecretResult;
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -32,6 +37,7 @@ import 'package:fa/services/media_tools.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/widgets/media_player.dart';
+import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/services/upload.dart';
@@ -373,6 +379,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Same pattern for the ask tool: this screen renders the questions as a
     // modal bottom sheet; without a handler, ask calls resolve as cancelled.
     widget.service.askHandler = _handleAskQuestions;
+    // And for the request_secret tool: this screen renders the credential
+    // prompt as a modal bottom sheet; without a handler, requests resolve as
+    // declined. The service persists and activates a granted key itself.
+    widget.service.secretRequestHandler = _handleSecretRequest;
     // And for the open_app tool: this screen owns the Navigator, so it
     // pushes the app's JsAppView; without a launcher the tool is absent.
     widget.service.appLauncher = _launchApp;
@@ -387,6 +397,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
     if (active.service.askHandler == _handleAskQuestions) {
       active.service.askHandler = null;
+    }
+    if (active.service.secretRequestHandler == _handleSecretRequest) {
+      active.service.secretRequestHandler = null;
     }
     if (active.service.appLauncher == _launchApp) {
       active.service.appLauncher = null;
@@ -419,6 +432,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<List<AskAnswer>?> _handleAskQuestions(List<AskQuestion> questions) {
     if (!mounted) return Future.value(null);
     return showAskSheet(context, questions);
+  }
+
+  Future<RequestSecretResult?> _handleSecretRequest(
+    String name,
+    String reason,
+  ) {
+    if (!mounted) return Future.value(null);
+    return showSecretRequestSheet(context, name, reason);
   }
 
   @override

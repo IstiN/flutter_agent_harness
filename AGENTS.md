@@ -14,6 +14,17 @@ factual: paths, commands, invariants — no essays.
   = deny).
 - `lib/src/tools/ask_tool.dart` — `ask` tool: structured mid-turn questions
   via injectable `AskCallback` (null = error, cancel = plain result).
+- `lib/src/tools/request_secret_tool.dart` — `request_secret` tool: the agent
+  asks the USER for a missing credential via injectable
+  `RequestSecretCallback` (never in chat text); a grant returns
+  `RequestSecretResult` (host-adjusted `name`, `value`, `persisted` flag),
+  a decline is a plain result. The app wires it in `AgentService` to
+  `secretRequestHandler` (chat screen installs
+  `ui/widgets/secret_request_sheet.dart`): a grant is persisted into
+  `SessionKeysStore`, injected into the live shell env via
+  `SecretsExecutionEnv.addSecrets` (the map is runtime-mutable now), and
+  registered into the same `SecretRedactor` — so the next run's prompt name
+  list, bash `$NAME`, and redaction all pick it up.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.

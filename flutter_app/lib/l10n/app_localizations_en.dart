@@ -700,6 +700,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get quickStartUse => 'Use';
 
   @override
+  String get secretRequestInvalidName =>
+      'Use UPPER_SNAKE: A–Z, 0–9, _, starting with a letter';
+
+  @override
+  String get secretRequestNameLabel => 'Key name';
+
+  @override
+  String get secretRequestNotNow => 'Not now';
+
+  @override
+  String get secretRequestSave => 'Save';
+
+  @override
+  String get secretRequestTitle => 'Fa needs a key';
+
+  @override
+  String get secretRequestValueLabel => 'Key value';
+
+  @override
   String get settingsAddProvider => 'Add provider';
 
   @override

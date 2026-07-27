@@ -56,6 +56,7 @@ export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/inspect_image.dart';
 export 'src/tools/read_selector.dart';
+export 'src/tools/request_secret_tool.dart';
 export 'src/tools/sqlite/sqlite_reader.dart';
 export 'src/tools/transcribe_audio.dart';
 export 'src/prompts/project_context.dart';

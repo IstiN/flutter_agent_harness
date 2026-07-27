@@ -102,9 +102,14 @@ class _FileBrowserState extends State<FileBrowser> {
   String? _error;
 
   /// The mount env when the agent's env is one (desktop/macOS); null
-  /// elsewhere (the open-folder control hides then).
-  ProjectMountEnv? get _mountEnv =>
-      widget.env is ProjectMountEnv ? widget.env as ProjectMountEnv : null;
+  /// elsewhere (the open-folder control hides then). Looks through the
+  /// [SecretsExecutionEnv] wrapper the agent service always puts around
+  /// the shared env.
+  ProjectMountEnv? get _mountEnv {
+    var env = widget.env;
+    if (env is SecretsExecutionEnv) env = env.delegate;
+    return env is ProjectMountEnv ? env : null;
+  }
 
   Future<void> _pickProjectFolder() async {
     final mountEnv = _mountEnv;

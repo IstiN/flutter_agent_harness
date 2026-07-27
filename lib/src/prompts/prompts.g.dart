@@ -105,6 +105,14 @@ const askToolDescriptionPrompt =
 const checkpointToolDescriptionPrompt =
     'Creates a context checkpoint before exploratory work so you can later rewind and keep only a concise report.\n\nUse this when you need to investigate with many intermediate tool calls (read/grep/glob/etc.) and want to minimize context cost afterward.\n\nRules:\n- You MUST call `rewind` before finishing after starting a checkpoint.\n- You NEVER call `checkpoint` while another checkpoint is active.\n\nTypical flow:\n1. `checkpoint(goal: …)`\n2. Perform exploratory work\n3. `rewind(report: …)` with concise findings\n\nAfter rewind, intermediate checkpoint messages are removed from active context and replaced by the report. The dropped history stays in the session tree; nothing is lost.';
 
+/// Description of the request_secret tool for asking the user for a missing
+/// credential (API key, token) through the host's secure key prompt, which
+/// stores it as a secret env var instead of exposing it in chat text.
+///
+/// Source: `prompts/tools/request_secret.md`.
+const requestSecretToolDescriptionPrompt =
+    'Ask the user for a credential (API key, token, password) that you need and that is not available yet.\n\n<conditions>\n- A command or call fails because a credential is missing, or the task clearly requires one\n- The secret is NOT already in the "Available secret env vars" list\n</conditions>\n\n<instruction>\n- Set `name` to the conventional env var name for the service (GITHUB_TOKEN, OPENAI_API_KEY, NPM_TOKEN...); the user can adjust it before saving\n- Explain in `reason` what you need the credential for — the user sees this text\n- After the user saves it, reference it as \$NAME in shell commands; the value itself never enters the conversation\n</instruction>\n\n<critical>\n- NEVER ask the user to paste a secret into the chat as plain text — always use this tool, so the value is stored securely and redacted from the transcript\n- NEVER print, echo, or write the secret value after it is saved\n- If the user declines, do not immediately retry the same request; find another way or explain the blocker\n</critical>';
+
 /// Description of the lsp tool that queries a language server (the Dart
 /// analysis server by default) for diagnostics, definitions, references, and
 /// workspace-wide renames, reduced from oh-my-pi's lsp tool prompt.

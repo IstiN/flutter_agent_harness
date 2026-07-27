@@ -1262,6 +1262,42 @@ abstract class AppLocalizations {
   /// **'Use'**
   String get quickStartUse;
 
+  /// No description provided for @secretRequestInvalidName.
+  ///
+  /// In en, this message translates to:
+  /// **'Use UPPER_SNAKE: A–Z, 0–9, _, starting with a letter'**
+  String get secretRequestInvalidName;
+
+  /// No description provided for @secretRequestNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Key name'**
+  String get secretRequestNameLabel;
+
+  /// No description provided for @secretRequestNotNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get secretRequestNotNow;
+
+  /// No description provided for @secretRequestSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get secretRequestSave;
+
+  /// No description provided for @secretRequestTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Fa needs a key'**
+  String get secretRequestTitle;
+
+  /// No description provided for @secretRequestValueLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Key value'**
+  String get secretRequestValueLabel;
+
   /// No description provided for @settingsAddProvider.
   ///
   /// In en, this message translates to:

@@ -706,6 +706,25 @@ class AppLocalizationsRu extends AppLocalizations {
   String get quickStartUse => 'Использовать';
 
   @override
+  String get secretRequestInvalidName =>
+      'Только UPPER_SNAKE: A–Z, 0–9, _, начиная с буквы';
+
+  @override
+  String get secretRequestNameLabel => 'Имя ключа';
+
+  @override
+  String get secretRequestNotNow => 'Не сейчас';
+
+  @override
+  String get secretRequestSave => 'Сохранить';
+
+  @override
+  String get secretRequestTitle => 'Fa нужен ключ';
+
+  @override
+  String get secretRequestValueLabel => 'Значение ключа';
+
+  @override
   String get settingsAddProvider => 'Добавить провайдера';
 
   @override
