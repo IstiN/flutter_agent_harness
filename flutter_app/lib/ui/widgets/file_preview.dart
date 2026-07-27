@@ -9,6 +9,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:fa/ui/widgets/html_preview_stub.dart'
     if (dart.library.html) 'package:fa/ui/widgets/html_preview_web.dart';
 import 'package:fa/ui/markdown_style.dart';
+import 'package:fa/ui/widgets/media_player.dart';
 
 /// Files larger than this are never loaded for preview (4 MB).
 const int kPreviewReadCapBytes = 4 * 1024 * 1024;
@@ -19,6 +20,11 @@ const int kTextPreviewCapChars = 512 * 1024;
 const _kImageExtensions = {'.png', '.jpg', '.jpeg', '.gif', '.webp'};
 const _kMarkdownExtensions = {'.md', '.markdown'};
 const _kHtmlExtensions = {'.html', '.htm'};
+
+/// Audio/video extensions previewed with the sandbox media players
+/// (music/speech the agent generates, screen recordings, voice notes).
+const _kAudioExtensions = {'.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'};
+const _kVideoExtensions = {'.mp4', '.mov', '.webm', '.m4v'};
 
 /// Builds the in-app rendering surface for an HTML file's [html] markup.
 ///
@@ -82,7 +88,7 @@ bool _looksBinary(Uint8List bytes) {
   return false;
 }
 
-enum _PreviewState { loading, text, image, info, error }
+enum _PreviewState { loading, text, image, audio, video, info, error }
 
 /// Rich rendering available for a text file beyond the raw source view.
 enum _RichKind {
@@ -106,9 +112,10 @@ enum _TextViewMode { preview, source }
 /// (`.html`/`.htm`) files additionally get a Preview|Source toggle — the
 /// preview renders formatted Markdown or the page itself, the source is
 /// the monospace view. Images (by extension and magic bytes) render via
-/// [Image.memory]; anything else shows an info placeholder. Used embedded
-/// in the wide-layout file panel and inside [FilePreviewScreen] on narrow
-/// layouts.
+/// [Image.memory]; audio/video files (by extension) play inline via the
+/// sandbox media players; anything else shows an info placeholder. Used
+/// embedded in the wide-layout file panel and inside [FilePreviewScreen] on
+/// narrow layouts.
 class FilePreviewView extends StatefulWidget {
   const FilePreviewView({
     super.key,
@@ -116,6 +123,8 @@ class FilePreviewView extends StatefulWidget {
     required this.path,
     required this.name,
     this.htmlPreviewBuilder,
+    this.audioControllerFactory,
+    this.videoControllerFactory,
   });
 
   /// The environment to read the file from.
@@ -131,6 +140,11 @@ class FilePreviewView extends StatefulWidget {
   /// the webview plugin has no platform implementation on the host.
   final HtmlPreviewBuilder? htmlPreviewBuilder;
 
+  /// Playback engine overrides for the audio/video previews; tests inject
+  /// fakes (the real defaults use audioplayers / video_player).
+  final SandboxAudioControllerFactory? audioControllerFactory;
+  final SandboxVideoControllerFactory? videoControllerFactory;
+
   @override
   State<FilePreviewView> createState() => _FilePreviewViewState();
 }
@@ -140,6 +154,7 @@ class _FilePreviewViewState extends State<FilePreviewView> {
   String? _text;
   bool _truncated = false;
   Uint8List? _imageBytes;
+  Uint8List? _mediaBytes;
   int _size = 0;
   String? _message;
 
@@ -181,7 +196,8 @@ class _FilePreviewViewState extends State<FilePreviewView> {
         );
         return;
       }
-      if (_kImageExtensions.contains(fileExtension(widget.name))) {
+      final ext = fileExtension(widget.name);
+      if (_kImageExtensions.contains(ext)) {
         if (!_sniffsAsImage(bytes)) {
           _showInfo(context.l10n.filePreviewNoPreview);
         } else {
@@ -190,6 +206,23 @@ class _FilePreviewViewState extends State<FilePreviewView> {
             _state = _PreviewState.image;
           });
         }
+        return;
+      }
+      // Audio/video preview hands the raw bytes to the sandbox media
+      // players — no sniffing (the extension is the contract, like the
+      // chat's media tiles).
+      if (_kAudioExtensions.contains(ext)) {
+        setState(() {
+          _mediaBytes = bytes;
+          _state = _PreviewState.audio;
+        });
+        return;
+      }
+      if (_kVideoExtensions.contains(ext)) {
+        setState(() {
+          _mediaBytes = bytes;
+          _state = _PreviewState.video;
+        });
         return;
       }
       if (_looksBinary(bytes)) {
@@ -250,6 +283,25 @@ class _FilePreviewViewState extends State<FilePreviewView> {
               icon: Icons.broken_image_outlined,
               title: context.l10n.filePreviewDecodeError,
             ),
+          ),
+        ),
+      ),
+      _PreviewState.audio => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: SandboxAudioPlayer(
+            bytes: Future.value(_mediaBytes),
+            controllerFactory: widget.audioControllerFactory,
+          ),
+        ),
+      ),
+      _PreviewState.video => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SandboxVideoPlayer(
+            path: widget.path,
+            bytes: Future.value(_mediaBytes),
+            controllerFactory: widget.videoControllerFactory,
           ),
         ),
       ),
@@ -406,6 +458,8 @@ class FilePreviewScreen extends StatelessWidget {
     required this.name,
     this.htmlPreviewBuilder,
     this.fsRevision,
+    this.audioControllerFactory,
+    this.videoControllerFactory,
   });
 
   /// The environment to read the file from.
@@ -424,6 +478,11 @@ class FilePreviewScreen extends StatelessWidget {
   /// Agent filesystem revision (see `AgentService.fsRevision`); bumps
   /// reload the viewed file. `null` disables auto-reload.
   final ValueListenable<int>? fsRevision;
+
+  /// Playback engine overrides for the audio/video previews (see
+  /// [FilePreviewView]); tests inject fakes.
+  final SandboxAudioControllerFactory? audioControllerFactory;
+  final SandboxVideoControllerFactory? videoControllerFactory;
 
   @override
   Widget build(BuildContext context) {
@@ -447,6 +506,8 @@ class FilePreviewScreen extends StatelessWidget {
       path: path,
       name: name,
       htmlPreviewBuilder: htmlPreviewBuilder,
+      audioControllerFactory: audioControllerFactory,
+      videoControllerFactory: videoControllerFactory,
     );
   }
 }

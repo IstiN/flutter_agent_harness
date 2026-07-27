@@ -19,6 +19,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
+import '../fake_media_controllers.dart';
 
 /// Loads the MaterialIcons font from the local Flutter SDK so icon glyphs
 /// (folder/file/refresh/chevron icons) render instead of tofu boxes.
@@ -430,6 +431,29 @@ void main() {
       await tester.pump();
       expect(find.byType(Image), findsOneWidget);
       await expectGolden(tester, 'files_preview_image');
+    });
+
+    testWidgets('audio preview renders the inline player', (tester) async {
+      final env = MemoryExecutionEnv();
+      await env.writeBinaryFile(
+        'generated/speech-1785084305459.mp3',
+        Uint8List(11976),
+      );
+      final audio = FakeAudioController(duration: const Duration(seconds: 9));
+      await pumpGolden(
+        tester,
+        FilePreviewScreen(
+          env: env,
+          path: 'generated/speech-1785084305459.mp3',
+          name: 'speech-1785084305459.mp3',
+          audioControllerFactory: (_) => audio,
+        ),
+        size: goldenSizePhone,
+        wrap: (child) => child,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('0:00 / 0:09'), findsOneWidget);
+      await expectGolden(tester, 'files_preview_audio');
     });
 
     testWidgets('empty folder state', (tester) async {
