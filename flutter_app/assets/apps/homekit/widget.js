@@ -474,8 +474,7 @@
           style: { color: t.muted, fontSize: 10, textAlign: 'center' } },
       });
     }
-    jsr.render({ type: 'column', crossAxisAlignment: 'stretch',
-      children: children });
+    jsr.render({ type: 'listView', shrinkWrap: false, children: children });
     jsr.exportState({
       loading: loading,
       bridgeAvailable: real,
