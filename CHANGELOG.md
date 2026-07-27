@@ -675,4 +675,9 @@
 - fix(example): HomeKit entitlement + longer homes wait + notify probe
 - feat(example): resume the day's session at boot instead of stacking empties
 
+## 0.1.93
+
+- fix(cli): empty Enter submits in guided flows; parse models[]/alias /models dialect
+- docs: commit identity policy — ai.teammate for contributors
+
 ## Unreleased
