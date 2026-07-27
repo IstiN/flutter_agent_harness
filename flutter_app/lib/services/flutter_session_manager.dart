@@ -87,7 +87,7 @@ final class FlutterSessionManager extends ChangeNotifier {
   Future<FlutterManagedSession> openSession(
     SessionMetadata metadata, {
     required AgentConfig config,
-    required AgentService Function() serviceFactory,
+    required FutureOr<AgentService> Function() serviceFactory,
   }) async {
     final existing = _sessions[metadata.id];
     if (existing != null) {
@@ -95,13 +95,68 @@ final class FlutterSessionManager extends ChangeNotifier {
       notifyListeners();
       return existing;
     }
-    final service = serviceFactory();
+    final service = await serviceFactory();
     await service.loadSession(metadata);
     final managed = FlutterManagedSession(id: metadata.id, service: service);
     _sessions[metadata.id] = managed;
     _activeId = metadata.id;
     notifyListeners();
     return managed;
+  }
+
+  /// Picks the persisted session to resume at boot, or null to mint a fresh
+  /// one. The newest session wins when it was created today (local time) —
+  /// a relaunched app continues the day's chat. Older sessions are reused
+  /// only while still empty (no user messages), so every relaunch of an
+  /// untouched app does not pile up another empty session file.
+  Future<SessionMetadata?> findReusableSession() async {
+    final List<SessionMetadata> all;
+    try {
+      all = await _repo.list();
+    } on Object {
+      // Storage-level failure — boot must not die on it; create fresh.
+      return null;
+    }
+    if (all.isEmpty) return null;
+    final newest = all.first;
+    final created = newest.createdAt.toLocal();
+    final now = DateTime.now();
+    if (created.year == now.year &&
+        created.month == now.month &&
+        created.day == now.day) {
+      return newest;
+    }
+    try {
+      final session = await _repo.open(newest);
+      final messages = await session.buildContextMessages();
+      return messages.any((m) => m is UserMessage) ? null : newest;
+    } on Object {
+      // Unreadable session file — do not resume it.
+      return null;
+    }
+  }
+
+  /// Boot entry point: resumes the session picked by [findReusableSession]
+  /// when there is one, otherwise creates a fresh session.
+  Future<FlutterManagedSession> createOrResumeSession({
+    required AgentConfig config,
+    required Future<AgentService> Function() createFactory,
+    required FutureOr<AgentService> Function() openFactory,
+  }) async {
+    final reusable = await findReusableSession();
+    if (reusable != null) {
+      try {
+        return await openSession(
+          reusable,
+          config: config,
+          serviceFactory: openFactory,
+        );
+      } on Object {
+        // The session failed to load (corrupt file, storage error) — fall
+        // through to a fresh session rather than blocking the boot.
+      }
+    }
+    return createSession(config: config, serviceFactory: createFactory);
   }
 
   /// Switches the active session without aborting its run.

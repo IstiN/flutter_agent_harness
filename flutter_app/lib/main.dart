@@ -320,9 +320,17 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
         env: env,
         sessionsRoot: '${env.cwd}/sessions',
       );
-      await manager.createSession(
+      // Resume the day's session (or an untouched empty one) instead of
+      // stacking a fresh empty session on every cold launch.
+      await manager.createOrResumeSession(
         config: config,
-        serviceFactory: () => AgentService.create(
+        createFactory: () => AgentService.create(
+          config: config,
+          env: env,
+          sessionKeys: widget.sessionKeysStore,
+          providerRegistry: widget.registry,
+        ),
+        openFactory: () => AgentService.create(
           config: config,
           env: env,
           sessionKeys: widget.sessionKeysStore,
@@ -431,9 +439,15 @@ class SetupScreen extends StatelessWidget {
       env: env ?? await createPlatformEnv(),
       sessionsRoot: '${(env ?? await createPlatformEnv()).cwd}/sessions',
     );
-    await manager.createSession(
+    await manager.createOrResumeSession(
       config: config,
-      serviceFactory: () => AgentService.create(
+      createFactory: () => AgentService.create(
+        config: config,
+        env: env,
+        sessionKeys: sessionKeysStore,
+        providerRegistry: registry,
+      ),
+      openFactory: () => AgentService.create(
         config: config,
         env: env,
         sessionKeys: sessionKeysStore,
