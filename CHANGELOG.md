@@ -653,4 +653,8 @@
 - ci: store-metadata workflow — App Store content upload on demand
 - feat(example): App Store content pipeline — store goldens, metadata, fastlane lanes
 
+## 0.1.89
+
+- fix(deps): revert sqlite3 to ^2.9.4 — 3.x build hooks break dart compile
+
 ## Unreleased
