@@ -136,6 +136,22 @@ void main() {
     expect(model.inputText, '');
   });
 
+  test('enter on empty input submits the empty line (guided flows use '
+      '"empty = keep the default")', () async {
+    final submitted = <String>[];
+    var model = FaTuiModel(
+      callbacks: callbacks(submitted: submitted),
+      isExited: () => false,
+    );
+    final result = model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+    model = result.$1 as FaTuiModel;
+    await result.$2?.call();
+    expect(submitted, ['']);
+    expect(model.inputText, '');
+    // No user-message echo for the empty submit (it would read as a glitch).
+    expect(model.stickyLines, isEmpty);
+  });
+
   test('enter in model picker selects the model', () async {
     final selected = <String>[];
     var model = FaTuiModel(

@@ -781,8 +781,13 @@ final class FaTuiModel extends TeaModel {
           return _insertNewlineAtCursor();
         }
         final line = inputText.trim();
-        if (line.isEmpty) return (this, null);
-        if (busy && !line.startsWith('/') && !line.startsWith('!')) {
+        // Empty submits are NOT dropped: guided flows (custom provider
+        // setup) use "empty = keep the default" answers, and the host's
+        // line handler ignores stray empties outside a pending prompt.
+        if (busy &&
+            line.isNotEmpty &&
+            !line.startsWith('/') &&
+            !line.startsWith('!')) {
           // While a run streams, plain messages queue up (kimi-cli); slash
           // and bang commands execute immediately via the normal path.
           return _enqueue(line);
@@ -955,6 +960,17 @@ final class FaTuiModel extends TeaModel {
     final rule = _dim('─' * termWidth);
     const bg = '\x1b[48;2;30;34;42m';
     const reset = '\x1b[0m';
+    // Empty submits (guided-flow "keep the default" answers) skip the
+    // message echo — an empty backgrounded block would read as a glitch.
+    if (inputText.isEmpty) {
+      return (
+        copyWith(inputText: '', cursor: 0),
+        () async {
+          await callbacks.onSubmit(text);
+          return null;
+        },
+      );
+    }
     final echoed = _echoAppend(outputLines, inputText);
     // The pinned echo for long answers (Copilot-style): rule + the first
     // input line, truncated to the width with a dim ellipsis marking any

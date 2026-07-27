@@ -33,17 +33,22 @@ const fallbackContextWindow = 200000;
 const fallbackMaxTokens = 16384;
 
 /// Parses [body] (the raw `/models` JSON) into [ModelsEndpointInfo].
+///
+/// Dialects accepted: OpenAI/OpenRouter `{"data": [{"id": ...}]}` and the
+/// `{"models": [{"alias": ...}]}` shape some gateways use (id falls back to
+/// `alias`, then `name`).
 ModelsEndpointInfo parseModelsResponse(String body) {
   final decoded = jsonDecode(body);
-  final data = decoded is Map ? decoded['data'] : null;
+  final data = decoded is Map ? (decoded['data'] ?? decoded['models']) : null;
   final ids = <String>[];
   final windows = <String, int>{};
   final maxTokens = <String, int>{};
   if (data is List) {
     for (final entry in data) {
       if (entry is! Map) continue;
-      final id = entry['id'];
-      if (id is! String || id.isEmpty) continue;
+      final idValue = entry['id'] ?? entry['alias'] ?? entry['name'];
+      if (idValue is! String || idValue.isEmpty) continue;
+      final id = idValue;
       ids.add(id);
       final window =
           entry['context_length'] ??
