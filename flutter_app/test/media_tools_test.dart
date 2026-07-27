@@ -287,6 +287,238 @@ void main() {
     );
   });
 
+  group('generate_video', () {
+    MediaModelsStore videoStore() {
+      final store = MediaModelsStore.inMemory();
+      store.setOverride(
+        MediaSlot.videoGeneration,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://video.test/v1',
+          modelId: 'bytedance/seedance-1-5-pro',
+        ),
+      );
+      return store;
+    }
+
+    MediaGateway videoGateway(
+      MemoryExecutionEnv env,
+      http.Client client, {
+      Duration? pollTimeout,
+    }) => MediaGateway(
+      env: env,
+      fallback: () => fallback,
+      store: videoStore(),
+      httpClient: client,
+      videoPollInterval: const Duration(milliseconds: 5),
+      videoPollTimeout: pollTimeout ?? const Duration(seconds: 5),
+    );
+
+    test('creates a job, polls until completed, saves the mp4', () async {
+      final env = MemoryExecutionEnv();
+      final seen = <http.Request>[];
+      var polls = 0;
+      final client = http_testing.MockClient((request) async {
+        seen.add(request);
+        if (request.method == 'POST') {
+          return http.Response(
+            jsonEncode({'id': 'job-1', 'status': 'pending'}),
+            202,
+          );
+        }
+        if (request.url.host == 'cdn.test') {
+          return http.Response.bytes(Uint8List.fromList([7, 7, 7]), 200);
+        }
+        polls++;
+        return http.Response(
+          jsonEncode(
+            polls < 2
+                ? {'id': 'job-1', 'status': 'in_progress'}
+                : {
+                    'id': 'job-1',
+                    'status': 'completed',
+                    'unsigned_urls': ['https://cdn.test/clip.mp4'],
+                  },
+          ),
+          200,
+        );
+      });
+      final tool = generateVideoTool(videoGateway(env, client));
+      expect(tool.tier, ApprovalTier.write);
+
+      final result = await tool.execute(
+        const {
+          'prompt': 'a teal robot dances',
+          'seconds': 8,
+          'size': '1280x720',
+        },
+        null,
+        null,
+      );
+
+      final post = seen.first;
+      expect(post.url.toString(), 'https://video.test/v1/videos');
+      expect(post.headers['authorization'], 'Bearer sk-main');
+      final body = jsonDecode(post.body) as Map<String, dynamic>;
+      expect(body, {
+        'model': 'bytedance/seedance-1-5-pro',
+        'prompt': 'a teal robot dances',
+        'duration': 8,
+        'size': '1280x720',
+      });
+      // Two status polls, then the download from the job's unsigned_urls.
+      expect(polls, 2);
+      expect(seen.last.url.toString(), 'https://cdn.test/clip.mp4');
+
+      final text = textOf(result);
+      expect(text, contains('Video saved to generated/video-'));
+      expect(text, contains('.mp4'));
+      expect(text, contains('3 bytes'));
+      expect(text, contains('8s, 1280x720'));
+      final path = RegExp(r'generated/\S+\.mp4').firstMatch(text)![0]!;
+      expect((await env.readBinaryFile(path)).valueOrNull, [7, 7, 7]);
+    });
+
+    test(
+      'falls back to the authenticated content endpoint without URLs',
+      () async {
+        final env = MemoryExecutionEnv();
+        final seen = <http.Request>[];
+        final client = http_testing.MockClient((request) async {
+          seen.add(request);
+          if (request.method == 'POST') {
+            return http.Response(
+              jsonEncode({'id': 'job-9', 'status': 'queued'}),
+              200,
+            );
+          }
+          if (request.url.path.endsWith('/content')) {
+            return http.Response.bytes(Uint8List.fromList([1, 2]), 200);
+          }
+          return http.Response(
+            jsonEncode({'id': 'job-9', 'status': 'completed'}),
+            200,
+          );
+        });
+        final tool = generateVideoTool(videoGateway(env, client));
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+
+        final content = seen.last;
+        expect(
+          content.url.toString(),
+          'https://video.test/v1/videos/job-9/content',
+        );
+        expect(content.headers['authorization'], 'Bearer sk-main');
+        expect(textOf(result), contains('2 bytes'));
+        expect(textOf(result), contains('provider defaults'));
+      },
+    );
+
+    test('a failed job surfaces the endpoint error', () async {
+      final env = MemoryExecutionEnv();
+      final client = http_testing.MockClient((request) async {
+        if (request.method == 'POST') {
+          return http.Response(jsonEncode({'id': 'job-2'}), 202);
+        }
+        return http.Response(
+          jsonEncode({
+            'id': 'job-2',
+            'status': 'failed',
+            'error': 'Content policy violation',
+          }),
+          200,
+        );
+      });
+      final tool = generateVideoTool(videoGateway(env, client));
+
+      final result = await tool.execute(const {'prompt': 'x'}, null, null);
+      final text = textOf(result);
+      expect(text, startsWith('Error:'));
+      expect(text, contains('failed'));
+      expect(text, contains('Content policy violation'));
+    });
+
+    test('a job that never completes times out', () async {
+      final env = MemoryExecutionEnv();
+      final client = http_testing.MockClient((request) async {
+        if (request.method == 'POST') {
+          return http.Response(jsonEncode({'id': 'job-3'}), 202);
+        }
+        return http.Response(
+          jsonEncode({'id': 'job-3', 'status': 'pending'}),
+          200,
+        );
+      });
+      final tool = generateVideoTool(
+        videoGateway(
+          env,
+          client,
+          pollTimeout: const Duration(milliseconds: 20),
+        ),
+      );
+
+      final result = await tool.execute(const {'prompt': 'x'}, null, null);
+      final text = textOf(result);
+      expect(text, startsWith('Error:'));
+      expect(text, contains('timed out'));
+      expect(text, contains('job-3'));
+    });
+
+    test('create-endpoint HTTP errors surface the status and body', () async {
+      final env = MemoryExecutionEnv();
+      final client = http_testing.MockClient(
+        (request) async => http.Response('model not found', 404),
+      );
+      final tool = generateVideoTool(videoGateway(env, client));
+
+      final result = await tool.execute(const {'prompt': 'x'}, null, null);
+      expect(textOf(result), contains('HTTP 404'));
+      expect(textOf(result), contains('model not found'));
+    });
+
+    test('a cancelled token aborts the wait', () async {
+      final env = MemoryExecutionEnv();
+      final client = http_testing.MockClient((request) async {
+        if (request.method == 'POST') {
+          return http.Response(jsonEncode({'id': 'job-4'}), 202);
+        }
+        return http.Response(
+          jsonEncode({'id': 'job-4', 'status': 'pending'}),
+          200,
+        );
+      });
+      final tool = generateVideoTool(videoGateway(env, client));
+      final source = CancelTokenSource()..cancel('user stopped');
+
+      await expectLater(
+        tool.execute(const {'prompt': 'x'}, source.token, null),
+        throwsA(isA<CancelledException>()),
+      );
+    });
+
+    test(
+      'without a configured slot the error is honest and actionable',
+      () async {
+        final env = MemoryExecutionEnv();
+        var calls = 0;
+        final client = http_testing.MockClient((request) async {
+          calls++;
+          return http.Response('{}', 500);
+        });
+        // No videoGeneration override: there is no provider fallback for video.
+        final tool = generateVideoTool(gateway(env, client));
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+        final text = textOf(result);
+        expect(text, startsWith('Error:'));
+        expect(text, contains('media_models.json'));
+        expect(text, contains('videoGeneration'));
+        expect(calls, 0);
+      },
+    );
+  });
+
   group('endpoint resolution shared with the store', () {
     test(
       'a slot override redirects the tool to its own endpoint + key',

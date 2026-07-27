@@ -25,7 +25,8 @@ final class MediaSlot {
   /// Music generation (`generate_music`, `jsr.fa.media.generateMusic`).
   static const musicGeneration = 'musicGeneration';
 
-  /// Video generation (reserved — no tool rides it yet).
+  /// Video generation (`generate_video`, `jsr.fa.media.generateVideo` —
+  /// async job endpoint, no main-connection fallback).
   static const videoGeneration = 'videoGeneration';
 
   /// Image reading / vision (`read_video`, `jsr.fa.media.readVideo` — the

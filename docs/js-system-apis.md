@@ -164,6 +164,7 @@ Android TODO (Kotlin handler in `MainActivity.kt`, manifest permissions):
 | Contacts | `jsr.fa.contacts.*` | `contacts` | stub | — | stub |
 | Mic / audio record | `jsr.fa.asr.*` | `microphone` | AVAudioRecorder via `fah/mic` (iOS/macOS) | — | works |
 | TTS | `speak` media tool | `media` | media models | `speak` | works |
+| Video generation | `jsr.fa.media.generateVideo` | `media` | media models (`videoGeneration` slot; async OpenAI/OpenRouter `/videos` contract) | `generate_video` | works |
 
 ### The `jsr.fa.home.*` surface (iOS HomeKit)
 

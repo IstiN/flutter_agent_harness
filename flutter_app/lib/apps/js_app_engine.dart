@@ -70,7 +70,8 @@ typedef FaPlatformHandler =
 ///   [AppPermissions.notifications] (real backend via [NotifyApi]; requests
 ///   OS notification access on first use)
 /// - `jsr.fa.media.generateImage` / `jsr.fa.media.speak` /
-///   `jsr.fa.media.generateMusic` / `jsr.fa.media.readVideo` →
+///   `jsr.fa.media.generateMusic` / `jsr.fa.media.generateVideo` /
+///   `jsr.fa.media.readVideo` →
 ///   [AppPermissions.media] (endpoint resolution via [MediaGateway] over
 ///   `media_models.json` + the main connection, the same resolvers the
 ///   agent's media tools use; video reading via [VideoReader])
@@ -339,8 +340,8 @@ jsr.fa.notify = {
   cancel: function(args) { return jsr.fa.call('notify.cancel', args); },
 };
 
-// Media generation (image / TTS / music) + video reading, gated on the
-// `media` manifest flag. The generation methods resolve with
+// Media generation (image / TTS / music / video) + video reading, gated on
+// the `media` manifest flag. The generation methods resolve with
 // {path, bytes, detail}: the file is saved in the sandbox generated/
 // folder — reference it as file:<path> in image/audio nodes. readVideo
 // resolves with {description} (frames never leave the host).
@@ -348,6 +349,7 @@ jsr.fa.media = {
   generateImage: function(args) { return jsr.fa.call('media.generateImage', args); },
   speak: function(args) { return jsr.fa.call('media.speak', args); },
   generateMusic: function(args) { return jsr.fa.call('media.generateMusic', args); },
+  generateVideo: function(args) { return jsr.fa.call('media.generateVideo', args); },
   readVideo: function(args) { return jsr.fa.call('media.readVideo', args); },
 };
 
@@ -569,6 +571,10 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'media.generateMusic') {
         _resolve?.call(id, await _mediaGenerateMusic(args));
+        return;
+      }
+      if (method == 'media.generateVideo') {
+        _resolve?.call(id, await _mediaGenerateVideo(args));
         return;
       }
       if (method == 'media.readVideo') {
@@ -1272,6 +1278,22 @@ Object.defineProperty(jsr, 'onBack', {
     final file = await gateway.generateMusic(
       prompt: (args['prompt'] ?? '').toString(),
       seconds: (args['seconds'] as num?)?.toInt(),
+    );
+    return file.toBridgeJson();
+  }
+
+  /// `jsr.fa.media.generateVideo({prompt, seconds?, size?})` → `{path,
+  /// bytes, detail}` — video on the configured videoGeneration endpoint,
+  /// same gate. Generation is asynchronous (the gateway polls the job), so
+  /// the promise can take minutes to resolve.
+  Future<Map<String, Object?>> _mediaGenerateVideo(
+    Map<String, Object?> args,
+  ) async {
+    final gateway = _gatedMedia();
+    final file = await gateway.generateVideo(
+      prompt: (args['prompt'] ?? '').toString(),
+      seconds: (args['seconds'] as num?)?.toInt(),
+      size: args['size']?.toString(),
     );
     return file.toBridgeJson();
   }

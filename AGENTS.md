@@ -142,7 +142,7 @@ factual: paths, commands, invariants — no essays.
   "not supported" note). Wired in `chat_screen.dart` for `speak`/
   `generate_music` results plus a `.mp3/.wav/.m4a` (audio) / `.mp4/.mov/
   .webm` (video) extension fallback for any NON-`read`, non-error tool
-  result; markdown media links open a `showFahMediaDialog` player dialog
+  result (which is how `generate_video` tiles render); markdown media links open a `showFahMediaDialog` player dialog
   (`onTapLink` — flutter_markdown has no custom link renderer) in the chat
   screen and the Fa chat overlay. Bytes load through the same memoized
   `SandboxImageResolver.load`.
@@ -267,6 +267,14 @@ factual: paths, commands, invariants — no essays.
   heuristic fills `Model.input`; `AgentConfig.supportsImages` overrides;
   without `image` the `read` tool notes non-vision and adapters drop image
   blocks.
+- `flutter_app/lib/services/media_tools.dart` — `MediaGateway` over the
+  `media_models.json` slots (+ main-connection fallback) backing the
+  `generate_image`/`speak`/`generate_music`/`generate_video` tools and the
+  `jsr.fa.media.*` bridge; files land in `generated/`. `generate_video`
+  rides the `videoGeneration` slot (required — no fallback): async
+  OpenAI/OpenRouter `/videos` contract (POST job → poll `GET /videos/{id}`
+  every 3s, 4-min cap, cancel-token aware → `unsigned_urls` or
+  `GET /videos/{id}/content` mp4).
 - `site/` — static GitHub Pages landing; `.github/workflows/pages.yml`
   builds the web demo into `app/` (never committed).
 - `scripts/` — codegen and quality-gate scripts.

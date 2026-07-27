@@ -163,6 +163,89 @@ void main() {
     });
   });
 
+  testWidgets('fa.media.generateVideo with the permission polls the job and '
+      'resolves with the sandbox path of the saved mp4', (tester) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.fa.media.generateVideo({prompt: 'a teal robot dances', seconds: 8})
+    .then(function(result) {
+      jsr.exportState({result: result});
+    }, function(error) {
+      jsr.exportState({result: {__error: '' + error}});
+    });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+      final seen = <http.Request>[];
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.videoGeneration,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://video.test/v1',
+          modelId: 'bytedance/seedance-1-5-pro',
+        ),
+      );
+      final gateway = MediaGateway(
+        env: env,
+        fallback: () => const MediaFallback(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://api.test/v1',
+          modelId: 'gpt-5',
+          apiKey: 'sk-main',
+        ),
+        store: store,
+        httpClient: http_testing.MockClient((request) async {
+          seen.add(request);
+          if (request.method == 'POST') {
+            return http.Response(
+              jsonEncode({'id': 'job-1', 'status': 'pending'}),
+              202,
+            );
+          }
+          if (request.url.host == 'cdn.test') {
+            return http.Response.bytes(Uint8List.fromList([7, 7]), 200);
+          }
+          return http.Response(
+            jsonEncode({
+              'id': 'job-1',
+              'status': 'completed',
+              'unsigned_urls': ['https://cdn.test/clip.mp4'],
+            }),
+            200,
+          );
+        }),
+        videoPollInterval: const Duration(milliseconds: 5),
+      );
+
+      final granted = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(media: true),
+        mediaGateway: gateway,
+      );
+      try {
+        await granted.start();
+        // Poll: the bridge round-trip + job poll have no fixed completion time.
+        for (var i = 0; i < 50 && granted.exportedState == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(seen.first.url.toString(), 'https://video.test/v1/videos');
+        final result = granted.exportedState?['result'] as Map;
+        final path = result['path'].toString();
+        expect(path, startsWith('generated/video-'));
+        expect(path, endsWith('.mp4'));
+        expect(result['bytes'], 2);
+        // The generated file really landed in the app's sandbox.
+        expect((await env.readBinaryFile(path)).valueOrNull, [7, 7]);
+      } finally {
+        await granted.dispose();
+      }
+    });
+  });
+
   testWidgets('fa.media with the permission but no session gateway answers '
       'with an actionable error', (tester) async {
     await tester.runAsync(() async {

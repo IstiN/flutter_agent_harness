@@ -47,9 +47,9 @@ final class GeneratedMediaFile {
 /// Media generation against the per-modality endpoints configured in
 /// [MediaModelsStore] (falling back to the app's main connection).
 ///
-/// Shared by the agent's `generate_image` / `speak` / `generate_music`
-/// tools and the `jsr.fa.media.*` JS bridge so both resolve endpoints
-/// identically. The store is (re)loaded per call when none was injected, so
+/// Shared by the agent's `generate_image` / `speak` / `generate_music` /
+/// `generate_video` tools and the `jsr.fa.media.*` JS bridge so both
+/// resolve endpoints identically. The store is (re)loaded per call when none was injected, so
 /// edits to `media_models.json` take effect without a reconnect. All
 /// failures surface as [StateError] with an actionable, user-readable
 /// message (never a bare exception).
@@ -63,10 +63,14 @@ final class MediaGateway {
     MediaModelsStore? store,
     MediaKeyResolver? resolveKey,
     http.Client? httpClient,
+    Duration videoPollInterval = const Duration(seconds: 3),
+    Duration videoPollTimeout = const Duration(minutes: 4),
   }) : _fallback = fallback,
        _store = store,
        _resolveKey = resolveKey,
-       _httpClient = httpClient;
+       _httpClient = httpClient,
+       _videoPollInterval = videoPollInterval,
+       _videoPollTimeout = videoPollTimeout;
 
   /// The sandbox filesystem generated files land in.
   final ExecutionEnv env;
@@ -75,6 +79,13 @@ final class MediaGateway {
   final MediaModelsStore? _store;
   final MediaKeyResolver? _resolveKey;
   final http.Client? _httpClient;
+
+  /// How often [generateVideo] polls the job status (injectable for tests).
+  final Duration _videoPollInterval;
+
+  /// How long [generateVideo] waits for a job before failing (injectable
+  /// for tests).
+  final Duration _videoPollTimeout;
 
   /// Resolves the endpoint for [slot] (see [MediaModelsStore.resolve]);
   /// null when no usable endpoint exists.
@@ -185,6 +196,194 @@ final class MediaGateway {
     return _save('music', 'mp3', bytes, detail: '$duration s requested');
   }
 
+  /// Generates a video clip on the [MediaSlot.videoGeneration] endpoint and
+  /// saves the mp4 into [generatedMediaDir].
+  ///
+  /// Video generation is asynchronous, so the endpoint must follow the
+  /// OpenAI/OpenRouter videos contract: `POST {baseUrl}/videos` with
+  /// `{model, prompt, duration?, size?}` answers a job `{id, status}`
+  /// (200 or 202 Accepted); the job is polled at its `polling_url` (or
+  /// `GET {baseUrl}/videos/{id}`) every [videoPollInterval] until a
+  /// terminal status — `completed` downloads the mp4 (from the job's
+  /// `unsigned_urls`/`url` when present, otherwise
+  /// `GET {baseUrl}/videos/{id}/content`), `failed`/`cancelled`/`expired`
+  /// is an error — giving up after [videoPollTimeout]. [cancelToken] aborts
+  /// the wait between polls. Without a configured slot the call fails with
+  /// an actionable error — there is no main-connection fallback.
+  Future<GeneratedMediaFile> generateVideo({
+    required String prompt,
+    int? seconds,
+    String? size,
+    CancelToken? cancelToken,
+  }) async {
+    final trimmed = prompt.trim();
+    if (trimmed.isEmpty) throw StateError('prompt is required');
+    final endpoint = await _requireEndpoint(MediaSlot.videoGeneration);
+    cancelToken?.throwIfCancelled();
+    final usedSeconds = seconds != null && seconds > 0 ? seconds : null;
+    final usedSize = size != null && size.trim().isNotEmpty
+        ? size.trim()
+        : null;
+    final created = await _postJson(
+      endpoint,
+      '/videos',
+      {
+        'model': endpoint.modelId,
+        'prompt': trimmed,
+        if (usedSeconds != null) 'duration': usedSeconds,
+        if (usedSize != null) 'size': usedSize,
+      },
+      what: 'Video generation',
+      okStatuses: const {200, 202},
+    );
+    final jobId = created['id']?.toString();
+    if (jobId == null || jobId.isEmpty) {
+      throw StateError('Video generation returned no job id.');
+    }
+    final pollingUrl = created['polling_url']?.toString();
+    final pollUri = Uri.parse(
+      pollingUrl != null && pollingUrl.isNotEmpty
+          ? pollingUrl
+          : '${endpoint.baseUrl}/videos/$jobId',
+    );
+    final deadline = DateTime.now().add(_videoPollTimeout);
+    final job = await _pollVideoJob(
+      pollUri,
+      endpoint,
+      jobId,
+      deadline,
+      cancelToken,
+    );
+    final bytes = await _videoBytes(job, endpoint, jobId);
+    final detail = [
+      if (usedSeconds != null) '${usedSeconds}s',
+      if (usedSize != null) usedSize,
+    ];
+    return _save(
+      'video',
+      'mp4',
+      bytes,
+      detail: detail.isEmpty ? 'provider defaults' : detail.join(', '),
+    );
+  }
+
+  /// Polls the video job at [pollUri] until it reaches a terminal status,
+  /// returning the completed job payload. `failed`/`cancelled`/`expired`
+  /// jobs and the [deadline] are [StateError]s; [cancelToken] aborts the
+  /// wait between polls.
+  Future<Map<String, dynamic>> _pollVideoJob(
+    Uri pollUri,
+    MediaEndpoint endpoint,
+    String jobId,
+    DateTime deadline,
+    CancelToken? cancelToken,
+  ) async {
+    for (;;) {
+      cancelToken?.throwIfCancelled();
+      final job = await _getJson(pollUri, endpoint, what: 'Video generation');
+      final status = job['status']?.toString() ?? '';
+      if (status == 'completed' || status == 'succeeded') return job;
+      if (status == 'failed' || status == 'cancelled' || status == 'expired') {
+        final error = job['error'];
+        throw StateError(
+          'Video generation job $status${error == null ? '' : ': $error'}.',
+        );
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        throw StateError(
+          'Video generation timed out after '
+          '${(_videoPollTimeout.inSeconds / 60).round()} minutes '
+          '(job $jobId is still "$status").',
+        );
+      }
+      await _pollSleep(cancelToken);
+    }
+  }
+
+  /// Waits [_videoPollInterval] between job status polls, waking early when
+  /// [cancelToken] is cancelled.
+  Future<void> _pollSleep(CancelToken? cancelToken) async {
+    if (cancelToken == null) {
+      await Future<void>.delayed(_videoPollInterval);
+      return;
+    }
+    await Future.any<void>([
+      Future<void>.delayed(_videoPollInterval),
+      cancelToken.onCancel,
+    ]);
+    cancelToken.throwIfCancelled();
+  }
+
+  /// The mp4 bytes of a completed video job: an explicit URL from the job
+  /// (`unsigned_urls` first, then `url`) fetched as-is, otherwise the
+  /// authenticated content endpoint.
+  Future<Uint8List> _videoBytes(
+    Map<String, dynamic> job,
+    MediaEndpoint endpoint,
+    String jobId,
+  ) async {
+    String? url;
+    final unsigned = job['unsigned_urls'];
+    if (unsigned is List && unsigned.isNotEmpty) {
+      url = unsigned.first?.toString();
+    }
+    url ??= job['url']?.toString();
+    final authed = url == null || url.isEmpty;
+    final uri = Uri.parse(
+      authed ? '${endpoint.baseUrl}/videos/$jobId/content' : url,
+    );
+    final client = _httpClient ?? http.Client();
+    final http.Response response;
+    try {
+      response = await client.get(
+        uri,
+        headers: authed ? {'authorization': 'Bearer ${endpoint.apiKey}'} : null,
+      );
+    } finally {
+      if (_httpClient == null) client.close();
+    }
+    if (response.statusCode != 200) {
+      throw StateError(
+        'Video download failed (HTTP ${response.statusCode}) for $uri',
+      );
+    }
+    return response.bodyBytes;
+  }
+
+  /// Authenticated JSON GET (the video job status poll), with the same
+  /// error contract as [_postJson].
+  Future<Map<String, dynamic>> _getJson(
+    Uri uri,
+    MediaEndpoint endpoint, {
+    required String what,
+  }) async {
+    final client = _httpClient ?? http.Client();
+    final http.Response response;
+    try {
+      response = await client.get(
+        uri,
+        headers: {'authorization': 'Bearer ${endpoint.apiKey}'},
+      );
+    } finally {
+      if (_httpClient == null) client.close();
+    }
+    if (response.statusCode != 200) {
+      throw StateError(
+        '$what status poll failed (HTTP ${response.statusCode}): '
+        '${response.body.trim()}',
+      );
+    }
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    } on FormatException {
+      // fall through
+    }
+    throw StateError(
+      '$what status poll returned an unexpected response (not JSON).',
+    );
+  }
+
   /// The shared "no usable endpoint" error: points at the slot in
   /// `media_models.json` (and, for the main-connection fallback, at the
   /// provider requirements).
@@ -214,6 +413,7 @@ final class MediaGateway {
     String path,
     Map<String, Object?> body, {
     required String what,
+    Set<int> okStatuses = const {200},
   }) async {
     final client = _httpClient ?? http.Client();
     final http.Response response;
@@ -229,7 +429,7 @@ final class MediaGateway {
     } finally {
       if (_httpClient == null) client.close();
     }
-    if (response.statusCode != 200) {
+    if (!okStatuses.contains(response.statusCode)) {
       throw StateError(
         '$what failed (HTTP ${response.statusCode}): ${response.body.trim()}',
       );
@@ -318,6 +518,9 @@ const speakToolName = 'speak';
 
 /// Name of the agent tool that generates music.
 const generateMusicToolName = 'generate_music';
+
+/// Name of the agent tool that generates a video clip.
+const generateVideoToolName = 'generate_video';
 
 /// Creates the `generate_image` tool bound to [gateway].
 ///
@@ -461,6 +664,77 @@ AgentTool generateMusicTool(MediaGateway gateway) {
           'Music saved to ${file.path} '
           '(${file.bytes.length} bytes, ${file.detail}).',
         );
+      } on Object catch (error) {
+        return ToolExecutionResult.text(_errorText(error));
+      }
+    },
+  );
+}
+
+/// Creates the `generate_video` tool bound to [gateway].
+///
+/// Video generation has no main-connection fallback, so the tool only works
+/// with a configured `videoGeneration` slot; the description documents the
+/// async endpoint contract so custom endpoints can conform. Generation can
+/// take minutes — the gateway polls the job to completion inside the tool
+/// call (honoring the cancel token).
+AgentTool generateVideoTool(MediaGateway gateway) {
+  return AgentTool(
+    name: generateVideoToolName,
+    label: generateVideoToolName,
+    tier: ApprovalTier.write,
+    description:
+        'Generate a video clip from a text prompt. Requires a '
+        'videoGeneration endpoint configured in media_models.json (video '
+        'generation is asynchronous — there is no provider fallback). The '
+        'endpoint must follow the OpenAI/OpenRouter videos contract: POST '
+        '{baseUrl}/videos with a JSON body {model, prompt, duration?, '
+        'size?} answers a job {id, status}, polled at GET '
+        '{baseUrl}/videos/{id} until completed/failed; the mp4 comes from '
+        'the job\'s unsigned_urls or GET {baseUrl}/videos/{id}/content. '
+        'Generation can take several minutes. Saves an mp4 into the sandbox '
+        'generated/ folder and returns its path.',
+    parameters: const {
+      'type': 'object',
+      'properties': {
+        'prompt': {
+          'type': 'string',
+          'description':
+              'Text description of the video to generate (required) — '
+              'include motion, camera, and scene details',
+        },
+        'seconds': {
+          'type': 'integer',
+          'description':
+              'Requested clip length in seconds (provider-dependent, short '
+              'clips of 4-16s are typical; capped at 30; default: provider '
+              'default)',
+        },
+        'size': {
+          'type': 'string',
+          'description':
+              'Pixel dimensions as "WIDTHxHEIGHT", e.g. "1280x720" '
+              '(landscape) or "720x1280" (portrait; provider-dependent, '
+              'default: provider default)',
+        },
+      },
+      'required': ['prompt'],
+    },
+    execute: (arguments, cancelToken, onUpdate) async {
+      try {
+        final seconds = (arguments['seconds'] as num?)?.toInt().clamp(1, 30);
+        final file = await gateway.generateVideo(
+          prompt: (arguments['prompt'] ?? '').toString(),
+          seconds: seconds?.toInt(),
+          size: arguments['size']?.toString(),
+          cancelToken: cancelToken,
+        );
+        return ToolExecutionResult.text(
+          'Video saved to ${file.path} '
+          '(${file.bytes.length} bytes, ${file.detail}).',
+        );
+      } on CancelledException {
+        rethrow;
       } on Object catch (error) {
         return ToolExecutionResult.text(_errorText(error));
       }

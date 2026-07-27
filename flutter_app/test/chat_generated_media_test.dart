@@ -255,6 +255,29 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a generate_video tool result renders the inline video '
+      'player', (tester) async {
+    final env = MemoryExecutionEnv();
+    await env.writeBinaryFile('generated/video-1.mp4', _fakeMediaBytes);
+    final service = _fakeService(env);
+    addTearDown(service.dispose);
+    service.messages.add(
+      FahChatMessage(
+        role: 'tool',
+        toolName: 'generate_video',
+        content:
+            'Video saved to generated/video-1.mp4 '
+            '(64 bytes, 8s, 1280x720).',
+      ),
+    );
+    await _pumpChat(tester, env, service);
+
+    expect(find.byType(SandboxVideoPlayer), findsOneWidget);
+    expect(find.byType(SandboxAudioPlayer), findsNothing);
+    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a speak result pointing at a deleted file shows the missing '
       'note instead of crashing', (tester) async {
     final env = MemoryExecutionEnv();

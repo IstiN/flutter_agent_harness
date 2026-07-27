@@ -406,15 +406,16 @@ class AgentService extends ChangeNotifier {
           env,
           () => whisperTranscriberForGateway(_mediaGateway!),
         ),
-      // Media generation (image / TTS / music) against the per-modality
-      // endpoints in media_models.json, falling back to the main
-      // connection; the tools report an actionable error when the slot has
-      // no usable endpoint. Skipped for the on-device backends, which keep
-      // only the core coding tools (small tool-instruction block).
+      // Media generation (image / TTS / music / video) against the
+      // per-modality endpoints in media_models.json, falling back to the
+      // main connection; the tools report an actionable error when the slot
+      // has no usable endpoint. Skipped for the on-device backends, which
+      // keep only the core coding tools (small tool-instruction block).
       if (!isOnDevice) ...[
         generateImageTool(_mediaGateway!),
         speakTool(_mediaGateway!),
         generateMusicTool(_mediaGateway!),
+        generateVideoTool(_mediaGateway!),
         // Video reading through the `vision` slot (or the main connection
         // when its model accepts images); frames come from the `fah/video`
         // channel — the tool reports a clean note where unsupported.
@@ -698,7 +699,8 @@ class AgentService extends ChangeNotifier {
   final MediaKeyResolver? _resolveSecretName;
 
   /// Media generation gateway shared by the `generate_image` / `speak` /
-  /// `generate_music` tools and exposed for the `jsr.fa.media.*` bridge.
+  /// `generate_music` / `generate_video` tools and exposed for the
+  /// `jsr.fa.media.*` bridge.
   /// `null` for services constructed around a pre-constructed [Agent]
   /// (tests).
   MediaGateway? get mediaGateway => _mediaGateway;
