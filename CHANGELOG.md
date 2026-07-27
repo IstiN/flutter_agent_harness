@@ -644,4 +644,13 @@
 - fix(example): contacts — system back steps out of detail, transient call hint
 - feat(example): rename sessions, arbitrary agent keys, persist approval mode
 
+## 0.1.88
+
+- fix(example): retry deliver on Apple's bursty Connect API 500s
+- fix(example): preflight the macOS store version before deliver
+- fix(example): tolerate deliver's first-version 'No data' review-detail crash
+- fix(example): shrink RU promotional text under App Store's 170-char limit
+- ci: store-metadata workflow — App Store content upload on demand
+- feat(example): App Store content pipeline — store goldens, metadata, fastlane lanes
+
 ## Unreleased
