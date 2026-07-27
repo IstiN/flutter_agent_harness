@@ -680,4 +680,11 @@
 - fix(cli): empty Enter submits in guided flows; parse models[]/alias /models dialect
 - docs: commit identity policy — ai.teammate for contributors
 
+## 0.1.94
+
+- refactor(test): split agent_cli_test.dart into support + provider/model topical files
+- fix(cli): spec env names resolve only for the default hosted endpoint
+- fix: video download auth on own-origin urls + provider key name dedupe + keychain preflight
+- fix(cli): fa update misdetects a native binary in pub-cache as pub-global
+
 ## Unreleased
