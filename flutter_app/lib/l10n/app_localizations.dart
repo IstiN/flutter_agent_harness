@@ -1046,6 +1046,30 @@ abstract class AppLocalizations {
   /// **'Value'**
   String get keysValueLabel;
 
+  /// No description provided for @launcherDissolveFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove folder'**
+  String get launcherDissolveFolder;
+
+  /// No description provided for @launcherFolderDefaultName.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder'**
+  String get launcherFolderDefaultName;
+
+  /// No description provided for @launcherFolderNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder name'**
+  String get launcherFolderNameHint;
+
+  /// No description provided for @launcherRenameFolderTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename folder'**
+  String get launcherRenameFolderTooltip;
+
   /// No description provided for @mediaFileMissing.
   ///
   /// In en, this message translates to:

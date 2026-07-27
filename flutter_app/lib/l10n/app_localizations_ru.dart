@@ -583,6 +583,18 @@ class AppLocalizationsRu extends AppLocalizations {
   String get keysValueLabel => 'Значение';
 
   @override
+  String get launcherDissolveFolder => 'Убрать папку';
+
+  @override
+  String get launcherFolderDefaultName => 'Папка';
+
+  @override
+  String get launcherFolderNameHint => 'Название папки';
+
+  @override
+  String get launcherRenameFolderTooltip => 'Переименовать папку';
+
+  @override
   String get mediaFileMissing => 'Медиафайл не найден';
 
   @override

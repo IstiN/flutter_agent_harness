@@ -45,8 +45,9 @@ import 'package:fa/services/upload_picker_stub.dart'
 
 /// Minimum body width (logical px) at which the side panels (sessions/model
 /// on the left, files on the right) become persistent, collapsible panels
-/// instead of drawers.
-const double _kWideLayoutBreakpoint = 900;
+/// instead of drawers — and below which the apps launcher (see
+/// `AppLauncherScreen`) replaces this screen as the app home.
+const double kWideLayoutBreakpoint = 900;
 
 /// A chat UI backed by [FlutterSessionManager], built on top of
 /// `flutter_chat_ui`.
@@ -304,7 +305,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// layouts, opens the drawer on narrow ones. [context] must be below the
   /// [Scaffold].
   void _openSidebar(BuildContext context) {
-    if (MediaQuery.sizeOf(context).width >= _kWideLayoutBreakpoint) {
+    if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
       setState(() => _leftPanelOpen = !_leftPanelOpen);
     } else {
       Scaffold.of(context).openDrawer();
@@ -315,7 +316,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// opens the end drawer on narrow ones. [context] must be below the
   /// [Scaffold].
   void _openFiles(BuildContext context) {
-    if (MediaQuery.sizeOf(context).width >= _kWideLayoutBreakpoint) {
+    if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
       setState(() => _filesPanelOpen = !_filesPanelOpen);
     } else {
       Scaffold.of(context).openEndDrawer();
@@ -1241,7 +1242,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.sizeOf(context).width >= _kWideLayoutBreakpoint;
+    final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
     return Scaffold(
       appBar: AppBar(
         leading: Builder(

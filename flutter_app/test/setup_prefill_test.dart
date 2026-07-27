@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
@@ -542,8 +542,9 @@ void main() {
         await tester.tap(find.text('Start chat'));
         await tester.pumpAndSettle();
 
-        // Connected: the chat screen replaced the setup screen…
-        expect(find.byType(ChatScreen), findsOneWidget);
+        // Connected: the home replaced the setup screen — on this narrow
+        // (800px) test surface the home is the apps launcher.
+        expect(find.byType(AppLauncherScreen), findsOneWidget);
         // …and the connection was saved (non-secret parts only).
         final connection = store.connection;
         expect(connection, isNotNull);

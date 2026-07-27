@@ -23,6 +23,7 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
+import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -255,6 +256,29 @@ AgentConfig? restorableBootConfig({
   );
 }
 
+/// The app home after a successful connect: the apps launcher (iOS-style
+/// grid + folders) on narrow phone layouts, the classic chat screen on wide
+/// ones (see [kWideLayoutBreakpoint]).
+Widget faHomeScreen({
+  required BuildContext context,
+  required FlutterSessionManager manager,
+  ProviderRegistry? registry,
+  LastConnectionStore? lastConnectionStore,
+}) {
+  if (MediaQuery.sizeOf(context).width < kWideLayoutBreakpoint) {
+    return AppLauncherScreen(
+      manager: manager,
+      registry: registry,
+      lastConnectionStore: lastConnectionStore,
+    );
+  }
+  return ChatScreen(
+    manager: manager,
+    registry: registry,
+    lastConnectionStore: lastConnectionStore,
+  );
+}
+
 /// Boot decision screen: the setup form shows only when nothing was ever
 /// configured (first run) or the last connection cannot be restored (its
 /// key is gone, or it was an on-device model — those re-offer the quick
@@ -341,7 +365,8 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       AppAnalytics.instance.bootstrapResult('chat');
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => ChatScreen(
+          builder: (_) => faHomeScreen(
+            context: context,
             manager: manager,
             registry: widget.registry,
             lastConnectionStore: widget.lastConnectionStore,
@@ -461,7 +486,8 @@ class SetupScreen extends StatelessWidget {
     if (!context.mounted) return;
     await Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => ChatScreen(
+        builder: (_) => faHomeScreen(
+          context: context,
           manager: manager,
           registry: registry,
           lastConnectionStore: lastConnectionStore,

@@ -577,6 +577,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get keysValueLabel => 'Value';
 
   @override
+  String get launcherDissolveFolder => 'Remove folder';
+
+  @override
+  String get launcherFolderDefaultName => 'Folder';
+
+  @override
+  String get launcherFolderNameHint => 'Folder name';
+
+  @override
+  String get launcherRenameFolderTooltip => 'Rename folder';
+
+  @override
   String get mediaFileMissing => 'Media file not found';
 
   @override
