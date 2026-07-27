@@ -667,4 +667,12 @@
 - feat(example): audio/video playback in the file preview
 - feat(example): story-driven App Store screenshots with real photos
 
+## 0.1.92
+
+- feat(example): generate_video tool — async /videos job on the videoGeneration slot
+- feat: request_secret tool — agent asks the user for missing credentials
+- fix(example): theme-aware FaWorkBar — one component with the chat overlay
+- fix(example): HomeKit entitlement + longer homes wait + notify probe
+- feat(example): resume the day's session at boot instead of stacking empties
+
 ## Unreleased
