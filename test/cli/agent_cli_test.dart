@@ -3,264 +3,7 @@ import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-const _model = Model(
-  id: 'test-model',
-  api: 'test-api',
-  provider: 'test-provider',
-  baseUrl: 'https://example.test',
-  contextWindow: 100000,
-  maxTokens: 4096,
-);
-
-/// A catalog-backed cloud model, for the banner's key-status line.
-const _cloudModel = Model(
-  id: 'claude-sonnet-4-5',
-  api: 'anthropic-messages',
-  provider: 'anthropic',
-  baseUrl: 'https://api.anthropic.com',
-  contextWindow: 200000,
-  maxTokens: 8192,
-);
-
-/// A model on a custom endpoint: the provider flips to `openai` (see
-/// `buildCliDefaultModel`) while the key lookup stays by provider kind.
-const _customEndpointModel = Model(
-  id: 'local-model',
-  api: 'openai-completions',
-  provider: 'openai',
-  baseUrl: 'http://127.0.0.1:8932',
-  contextWindow: 100000,
-  maxTokens: 4096,
-);
-
-AssistantMessage _assistant({
-  List<ContentBlock> content = const [],
-  StopReason stopReason = StopReason.stop,
-  String? errorMessage,
-  Usage? usage,
-}) {
-  return AssistantMessage(
-    content: content,
-    api: 'test-api',
-    provider: 'test-provider',
-    model: 'test-model',
-    usage: usage ?? Usage.zero,
-    stopReason: stopReason,
-    errorMessage: errorMessage,
-    timestamp: DateTime.utc(2026),
-  );
-}
-
-List<AssistantMessageEvent> _textTurn(String text, {Usage? usage}) {
-  final empty = _assistant();
-  final partial = _assistant(
-    content: [TextContent(text: text)],
-    usage: usage,
-  );
-  return [
-    StartEvent(partial: empty),
-    TextStartEvent(contentIndex: 0, partial: empty),
-    TextDeltaEvent(contentIndex: 0, delta: text, partial: partial),
-    DoneEvent(reason: StopReason.stop, message: partial),
-  ];
-}
-
-List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
-  final empty = _assistant();
-  final partial = _assistant(content: calls, stopReason: StopReason.toolUse);
-  final events = <AssistantMessageEvent>[StartEvent(partial: empty)];
-  for (var i = 0; i < calls.length; i++) {
-    events
-      ..add(ToolCallStartEvent(contentIndex: i, partial: empty))
-      ..add(
-        ToolCallEndEvent(contentIndex: i, toolCall: calls[i], partial: partial),
-      );
-  }
-  events.add(DoneEvent(reason: StopReason.toolUse, message: partial));
-  return events;
-}
-
-/// Scripted [StreamFunction] replaying pre-recorded turns.
-class _FakeStreamFunction {
-  _FakeStreamFunction(this.turns);
-
-  final List<List<AssistantMessageEvent>> turns;
-  final contexts = <Context>[];
-  final models = <Model>[];
-
-  int get calls => contexts.length;
-
-  AssistantMessageEventStream call(
-    Model model,
-    Context context, {
-    CancelToken? cancelToken,
-  }) {
-    models.add(model);
-    contexts.add(
-      Context(
-        systemPrompt: context.systemPrompt,
-        messages: List.of(context.messages),
-        tools: context.tools,
-      ),
-    );
-    final stream = AssistantMessageEventStream();
-    for (final event in turns.removeAt(0)) {
-      stream.push(event);
-    }
-    stream.end();
-    return stream;
-  }
-}
-
-/// A [StreamFunction] turn that hangs until cancelled, then reports aborted.
-class _AbortableStreamFunction {
-  var started = false;
-
-  AssistantMessageEventStream call(
-    Model model,
-    Context context, {
-    CancelToken? cancelToken,
-  }) {
-    started = true;
-    final stream = AssistantMessageEventStream();
-    stream.push(StartEvent(partial: _assistant()));
-    cancelToken?.onCancel.then((_) {
-      stream.push(
-        ErrorEvent(
-          reason: StopReason.aborted,
-          error: _assistant(
-            stopReason: StopReason.aborted,
-            errorMessage: 'Operation aborted',
-          ),
-        ),
-      );
-      stream.end();
-    });
-    return stream;
-  }
-}
-
-/// A [Shell] that blocks until [release] completes the gate.
-class _GatedShell implements Shell {
-  final _gate = Completer<void>();
-
-  void release() => _gate.complete();
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) async {
-    await _gate.future;
-    return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
-  }
-}
-
-/// A [Shell] that echoes the command and returns canned output.
-class _FakeShell implements Shell {
-  _FakeShell({this.stdout = '', this.stderr = '', this.exitCode = 0});
-
-  final String stdout;
-  final String stderr;
-  final int exitCode;
-  final commands = <String>[];
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) async {
-    commands.add(command);
-    return Ok(
-      ShellExecResult(stdout: stdout, stderr: stderr, exitCode: exitCode),
-    );
-  }
-}
-
-/// In-memory [CliIO]: scripted input lines, captured output.
-class FakeCliIO implements CliIO {
-  @override
-  int columns = 80;
-
-  @override
-  int rows = 24;
-
-  final _lines = StreamController<String>();
-  final _interrupts = StreamController<void>.broadcast();
-  final _keys = StreamController<KeyEvent>.broadcast();
-  final out = StringBuffer();
-
-  /// Tests flip this to exercise the non-interactive approval path.
-  @override
-  bool isInteractive = true;
-
-  @override
-  Stream<String> get lines => _lines.stream;
-
-  @override
-  Stream<void> get interrupts => _interrupts.stream;
-
-  @override
-  Stream<KeyEvent> get keys => _keys.stream;
-
-  @override
-  bool get supportsRawMode => true;
-
-  @override
-  void write(String text) => out.write(text);
-
-  @override
-  void writeln(String text) => out.write('$text\n');
-
-  void sendLine(String line) => _lines.add(line);
-
-  void sendKey(KeyEvent key) => _keys.add(key);
-
-  void interrupt() => _interrupts.add(null);
-
-  Future<void> close() async {
-    // The close future only completes once a listener received the done
-    // event; tests that never ran the CLI have no listener, so don't await.
-    unawaited(_lines.close());
-    unawaited(_keys.close());
-    await _interrupts.close();
-  }
-}
-
-/// In-memory [SecureKeyStore] with a toggleable availability flag.
-class _FakeSecureKeyStore implements SecureKeyStore {
-  _FakeSecureKeyStore({this.available = true});
-
-  bool available;
-  bool failWrites = false;
-  final map = <String, String>{};
-
-  @override
-  String get label => 'fake store';
-
-  @override
-  Future<bool> isAvailable() async => available;
-
-  @override
-  Future<String?> read(String name) async => map[name];
-
-  @override
-  Future<void> write(String name, String value) async {
-    if (failWrites) throw StateError('keychain write failed (exit 45)');
-    map[name] = value;
-  }
-
-  @override
-  Future<void> delete(String name) async => map.remove(name);
-}
-
-Future<void> _waitFor(bool Function() condition, {String? reason}) async {
-  for (var i = 0; i < 400; i++) {
-    if (condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-  }
-  fail('timed out waiting: ${reason ?? 'condition'}');
-}
+import 'agent_cli_test_support.dart';
 
 void main() {
   late MemoryExecutionEnv env;
@@ -275,7 +18,7 @@ void main() {
 
   AgentCli cliFor(
     StreamFunction streamFunction, {
-    Model model = _model,
+    Model model = testModel,
     ExecutionEnv? envOverride,
     bool Function(String name)? envVarIsSet,
     String? Function(String name)? envVarValue,
@@ -318,7 +61,7 @@ void main() {
   test(
     'default system prompt uses fah branding and forbids pi/Claude names',
     () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
       final prompt = cli.systemPrompt;
       expect(prompt, contains('You are fah'));
@@ -331,10 +74,10 @@ void main() {
   );
 
   test('registers inspect_image tool when visionConfig is provided', () {
-    final fake = _FakeStreamFunction([]);
+    final fake = FakeStreamFunction([]);
     final cli = AgentCli(
       config: AgentCliConfig(
-        model: _model,
+        model: testModel,
         apiKey: 'test-key',
         env: env,
         sessionRoot: '/sessions',
@@ -351,10 +94,10 @@ void main() {
   });
 
   test('registers transcribe_audio tool when transcribeConfig is provided', () {
-    final fake = _FakeStreamFunction([]);
+    final fake = FakeStreamFunction([]);
     final cli = AgentCli(
       config: AgentCliConfig(
-        model: _model,
+        model: testModel,
         apiKey: 'test-key',
         env: env,
         sessionRoot: '/sessions',
@@ -368,11 +111,11 @@ void main() {
   });
 
   test('streams assistant text live and persists the session', () async {
-    final fake = _FakeStreamFunction([_textTurn('Hello world')]);
+    final fake = FakeStreamFunction([textTurn('Hello world')]);
     final cli = cliFor(fake.call);
     final run = cli.run();
     io.sendLine('hi');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
     final output = io.out.toString();
@@ -394,15 +137,15 @@ void main() {
   });
 
   test('banner shows the endpoint and the set key env var name', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(
       fake.call,
-      model: _cloudModel,
+      model: testCloudModel,
       providerKind: 'anthropic',
       envVarIsSet: (name) => name == 'ANTHROPIC_API_KEY',
     );
     final run = cli.run();
-    await _waitFor(() => io.out.toString().contains('[Model]'));
+    await waitForIt(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
     final output = io.out.toString();
@@ -412,15 +155,15 @@ void main() {
   });
 
   test('banner warns when no key env var is set for the provider', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(
       fake.call,
-      model: _cloudModel,
+      model: testCloudModel,
       providerKind: 'anthropic',
       envVarIsSet: (_) => false,
     );
     final run = cli.run();
-    await _waitFor(() => io.out.toString().contains('[Model]'));
+    await waitForIt(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
     expect(
@@ -430,10 +173,10 @@ void main() {
   });
 
   test('banner has no key line for providers without key env vars', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call, providerKind: 'test-kind');
     final run = cli.run();
-    await _waitFor(() => io.out.toString().contains('[Model]'));
+    await waitForIt(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
 
@@ -445,15 +188,15 @@ void main() {
   test(
     'banner key status tracks the provider kind on custom endpoints',
     () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(
         fake.call,
-        model: _customEndpointModel,
+        model: testCustomEndpointModel,
         envVarIsSet: (name) => name == 'OPENROUTER_API_KEY',
       );
       final run = cli.run();
 
-      await _waitFor(() => io.out.toString().contains('[Model]'));
+      await waitForIt(() => io.out.toString().contains('[Model]'));
       io.sendLine('/exit');
       await run;
 
@@ -467,15 +210,15 @@ void main() {
   );
 
   test('banner skips the key warning on keyless custom endpoints', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
+    final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(
       fake.call,
-      model: _customEndpointModel,
+      model: testCustomEndpointModel,
       envVarIsSet: (_) => false,
     );
     final run = cli.run();
 
-    await _waitFor(() => io.out.toString().contains('[Model]'));
+    await waitForIt(() => io.out.toString().contains('[Model]'));
     io.sendLine('/exit');
     await run;
 
@@ -489,9 +232,9 @@ void main() {
   test(
     'background task job completes and re-enters the conversation',
     () async {
-      final fake = _FakeStreamFunction([
+      final fake = FakeStreamFunction([
         // 1. The parent delegates a background agent.
-        _toolTurn([
+        toolTurn([
           ToolCall(
             id: 't1',
             name: 'task',
@@ -505,19 +248,19 @@ void main() {
           ),
         ]),
         // 2. The parent wraps up its own turn.
-        _textTurn('delegated the survey'),
+        textTurn('delegated the survey'),
         // 3. The background child agent produces its result.
-        _textTurn('survey says: all quiet'),
+        textTurn('survey says: all quiet'),
         // 4. The async-result re-wake reacts to the injected notification.
-        _textTurn('noted, survey integrated'),
+        textTurn('noted, survey integrated'),
       ]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
       io.sendLine('delegate it');
-      await _waitFor(() => fake.calls == 4 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 4 && !cli.isBusy);
       io.sendLine('/tasks');
-      await _waitFor(() => io.out.toString().contains('background agents:'));
+      await waitForIt(() => io.out.toString().contains('background agents:'));
       io.sendLine('/exit');
       await run;
 
@@ -546,16 +289,16 @@ void main() {
         '---\nname: deploy\ndescription: Deploy the app\n---\n'
             'Deploy body here.\n',
       );
-      final fake = _FakeStreamFunction([_textTurn('deploying now')]);
+      final fake = FakeStreamFunction([textTurn('deploying now')]);
       final cli = cliFor(fake.call);
       final run = cli.run();
-      await _waitFor(
+      await waitForIt(
         () =>
             cli.systemPrompt.contains('follow the repo rules') &&
             cli.systemPrompt.contains('<name>deploy</name>'),
       );
       io.sendLine('/skill:deploy ship it');
-      await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
       io.sendLine('/exit');
       await run;
 
@@ -577,21 +320,21 @@ void main() {
 
   test('renders tool start/end one-liners and stores tool results', () async {
     await env.writeFile('notes.txt', 'data');
-    final fake = _FakeStreamFunction([
-      _toolTurn([
+    final fake = FakeStreamFunction([
+      toolTurn([
         ToolCall(
           id: 'c1',
           name: 'read',
           arguments: const {'path': 'notes.txt'},
         ),
       ]),
-      _textTurn('done reading'),
+      textTurn('done reading'),
     ]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('read it');
-    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -614,23 +357,23 @@ void main() {
   });
 
   test('steers typed input into a running agent', () async {
-    final shell = _GatedShell();
+    final shell = GatedShell();
     final gatedEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
-    final fake = _FakeStreamFunction([
-      _toolTurn([
+    final fake = FakeStreamFunction([
+      toolTurn([
         ToolCall(id: 'c1', name: 'bash', arguments: const {'command': 'sleep'}),
       ]),
-      _textTurn('final'),
+      textTurn('final'),
     ]);
     final cli = cliFor(fake.call, envOverride: gatedEnv);
     final run = cli.run();
 
     io.sendLine('run');
-    await _waitFor(() => fake.calls == 1);
+    await waitForIt(() => fake.calls == 1);
     // The bash tool is blocked on the gate, so the run is mid-flight.
     io.sendLine('steer me');
     shell.release();
-    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -644,14 +387,14 @@ void main() {
   });
 
   test('aborts the current run on interrupt', () async {
-    final fake = _AbortableStreamFunction();
+    final fake = AbortableStreamFunction();
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('long task');
-    await _waitFor(() => fake.started);
+    await waitForIt(() => fake.started);
     io.interrupt();
-    await _waitFor(() => !cli.isBusy);
+    await waitForIt(() => !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -667,14 +410,14 @@ void main() {
       totalTokens: 15,
       cost: UsageCost(input: 0.0006, output: 0.0004, total: 0.001),
     );
-    final fake = _FakeStreamFunction([_textTurn('hi', usage: usage)]);
+    final fake = FakeStreamFunction([textTurn('hi', usage: usage)]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('q');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/stats');
-    await _waitFor(() => io.out.toString().contains('cost:'));
+    await waitForIt(() => io.out.toString().contains('cost:'));
     io.sendLine('/exit');
     await run;
 
@@ -686,861 +429,17 @@ void main() {
     expect(output, contains(r'cost: $0.0010'));
   });
 
-  test('/model prints and switches the model', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final cli = cliFor(fake.call);
-    final run = cli.run();
-
-    io.sendLine('/model');
-    await _waitFor(() => io.out.toString().contains('model: test-model'));
-    io.sendLine('/model new-model');
-    await _waitFor(
-      () => io.out.toString().contains('switched model to new-model'),
-    );
-    io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
-    io.sendLine('/exit');
-    await run;
-
-    expect(fake.models.single.id, 'new-model');
-    expect(fake.contexts.single.systemPrompt, isNotNull);
-  });
-
-  test('/provider prints the active provider and the catalog', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final cli = cliFor(fake.call);
-    final run = cli.run();
-
-    io.sendLine('/provider');
-    await _waitFor(() => io.out.toString().contains('supported providers:'));
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    expect(output, contains('provider: test-provider (test-api)'));
-    expect(output, contains('endpoint: https://example.test'));
-    expect(output, contains('openrouter — https://openrouter.ai/api/v1'));
-    expect(output, contains('anthropic — https://api.anthropic.com'));
-    expect(output, contains('use /provider <name> [baseUrl] [token]'));
-  });
-
-  test('/provider <name> switches provider, endpoint, and env key', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final changes = <(String, String)>[];
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (name) => name == 'ANTHROPIC_API_KEY' ? 'env-key-123' : null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider anthropic');
-    await _waitFor(
-      () => io.out.toString().contains('switched provider to anthropic'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    final model = cli.agent.state.model;
-    expect(model.provider, 'anthropic');
-    expect(model.api, 'anthropic-messages');
-    expect(model.baseUrl, 'https://api.anthropic.com');
-    expect(model.id, 'test-model', reason: 'the model id is kept');
-    expect(cli.providerKind, 'anthropic');
-    expect(output, contains('endpoint: https://api.anthropic.com'));
-    expect(output, contains('key: ANTHROPIC_API_KEY'));
-    expect(output, isNot(contains('env-key-123')));
-    expect(output, contains('model unchanged: test-model'));
-    expect(changes, [('anthropic', 'env-key-123')]);
-  });
-
-  test('/provider with a custom baseUrl runs keyless', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final changes = <(String, String)>[];
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider openai http://127.0.0.1:1/v1');
-    await _waitFor(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    final model = cli.agent.state.model;
-    expect(model.provider, 'openai');
-    expect(model.api, 'openai-completions');
-    expect(model.baseUrl, 'http://127.0.0.1:1/v1');
-    expect(cli.providerKind, 'openai-completions');
-    expect(output, contains('key: none (keyless endpoint)'));
-    expect(changes, [('openai-completions', '')]);
-  });
-
-  test('/provider accepts an explicit session token', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final changes = <(String, String)>[];
-    final cli = cliFor(
-      fake.call,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider openai http://127.0.0.1:1/v1 tok-1234567890');
-    await _waitFor(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    expect(output, contains('key: provided'));
-    expect(output, isNot(contains('tok-1234567890')));
-    expect(changes, [('openai-completions', 'tok-1234567890')]);
-  });
-
-  test('/provider rejects an unknown provider without state changes', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final cli = cliFor(fake.call);
-    final run = cli.run();
-
-    io.sendLine('/provider bogus');
-    await _waitFor(() => io.out.toString().contains('unknown provider: bogus'));
-    io.sendLine('/provider a b c d');
-    await _waitFor(() => io.out.toString().contains('usage: /provider <name>'));
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    expect(
-      output,
-      contains('supported providers: openrouter, openai, anthropic, google'),
-    );
-    expect(cli.agent.state.model.provider, 'test-provider');
-    expect(cli.providerKind, 'openai-completions');
-  });
-
-  test('/key lists key sources without exposing values', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore()
-      ..map['GOOGLE_API_KEY'] = 'google-key-123';
-    final cache = SecureKeyCache(store);
-    await cache.preload(const ['GOOGLE_API_KEY']);
-    final cli = cliFor(
-      fake.call,
-      secureKeys: cache,
-      envVarIsSet: (name) => name == 'OPENROUTER_API_KEY',
-    );
-    final run = cli.run();
-
-    io.sendLine('/key');
-    await _waitFor(
-      () => io.out.toString().contains('secure storage: fake store'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    expect(output, contains('OPENROUTER_API_KEY: env'));
-    expect(output, contains('GOOGLE_API_KEY: fake store'));
-    expect(output, contains('ANTHROPIC_API_KEY: not set'));
-    expect(output, isNot(contains('google-key-123')));
-  });
-
-  test(
-    '/key set stores, redacts, and updates the active provider key',
-    () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      final store = _FakeSecureKeyStore();
-      final cache = SecureKeyCache(store);
-      await cache.probe();
-      final stored = <(String, String)>[];
-      final cli = cliFor(
-        fake.call,
-        secureKeys: cache,
-        onSecretStored: (name, value) => stored.add((name, value)),
-      );
-      final run = cli.run();
-
-      io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
-      await _waitFor(
-        () => io.out.toString().contains('saved OPENAI_API_KEY to fake store'),
-      );
-      io.sendLine('/exit');
-      await run;
-
-      final output = io.out.toString();
-      expect(store.map['OPENAI_API_KEY'], 'sk-new-key-456');
-      expect(stored, [('OPENAI_API_KEY', 'sk-new-key-456')]);
-      expect(output, isNot(contains('sk-new-key-456')));
-      // openai-completions resolves OPENROUTER_API_KEY/OPENAI_API_KEY, so the
-      // freshly stored key is picked up without a restart.
-      expect(output, contains('active provider key updated'));
-    },
-  );
-
-  test('/key set reports when secure storage is unavailable', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore(available: false);
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    final cli = cliFor(fake.call, secureKeys: cache);
-    final run = cli.run();
-
-    io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
-    await _waitFor(
-      () => io.out.toString().contains('secure storage unavailable'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    expect(store.map, isEmpty);
-  });
-
-  test(
-    '/key set reports a failing keychain write instead of crashing',
-    () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      final store = _FakeSecureKeyStore()..failWrites = true;
-      final cache = SecureKeyCache(store);
-      await cache.probe();
-      final cli = cliFor(fake.call, secureKeys: cache);
-      final run = cli.run();
-
-      io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
-      await _waitFor(
-        () => io.out.toString().contains('could not save OPENAI_API_KEY'),
-      );
-      io.sendLine('/exit');
-      await run;
-
-      expect(store.map, isEmpty);
-    },
-  );
-
-  test(
-    '/provider token falls back to session-only when the write fails',
-    () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      final changes = <(String, String)>[];
-      final store = _FakeSecureKeyStore()..failWrites = true;
-      final cache = SecureKeyCache(store);
-      await cache.probe();
-      final cli = cliFor(
-        fake.call,
-        secureKeys: cache,
-        onProviderChanged: (kind, key) => changes.add((kind, key)),
-      );
-      final run = cli.run();
-
-      io.sendLine('/provider openai http://127.0.0.1:1/v1 sk-token-789');
-      await _waitFor(
-        () => io.out.toString().contains('could not save the key'),
-      );
-      io.sendLine('/exit');
-      await run;
-
-      final output = io.out.toString();
-      expect(store.map, isEmpty);
-      // Session continues keyless-to-store but with the token live.
-      expect(output, contains('key: provided'));
-      expect(changes, [('openai-completions', 'sk-token-789')]);
-    },
-  );
-
-  test('/key delete removes the stored key', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    await cache.save('OPENAI_API_KEY', 'sk-stored-key');
-    final cli = cliFor(fake.call, secureKeys: cache);
-    final run = cli.run();
-
-    io.sendLine('/key delete OPENAI_API_KEY');
-    await _waitFor(() => io.out.toString().contains('removed OPENAI_API_KEY'));
-    io.sendLine('/exit');
-    await run;
-
-    expect(store.map, isEmpty);
-    expect(cache.read('OPENAI_API_KEY'), isNull);
-  });
-
-  test('/key validates its arguments', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    final cli = cliFor(fake.call, secureKeys: cache);
-    final run = cli.run();
-
-    io.sendLine('/key set ONLYNAME');
-    await _waitFor(
-      () => io.out.toString().contains('usage: /key set <NAME> <value>'),
-    );
-    io.sendLine('/key set bad-name! value');
-    await _waitFor(
-      () => io.out.toString().contains('invalid key name: bad-name!'),
-    );
-    io.sendLine('/key frobnicate');
-    await _waitFor(() => io.out.toString().contains('usage: /key [set'));
-    io.sendLine('/exit');
-    await run;
-
-    expect(store.map, isEmpty);
-  });
-
-  test('/provider persists the explicit token in the secure store', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    final cli = cliFor(fake.call, secureKeys: cache);
-    final run = cli.run();
-
-    io.sendLine('/provider openai http://127.0.0.1:1/v1 sk-token-789');
-    await _waitFor(() => io.out.toString().contains('saved to fake store'));
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    // Endpoint-scoped store name (FA_KEY_<HOST>), never the shared env name.
-    expect(store.map['FA_KEY_127_0_0_1_1'], 'sk-token-789');
-    expect(store.map['OPENAI_API_KEY'], isNull);
-    expect(
-      output,
-      contains(
-        'key: provided (saved to fake store; '
-        'remove with /key delete FA_KEY_127_0_0_1_1)',
-      ),
-    );
-    expect(output, isNot(contains('sk-token-789')));
-  });
-
-  test('/provider resolves the endpoint-scoped store key', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    await cache.save('FA_KEY_127_0_0_1_1', 'scoped-key');
-    final changes = <(String, String)>[];
-    final cli = cliFor(
-      fake.call,
-      secureKeys: cache,
-      envVarValue: (name) =>
-          name == 'FA_KEY_127_0_0_1_1' ? cache.read(name) : null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider openai http://127.0.0.1:1/v1');
-    await _waitFor(() => changes.isNotEmpty);
-    io.sendLine('/exit');
-    await run;
-
-    expect(changes.single.$2, 'scoped-key');
-    expect(io.out.toString(), contains('key: FA_KEY_127_0_0_1_1 (fake store)'));
-  });
-
-  test('/provider still resolves a legacy env-name store key', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    await cache.save('OPENAI_API_KEY', 'legacy-key');
-    final changes = <(String, String)>[];
-    final cli = cliFor(
-      fake.call,
-      secureKeys: cache,
-      envVarValue: (name) => name == 'OPENAI_API_KEY' ? cache.read(name) : null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider openai');
-    await _waitFor(() => changes.isNotEmpty);
-    io.sendLine('/exit');
-    await run;
-
-    expect(changes.single.$2, 'legacy-key');
-    expect(io.out.toString(), contains('key: OPENAI_API_KEY (fake store)'));
-  });
-
-  test('/provider key order: env beats scoped on the default endpoint, '
-      'scoped wins on custom endpoints', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    await cache.save('OPENAI_API_KEY', 'legacy-key');
-    await cache.save('FA_KEY_127_0_0_1_1', 'scoped-key');
-    final changes = <(String, String)>[];
-    final cli = cliFor(
-      fake.call,
-      secureKeys: cache,
-      envVarValue: (name) {
-        if (name == 'OPENAI_API_KEY') return 'env-key';
-        if (name == 'FA_KEY_127_0_0_1_1') return cache.read(name);
-        return null;
-      },
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
-    );
-    final run = cli.run();
-
-    // Default hosted endpoint: env wins over scoped and legacy.
-    io.sendLine('/provider openai');
-    await _waitFor(() => changes.isNotEmpty);
-    expect(changes.removeLast().$2, 'env-key');
-
-    // Custom endpoint, env still set: the env name must NOT hijack it.
-    io.sendLine('/provider openai http://127.0.0.1:1/v1');
-    await _waitFor(() => changes.isNotEmpty);
-    expect(changes.removeLast().$2, 'scoped-key');
-
-    io.sendLine('/provider openai http://127.0.0.1:2/v1');
-    await _waitFor(() => changes.isNotEmpty);
-    io.sendLine('/exit');
-    await run;
-
-    expect(changes.removeLast().$2, '');
-  });
-
-  test('/provider custom runs the guided openai-like setup', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final changes = <(String, String)>[];
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider custom');
-    await _waitFor(() => io.out.toString().contains('type a number:'));
-    io.sendLine('1');
-    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
-    io.sendLine('http://127.0.0.1:1/v1');
-    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
-    io.sendLine('');
-    await _waitFor(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
-    io.sendLine('');
-    await _waitFor(
-      () => io.out.toString().contains('no model list from the endpoint'),
-    );
-    io.sendLine('my-local-model');
-    await _waitFor(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    final model = cli.agent.state.model;
-    expect(model.provider, 'openai');
-    expect(model.api, 'openai-completions');
-    expect(model.id, 'my-local-model');
-    expect(model.baseUrl, 'http://127.0.0.1:1/v1');
-    expect(output, contains('model: my-local-model'));
-    expect(output, contains('key: none (keyless endpoint)'));
-    expect(changes, [('openai-completions', '')]);
-  });
-
-  test('/provider custom offers the endpoint model list', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      modelsFetcher: (baseUrl, {required apiKey}) async => ['m1', 'm2'],
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider custom');
-    await _waitFor(() => io.out.toString().contains('type a number:'));
-    io.sendLine('1');
-    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
-    io.sendLine('https://proxy.example.com/v1');
-    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
-    io.sendLine('');
-    await _waitFor(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
-    io.sendLine('');
-    await _waitFor(() => io.out.toString().contains('2) m2'));
-    io.sendLine('2');
-    await _waitFor(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    expect(cli.agent.state.model.id, 'm2');
-    expect(output, contains('model: m2'));
-  });
-
-  test('/provider custom stores the typed key in the secure store', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    final cli = cliFor(
-      fake.call,
-      secureKeys: cache,
-      modelsFetcher: (baseUrl, {required apiKey}) async => const [],
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider custom');
-    await _waitFor(() => io.out.toString().contains('type a number:'));
-    io.sendLine('1');
-    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
-    io.sendLine('https://proxy.example.com/v1');
-    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
-    io.sendLine('work');
-    await _waitFor(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
-    io.sendLine('sk-flow-key-1');
-    await _waitFor(
-      () => io.out.toString().contains('no model list from the endpoint'),
-    );
-    io.sendLine('proxy-model');
-    await _waitFor(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    // Name-scoped slot: the key binds to this entry, not just the host.
-    expect(store.map['FA_KEY_PROXY_EXAMPLE_COM_WORK'], 'sk-flow-key-1');
-    expect(output, contains('key: provided (saved to fake store'));
-    expect(output, isNot(contains('sk-flow-key-1')));
-  });
-
-  test('two accounts on one endpoint keep separate keys', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final store = _FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    final cli = cliFor(
-      fake.call,
-      secureKeys: cache,
-      modelsFetcher: (baseUrl, {required apiKey}) async => const [],
-      customProviders: CustomProviderRegistry(const []),
-    );
-    final run = cli.run();
-
-    Future<void> addAccount(String name, String key) async {
-      // Match only output produced by THIS wizard run — identical prompts
-      // from the previous account would satisfy the waits prematurely and
-      // desync the scripted answers.
-      final marker = io.out.toString().length;
-      String fresh() => io.out.toString().substring(marker);
-      io.sendLine('/provider custom');
-      await _waitFor(() => fresh().contains('type a number:'));
-      io.sendLine('1');
-      await _waitFor(() => fresh().contains('base URL (empty ='));
-      io.sendLine('https://proxy.example.com/v1');
-      await _waitFor(() => fresh().contains('provider name (empty ='));
-      io.sendLine(name);
-      await _waitFor(() => fresh().contains('API key (empty for none):'));
-      io.sendLine(key);
-      await _waitFor(() => fresh().contains('no model list from the endpoint'));
-      io.sendLine('proxy-model');
-      await _waitFor(() => fresh().contains('saved provider $name'));
-    }
-
-    await addAccount('ira1', 'sk-one');
-    await addAccount('ira2', 'sk-two');
-    io.sendLine('/exit');
-    await run;
-
-    // Distinct name-scoped slots — the second account did not overwrite the
-    // first.
-    expect(store.map['FA_KEY_PROXY_EXAMPLE_COM_IRA1'], 'sk-one');
-    expect(store.map['FA_KEY_PROXY_EXAMPLE_COM_IRA2'], 'sk-two');
-    final entries = cli.config.customProviders?.entries ?? const [];
-    expect(
-      entries.map((e) => e.keyName).toSet().length,
-      entries.length,
-      reason: 'every entry owns a distinct key slot',
-    );
-  });
-
-  test('/provider custom supports anthropic-like endpoints', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final cli = cliFor(fake.call, envVarValue: (_) => null);
-    final run = cli.run();
-
-    io.sendLine('/provider custom');
-    await _waitFor(() => io.out.toString().contains('type a number:'));
-    io.sendLine('2');
-    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
-    io.sendLine('https://anthropic-proxy.example.com');
-    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
-    io.sendLine('');
-    await _waitFor(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
-    io.sendLine('');
-    await _waitFor(() => io.out.toString().contains('model id (empty keeps'));
-    io.sendLine('claude-proxy-model');
-    await _waitFor(
-      () => io.out.toString().contains('switched provider to anthropic'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    expect(output, isNot(contains('fetching models from')));
-    final model = cli.agent.state.model;
-    expect(model.provider, 'anthropic');
-    expect(model.api, 'anthropic-messages');
-    expect(model.id, 'claude-proxy-model');
-    expect(cli.providerKind, 'anthropic');
-  });
-
-  test('/provider custom validates the api type and base URL', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final cli = cliFor(fake.call, envVarValue: (_) => null);
-    final run = cli.run();
-
-    io.sendLine('/provider custom extra');
-    await _waitFor(() => io.out.toString().contains('usage: /provider custom'));
-    io.sendLine('/provider custom');
-    await _waitFor(() => io.out.toString().contains('type a number:'));
-    io.sendLine('x');
-    await _waitFor(() => io.out.toString().contains('invalid selection: x'));
-    io.sendLine('1');
-    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
-    io.sendLine('localhost:8080');
-    await _waitFor(() => io.out.toString().contains('invalid base URL'));
-    io.sendLine('/exit');
-    await run;
-
-    expect(cli.agent.state.model.provider, 'test-provider');
-    expect(cli.providerKind, 'openai-completions');
-  });
-
-  test('/provider custom cancels on interrupt without state changes', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final cli = cliFor(fake.call, envVarValue: (_) => null);
-    final run = cli.run();
-
-    io.sendLine('/provider custom');
-    await _waitFor(() => io.out.toString().contains('type a number:'));
-    io.interrupt();
-    await _waitFor(
-      () => io.out.toString().contains('custom provider setup cancelled'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    expect(cli.agent.state.model.provider, 'test-provider');
-    expect(cli.providerKind, 'openai-completions');
-  });
-
-  test(
-    '/provider custom consumes piped answers without leaking into runs',
-    () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      final cli = cliFor(fake.call, envVarValue: (_) => null);
-      final run = cli.run();
-
-      // All answers arrive before the flow asks for them (piped stdin):
-      // type, url, name (empty = default), key (empty = none), model.
-      io
-        ..sendLine('/provider custom')
-        ..sendLine('1')
-        ..sendLine('http://127.0.0.1:1/v1')
-        ..sendLine('')
-        ..sendLine('')
-        ..sendLine('my-local-model');
-      await _waitFor(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
-      io.sendLine('/exit');
-      await run;
-
-      expect(cli.agent.state.model.id, 'my-local-model');
-      expect(fake.calls, 0, reason: 'no answer may leak into a run');
-    },
-  );
-
-  test(
-    '/provider custom applies the spec default URL on an empty answer',
-    () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      final cli = cliFor(fake.call, envVarValue: (_) => null);
-      final run = cli.run();
-
-      io.sendLine('/provider custom');
-      await _waitFor(() => io.out.toString().contains('type a number:'));
-      io.sendLine('1');
-      await _waitFor(
-        () => io.out.toString().contains('base URL (empty = https://'),
-      );
-      io.sendLine('');
-      await _waitFor(
-        () => io.out.toString().contains('provider name (empty ='),
-      );
-      io.sendLine('');
-      await _waitFor(
-        () => io.out.toString().contains('API key (empty for none):'),
-      );
-      io.sendLine('');
-      await _waitFor(
-        () => io.out.toString().contains('no model list from the endpoint'),
-      );
-      io.sendLine('gpt-4o-mini');
-      await _waitFor(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
-      io.sendLine('/exit');
-      await run;
-
-      expect(cli.agent.state.model.baseUrl, 'https://api.openai.com/v1');
-      expect(cli.agent.state.model.id, 'gpt-4o-mini');
-    },
-  );
-
-  test(
-    '/provider custom saves the provider and switching restores its model',
-    () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      final registry = CustomProviderRegistry(const []);
-      final cli = cliFor(
-        fake.call,
-        envVarValue: (_) => null,
-        customProviders: registry,
-        modelsFetcher: (baseUrl, {required apiKey}) async => ['m1', 'm2'],
-      );
-      final run = cli.run();
-
-      io.sendLine('/provider custom');
-      await _waitFor(() => io.out.toString().contains('type a number:'));
-      io.sendLine('1');
-      await _waitFor(() => io.out.toString().contains('base URL (empty ='));
-      io.sendLine('http://localhost:11434/v1');
-      await _waitFor(
-        () => io.out.toString().contains('provider name (empty ='),
-      );
-      io.sendLine('my-ollama');
-      await _waitFor(
-        () => io.out.toString().contains('API key (empty for none):'),
-      );
-      io.sendLine('');
-      await _waitFor(() => io.out.toString().contains('2) m2'));
-      io.sendLine('2');
-      await _waitFor(
-        () => io.out.toString().contains('saved provider my-ollama'),
-      );
-
-      final entry = registry.entries.single;
-      expect(entry.name, 'my-ollama');
-      expect(entry.modelId, 'm2');
-      expect(entry.baseUrl, 'http://localhost:11434/v1');
-
-      // A catalog switch clears it; switching back by name restores m2.
-      io.sendLine('/provider anthropic');
-      await _waitFor(
-        () => io.out.toString().contains('switched provider to anthropic'),
-      );
-      io.sendLine('/model other-model');
-      await _waitFor(
-        () => io.out.toString().contains('switched model to other-model'),
-      );
-      io.sendLine('/provider my-ollama');
-      await _waitFor(() => cli.agent.state.model.id == 'm2');
-
-      // Per-provider model memory: /model rewrites the entry.
-      io.sendLine('/model llama3.2');
-      await _waitFor(
-        () => io.out.toString().contains('switched model to llama3.2'),
-      );
-      expect(registry.find('my-ollama')!.modelId, 'llama3.2');
-      io.sendLine('/exit');
-      await run;
-    },
-  );
-
-  test('/provider-edit updates the active custom provider', () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    final registry = CustomProviderRegistry([
-      CustomProviderEntry(
-        name: 'localhost:11434',
-        apiType: 'openai',
-        baseUrl: 'http://localhost:11434/v1',
-        modelId: 'old-model',
-      ),
-    ]);
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      customProviders: registry,
-      modelsFetcher: (baseUrl, {required apiKey}) async => [
-        'new-model',
-        'old-model',
-      ],
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider localhost:11434');
-    await _waitFor(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/provider-edit');
-    await _waitFor(
-      () => io.out.toString().contains('editing provider localhost:11434'),
-    );
-    io.sendLine('1');
-    await _waitFor(
-      () => io.out.toString().contains(
-        'base URL (empty = http://localhost:11434/v1)',
-      ),
-    );
-    io.sendLine('');
-    await _waitFor(
-      () =>
-          io.out.toString().contains('provider name (empty = localhost:11434)'),
-    );
-    io.sendLine('renamed-ollama');
-    await _waitFor(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
-    io.sendLine('');
-    await _waitFor(() => io.out.toString().contains('1) new-model'));
-    io.sendLine('1');
-    await _waitFor(() => cli.agent.state.model.id == 'new-model');
-    io.sendLine('/exit');
-    await run;
-
-    expect(registry.find('localhost:11434'), isNull);
-    final entry = registry.entries.single;
-    expect(entry.name, 'renamed-ollama');
-    expect(entry.modelId, 'new-model');
-    expect(entry.baseUrl, 'http://localhost:11434/v1');
-  });
-
   test('/reset starts a fresh session and clears history', () async {
-    final fake = _FakeStreamFunction([_textTurn('first'), _textTurn('second')]);
+    final fake = FakeStreamFunction([textTurn('first'), textTurn('second')]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('one');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/reset');
-    await _waitFor(() => io.out.toString().contains('new session started'));
+    await waitForIt(() => io.out.toString().contains('new session started'));
     io.sendLine('two');
-    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1553,21 +452,21 @@ void main() {
   });
 
   test('/compact summarizes history and replaces the context', () async {
-    final fake = _FakeStreamFunction([
-      _textTurn('answer'),
-      _textTurn('SUMMARY'),
-      _textTurn('after'),
+    final fake = FakeStreamFunction([
+      textTurn('answer'),
+      textTurn('SUMMARY'),
+      textTurn('after'),
     ]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('q');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/compact');
-    await _waitFor(() => fake.calls == 2, reason: 'summarizer called');
-    await _waitFor(() => io.out.toString().contains('[compacted]'));
+    await waitForIt(() => fake.calls == 2, reason: 'summarizer called');
+    await waitForIt(() => io.out.toString().contains('[compacted]'));
     io.sendLine('next');
-    await _waitFor(() => fake.calls == 3 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 3 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1592,16 +491,16 @@ void main() {
       contextWindow: 100,
       maxTokens: 4096,
     );
-    final fake = _FakeStreamFunction([
-      _textTurn('a reasonably long answer that exceeds the tiny window'),
-      _textTurn('AUTO SUMMARY'),
+    final fake = FakeStreamFunction([
+      textTurn('a reasonably long answer that exceeds the tiny window'),
+      textTurn('AUTO SUMMARY'),
     ]);
     final cli = cliFor(fake.call, model: tinyWindow);
     final run = cli.run();
 
     io.sendLine('q');
-    await _waitFor(() => fake.calls == 2, reason: 'summarizer called');
-    await _waitFor(() => io.out.toString().contains('[auto-compacted]'));
+    await waitForIt(() => fake.calls == 2, reason: 'summarizer called');
+    await waitForIt(() => io.out.toString().contains('[auto-compacted]'));
     io.sendLine('/exit');
     await run;
 
@@ -1610,12 +509,12 @@ void main() {
   });
 
   test('/help lists the slash commands', () async {
-    final fake = _FakeStreamFunction([]);
+    final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('/help');
-    await _waitFor(() => io.out.toString().contains('/compact'));
+    await waitForIt(() => io.out.toString().contains('/compact'));
     io.sendLine('/exit');
     await run;
 
@@ -1633,27 +532,29 @@ void main() {
   });
 
   test('unknown slash commands show a filtered command menu', () async {
-    final fake = _FakeStreamFunction([]);
+    final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('/bogus');
-    await _waitFor(() => io.out.toString().contains('unknown command: /bogus'));
+    await waitForIt(
+      () => io.out.toString().contains('unknown command: /bogus'),
+    );
     io.sendLine('/exit');
     await run;
   });
 
   test('bare / shows a numbered command menu in line mode', () async {
-    final fake = _FakeStreamFunction([]);
+    final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('/');
-    await _waitFor(
+    await waitForIt(
       () => io.out.toString().contains('[Commands]'),
       reason: 'menu appears',
     );
-    await _waitFor(() => io.out.toString().contains('1) /exit'));
+    await waitForIt(() => io.out.toString().contains('1) /exit'));
     // Pick the exit command by number.
     io.sendLine('1');
     await run;
@@ -1672,8 +573,8 @@ void main() {
   });
 
   test('renders tool errors and assistant errors', () async {
-    final fake = _FakeStreamFunction([
-      _toolTurn([
+    final fake = FakeStreamFunction([
+      toolTurn([
         ToolCall(
           id: 'c1',
           name: 'read',
@@ -1681,10 +582,13 @@ void main() {
         ),
       ]),
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(stopReason: StopReason.error, errorMessage: 'boom'),
+          error: testAssistant(
+            stopReason: StopReason.error,
+            errorMessage: 'boom',
+          ),
         ),
       ],
     ]);
@@ -1692,7 +596,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1703,19 +607,22 @@ void main() {
   });
 
   test('error lines render red when color is enabled', () async {
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(stopReason: StopReason.error, errorMessage: 'boom'),
+          error: testAssistant(
+            stopReason: StopReason.error,
+            errorMessage: 'boom',
+          ),
         ),
       ],
     ]);
     final cli = AgentCli(
       useColor: true,
       config: AgentCliConfig(
-        model: _model,
+        model: testModel,
         apiKey: 'test-key',
         env: env,
         sessionRoot: '/sessions',
@@ -1726,7 +633,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1738,12 +645,12 @@ void main() {
 
   test('connection-refused error appends the endpoint hint (ClientException '
       'message shape)', () async {
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(
+          error: testAssistant(
             stopReason: StopReason.error,
             errorMessage: 'Connection refused',
           ),
@@ -1754,7 +661,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1770,12 +677,12 @@ void main() {
 
   test('connection-refused error appends the endpoint hint (SocketException '
       'toString shape)', () async {
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(
+          error: testAssistant(
             stopReason: StopReason.error,
             errorMessage:
                 'ClientException with SocketException: Connection refused '
@@ -1790,7 +697,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1801,15 +708,15 @@ void main() {
   });
 
   test('401 with a different stored key warns about env shadowing', () async {
-    final cache = SecureKeyCache(_FakeSecureKeyStore());
+    final cache = SecureKeyCache(FakeSecureKeyStore());
     await cache.probe();
     await cache.save('OPENAI_API_KEY', 'store-key');
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(
+          error: testAssistant(
             stopReason: StopReason.error,
             errorMessage:
                 '401: The API Key appears to be invalid or may '
@@ -1828,7 +735,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1838,12 +745,12 @@ void main() {
   });
 
   test('401 without a key suggests storing one', () async {
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(
+          error: testAssistant(
             stopReason: StopReason.error,
             errorMessage: '401: Unauthorized',
           ),
@@ -1859,7 +766,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1869,12 +776,12 @@ void main() {
   });
 
   test('401 with a single-source key names its origin', () async {
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(
+          error: testAssistant(
             stopReason: StopReason.error,
             errorMessage: 'authentication_error: invalid x-api-key',
           ),
@@ -1890,7 +797,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1901,15 +808,15 @@ void main() {
   });
 
   test('401 with a store-only key names the store', () async {
-    final cache = SecureKeyCache(_FakeSecureKeyStore());
+    final cache = SecureKeyCache(FakeSecureKeyStore());
     await cache.probe();
     await cache.save('OPENAI_API_KEY', 'store-key');
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(
+          error: testAssistant(
             stopReason: StopReason.error,
             errorMessage:
                 '401: The API Key appears to be invalid or may '
@@ -1928,7 +835,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1939,12 +846,15 @@ void main() {
   });
 
   test('non-auth errors get no key hint', () async {
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(stopReason: StopReason.error, errorMessage: 'boom'),
+          error: testAssistant(
+            stopReason: StopReason.error,
+            errorMessage: 'boom',
+          ),
         ),
       ],
     ]);
@@ -1952,7 +862,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1962,12 +872,12 @@ void main() {
   });
 
   test('non-connection errors get no endpoint hint', () async {
-    final fake = _FakeStreamFunction([
+    final fake = FakeStreamFunction([
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(
+          error: testAssistant(
             stopReason: StopReason.error,
             errorMessage: '401: Unauthorized',
           ),
@@ -1978,7 +888,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -1988,17 +898,17 @@ void main() {
   });
 
   test('renders unserializable tool args safely', () async {
-    final fake = _FakeStreamFunction([
-      _toolTurn([
+    final fake = FakeStreamFunction([
+      toolTurn([
         ToolCall(id: 'c1', name: 'ls', arguments: {'weird': Object()}),
       ]),
-      _textTurn('ok'),
+      textTurn('ok'),
     ]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -2006,40 +916,40 @@ void main() {
   });
 
   test('/compact on an empty session reports nothing to compact', () async {
-    final fake = _FakeStreamFunction([]);
+    final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('/compact');
-    await _waitFor(() => io.out.toString().contains('nothing to compact'));
+    await waitForIt(() => io.out.toString().contains('nothing to compact'));
     io.sendLine('/exit');
     await run;
   });
 
   test('compaction failure is reported and history is kept', () async {
-    final fake = _FakeStreamFunction([
-      _textTurn('answer'),
+    final fake = FakeStreamFunction([
+      textTurn('answer'),
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(
+          error: testAssistant(
             stopReason: StopReason.error,
             errorMessage: 'summary failed',
           ),
         ),
       ],
-      _textTurn('after'),
+      textTurn('after'),
     ]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('q');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/compact');
-    await _waitFor(() => io.out.toString().contains('compaction failed'));
+    await waitForIt(() => io.out.toString().contains('compaction failed'));
     io.sendLine('next');
-    await _waitFor(() => fake.calls == 3 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 3 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -2051,7 +961,7 @@ void main() {
   });
 
   test('registers the checkpoint and rewind tools', () {
-    final fake = _FakeStreamFunction([]);
+    final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);
     final names = cli.agent.state.tools.map((t) => t.name);
     expect(names, containsAll(['checkpoint', 'rewind']));
@@ -2062,22 +972,22 @@ void main() {
     () async {
       await env.writeFile('notes.txt', 'data');
       const report = 'FINDINGS: notes.txt holds data.';
-      final fake = _FakeStreamFunction([
-        _toolTurn([
+      final fake = FakeStreamFunction([
+        toolTurn([
           ToolCall(
             id: 'c1',
             name: 'checkpoint',
             arguments: const {'goal': 'probe notes'},
           ),
         ]),
-        _toolTurn([
+        toolTurn([
           ToolCall(
             id: 'c2',
             name: 'read',
             arguments: const {'path': 'notes.txt'},
           ),
         ]),
-        _toolTurn([
+        toolTurn([
           ToolCall(
             id: 'c3',
             name: 'rewind',
@@ -2086,20 +996,20 @@ void main() {
         ]),
         // A tool call AFTER the rewind: the swapped context must accept
         // appended tool results (the unmodifiable-view regression).
-        _toolTurn([
+        toolTurn([
           ToolCall(
             id: 'c4',
             name: 'read',
             arguments: const {'path': 'notes.txt'},
           ),
         ]),
-        _textTurn('wrapping up'),
+        textTurn('wrapping up'),
       ]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
       io.sendLine('go');
-      await _waitFor(() => fake.calls == 5 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 5 && !cli.isBusy);
       io.sendLine('/exit');
       await run;
 
@@ -2137,31 +1047,29 @@ void main() {
     () async {
       await env.writeFile('notes.txt', 'data');
       const report = 'FINDINGS: notes.txt holds data.';
-      final fake = _FakeStreamFunction([
-        _toolTurn([
-          ToolCall(id: 'c1', name: 'checkpoint', arguments: const {}),
-        ]),
-        _toolTurn([
+      final fake = FakeStreamFunction([
+        toolTurn([ToolCall(id: 'c1', name: 'checkpoint', arguments: const {})]),
+        toolTurn([
           ToolCall(
             id: 'c2',
             name: 'rewind',
             arguments: const {'report': report},
           ),
         ]),
-        _toolTurn([
+        toolTurn([
           ToolCall(
             id: 'c3',
             name: 'rewind',
             arguments: const {'report': 'again'},
           ),
         ]),
-        _textTurn('moving on'),
+        textTurn('moving on'),
       ]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
       io.sendLine('go');
-      await _waitFor(() => fake.calls == 4 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 4 && !cli.isBusy);
       io.sendLine('/exit');
       await run;
 
@@ -2184,18 +1092,18 @@ void main() {
   );
 
   test('/reset clears the active checkpoint', () async {
-    final fake = _FakeStreamFunction([
-      _toolTurn([ToolCall(id: 'c1', name: 'checkpoint', arguments: const {})]),
-      _textTurn('ok'),
+    final fake = FakeStreamFunction([
+      toolTurn([ToolCall(id: 'c1', name: 'checkpoint', arguments: const {})]),
+      textTurn('ok'),
     ]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('go');
-    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     expect(cli.checkpoints.activeCheckpoint, isNotNull);
     io.sendLine('/reset');
-    await _waitFor(() => io.out.toString().contains('new session started'));
+    await waitForIt(() => io.out.toString().contains('new session started'));
     expect(cli.checkpoints.activeCheckpoint, isNull);
     io.sendLine('/exit');
     await run;
@@ -2204,14 +1112,14 @@ void main() {
   test(
     '! command runs a shell command and prints stdout/stderr/exit code',
     () async {
-      final shell = _FakeShell(stdout: 'hello\n', stderr: 'oops', exitCode: 2);
+      final shell = FakeShell(stdout: 'hello\n', stderr: 'oops', exitCode: 2);
       final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
-      final fake = _FakeStreamFunction([]);
+      final fake = FakeStreamFunction([]);
       final cli = cliFor(fake.call, envOverride: shellEnv);
       final run = cli.run();
 
       io.sendLine('!echo hi');
-      await _waitFor(() => io.out.toString().contains('exit code: 2'));
+      await waitForIt(() => io.out.toString().contains('exit code: 2'));
       io.sendLine('/exit');
       await run;
 
@@ -2223,66 +1131,6 @@ void main() {
     },
   );
 
-  test('/models lists known models for the active provider', () async {
-    final fake = _FakeStreamFunction([]);
-    final cli = cliFor(
-      fake.call,
-      model: _cloudModel,
-      providerKind: 'anthropic',
-    );
-    final run = cli.run();
-
-    io.sendLine('/models');
-    await _waitFor(() => io.out.toString().contains('claude-sonnet-4-5'));
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    expect(output, contains('models for anthropic:'));
-    expect(output, contains('1) claude-sonnet-4-5'));
-    expect(output, contains('use /model <n> or /model <id> to switch'));
-  });
-
-  test('/models filters known models by substring', () async {
-    final fake = _FakeStreamFunction([]);
-    final cli = cliFor(
-      fake.call,
-      model: _cloudModel,
-      providerKind: 'anthropic',
-    );
-    final run = cli.run();
-
-    io.sendLine('/models opus');
-    await _waitFor(() => io.out.toString().contains('claude-opus-4'));
-    io.sendLine('/exit');
-    await run;
-
-    final output = io.out.toString();
-    expect(output, contains('1) claude-opus-4'));
-    expect(output, isNot(contains('claude-haiku-4')));
-  });
-
-  test('/model picker lets the user switch by number', () async {
-    final fake = _FakeStreamFunction([]);
-    final cli = cliFor(
-      fake.call,
-      model: _cloudModel,
-      providerKind: 'anthropic',
-    );
-    final run = cli.run();
-
-    io.sendLine('/model ?');
-    await _waitFor(() => io.out.toString().contains('use /model <n>'));
-    io.sendLine('/model 2');
-    await _waitFor(
-      () => io.out.toString().contains('switched model to claude-opus-4'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    expect(cli.agent.state.model.id, 'claude-opus-4');
-  });
-
   test('status line is printed before idle prompts after a run', () async {
     const usage = Usage(
       input: 10,
@@ -2292,12 +1140,12 @@ void main() {
       totalTokens: 15,
       cost: UsageCost(input: 0.0006, output: 0.0004, total: 0.001),
     );
-    final fake = _FakeStreamFunction([_textTurn('hi', usage: usage)]);
+    final fake = FakeStreamFunction([textTurn('hi', usage: usage)]);
     final cli = cliFor(fake.call);
     final run = cli.run();
 
     io.sendLine('q');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -2319,13 +1167,16 @@ void main() {
       totalTokens: 15,
       cost: UsageCost(input: 0.0006, output: 0.0004, total: 0.001),
     );
-    final fake = _FakeStreamFunction([
-      _textTurn('hi', usage: usage),
+    final fake = FakeStreamFunction([
+      textTurn('hi', usage: usage),
       [
-        StartEvent(partial: _assistant()),
+        StartEvent(partial: testAssistant()),
         ErrorEvent(
           reason: StopReason.error,
-          error: _assistant(stopReason: StopReason.error, errorMessage: 'boom'),
+          error: testAssistant(
+            stopReason: StopReason.error,
+            errorMessage: 'boom',
+          ),
         ),
       ],
     ]);
@@ -2333,9 +1184,9 @@ void main() {
     final run = cli.run();
 
     io.sendLine('q');
-    await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('q2');
-    await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+    await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
@@ -2349,10 +1200,10 @@ void main() {
 
   group('session management', () {
     test('--session creates and resumes a named session', () async {
-      final fake = _FakeStreamFunction([_textTurn('hello')]);
+      final fake = FakeStreamFunction([textTurn('hello')]);
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: _model,
+          model: testModel,
           apiKey: 'test-key',
           env: env,
           sessionRoot: '/sessions',
@@ -2364,7 +1215,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('hi');
-      await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
       io.sendLine('/exit');
       await run;
 
@@ -2376,10 +1227,10 @@ void main() {
 
       final io2 = FakeCliIO();
       addTearDown(io2.close);
-      final fake2 = _FakeStreamFunction([_textTurn('again')]);
+      final fake2 = FakeStreamFunction([textTurn('again')]);
       final cli2 = AgentCli(
         config: AgentCliConfig(
-          model: _model,
+          model: testModel,
           apiKey: 'test-key',
           env: env,
           sessionRoot: '/sessions',
@@ -2390,11 +1241,11 @@ void main() {
       );
       final run2 = cli2.run();
       // The resumed session replays its transcript after the banner.
-      await _waitFor(
+      await waitForIt(
         () => io2.out.toString().contains('restored session: work'),
       );
       io2.sendLine('continue');
-      await _waitFor(() => fake2.calls == 1 && !cli2.isBusy);
+      await waitForIt(() => fake2.calls == 1 && !cli2.isBusy);
       io2.sendLine('/exit');
       await run2;
 
@@ -2409,28 +1260,28 @@ void main() {
     });
 
     test('slash commands create, rename, list, and switch sessions', () async {
-      final fake = _FakeStreamFunction([]);
+      final fake = FakeStreamFunction([]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
       io.sendLine('/session-new alpha');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("created session 'alpha'"),
       );
       io.sendLine('/rename-session beta');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("renamed current session to 'beta'"),
       );
       io.sendLine('/sessions');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains('rename: /rename-session'),
       );
       io.sendLine('/session gamma');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("created session 'gamma'"),
       );
       io.sendLine('/session');
-      await _waitFor(() => io.out.toString().contains('session: gamma'));
+      await waitForIt(() => io.out.toString().contains('session: gamma'));
       expect(io.out.toString(), contains('rename: /rename-session'));
       io.sendLine('/exit');
       await run;
@@ -2448,27 +1299,27 @@ void main() {
     });
 
     test('switching back to a session replays its transcript', () async {
-      final fake = _FakeStreamFunction([
-        _textTurn('first-answer'),
-        _textTurn('second-answer'),
+      final fake = FakeStreamFunction([
+        textTurn('first-answer'),
+        textTurn('second-answer'),
       ]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
       io.sendLine('/session alpha');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("created session 'alpha'"),
       );
       io.sendLine('one');
-      await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
       io.sendLine('/session beta');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("created session 'beta'"),
       );
       io.sendLine('two');
-      await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
       io.sendLine('/session alpha');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains('restored session: alpha'),
       );
       io.sendLine('/exit');
@@ -2483,26 +1334,26 @@ void main() {
     test(
       'a restored session replays the full transcript, not just the tail',
       () async {
-        final fake = _FakeStreamFunction([
-          for (var i = 1; i <= 6; i++) _textTurn('a$i'),
+        final fake = FakeStreamFunction([
+          for (var i = 1; i <= 6; i++) textTurn('a$i'),
         ]);
         final cli = cliFor(fake.call);
         final run = cli.run();
 
         io.sendLine('/session alpha');
-        await _waitFor(
+        await waitForIt(
           () => io.out.toString().contains("created session 'alpha'"),
         );
         for (var i = 1; i <= 6; i++) {
           io.sendLine('q$i');
-          await _waitFor(() => fake.calls == i && !cli.isBusy);
+          await waitForIt(() => fake.calls == i && !cli.isBusy);
         }
         io.sendLine('/session beta');
-        await _waitFor(
+        await waitForIt(
           () => io.out.toString().contains("created session 'beta'"),
         );
         io.sendLine('/session alpha');
-        await _waitFor(
+        await waitForIt(
           () => io.out.toString().contains('restored session: alpha'),
         );
         io.sendLine('/exit');
@@ -2517,31 +1368,31 @@ void main() {
     );
 
     test('consecutive tool-call turns collapse into one replay row', () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([
+      final fake = FakeStreamFunction([
+        toolTurn([
           ToolCall(
             id: 'c1',
             name: 'read',
             arguments: const {'path': 'missing.txt'},
           ),
         ]),
-        _textTurn('done'),
+        textTurn('done'),
       ]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
       io.sendLine('/session alpha');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("created session 'alpha'"),
       );
       io.sendLine('go');
-      await _waitFor(() => fake.calls == 2 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
       io.sendLine('/session beta');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("created session 'beta'"),
       );
       io.sendLine('/session alpha');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains('restored session: alpha'),
       );
       io.sendLine('/exit');
@@ -2554,38 +1405,38 @@ void main() {
     });
 
     test('tool results do not break a collapsing tool-call run', () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([
+      final fake = FakeStreamFunction([
+        toolTurn([
           ToolCall(
             id: 'c1',
             name: 'read',
             arguments: const {'path': 'missing.txt'},
           ),
         ]),
-        _toolTurn([
+        toolTurn([
           ToolCall(
             id: 'c2',
             name: 'edit',
             arguments: const {'path': 'missing.txt', 'patch': ''},
           ),
         ]),
-        _textTurn('done'),
+        textTurn('done'),
       ]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
       io.sendLine('/session alpha');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("created session 'alpha'"),
       );
       io.sendLine('go');
-      await _waitFor(() => fake.calls == 3 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 3 && !cli.isBusy);
       io.sendLine('/session beta');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains("created session 'beta'"),
       );
       io.sendLine('/session alpha');
-      await _waitFor(
+      await waitForIt(
         () => io.out.toString().contains('restored session: alpha'),
       );
       io.sendLine('/exit');
@@ -2603,10 +1454,10 @@ void main() {
     });
 
     test('exit prints the resume command for a named session', () async {
-      final fake = _FakeStreamFunction([_textTurn('hi')]);
+      final fake = FakeStreamFunction([textTurn('hi')]);
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: _model,
+          model: testModel,
           apiKey: 'test-key',
           env: env,
           sessionRoot: '/sessions',
@@ -2618,7 +1469,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('q');
-      await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
       io.sendLine('/exit');
       await run;
 
@@ -2631,12 +1482,12 @@ void main() {
     test(
       'exit prints the resume command and the id resumes the session',
       () async {
-        final fake = _FakeStreamFunction([_textTurn('memorable-answer')]);
+        final fake = FakeStreamFunction([textTurn('memorable-answer')]);
         final cli = cliFor(fake.call);
         final run = cli.run();
 
         io.sendLine('q');
-        await _waitFor(() => fake.calls == 1 && !cli.isBusy);
+        await waitForIt(() => fake.calls == 1 && !cli.isBusy);
         io.sendLine('/exit');
         await run;
 
@@ -2649,10 +1500,10 @@ void main() {
 
         // `fa --session '<id>'` picks the same session back up.
         final io2 = FakeCliIO();
-        final fake2 = _FakeStreamFunction([_textTurn('again')]);
+        final fake2 = FakeStreamFunction([textTurn('again')]);
         final cli2 = AgentCli(
           config: AgentCliConfig(
-            model: _model,
+            model: testModel,
             apiKey: 'test-key',
             env: env,
             sessionRoot: '/sessions',
@@ -2671,7 +1522,7 @@ void main() {
     );
 
     test('no resume hint when the session has nothing persisted', () async {
-      final fake = _FakeStreamFunction([_textTurn('unused')]);
+      final fake = FakeStreamFunction([textTurn('unused')]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
@@ -2682,10 +1533,10 @@ void main() {
     });
 
     test('headless --session resumes a named session', () async {
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: _model,
+          model: testModel,
           apiKey: 'test-key',
           env: env,
           sessionRoot: '/sessions',
@@ -2696,10 +1547,10 @@ void main() {
       );
       expect(await cli.runHeadless('first'), 0);
 
-      final fake2 = _FakeStreamFunction([_textTurn('again')]);
+      final fake2 = FakeStreamFunction([textTurn('again')]);
       final cli2 = AgentCli(
         config: AgentCliConfig(
-          model: _model,
+          model: testModel,
           apiKey: 'test-key',
           env: env,
           sessionRoot: '/sessions',
@@ -2715,86 +1566,6 @@ void main() {
       expect(messages[0], isA<UserMessage>());
       expect(messages[1], isA<AssistantMessage>());
       expect(messages[2], isA<UserMessage>());
-    });
-  });
-
-  group('parseModelsResponse', () {
-    test('reads ids sorted and context windows from all known fields', () {
-      final (ids, windows, _) = parseModelsResponse(
-        '{"data": ['
-        '{"id": "z-model", "context_length": 262144},'
-        '{"id": "a-model", "context_window": 131072},'
-        '{"id": "m-model", "max_context_length": 32768},'
-        '{"id": "no-window"},'
-        '{"id": "bad-window", "context_length": "lots"},'
-        '{"id": ""}'
-        ']}',
-      );
-      expect(ids, ['a-model', 'bad-window', 'm-model', 'no-window', 'z-model']);
-      expect(windows, {'z-model': 262144, 'a-model': 131072, 'm-model': 32768});
-    });
-
-    test('reads max completion caps (flat and top_provider nested)', () {
-      final (_, _, caps) = parseModelsResponse(
-        '{"data": ['
-        '{"id": "flat", "max_completion_tokens": 65536},'
-        '{"id": "nested", "top_provider": {"max_completion_tokens": 32768}},'
-        '{"id": "alt", "max_output_tokens": 16384},'
-        '{"id": "none"},'
-        '{"id": "nullish", "max_completion_tokens": null}'
-        ']}',
-      );
-      expect(caps, {'flat': 65536, 'nested': 32768, 'alt': 16384});
-    });
-
-    test('tolerates an empty payload', () {
-      final (ids, windows, caps) = parseModelsResponse('{"data": []}');
-      expect(ids, isEmpty);
-      expect(windows, isEmpty);
-      expect(caps, isEmpty);
-    });
-  });
-
-  group('/model-edit', () {
-    test('bare shows the active limits; setting applies them', () async {
-      final fake = _FakeStreamFunction([_textTurn('hi')]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
-
-      io.sendLine('/model-edit');
-      await _waitFor(() => io.out.toString().contains('contextWindow 100000'));
-      io.sendLine('/model-edit contextWindow 131072');
-      await _waitFor(
-        () => io.out.toString().contains('model context window set to 131072'),
-      );
-      expect(cli.agent.state.model.contextWindow, 131072);
-      expect(cli.agent.state.model.maxTokens, 4096);
-
-      io.sendLine('/model-edit maxTokens 8192');
-      await _waitFor(
-        () => io.out.toString().contains('model max tokens set to 8192'),
-      );
-      expect(cli.agent.state.model.maxTokens, 8192);
-      expect(cli.agent.state.model.contextWindow, 131072);
-
-      io.sendLine('/exit');
-      await run;
-    });
-
-    test('rejects bad input without touching the model', () async {
-      final fake = _FakeStreamFunction([_textTurn('hi')]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
-
-      io.sendLine('/model-edit contextWindow nope');
-      await _waitFor(() => io.out.toString().contains('usage: /model-edit'));
-      io.sendLine('/model-edit bananas 123');
-      await _waitFor(() => io.out.toString().contains('usage: /model-edit'));
-      io.sendLine('/exit');
-      await run;
-
-      expect(cli.agent.state.model.contextWindow, 100000);
-      expect(cli.agent.state.model.maxTokens, 4096);
     });
   });
 }
