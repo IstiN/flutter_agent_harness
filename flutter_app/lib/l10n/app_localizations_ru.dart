@@ -657,6 +657,37 @@ class AppLocalizationsRu extends AppLocalizations {
       'Воспроизведение видео не поддерживается в веб-сборке';
 
   @override
+  String get modelPresetBudgetDescription =>
+      'Самый дешёвый надёжный набор на каждый день — быстрый чат и все медиа через OpenRouter';
+
+  @override
+  String get modelPresetBudgetName => 'Оптимальный по цене';
+
+  @override
+  String get modelPresetQualityDescription =>
+      'Топовый чат и флагманская генерация изображений — самый сильный набор на OpenRouter';
+
+  @override
+  String get modelPresetQualityName => 'Качество';
+
+  @override
+  String get modelPresetsApplied => 'Применено';
+
+  @override
+  String get modelPresetsChatLabel => 'Чат';
+
+  @override
+  String modelPresetsKeyMissing(Object provider) {
+    return 'Для этого пресета нужен ключ API $provider.';
+  }
+
+  @override
+  String get modelPresetsSectionTitle => 'Пресеты моделей';
+
+  @override
+  String get modelPresetsSetKey => 'Задать ключ';
+
+  @override
   String quickStartCachedLabel(Object bytes, Object size) {
     return '$size · $bytes в кеше';
   }

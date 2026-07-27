@@ -28,6 +28,8 @@ const _coverage = <String, String>{
       'test/golden/settings_golden_test.dart',
   'lib/ui/screens/media_slot_picker_page.dart':
       'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/model_presets.dart':
+      'test/golden/model_presets_golden_test.dart',
   'lib/ui/screens/chat_screen.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/media_player.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',

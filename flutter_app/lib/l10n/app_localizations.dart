@@ -1178,6 +1178,60 @@ abstract class AppLocalizations {
   /// **'Video playback is not supported in the web build'**
   String get mediaVideoUnsupportedWeb;
 
+  /// No description provided for @modelPresetBudgetDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Cheapest solid combo for every day — fast chat plus all media on OpenRouter'**
+  String get modelPresetBudgetDescription;
+
+  /// No description provided for @modelPresetBudgetName.
+  ///
+  /// In en, this message translates to:
+  /// **'Budget optimal'**
+  String get modelPresetBudgetName;
+
+  /// No description provided for @modelPresetQualityDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Top-tier chat plus flagship image generation — the strongest combo on OpenRouter'**
+  String get modelPresetQualityDescription;
+
+  /// No description provided for @modelPresetQualityName.
+  ///
+  /// In en, this message translates to:
+  /// **'Quality'**
+  String get modelPresetQualityName;
+
+  /// No description provided for @modelPresetsApplied.
+  ///
+  /// In en, this message translates to:
+  /// **'Applied'**
+  String get modelPresetsApplied;
+
+  /// No description provided for @modelPresetsChatLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat'**
+  String get modelPresetsChatLabel;
+
+  /// No description provided for @modelPresetsKeyMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'This preset needs an API key for {provider}.'**
+  String modelPresetsKeyMissing(Object provider);
+
+  /// No description provided for @modelPresetsSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model presets'**
+  String get modelPresetsSectionTitle;
+
+  /// No description provided for @modelPresetsSetKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Set key'**
+  String get modelPresetsSetKey;
+
   /// No description provided for @quickStartCachedLabel.
   ///
   /// In en, this message translates to:

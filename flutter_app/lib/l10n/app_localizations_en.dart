@@ -651,6 +651,37 @@ class AppLocalizationsEn extends AppLocalizations {
       'Video playback is not supported in the web build';
 
   @override
+  String get modelPresetBudgetDescription =>
+      'Cheapest solid combo for every day — fast chat plus all media on OpenRouter';
+
+  @override
+  String get modelPresetBudgetName => 'Budget optimal';
+
+  @override
+  String get modelPresetQualityDescription =>
+      'Top-tier chat plus flagship image generation — the strongest combo on OpenRouter';
+
+  @override
+  String get modelPresetQualityName => 'Quality';
+
+  @override
+  String get modelPresetsApplied => 'Applied';
+
+  @override
+  String get modelPresetsChatLabel => 'Chat';
+
+  @override
+  String modelPresetsKeyMissing(Object provider) {
+    return 'This preset needs an API key for $provider.';
+  }
+
+  @override
+  String get modelPresetsSectionTitle => 'Model presets';
+
+  @override
+  String get modelPresetsSetKey => 'Set key';
+
+  @override
   String quickStartCachedLabel(Object bytes, Object size) {
     return '$size · $bytes cached';
   }

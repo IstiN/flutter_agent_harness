@@ -27,6 +27,7 @@ import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
+import 'package:fa/ui/screens/model_presets.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
@@ -1904,7 +1905,8 @@ class MediaModelsSection extends StatelessWidget {
   /// `/models` fetch override (tests), forwarded to the editor page.
   final ModelsEndpointFetcher? modelsFetcher;
 
-  static const _slotIcons = <String, IconData>{
+  /// The icon each slot's row (and the model preset combo summary) shows.
+  static const slotIcons = <String, IconData>{
     MediaSlot.imageGeneration: Icons.image_outlined,
     MediaSlot.audioTts: Icons.record_voice_over_outlined,
     MediaSlot.musicGeneration: Icons.music_note_outlined,
@@ -1990,7 +1992,7 @@ class MediaModelsSection extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              _slotIcons[slot] ?? Icons.tune,
+              slotIcons[slot] ?? Icons.tune,
               size: 20,
               color: theme.colorScheme.primary,
             ),
@@ -2113,6 +2115,13 @@ class SettingsScreen extends StatelessWidget {
                 webLlmEngine: webLlmEngine,
                 gemmaEngine: gemmaEngine,
                 transformersJsEngine: transformersJsEngine,
+              ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              ModelPresetsSection(
+                service: service,
+                lastConnectionStore: lastConnectionStore,
               ),
               const SizedBox(height: 24),
               const Divider(),

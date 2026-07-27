@@ -143,6 +143,15 @@ factual: paths, commands, invariants — no essays.
   `// l10n:ignore`, per file with `// l10n:ignore-file` (agent-facing/log
   strings stay literal).
 - `flutter_app/test/golden/` — golden tests (see MANDATORY section below).
+- `flutter_app/lib/ui/screens/model_presets.dart` — settings "Model presets"
+  section: a swipeable `PageView` of `kModelPresets` cards applying a whole
+  model combo in one tap (`applyModelPreset` — per-slot `MediaModelsStore`
+  overrides, unmapped slots cleared, then `service.reconfigure` +
+  `LastConnectionStore.saveFromConfig`; missing provider key = inline hint +
+  jump to `ProviderEditorPage`, nothing applied). Add a preset by appending a
+  `ModelPreset` to `kModelPresets` (doc comment there) plus its
+  `modelPreset<Id>Name`/`...Description` arb keys; `ModelPresetTarget` is
+  sealed for future custom/on-device targets.
 - `flutter_app/lib/sandbox/sandbox_registry.dart` — central registry of
   sandbox shell commands per platform; the Fa system prompt's `{{commands}}`
   renders from it. Never list commands in prompt text or UI by hand.
