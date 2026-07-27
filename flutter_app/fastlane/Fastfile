@@ -253,6 +253,7 @@ platform :ios do
           deliver(
             app_identifier: bundle_id,
             api_key: api_key,
+            copyright: "2026 IstiN",
             metadata_path: File.expand_path(metadata_dir),
             screenshots_path: File.expand_path("screenshots"),
             skip_binary_upload: true,
@@ -398,6 +399,7 @@ platform :mac do
             app_identifier: bundle_id,
             api_key: api_key,
             platform: "osx",
+            copyright: "2026 IstiN",
             metadata_path: File.expand_path(metadata_dir),
             screenshots_path: File.expand_path("screenshots_mac"),
             skip_binary_upload: true,
