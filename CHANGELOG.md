@@ -661,4 +661,10 @@
 
 - fix(example): set the App Store copyright field in the deliver lanes
 
+## 0.1.91
+
+- feat(example): model presets wizard in settings
+- feat(example): audio/video playback in the file preview
+- feat(example): story-driven App Store screenshots with real photos
+
 ## Unreleased
