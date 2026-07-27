@@ -697,4 +697,12 @@
 
 - fix(example): Home + Health apps scroll — root column → listView
 
+## 0.1.97
+
+- docs(example): AGENTS.md notes for the launcher home, chat sheet and shared composer
+- feat(example): session chat bottom sheet over the launcher (pager, shared composer)
+- feat(example): apps launcher home on narrow layouts (grid, folders, system tiles)
+- fix(example): home control disambiguation (room/UUID) + duplicate-bridge-id write routing
+- fix(example): preset carousel is full-bleed — cards slide behind the edges
+
 ## Unreleased
