@@ -176,6 +176,16 @@ final class _MacosKeychainStore implements SecureKeyStore {
   @override
   Future<void> write(String name, String value) async {
     _validateName(name);
+    // Preflight: with no default keychain (a broken/removed login keychain)
+    // `add-generic-password` pops the system "Keychain Not Found" dialog
+    // before failing — check quietly first so the caller degrades to
+    // session-only without the prompt.
+    final defaultKeychain = await _run('security', ['default-keychain']);
+    if (defaultKeychain.exitCode != 0) {
+      throw StateError(
+        'no default keychain (exit ${defaultKeychain.exitCode})',
+      );
+    }
     final result = await _run('security', [
       'add-generic-password',
       '-s',

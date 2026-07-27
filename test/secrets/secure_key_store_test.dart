@@ -105,7 +105,9 @@ void main() {
     });
 
     test('write updates the generic-password item', () async {
-      final runner = _FakeRunner()..queue.add(const SecureKeyRunResult(0, ''));
+      final runner = _FakeRunner()
+        ..queue.add(const SecureKeyRunResult(0, ''))
+        ..queue.add(const SecureKeyRunResult(0, ''));
       final store = platformSecureKeyStore(
         runner: runner.call,
         platform: 'macos',
@@ -113,14 +115,32 @@ void main() {
 
       await store.write('OPENAI_API_KEY', 'sk-secret-123');
 
+      // Preflight first (no default keychain → no system dialog), then add.
+      expect(runner.calls.first.command, 'security default-keychain');
       expect(
-        runner.calls.single.command,
+        runner.calls.last.command,
         'security add-generic-password -s fah -a OPENAI_API_KEY '
         '-w sk-secret-123 -U',
       );
     });
 
     test('write surfaces a failing exit code', () async {
+      final runner = _FakeRunner()
+        ..queue.add(const SecureKeyRunResult(0, ''))
+        ..queue.add(const SecureKeyRunResult(1, ''));
+      final store = platformSecureKeyStore(
+        runner: runner.call,
+        platform: 'macos',
+      );
+
+      expect(
+        () => store.write('OPENAI_API_KEY', 'sk-secret-123'),
+        throwsStateError,
+      );
+    });
+
+    test('write without a default keychain fails before the add (no system '
+        'dialog)', () async {
       final runner = _FakeRunner()..queue.add(const SecureKeyRunResult(1, ''));
       final store = platformSecureKeyStore(
         runner: runner.call,
@@ -131,6 +151,9 @@ void main() {
         () => store.write('OPENAI_API_KEY', 'sk-secret-123'),
         throwsStateError,
       );
+      // The preflight alone ran — add-generic-password (which would pop the
+      // "Keychain Not Found" dialog) was never invoked.
+      expect(runner.calls.single.command, 'security default-keychain');
     });
 
     test('delete tolerates a missing entry', () async {

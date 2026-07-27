@@ -332,12 +332,20 @@ final class MediaGateway {
     final uri = Uri.parse(
       authed ? '${endpoint.baseUrl}/videos/$jobId/content' : url,
     );
+    // OpenRouter fills the completed job's `url` with the AUTHENTICATED
+    // content endpoint (.../videos/<id>/content?index=0) rather than a
+    // public link — fetching it "as-is" 401s. Send the key whenever the
+    // URL lives on the endpoint's origin; truly public URLs skip it.
+    final endpointHost = Uri.tryParse(endpoint.baseUrl)?.host;
+    final sendAuth = authed || uri.host == endpointHost;
     final client = _httpClient ?? http.Client();
     final http.Response response;
     try {
       response = await client.get(
         uri,
-        headers: authed ? {'authorization': 'Bearer ${endpoint.apiKey}'} : null,
+        headers: sendAuth
+            ? {'authorization': 'Bearer ${endpoint.apiKey}'}
+            : null,
       );
     } finally {
       if (_httpClient == null) client.close();

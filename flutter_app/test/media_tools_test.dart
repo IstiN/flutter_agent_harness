@@ -415,6 +415,45 @@ void main() {
       },
     );
 
+    test('the job\'s own-origin url (OpenRouter .../content?index=0) is '
+        'fetched WITH auth — as-is fetching 401s', () async {
+      final env = MemoryExecutionEnv();
+      final seen = <http.Request>[];
+      final client = http_testing.MockClient((request) async {
+        seen.add(request);
+        if (request.method == 'POST') {
+          return http.Response(
+            jsonEncode({'id': 'job-7', 'status': 'queued'}),
+            202,
+          );
+        }
+        if (request.url.path.endsWith('/content')) {
+          return http.Response.bytes(Uint8List.fromList([9, 9, 9, 9]), 200);
+        }
+        return http.Response(
+          jsonEncode({
+            'id': 'job-7',
+            'status': 'completed',
+            // OpenRouter's completed job: an authenticated content URL,
+            // not a public unsigned link.
+            'url': 'https://video.test/v1/videos/job-7/content?index=0',
+          }),
+          200,
+        );
+      });
+      final tool = generateVideoTool(videoGateway(env, client));
+
+      final result = await tool.execute(const {'prompt': 'x'}, null, null);
+
+      final download = seen.last;
+      expect(
+        download.url.toString(),
+        'https://video.test/v1/videos/job-7/content?index=0',
+      );
+      expect(download.headers['authorization'], 'Bearer sk-main');
+      expect(textOf(result), contains('4 bytes'));
+    });
+
     test('a failed job surfaces the endpoint error', () async {
       final env = MemoryExecutionEnv();
       final client = http_testing.MockClient((request) async {

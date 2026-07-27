@@ -472,7 +472,6 @@ class AgentService extends ChangeNotifier {
       '[fah] system prompt platform=$platform, '
       'commands section ${commandSection.length} chars',
     );
-    debugPrint('[fah] commands section:\n$commandSection');
     final base = (config.systemPrompt ?? sandboxSystemPrompt).replaceAll(
       '{{commands}}',
       commandSection,

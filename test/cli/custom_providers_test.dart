@@ -166,6 +166,15 @@ void main() {
         ),
         'FA_KEY_API_ACME_COM',
       );
+      // A provider named after its host (the derived default) must not
+      // double the suffix.
+      expect(
+        CustomProviderRegistry.keyNameFor(
+          'https://api.aiin.by/v1',
+          providerName: 'api.aiin.by',
+        ),
+        'FA_KEY_API_AIIN_BY',
+      );
     });
   });
 

@@ -171,6 +171,10 @@ final class CustomProviderRegistry {
         ?.toUpperCase()
         .replaceAll(RegExp('[^A-Z0-9]+'), '_')
         .replaceAll(RegExp('^_+|_+\$'), '');
-    return name == null || name.isEmpty ? base : '${base}_$name';
+    // A provider named after its host (the default derived name) must not
+    // double the suffix: FA_KEY_API_AIIN_BY, not FA_KEY_API_AIIN_BY_API_AIIN_BY.
+    return name == null || name.isEmpty || name == sanitized
+        ? base
+        : '${base}_$name';
   }
 }
