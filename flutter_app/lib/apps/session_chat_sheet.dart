@@ -320,9 +320,10 @@ class _SessionChatSheetState extends State<SessionChatSheet>
           return Stack(
             alignment: Alignment.bottomCenter,
             children: [
-              // Mini bar (or the work bar while streaming): fades out as
-              // the sheet slides up and leaves the tree when expanded.
-              if (_anim.value < 0.99)
+              // Mini bar (or the work bar while streaming): cross-fades
+              // out across the first half of the expansion and is gone by
+              // the midpoint — never a ghost second panel.
+              if (_anim.value < 0.5)
                 Opacity(
                   opacity: (1 - _anim.value * 2).clamp(0.0, 1.0),
                   child: IgnorePointer(
@@ -363,68 +364,64 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   }
 
   /// The collapsed mini bar: drag handle, Fa mark, inline input, send and
-  /// expand buttons — the default home presence of the chat.
+  /// expand buttons — the default home presence of the chat. Full-bleed
+  /// (like Material's BottomSheet): flush to the screen edges, top-rounded
+  /// corners only.
   Widget _buildMiniBar(FahColors colors, AgentService service) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: Container(
-        height: _miniHeight,
-        decoration: _panelDecoration(colors),
-        child: Material(
-          type: MaterialType.transparency,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragUpdate: _onDragUpdate,
-            onVerticalDragEnd: _onDragEnd,
-            onVerticalDragCancel: _onDragCancel,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _handle(colors),
-                Expanded(
-                  child: Row(
-                    children: [
-                      const SizedBox(width: 12),
-                      const FaMark(size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          key: const ValueKey('sessionChatMiniInput'),
-                          controller: _miniInput,
-                          focusNode: _miniFocus,
-                          style: const TextStyle(fontSize: 13),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            hintText: context.l10n.appsFollowUpHint,
-                            hintStyle: TextStyle(
-                              color: colors.dim,
-                              fontSize: 13,
-                            ),
-                            border: InputBorder.none,
-                          ),
-                          onSubmitted: (_) => _sendMini(),
+    return Container(
+      height: _miniHeight,
+      decoration: _panelDecoration(colors),
+      child: Material(
+        type: MaterialType.transparency,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragUpdate: _onDragUpdate,
+          onVerticalDragEnd: _onDragEnd,
+          onVerticalDragCancel: _onDragCancel,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _handle(colors),
+              Expanded(
+                child: Row(
+                  children: [
+                    const SizedBox(width: 12),
+                    const FaMark(size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('sessionChatMiniInput'),
+                        controller: _miniInput,
+                        focusNode: _miniFocus,
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: context.l10n.appsFollowUpHint,
+                          hintStyle: TextStyle(color: colors.dim, fontSize: 13),
+                          border: InputBorder.none,
                         ),
+                        onSubmitted: (_) => _sendMini(),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.send, size: 16),
-                        tooltip: context.l10n.appsSendTooltip,
-                        visualDensity: VisualDensity.compact,
-                        color: colors.indigo,
-                        onPressed: _sendMini,
-                      ),
-                      IconButton(
-                        key: const ValueKey('sessionChatFaButton'),
-                        icon: const Icon(Icons.keyboard_arrow_up, size: 20),
-                        tooltip: context.l10n.appsOpenChatTooltip,
-                        visualDensity: VisualDensity.compact,
-                        color: colors.dim,
-                        onPressed: () => unawaited(_expand()),
-                      ),
-                    ],
-                  ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.send, size: 16),
+                      tooltip: context.l10n.appsSendTooltip,
+                      visualDensity: VisualDensity.compact,
+                      color: colors.indigo,
+                      onPressed: _sendMini,
+                    ),
+                    IconButton(
+                      key: const ValueKey('sessionChatFaButton'),
+                      icon: const Icon(Icons.keyboard_arrow_up, size: 20),
+                      tooltip: context.l10n.appsOpenChatTooltip,
+                      visualDensity: VisualDensity.compact,
+                      color: colors.dim,
+                      onPressed: () => unawaited(_expand()),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -432,14 +429,19 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   }
 
   /// The expanded sheet: header, session pager, status row, composer.
+  /// Full-bleed (like Material's BottomSheet): flush to the screen edges,
+  /// top-rounded corners only. The whole surface is the drag zone — child
+  /// scrollables (pager, transcript) claim their own gestures first.
   Widget _buildSheet(FahColors colors, AgentService service) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: Container(
-        clipBehavior: Clip.antiAlias,
-        decoration: _panelDecoration(colors),
-        child: Material(
-          type: MaterialType.transparency,
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: _panelDecoration(colors),
+      child: Material(
+        type: MaterialType.transparency,
+        child: GestureDetector(
+          onVerticalDragUpdate: _onDragUpdate,
+          onVerticalDragEnd: _onDragEnd,
+          onVerticalDragCancel: _onDragCancel,
           child: Column(
             children: [
               GestureDetector(
@@ -570,10 +572,10 @@ class _SessionChatSheetState extends State<SessionChatSheet>
 
   BoxDecoration _panelDecoration(FahColors colors) => BoxDecoration(
     color: colors.panelAlt.withValues(alpha: 0.97),
-    borderRadius: BorderRadius.circular(16),
-    border: Border.all(color: colors.border),
+    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+    border: Border(top: BorderSide(color: colors.border)),
     boxShadow: const [
-      BoxShadow(color: Colors.black38, blurRadius: 12, offset: Offset(0, 4)),
+      BoxShadow(color: Colors.black38, blurRadius: 12, offset: Offset(0, -2)),
     ],
   );
 }
