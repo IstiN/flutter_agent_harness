@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
@@ -24,19 +25,24 @@ import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 
 /// The session chat bottom sheet floating over the apps launcher (narrow
-/// home). Two states, following the [FaChatOverlay] pattern/constants:
+/// home). One continuous component driven by a single animation value:
 ///
-/// - **Collapsed**: a floating Fa button bottom-right (tap → expand); while
-///   the active session streams, the [FaWorkBar] takes its place (pull-up or
-///   its expand button opens the sheet).
-/// - **Expanded**: a 92% bottom sheet — drag-handle header with the session
-///   title (via [SessionNamesStore], like the sidebar) and a 3-dots menu
-///   (New session / Open full chat / Collapse), a horizontal [PageView]
-///   paging the live sessions (page change → `manager.switchTo`), the
-///   embedded [FaWorkBar] status row, and the shared [ChatComposer].
+/// - **Mini** (default): a compact bottom bar — drag handle, the Fa mark,
+///   an inline input and send/expand buttons. Always visible, so a quick
+///   message never needs the full sheet; pull up (or tap the expand icon)
+///   to grow.
+/// - **Expanded**: the same panel grown to 92% — drag-handle header with
+///   the session title (via [SessionNamesStore]) and a 3-dots menu (New
+///   session / Open full chat / Collapse), a horizontal [PageView] paging
+///   live AND persisted sessions (page change → `manager.switchTo`, or
+///   opens a persisted one lazily), the embedded [FaWorkBar] status row,
+///   and the shared [ChatComposer].
 ///
-/// Collapsing happens via the menu, a pull-down on the header (past 48px or
-/// a 300px/s fling), or a pull-down on the work bar.
+/// The transition is physics-y: the mini bar and the full sheet are two
+/// layers — the sheet slides up from below while the mini bar fades — so
+/// expand/collapse is a smooth animated morph, and a vertical drag on the
+/// handle zone moves the whole thing with the finger (release flings to
+/// the nearest state).
 class SessionChatSheet extends StatefulWidget {
   const SessionChatSheet({
     super.key,
@@ -83,42 +89,62 @@ class SessionChatSheet extends StatefulWidget {
   State<SessionChatSheet> createState() => _SessionChatSheetState();
 }
 
-class _SessionChatSheetState extends State<SessionChatSheet> {
-  /// Travel (px) beyond which a header release collapses the sheet.
-  static const double _dragThreshold = 48;
+class _SessionChatSheetState extends State<SessionChatSheet>
+    with SingleTickerProviderStateMixin {
+  /// Height of the mini bar (the collapsed state) without safe area.
+  static const double _miniHeight = 76;
 
-  /// Downward fling velocity (px/s) that collapses on its own.
+  /// Expanded height as a fraction of the screen.
+  static const double _expandedFraction = 0.92;
+
+  /// Downward/upward fling velocity (px/s) that completes the gesture.
   static const double _flingVelocity = 300;
 
-  /// How far the header visually follows the finger before resisting.
-  static const double _maxDragTravel = 120;
-
-  bool _expanded = false;
+  late final AnimationController _anim;
   late final PageController _pager;
   SessionNamesStore? _namesStore;
-  double _dragOffset = 0;
-  bool _dragging = false;
+  final _miniInput = TextEditingController();
+  final _miniFocus = FocusNode();
 
-  List<FlutterManagedSession> get _sessions => widget.manager.sessions;
+  /// Persisted (on-disk, not live) sessions merged into the pager after the
+  /// live ones — the sidebar's merge, so swiping reaches every session.
+  List<SessionMetadata> _persisted = const [];
+  var _openingPersisted = false;
+
+  List<FlutterManagedSession> get _liveSessions => widget.manager.sessions;
 
   AgentService? get _activeService => widget.manager.active?.service;
+
+  bool get _isExpanded => _anim.value > 0.5;
 
   @override
   void initState() {
     super.initState();
-    _pager = PageController(initialPage: _activeIndex(_sessions));
+    _anim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+    _pager = PageController(initialPage: _activeIndex());
     _namesStore = widget.sessionNamesStore;
-    _namesStore?.addListener(_onNamesChanged);
+    _namesStore?.addListener(_onChanged);
     if (_namesStore == null) unawaited(_loadNamesStore());
     widget.manager.addListener(_onManagerChanged);
+    unawaited(_reloadPersisted());
   }
 
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
-    _namesStore?.removeListener(_onNamesChanged);
+    _namesStore?.removeListener(_onChanged);
     _pager.dispose();
+    _anim.dispose();
+    _miniInput.dispose();
+    _miniFocus.dispose();
     super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadNamesStore() async {
@@ -126,16 +152,33 @@ class _SessionChatSheetState extends State<SessionChatSheet> {
     if (service == null) return;
     final store = await SessionNamesStore.load(service.env);
     if (!mounted || _namesStore != null) return;
-    setState(() => _namesStore = store..addListener(_onNamesChanged));
+    setState(() => _namesStore = store..addListener(_onChanged));
   }
 
-  void _onNamesChanged() {
-    if (mounted) setState(() {});
+  /// The disk-persisted sessions minus the live ones, oldest-positioned
+  /// after the live pages (the session sidebar's merge).
+  Future<void> _reloadPersisted() async {
+    final service = _activeService;
+    if (service == null) return;
+    try {
+      final all = await service.listSessions();
+      final liveIds = _liveSessions.map((s) => s.id).toSet();
+      final persisted = [
+        for (final metadata in all)
+          if (!liveIds.contains(metadata.id)) metadata,
+      ];
+      if (mounted) setState(() => _persisted = persisted);
+    } on Object {
+      // A broken sessions dir must not break the sheet.
+    }
   }
 
-  int _activeIndex(List<FlutterManagedSession> sessions) {
+  /// Pager entries: live sessions first, then persisted-only metadata.
+  int get _pageCount => _liveSessions.length + _persisted.length;
+
+  int _activeIndex() {
     final activeId = widget.manager.activeId;
-    final index = sessions.indexWhere((s) => s.id == activeId);
+    final index = _liveSessions.indexWhere((s) => s.id == activeId);
     return index < 0 ? 0 : index;
   }
 
@@ -143,20 +186,57 @@ class _SessionChatSheetState extends State<SessionChatSheet> {
   /// switch) keep the pager on the active session.
   void _onManagerChanged() {
     if (!mounted) return;
-    final sessions = _sessions;
-    final index = _activeIndex(sessions);
-    if (_pager.hasClients && sessions.isNotEmpty) {
+    final index = _activeIndex();
+    if (_pager.hasClients && _liveSessions.isNotEmpty) {
       final current = _pager.page?.round() ?? _pager.initialPage;
-      if (current != index && index < sessions.length) {
+      if (current != index && index < _liveSessions.length) {
         _pager.jumpToPage(index);
       }
     }
     setState(() {});
   }
 
-  void _expand() => setState(() => _expanded = true);
+  void _onPageChanged(int index) {
+    if (index < _liveSessions.length) {
+      widget.manager.switchTo(_liveSessions[index].id);
+      return;
+    }
+    final metadata = _persisted[index - _liveSessions.length];
+    if (_openingPersisted) return;
+    _openingPersisted = true;
+    () async {
+      try {
+        final active = _activeService;
+        if (active == null) return;
+        await widget.manager.openSession(
+          metadata,
+          config:
+              active.configForClone ??
+              AgentConfig(
+                providerKind: active.providerKind,
+                modelId: active.modelId,
+                baseUrl: '',
+                apiKey: '',
+              ),
+          serviceFactory: () async => active.clone(),
+        );
+      } finally {
+        _openingPersisted = false;
+      }
+    }();
+  }
 
-  void _collapse() => setState(() => _expanded = false);
+  Future<void> _expand() => _anim.animateTo(
+    1,
+    duration: const Duration(milliseconds: 260),
+    curve: Curves.easeOutCubic,
+  );
+
+  Future<void> _collapse() => _anim.animateTo(
+    0,
+    duration: const Duration(milliseconds: 220),
+    curve: Curves.easeInCubic,
+  );
 
   Future<void> _newSession() async {
     final manager = widget.manager;
@@ -188,138 +268,225 @@ class _SessionChatSheetState extends State<SessionChatSheet> {
     );
   }
 
-  // Pull-down on the header collapses the sheet (same constants as the
-  // FaChatOverlay's header): it follows the finger and springs back unless
-  // the drag passes the threshold or ends in a downward fling.
-  void _onHeaderDragUpdate(DragUpdateDetails details) {
-    setState(() {
-      _dragging = true;
-      _dragOffset = (_dragOffset + details.delta.dy).clamp(0.0, _maxDragTravel);
-    });
+  void _sendMini() {
+    final text = _miniInput.text.trim();
+    if (text.isEmpty) return;
+    _miniInput.clear();
+    unawaited(_activeService?.sendText(text));
   }
 
-  void _onHeaderDragEnd(DragEndDetails details) {
+  // --- the drag: the whole sheet follows the finger ------------------------
+
+  double get _sheetPixels {
+    final screenH = MediaQuery.sizeOf(context).height;
+    return screenH * _expandedFraction;
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    _anim.stop();
+    _anim.value = (_anim.value - details.delta.dy / _sheetPixels).clamp(
+      0.0,
+      1.0,
+    );
+  }
+
+  void _onDragEnd(DragEndDetails details) {
     final velocity = details.velocity.pixelsPerSecond.dy;
-    if (_dragOffset >= _dragThreshold || velocity >= _flingVelocity) {
-      _collapse();
+    if (velocity <= -_flingVelocity) {
+      unawaited(_expand());
+    } else if (velocity >= _flingVelocity) {
+      unawaited(_collapse());
+    } else {
+      unawaited(_isExpanded ? _expand() : _collapse());
     }
-    setState(() {
-      _dragging = false;
-      _dragOffset = 0;
-    });
   }
 
-  void _onHeaderDragCancel() {
-    setState(() {
-      _dragging = false;
-      _dragOffset = 0;
-    });
+  void _onDragCancel() {
+    unawaited(_isExpanded ? _expand() : _collapse());
   }
 
   @override
   Widget build(BuildContext context) {
     final service = _activeService;
     if (service == null) return const SizedBox.shrink();
-    if (!_expanded) {
-      return ListenableBuilder(
-        listenable: service,
-        builder: (context, _) {
-          if (service.isStreaming) {
-            // Full-width compact status bar (it renders only while
-            // streaming) — pull-up or the expand button opens the sheet.
-            return Align(
-              alignment: Alignment.bottomCenter,
-              child: FaWorkBar(
-                service: service,
-                onSend: service.sendText,
-                onExpand: _expand,
-              ),
-            );
-          }
-          return Align(
-            alignment: Alignment.bottomRight,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 16, bottom: 24),
-              child: _FaLauncherButton(onTap: _expand),
-            ),
-          );
-        },
-      );
-    }
-    return _buildExpanded(context, service);
-  }
-
-  Widget _buildExpanded(BuildContext context, AgentService service) {
     final colors = FahColors.of(context);
-    final sessions = _sessions;
-    // The same panel as the collapsed FaWorkBar, grown: identical side and
-    // bottom margins, radius, surface, border, and shadow — one component
-    // in two states, never two stacked cards.
+    final screenH = MediaQuery.sizeOf(context).height;
+    final sheetH = screenH * _expandedFraction;
     return Align(
       alignment: Alignment.bottomCenter,
-      child: FractionallySizedBox(
-        widthFactor: 1,
-        heightFactor: 0.92,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: Container(
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: colors.panelAlt.withValues(alpha: 0.97),
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
-                bottom: Radius.circular(16),
-              ),
-              border: Border.all(color: colors.border),
-              boxShadow: const [
-                BoxShadow(
-                  color: Colors.black38,
-                  blurRadius: 12,
-                  offset: Offset(0, 4),
+      child: AnimatedBuilder(
+        animation: _anim,
+        builder: (context, _) {
+          return Stack(
+            alignment: Alignment.bottomCenter,
+            children: [
+              // Mini bar (or the work bar while streaming): fades out as
+              // the sheet slides up and leaves the tree when expanded.
+              if (_anim.value < 0.99)
+                Opacity(
+                  opacity: (1 - _anim.value * 2).clamp(0.0, 1.0),
+                  child: IgnorePointer(
+                    ignoring: _anim.value > 0.3,
+                    child: ListenableBuilder(
+                      listenable: service,
+                      builder: (context, _) {
+                        if (service.isStreaming) {
+                          return Align(
+                            alignment: Alignment.bottomCenter,
+                            child: FaWorkBar(
+                              service: service,
+                              onSend: service.sendText,
+                              onExpand: _expand,
+                            ),
+                          );
+                        }
+                        return _buildMiniBar(colors, service);
+                      },
+                    ),
+                  ),
+                ),
+              // The sheet: slides up from below; absent while fully
+              // collapsed (out of the widget tree entirely).
+              if (_anim.value > 0)
+                Transform.translate(
+                  offset: Offset(0, (1 - _anim.value) * sheetH),
+                  child: SizedBox(
+                    height: sheetH,
+                    child: _buildSheet(colors, service),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// The collapsed mini bar: drag handle, Fa mark, inline input, send and
+  /// expand buttons — the default home presence of the chat.
+  Widget _buildMiniBar(FahColors colors, AgentService service) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Container(
+        height: _miniHeight,
+        decoration: _panelDecoration(colors),
+        child: Material(
+          type: MaterialType.transparency,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragUpdate: _onDragUpdate,
+            onVerticalDragEnd: _onDragEnd,
+            onVerticalDragCancel: _onDragCancel,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _handle(colors),
+                Expanded(
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 12),
+                      const FaMark(size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          key: const ValueKey('sessionChatMiniInput'),
+                          controller: _miniInput,
+                          focusNode: _miniFocus,
+                          style: const TextStyle(fontSize: 13),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            hintText: context.l10n.appsFollowUpHint,
+                            hintStyle: TextStyle(
+                              color: colors.dim,
+                              fontSize: 13,
+                            ),
+                            border: InputBorder.none,
+                          ),
+                          onSubmitted: (_) => _sendMini(),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.send, size: 16),
+                        tooltip: context.l10n.appsSendTooltip,
+                        visualDensity: VisualDensity.compact,
+                        color: colors.indigo,
+                        onPressed: _sendMini,
+                      ),
+                      IconButton(
+                        key: const ValueKey('sessionChatFaButton'),
+                        icon: const Icon(Icons.keyboard_arrow_up, size: 20),
+                        tooltip: context.l10n.appsOpenChatTooltip,
+                        visualDensity: VisualDensity.compact,
+                        color: colors.dim,
+                        onPressed: () => unawaited(_expand()),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            child: Material(
-              type: MaterialType.transparency,
-              child: Column(
-                children: [
-                  _buildHeader(colors, service),
-                  Divider(height: 1, color: colors.border),
-                  Expanded(
-                    child: PageView.builder(
-                      key: const ValueKey('sessionChatPager'),
-                      controller: _pager,
-                      itemCount: sessions.length,
-                      onPageChanged: (index) {
-                        if (index < sessions.length) {
-                          widget.manager.switchTo(sessions[index].id);
-                        }
-                      },
-                      itemBuilder: (context, index) => _SessionTranscript(
-                        key: ValueKey(
-                          'sessionTranscript:${sessions[index].id}',
-                        ),
-                        service: sessions[index].service,
-                        audioControllerFactory: widget.audioControllerFactory,
-                        videoControllerFactory: widget.videoControllerFactory,
-                      ),
-                    ),
-                  ),
-                  Divider(height: 1, color: colors.border),
-                  FaWorkBar(
-                    service: service,
-                    onCollapse: _collapse,
-                    embedded: true,
-                  ),
-                  ChatComposer(
-                    service: service,
-                    uploadPicker: widget.uploadPicker,
-                    asr: widget.asr,
-                    asrTranscriber: widget.asrTranscriber,
-                  ),
-                ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The expanded sheet: header, session pager, status row, composer.
+  Widget _buildSheet(FahColors colors, AgentService service) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: _panelDecoration(colors),
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: _onDragUpdate,
+                onVerticalDragEnd: _onDragEnd,
+                onVerticalDragCancel: _onDragCancel,
+                child: _buildHeader(colors, service),
               ),
-            ),
+              Divider(height: 1, color: colors.border),
+              Expanded(
+                child: PageView.builder(
+                  key: const ValueKey('sessionChatPager'),
+                  controller: _pager,
+                  itemCount: _pageCount,
+                  onPageChanged: _onPageChanged,
+                  itemBuilder: (context, index) => index < _liveSessions.length
+                      ? _SessionTranscript(
+                          key: ValueKey(
+                            'sessionTranscript:${_liveSessions[index].id}',
+                          ),
+                          service: _liveSessions[index].service,
+                          audioControllerFactory: widget.audioControllerFactory,
+                          videoControllerFactory: widget.videoControllerFactory,
+                        )
+                      : _PersistedPage(
+                          key: ValueKey(
+                            'persistedPage:${_persisted[index - _liveSessions.length].id}',
+                          ),
+                          metadata: _persisted[index - _liveSessions.length],
+                          namesStore: _namesStore,
+                        ),
+                ),
+              ),
+              Divider(height: 1, color: colors.border),
+              FaWorkBar(
+                service: service,
+                onCollapse: _collapse,
+                embedded: true,
+              ),
+              ChatComposer(
+                service: service,
+                uploadPicker: widget.uploadPicker,
+                asr: widget.asr,
+                asrTranscriber: widget.asrTranscriber,
+              ),
+            ],
           ),
         ),
       ),
@@ -333,117 +500,126 @@ class _SessionChatSheetState extends State<SessionChatSheet> {
         context.l10n.sidebarSessionTitle(
           activeId.length > 8 ? activeId.substring(0, 8) : activeId,
         );
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onVerticalDragUpdate: _onHeaderDragUpdate,
-      onVerticalDragEnd: _onHeaderDragEnd,
-      onVerticalDragCancel: _onHeaderDragCancel,
-      child: AnimatedContainer(
-        duration: _dragging ? Duration.zero : const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        transform: Matrix4.translationValues(0, _dragOffset, 0),
-        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              key: const ValueKey('sessionChatSheetHandle'),
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: colors.dim.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(2),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _handle(colors),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const FaMark(size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                const FaMark(size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall,
+              PopupMenuButton<String>(
+                key: const ValueKey('sessionChatMenu'),
+                icon: const Icon(Icons.more_vert, size: 20),
+                tooltip: context.l10n.launcherChatActionsTooltip,
+                color: colors.panelAlt,
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'new',
+                    child: Text(context.l10n.sidebarNewSessionTooltip),
                   ),
-                ),
-                PopupMenuButton<String>(
-                  key: const ValueKey('sessionChatMenu'),
-                  icon: const Icon(Icons.more_vert, size: 20),
-                  tooltip: context.l10n.launcherChatActionsTooltip,
-                  color: colors.panelAlt,
-                  itemBuilder: (context) => [
-                    PopupMenuItem(
-                      value: 'new',
-                      child: Text(context.l10n.sidebarNewSessionTooltip),
-                    ),
-                    PopupMenuItem(
-                      value: 'full',
-                      child: Text(context.l10n.appsOpenFullChatTooltip),
-                    ),
-                    PopupMenuItem(
-                      value: 'collapse',
-                      child: Text(context.l10n.appsCollapseChatTooltip),
-                    ),
-                  ],
-                  onSelected: (value) {
-                    switch (value) {
-                      case 'new':
-                        unawaited(_newSession());
-                      case 'full':
-                        unawaited(_openFullChat());
-                      case 'collapse':
-                        _collapse();
-                    }
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
+                  PopupMenuItem(
+                    value: 'full',
+                    child: Text(context.l10n.appsOpenFullChatTooltip),
+                  ),
+                  PopupMenuItem(
+                    value: 'collapse',
+                    child: Text(context.l10n.appsCollapseChatTooltip),
+                  ),
+                ],
+                onSelected: (value) {
+                  switch (value) {
+                    case 'new':
+                      unawaited(_newSession());
+                    case 'full':
+                      unawaited(_openFullChat());
+                    case 'collapse':
+                      unawaited(_collapse());
+                  }
+                },
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
+
+  Widget _handle(FahColors colors) {
+    return Container(
+      key: const ValueKey('sessionChatSheetHandle'),
+      width: 36,
+      height: 4,
+      decoration: BoxDecoration(
+        color: colors.dim.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(2),
+      ),
+    );
+  }
+
+  BoxDecoration _panelDecoration(FahColors colors) => BoxDecoration(
+    color: colors.panelAlt.withValues(alpha: 0.97),
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: colors.border),
+    boxShadow: const [
+      BoxShadow(color: Colors.black38, blurRadius: 12, offset: Offset(0, 4)),
+    ],
+  );
 }
 
-/// The collapsed state's floating Fa button (bottom-right of the launcher):
-/// a brand-gradient circle with the Fa mark; tap expands the sheet.
-class _FaLauncherButton extends StatelessWidget {
-  const _FaLauncherButton({required this.onTap});
+/// A pager page for a persisted (not yet opened) session: opening it is in
+/// flight (the page change opens it lazily via the manager).
+class _PersistedPage extends StatelessWidget {
+  const _PersistedPage({super.key, required this.metadata, this.namesStore});
 
-  final VoidCallback onTap;
+  final SessionMetadata metadata;
+  final SessionNamesStore? namesStore;
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    return Material(
-      key: const ValueKey('sessionChatFaButton'),
-      shape: const CircleBorder(),
-      elevation: 8,
-      color: colors.panelAlt,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: Ink(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: colors.border),
+    final id = metadata.id;
+    final title =
+        namesStore?.titleFor(id) ??
+        context.l10n.sidebarSessionTitle(
+          id.length > 8 ? id.substring(0, 8) : id,
+        );
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          child: Tooltip(
-            message: context.l10n.appsOpenChatTooltip,
-            child: const Center(child: FaMark(size: 26)),
+          const SizedBox(height: 12),
+          Text(title, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Text(
+            context.l10n.appsFaStatusWorking,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: colors.dim),
           ),
-        ),
+        ],
       ),
     );
   }
 }
 
-/// One session's transcript page inside the pager: user bubbles, Markdown
-/// answers, thinking notes, compact tool lines — the shared
+/// One session's transcript page inside the pager: the shared
 /// [ChatMessageTile] renderer, pinned to the tail on new content.
 class _SessionTranscript extends StatefulWidget {
   const _SessionTranscript({
