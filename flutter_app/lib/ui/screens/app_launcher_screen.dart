@@ -8,6 +8,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 
 import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/session_chat_sheet.dart';
@@ -31,7 +32,9 @@ import 'package:fa/ui/widgets/media_player.dart';
 /// (Settings, Files); tiles reorder by drag&amp;drop, an app dropped onto
 /// the CENTER of another app groups both into a folder (drop onto an edge
 /// reorders, drop onto a folder adds to it), and a folder tap opens it as a
-/// floating panel whose tiles launch on tap or drag out to ungroup.
+/// floating panel whose tiles launch on tap or drag out to ungroup. An app
+/// whose manifest declares a `"widget"` section renders a live tile
+/// ([AppTileHost]) in place of the static icon + label.
 ///
 /// The layout (order, folders) persists through [LauncherLayoutStore]; the
 /// apps list refreshes on the active session's [AgentService.fsRevision]
@@ -51,6 +54,7 @@ class AppLauncherScreen extends StatefulWidget {
     this.asrTranscriber,
     this.audioControllerFactory,
     this.videoControllerFactory,
+    this.tileEngineFactory,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -88,6 +92,10 @@ class AppLauncherScreen extends StatefulWidget {
 
   /// Playback engine factory for inline video in the chat sheet transcript.
   final SandboxVideoControllerFactory? videoControllerFactory;
+
+  /// Test seam for live tiles: substitutes the [AppTileHost] engine so
+  /// widget tests and goldens render a deterministic tile tree.
+  final TileEngineFactory? tileEngineFactory;
 
   @override
   State<AppLauncherScreen> createState() => _AppLauncherScreenState();
@@ -436,10 +444,36 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
   }
 
-  /// The tile body: icon square + label. Taps launch/navigate; folder taps
-  /// open the folder panel.
+  /// The tile body: icon square + label — or, for apps declaring a
+  /// `"widget"` manifest section, the live tile ([AppTileHost]) filling the
+  /// cell. Taps launch/navigate; folder taps open the folder panel.
   Widget _tileContent(FahColors colors, String key) {
     final theme = Theme.of(context);
+    if (key.startsWith('app:')) {
+      final app = _appsById[key.substring(4)];
+      final tile = app?.tileWidget;
+      if (app != null && tile != null) {
+        // Live tile: the app draws its own mini UI (icon+label replaced);
+        // any tap opens the full app. `2x1` parses but renders as one cell
+        // until the grid delegate supports spans.
+        // TODO(phase-2): honor JsTileWidgetInfo.size2x1 with a custom
+        // SliverGridDelegate (index↔child mapping stays 1:1 for DnD).
+        return InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _onTileTap(key),
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: AppTileHost(
+              app: app,
+              env: widget.manager.env,
+              fsRevision: widget.manager.active?.service.fsRevision,
+              engineFactory: widget.tileEngineFactory,
+              onOpen: () => _onTileTap(key),
+            ),
+          ),
+        );
+      }
+    }
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: () => _onTileTap(key),

@@ -221,6 +221,11 @@ factual: paths, commands, invariants — no essays.
   iOS, honest demo-panel fallback elsewhere). `open_app_tool.dart` registers
   the agent tool `open_app`
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
+  Live launcher tiles: a manifest `"widget"` section
+  (`{entry: 'widget_tile.js', size: '1x1', refreshSeconds?}` →
+  `JsAppInfo.tileWidget`) makes the launcher grid render `app_tile_host.dart`
+  (a JsAppEngine on the tile entry, display-only — any tap opens the app)
+  instead of the static icon tile.
 - `flutter_app/lib/services/home_service.dart` — smart home: `HomeApi` over
   the `fah/home` MethodChannel (HomeKit in `AppDelegate.swift`, iOS only;
   the macOS channel answers unsupported): `listHomes`/`listRooms`/

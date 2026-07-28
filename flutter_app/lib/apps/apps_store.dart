@@ -118,6 +118,58 @@ class AppPermissions {
   };
 }
 
+/// Live-tile widget declaration of a JS app, parsed from the optional
+/// `"widget"` section of its `manifest.json`:
+///
+/// ```json
+/// "widget": { "entry": "widget_tile.js", "size": "1x1", "refreshSeconds": 900 }
+/// ```
+///
+/// An app with a tile renders its own mini UI inside the launcher home grid
+/// cell (see `app_tile_host.dart`) instead of the static icon + label. Unknown
+/// or invalid values fall back to the defaults (like `chrome` does).
+class JsTileWidgetInfo {
+  const JsTileWidgetInfo({
+    this.entry = defaultEntry,
+    this.size = size1x1,
+    this.refreshSeconds,
+  });
+
+  factory JsTileWidgetInfo.fromJson(Map<String, Object?> json) {
+    final entry = (json['entry'] ?? defaultEntry).toString();
+    final size = json['size']?.toString();
+    final refresh = json['refreshSeconds'];
+    return JsTileWidgetInfo(
+      entry: entry.isEmpty ? defaultEntry : entry,
+      size: size == size2x1 ? size2x1 : size1x1,
+      refreshSeconds: refresh is num && refresh > 0 ? refresh.toInt() : null,
+    );
+  }
+
+  /// Default tile entry file inside the app folder.
+  static const String defaultEntry = 'widget_tile.js';
+
+  /// One grid cell (the only rendered size for now).
+  static const String size1x1 = '1x1';
+
+  /// Two-cell horizontal span — parses fine but renders as [size1x1] until
+  /// the grid delegate supports spans.
+  // TODO(phase-2): real 2x1 spans via a custom SliverGridDelegate.
+  static const String size2x1 = '2x1';
+
+  /// Tile JS entry file inside `apps/<id>/`.
+  final String entry;
+
+  /// Declared tile size: [size1x1] (default) or [size2x1]; unknown manifest
+  /// values fall back to [size1x1].
+  final String size;
+
+  /// Optional host-side refresh cadence: the tile host calls the tile's
+  /// `tile.refresh` event every this many seconds (the tile JS can also just
+  /// use its own `setInterval` instead).
+  final int? refreshSeconds;
+}
+
 /// A JS app discovered in the env's `apps/` folder.
 class JsAppInfo {
   const JsAppInfo({
@@ -128,6 +180,7 @@ class JsAppInfo {
     required this.declaredPermissions,
     this.version = '1.0.0',
     this.chrome = chromeHeader,
+    this.tileWidget,
     this.bundled = false,
   });
 
@@ -136,6 +189,7 @@ class JsAppInfo {
     required bool bundled,
     required String fallbackId,
   }) {
+    final widget = json['widget'];
     return JsAppInfo(
       id: (json['id'] ?? fallbackId).toString(),
       name: (json['name'] ?? fallbackId).toString(),
@@ -143,6 +197,9 @@ class JsAppInfo {
       icon: (json['icon'] ?? '📦').toString(),
       version: (json['version'] ?? '1.0.0').toString(),
       chrome: json['chrome'] == chromeFull ? chromeFull : chromeHeader,
+      tileWidget: widget is Map<String, Object?>
+          ? JsTileWidgetInfo.fromJson(widget)
+          : null,
       declaredPermissions: AppPermissions.fromJson(json),
       bundled: bundled,
     );
@@ -171,10 +228,19 @@ class JsAppInfo {
   /// True for demo apps seeded from bundled assets (read-only source).
   final bool bundled;
 
+  /// Live-tile widget declaration (the manifest's `"widget"` section), or
+  /// null when the app has no launcher tile — it renders the classic static
+  /// icon tile on the home grid.
+  final JsTileWidgetInfo? tileWidget;
+
   /// Env-relative path of the app directory (`apps/<id>`).
   String get dir => 'apps/$id';
   String get widgetPath => '$dir/widget.js';
   String get manifestPath => '$dir/manifest.json';
+
+  /// Env-relative path of the live-tile entry file (see [tileWidget]).
+  String get tileWidgetPath =>
+      '$dir/${tileWidget?.entry ?? JsTileWidgetInfo.defaultEntry}';
 }
 
 /// Effective permission state for one app: the manifest's declared set with
@@ -348,7 +414,9 @@ class AppsStore {
   /// Copies bundled demo apps (see [seedDemoIds]) into `apps/`. Files are
   /// refreshed when the bundled content changed (demo apps are samples, not
   /// user data — custom apps should use their own id). A manifest whose
-  /// `icon` points at an `.svg` file gets that file copied alongside.
+  /// `icon` points at an `.svg` file gets that file copied alongside, and a
+  /// manifest with a `"widget"` section gets its tile entry file copied when
+  /// the asset exists.
   Future<void> seedBundledApps([List<String>? demoIds]) async {
     for (final id in demoIds ?? seedDemoIds) {
       final manifest = await _readAsset('$bundledAssetRoot/$id/manifest.json');
@@ -362,6 +430,19 @@ class AppsStore {
           if (icon.toLowerCase().endsWith('.svg')) {
             final svg = await _readAsset('$bundledAssetRoot/$id/$icon');
             await _writeIfChanged('apps/$id/$icon', svg);
+          }
+          final tile = decoded['widget'];
+          if (tile is Map<String, Object?>) {
+            final entry = JsTileWidgetInfo.fromJson(tile).entry;
+            try {
+              final tileSource = await _readAsset(
+                '$bundledAssetRoot/$id/$entry',
+              );
+              await _writeIfChanged('apps/$id/$entry', tileSource);
+            } on Object {
+              // The manifest declares a tile but no asset ships it — the
+              // tile host will surface the missing file at render time.
+            }
           }
         }
       } on FormatException {

@@ -114,6 +114,29 @@ The `icon` field accepts three forms:
 
 SVG icons render in the sidebar, the apps grid, the app bar and the permissions dialog. Inside the app UI itself, use the `svg` node (`{"type": "svg", "data": "<svg …>", "width": 24, "color": "#818cf8"}`) for inline vector graphics.
 
+### Live launcher tiles (the `widget` section)
+
+An app can render **live mini-content inside its launcher home-grid tile** (like an iOS/Android home-screen widget — think a weather tile showing the current temperature) instead of the static icon + label. Opt in with a `"widget"` section in `manifest.json` plus a separate tile entry file:
+
+```json
+"widget": { "entry": "widget_tile.js", "size": "1x1", "refreshSeconds": 900 }
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `entry` | ❌ | Tile JS file inside the app folder (default: `widget_tile.js`) |
+| `size` | ❌ | `"1x1"` (default). `"2x1"` parses but renders as 1x1 for now |
+| `refreshSeconds` | ❌ | Host-side refresh cadence — the tile host fires a `tile.refresh` event every N seconds (omit it and use your own `setInterval` if you prefer) |
+
+Tile-JS rules (see the `weather` / `reminders` demo `widget_tile.js`):
+
+1. **Small canvas** — the tile is one square grid cell (~104 px) and gives your root node tight bounds (fill it; don't center a fixed-size box). Render a compact layout: 2-4 nodes, big value + one muted label, no forms, no scrolling.
+2. **Display-only** — any tap on the tile opens the full app; tile JS must not rely on its own buttons/inputs (there is no in-tile interaction in v1).
+3. **`tile.refresh` event** — when the manifest sets `refreshSeconds`, the host calls your `jsr.onEvent` handler with `actionId === 'tile.refresh'`; refetch/re-read data there.
+4. **`jsr.theme` colors** — same theming rules as full apps: read `jsr.theme` fresh on every render and re-render from `jsr._onThemeChange`.
+5. **Storage is shared** — the tile engine uses the same `apps/<id>/storage.json` as the full app: read what the app writes (e.g. the reminders tile shows the app's `reminders` list), and cache your last fetched payload for an instant first paint.
+6. **Foreground only** — the tile engine lives only while the launcher is visible; there is no background execution.
+
 ---
 
 ## widget.js — Code Structure

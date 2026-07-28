@@ -7,12 +7,26 @@
   "allowedCommands": [],
   "network": false,
   "notifications": true,
+  "widget": {
+    "entry": "widget_tile.js",
+    "size": "1x1",
+    "refreshSeconds": 60
+  },
   "cli": {
     "summary": "Local notification reminders: schedule in N minutes, cancel per row",
     "events": [
-      { "id": "remind_add", "description": "Schedule a reminder from the form fields" },
-      { "id": "cancel_0", "description": "Cancel the first listed reminder" },
-      { "id": "retry", "description": "Reload after granting the permission" }
+      {
+        "id": "remind_add",
+        "description": "Schedule a reminder from the form fields"
+      },
+      {
+        "id": "cancel_0",
+        "description": "Cancel the first listed reminder"
+      },
+      {
+        "id": "retry",
+        "description": "Reload after granting the permission"
+      }
     ],
     "read": {
       "state": "yoloit app:state reminders — reminderCount, loading, error, notice",

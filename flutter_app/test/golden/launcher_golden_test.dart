@@ -1,6 +1,8 @@
 /// Golden (screenshot) tests for the apps launcher home:
 /// `lib/ui/screens/app_launcher_screen.dart` (grid, folders, system tiles)
-/// and, hosted over it, `lib/apps/session_chat_sheet.dart`.
+/// and, hosted over it, `lib/apps/session_chat_sheet.dart` — whose expanded
+/// and mini states also exercise the shared `ChatComposer`
+/// (`lib/ui/widgets/chat_composer.dart`).
 ///
 /// Apps are seeded straight into a `MemoryExecutionEnv` (no bundled-asset
 /// seeding) with inline-SVG manifest icons — the golden font sandbox renders
@@ -9,14 +11,14 @@ library;
 
 import 'dart:async';
 
+import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
-import 'package:fa/apps/session_chat_sheet.dart';
+import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
-import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -142,7 +144,7 @@ Map<String, List<String>> get _apps => {
   ],
 };
 
-Future<MemoryExecutionEnv> _seededEnv() async {
+Future<MemoryExecutionEnv> _seededEnv({bool weatherTile = false}) async {
   final env = MemoryExecutionEnv();
   for (final entry in _apps.entries) {
     await env.writeFile(
@@ -153,8 +155,83 @@ Future<MemoryExecutionEnv> _seededEnv() async {
     );
     await env.writeFile('apps/${entry.key}/widget.js', '(function(){})();');
   }
+  if (weatherTile) {
+    // A live-tile app: the `"widget"` manifest section opts it into the
+    // AppTileHost cell instead of the static icon + label.
+    final sunIcon = _badgeIcon(
+      '#0ea5e9',
+      "<circle cx='12' cy='12' r='5' fill='$_fg'/>"
+          "<rect x='11' y='2' width='2' height='4' rx='1' fill='$_fg'/>"
+          "<rect x='11' y='18' width='2' height='4' rx='1' fill='$_fg'/>"
+          "<rect x='2' y='11' width='4' height='2' rx='1' fill='$_fg'/>"
+          "<rect x='18' y='11' width='4' height='2' rx='1' fill='$_fg'/>",
+    );
+    await env.writeFile(
+      'apps/weather/manifest.json',
+      '{"id": "weather", "name": "Weather", "description": "Weather app", '
+          '"icon": ${_jsonString(sunIcon)}, '
+          '"widget": {"entry": "widget_tile.js", "size": "1x1", '
+          '"refreshSeconds": 900}}',
+    );
+    await env.writeFile('apps/weather/widget.js', '(function(){})();');
+    await env.writeFile('apps/weather/widget_tile.js', '(function(){})();');
+  }
   return env;
 }
+
+/// Fake tile engine emitting a deterministic weather-tile tree so the
+/// live-tile goldens stay pixel-stable (no JavaScriptCore boot).
+final class _FakeTileEngine extends JsAppEngine {
+  _FakeTileEngine({
+    required super.app,
+    required super.env,
+    required super.permissions,
+    super.initialTheme,
+  });
+
+  @override
+  Future<void> start() async {
+    tree.value = const {
+      'type': 'container',
+      'alignment': 'center',
+      'child': {
+        'type': 'column',
+        'mainAxisSize': 'min',
+        'crossAxisAlignment': 'center',
+        'children': [
+          {'type': 'icon', 'name': 'wb_sunny', 'color': '#FBBF24', 'size': 18},
+          {'type': 'sizedBox', 'height': 2},
+          {
+            'type': 'text',
+            'data': '21°',
+            'style': {'fontSize': 26, 'fontWeight': 'w700'},
+          },
+          {
+            'type': 'text',
+            'data': 'Minsk',
+            'style': {'fontSize': 11},
+          },
+        ],
+      },
+    };
+  }
+
+  @override
+  Future<void> updateTheme(Map<String, dynamic> theme) async {}
+}
+
+TileEngineFactory _fakeTileEngineFactory() =>
+    ({
+      required JsAppInfo app,
+      required ExecutionEnv env,
+      required AppPermissions permissions,
+      required Map<String, dynamic> initialTheme,
+    }) => _FakeTileEngine(
+      app: app,
+      env: env,
+      permissions: permissions,
+      initialTheme: initialTheme,
+    );
 
 /// JSON-encodes [value] as a string literal (double quotes, escaped).
 String _jsonString(String value) {
@@ -177,7 +254,9 @@ AppsStore _appsStore(MemoryExecutionEnv env) => AppsStore(
 /// Pumps the launcher as the full app home at phone size. [folders] seeds a
 /// pre-made folder layout (default: the four apps + system tiles).
 /// [sessions] maps session ids to seeded transcript messages (the LAST id
-/// is the active session).
+/// is the active session). [weatherTile] adds a fifth app whose manifest
+/// declares a `"widget"` section — pair it with [tileEngineFactory] so the
+/// live tile renders a deterministic tree.
 Future<void> _pumpLauncher(
   WidgetTester tester, {
   Locale locale = const Locale('en'),
@@ -186,8 +265,10 @@ Future<void> _pumpLauncher(
   List<LauncherFolder>? folders,
   Map<String, List<FahChatMessage>>? sessions,
   StreamFunction? streamFunction,
+  bool weatherTile = false,
+  TileEngineFactory? tileEngineFactory,
 }) async {
-  final env = await _seededEnv();
+  final env = await _seededEnv(weatherTile: weatherTile);
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   for (final entry
       in (sessions ?? const {'fake-session': <FahChatMessage>[]}).entries) {
@@ -203,6 +284,7 @@ Future<void> _pumpLauncher(
         order:
             order ??
             [
+              if (weatherTile) 'app:weather',
               'app:notes',
               'app:pomodoro',
               'app:habits',
@@ -213,6 +295,7 @@ Future<void> _pumpLauncher(
         folders: folders,
       ),
       appsStore: _appsStore(env),
+      tileEngineFactory: tileEngineFactory,
     ),
     size: goldenSizePhone,
     locale: locale,
@@ -224,18 +307,23 @@ Future<void> _pumpLauncher(
 void main() {
   setUpAll(ensureGoldenFonts);
 
-  group('AppLauncherScreen goldens', () {
-    testWidgets('launcher grid — phone', (tester) async {
+  group('AppLauncherScreen goldens (launcher/)', () {
+    testWidgets('launcher grid — dark', (tester) async {
       await _pumpLauncher(tester);
-      await expectGolden(tester, 'launcher_grid');
+      await expectGolden(tester, 'launcher/grid_dark');
     });
 
-    testWidgets('launcher grid — phone, ru', (tester) async {
+    testWidgets('launcher grid — light', (tester) async {
+      await _pumpLauncher(tester, theme: buildFahThemeLight());
+      await expectGolden(tester, 'launcher/grid_light');
+    });
+
+    testWidgets('launcher grid — ru', (tester) async {
       await _pumpLauncher(tester, locale: const Locale('ru'));
-      await expectGolden(tester, 'launcher_grid_ru');
+      await expectGolden(tester, 'launcher/grid_ru');
     });
 
-    testWidgets('folder open — phone', (tester) async {
+    testWidgets('folder open — dark', (tester) async {
       await _pumpLauncher(
         tester,
         order: [
@@ -255,12 +343,32 @@ void main() {
       );
       await tester.tap(find.text('Writing'));
       await tester.pumpAndSettle();
-      await expectGolden(tester, 'launcher_folder_open');
+      await expectGolden(tester, 'launcher/folder_open_dark');
+    });
+
+    testWidgets('grid with a live weather tile — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        weatherTile: true,
+        tileEngineFactory: _fakeTileEngineFactory(),
+      );
+      await expectGolden(tester, 'launcher/grid_widget_tile_dark');
+    });
+
+    testWidgets('grid with a live weather tile — light', (tester) async {
+      await _pumpLauncher(
+        tester,
+        weatherTile: true,
+        tileEngineFactory: _fakeTileEngineFactory(),
+        theme: buildFahThemeLight(),
+      );
+      await expectGolden(tester, 'launcher/grid_widget_tile_light');
     });
   });
 
-  group('SessionChatSheet goldens (over the launcher)', () {
-    /// The seeded conversation for the expanded-sheet shots.
+  group('SessionChatSheet state matrix (launcher/sheet_*)', () {
+    /// The seeded conversation driving every sheet-state shot: sess-b
+    /// (active, a finished dice-roller exchange) and sess-a (pager page 2).
     Map<String, List<FahChatMessage>> twoSessions() => {
       'sess-a': [
         FahChatMessage(role: 'user', content: 'remind me what we decided'),
@@ -288,21 +396,35 @@ void main() {
       ],
     };
 
+    /// From the mini bar (the default resting state), a tap on the handle
+    /// area opens the full sheet.
     Future<void> expandSheet(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('sessionChatFaButton')));
+      await tester.tap(find.byKey(const ValueKey('sessionChatSheetHandle')));
       await tester.pumpAndSettle();
     }
 
-    testWidgets('sheet collapsed while streaming shows the work bar', (
-      tester,
-    ) async {
-      await _pumpLauncher(
-        tester,
-        sessions: {'sess-b': twoSessions()['sess-b']!},
-        streamFunction: _hungResponse(),
+    /// Same as [expandSheet] but with timed pumps — usable while the
+    /// streaming orbit animation keeps the tree from ever settling.
+    Future<void> expandSheetWhileStreaming(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('sessionChatSheetHandle')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    /// From the default mini bar, one strong pull-down collapses the sheet
+    /// to the round Fa icon.
+    Future<void> pullDownToIcon(WidgetTester tester) async {
+      await tester.drag(
+        find.byKey(const ValueKey('sessionChatSheetHandle')),
+        const Offset(0, 400),
       );
-      // Start the run, then freeze on fixed frames: the work bar's orbit
-      // animation repeats forever, so pumpAndSettle would time out.
+      await tester.pumpAndSettle();
+    }
+
+    /// Starts a hung run and pumps fixed frames until the stream-start
+    /// auto-grow settles into the mini state (the orbit repeats forever, so
+    /// pumpAndSettle would time out).
+    Future<void> startHungRun(WidgetTester tester) async {
       final service = tester
           .widget<AppLauncherScreen>(find.byType(AppLauncherScreen))
           .manager
@@ -312,44 +434,101 @@ void main() {
         unawaited(service.sendText('roll a d20'));
         await Future<void>.delayed(const Duration(milliseconds: 100));
       });
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      await expectGolden(tester, 'launcher_sheet_streaming');
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    testWidgets('collapsed — round Fa button (dark)', (tester) async {
+      await _pumpLauncher(tester, sessions: twoSessions());
+      await pullDownToIcon(tester);
+      await expectGolden(tester, 'launcher/sheet_icon_dark');
     });
 
-    testWidgets('sheet expanded — transcript, header, composer', (
-      tester,
-    ) async {
+    testWidgets('collapsed — round Fa button (light)', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        theme: buildFahThemeLight(),
+      );
+      await pullDownToIcon(tester);
+      await expectGolden(tester, 'launcher/sheet_icon_light');
+    });
+
+    testWidgets('mini bar — dark', (tester) async {
+      // The mini bar IS the default resting state — no gestures needed.
+      await _pumpLauncher(tester, sessions: twoSessions());
+      await expectGolden(tester, 'launcher/sheet_mini_dark');
+    });
+
+    testWidgets('mini bar — light', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        theme: buildFahThemeLight(),
+      );
+      await expectGolden(tester, 'launcher/sheet_mini_light');
+    });
+
+    testWidgets('mini bar streaming — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: {'sess-b': twoSessions()['sess-b']!},
+        streamFunction: _hungResponse(),
+      );
+      await startHungRun(tester);
+      await expectGolden(tester, 'launcher/sheet_mini_streaming_dark');
+    });
+
+    testWidgets('mini bar streaming — light', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: {'sess-b': twoSessions()['sess-b']!},
+        streamFunction: _hungResponse(),
+        theme: buildFahThemeLight(),
+      );
+      await startHungRun(tester);
+      await expectGolden(tester, 'launcher/sheet_mini_streaming_light');
+    });
+
+    testWidgets('expanded — dark', (tester) async {
       await _pumpLauncher(tester, sessions: twoSessions());
       await expandSheet(tester);
-      expect(find.byType(SessionChatSheet), findsOneWidget);
-      expect(find.byType(ChatComposer), findsOneWidget);
-      await expectGolden(tester, 'launcher_sheet_expanded');
+      await expectGolden(tester, 'launcher/sheet_expanded_dark');
     });
 
-    testWidgets('sheet expanded — ru', (tester) async {
+    testWidgets('expanded — ru', (tester) async {
       await _pumpLauncher(
         tester,
         locale: const Locale('ru'),
         sessions: twoSessions(),
       );
       await expandSheet(tester);
-      await expectGolden(tester, 'launcher_sheet_expanded_ru');
+      await expectGolden(tester, 'launcher/sheet_expanded_ru');
     });
 
-    testWidgets('sheet expanded — light theme (safe-area handle visible)', (
-      tester,
-    ) async {
+    testWidgets('expanded — light', (tester) async {
       await _pumpLauncher(
         tester,
         sessions: twoSessions(),
         theme: buildFahThemeLight(),
       );
       await expandSheet(tester);
-      await expectGolden(tester, 'launcher_sheet_expanded_light');
+      await expectGolden(tester, 'launcher/sheet_expanded_light');
     });
 
-    testWidgets('sheet pager — second session', (tester) async {
+    testWidgets('expanded streaming — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: {'sess-b': twoSessions()['sess-b']!},
+        streamFunction: _hungResponse(),
+      );
+      await startHungRun(tester);
+      await expandSheetWhileStreaming(tester);
+      await expectGolden(tester, 'launcher/sheet_expanded_streaming_dark');
+    });
+
+    testWidgets('pager — second session', (tester) async {
       await _pumpLauncher(tester, sessions: twoSessions());
       await expandSheet(tester);
       await tester.fling(
@@ -359,7 +538,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('session sess-a'), findsOneWidget);
-      await expectGolden(tester, 'launcher_sheet_pager2');
+      await expectGolden(tester, 'launcher/sheet_pager2_dark');
     });
   });
 }

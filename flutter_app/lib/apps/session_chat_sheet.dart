@@ -94,8 +94,10 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   /// Diameter of the fully-collapsed round Fa button.
   static const double _iconSize = 56;
 
-  /// Height of the mini state (handle + composer row) without safe area.
-  static const double _miniHeight = 100;
+  /// Height of the mini state (handle + composer row) without safe area —
+  /// only the initial estimate; the real natural height is measured live
+  /// into `_measuredMiniH`.
+  static const double _miniHeight = 110;
 
   /// Expanded height as a fraction of the screen.
   static const double _expandedFraction = 0.92;
@@ -118,6 +120,15 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   /// One-shot guard for the stream-start auto-grow to the mini state.
   var _autoMini = false;
 
+  /// Key on the always-rendered body column — its natural height is
+  /// measured live ([_measuredMiniH]) so the icon↔mini pixel lerp targets
+  /// the REAL mini height in the current environment (composer + safe-area
+  /// + optional status row), making state switches pixel-continuous.
+  final GlobalKey _miniBodyKey = GlobalKey();
+
+  /// Last measured natural mini-body height; seeded with an estimate.
+  double _measuredMiniH = _miniHeight;
+
   List<FlutterManagedSession> get _liveSessions => widget.manager.sessions;
 
   AgentService? get _activeService => widget.manager.active?.service;
@@ -125,8 +136,12 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   @override
   void initState() {
     super.initState();
+    // The MINI bar (handle + composer) is the default resting state — the
+    // composer is one tap away and the grid above stays fully visible. A
+    // pull-down still collapses it to the round Fa icon (value 0).
     _anim = AnimationController(
       vsync: this,
+      value: _miniValue,
       duration: const Duration(milliseconds: 260),
     );
     _pager = PageController(initialPage: _activeIndex());
@@ -338,16 +353,24 @@ class _SessionChatSheetState extends State<SessionChatSheet>
               0.0,
               1.0,
             );
-            // Icon (56px) → mini (natural body height) → sheet (92%). The
-            // mini state's height is the body's own, so the status row and
-            // composer are never clipped out of the panel. While streaming
-            // the icon state is skipped entirely (the mini body shows).
-            final double? height =
-                (v < _miniValue * 0.7 && !service.isStreaming)
-                ? _iconSize
-                : (sheetT > 0
-                      ? _miniHeight + (expandedH - _miniHeight) * sheetT
-                      : null);
+            // Icon (56px) → mini (handle + [status] + composer) → sheet
+            // (92%). At REST the mini state sizes itself to its content
+            // (height == null → no clipping of the handle or composer, and
+            // the panel never covers the grid behind it); during transitions
+            // the height is explicit, targeting the MEASURED natural mini
+            // height, and the body is bottom-pinned, so nothing jumps.
+            final miniH = _measuredMiniH;
+            final atMiniRest = sheetT == 0 && (v - _miniValue).abs() < 0.001;
+            final double? height;
+            if (v < _miniValue * 0.7 && !service.isStreaming) {
+              height = _iconSize;
+            } else if (sheetT > 0) {
+              height = miniH + (expandedH - miniH) * sheetT;
+            } else if (atMiniRest) {
+              height = null;
+            } else {
+              height = _iconSize + (miniH - _iconSize) * (v / _miniValue);
+            }
             final width = sheetT > 0 || miniT >= 1
                 ? size.width
                 : _iconSize + (size.width - _iconSize) * miniT;
@@ -404,31 +427,22 @@ class _SessionChatSheetState extends State<SessionChatSheet>
                           _autoMini = false;
                         }
                         return Stack(
-                          fit: StackFit.expand,
+                          // Passthrough: with an explicit container height
+                          // (icon/transitions/sheet) the children fill it;
+                          // at mini REST (height == null) the stack — and
+                          // with it the whole panel — shrink-wraps the
+                          // natural body height, so the panel NEVER covers
+                          // the app grid behind it.
+                          fit: StackFit.passthrough,
                           children: [
-                            if (sheetT > 0)
-                              OverflowBox(
-                                maxWidth: size.width,
-                                maxHeight: expandedH,
-                                alignment: Alignment.bottomRight,
-                                child: _panelContent(
-                                  colors,
-                                  service,
-                                  v,
-                                  sheetT,
-                                ),
-                              )
-                            else
-                              OverflowBox(
-                                maxWidth: size.width,
-                                alignment: Alignment.bottomRight,
-                                child: _panelContent(
-                                  colors,
-                                  service,
-                                  v,
-                                  sheetT,
-                                ),
-                              ),
+                            _panelContent(
+                              colors,
+                              service,
+                              v,
+                              sheetT,
+                              expandedH,
+                              atMiniRest,
+                            ),
                             // The round Fa button (collapsed state): fills
                             // the 56px container, NOT the overflowed body.
                             if (v < _miniValue * 0.7 && !service.isStreaming)
@@ -463,6 +477,8 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     AgentService service,
     double v,
     double sheetT,
+    double expandedH,
+    bool atMiniRest,
   ) {
     // No body below the icon threshold (the container is too small for the
     // composer); while Fa starts working the auto-grow animates the panel
@@ -470,6 +486,55 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     if (v < _miniValue * 0.7) {
       return const SizedBox.shrink();
     }
+    final column = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _handle(colors),
+        if (sheetT > 0) ...[
+          Opacity(opacity: sheetT, child: _buildHeader(colors, service)),
+          Divider(height: 1, color: colors.border),
+          Expanded(child: _buildPager()),
+          Divider(height: 1, color: colors.border),
+        ] else
+          const SizedBox(height: 4),
+        // The status row belongs to the mini state; the expanded sheet
+        // shows the streaming progress inside the transcript itself.
+        if (service.isStreaming && sheetT == 0)
+          FaWorkBar(
+            service: service,
+            onExpand: _expand,
+            onCollapse: _collapse,
+            embedded: true,
+          ),
+        ChatComposer(
+          service: service,
+          uploadPicker: widget.uploadPicker,
+          asr: widget.asr,
+          asrTranscriber: widget.asrTranscriber,
+        ),
+      ],
+    );
+    // Measure the natural mini-body height on every layout (mini states
+    // only — in the sheet the column is stretched to expandedH): the
+    // icon↔mini pixel lerp targets this exact value, so landing on the
+    // natural-height rest state is pixel-continuous in any environment
+    // (safe-area bottom, with/without the streaming status row).
+    final body = NotificationListener<SizeChangedLayoutNotification>(
+      onNotification: (_) {
+        if (sheetT != 0) return true;
+        // The notification fires DURING layout — reading the size right
+        // here is illegal (render object still dirty), so defer it.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final h = _miniBodyKey.currentContext?.size?.height;
+          if (h != null && (h - _measuredMiniH).abs() > 0.5) {
+            _measuredMiniH = h;
+          }
+        });
+        return true;
+      },
+      child: SizeChangedLayoutNotifier(key: _miniBodyKey, child: column),
+    );
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       // A tap anywhere outside the interactive children opens the sheet.
@@ -477,32 +542,26 @@ class _SessionChatSheetState extends State<SessionChatSheet>
       onVerticalDragUpdate: _onDragUpdate,
       onVerticalDragEnd: _onDragEnd,
       onVerticalDragCancel: _onDragCancel,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _handle(colors),
-          if (sheetT > 0) ...[
-            Opacity(opacity: sheetT, child: _buildHeader(colors, service)),
-            Divider(height: 1, color: colors.border),
-            Expanded(child: _buildPager()),
-            Divider(height: 1, color: colors.border),
-          ] else
-            const SizedBox(height: 4),
-          if (service.isStreaming)
-            FaWorkBar(
-              service: service,
-              onExpand: _expand,
-              onCollapse: _collapse,
-              embedded: true,
+      // Mini at REST: the container has no explicit height, so the plain
+      // natural-height body shrink-wraps it — the panel covers ONLY its
+      // own bar and the app grid behind stays fully visible. Transitions
+      // and the sheet: the body is laid out at its rest size (full expanded
+      // height in the sheet) and pinned to the BOTTOM of the container, so
+      // mid-gesture the top clips instead of overflowing and the composer
+      // and messages never reflow or jump.
+      child: atMiniRest
+          ? body
+          : Align(
+              alignment: Alignment.bottomCenter,
+              child: OverflowBox(
+                alignment: Alignment.bottomCenter,
+                maxHeight: expandedH,
+                child: SizedBox(
+                  height: sheetT > 0 ? expandedH : null,
+                  child: body,
+                ),
+              ),
             ),
-          ChatComposer(
-            service: service,
-            uploadPicker: widget.uploadPicker,
-            asr: widget.asr,
-            asrTranscriber: widget.asrTranscriber,
-          ),
-        ],
-      ),
     );
   }
 

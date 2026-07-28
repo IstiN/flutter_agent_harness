@@ -82,6 +82,7 @@ class JsAppEngine {
     required this.app,
     required this.env,
     required this.permissions,
+    this.entryFile = defaultEntryFile,
     this.llmHandler,
     this.platformHandler,
     this.calendar,
@@ -97,9 +98,17 @@ class JsAppEngine {
     void Function(String line)? onLog,
   }) : _onLog = onLog;
 
+  /// The JS entry file [start] runs when no override is given.
+  static const String defaultEntryFile = 'widget.js';
+
   final JsAppInfo app;
   final ExecutionEnv env;
   final AppPermissions permissions;
+
+  /// The JS entry file inside the app folder (`apps/<id>/`) that [start]
+  /// runs — [defaultEntryFile] for the full app, the tile entry
+  /// ([JsTileWidgetInfo.entry]) when the engine powers a launcher live tile.
+  final String entryFile;
   final FaLlmHandler? llmHandler;
   final FaPlatformHandler? platformHandler;
 
@@ -166,14 +175,14 @@ class JsAppEngine {
   Map<String, dynamic>? get exportedState => _engine?.exportedState;
   List<Map<String, dynamic>> peekLogs() => _engine?.peekLogs() ?? const [];
 
-  /// Starts (or restarts) the JS engine with the current `widget.js`.
+  /// Starts (or restarts) the JS engine with the current [entryFile].
   Future<void> start() async {
     final old = _engine;
     _engine = null;
     if (old != null) await old.dispose();
     backHandlerRegistered.value = false;
 
-    final js = (await env.readTextFile(app.widgetPath)).getOrThrow();
+    final js = (await env.readTextFile('${app.dir}/$entryFile')).getOrThrow();
     final storage = await _readStorage();
     final config = JsRuntimeConfig(
       widgetId: app.id,

@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -76,6 +77,67 @@ void main() {
       expect(svg.valueOrNull, '<svg/>');
     });
 
+    test(
+      'seeds the tile entry file when the manifest declares a widget',
+      () async {
+        const manifestWithWidget = '''
+{
+  "id": "demo",
+  "name": "Demo App",
+  "description": "A demo",
+  "icon": "🧪",
+  "widget": { "entry": "widget_tile.js", "size": "1x1", "refreshSeconds": 900 }
+}
+''';
+        final env = MemoryExecutionEnv();
+        final store = AppsStore(
+          env,
+          readAsset: (path) async {
+            if (path.endsWith('manifest.json')) return manifestWithWidget;
+            if (path.endsWith('widget_tile.js')) return '(function(){})();';
+            return _fakeAssets(path);
+          },
+        );
+        await store.seedBundledApps(['demo']);
+        final tile = await env.readTextFile('apps/demo/widget_tile.js');
+        expect(tile.valueOrNull, '(function(){})();');
+
+        // The tile declaration lands on the discovered app info.
+        final app = (await store.listApps()).single;
+        expect(app.tileWidget, isNotNull);
+        expect(app.tileWidget!.entry, 'widget_tile.js');
+        expect(app.tileWidget!.refreshSeconds, 900);
+      },
+    );
+
+    test('a missing tile entry asset is skipped, not fatal', () async {
+      const manifestWithWidget = '''
+{
+  "id": "demo",
+  "name": "Demo App",
+  "description": "A demo",
+  "icon": "🧪",
+  "widget": { "entry": "widget_tile.js" }
+}
+''';
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(
+        env,
+        readAsset: (path) async {
+          if (path.endsWith('manifest.json')) return manifestWithWidget;
+          if (path.endsWith('widget_tile.js')) {
+            throw StateError('asset not found');
+          }
+          return _fakeAssets(path);
+        },
+      );
+      await store.seedBundledApps(['demo']);
+      final apps = await store.listApps();
+      expect(apps, hasLength(1));
+      final tile = await env.readTextFile('apps/demo/widget_tile.js');
+      expect(tile.valueOrNull, isNull);
+    });
+
     test('skips malformed app folders', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile('apps/broken/manifest.json', '{not json');
@@ -120,6 +182,79 @@ void main() {
         fallbackId: 'demo',
       );
       expect(unknown.chrome, JsAppInfo.chromeHeader);
+    });
+
+    test('no widget section → no tile widget', () {
+      final app = JsAppInfo.fromManifest(
+        const {'id': 'demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      expect(app.tileWidget, isNull);
+    });
+
+    test('widget section parses with defaults', () {
+      final app = JsAppInfo.fromManifest(
+        const {'id': 'demo', 'widget': <String, Object?>{}},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      final tile = app.tileWidget!;
+      expect(tile.entry, JsTileWidgetInfo.defaultEntry);
+      expect(tile.size, JsTileWidgetInfo.size1x1);
+      expect(tile.refreshSeconds, isNull);
+      expect(app.tileWidgetPath, 'apps/demo/widget_tile.js');
+
+      final full = JsAppInfo.fromManifest(
+        const {
+          'id': 'demo',
+          'widget': {'entry': 'tile.js', 'size': '2x1', 'refreshSeconds': 900},
+        },
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      expect(full.tileWidget!.entry, 'tile.js');
+      expect(full.tileWidget!.size, JsTileWidgetInfo.size2x1);
+      expect(full.tileWidget!.refreshSeconds, 900);
+      expect(full.tileWidgetPath, 'apps/demo/tile.js');
+    });
+
+    test('weird widget values fall back to the defaults', () {
+      final app = JsAppInfo.fromManifest(
+        const {
+          'id': 'demo',
+          'widget': {'entry': '', 'size': '3x3', 'refreshSeconds': 'later'},
+        },
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      final tile = app.tileWidget!;
+      expect(tile.entry, JsTileWidgetInfo.defaultEntry);
+      expect(tile.size, JsTileWidgetInfo.size1x1);
+      expect(tile.refreshSeconds, isNull);
+
+      // A non-map widget section is ignored entirely.
+      final notAMap = JsAppInfo.fromManifest(
+        const {'id': 'demo', 'widget': true},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      expect(notAMap.tileWidget, isNull);
+    });
+  });
+
+  group('JsAppEngine entryFile', () {
+    test('defaults to widget.js', () {
+      final engine = JsAppEngine(
+        app: JsAppInfo.fromManifest(
+          const {'id': 'demo'},
+          bundled: false,
+          fallbackId: 'demo',
+        ),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+      expect(engine.entryFile, JsAppEngine.defaultEntryFile);
     });
   });
 

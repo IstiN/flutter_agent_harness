@@ -33,6 +33,7 @@ const _coverage = <String, String>{
   'lib/ui/screens/chat_screen.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/screens/app_launcher_screen.dart':
       'test/golden/launcher_golden_test.dart',
+  'lib/apps/app_tile_host.dart': 'test/golden/launcher_golden_test.dart',
   'lib/apps/session_chat_sheet.dart': 'test/golden/launcher_golden_test.dart',
   'lib/ui/widgets/chat_composer.dart': 'test/golden/launcher_golden_test.dart',
   'lib/ui/widgets/media_player.dart': 'test/golden/chat_golden_test.dart',

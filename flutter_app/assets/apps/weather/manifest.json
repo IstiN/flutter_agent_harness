@@ -6,6 +6,7 @@
   "icon": "🌤️",
   "allowedCommands": [],
   "network": true,
+  "widget": { "entry": "widget_tile.js", "size": "1x1", "refreshSeconds": 900 },
   "cli": {
     "summary": "Current weather for any city (wttr.in)",
     "events": [

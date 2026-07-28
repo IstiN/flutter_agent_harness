@@ -122,18 +122,30 @@ Future<_Harness> _pumpSheet(
 }
 
 Future<void> _expand(WidgetTester tester) async {
-  await tester.tap(find.byKey(_faButtonKey));
+  await tester.tap(find.byKey(const ValueKey('sessionChatSheetHandle')));
+  await tester.pumpAndSettle();
+}
+
+/// Drags the mini bar down into the collapsed round-Fa-icon state.
+Future<void> _collapseToIcon(WidgetTester tester) async {
+  await tester.drag(
+    find.byKey(const ValueKey('sessionChatSheetHandle')),
+    const Offset(0, 400),
+  );
   await tester.pumpAndSettle();
 }
 
 void main() {
   group('SessionChatSheet', () {
-    testWidgets('collapsed shows the Fa button; tap expands the sheet', (
+    testWidgets('starts as the mini bar by default; tap expands the sheet', (
       tester,
     ) async {
       await _pumpSheet(tester);
-      expect(find.byKey(_faButtonKey), findsOneWidget);
+      // The MINI bar is the default resting state: composer ready, no
+      // pager, no round icon.
+      expect(find.byType(ChatComposer), findsOneWidget);
       expect(find.byKey(_pagerKey), findsNothing);
+      expect(find.byKey(_faButtonKey), findsNothing);
 
       await _expand(tester);
       expect(find.byKey(_pagerKey), findsOneWidget);
@@ -144,7 +156,46 @@ void main() {
       expect(find.text('session sess-b'), findsOneWidget);
     });
 
-    testWidgets('collapsed shows the FaWorkBar instead while streaming', (
+    testWidgets('mini bar shows the FaWorkBar while streaming', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _hungResponse());
+      addTearDown(service.dispose);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-h', service);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Mini bar by default — no round icon.
+      expect(find.byKey(_faButtonKey), findsNothing);
+
+      await tester.runAsync(() async {
+        unawaited(service.sendText('long task'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+      expect(service.isStreaming, isTrue);
+
+      // The status row appears inside the mini bar; the work bar's orbit
+      // repeats forever, so pump timed frames instead of pumpAndSettle.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byType(FaWorkBar), findsOneWidget);
+      expect(find.byKey(_faButtonKey), findsNothing);
+
+      await tester.tap(find.byType(FaWorkBar));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(_pagerKey), findsOneWidget);
+    });
+
+    testWidgets('the icon auto-grows to the mini bar when the stream starts', (
       tester,
     ) async {
       final env = MemoryExecutionEnv();
@@ -161,6 +212,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      // Collapse to the round icon first, then start a stream.
+      await _collapseToIcon(tester);
       expect(find.byKey(_faButtonKey), findsOneWidget);
 
       await tester.runAsync(() async {
@@ -171,18 +224,13 @@ void main() {
       expect(service.isStreaming, isTrue);
 
       // The stream-start auto-grow animates the panel to the mini state
-      // (260 ms) and the body fades in there; the work bar's orbit repeats
-      // forever, so pump timed frames instead of pumpAndSettle.
+      // (260 ms); pump timed frames (the orbit animation never settles).
       for (var i = 0; i < 5; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
       expect(find.byType(FaWorkBar), findsOneWidget);
+      expect(find.byType(ChatComposer), findsOneWidget);
       expect(find.byKey(_faButtonKey), findsNothing);
-
-      await tester.tap(find.byType(FaWorkBar));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(_pagerKey), findsOneWidget);
     });
 
     testWidgets('the pager switches the active session', (tester) async {

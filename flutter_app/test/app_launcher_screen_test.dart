@@ -2,7 +2,9 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
@@ -71,19 +73,74 @@ String _manifest(String id, String name, String icon) =>
 }
 ''';
 
-/// Seeds three apps (Alpha/Beta/Gamma) and returns the env.
-Future<MemoryExecutionEnv> _seededEnv() async {
+/// Manifest variant opting the app into a live launcher tile.
+String _manifestWithTile(String id, String name, String icon) =>
+    '''
+{
+  "id": "$id",
+  "name": "$name",
+  "description": "$name app",
+  "icon": "$icon",
+  "widget": { "entry": "widget_tile.js", "size": "1x1" }
+}
+''';
+
+/// Seeds three apps (Alpha/Beta/Gamma) and returns the env. Ids in
+/// [tileApps] get a `"widget"` manifest section (live launcher tile).
+Future<MemoryExecutionEnv> _seededEnv({Set<String> tileApps = const {}}) async {
   final env = MemoryExecutionEnv();
   for (final (id, name, icon) in [
     ('alpha', 'Alpha', '🅰️'),
     ('beta', 'Beta', '🅱️'),
     ('gamma', 'Gamma', '🎲'),
   ]) {
-    await env.writeFile('apps/$id/manifest.json', _manifest(id, name, icon));
+    final manifest = tileApps.contains(id)
+        ? _manifestWithTile(id, name, icon)
+        : _manifest(id, name, icon);
+    await env.writeFile('apps/$id/manifest.json', manifest);
     await env.writeFile('apps/$id/widget.js', '(function(){})();');
+    if (tileApps.contains(id)) {
+      await env.writeFile('apps/$id/widget_tile.js', '(function(){})();');
+    }
   }
   return env;
 }
+
+/// Fake tile engine for the live-tile launcher tests: emits a fixed tree,
+/// no JavaScriptCore boot (see test/apps/app_tile_host_test.dart).
+final class _FakeTileEngine extends JsAppEngine {
+  _FakeTileEngine({
+    required super.app,
+    required super.env,
+    required super.permissions,
+    super.initialTheme,
+  });
+
+  @override
+  Future<void> start() async {
+    tree.value = const {
+      'type': 'container',
+      'alignment': 'center',
+      'child': {'type': 'text', 'data': 'LIVE TILE'},
+    };
+  }
+
+  @override
+  Future<void> updateTheme(Map<String, dynamic> theme) async {}
+}
+
+TileEngineFactory _fakeTileEngineFactory() =>
+    ({
+      required JsAppInfo app,
+      required ExecutionEnv env,
+      required AppPermissions permissions,
+      required Map<String, dynamic> initialTheme,
+    }) => _FakeTileEngine(
+      app: app,
+      env: env,
+      permissions: permissions,
+      initialTheme: initialTheme,
+    );
 
 AppsStore _appsStore(MemoryExecutionEnv env) => AppsStore(
   env,
@@ -104,8 +161,10 @@ Future<_Harness> _pumpLauncher(
   WidgetTester tester, {
   List<String>? order,
   List<LauncherFolder>? folders,
+  Set<String> tileApps = const {},
+  TileEngineFactory? tileEngineFactory,
 }) async {
-  final env = await _seededEnv();
+  final env = await _seededEnv(tileApps: tileApps);
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
     ..addSession('fake-session', _fakeService(env));
   final layout = LauncherLayoutStore.inMemory(
@@ -129,6 +188,7 @@ Future<_Harness> _pumpLauncher(
         manager: manager,
         layoutStore: layout,
         appsStore: _appsStore(env),
+        tileEngineFactory: tileEngineFactory,
       ),
     ),
   );
@@ -333,10 +393,17 @@ void main() {
       await tester.tap(find.text('Pair'));
       await tester.pumpAndSettle();
 
-      // Rename.
+      // Rename. (Scope the field finder to the AlertDialog — the mini chat
+      // bar's composer TextField is always on screen too.)
       await tester.tap(find.byTooltip('Rename folder'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Stuff');
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        ),
+        'Stuff',
+      );
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       expect(harness.layout.folderById('f1')!.name, 'Stuff');
@@ -383,6 +450,46 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Delta'), findsOneWidget);
       expect(harness.layout.topLevelKeys.last, 'app:delta');
+    });
+
+    testWidgets('an app with a widget section renders a live tile', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        tileApps: {'alpha'},
+        tileEngineFactory: _fakeTileEngineFactory(),
+      );
+      // The live tile replaces Alpha's static icon + label …
+      expect(find.byType(AppTileHost), findsOneWidget);
+      expect(find.text('LIVE TILE'), findsOneWidget);
+      expect(find.text('Alpha'), findsNothing);
+      // … while the other apps keep the classic icon tile.
+      expect(find.text('Beta'), findsOneWidget);
+      expect(find.text('Gamma'), findsOneWidget);
+    });
+
+    testWidgets('live tiles still reorder by drag & drop', (tester) async {
+      final harness = await _pumpLauncher(
+        tester,
+        tileApps: {'alpha'},
+        tileEngineFactory: _fakeTileEngineFactory(),
+      );
+      // Drop the live tile on the LEFT edge of Gamma's cell → Alpha moves
+      // behind Gamma.
+      final gammaRect = tester.getRect(_cell('app:gamma'));
+      await _dragTile(
+        tester,
+        'app:alpha',
+        Offset(gammaRect.left + 3, gammaRect.top + 4),
+      );
+      expect(harness.layout.topLevelKeys, [
+        'app:beta',
+        'app:alpha',
+        'app:gamma',
+        LauncherLayoutStore.settingsKey,
+        LauncherLayoutStore.filesKey,
+      ]);
     });
   });
 
