@@ -601,6 +601,18 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherRenameFolderTooltip => 'Переименовать папку';
 
   @override
+  String get launcherTileSizeLarge => 'Большой (4×4)';
+
+  @override
+  String get launcherTileSizeMedium => 'Средний (4×2)';
+
+  @override
+  String get launcherTileSizeReset => 'По умолчанию';
+
+  @override
+  String get launcherTileSizeSmall => 'Маленький (2×2)';
+
+  @override
   String get mediaFileMissing => 'Медиафайл не найден';
 
   @override

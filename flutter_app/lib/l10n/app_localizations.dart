@@ -1082,6 +1082,30 @@ abstract class AppLocalizations {
   /// **'Rename folder'**
   String get launcherRenameFolderTooltip;
 
+  /// No description provided for @launcherTileSizeLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'Large (4×4)'**
+  String get launcherTileSizeLarge;
+
+  /// No description provided for @launcherTileSizeMedium.
+  ///
+  /// In en, this message translates to:
+  /// **'Medium (4×2)'**
+  String get launcherTileSizeMedium;
+
+  /// No description provided for @launcherTileSizeReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset to default'**
+  String get launcherTileSizeReset;
+
+  /// No description provided for @launcherTileSizeSmall.
+  ///
+  /// In en, this message translates to:
+  /// **'Small (2×2)'**
+  String get launcherTileSizeSmall;
+
   /// No description provided for @mediaFileMissing.
   ///
   /// In en, this message translates to:

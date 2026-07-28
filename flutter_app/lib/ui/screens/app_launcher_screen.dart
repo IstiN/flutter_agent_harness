@@ -104,20 +104,37 @@ class AppLauncherScreen extends StatefulWidget {
 }
 
 class _AppLauncherScreenState extends State<AppLauncherScreen> {
-  /// Drop x-fraction (within the target cell) that groups two apps into a
-  /// folder; drops nearer an edge reorder instead.
-  static const double _folderDropBand = 0.15;
+  /// Hover x-fraction band (middle of the target slot) that means FOLDER
+  /// intent while dragging; nearer an edge inserts before/after instead.
+  static const double _folderHoverBand = 0.25;
 
   /// Size of the drag-feedback icon and the fixed drag anchor (feedback
   /// centered on the pointer) — see [_onDrop].
   static const double _feedbackSize = 64;
   static const Offset _dragAnchor = Offset(32, 32);
 
+  /// Pointer speed below which a cancelled drag counts as
+  /// hold-release-without-movement (the iOS "edit menu" gesture).
+  static const double _holdMaxVelocity = 50;
+
   LauncherLayoutStore? _layout;
   late final AppsStore _appsStore;
   List<JsAppInfo>? _apps;
   Object? _error;
   String? _openFolderId;
+
+  /// Live reorder preview while dragging: the order the grid animates to
+  /// (the persisted order is only mutated on drop).
+  List<String>? _previewOrder;
+
+  /// Tile key currently highlighted as a FOLDER drop target (center-band
+  /// hover on an app tile, or any hover on a folder tile); null while the
+  /// drag is a reorder (or no drag).
+  String? _folderHoverKey;
+
+  /// Debounce for re-reading `launcher_layout.json` on fsRevision bumps
+  /// (the agent/user may have edited grid/tileSizes/order — see §3).
+  Timer? _layoutReloadDebounce;
 
   Map<String, JsAppInfo> get _appsById => {
     for (final app in _apps ?? const <JsAppInfo>[]) app.id: app,
@@ -140,6 +157,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     widget.manager.removeListener(_onManagerChanged);
     _detachFsRevision();
     _layout?.removeListener(_onLayoutChanged);
+    _layoutReloadDebounce?.cancel();
     super.dispose();
   }
 
@@ -172,14 +190,25 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   void _attachFsRevision() {
     final source = widget.manager.active?.service.fsRevision;
     if (identical(source, _fsRevisionSource)) return;
-    _fsRevisionSource?.removeListener(_reloadApps);
+    _fsRevisionSource?.removeListener(_onFsRevision);
     _fsRevisionSource = source;
-    source?.addListener(_reloadApps);
+    source?.addListener(_onFsRevision);
   }
 
   void _detachFsRevision() {
-    _fsRevisionSource?.removeListener(_reloadApps);
+    _fsRevisionSource?.removeListener(_onFsRevision);
     _fsRevisionSource = null;
+  }
+
+  void _onFsRevision() {
+    unawaited(_reloadApps());
+    // The agent/user may also have edited launcher_layout.json (grid
+    // columns, tile sizes, order) — re-read it, debounced like the tile
+    // engine reloads (agent edits often write several files back to back).
+    _layoutReloadDebounce?.cancel();
+    _layoutReloadDebounce = Timer(const Duration(milliseconds: 600), () {
+      if (mounted) unawaited(_layout?.reload());
+    });
   }
 
   Future<void> _reloadApps() async {
@@ -207,28 +236,72 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   // --- drag & drop ---------------------------------------------------------
 
-  /// One drop onto the cell of [targetKey]: folder-add on folder tiles,
-  /// folder-create on the center band of an app tile, reorder elsewhere
-  /// (left half inserts before, right half after). [avatarTopLeft] is the
-  /// drag-feedback's top-left corner (what `DragTargetDetails.offset`
-  /// carries); the fixed drag anchor recovers the pointer position.
-  void _onDrop(String draggedKey, String targetKey, Offset avatarTopLeft) {
+  /// Continuous hover while dragging over [targetKey]'s slot: the CENTER
+  /// band of an app tile (or any position on a folder tile) means FOLDER
+  /// intent — the target highlights and the grid does NOT reflow; the edge
+  /// halves set a live insertion preview so the other tiles animate aside
+  /// (the persisted order only changes on drop, see [_onDrop]).
+  void _onDragHover(String targetKey, DragTargetDetails<String> details) {
+    final draggedKey = details.data;
+    if (draggedKey == targetKey) return;
     final layout = _layout;
-    if (layout == null || draggedKey == targetKey) return;
-    if (LauncherLayoutStore.isFolderKey(targetKey)) {
-      layout.addToFolder(LauncherLayoutStore.folderIdOf(targetKey), draggedKey);
+    if (layout == null) return;
+    // details.offset is the drag feedback's top-left corner; the fixed
+    // drag anchor recovers the pointer position.
+    final fx = _fractionOnTile(targetKey, details.offset + _dragAnchor);
+    final folderTarget =
+        LauncherLayoutStore.isFolderKey(targetKey) ||
+        (draggedKey.startsWith('app:') &&
+            targetKey.startsWith('app:') &&
+            (fx - 0.5).abs() <= _folderHoverBand);
+    if (folderTarget) {
+      if (_folderHoverKey != targetKey || _previewOrder != null) {
+        setState(() {
+          _folderHoverKey = targetKey;
+          _previewOrder = null;
+        });
+      }
       return;
     }
-    final pointer = avatarTopLeft + _dragAnchor;
-    final targetBox = _tileBoxes[targetKey];
-    var fx = 0.5;
-    if (targetBox != null && targetBox.hasSize && targetBox.size.width > 0) {
-      final local = targetBox.globalToLocal(pointer);
-      fx = local.dx / targetBox.size.width;
+    final order = _previewOrder ?? layout.topLevelKeys;
+    final insertion = launcherInsertionIndex(
+      order: order,
+      draggedKey: draggedKey,
+      targetKey: targetKey,
+      fx: fx,
+    );
+    if (insertion < 0) return;
+    final next = moveLauncherKey(order, draggedKey, insertion);
+    if (!_sameKeys(next, order)) {
+      setState(() {
+        _folderHoverKey = null;
+        _previewOrder = next;
+      });
+    } else if (_folderHoverKey != null) {
+      setState(() => _folderHoverKey = null);
+    }
+  }
+
+  /// One drop onto the slot of [targetKey]: folder-add on folder tiles,
+  /// folder-create when the center-band hover armed folder intent, reorder
+  /// elsewhere (left half inserts before, right half after — the same math
+  /// the live preview used). [avatarTopLeft] is the drag-feedback's
+  /// top-left corner (what `DragTargetDetails.offset` carries); the fixed
+  /// drag anchor recovers the pointer position.
+  void _onDrop(String draggedKey, String targetKey, Offset avatarTopLeft) {
+    final layout = _layout;
+    if (layout == null || draggedKey == targetKey) {
+      _clearDragPreview();
+      return;
+    }
+    if (LauncherLayoutStore.isFolderKey(targetKey)) {
+      layout.addToFolder(LauncherLayoutStore.folderIdOf(targetKey), draggedKey);
+      _clearDragPreview();
+      return;
     }
     final bothApps =
         draggedKey.startsWith('app:') && targetKey.startsWith('app:');
-    if (bothApps && (fx - 0.5).abs() <= _folderDropBand) {
+    if (bothApps && _folderHoverKey == targetKey) {
       final apps = _appsById;
       final nameA = apps[draggedKey.substring(4)]?.name;
       final nameB = apps[targetKey.substring(4)]?.name;
@@ -236,15 +309,126 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           ? '$nameA & $nameB'
           : context.l10n.launcherFolderDefaultName;
       layout.createFolder(draggedKey, targetKey, name: autoName);
+      _clearDragPreview();
       return;
     }
-    final keys = layout.topLevelKeys;
-    final from = keys.indexOf(draggedKey);
-    var to = keys.indexOf(targetKey);
+    final order = layout.topLevelKeys;
+    final from = order.indexOf(draggedKey);
+    final to = launcherInsertionIndex(
+      order: order,
+      draggedKey: draggedKey,
+      targetKey: targetKey,
+      fx: _fractionOnTile(targetKey, avatarTopLeft + _dragAnchor),
+    );
+    _clearDragPreview();
     if (from < 0 || to < 0) return;
-    if (fx > 0.5) to += 1;
-    if (from < to) to -= 1;
     layout.reorder(from, to);
+  }
+
+  /// The drag ended: the preview always reverts. When the drag never left
+  /// its tile and carried ~no velocity, this was a hold-release WITHOUT
+  /// movement — the iOS "edit menu" gesture — so open the tile menu.
+  void _onDragCanceled(String key, Velocity velocity, Offset offset) {
+    final hadPreview = _previewOrder != null || _folderHoverKey != null;
+    _clearDragPreview();
+    if (hadPreview) return; // a real drag cancelled outside any target
+    if (velocity.pixelsPerSecond.distance > _holdMaxVelocity) return;
+    final box = _tileBoxes[key];
+    if (box == null || !box.hasSize) return;
+    // The offset is the feedback's top-left corner; recover the pointer.
+    final pointer = offset + _dragAnchor;
+    final local = box.globalToLocal(pointer);
+    final inside =
+        local.dx >= 0 &&
+        local.dx <= box.size.width &&
+        local.dy >= 0 &&
+        local.dy <= box.size.height;
+    if (inside) unawaited(_showTileMenu(key, pointer));
+  }
+
+  void _clearDragPreview() {
+    if (_previewOrder == null && _folderHoverKey == null) return;
+    setState(() {
+      _previewOrder = null;
+      _folderHoverKey = null;
+    });
+  }
+
+  /// The horizontal fraction (0..1) of [globalPointer] within [key]'s slot;
+  /// 0.5 when the slot's render box is unknown.
+  double _fractionOnTile(String key, Offset globalPointer) {
+    final box = _tileBoxes[key];
+    if (box != null && box.hasSize && box.size.width > 0) {
+      final local = box.globalToLocal(globalPointer);
+      return (local.dx / box.size.width).clamp(0.0, 1.0);
+    }
+    return 0.5;
+  }
+
+  static bool _sameKeys(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  // --- tile menu (hold-release without movement) ---------------------------
+
+  /// The iOS-style tile context menu: live-tile apps get size choices
+  /// (Small 2x2 / Medium 4x2 / Large 4x4, persisted as a `tileSizes`
+  /// override) plus "Reset to default" while an override exists.
+  /// Non-widget apps get no menu (nothing to offer yet).
+  Future<void> _showTileMenu(String key, Offset globalPosition) async {
+    if (!key.startsWith('app:')) return;
+    final app = _appsById[key.substring(4)];
+    final tile = app?.tileWidget;
+    final layout = _layout;
+    if (app == null || tile == null || layout == null) return;
+    final overlay = Overlay.of(context).context.findRenderObject();
+    if (overlay is! RenderBox) return;
+    final appId = app.id;
+    final override = layout.tileSizeFor(appId);
+    final current = override ?? (w: tile.widthCells, h: tile.heightCells);
+    final choices = <({String label, TileSize size})>[
+      (label: context.l10n.launcherTileSizeSmall, size: (w: 2, h: 2)),
+      (label: context.l10n.launcherTileSizeMedium, size: (w: 4, h: 2)),
+      (label: context.l10n.launcherTileSizeLarge, size: (w: 4, h: 4)),
+    ];
+    final selected = await showMenu<Object?>(
+      context: context,
+      position: RelativeRect.fromRect(
+        globalPosition & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        for (final choice in choices)
+          PopupMenuItem<Object?>(
+            value: choice.size,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: choice.size == current
+                      ? const Icon(Icons.check, size: 18)
+                      : null,
+                ),
+                Text(choice.label),
+              ],
+            ),
+          ),
+        if (override != null)
+          PopupMenuItem<Object?>(
+            value: 'reset',
+            child: Text(context.l10n.launcherTileSizeReset),
+          ),
+      ],
+    );
+    if (selected == 'reset') {
+      layout.setTileSize(appId, null);
+    } else if (selected is TileSize) {
+      layout.setTileSize(appId, selected);
+    }
   }
 
   // Registry of tile render boxes so [_onDrop] can translate the global
@@ -397,13 +581,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              // Same column count the old maxCrossAxisExtent: 120 delegate
-              // produced (crossAxisExtent = width minus the padding below).
-              final crossAxisCount = ((constraints.maxWidth - 32) / 120)
-                  .ceil()
-                  .clamp(1, 100);
-              final keys = layout.topLevelKeys;
-              return GridView.builder(
+              final crossAxisCount = _crossAxisCount(constraints.maxWidth);
+              final keys = _previewOrder ?? layout.topLevelKeys;
+              final rects = layOutTileRects(
+                crossAxisCount: crossAxisCount,
+                spans: [for (final key in keys) _tileSpan(key, crossAxisCount)],
+              );
+              return SingleChildScrollView(
                 // Bottom clearance for the floating mini chat bar (bar
                 // height + its margin above the home indicator).
                 padding: EdgeInsets.fromLTRB(
@@ -412,15 +596,27 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                   16,
                   MediaQuery.viewPaddingOf(context).bottom + 128,
                 ),
-                gridDelegate: SpanGridDelegate(
-                  crossAxisCount: crossAxisCount,
-                  spans: [
-                    for (final key in keys) _tileSpan(key, crossAxisCount),
-                  ],
+                child: Center(
+                  child: SizedBox(
+                    width: LauncherGridSpec.gridCrossExtent(crossAxisCount),
+                    height: packedTilesHeight(rects),
+                    child: Stack(
+                      children: [
+                        for (var i = 0; i < keys.length; i++)
+                          AnimatedPositioned(
+                            key: ValueKey('tilePos:${keys[i]}'),
+                            duration: const Duration(milliseconds: 180),
+                            curve: Curves.easeOut,
+                            left: rects[i].x,
+                            top: rects[i].y,
+                            width: rects[i].w,
+                            height: rects[i].h,
+                            child: _buildCell(colors, keys[i]),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
-                itemCount: keys.length,
-                itemBuilder: (context, index) =>
-                    _buildCell(colors, keys[index]),
               );
             },
           ),
@@ -429,16 +625,36 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
   }
 
-  /// The grid span of one tile: apps with a live tile get their declared
-  /// WxH (width clamped to the column count), everything else is 1x1.
+  /// The grid column count: the layout's `grid.columns` override when set,
+  /// else 4 on narrow screens / 6 on wide ones — clamped to the store's
+  /// 3..8 range and to what actually fits the available width.
+  int _crossAxisCount(double width) {
+    final configured = _layout?.gridColumns ?? (width < 600 ? 4 : 6);
+    final fits =
+        ((width + LauncherGridSpec.spacing) /
+                (LauncherGridSpec.cellCrossExtent + LauncherGridSpec.spacing))
+            .floor()
+            .clamp(1, LauncherLayoutStore.maxGridColumns);
+    return configured
+        .clamp(
+          LauncherLayoutStore.minGridColumns,
+          LauncherLayoutStore.maxGridColumns,
+        )
+        .clamp(1, fits);
+  }
+
+  /// The grid span of one tile: apps with a live tile get their WxH —
+  /// the `tileSizes` override when set, else the manifest's declared size
+  /// (width clamped to the column count); everything else is one icon slot.
   TileSpan _tileSpan(String key, int crossAxisCount) {
     if (key.startsWith('app:')) {
-      final tile = _appsById[key.substring(4)]?.tileWidget;
+      final appId = key.substring(4);
+      final tile = _appsById[appId]?.tileWidget;
       if (tile != null) {
-        return (
-          w: tile.widthCells.clamp(1, crossAxisCount),
-          h: tile.heightCells,
-        );
+        final override = _layout?.tileSizeFor(appId);
+        final w = override?.w ?? tile.widthCells;
+        final h = override?.h ?? tile.heightCells;
+        return (w: w.clamp(1, crossAxisCount), h: h);
       }
     }
     return (w: 1, h: 1);
@@ -454,13 +670,17 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         return DragTarget<String>(
           key: ValueKey('launcherCell:$key'),
           onWillAcceptWithDetails: (details) => details.data != key,
+          onMove: (details) => _onDragHover(key, details),
           onAcceptWithDetails: (details) =>
               _onDrop(details.data, key, details.offset),
           builder: (context, candidateData, rejectedData) {
-            final highlighted = candidateData.isNotEmpty;
+            final folderHover = _folderHoverKey == key;
             return LongPressDraggable<String>(
               data: key,
               dragAnchorStrategy: (draggable, context, position) => _dragAnchor,
+              onDraggableCanceled: (velocity, offset) =>
+                  _onDragCanceled(key, velocity, offset),
+              onDragEnd: (_) => _clearDragPreview(),
               feedback: Material(
                 color: Colors.transparent,
                 child: Opacity(
@@ -473,7 +693,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 child: _tileContent(colors, key),
               ),
               child: AnimatedScale(
-                scale: highlighted ? 1.08 : 1,
+                scale: folderHover
+                    ? 1.12
+                    : (candidateData.isNotEmpty ? 1.08 : 1),
                 duration: const Duration(milliseconds: 120),
                 child: _tileContent(colors, key),
               ),
@@ -484,9 +706,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
   }
 
-  /// The tile body: icon square + label — or, for apps declaring a
-  /// `"widget"` manifest section, the live tile ([AppTileHost]) filling the
-  /// cell. Taps launch/navigate; folder taps open the folder panel.
+  /// The tile body: the icon slot (icon square + label strip, exactly one
+  /// [LauncherGridSpec] cell) — or, for apps declaring a `"widget"`
+  /// manifest section, the live tile ([AppTileHost]) filling its WxH span
+  /// edge-to-edge with the icon block it replaces. Taps launch/navigate;
+  /// folder taps open the folder panel.
   Widget _tileContent(FahColors colors, String key) {
     final theme = Theme.of(context);
     if (key.startsWith('app:')) {
@@ -494,20 +718,16 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       final tile = app?.tileWidget;
       if (app != null && tile != null) {
         // Live tile: the app draws its own mini UI (icon+label replaced);
-        // any tap opens the full app. The cell span (WxH) comes from the
-        // manifest via [_tileSpan]/[SpanGridDelegate].
+        // any tap opens the full app.
         return InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: () => _onTileTap(key),
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: AppTileHost(
-              app: app,
-              env: widget.manager.env,
-              fsRevision: widget.manager.active?.service.fsRevision,
-              engineFactory: widget.tileEngineFactory,
-              onOpen: () => _onTileTap(key),
-            ),
+          child: AppTileHost(
+            app: app,
+            env: widget.manager.env,
+            fsRevision: widget.manager.active?.service.fsRevision,
+            engineFactory: widget.tileEngineFactory,
+            onOpen: () => _onTileTap(key),
           ),
         );
       }
@@ -517,17 +737,25 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       onTap: () => _onTileTap(key),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           _tileIcon(colors, key),
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text(
-              _tileLabel(key),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+          SizedBox(
+            height: LauncherGridSpec.labelHeight,
+            // iOS-style: the label may bleed into the (empty) inter-icon
+            // gap, so it measures up to one cell PITCH wide, not just the
+            // icon square — keeps names like "Pomodoro" readable.
+            child: OverflowBox(
+              alignment: Alignment.topCenter,
+              maxWidth:
+                  LauncherGridSpec.cellCrossExtent + LauncherGridSpec.spacing,
+              child: Text(
+                _tileLabel(key),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+              ),
             ),
           ),
         ],

@@ -401,19 +401,15 @@ class _SessionChatSheetState extends State<SessionChatSheet>
             } else {
               height = null; // mini: natural shrink-wrap, always
             }
-            // The mini bar FLOATS above the home indicator (iOS-18-style
-            // rounded bar over the grid) and docks edge-to-edge only as it
-            // grows into the sheet; the round icon floats the same way.
-            const miniRadius = BorderRadius.all(Radius.circular(20));
-            const sheetRadius = BorderRadius.vertical(top: Radius.circular(16));
-            final sideInset = isIcon ? 16.0 : (1 - sheetT) * 8;
-            final bottomInset = isIcon
-                ? viewPad.bottom + 16
-                : (1 - sheetT) * (viewPad.bottom + 8);
-            final width = isIcon ? _iconSize : size.width - sideInset * 2;
-            final radius = isIcon
-                ? BorderRadius.circular(28)
-                : BorderRadius.lerp(miniRadius, sheetRadius, sheetT)!;
+            // The mini bar is DOCKED to the bottom edge (full width, top
+            // corners rounded, panel color running into the home-indicator
+            // zone — one continuous iOS-style surface, no hanging card);
+            // only the round Fa icon floats.
+            const barRadius = BorderRadius.vertical(top: Radius.circular(16));
+            final sideInset = isIcon ? 16.0 : 0.0;
+            final bottomInset = isIcon ? viewPad.bottom + 16 : 0.0;
+            final width = isIcon ? _iconSize : size.width;
+            final radius = isIcon ? BorderRadius.circular(28) : barRadius;
             return Padding(
               padding: EdgeInsets.only(
                 left: sideInset,
@@ -427,25 +423,25 @@ class _SessionChatSheetState extends State<SessionChatSheet>
                 decoration: BoxDecoration(
                   color: colors.panelAlt.withValues(alpha: 0.97),
                   borderRadius: radius,
-                  // No border on the floating states (icon/mini) — a bare
-                  // shadow reads like iOS; only the docked sheet keeps the
-                  // top hairline where it meets the grid.
-                  border: sheetT > 0
-                      ? Border(top: BorderSide(color: colors.border))
-                      : null,
-                  boxShadow: sheetT > 0
+                  // Docked bar/sheet: the top hairline where the panel meets
+                  // the grid. The floating icon is borderless (iOS-style,
+                  // separates by its shadow alone).
+                  border: isIcon
+                      ? null
+                      : Border(top: BorderSide(color: colors.border)),
+                  boxShadow: isIcon
                       ? const [
-                          BoxShadow(
-                            color: Colors.black38,
-                            blurRadius: 12,
-                            offset: Offset(0, -2),
-                          ),
-                        ]
-                      : const [
                           BoxShadow(
                             color: Colors.black26,
                             blurRadius: 18,
                             offset: Offset(0, 6),
+                          ),
+                        ]
+                      : const [
+                          BoxShadow(
+                            color: Colors.black38,
+                            blurRadius: 12,
+                            offset: Offset(0, -2),
                           ),
                         ],
                 ),
@@ -566,10 +562,11 @@ class _SessionChatSheetState extends State<SessionChatSheet>
           asr: widget.asr,
           asrTranscriber: widget.asrTranscriber,
         ),
-        // The docked sheet reaches the screen's bottom edge: lift the
-        // composer above the home indicator. Grows with sheetT, so the
-        // mini bar's natural-height measurement never includes it.
-        if (sheetT > 0) SizedBox(height: bottomSafeInset * sheetT),
+        // The docked bar/sheet reaches the screen's bottom edge: lift the
+        // composer above the home indicator — the panel color runs through
+        // the indicator zone, one continuous surface. Part of the mini
+        // bar's natural height (measured), so transitions stay continuous.
+        SizedBox(height: bottomSafeInset),
       ],
     );
     // Measure the natural mini-body height on every layout (mini states

@@ -595,6 +595,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherRenameFolderTooltip => 'Rename folder';
 
   @override
+  String get launcherTileSizeLarge => 'Large (4×4)';
+
+  @override
+  String get launcherTileSizeMedium => 'Medium (4×2)';
+
+  @override
+  String get launcherTileSizeReset => 'Reset to default';
+
+  @override
+  String get launcherTileSizeSmall => 'Small (2×2)';
+
+  @override
   String get mediaFileMissing => 'Media file not found';
 
   @override

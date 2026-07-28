@@ -122,33 +122,38 @@ class AppPermissions {
 /// `"widget"` section of its `manifest.json`:
 ///
 /// ```json
-/// "widget": { "entry": "widget_tile.js", "size": "2x1", "refreshSeconds": 900 }
+/// "widget": { "entry": "widget_tile.js", "size": "4x2", "refreshSeconds": 900 }
 /// ```
 ///
 /// An app with a tile renders its own mini UI inside the launcher home grid
-/// cell (see `app_tile_host.dart`) instead of the static icon + label. Unknown
-/// or invalid values fall back to the defaults (like `chrome` does).
+/// (see `app_tile_host.dart`) instead of the static icon + label, spanning
+/// the declared WxH block of icon slots. Unknown or invalid values fall back
+/// to the defaults (like `chrome` does).
 class JsTileWidgetInfo {
   const JsTileWidgetInfo({
     this.entry = defaultEntry,
-    this.widthCells = 1,
-    this.heightCells = 1,
+    this.widthCells = defaultWidthCells,
+    this.heightCells = defaultHeightCells,
     this.refreshSeconds,
   });
 
   factory JsTileWidgetInfo.fromJson(Map<String, Object?> json) {
     final entry = (json['entry'] ?? defaultEntry).toString();
-    // "size": "<W>x<H>" in grid cells (e.g. "2x1", "2x2"); anything
-    // unparsable falls back to 1x1, numbers clamp to the supported range.
-    var widthCells = 1;
-    var heightCells = 1;
+    // "size": "<W>x<H>" in icon-slot cells (e.g. "2x2", "4x2"); anything
+    // unparsable falls back to the small-widget default 2x2, numbers clamp
+    // to the supported range.
+    var widthCells = defaultWidthCells;
+    var heightCells = defaultHeightCells;
     final match = RegExp(
       r'^(\d+)x(\d+)$',
     ).firstMatch(json['size']?.toString() ?? '');
     if (match != null) {
-      widthCells = (int.tryParse(match.group(1)!) ?? 1).clamp(1, maxWidthCells);
-      heightCells = (int.tryParse(match.group(2)!) ?? 1).clamp(
-        1,
+      widthCells = (int.tryParse(match.group(1)!) ?? defaultWidthCells).clamp(
+        minWidthCells,
+        maxWidthCells,
+      );
+      heightCells = (int.tryParse(match.group(2)!) ?? defaultHeightCells).clamp(
+        minHeightCells,
         maxHeightCells,
       );
     }
@@ -164,24 +169,34 @@ class JsTileWidgetInfo {
   /// Default tile entry file inside the app folder.
   static const String defaultEntry = 'widget_tile.js';
 
-  /// Maximum horizontal span of a tile, in grid cells.
-  static const int maxWidthCells = 3;
+  /// Default horizontal span in icon-slot cells (the iOS "small" widget).
+  static const int defaultWidthCells = 2;
 
-  /// Maximum vertical span of a tile, in grid cells.
-  static const int maxHeightCells = 2;
+  /// Default vertical span in icon-slot cells.
+  static const int defaultHeightCells = 2;
+
+  /// Minimum/maximum horizontal span of a tile, in icon-slot cells.
+  static const int minWidthCells = 2;
+  static const int maxWidthCells = 4;
+
+  /// Minimum/maximum vertical span of a tile, in icon-slot cells.
+  static const int minHeightCells = 1;
+  static const int maxHeightCells = 4;
 
   /// Tile JS entry file inside `apps/<id>/`.
   final String entry;
 
-  /// Horizontal tile span in grid cells (1..[maxWidthCells]); unknown
-  /// manifest values fall back to 1.
+  /// Horizontal tile span in icon-slot cells
+  /// ([minWidthCells]..[maxWidthCells]); unknown manifest values fall back
+  /// to [defaultWidthCells].
   final int widthCells;
 
-  /// Vertical tile span in grid cells (1..[maxHeightCells]); unknown
-  /// manifest values fall back to 1.
+  /// Vertical tile span in icon-slot cells
+  /// ([minHeightCells]..[maxHeightCells]); unknown manifest values fall back
+  /// to [defaultHeightCells].
   final int heightCells;
 
-  /// The declared tile size as a `'WxH'` cell string (e.g. `'2x1'`).
+  /// The declared tile size as a `'WxH'` cell string (e.g. `'4x2'`).
   String get size => '${widthCells}x$heightCells';
 
   /// Optional host-side refresh cadence: the tile host calls the tile's

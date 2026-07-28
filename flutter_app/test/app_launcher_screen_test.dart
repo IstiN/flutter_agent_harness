@@ -161,13 +161,23 @@ class _Harness {
 }
 
 /// Pumps the launcher with three apps and an explicit initial layout.
+/// [useEnvLayout] skips the in-memory layout store: the screen loads
+/// `launcher_layout.json` from the env instead (agent-edit reload tests).
 Future<_Harness> _pumpLauncher(
   WidgetTester tester, {
   List<String>? order,
   List<LauncherFolder>? folders,
   Map<String, String> tileApps = const {},
   TileEngineFactory? tileEngineFactory,
+  int? gridColumns,
+  bool useEnvLayout = false,
+  Size? surface,
 }) async {
+  if (surface != null) {
+    tester.view.physicalSize = surface;
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+  }
   final env = await _seededEnv(tileApps: tileApps);
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
     ..addSession('fake-session', _fakeService(env));
@@ -182,6 +192,7 @@ Future<_Harness> _pumpLauncher(
           LauncherLayoutStore.filesKey,
         ],
     folders: folders,
+    gridColumns: gridColumns,
   );
   await tester.pumpWidget(
     MaterialApp(
@@ -190,7 +201,7 @@ Future<_Harness> _pumpLauncher(
       supportedLocales: AppLocalizations.supportedLocales,
       home: AppLauncherScreen(
         manager: manager,
-        layoutStore: layout,
+        layoutStore: useEnvLayout ? null : layout,
         appsStore: _appsStore(env),
         tileEngineFactory: tileEngineFactory,
       ),
@@ -461,7 +472,7 @@ void main() {
     ) async {
       await _pumpLauncher(
         tester,
-        tileApps: {'alpha': '1x1'},
+        tileApps: {'alpha': '2x2'},
         tileEngineFactory: _fakeTileEngineFactory(),
       );
       // The live tile replaces Alpha's static icon + label …
@@ -473,37 +484,222 @@ void main() {
       expect(find.text('Gamma'), findsOneWidget);
     });
 
-    testWidgets('a 2x1 live tile spans two grid cells', (tester) async {
+    testWidgets('a 4x2 live tile aligns with the icon-slot block', (
+      tester,
+    ) async {
+      // 800px surface → 6 columns; a 4x2 tile covers rows 0-1, cols 0-3.
       await _pumpLauncher(
         tester,
-        tileApps: {'alpha': '2x1'},
+        tileApps: {'alpha': '4x2'},
         tileEngineFactory: _fakeTileEngineFactory(),
       );
-      // The host sits inside a 4 px padding: width ≈ 2 cells − 8, height ≈
-      // 1 cell − 8 (Beta's classic cell is the 1x1 reference).
+      const i = 56.0, g = 16.0, cellMain = 76.0;
       final hostRect = tester.getRect(find.byType(AppTileHost));
       final betaRect = tester.getRect(_cell('app:beta'));
-      expect(
-        hostRect.width,
-        moreOrLessEquals(2 * betaRect.width - 8, epsilon: 1),
-      );
-      expect(
-        hostRect.height,
-        moreOrLessEquals(betaRect.height - 8, epsilon: 1),
-      );
-      // Beta packs first-fit right after the 2-wide tile, same row (the
-      // host sits 4 px inside its span).
-      expect(hostRect.top, moreOrLessEquals(betaRect.top + 4, epsilon: 1));
+      // Exact icon-unit extents: 4 slots + 3 gaps wide, 2 + 1 high.
+      expect(hostRect.width, moreOrLessEquals(4 * i + 3 * g, epsilon: 0.5));
+      expect(hostRect.height, moreOrLessEquals(2 * cellMain + g, epsilon: 0.5));
+      // Beta packs first-fit beside the tile: SAME row, left edge exactly
+      // 4 slots + 4 gaps to the right of the tile's left edge.
+      expect(hostRect.top, moreOrLessEquals(betaRect.top, epsilon: 0.5));
       expect(
         betaRect.left,
-        moreOrLessEquals(hostRect.left - 4 + 2 * betaRect.width, epsilon: 1),
+        moreOrLessEquals(hostRect.left + 4 * (i + g), epsilon: 0.5),
+      );
+      // And Beta's slot is exactly one icon unit.
+      expect(betaRect.width, moreOrLessEquals(i, epsilon: 0.5));
+      expect(betaRect.height, moreOrLessEquals(cellMain, epsilon: 0.5));
+    });
+
+    testWidgets('defaults to 4 icon columns on a phone-width screen', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester, surface: const Size(390, 844));
+      // Row 0: alpha, beta, gamma, settings — files wraps to row 1.
+      final settingsRect = tester.getRect(
+        _cell(LauncherLayoutStore.settingsKey),
+      );
+      final filesRect = tester.getRect(_cell(LauncherLayoutStore.filesKey));
+      final alphaRect = tester.getRect(_cell('app:alpha'));
+      final gammaRect = tester.getRect(_cell('app:gamma'));
+      expect(settingsRect.top, moreOrLessEquals(alphaRect.top, epsilon: 0.5));
+      expect(settingsRect.left, greaterThan(gammaRect.left));
+      expect(filesRect.top, greaterThan(settingsRect.top));
+      // 4 slots + 3 gaps = 272 wide, centered in the 390 − 32 padded area.
+      expect(
+        alphaRect.left,
+        moreOrLessEquals(16 + (390 - 32 - 272) / 2, epsilon: 0.5),
+      );
+      // A 5th column would NOT fit — the count stays 4.
+      expect(gammaRect.left - tester.getRect(_cell('app:beta')).left, 72.0);
+    });
+
+    testWidgets('dragging over an edge half live-reflows the grid', (
+      tester,
+    ) async {
+      final harness = await _pumpLauncher(tester);
+      final betaBefore = tester.getRect(_cell('app:beta'));
+      final alphaRect = tester.getRect(_cell('app:alpha'));
+      // Drag gamma onto the RIGHT half of alpha's slot (insert after) and
+      // HOLD — the preview moves beta aside without persisting anything.
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:gamma')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture.moveTo(Offset(alphaRect.right - 8, alphaRect.center.dy));
+      // First pump: the preview builds and the reflow animation starts;
+      // second pump: the 180 ms AnimatedPositioned run completes.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final betaPreview = tester.getRect(_cell('app:beta'));
+      expect(betaPreview.left, greaterThan(betaBefore.left));
+      expect(harness.layout.topLevelKeys.first, 'app:alpha'); // not persisted
+      // Release: the preview becomes the persisted order.
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(harness.layout.topLevelKeys, [
+        'app:alpha',
+        'app:gamma',
+        'app:beta',
+        LauncherLayoutStore.settingsKey,
+        LauncherLayoutStore.filesKey,
+      ]);
+    });
+
+    testWidgets('center-band hover arms folder intent without reflow', (
+      tester,
+    ) async {
+      final harness = await _pumpLauncher(tester);
+      final betaBefore = tester.getRect(_cell('app:beta'));
+      final gammaRect = tester.getRect(_cell('app:gamma'));
+      // Drag alpha onto the CENTER of beta and hold: no insertion preview …
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:alpha')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture.moveTo(betaBefore.center);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.getRect(_cell('app:gamma')), gammaRect); // … no reflow
+      // … and the drop groups both into a folder.
+      await gesture.up();
+      await tester.pumpAndSettle();
+      final folderKeys = harness.layout.topLevelKeys
+          .where(LauncherLayoutStore.isFolderKey)
+          .toList();
+      expect(folderKeys, hasLength(1));
+      expect(
+        harness.layout
+            .folderById(LauncherLayoutStore.folderIdOf(folderKeys.single))!
+            .tiles,
+        containsAll(['app:alpha', 'app:beta']),
+      );
+    });
+
+    testWidgets('hold-release without moving opens the tile size menu', (
+      tester,
+    ) async {
+      final harness = await _pumpLauncher(
+        tester,
+        tileApps: {'alpha': '2x2'},
+        tileEngineFactory: _fakeTileEngineFactory(),
+      );
+      // Long-press alpha and release WITHOUT moving: the menu opens.
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:alpha')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.text('Small (2×2)'), findsOneWidget);
+      expect(find.text('Medium (4×2)'), findsOneWidget);
+      expect(find.text('Large (4×4)'), findsOneWidget);
+      // No override yet → no reset entry.
+      expect(find.text('Reset to default'), findsNothing);
+
+      // Pick Medium: the override lands and the tile resizes.
+      await tester.tap(find.text('Medium (4×2)'));
+      await tester.pumpAndSettle();
+      expect(harness.layout.tileSizeFor('alpha'), (w: 4, h: 2));
+      expect(
+        tester.getRect(find.byType(AppTileHost)).width,
+        moreOrLessEquals(4 * 56 + 3 * 16, epsilon: 0.5),
+      );
+
+      // Menu again → current size checked, reset offered; reset clears.
+      final gesture2 = await tester.startGesture(
+        tester.getCenter(_cell('app:alpha')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture2.up();
+      await tester.pumpAndSettle();
+      expect(find.text('Reset to default'), findsOneWidget);
+      await tester.tap(find.text('Reset to default'));
+      await tester.pumpAndSettle();
+      expect(harness.layout.tileSizeFor('alpha'), isNull);
+    });
+
+    testWidgets('hold-release on a classic app tile opens no menu', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester);
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:beta')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.byType(PopupMenuItem<Object?>), findsNothing);
+      expect(find.text('Small (2×2)'), findsNothing);
+    });
+
+    testWidgets('a layout JSON edit + fsRevision bump reconfigures the grid', (
+      tester,
+    ) async {
+      final harness = await _pumpLauncher(
+        tester,
+        tileApps: {'alpha': '2x2'},
+        tileEngineFactory: _fakeTileEngineFactory(),
+        useEnvLayout: true,
+      );
+      // Seed the v2 layout: 4 columns, alpha at its manifest size (2x2).
+      await harness.env.writeFile(
+        '${harness.env.cwd}/${LauncherLayoutStore.fileName}',
+        '{"version":2,'
+            '"order":["app:alpha","app:beta","app:gamma",'
+            '"system:settings","system:files"],'
+            '"folders":[],"grid":{"columns":4},"tileSizes":{}}',
+      );
+      // The env-backed store loads on boot — pump a fresh screen state.
+      harness.manager.active!.service.fsRevision.value++;
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getRect(find.byType(AppTileHost)).width,
+        moreOrLessEquals(2 * 56 + 16, epsilon: 0.5),
+      );
+
+      // The agent reconfigures: 3 columns + a 4x2 override (clamped to 3).
+      await harness.env.writeFile(
+        '${harness.env.cwd}/${LauncherLayoutStore.fileName}',
+        '{"version":2,'
+            '"order":["app:alpha","app:beta","app:gamma",'
+            '"system:settings","system:files"],'
+            '"folders":[],"grid":{"columns":3},'
+            '"tileSizes":{"alpha":"4x2"}}',
+      );
+      harness.manager.active!.service.fsRevision.value++;
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getRect(find.byType(AppTileHost)).width,
+        moreOrLessEquals(3 * 56 + 2 * 16, epsilon: 0.5),
       );
     });
 
     testWidgets('live tiles still reorder by drag & drop', (tester) async {
       final harness = await _pumpLauncher(
         tester,
-        tileApps: {'alpha': '1x1'},
+        tileApps: {'alpha': '2x2'},
         tileEngineFactory: _fakeTileEngineFactory(),
       );
       // Drop the live tile on the LEFT edge of Gamma's cell → Alpha moves

@@ -1,6 +1,7 @@
-// Weather live tile — 2x1 launcher widget (two grid cells wide, ~220x104
-// px canvas): condition glyph + city on the left, big temp + description on
-// the right. Display-only: any tap opens the full
+// Weather live tile — 4x2 launcher widget (four icon slots wide, two
+// high; ~272x168 px canvas on a phone): condition glyph + city on the
+// left, big temp + description on the right. Display-only: any tap opens
+// the full
 // Weather app. Shares storage.json with widget.js (the 'city' key), so the
 // tile follows the city the user picked in the app. Refetches on the host's
 // 'tile.refresh' event (manifest widget.refreshSeconds) and caches the last
@@ -28,26 +29,26 @@
     var t = jsr.theme;
     jsr.render({
       type: 'container',
-      padding: [14, 8, 14, 8],
+      padding: [18, 12, 18, 12],
       child: {
         type: 'row', crossAxisAlignment: 'center', children: [
           { type: 'column', mainAxisSize: 'min', crossAxisAlignment: 'center',
             children: [
               { type: 'text', data: last ? last.icon : '🌡️',
-                style: { fontSize: 26 } },
-              { type: 'sizedBox', height: 2 },
+                style: { fontSize: 34 } },
+              { type: 'sizedBox', height: 4 },
               { type: 'text', data: last ? last.areaName : city,
                 maxLines: 1, overflow: 'ellipsis',
-                style: { color: t.muted, fontSize: 11 } },
+                style: { color: t.muted, fontSize: 12 } },
             ] },
           { type: 'expanded', child: { type: 'sizedBox' } },
           { type: 'column', mainAxisSize: 'min', crossAxisAlignment: 'end',
             children: [
               { type: 'text', data: last ? last.tempC + '°' : '—',
-                style: { color: t.text, fontSize: 32, fontWeight: 'w700' } },
+                style: { color: t.text, fontSize: 42, fontWeight: 'w700' } },
               { type: 'text', data: last ? last.desc : 'Loading…',
                 maxLines: 1, overflow: 'ellipsis',
-                style: { color: t.muted, fontSize: 10 } },
+                style: { color: t.muted, fontSize: 11 } },
             ] },
         ] },
     });

@@ -144,7 +144,7 @@ Map<String, List<String>> get _apps => {
   ],
 };
 
-Future<MemoryExecutionEnv> _seededEnv({bool weatherTile = false}) async {
+Future<MemoryExecutionEnv> _seededEnv({bool liveTiles = false}) async {
   final env = MemoryExecutionEnv();
   for (final entry in _apps.entries) {
     await env.writeFile(
@@ -155,10 +155,10 @@ Future<MemoryExecutionEnv> _seededEnv({bool weatherTile = false}) async {
     );
     await env.writeFile('apps/${entry.key}/widget.js', '(function(){})();');
   }
-  if (weatherTile) {
-    // A live-tile app: the `"widget"` manifest section opts it into the
-    // AppTileHost cell instead of the static icon + label; "2x1" spans two
-    // grid cells (the classic medium widget).
+  if (liveTiles) {
+    // Two live-tile apps: the `"widget"` manifest section opts them into
+    // AppTileHost spans instead of static icon tiles — weather as the 4x2
+    // medium widget (full width on a phone), reminders as the 2x2 small.
     final sunIcon = _badgeIcon(
       '#0ea5e9',
       "<circle cx='12' cy='12' r='5' fill='$_fg'/>"
@@ -167,20 +167,34 @@ Future<MemoryExecutionEnv> _seededEnv({bool weatherTile = false}) async {
           "<rect x='2' y='11' width='4' height='2' rx='1' fill='$_fg'/>"
           "<rect x='18' y='11' width='4' height='2' rx='1' fill='$_fg'/>",
     );
+    final bellIcon = _badgeIcon(
+      '#f59e0b',
+      "<path d='M12 4a6 6 0 0 0-6 6v3l-2 4h16l-2-4v-3a6 6 0 0 0-6-6z' "
+          "fill='$_fg'/><circle cx='12' cy='19' r='2' fill='$_fg'/>",
+    );
     await env.writeFile(
       'apps/weather/manifest.json',
       '{"id": "weather", "name": "Weather", "description": "Weather app", '
           '"icon": ${_jsonString(sunIcon)}, '
-          '"widget": {"entry": "widget_tile.js", "size": "2x1", '
+          '"widget": {"entry": "widget_tile.js", "size": "4x2", '
           '"refreshSeconds": 900}}',
     );
     await env.writeFile('apps/weather/widget.js', '(function(){})();');
     await env.writeFile('apps/weather/widget_tile.js', '(function(){})();');
+    await env.writeFile(
+      'apps/reminders/manifest.json',
+      '{"id": "reminders", "name": "Reminders", '
+          '"description": "Reminders app", '
+          '"icon": ${_jsonString(bellIcon)}, '
+          '"widget": {"entry": "widget_tile.js", "size": "2x2"}}',
+    );
+    await env.writeFile('apps/reminders/widget.js', '(function(){})();');
+    await env.writeFile('apps/reminders/widget_tile.js', '(function(){})();');
   }
   return env;
 }
 
-/// Fake tile engine emitting a deterministic 2x1 weather-tile tree so the
+/// Fake tile engine emitting deterministic per-app tile trees so the
 /// live-tile goldens stay pixel-stable (no JavaScriptCore boot).
 final class _FakeTileEngine extends JsAppEngine {
   _FakeTileEngine({
@@ -190,57 +204,132 @@ final class _FakeTileEngine extends JsAppEngine {
     super.initialTheme,
   });
 
+  static const _weatherTree = <String, dynamic>{
+    'type': 'container',
+    'padding': [18, 12, 18, 12],
+    'child': {
+      'type': 'row',
+      'crossAxisAlignment': 'center',
+      'children': [
+        {
+          'type': 'column',
+          'mainAxisSize': 'min',
+          'crossAxisAlignment': 'center',
+          'children': [
+            {
+              'type': 'icon',
+              'name': 'wb_sunny',
+              'color': '#FBBF24',
+              'size': 34,
+            },
+            {'type': 'sizedBox', 'height': 4},
+            {
+              'type': 'text',
+              'data': 'Minsk',
+              'style': {'fontSize': 12},
+            },
+          ],
+        },
+        {
+          'type': 'expanded',
+          'child': {'type': 'sizedBox'},
+        },
+        {
+          'type': 'column',
+          'mainAxisSize': 'min',
+          'crossAxisAlignment': 'end',
+          'children': [
+            {
+              'type': 'text',
+              'data': '21°',
+              'style': {'fontSize': 42, 'fontWeight': 'w700'},
+            },
+            {
+              'type': 'text',
+              'data': 'Partly cloudy',
+              'style': {'fontSize': 11},
+            },
+          ],
+        },
+      ],
+    },
+  };
+
+  static const _remindersTree = <String, dynamic>{
+    'type': 'container',
+    'padding': [12, 10, 12, 10],
+    'child': {
+      'type': 'column',
+      'mainAxisAlignment': 'center',
+      'crossAxisAlignment': 'stretch',
+      'children': [
+        {
+          'type': 'row',
+          'crossAxisAlignment': 'center',
+          'children': [
+            {
+              'type': 'icon',
+              'name': 'notifications',
+              'color': '#5EEAD4',
+              'size': 14,
+            },
+            {'type': 'sizedBox', 'width': 6},
+            {
+              'type': 'expanded',
+              'child': {
+                'type': 'text',
+                'data': 'Dentist',
+                'maxLines': 1,
+                'overflow': 'ellipsis',
+                'style': {'fontSize': 12, 'fontWeight': 'w600'},
+              },
+            },
+            {
+              'type': 'text',
+              'data': '25m',
+              'style': {'fontSize': 10},
+            },
+          ],
+        },
+        {'type': 'sizedBox', 'height': 8},
+        {
+          'type': 'row',
+          'crossAxisAlignment': 'center',
+          'children': [
+            {
+              'type': 'icon',
+              'name': 'notifications',
+              'color': '#5EEAD4',
+              'size': 14,
+            },
+            {'type': 'sizedBox', 'width': 6},
+            {
+              'type': 'expanded',
+              'child': {
+                'type': 'text',
+                'data': 'Call Anna',
+                'maxLines': 1,
+                'overflow': 'ellipsis',
+                'style': {'fontSize': 12, 'fontWeight': 'w600'},
+              },
+            },
+            {
+              'type': 'text',
+              'data': '1h 10m',
+              'style': {'fontSize': 10},
+            },
+          ],
+        },
+      ],
+    },
+  };
+
   @override
   Future<void> start() async {
-    tree.value = const {
-      'type': 'container',
-      'padding': [14, 8, 14, 8],
-      'child': {
-        'type': 'row',
-        'crossAxisAlignment': 'center',
-        'children': [
-          {
-            'type': 'column',
-            'mainAxisSize': 'min',
-            'crossAxisAlignment': 'center',
-            'children': [
-              {
-                'type': 'icon',
-                'name': 'wb_sunny',
-                'color': '#FBBF24',
-                'size': 26,
-              },
-              {'type': 'sizedBox', 'height': 2},
-              {
-                'type': 'text',
-                'data': 'Minsk',
-                'style': {'fontSize': 11},
-              },
-            ],
-          },
-          {
-            'type': 'expanded',
-            'child': {'type': 'sizedBox'},
-          },
-          {
-            'type': 'column',
-            'mainAxisSize': 'min',
-            'crossAxisAlignment': 'end',
-            'children': [
-              {
-                'type': 'text',
-                'data': '21°',
-                'style': {'fontSize': 32, 'fontWeight': 'w700'},
-              },
-              {
-                'type': 'text',
-                'data': 'Partly cloudy',
-                'style': {'fontSize': 10},
-              },
-            ],
-          },
-        ],
-      },
+    tree.value = switch (app.id) {
+      'weather' => _weatherTree,
+      'reminders' => _remindersTree,
+      _ => const {'type': 'text', 'data': 'TILE'},
     };
   }
 
@@ -282,9 +371,9 @@ AppsStore _appsStore(MemoryExecutionEnv env) => AppsStore(
 /// Pumps the launcher as the full app home at phone size. [folders] seeds a
 /// pre-made folder layout (default: the four apps + system tiles).
 /// [sessions] maps session ids to seeded transcript messages (the LAST id
-/// is the active session). [weatherTile] adds a fifth app whose manifest
-/// declares a `"widget"` section — pair it with [tileEngineFactory] so the
-/// live tile renders a deterministic tree.
+/// is the active session). [liveTiles] adds two apps whose manifests
+/// declare a `"widget"` section (weather 4x2, reminders 2x2) — pair it with
+/// [tileEngineFactory] so the live tiles render deterministic trees.
 Future<void> _pumpLauncher(
   WidgetTester tester, {
   Locale locale = const Locale('en'),
@@ -293,11 +382,11 @@ Future<void> _pumpLauncher(
   List<LauncherFolder>? folders,
   Map<String, List<FahChatMessage>>? sessions,
   StreamFunction? streamFunction,
-  bool weatherTile = false,
+  bool liveTiles = false,
   TileEngineFactory? tileEngineFactory,
   EdgeInsets? viewPadding,
 }) async {
-  final env = await _seededEnv(weatherTile: weatherTile);
+  final env = await _seededEnv(liveTiles: liveTiles);
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   for (final entry
       in (sessions ?? const {'fake-session': <FahChatMessage>[]}).entries) {
@@ -311,7 +400,8 @@ Future<void> _pumpLauncher(
       order:
           order ??
           [
-            if (weatherTile) 'app:weather',
+            if (liveTiles) 'app:weather',
+            if (liveTiles) 'app:reminders',
             'app:notes',
             'app:pomodoro',
             'app:habits',
@@ -389,23 +479,49 @@ void main() {
       await expectGolden(tester, 'launcher/folder_open_dark');
     });
 
-    testWidgets('grid with a live weather tile — dark', (tester) async {
+    testWidgets('grid with live tiles (4x2 + 2x2) — dark', (tester) async {
       await _pumpLauncher(
         tester,
-        weatherTile: true,
+        liveTiles: true,
         tileEngineFactory: _fakeTileEngineFactory(),
       );
       await expectGolden(tester, 'launcher/grid_widget_tile_dark');
     });
 
-    testWidgets('grid with a live weather tile — light', (tester) async {
+    testWidgets('grid with live tiles (4x2 + 2x2) — light', (tester) async {
       await _pumpLauncher(
         tester,
-        weatherTile: true,
+        liveTiles: true,
         tileEngineFactory: _fakeTileEngineFactory(),
         theme: buildFahThemeLight(),
       );
       await expectGolden(tester, 'launcher/grid_widget_tile_light');
+    });
+
+    /// The alignment showcase: a plain row of app icons sits ABOVE the 4x2
+    /// weather widget, so a reviewer can see the widget's left/right edges
+    /// line up EXACTLY with the outer edges of the 4-icon row (and the 2x2
+    /// reminders widget with a 2-icon block) — the icon-unit geometry
+    /// contract of LauncherGridSpec.
+    testWidgets('ios alignment — widgets align with icon blocks', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        liveTiles: true,
+        tileEngineFactory: _fakeTileEngineFactory(),
+        order: [
+          'app:notes',
+          'app:pomodoro',
+          'app:habits',
+          'app:dice',
+          'app:weather',
+          'app:reminders',
+          LauncherLayoutStore.settingsKey,
+          LauncherLayoutStore.filesKey,
+        ],
+      );
+      await expectGolden(tester, 'launcher/grid_ios_alignment_dark');
     });
   });
 

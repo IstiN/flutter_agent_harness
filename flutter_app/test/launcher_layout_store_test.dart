@@ -203,5 +203,170 @@ void main() {
       final store = await LauncherLayoutStore.load(env);
       expect(store.topLevelKeys, isEmpty);
     });
+
+    test('v1 file migrates: order/folders load, grid knobs default', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        '{"version":1,"order":["app:a","app:b"],'
+            '"folders":[{"id":"f1","name":"Pair","tiles":["app:b"]}]}',
+      );
+      final store = await LauncherLayoutStore.load(env);
+      expect(store.topLevelKeys, ['app:a', 'app:b']);
+      expect(store.folderById('f1')!.tiles, ['app:b']);
+      expect(store.gridColumns, isNull);
+      expect(store.tileSizeFor('a'), isNull);
+    });
+
+    test('v2 grid/tileSizes knobs persist and reload', () async {
+      final env = MemoryExecutionEnv();
+      final store = await LauncherLayoutStore.load(env);
+      store.syncApps(['weather']);
+      store.setGridColumns(6);
+      store.setTileSize('weather', (w: 4, h: 2));
+      await Future<void>.delayed(Duration.zero);
+
+      final reloaded = await LauncherLayoutStore.load(env);
+      expect(reloaded.gridColumns, 6);
+      expect(reloaded.tileSizeFor('weather'), (w: 4, h: 2));
+
+      // Clearing the override persists too.
+      reloaded.setTileSize('weather', null);
+      reloaded.setGridColumns(null);
+      await Future<void>.delayed(Duration.zero);
+      final cleared = await LauncherLayoutStore.load(env);
+      expect(cleared.gridColumns, isNull);
+      expect(cleared.tileSizeFor('weather'), isNull);
+    });
+
+    test('grid.columns and tileSizes clamp/ignore garbage on load', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        '{"version":2,"order":[],"folders":[],'
+            '"grid":{"columns":99},'
+            '"tileSizes":{"a":"9x9","b":"1x0","c":"big","d":42}}',
+      );
+      final store = await LauncherLayoutStore.load(env);
+      expect(store.gridColumns, LauncherLayoutStore.maxGridColumns);
+      expect(store.tileSizeFor('a'), (w: 4, h: 4));
+      expect(store.tileSizeFor('b'), (w: 2, h: 1)); // clamped to the range
+      expect(store.tileSizeFor('c'), isNull);
+      expect(store.tileSizeFor('d'), isNull);
+    });
+
+    test('setGridColumns/setTileSize clamp and notify', () {
+      final store = LauncherLayoutStore.inMemory();
+      var notified = 0;
+      store.addListener(() => notified++);
+      store.setGridColumns(99);
+      expect(store.gridColumns, LauncherLayoutStore.maxGridColumns);
+      store.setTileSize('a', (w: 1, h: 9));
+      expect(store.tileSizeFor('a'), (w: 2, h: 4));
+      expect(notified, 2);
+      // No-op writes don't notify.
+      store.setGridColumns(LauncherLayoutStore.maxGridColumns);
+      store.setTileSize('a', (w: 2, h: 4));
+      expect(notified, 2);
+    });
+
+    test('reload applies external file edits and notifies', () async {
+      final env = MemoryExecutionEnv();
+      final store = await LauncherLayoutStore.load(env);
+      store.syncApps(['weather', 'notes']);
+      await Future<void>.delayed(Duration.zero);
+      var notified = 0;
+      store.addListener(() => notified++);
+
+      // An outside writer (the agent) reconfigures the home screen.
+      await env.writeFile(
+        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        '{"version":2,"order":["app:notes","app:weather"],'
+            '"folders":[],"grid":{"columns":3},'
+            '"tileSizes":{"weather":"4x2"}}',
+      );
+      await store.reload();
+      expect(notified, greaterThan(0));
+      expect(store.topLevelKeys.first, 'app:notes');
+      expect(store.gridColumns, 3);
+      expect(store.tileSizeFor('weather'), (w: 4, h: 2));
+
+      // A corrupt file keeps the current state.
+      await env.writeFile(
+        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        'not json {{{',
+      );
+      await store.reload();
+      expect(store.gridColumns, 3);
+    });
+  });
+
+  group('launcherInsertionIndex / moveLauncherKey', () {
+    const order = ['app:a', 'app:b', 'app:c', 'app:d'];
+
+    test('left half inserts before, right half after the target', () {
+      // Drag a onto b.
+      expect(
+        launcherInsertionIndex(
+          order: order,
+          draggedKey: 'app:a',
+          targetKey: 'app:b',
+          fx: 0.2,
+        ),
+        0, // before b → a stays first in the post-removal list
+      );
+      expect(
+        launcherInsertionIndex(
+          order: order,
+          draggedKey: 'app:a',
+          targetKey: 'app:b',
+          fx: 0.8,
+        ),
+        1, // after b
+      );
+      // Drag c onto a (backward move).
+      expect(
+        launcherInsertionIndex(
+          order: order,
+          draggedKey: 'app:c',
+          targetKey: 'app:a',
+          fx: 0.2,
+        ),
+        0,
+      );
+      // Unknown target → -1.
+      expect(
+        launcherInsertionIndex(
+          order: order,
+          draggedKey: 'app:c',
+          targetKey: 'app:x',
+          fx: 0.5,
+        ),
+        -1,
+      );
+    });
+
+    test('moveLauncherKey matches LauncherLayoutStore.reorder semantics', () {
+      expect(moveLauncherKey(order, 'app:a', 2), [
+        'app:b',
+        'app:c',
+        'app:a',
+        'app:d',
+      ]);
+      expect(moveLauncherKey(order, 'app:d', 0), [
+        'app:d',
+        'app:a',
+        'app:b',
+        'app:c',
+      ]);
+      // Clamps and unknown keys are safe.
+      expect(moveLauncherKey(order, 'app:a', 99), [
+        'app:b',
+        'app:c',
+        'app:d',
+        'app:a',
+      ]);
+      expect(moveLauncherKey(order, 'app:x', 1), order);
+    });
   });
 }

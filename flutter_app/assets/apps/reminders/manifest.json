@@ -9,7 +9,7 @@
   "notifications": true,
   "widget": {
     "entry": "widget_tile.js",
-    "size": "1x1",
+    "size": "2x2",
     "refreshSeconds": 60
   },
   "cli": {

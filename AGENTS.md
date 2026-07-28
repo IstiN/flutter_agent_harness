@@ -158,15 +158,23 @@ factual: paths, commands, invariants — no essays.
 - `flutter_app/lib/ui/screens/app_launcher_screen.dart` — the narrow-layout
   home (< `kWideLayoutBreakpoint` in chat_screen.dart; `faHomeScreen` in
   main.dart picks it over `ChatScreen` in `_boot()` + `SetupScreen._connect`).
-  iOS-home-screen square grid of the JS apps (fsRevision-refreshed like
-  `AppsGridView`) plus Settings/Files system tiles; long-press drag&drop:
-  center-band drop on an app groups both into a folder (edge drop reorders,
-  drop on a folder adds), folder tap opens a floating panel (rename/dissolve
+  iOS-home-screen grid of the JS apps (fsRevision-refreshed like
+  `AppsGridView`) plus Settings/Files system tiles, laid out on the
+  icon-unit geometry (`LauncherGridSpec` in
+  `lib/ui/widgets/span_grid_delegate.dart`: 56px icon square + 20px label,
+  16px gaps; default 4 columns < 600px, 6 above, clamped 3–8) as a
+  `SingleChildScrollView` + `Stack` of `AnimatedPositioned` tiles
+  (`packTileSpans`/`layOutTileRects`), so reorders animate live while
+  dragging (center-band hover on an app = folder intent, edge halves =
+  insertion preview; drop persists; hold-release without movement opens the
+  tile-size menu). Folder tap opens a floating panel (rename/dissolve
   buttons, drag-out-to-ungroup onto the barrier). Tile layout persists via
   `LauncherLayoutStore` (`lib/services/launcher_layout_store.dart`,
-  `launcher_layout.json`, mirrors `SessionNamesStore`: ordered keys
-  `app:<id>`/`system:*`/`folder:<id>`, `syncApps` reconciles with installed
-  apps, corrupt file → defaults). Its Stack hosts the `SessionChatSheet`.
+  `launcher_layout.json` v2: ordered keys `app:<id>`/`system:*`/`folder:<id>`
+  + `grid.columns` + `tileSizes` {appId: "WxH"} overrides — agent-editable,
+  re-read live on fsRevision; v1 migrates, corrupt file → defaults;
+  `syncApps` reconciles with installed apps). Its Stack hosts the
+  `SessionChatSheet`.
 - `flutter_app/lib/apps/session_chat_sheet.dart` — the session chat bottom
   sheet over the launcher (FaChatOverlay pattern/constants): collapsed =
   floating Fa button bottom-right (the `FaWorkBar` takes its place while
@@ -223,12 +231,13 @@ factual: paths, commands, invariants — no essays.
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
   Live launcher tiles: a manifest `"widget"` section
   (`{entry: 'widget_tile.js', size: 'WxH', refreshSeconds?}` →
-  `JsAppInfo.tileWidget`; size in grid cells, W 1–3 × H 1–2, e.g. 1x1/2x1/
-  2x2/3x2) makes the launcher grid render `app_tile_host.dart`
+  `JsAppInfo.tileWidget`; size in icon-slot cells, W 2–4 × H 1–4, default
+  2x2 — the iOS small/medium/large presets 2x2/4x2/4x4) makes the launcher
+  grid render `app_tile_host.dart`
   (a JsAppEngine on the tile entry, display-only — any tap opens the app)
-  instead of the static icon tile; spans ride `SpanGridDelegate`
-  (`lib/ui/widgets/span_grid_delegate.dart` — greedy first-fit row packing,
-  holes allowed, child index ↔ order index 1:1 for DnD).
+  instead of the static icon tile; a WxH tile's edges align exactly with
+  the WxH block of icon slots it replaces. Users resize tiles via the
+  hold-release menu (writes `tileSizes` into `launcher_layout.json`).
 - `flutter_app/lib/services/home_service.dart` — smart home: `HomeApi` over
   the `fah/home` MethodChannel (HomeKit in `AppDelegate.swift`, iOS only;
   the macOS channel answers unsupported): `listHomes`/`listRooms`/
