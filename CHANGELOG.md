@@ -722,4 +722,11 @@
 
 - fix(example): sheet respects the top safe area + light-theme golden
 
+## 0.1.102
+
+- feat(example): iOS-style home grid — icon-unit alignment, live reflow, resizable tiles
+- fix(example): drop the border on the floating chat bar/icon — shadow only
+- feat(example): tile span sizes + floating mini chat bar, directional sheet swipes
+- feat(example): live app tiles on the launcher + chat sheet mini-by-default
+
 ## Unreleased
