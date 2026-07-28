@@ -105,6 +105,10 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   /// Animation value where the mini state sits (icon 0 → mini → sheet 1).
   static const double _miniValue = 0.3;
 
+  /// Below this value the sheet is the round 56px Fa icon; between
+  /// [_iconMaxV] and [_miniValue] the full-size mini bar cross-fades in.
+  static const double _iconMaxV = _miniValue * 0.5;
+
   /// Downward/upward fling velocity (px/s) that completes the gesture.
   static const double _flingVelocity = 300;
 
@@ -244,6 +248,12 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     }();
   }
 
+  Future<void> _toMini() => _anim.animateTo(
+    _miniValue,
+    duration: const Duration(milliseconds: 260),
+    curve: Curves.easeOutCubic,
+  );
+
   Future<void> _expand() => _anim.animateTo(
     1,
     duration: const Duration(milliseconds: 260),
@@ -301,30 +311,41 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
+  /// The snap target nearest to the current value: icon (0), mini bar
+  /// (_miniValue), full sheet (1).
+  double get _nearestSnap {
+    final v = _anim.value;
+    return v < _miniValue / 2
+        ? 0.0
+        : (v < (_miniValue + 1) / 2 ? _miniValue : 1.0);
+  }
+
+  Future<void> _snapTo(double target) => _anim.animateTo(
+    target,
+    duration: const Duration(milliseconds: 220),
+    curve: Curves.easeOutCubic,
+  );
+
   void _onDragEnd(DragEndDetails details) {
     final velocity = details.velocity.pixelsPerSecond.dy;
+    final v = _anim.value;
     if (velocity <= -_flingVelocity) {
-      unawaited(_expand());
+      // Fling UP: settle into the next LARGER state (icon → mini → sheet).
+      unawaited(_snapTo(v < _miniValue - 0.001 ? _miniValue : 1.0));
     } else if (velocity >= _flingVelocity) {
-      unawaited(_collapse());
+      // Fling DOWN: settle into the next SMALLER state (sheet → mini →
+      // icon) — a swipe down from the full sheet stops at the mini bar,
+      // it never skips straight to the icon.
+      unawaited(_snapTo(v > _miniValue + 0.001 ? _miniValue : 0.0));
     } else {
-      // Nearest state: icon (0), mini bar (_miniValue), full sheet (1).
-      final v = _anim.value;
-      final target = v < _miniValue / 2
-          ? 0.0
-          : (v < (_miniValue + 1) / 2 ? _miniValue : 1.0);
-      unawaited(
-        _anim.animateTo(
-          target,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-        ),
-      );
+      unawaited(_snapTo(_nearestSnap));
     }
   }
 
   void _onDragCancel() {
-    unawaited(_anim.value < (_miniValue + 1) / 2 ? _collapse() : _expand());
+    // A canceled gesture (the arena was lost mid-drag) must still settle on
+    // a real state — never leave the panel hanging between states.
+    unawaited(_snapTo(_nearestSnap));
   }
 
   @override
@@ -333,7 +354,13 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     if (service == null) return const SizedBox.shrink();
     final colors = FahColors.of(context);
     final size = MediaQuery.sizeOf(context);
-    final expandedH = size.height * _expandedFraction;
+    // viewPadding survives the outer SafeArea (which only consumes
+    // `padding`), so the real display cutouts (Dynamic Island, home
+    // indicator) are always known here.
+    final viewPad = MediaQuery.viewPaddingOf(context);
+    // Expanded sheet: 92% of the height BELOW the top cutout — the panel
+    // top (and its drag handle) never slides under the Dynamic Island.
+    final expandedH = (size.height - viewPad.top) * _expandedFraction;
     // ONE panel, three states driven by a single value: round Fa button
     // (0) ↔ mini bar (handle + status + composer, _miniValue) ↔ full sheet
     // (1). The container's height/width/radius lerp; the body inside is an
@@ -348,39 +375,50 @@ class _SessionChatSheetState extends State<SessionChatSheet>
           animation: _anim,
           builder: (context, _) {
             final v = _anim.value;
-            final miniT = (v / _miniValue).clamp(0.0, 1.0);
             final sheetT = ((v - _miniValue) / (1 - _miniValue)).clamp(
               0.0,
               1.0,
             );
-            // Icon (56px) → mini (handle + [status] + composer) → sheet
-            // (92%). At REST the mini state sizes itself to its content
-            // (height == null → no clipping of the handle or composer, and
-            // the panel never covers the grid behind it); during transitions
-            // the height is explicit, targeting the MEASURED natural mini
-            // height, and the body is bottom-pinned, so nothing jumps.
+            // States: round Fa icon (v < _iconMaxV) → mini bar (_miniValue)
+            // → full sheet (1). The icon↔mini transition is a CROSS-FADE,
+            // not a size morph: the 56px circle hard-switches to the
+            // full-size mini bar fading in (bodyT) — no squeezed-composer
+            // frames. The mini bar always shrink-wraps its natural content
+            // height (height == null), so it never covers the grid; the
+            // sheet uses explicit heights targeting the MEASURED mini
+            // height, and its body is bottom-pinned, so nothing jumps.
             final miniH = _measuredMiniH;
-            final atMiniRest = sheetT == 0 && (v - _miniValue).abs() < 0.001;
+            final isIcon = v < _iconMaxV && !service.isStreaming;
+            final bodyT = ((v - _iconMaxV) / (_miniValue - _iconMaxV)).clamp(
+              0.0,
+              1.0,
+            );
             final double? height;
-            if (v < _miniValue * 0.7 && !service.isStreaming) {
+            if (isIcon) {
               height = _iconSize;
             } else if (sheetT > 0) {
               height = miniH + (expandedH - miniH) * sheetT;
-            } else if (atMiniRest) {
-              height = null;
             } else {
-              height = _iconSize + (miniH - _iconSize) * (v / _miniValue);
+              height = null; // mini: natural shrink-wrap, always
             }
-            final width = sheetT > 0 || miniT >= 1
-                ? size.width
-                : _iconSize + (size.width - _iconSize) * miniT;
-            final radius = sheetT > 0 || miniT >= 1
-                ? const BorderRadius.vertical(top: Radius.circular(16))
-                : BorderRadius.circular(28 - 12 * miniT);
+            // The mini bar FLOATS above the home indicator (iOS-18-style
+            // rounded bar over the grid) and docks edge-to-edge only as it
+            // grows into the sheet; the round icon floats the same way.
+            const miniRadius = BorderRadius.all(Radius.circular(20));
+            const sheetRadius = BorderRadius.vertical(top: Radius.circular(16));
+            final sideInset = isIcon ? 16.0 : (1 - sheetT) * 8;
+            final bottomInset = isIcon
+                ? viewPad.bottom + 16
+                : (1 - sheetT) * (viewPad.bottom + 8);
+            final width = isIcon ? _iconSize : size.width - sideInset * 2;
+            final radius = isIcon
+                ? BorderRadius.circular(28)
+                : BorderRadius.lerp(miniRadius, sheetRadius, sheetT)!;
             return Padding(
               padding: EdgeInsets.only(
-                right: (1 - miniT) * 16,
-                bottom: (1 - miniT) * 16,
+                left: sideInset,
+                right: sideInset,
+                bottom: bottomInset,
               ),
               child: Container(
                 width: width,
@@ -389,7 +427,11 @@ class _SessionChatSheetState extends State<SessionChatSheet>
                 decoration: BoxDecoration(
                   color: colors.panelAlt.withValues(alpha: 0.97),
                   borderRadius: radius,
-                  border: Border(top: BorderSide(color: colors.border)),
+                  // Floating states (icon/mini) get a full ring; the docked
+                  // sheet only needs the top hairline.
+                  border: isIcon || sheetT == 0
+                      ? Border.all(color: colors.border)
+                      : Border(top: BorderSide(color: colors.border)),
                   boxShadow: const [
                     BoxShadow(
                       color: Colors.black38,
@@ -428,28 +470,31 @@ class _SessionChatSheetState extends State<SessionChatSheet>
                         }
                         return Stack(
                           // Passthrough: with an explicit container height
-                          // (icon/transitions/sheet) the children fill it;
-                          // at mini REST (height == null) the stack — and
-                          // with it the whole panel — shrink-wraps the
-                          // natural body height, so the panel NEVER covers
-                          // the app grid behind it.
+                          // (icon/sheet) the children fill it; in the mini
+                          // region (height == null) the stack — and with it
+                          // the whole panel — shrink-wraps the natural body
+                          // height, so the panel NEVER covers the app grid
+                          // behind it.
                           fit: StackFit.passthrough,
                           children: [
-                            _panelContent(
-                              colors,
-                              service,
-                              v,
-                              sheetT,
-                              expandedH,
-                              atMiniRest,
+                            Opacity(
+                              opacity: sheetT > 0 ? 1.0 : bodyT,
+                              child: _panelContent(
+                                colors,
+                                service,
+                                v,
+                                sheetT,
+                                expandedH,
+                                viewPad.bottom,
+                              ),
                             ),
                             // The round Fa button (collapsed state): fills
-                            // the 56px container, NOT the overflowed body.
-                            if (v < _miniValue * 0.7 && !service.isStreaming)
+                            // the 56px circle.
+                            if (isIcon)
                               GestureDetector(
                                 key: const ValueKey('sessionChatFaButton'),
                                 behavior: HitTestBehavior.opaque,
-                                onTap: () => unawaited(_expand()),
+                                onTap: () => unawaited(_toMini()),
                                 onVerticalDragUpdate: _onDragUpdate,
                                 onVerticalDragEnd: _onDragEnd,
                                 onVerticalDragCancel: _onDragCancel,
@@ -478,12 +523,12 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     double v,
     double sheetT,
     double expandedH,
-    bool atMiniRest,
+    double bottomSafeInset,
   ) {
-    // No body below the icon threshold (the container is too small for the
-    // composer); while Fa starts working the auto-grow animates the panel
-    // to the mini state within 260 ms and the body fades in there.
-    if (v < _miniValue * 0.7) {
+    // No body in the icon state (the 56px circle only holds the glyph);
+    // the mini bar cross-fades in above _iconMaxV, and while Fa starts
+    // working the auto-grow animates the panel to the mini state.
+    if (v < _iconMaxV) {
       return const SizedBox.shrink();
     }
     final column = Column(
@@ -512,12 +557,16 @@ class _SessionChatSheetState extends State<SessionChatSheet>
           asr: widget.asr,
           asrTranscriber: widget.asrTranscriber,
         ),
+        // The docked sheet reaches the screen's bottom edge: lift the
+        // composer above the home indicator. Grows with sheetT, so the
+        // mini bar's natural-height measurement never includes it.
+        if (sheetT > 0) SizedBox(height: bottomSafeInset * sheetT),
       ],
     );
     // Measure the natural mini-body height on every layout (mini states
     // only — in the sheet the column is stretched to expandedH): the
-    // icon↔mini pixel lerp targets this exact value, so landing on the
-    // natural-height rest state is pixel-continuous in any environment
+    // sheet↔mini height formula targets this exact value, so landing on
+    // the natural-height mini bar is pixel-continuous in any environment
     // (safe-area bottom, with/without the streaming status row).
     final body = NotificationListener<SizeChangedLayoutNotification>(
       onNotification: (_) {
@@ -542,26 +591,22 @@ class _SessionChatSheetState extends State<SessionChatSheet>
       onVerticalDragUpdate: _onDragUpdate,
       onVerticalDragEnd: _onDragEnd,
       onVerticalDragCancel: _onDragCancel,
-      // Mini at REST: the container has no explicit height, so the plain
+      // Mini region: the container has no explicit height, so the plain
       // natural-height body shrink-wraps it — the panel covers ONLY its
-      // own bar and the app grid behind stays fully visible. Transitions
-      // and the sheet: the body is laid out at its rest size (full expanded
-      // height in the sheet) and pinned to the BOTTOM of the container, so
-      // mid-gesture the top clips instead of overflowing and the composer
-      // and messages never reflow or jump.
-      child: atMiniRest
-          ? body
-          : Align(
+      // own bar and the app grid behind stays fully visible. Sheet: the
+      // body is laid out at the full expanded height and pinned to the
+      // BOTTOM of the container, so mid-gesture the top clips instead of
+      // overflowing and the composer and messages never reflow or jump.
+      child: sheetT > 0
+          ? Align(
               alignment: Alignment.bottomCenter,
               child: OverflowBox(
                 alignment: Alignment.bottomCenter,
                 maxHeight: expandedH,
-                child: SizedBox(
-                  height: sheetT > 0 ? expandedH : null,
-                  child: body,
-                ),
+                child: SizedBox(height: expandedH, child: body),
               ),
-            ),
+            )
+          : body,
     );
   }
 

@@ -201,36 +201,61 @@ void main() {
       );
       final tile = app.tileWidget!;
       expect(tile.entry, JsTileWidgetInfo.defaultEntry);
-      expect(tile.size, JsTileWidgetInfo.size1x1);
+      expect(tile.widthCells, 1);
+      expect(tile.heightCells, 1);
+      expect(tile.size, '1x1');
       expect(tile.refreshSeconds, isNull);
       expect(app.tileWidgetPath, 'apps/demo/widget_tile.js');
 
       final full = JsAppInfo.fromManifest(
         const {
           'id': 'demo',
-          'widget': {'entry': 'tile.js', 'size': '2x1', 'refreshSeconds': 900},
+          'widget': {'entry': 'tile.js', 'size': '2x2', 'refreshSeconds': 900},
         },
         bundled: false,
         fallbackId: 'demo',
       );
       expect(full.tileWidget!.entry, 'tile.js');
-      expect(full.tileWidget!.size, JsTileWidgetInfo.size2x1);
+      expect(full.tileWidget!.widthCells, 2);
+      expect(full.tileWidget!.heightCells, 2);
+      expect(full.tileWidget!.size, '2x2');
       expect(full.tileWidget!.refreshSeconds, 900);
       expect(full.tileWidgetPath, 'apps/demo/tile.js');
+    });
+
+    test('widget size clamps to the supported cell range', () {
+      JsTileWidgetInfo tile(String size) => JsAppInfo.fromManifest(
+        {
+          'id': 'demo',
+          'widget': {'size': size},
+        },
+        bundled: false,
+        fallbackId: 'demo',
+      ).tileWidget!;
+
+      expect(tile('1x1').size, '1x1');
+      expect(tile('2x1').size, '2x1');
+      expect(tile('3x1').size, '3x1');
+      expect(tile('3x2').size, '3x2');
+      // W clamps to 3, H to 2.
+      expect(tile('4x1').size, '3x1');
+      expect(tile('1x5').size, '1x2');
+      expect(tile('9x9').size, '3x2');
+      expect(tile('0x0').size, '1x1');
     });
 
     test('weird widget values fall back to the defaults', () {
       final app = JsAppInfo.fromManifest(
         const {
           'id': 'demo',
-          'widget': {'entry': '', 'size': '3x3', 'refreshSeconds': 'later'},
+          'widget': {'entry': '', 'size': 'big', 'refreshSeconds': 'later'},
         },
         bundled: false,
         fallbackId: 'demo',
       );
       final tile = app.tileWidget!;
       expect(tile.entry, JsTileWidgetInfo.defaultEntry);
-      expect(tile.size, JsTileWidgetInfo.size1x1);
+      expect(tile.size, '1x1');
       expect(tile.refreshSeconds, isNull);
 
       // A non-map widget section is ignored entirely.

@@ -25,6 +25,7 @@ import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/media_player.dart';
+import 'package:fa/ui/widgets/span_grid_delegate.dart';
 
 /// iOS-home-screen-style apps launcher: the app's home on narrow layouts
 /// (the wide layout keeps the classic chat home). A dynamic square grid of
@@ -34,7 +35,8 @@ import 'package:fa/ui/widgets/media_player.dart';
 /// reorders, drop onto a folder adds to it), and a folder tap opens it as a
 /// floating panel whose tiles launch on tap or drag out to ungroup. An app
 /// whose manifest declares a `"widget"` section renders a live tile
-/// ([AppTileHost]) in place of the static icon + label.
+/// ([AppTileHost]) in place of the static icon + label, spanning the
+/// declared WxH grid cells (see [SpanGridDelegate]).
 ///
 /// The layout (order, folders) persists through [LauncherLayoutStore]; the
 /// apps list refreshes on the active session's [AgentService.fsRevision]
@@ -333,7 +335,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     return Scaffold(
+      // Bottom false: the stack reaches the screen's bottom edge so the
+      // floating mini chat bar hovers over the GRID (not over an empty
+      // scaffold-colored band) and the expanded sheet docks edge-to-edge;
+      // the grid keeps its own bottom clearance below.
       body: SafeArea(
+        bottom: false,
         child: Stack(
           children: [
             _buildGridArea(colors),
@@ -388,20 +395,53 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           ),
         ),
         Expanded(
-          child: GridView.builder(
-            // Bottom clearance for the collapsed chat sheet (P2).
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 120,
-              childAspectRatio: 1,
-            ),
-            itemCount: layout.topLevelKeys.length,
-            itemBuilder: (context, index) =>
-                _buildCell(colors, layout.topLevelKeys[index]),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Same column count the old maxCrossAxisExtent: 120 delegate
+              // produced (crossAxisExtent = width minus the padding below).
+              final crossAxisCount = ((constraints.maxWidth - 32) / 120)
+                  .ceil()
+                  .clamp(1, 100);
+              final keys = layout.topLevelKeys;
+              return GridView.builder(
+                // Bottom clearance for the floating mini chat bar (bar
+                // height + its margin above the home indicator).
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  MediaQuery.viewPaddingOf(context).bottom + 128,
+                ),
+                gridDelegate: SpanGridDelegate(
+                  crossAxisCount: crossAxisCount,
+                  spans: [
+                    for (final key in keys) _tileSpan(key, crossAxisCount),
+                  ],
+                ),
+                itemCount: keys.length,
+                itemBuilder: (context, index) =>
+                    _buildCell(colors, keys[index]),
+              );
+            },
           ),
         ),
       ],
     );
+  }
+
+  /// The grid span of one tile: apps with a live tile get their declared
+  /// WxH (width clamped to the column count), everything else is 1x1.
+  TileSpan _tileSpan(String key, int crossAxisCount) {
+    if (key.startsWith('app:')) {
+      final tile = _appsById[key.substring(4)]?.tileWidget;
+      if (tile != null) {
+        return (
+          w: tile.widthCells.clamp(1, crossAxisCount),
+          h: tile.heightCells,
+        );
+      }
+    }
+    return (w: 1, h: 1);
   }
 
   Widget _buildCell(FahColors colors, String key) {
@@ -454,10 +494,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       final tile = app?.tileWidget;
       if (app != null && tile != null) {
         // Live tile: the app draws its own mini UI (icon+label replaced);
-        // any tap opens the full app. `2x1` parses but renders as one cell
-        // until the grid delegate supports spans.
-        // TODO(phase-2): honor JsTileWidgetInfo.size2x1 with a custom
-        // SliverGridDelegate (index↔child mapping stays 1:1 for DnD).
+        // any tap opens the full app. The cell span (WxH) comes from the
+        // manifest via [_tileSpan]/[SpanGridDelegate].
         return InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: () => _onTileTap(key),

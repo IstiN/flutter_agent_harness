@@ -119,18 +119,18 @@ SVG icons render in the sidebar, the apps grid, the app bar and the permissions 
 An app can render **live mini-content inside its launcher home-grid tile** (like an iOS/Android home-screen widget — think a weather tile showing the current temperature) instead of the static icon + label. Opt in with a `"widget"` section in `manifest.json` plus a separate tile entry file:
 
 ```json
-"widget": { "entry": "widget_tile.js", "size": "1x1", "refreshSeconds": 900 }
+"widget": { "entry": "widget_tile.js", "size": "2x1", "refreshSeconds": 900 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `entry` | ❌ | Tile JS file inside the app folder (default: `widget_tile.js`) |
-| `size` | ❌ | `"1x1"` (default). `"2x1"` parses but renders as 1x1 for now |
+| `size` | ❌ | Tile span as `"WxH"` in grid cells (default: `"1x1"`). W clamps to 1–3, H to 1–2; anything unparsable falls back to 1x1. Examples: `"1x1"` (1 cell), `"2x1"` (2 cells — the classic medium widget), `"3x1"` (3 cells, full row), `"2x2"` (4 cells), `"3x2"` (6 cells, the max) |
 | `refreshSeconds` | ❌ | Host-side refresh cadence — the tile host fires a `tile.refresh` event every N seconds (omit it and use your own `setInterval` if you prefer) |
 
-Tile-JS rules (see the `weather` / `reminders` demo `widget_tile.js`):
+Tile-JS rules (see the `weather` (2x1) / `reminders` (1x1) demo `widget_tile.js`):
 
-1. **Small canvas** — the tile is one square grid cell (~104 px) and gives your root node tight bounds (fill it; don't center a fixed-size box). Render a compact layout: 2-4 nodes, big value + one muted label, no forms, no scrolling.
+1. **Canvas size = the declared cells** — one grid cell is ~104 px square, so a `"1x1"` tile is ~104×104, a `"2x1"` ~220×104, a `"2x2"` ~220×220. The tile gives your root node tight bounds (fill it; don't center a fixed-size box). Render a compact layout for the span you declared: a 1x1 fits a big value + one muted label; a 2x1 fits a horizontal split (glyph + label | value + sublabel). No forms, no scrolling.
 2. **Display-only** — any tap on the tile opens the full app; tile JS must not rely on its own buttons/inputs (there is no in-tile interaction in v1).
 3. **`tile.refresh` event** — when the manifest sets `refreshSeconds`, the host calls your `jsr.onEvent` handler with `actionId === 'tile.refresh'`; refetch/re-read data there.
 4. **`jsr.theme` colors** — same theming rules as full apps: read `jsr.theme` fresh on every render and re-render from `jsr._onThemeChange`.

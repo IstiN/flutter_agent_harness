@@ -222,10 +222,13 @@ factual: paths, commands, invariants — no essays.
   the agent tool `open_app`
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
   Live launcher tiles: a manifest `"widget"` section
-  (`{entry: 'widget_tile.js', size: '1x1', refreshSeconds?}` →
-  `JsAppInfo.tileWidget`) makes the launcher grid render `app_tile_host.dart`
+  (`{entry: 'widget_tile.js', size: 'WxH', refreshSeconds?}` →
+  `JsAppInfo.tileWidget`; size in grid cells, W 1–3 × H 1–2, e.g. 1x1/2x1/
+  2x2/3x2) makes the launcher grid render `app_tile_host.dart`
   (a JsAppEngine on the tile entry, display-only — any tap opens the app)
-  instead of the static icon tile.
+  instead of the static icon tile; spans ride `SpanGridDelegate`
+  (`lib/ui/widgets/span_grid_delegate.dart` — greedy first-fit row packing,
+  holes allowed, child index ↔ order index 1:1 for DnD).
 - `flutter_app/lib/services/home_service.dart` — smart home: `HomeApi` over
   the `fah/home` MethodChannel (HomeKit in `AppDelegate.swift`, iOS only;
   the macOS channel answers unsupported): `listHomes`/`listRooms`/

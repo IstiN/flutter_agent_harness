@@ -74,32 +74,36 @@ String _manifest(String id, String name, String icon) =>
 ''';
 
 /// Manifest variant opting the app into a live launcher tile.
-String _manifestWithTile(String id, String name, String icon) =>
+String _manifestWithTile(String id, String name, String icon, String size) =>
     '''
 {
   "id": "$id",
   "name": "$name",
   "description": "$name app",
   "icon": "$icon",
-  "widget": { "entry": "widget_tile.js", "size": "1x1" }
+  "widget": { "entry": "widget_tile.js", "size": "$size" }
 }
 ''';
 
-/// Seeds three apps (Alpha/Beta/Gamma) and returns the env. Ids in
-/// [tileApps] get a `"widget"` manifest section (live launcher tile).
-Future<MemoryExecutionEnv> _seededEnv({Set<String> tileApps = const {}}) async {
+/// Seeds three apps (Alpha/Beta/Gamma) and returns the env. [tileApps] maps
+/// app id → tile size (`"WxH"` in grid cells) for apps with a `"widget"`
+/// manifest section (live launcher tile).
+Future<MemoryExecutionEnv> _seededEnv({
+  Map<String, String> tileApps = const {},
+}) async {
   final env = MemoryExecutionEnv();
   for (final (id, name, icon) in [
     ('alpha', 'Alpha', '🅰️'),
     ('beta', 'Beta', '🅱️'),
     ('gamma', 'Gamma', '🎲'),
   ]) {
-    final manifest = tileApps.contains(id)
-        ? _manifestWithTile(id, name, icon)
+    final size = tileApps[id];
+    final manifest = size != null
+        ? _manifestWithTile(id, name, icon, size)
         : _manifest(id, name, icon);
     await env.writeFile('apps/$id/manifest.json', manifest);
     await env.writeFile('apps/$id/widget.js', '(function(){})();');
-    if (tileApps.contains(id)) {
+    if (size != null) {
       await env.writeFile('apps/$id/widget_tile.js', '(function(){})();');
     }
   }
@@ -161,7 +165,7 @@ Future<_Harness> _pumpLauncher(
   WidgetTester tester, {
   List<String>? order,
   List<LauncherFolder>? folders,
-  Set<String> tileApps = const {},
+  Map<String, String> tileApps = const {},
   TileEngineFactory? tileEngineFactory,
 }) async {
   final env = await _seededEnv(tileApps: tileApps);
@@ -457,7 +461,7 @@ void main() {
     ) async {
       await _pumpLauncher(
         tester,
-        tileApps: {'alpha'},
+        tileApps: {'alpha': '1x1'},
         tileEngineFactory: _fakeTileEngineFactory(),
       );
       // The live tile replaces Alpha's static icon + label …
@@ -469,10 +473,37 @@ void main() {
       expect(find.text('Gamma'), findsOneWidget);
     });
 
+    testWidgets('a 2x1 live tile spans two grid cells', (tester) async {
+      await _pumpLauncher(
+        tester,
+        tileApps: {'alpha': '2x1'},
+        tileEngineFactory: _fakeTileEngineFactory(),
+      );
+      // The host sits inside a 4 px padding: width ≈ 2 cells − 8, height ≈
+      // 1 cell − 8 (Beta's classic cell is the 1x1 reference).
+      final hostRect = tester.getRect(find.byType(AppTileHost));
+      final betaRect = tester.getRect(_cell('app:beta'));
+      expect(
+        hostRect.width,
+        moreOrLessEquals(2 * betaRect.width - 8, epsilon: 1),
+      );
+      expect(
+        hostRect.height,
+        moreOrLessEquals(betaRect.height - 8, epsilon: 1),
+      );
+      // Beta packs first-fit right after the 2-wide tile, same row (the
+      // host sits 4 px inside its span).
+      expect(hostRect.top, moreOrLessEquals(betaRect.top + 4, epsilon: 1));
+      expect(
+        betaRect.left,
+        moreOrLessEquals(hostRect.left - 4 + 2 * betaRect.width, epsilon: 1),
+      );
+    });
+
     testWidgets('live tiles still reorder by drag & drop', (tester) async {
       final harness = await _pumpLauncher(
         tester,
-        tileApps: {'alpha'},
+        tileApps: {'alpha': '1x1'},
         tileEngineFactory: _fakeTileEngineFactory(),
       );
       // Drop the live tile on the LEFT edge of Gamma's cell → Alpha moves

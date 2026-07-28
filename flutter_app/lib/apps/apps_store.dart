@@ -122,7 +122,7 @@ class AppPermissions {
 /// `"widget"` section of its `manifest.json`:
 ///
 /// ```json
-/// "widget": { "entry": "widget_tile.js", "size": "1x1", "refreshSeconds": 900 }
+/// "widget": { "entry": "widget_tile.js", "size": "2x1", "refreshSeconds": 900 }
 /// ```
 ///
 /// An app with a tile renders its own mini UI inside the launcher home grid
@@ -131,17 +131,32 @@ class AppPermissions {
 class JsTileWidgetInfo {
   const JsTileWidgetInfo({
     this.entry = defaultEntry,
-    this.size = size1x1,
+    this.widthCells = 1,
+    this.heightCells = 1,
     this.refreshSeconds,
   });
 
   factory JsTileWidgetInfo.fromJson(Map<String, Object?> json) {
     final entry = (json['entry'] ?? defaultEntry).toString();
-    final size = json['size']?.toString();
+    // "size": "<W>x<H>" in grid cells (e.g. "2x1", "2x2"); anything
+    // unparsable falls back to 1x1, numbers clamp to the supported range.
+    var widthCells = 1;
+    var heightCells = 1;
+    final match = RegExp(
+      r'^(\d+)x(\d+)$',
+    ).firstMatch(json['size']?.toString() ?? '');
+    if (match != null) {
+      widthCells = (int.tryParse(match.group(1)!) ?? 1).clamp(1, maxWidthCells);
+      heightCells = (int.tryParse(match.group(2)!) ?? 1).clamp(
+        1,
+        maxHeightCells,
+      );
+    }
     final refresh = json['refreshSeconds'];
     return JsTileWidgetInfo(
       entry: entry.isEmpty ? defaultEntry : entry,
-      size: size == size2x1 ? size2x1 : size1x1,
+      widthCells: widthCells,
+      heightCells: heightCells,
       refreshSeconds: refresh is num && refresh > 0 ? refresh.toInt() : null,
     );
   }
@@ -149,20 +164,25 @@ class JsTileWidgetInfo {
   /// Default tile entry file inside the app folder.
   static const String defaultEntry = 'widget_tile.js';
 
-  /// One grid cell (the only rendered size for now).
-  static const String size1x1 = '1x1';
+  /// Maximum horizontal span of a tile, in grid cells.
+  static const int maxWidthCells = 3;
 
-  /// Two-cell horizontal span — parses fine but renders as [size1x1] until
-  /// the grid delegate supports spans.
-  // TODO(phase-2): real 2x1 spans via a custom SliverGridDelegate.
-  static const String size2x1 = '2x1';
+  /// Maximum vertical span of a tile, in grid cells.
+  static const int maxHeightCells = 2;
 
   /// Tile JS entry file inside `apps/<id>/`.
   final String entry;
 
-  /// Declared tile size: [size1x1] (default) or [size2x1]; unknown manifest
-  /// values fall back to [size1x1].
-  final String size;
+  /// Horizontal tile span in grid cells (1..[maxWidthCells]); unknown
+  /// manifest values fall back to 1.
+  final int widthCells;
+
+  /// Vertical tile span in grid cells (1..[maxHeightCells]); unknown
+  /// manifest values fall back to 1.
+  final int heightCells;
+
+  /// The declared tile size as a `'WxH'` cell string (e.g. `'2x1'`).
+  String get size => '${widthCells}x$heightCells';
 
   /// Optional host-side refresh cadence: the tile host calls the tile's
   /// `tile.refresh` event every this many seconds (the tile JS can also just

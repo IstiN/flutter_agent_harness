@@ -317,6 +317,68 @@ void main() {
       expect(find.byKey(_faButtonKey), findsOneWidget);
     });
 
+    testWidgets('fling DOWN from the sheet stops at the mini bar', (
+      tester,
+    ) async {
+      await _pumpSheet(tester);
+      await _expand(tester);
+      expect(find.byKey(_pagerKey), findsOneWidget);
+
+      // A fast swipe down from the full sheet settles into the mini bar —
+      // it must NOT skip straight to the round icon.
+      await tester.fling(
+        find.byKey(const ValueKey('sessionChatSheetHandle')),
+        const Offset(0, 300),
+        1200,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(_pagerKey), findsNothing);
+      expect(find.byType(ChatComposer), findsOneWidget);
+      expect(find.byKey(_faButtonKey), findsNothing);
+    });
+
+    testWidgets('fling DOWN from the mini bar settles into the icon', (
+      tester,
+    ) async {
+      await _pumpSheet(tester);
+      expect(find.byType(ChatComposer), findsOneWidget);
+
+      await tester.fling(
+        find.byKey(const ValueKey('sessionChatSheetHandle')),
+        const Offset(0, 300),
+        1200,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(_faButtonKey), findsOneWidget);
+      expect(find.byType(ChatComposer), findsNothing);
+    });
+
+    testWidgets('a tap on the icon opens the MINI bar (not the sheet)', (
+      tester,
+    ) async {
+      await _pumpSheet(tester);
+      await _collapseToIcon(tester);
+      expect(find.byKey(_faButtonKey), findsOneWidget);
+
+      await tester.tap(find.byKey(_faButtonKey));
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatComposer), findsOneWidget);
+      expect(find.byKey(_pagerKey), findsNothing);
+      expect(find.byKey(_faButtonKey), findsNothing);
+    });
+
+    testWidgets('fling UP from the icon stops at the mini bar', (tester) async {
+      await _pumpSheet(tester);
+      await _collapseToIcon(tester);
+      expect(find.byKey(_faButtonKey), findsOneWidget);
+
+      await tester.fling(find.byKey(_faButtonKey), const Offset(0, -300), 1200);
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatComposer), findsOneWidget);
+      expect(find.byKey(_pagerKey), findsNothing);
+      expect(find.byKey(_faButtonKey), findsNothing);
+    });
+
     testWidgets('the composer sends to the active session', (tester) async {
       final harness = await _pumpSheet(tester);
       await _expand(tester);

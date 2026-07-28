@@ -1,5 +1,6 @@
-// Weather live tile — 1x1 launcher widget (~104px square canvas):
-// current temp + city + condition. Display-only: any tap opens the full
+// Weather live tile — 2x1 launcher widget (two grid cells wide, ~220x104
+// px canvas): condition glyph + city on the left, big temp + description on
+// the right. Display-only: any tap opens the full
 // Weather app. Shares storage.json with widget.js (the 'city' key), so the
 // tile follows the city the user picked in the app. Refetches on the host's
 // 'tile.refresh' event (manifest widget.refreshSeconds) and caches the last
@@ -27,27 +28,27 @@
     var t = jsr.theme;
     jsr.render({
       type: 'container',
-      padding: [10, 8, 10, 8],
+      padding: [14, 8, 14, 8],
       child: {
-        type: 'column', crossAxisAlignment: 'start', children: [
-          { type: 'row', crossAxisAlignment: 'center', children: [
-            { type: 'text', data: last ? last.icon : '🌡️',
-              style: { fontSize: 14 } },
-            { type: 'sizedBox', width: 4 },
-            { type: 'expanded', child: {
-              type: 'text', data: last ? last.areaName : city,
-              maxLines: 1, overflow: 'ellipsis',
-              style: { color: t.muted, fontSize: 11 } } },
-          ] },
-          { type: 'expanded', child: {
-            type: 'column', mainAxisAlignment: 'center',
-            crossAxisAlignment: 'start', children: [
+        type: 'row', crossAxisAlignment: 'center', children: [
+          { type: 'column', mainAxisSize: 'min', crossAxisAlignment: 'center',
+            children: [
+              { type: 'text', data: last ? last.icon : '🌡️',
+                style: { fontSize: 26 } },
+              { type: 'sizedBox', height: 2 },
+              { type: 'text', data: last ? last.areaName : city,
+                maxLines: 1, overflow: 'ellipsis',
+                style: { color: t.muted, fontSize: 11 } },
+            ] },
+          { type: 'expanded', child: { type: 'sizedBox' } },
+          { type: 'column', mainAxisSize: 'min', crossAxisAlignment: 'end',
+            children: [
               { type: 'text', data: last ? last.tempC + '°' : '—',
-                style: { color: t.text, fontSize: 30, fontWeight: 'w700' } },
+                style: { color: t.text, fontSize: 32, fontWeight: 'w700' } },
               { type: 'text', data: last ? last.desc : 'Loading…',
                 maxLines: 1, overflow: 'ellipsis',
                 style: { color: t.muted, fontSize: 10 } },
-            ] } },
+            ] },
         ] },
     });
   }

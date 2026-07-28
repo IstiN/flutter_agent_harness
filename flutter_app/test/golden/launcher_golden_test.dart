@@ -157,7 +157,8 @@ Future<MemoryExecutionEnv> _seededEnv({bool weatherTile = false}) async {
   }
   if (weatherTile) {
     // A live-tile app: the `"widget"` manifest section opts it into the
-    // AppTileHost cell instead of the static icon + label.
+    // AppTileHost cell instead of the static icon + label; "2x1" spans two
+    // grid cells (the classic medium widget).
     final sunIcon = _badgeIcon(
       '#0ea5e9',
       "<circle cx='12' cy='12' r='5' fill='$_fg'/>"
@@ -170,7 +171,7 @@ Future<MemoryExecutionEnv> _seededEnv({bool weatherTile = false}) async {
       'apps/weather/manifest.json',
       '{"id": "weather", "name": "Weather", "description": "Weather app", '
           '"icon": ${_jsonString(sunIcon)}, '
-          '"widget": {"entry": "widget_tile.js", "size": "1x1", '
+          '"widget": {"entry": "widget_tile.js", "size": "2x1", '
           '"refreshSeconds": 900}}',
     );
     await env.writeFile('apps/weather/widget.js', '(function(){})();');
@@ -179,7 +180,7 @@ Future<MemoryExecutionEnv> _seededEnv({bool weatherTile = false}) async {
   return env;
 }
 
-/// Fake tile engine emitting a deterministic weather-tile tree so the
+/// Fake tile engine emitting a deterministic 2x1 weather-tile tree so the
 /// live-tile goldens stay pixel-stable (no JavaScriptCore boot).
 final class _FakeTileEngine extends JsAppEngine {
   _FakeTileEngine({
@@ -193,23 +194,50 @@ final class _FakeTileEngine extends JsAppEngine {
   Future<void> start() async {
     tree.value = const {
       'type': 'container',
-      'alignment': 'center',
+      'padding': [14, 8, 14, 8],
       'child': {
-        'type': 'column',
-        'mainAxisSize': 'min',
+        'type': 'row',
         'crossAxisAlignment': 'center',
         'children': [
-          {'type': 'icon', 'name': 'wb_sunny', 'color': '#FBBF24', 'size': 18},
-          {'type': 'sizedBox', 'height': 2},
           {
-            'type': 'text',
-            'data': '21°',
-            'style': {'fontSize': 26, 'fontWeight': 'w700'},
+            'type': 'column',
+            'mainAxisSize': 'min',
+            'crossAxisAlignment': 'center',
+            'children': [
+              {
+                'type': 'icon',
+                'name': 'wb_sunny',
+                'color': '#FBBF24',
+                'size': 26,
+              },
+              {'type': 'sizedBox', 'height': 2},
+              {
+                'type': 'text',
+                'data': 'Minsk',
+                'style': {'fontSize': 11},
+              },
+            ],
           },
           {
-            'type': 'text',
-            'data': 'Minsk',
-            'style': {'fontSize': 11},
+            'type': 'expanded',
+            'child': {'type': 'sizedBox'},
+          },
+          {
+            'type': 'column',
+            'mainAxisSize': 'min',
+            'crossAxisAlignment': 'end',
+            'children': [
+              {
+                'type': 'text',
+                'data': '21°',
+                'style': {'fontSize': 32, 'fontWeight': 'w700'},
+              },
+              {
+                'type': 'text',
+                'data': 'Partly cloudy',
+                'style': {'fontSize': 10},
+              },
+            ],
           },
         ],
       },
@@ -267,6 +295,7 @@ Future<void> _pumpLauncher(
   StreamFunction? streamFunction,
   bool weatherTile = false,
   TileEngineFactory? tileEngineFactory,
+  EdgeInsets? viewPadding,
 }) async {
   final env = await _seededEnv(weatherTile: weatherTile);
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
@@ -276,27 +305,41 @@ Future<void> _pumpLauncher(
     service.messages.addAll(entry.value);
     manager.addSession(entry.key, service);
   }
+  final launcher = AppLauncherScreen(
+    manager: manager,
+    layoutStore: LauncherLayoutStore.inMemory(
+      order:
+          order ??
+          [
+            if (weatherTile) 'app:weather',
+            'app:notes',
+            'app:pomodoro',
+            'app:habits',
+            'app:dice',
+            LauncherLayoutStore.settingsKey,
+            LauncherLayoutStore.filesKey,
+          ],
+      folders: folders,
+    ),
+    appsStore: _appsStore(env),
+    tileEngineFactory: tileEngineFactory,
+  );
   await pumpGolden(
     tester,
-    AppLauncherScreen(
-      manager: manager,
-      layoutStore: LauncherLayoutStore.inMemory(
-        order:
-            order ??
-            [
-              if (weatherTile) 'app:weather',
-              'app:notes',
-              'app:pomodoro',
-              'app:habits',
-              'app:dice',
-              LauncherLayoutStore.settingsKey,
-              LauncherLayoutStore.filesKey,
-            ],
-        folders: folders,
-      ),
-      appsStore: _appsStore(env),
-      tileEngineFactory: tileEngineFactory,
-    ),
+    viewPadding == null
+        ? launcher
+        // Simulate a notched phone (Dynamic Island + home indicator):
+        // padding lets the SafeArea inset the stack, viewPadding drives
+        // the sheet's floating/docked geometry. copyWith keeps the host
+        // MediaQuery's size/pixel ratio intact.
+        : Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(padding: viewPadding, viewPadding: viewPadding),
+              child: launcher,
+            ),
+          ),
     size: goldenSizePhone,
     locale: locale,
     theme: theme,
@@ -539,6 +582,39 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('session sess-a'), findsOneWidget);
       await expectGolden(tester, 'launcher/sheet_pager2_dark');
+    });
+
+    // iPhone 16 Pro insets: 59pt island top, 34pt home indicator bottom.
+    const phoneInsets = EdgeInsets.only(top: 59, bottom: 34);
+
+    testWidgets('mini bar on a notched phone — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        viewPadding: phoneInsets,
+      );
+      await expectGolden(tester, 'launcher/sheet_mini_insets_dark');
+    });
+
+    testWidgets('expanded sheet on a notched phone — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        viewPadding: phoneInsets,
+      );
+      await expandSheet(tester);
+      await expectGolden(tester, 'launcher/sheet_expanded_insets_dark');
+    });
+
+    testWidgets('expanded sheet on a notched phone — light', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        theme: buildFahThemeLight(),
+        viewPadding: phoneInsets,
+      );
+      await expandSheet(tester);
+      await expectGolden(tester, 'launcher/sheet_expanded_insets_light');
     });
   });
 }
