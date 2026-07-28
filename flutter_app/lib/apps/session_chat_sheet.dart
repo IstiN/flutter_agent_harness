@@ -122,8 +122,6 @@ class _SessionChatSheetState extends State<SessionChatSheet>
 
   AgentService? get _activeService => widget.manager.active?.service;
 
-  bool get _isExpanded => _anim.value > 0.5;
-
   @override
   void initState() {
     super.initState();
@@ -586,15 +584,6 @@ class _SessionChatSheetState extends State<SessionChatSheet>
       ),
     );
   }
-
-  BoxDecoration _panelDecoration(FahColors colors) => BoxDecoration(
-    color: colors.panelAlt.withValues(alpha: 0.97),
-    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-    border: Border(top: BorderSide(color: colors.border)),
-    boxShadow: const [
-      BoxShadow(color: Colors.black38, blurRadius: 12, offset: Offset(0, -2)),
-    ],
-  );
 }
 
 /// A pager page for a persisted (not yet opened) session: opening it is in
