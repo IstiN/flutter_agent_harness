@@ -427,18 +427,27 @@ class _SessionChatSheetState extends State<SessionChatSheet>
                 decoration: BoxDecoration(
                   color: colors.panelAlt.withValues(alpha: 0.97),
                   borderRadius: radius,
-                  // Floating states (icon/mini) get a full ring; the docked
-                  // sheet only needs the top hairline.
-                  border: isIcon || sheetT == 0
-                      ? Border.all(color: colors.border)
-                      : Border(top: BorderSide(color: colors.border)),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Colors.black38,
-                      blurRadius: 12,
-                      offset: Offset(0, -2),
-                    ),
-                  ],
+                  // No border on the floating states (icon/mini) — a bare
+                  // shadow reads like iOS; only the docked sheet keeps the
+                  // top hairline where it meets the grid.
+                  border: sheetT > 0
+                      ? Border(top: BorderSide(color: colors.border))
+                      : null,
+                  boxShadow: sheetT > 0
+                      ? const [
+                          BoxShadow(
+                            color: Colors.black38,
+                            blurRadius: 12,
+                            offset: Offset(0, -2),
+                          ),
+                        ]
+                      : const [
+                          BoxShadow(
+                            color: Colors.black26,
+                            blurRadius: 18,
+                            offset: Offset(0, 6),
+                          ),
+                        ],
                 ),
                 child: Material(
                   type: MaterialType.transparency,
