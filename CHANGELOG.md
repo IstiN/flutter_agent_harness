@@ -718,4 +718,8 @@
 - refactor(example): drop unused members left by the sheet v3 rewrite
 - feat(example): sheet v3 — ONE panel: round icon ↔ mini bar ↔ full sheet
 
+## 0.1.101
+
+- fix(example): sheet respects the top safe area + light-theme golden
+
 ## Unreleased
