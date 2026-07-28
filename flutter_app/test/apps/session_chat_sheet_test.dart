@@ -169,14 +169,19 @@ void main() {
       });
       await tester.pump();
       expect(service.isStreaming, isTrue);
+
+      // The stream-start auto-grow animates the panel to the mini state
+      // (260 ms) and the body fades in there; the work bar's orbit repeats
+      // forever, so pump timed frames instead of pumpAndSettle.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
       expect(find.byType(FaWorkBar), findsOneWidget);
       expect(find.byKey(_faButtonKey), findsNothing);
 
-      // Expanding from the work bar opens the sheet. (No pumpAndSettle:
-      // the work bar's orbit animation repeats forever while streaming.)
-      await tester.tap(find.byTooltip('Open chat'));
+      await tester.tap(find.byType(FaWorkBar));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(_pagerKey), findsOneWidget);
     });
 
@@ -238,15 +243,29 @@ void main() {
       expect(find.byKey(_faButtonKey), findsOneWidget);
     });
 
-    testWidgets('pull-down on the header collapses the sheet', (tester) async {
+    testWidgets('pull-down collapses: sheet → mini bar → round icon', (
+      tester,
+    ) async {
       await _pumpSheet(tester);
       await _expand(tester);
+
+      // First pull: the sheet settles into the mini bar (composer stays,
+      // pager gone, no round icon).
       await tester.drag(
         find.byKey(const ValueKey('sessionChatSheetHandle')),
         const Offset(0, 400),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(_pagerKey), findsNothing);
+      expect(find.byKey(_faButtonKey), findsNothing);
+      expect(find.byType(ChatComposer), findsOneWidget);
+
+      // Second pull: collapses to the round Fa button.
+      await tester.drag(
+        find.byKey(const ValueKey('sessionChatSheetHandle')),
+        const Offset(0, 400),
+      );
+      await tester.pumpAndSettle();
       expect(find.byKey(_faButtonKey), findsOneWidget);
     });
 

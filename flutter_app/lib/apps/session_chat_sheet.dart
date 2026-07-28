@@ -91,11 +91,17 @@ class SessionChatSheet extends StatefulWidget {
 
 class _SessionChatSheetState extends State<SessionChatSheet>
     with SingleTickerProviderStateMixin {
-  /// Height of the mini bar (the collapsed state) without safe area.
-  static const double _miniHeight = 76;
+  /// Diameter of the fully-collapsed round Fa button.
+  static const double _iconSize = 56;
+
+  /// Height of the mini state (handle + composer row) without safe area.
+  static const double _miniHeight = 100;
 
   /// Expanded height as a fraction of the screen.
   static const double _expandedFraction = 0.92;
+
+  /// Animation value where the mini state sits (icon 0 → mini → sheet 1).
+  static const double _miniValue = 0.3;
 
   /// Downward/upward fling velocity (px/s) that completes the gesture.
   static const double _flingVelocity = 300;
@@ -103,13 +109,14 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   late final AnimationController _anim;
   late final PageController _pager;
   SessionNamesStore? _namesStore;
-  final _miniInput = TextEditingController();
-  final _miniFocus = FocusNode();
 
   /// Persisted (on-disk, not live) sessions merged into the pager after the
   /// live ones — the sidebar's merge, so swiping reaches every session.
   List<SessionMetadata> _persisted = const [];
   var _openingPersisted = false;
+
+  /// One-shot guard for the stream-start auto-grow to the mini state.
+  var _autoMini = false;
 
   List<FlutterManagedSession> get _liveSessions => widget.manager.sessions;
 
@@ -138,8 +145,6 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     _namesStore?.removeListener(_onChanged);
     _pager.dispose();
     _anim.dispose();
-    _miniInput.dispose();
-    _miniFocus.dispose();
     super.dispose();
   }
 
@@ -268,14 +273,7 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
-  void _sendMini() {
-    final text = _miniInput.text.trim();
-    if (text.isEmpty) return;
-    _miniInput.clear();
-    unawaited(_activeService?.sendText(text));
-  }
-
-  // --- the drag: the whole sheet follows the finger ------------------------
+  // --- the drag: the whole panel follows the finger ------------------------
 
   double get _sheetPixels {
     final screenH = MediaQuery.sizeOf(context).height;
@@ -297,12 +295,23 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     } else if (velocity >= _flingVelocity) {
       unawaited(_collapse());
     } else {
-      unawaited(_isExpanded ? _expand() : _collapse());
+      // Nearest state: icon (0), mini bar (_miniValue), full sheet (1).
+      final v = _anim.value;
+      final target = v < _miniValue / 2
+          ? 0.0
+          : (v < (_miniValue + 1) / 2 ? _miniValue : 1.0);
+      unawaited(
+        _anim.animateTo(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        ),
+      );
     }
   }
 
   void _onDragCancel() {
-    unawaited(_isExpanded ? _expand() : _collapse());
+    unawaited(_anim.value < (_miniValue + 1) / 2 ? _collapse() : _expand());
   }
 
   @override
@@ -310,188 +319,198 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     final service = _activeService;
     if (service == null) return const SizedBox.shrink();
     final colors = FahColors.of(context);
-    final screenH = MediaQuery.sizeOf(context).height;
-    final sheetH = screenH * _expandedFraction;
+    final size = MediaQuery.sizeOf(context);
+    final expandedH = size.height * _expandedFraction;
+    // ONE panel, three states driven by a single value: round Fa button
+    // (0) ↔ mini bar (handle + status + composer, _miniValue) ↔ full sheet
+    // (1). The container's height/width/radius lerp; the body inside is an
+    // OverflowBox pinned to the BOTTOM, so the composer row never moves —
+    // only the messages area above it stretches.
     return Align(
-      alignment: Alignment.bottomCenter,
+      alignment: Alignment.bottomRight,
       child: AnimatedBuilder(
         animation: _anim,
         builder: (context, _) {
-          return Stack(
-            alignment: Alignment.bottomCenter,
-            children: [
-              // Mini bar (or the work bar while streaming): cross-fades
-              // out across the first half of the expansion and is gone by
-              // the midpoint — never a ghost second panel.
-              if (_anim.value < 0.5)
-                Opacity(
-                  opacity: (1 - _anim.value * 2).clamp(0.0, 1.0),
-                  child: IgnorePointer(
-                    ignoring: _anim.value > 0.3,
-                    child: ListenableBuilder(
-                      listenable: service,
-                      builder: (context, _) {
-                        if (service.isStreaming) {
-                          return Align(
-                            alignment: Alignment.bottomCenter,
-                            child: FaWorkBar(
-                              service: service,
-                              onSend: service.sendText,
-                              onExpand: _expand,
+          final v = _anim.value;
+          final miniT = (v / _miniValue).clamp(0.0, 1.0);
+          final sheetT = ((v - _miniValue) / (1 - _miniValue)).clamp(0.0, 1.0);
+          // Icon (56px) → mini (natural body height) → sheet (92%). The
+          // mini state's height is the body's own, so the status row and
+          // composer are never clipped out of the panel. While streaming
+          // the icon state is skipped entirely (the mini body shows).
+          final double? height = (v < _miniValue * 0.7 && !service.isStreaming)
+              ? _iconSize
+              : (sheetT > 0
+                    ? _miniHeight + (expandedH - _miniHeight) * sheetT
+                    : null);
+          final width = sheetT > 0 || miniT >= 1
+              ? size.width
+              : _iconSize + (size.width - _iconSize) * miniT;
+          final radius = sheetT > 0 || miniT >= 1
+              ? const BorderRadius.vertical(top: Radius.circular(16))
+              : BorderRadius.circular(28 - 12 * miniT);
+          return Padding(
+            padding: EdgeInsets.only(
+              right: (1 - miniT) * 16,
+              bottom: (1 - miniT) * 16,
+            ),
+            child: Container(
+              width: width,
+              height: height,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: colors.panelAlt.withValues(alpha: 0.97),
+                borderRadius: radius,
+                border: Border(top: BorderSide(color: colors.border)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black38,
+                    blurRadius: 12,
+                    offset: Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                child: ClipRect(
+                  // Rebuild on service events too (streaming flips the
+                  // status row and hides the collapsed icon).
+                  child: ListenableBuilder(
+                    listenable: service,
+                    builder: (context, _) {
+                      // Fa starts working while hidden: grow to the mini
+                      // state so the status row and composer are usable.
+                      if (service.isStreaming &&
+                          _anim.value < _miniValue - 0.01 &&
+                          !_autoMini) {
+                        _autoMini = true;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            unawaited(
+                              _anim.animateTo(
+                                _miniValue,
+                                duration: const Duration(milliseconds: 260),
+                                curve: Curves.easeOutCubic,
+                              ),
+                            );
+                          }
+                        });
+                      } else if (!service.isStreaming) {
+                        _autoMini = false;
+                      }
+                      return Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (sheetT > 0)
+                            OverflowBox(
+                              maxWidth: size.width,
+                              maxHeight: expandedH,
+                              alignment: Alignment.bottomRight,
+                              child: _panelContent(colors, service, v, sheetT),
+                            )
+                          else
+                            OverflowBox(
+                              maxWidth: size.width,
+                              alignment: Alignment.bottomRight,
+                              child: _panelContent(colors, service, v, sheetT),
                             ),
-                          );
-                        }
-                        return _buildMiniBar(colors, service);
-                      },
-                    ),
+                          // The round Fa button (collapsed state): fills
+                          // the 56px container, NOT the overflowed body.
+                          if (v < _miniValue * 0.7 && !service.isStreaming)
+                            GestureDetector(
+                              key: const ValueKey('sessionChatFaButton'),
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => unawaited(_expand()),
+                              onVerticalDragUpdate: _onDragUpdate,
+                              onVerticalDragEnd: _onDragEnd,
+                              onVerticalDragCancel: _onDragCancel,
+                              child: const Center(child: FaMark(size: 26)),
+                            ),
+                        ],
+                      );
+                    },
                   ),
                 ),
-              // The sheet: slides up from below; absent while fully
-              // collapsed (out of the widget tree entirely).
-              if (_anim.value > 0)
-                Transform.translate(
-                  offset: Offset(0, (1 - _anim.value) * sheetH),
-                  child: SizedBox(
-                    height: sheetH,
-                    child: _buildSheet(colors, service),
-                  ),
-                ),
-            ],
+              ),
+            ),
           );
         },
       ),
     );
   }
 
-  /// The collapsed mini bar: drag handle, Fa mark, inline input, send and
-  /// expand buttons — the default home presence of the chat. Full-bleed
-  /// (like Material's BottomSheet): flush to the screen edges, top-rounded
-  /// corners only.
-  Widget _buildMiniBar(FahColors colors, AgentService service) {
-    return Container(
-      height: _miniHeight,
-      decoration: _panelDecoration(colors),
-      child: Material(
-        type: MaterialType.transparency,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onVerticalDragUpdate: _onDragUpdate,
-          onVerticalDragEnd: _onDragEnd,
-          onVerticalDragCancel: _onDragCancel,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _handle(colors),
-              Expanded(
-                child: Row(
-                  children: [
-                    const SizedBox(width: 12),
-                    const FaMark(size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        key: const ValueKey('sessionChatMiniInput'),
-                        controller: _miniInput,
-                        focusNode: _miniFocus,
-                        style: const TextStyle(fontSize: 13),
-                        decoration: InputDecoration(
-                          isDense: true,
-                          hintText: context.l10n.appsFollowUpHint,
-                          hintStyle: TextStyle(color: colors.dim, fontSize: 13),
-                          border: InputBorder.none,
-                        ),
-                        onSubmitted: (_) => _sendMini(),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.send, size: 16),
-                      tooltip: context.l10n.appsSendTooltip,
-                      visualDensity: VisualDensity.compact,
-                      color: colors.indigo,
-                      onPressed: _sendMini,
-                    ),
-                    IconButton(
-                      key: const ValueKey('sessionChatFaButton'),
-                      icon: const Icon(Icons.keyboard_arrow_up, size: 20),
-                      tooltip: context.l10n.appsOpenChatTooltip,
-                      visualDensity: VisualDensity.compact,
-                      color: colors.dim,
-                      onPressed: () => unawaited(_expand()),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+  /// The one continuous body: drag handle, the expanded zone (header +
+  /// session pager, appearing with [sheetT]), the streaming status row, and
+  /// the always-fixed [ChatComposer] at the bottom.
+  Widget _panelContent(
+    FahColors colors,
+    AgentService service,
+    double v,
+    double sheetT,
+  ) {
+    // No body below the icon threshold (the container is too small for the
+    // composer); while Fa starts working the auto-grow animates the panel
+    // to the mini state within 260 ms and the body fades in there.
+    if (v < _miniValue * 0.7) {
+      return const SizedBox.shrink();
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      // A tap anywhere outside the interactive children opens the sheet.
+      onTap: () => unawaited(_expand()),
+      onVerticalDragUpdate: _onDragUpdate,
+      onVerticalDragEnd: _onDragEnd,
+      onVerticalDragCancel: _onDragCancel,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _handle(colors),
+          if (sheetT > 0) ...[
+            Opacity(opacity: sheetT, child: _buildHeader(colors, service)),
+            Divider(height: 1, color: colors.border),
+            Expanded(child: _buildPager()),
+            Divider(height: 1, color: colors.border),
+          ] else
+            const SizedBox(height: 4),
+          if (service.isStreaming)
+            FaWorkBar(
+              service: service,
+              onExpand: _expand,
+              onCollapse: _collapse,
+              embedded: true,
+            ),
+          ChatComposer(
+            service: service,
+            uploadPicker: widget.uploadPicker,
+            asr: widget.asr,
+            asrTranscriber: widget.asrTranscriber,
           ),
-        ),
+        ],
       ),
     );
   }
 
-  /// The expanded sheet: header, session pager, status row, composer.
-  /// Full-bleed (like Material's BottomSheet): flush to the screen edges,
-  /// top-rounded corners only. The whole surface is the drag zone — child
-  /// scrollables (pager, transcript) claim their own gestures first.
-  Widget _buildSheet(FahColors colors, AgentService service) {
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: _panelDecoration(colors),
-      child: Material(
-        type: MaterialType.transparency,
-        child: GestureDetector(
-          onVerticalDragUpdate: _onDragUpdate,
-          onVerticalDragEnd: _onDragEnd,
-          onVerticalDragCancel: _onDragCancel,
-          child: Column(
-            children: [
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onVerticalDragUpdate: _onDragUpdate,
-                onVerticalDragEnd: _onDragEnd,
-                onVerticalDragCancel: _onDragCancel,
-                child: _buildHeader(colors, service),
+  /// The session pager (live + persisted sessions) — the expanded zone.
+  Widget _buildPager() {
+    return PageView.builder(
+      key: const ValueKey('sessionChatPager'),
+      controller: _pager,
+      itemCount: _pageCount,
+      onPageChanged: _onPageChanged,
+      itemBuilder: (context, index) => index < _liveSessions.length
+          ? _SessionTranscript(
+              key: ValueKey('sessionTranscript:${_liveSessions[index].id}'),
+              service: _liveSessions[index].service,
+              audioControllerFactory: widget.audioControllerFactory,
+              videoControllerFactory: widget.videoControllerFactory,
+            )
+          : _PersistedPage(
+              key: ValueKey(
+                'persistedPage:${_persisted[index - _liveSessions.length].id}',
               ),
-              Divider(height: 1, color: colors.border),
-              Expanded(
-                child: PageView.builder(
-                  key: const ValueKey('sessionChatPager'),
-                  controller: _pager,
-                  itemCount: _pageCount,
-                  onPageChanged: _onPageChanged,
-                  itemBuilder: (context, index) => index < _liveSessions.length
-                      ? _SessionTranscript(
-                          key: ValueKey(
-                            'sessionTranscript:${_liveSessions[index].id}',
-                          ),
-                          service: _liveSessions[index].service,
-                          audioControllerFactory: widget.audioControllerFactory,
-                          videoControllerFactory: widget.videoControllerFactory,
-                        )
-                      : _PersistedPage(
-                          key: ValueKey(
-                            'persistedPage:${_persisted[index - _liveSessions.length].id}',
-                          ),
-                          metadata: _persisted[index - _liveSessions.length],
-                          namesStore: _namesStore,
-                        ),
-                ),
-              ),
-              Divider(height: 1, color: colors.border),
-              FaWorkBar(
-                service: service,
-                onCollapse: _collapse,
-                embedded: true,
-              ),
-              ChatComposer(
-                service: service,
-                uploadPicker: widget.uploadPicker,
-                asr: widget.asr,
-                asrTranscriber: widget.asrTranscriber,
-              ),
-            ],
-          ),
-        ),
-      ),
+              metadata: _persisted[index - _liveSessions.length],
+              namesStore: _namesStore,
+            ),
     );
   }
 
@@ -507,8 +526,6 @@ class _SessionChatSheetState extends State<SessionChatSheet>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _handle(colors),
-          const SizedBox(height: 6),
           Row(
             children: [
               const FaMark(size: 18),
