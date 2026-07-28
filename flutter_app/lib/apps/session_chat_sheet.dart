@@ -324,115 +324,133 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     // (1). The container's height/width/radius lerp; the body inside is an
     // OverflowBox pinned to the BOTTOM, so the composer row never moves —
     // only the messages area above it stretches.
-    return Align(
-      alignment: Alignment.bottomRight,
-      child: AnimatedBuilder(
-        animation: _anim,
-        builder: (context, _) {
-          final v = _anim.value;
-          final miniT = (v / _miniValue).clamp(0.0, 1.0);
-          final sheetT = ((v - _miniValue) / (1 - _miniValue)).clamp(0.0, 1.0);
-          // Icon (56px) → mini (natural body height) → sheet (92%). The
-          // mini state's height is the body's own, so the status row and
-          // composer are never clipped out of the panel. While streaming
-          // the icon state is skipped entirely (the mini body shows).
-          final double? height = (v < _miniValue * 0.7 && !service.isStreaming)
-              ? _iconSize
-              : (sheetT > 0
-                    ? _miniHeight + (expandedH - _miniHeight) * sheetT
-                    : null);
-          final width = sheetT > 0 || miniT >= 1
-              ? size.width
-              : _iconSize + (size.width - _iconSize) * miniT;
-          final radius = sheetT > 0 || miniT >= 1
-              ? const BorderRadius.vertical(top: Radius.circular(16))
-              : BorderRadius.circular(28 - 12 * miniT);
-          return Padding(
-            padding: EdgeInsets.only(
-              right: (1 - miniT) * 16,
-              bottom: (1 - miniT) * 16,
-            ),
-            child: Container(
-              width: width,
-              height: height,
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: colors.panelAlt.withValues(alpha: 0.97),
-                borderRadius: radius,
-                border: Border(top: BorderSide(color: colors.border)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black38,
-                    blurRadius: 12,
-                    offset: Offset(0, -2),
-                  ),
-                ],
+    return SafeArea(
+      // Never let the sheet (or its drag handle) slide under the status bar.
+      bottom: false,
+      child: Align(
+        alignment: Alignment.bottomRight,
+        child: AnimatedBuilder(
+          animation: _anim,
+          builder: (context, _) {
+            final v = _anim.value;
+            final miniT = (v / _miniValue).clamp(0.0, 1.0);
+            final sheetT = ((v - _miniValue) / (1 - _miniValue)).clamp(
+              0.0,
+              1.0,
+            );
+            // Icon (56px) → mini (natural body height) → sheet (92%). The
+            // mini state's height is the body's own, so the status row and
+            // composer are never clipped out of the panel. While streaming
+            // the icon state is skipped entirely (the mini body shows).
+            final double? height =
+                (v < _miniValue * 0.7 && !service.isStreaming)
+                ? _iconSize
+                : (sheetT > 0
+                      ? _miniHeight + (expandedH - _miniHeight) * sheetT
+                      : null);
+            final width = sheetT > 0 || miniT >= 1
+                ? size.width
+                : _iconSize + (size.width - _iconSize) * miniT;
+            final radius = sheetT > 0 || miniT >= 1
+                ? const BorderRadius.vertical(top: Radius.circular(16))
+                : BorderRadius.circular(28 - 12 * miniT);
+            return Padding(
+              padding: EdgeInsets.only(
+                right: (1 - miniT) * 16,
+                bottom: (1 - miniT) * 16,
               ),
-              child: Material(
-                type: MaterialType.transparency,
-                child: ClipRect(
-                  // Rebuild on service events too (streaming flips the
-                  // status row and hides the collapsed icon).
-                  child: ListenableBuilder(
-                    listenable: service,
-                    builder: (context, _) {
-                      // Fa starts working while hidden: grow to the mini
-                      // state so the status row and composer are usable.
-                      if (service.isStreaming &&
-                          _anim.value < _miniValue - 0.01 &&
-                          !_autoMini) {
-                        _autoMini = true;
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) {
-                            unawaited(
-                              _anim.animateTo(
-                                _miniValue,
-                                duration: const Duration(milliseconds: 260),
-                                curve: Curves.easeOutCubic,
+              child: Container(
+                width: width,
+                height: height,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: colors.panelAlt.withValues(alpha: 0.97),
+                  borderRadius: radius,
+                  border: Border(top: BorderSide(color: colors.border)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black38,
+                      blurRadius: 12,
+                      offset: Offset(0, -2),
+                    ),
+                  ],
+                ),
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: ClipRect(
+                    // Rebuild on service events too (streaming flips the
+                    // status row and hides the collapsed icon).
+                    child: ListenableBuilder(
+                      listenable: service,
+                      builder: (context, _) {
+                        // Fa starts working while hidden: grow to the mini
+                        // state so the status row and composer are usable.
+                        if (service.isStreaming &&
+                            _anim.value < _miniValue - 0.01 &&
+                            !_autoMini) {
+                          _autoMini = true;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) {
+                              unawaited(
+                                _anim.animateTo(
+                                  _miniValue,
+                                  duration: const Duration(milliseconds: 260),
+                                  curve: Curves.easeOutCubic,
+                                ),
+                              );
+                            }
+                          });
+                        } else if (!service.isStreaming) {
+                          _autoMini = false;
+                        }
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (sheetT > 0)
+                              OverflowBox(
+                                maxWidth: size.width,
+                                maxHeight: expandedH,
+                                alignment: Alignment.bottomRight,
+                                child: _panelContent(
+                                  colors,
+                                  service,
+                                  v,
+                                  sheetT,
+                                ),
+                              )
+                            else
+                              OverflowBox(
+                                maxWidth: size.width,
+                                alignment: Alignment.bottomRight,
+                                child: _panelContent(
+                                  colors,
+                                  service,
+                                  v,
+                                  sheetT,
+                                ),
                               ),
-                            );
-                          }
-                        });
-                      } else if (!service.isStreaming) {
-                        _autoMini = false;
-                      }
-                      return Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          if (sheetT > 0)
-                            OverflowBox(
-                              maxWidth: size.width,
-                              maxHeight: expandedH,
-                              alignment: Alignment.bottomRight,
-                              child: _panelContent(colors, service, v, sheetT),
-                            )
-                          else
-                            OverflowBox(
-                              maxWidth: size.width,
-                              alignment: Alignment.bottomRight,
-                              child: _panelContent(colors, service, v, sheetT),
-                            ),
-                          // The round Fa button (collapsed state): fills
-                          // the 56px container, NOT the overflowed body.
-                          if (v < _miniValue * 0.7 && !service.isStreaming)
-                            GestureDetector(
-                              key: const ValueKey('sessionChatFaButton'),
-                              behavior: HitTestBehavior.opaque,
-                              onTap: () => unawaited(_expand()),
-                              onVerticalDragUpdate: _onDragUpdate,
-                              onVerticalDragEnd: _onDragEnd,
-                              onVerticalDragCancel: _onDragCancel,
-                              child: const Center(child: FaMark(size: 26)),
-                            ),
-                        ],
-                      );
-                    },
+                            // The round Fa button (collapsed state): fills
+                            // the 56px container, NOT the overflowed body.
+                            if (v < _miniValue * 0.7 && !service.isStreaming)
+                              GestureDetector(
+                                key: const ValueKey('sessionChatFaButton'),
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => unawaited(_expand()),
+                                onVerticalDragUpdate: _onDragUpdate,
+                                onVerticalDragEnd: _onDragEnd,
+                                onVerticalDragCancel: _onDragCancel,
+                                child: const Center(child: FaMark(size: 26)),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

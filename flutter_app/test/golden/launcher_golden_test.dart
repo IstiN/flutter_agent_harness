@@ -14,6 +14,7 @@ import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
+import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:flutter/material.dart';
@@ -180,6 +181,7 @@ AppsStore _appsStore(MemoryExecutionEnv env) => AppsStore(
 Future<void> _pumpLauncher(
   WidgetTester tester, {
   Locale locale = const Locale('en'),
+  ThemeData? theme,
   List<String>? order,
   List<LauncherFolder>? folders,
   Map<String, List<FahChatMessage>>? sessions,
@@ -214,6 +216,7 @@ Future<void> _pumpLauncher(
     ),
     size: goldenSizePhone,
     locale: locale,
+    theme: theme,
     wrap: (child) => child,
   );
 }
@@ -332,6 +335,18 @@ void main() {
       );
       await expandSheet(tester);
       await expectGolden(tester, 'launcher_sheet_expanded_ru');
+    });
+
+    testWidgets('sheet expanded — light theme (safe-area handle visible)', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        theme: buildFahThemeLight(),
+      );
+      await expandSheet(tester);
+      await expectGolden(tester, 'launcher_sheet_expanded_light');
     });
 
     testWidgets('sheet pager — second session', (tester) async {
