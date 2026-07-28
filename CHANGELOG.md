@@ -709,4 +709,8 @@
 
 - feat(example): session chat sheet v2 — mini bar with input, smooth physics
 
+## 0.1.99
+
+- fix(example): sheet UX — full-bleed, one surface, ghost panel gone
+
 ## Unreleased
