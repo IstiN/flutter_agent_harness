@@ -713,4 +713,9 @@
 
 - fix(example): sheet UX — full-bleed, one surface, ghost panel gone
 
+## 0.1.100
+
+- refactor(example): drop unused members left by the sheet v3 rewrite
+- feat(example): sheet v3 — ONE panel: round icon ↔ mini bar ↔ full sheet
+
 ## Unreleased
