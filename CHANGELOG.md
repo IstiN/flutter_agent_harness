@@ -705,4 +705,8 @@
 - fix(example): home control disambiguation (room/UUID) + duplicate-bridge-id write routing
 - fix(example): preset carousel is full-bleed — cards slide behind the edges
 
+## 0.1.98
+
+- feat(example): session chat sheet v2 — mini bar with input, smooth physics
+
 ## Unreleased
