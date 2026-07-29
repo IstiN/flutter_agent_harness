@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Fa (Flutter Agent Harness)</title>
+<meta name="description" content="Privacy policy of the Fa app: local-first design, keys in the platform Keychain, content sent only to the AI providers you connect.">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#070a10">
+<link rel="canonical" href="https://fa1.dev/privacy.html">
+<link rel="icon" href="favicon.svg?v=2" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #070a10; --panel: #0d1420; --border: #1c2637;
+    --text: #e8eef7; --dim: #93a1b5; --accent: #5eead4;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 16px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 20px 96px; }
+  a { color: var(--accent); }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 40px 0 12px; }
+  h3 { font-size: 16px; margin: 24px 0 8px; }
+  p, li { color: var(--dim); }
+  strong { color: var(--text); }
+  .meta { color: var(--dim); font-size: 14px; margin-bottom: 24px; }
+  .lang {
+    display: inline-flex; gap: 8px; margin: 16px 0 8px;
+    font-size: 14px;
+  }
+  .lang a {
+    padding: 4px 12px; border: 1px solid var(--border);
+    border-radius: 999px; text-decoration: none; color: var(--dim);
+  }
+  .lang a:hover { color: var(--accent); border-color: var(--accent); }
+  .back { display: inline-block; margin-bottom: 24px; text-decoration: none; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 40px 0 0; }
+  ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="index.html">← Fa — Flutter Agent Harness</a>
+  <h1>Privacy Policy</h1>
+  <div class="meta">Fa (Flutter Agent Harness) · Effective date: July 29, 2026</div>
+  <nav class="lang" aria-label="Language">
+    <a href="#en">English</a>
+    <a href="#ru">Русский</a>
+  </nav>
+
+  <section id="en">
+    <h2>English</h2>
+    <p>This policy covers the <strong>Fa</strong> mobile/desktop/web
+    application, built on the open-source Flutter Agent Harness. The short
+    version: the app is designed local-first — your keys, chats, and files
+    stay on your device, and content leaves the device only to the AI
+    providers you explicitly connect.</p>
+
+    <h3>1. What stays on your device</h3>
+    <ul>
+      <li><strong>API keys and secrets</strong> are stored in the platform
+      Keychain (iOS/macOS) or the local secure store of the app sandbox.
+      They are never transmitted anywhere except directly to the provider
+      they belong to.</li>
+      <li><strong>Chats, sessions, settings, and files</strong> (including
+      files the agent creates for you) are stored locally on your
+      device.</li>
+      <li><strong>Calendar, contacts, health, and smart-home data</strong>
+      is read (and written) on-device only, for the features you invoke. It
+      is never uploaded.</li>
+    </ul>
+
+    <h3>2. What leaves your device, and where</h3>
+    <ul>
+      <li><strong>AI requests.</strong> When you chat with the agent or
+      generate media (images, music, video), the relevant prompts and
+      conversation context are sent — directly from your device — to the AI
+      providers <strong>you</strong> configure (for example OpenRouter, or a
+      custom endpoint you enter). Those providers process your data under
+      their own privacy policies. The app has no server of its own and
+      proxies nothing.</li>
+      <li><strong>Analytics.</strong> If available on your platform, the app
+      sends Firebase Analytics events containing metadata only: event names
+      (e.g. "app started", "message sent"), provider/model identifiers, and
+      coarse buckets (message-length ranges, counts). Analytics
+      <strong>never</strong> includes API keys, message text, prompts, file
+      contents, or paths.</li>
+    </ul>
+
+    <h3>3. Permissions</h3>
+    <p>All system permissions are <strong>optional</strong> and requested
+    only in context, when a feature needs them: notifications (reminders
+    and agent alerts), microphone (voice input), calendar (event planning),
+    contacts (call/text actions), health (activity summaries), and home
+    (smart-home control). The core app works without any of them, and you
+    can revoke them anytime in your device's Settings.</p>
+
+    <h3>4. No accounts, no ads, no sale of data</h3>
+    <p>The app requires no account, shows no ads, and does not sell, rent,
+    or share your personal data with third parties for their marketing.
+    There is no tracking beyond the analytics described above.</p>
+
+    <h3>5. Children's privacy</h3>
+    <p>The app is not directed at children under 13 and does not knowingly
+    collect personal data from them.</p>
+
+    <h3>6. Changes and contact</h3>
+    <p>Changes to this policy are posted at this URL. Questions: open an
+    issue at
+    <a href="https://github.com/IstiN/flutter_agent_harness/issues">github.com/IstiN/flutter_agent_harness/issues</a>.</p>
+  </section>
+
+  <hr>
+
+  <section id="ru">
+    <h2>Русский</h2>
+    <p><em>Дата вступления в силу: 29 июля 2026 г.</em></p>
+    <p>Эта политика распространяется на приложение <strong>Fa</strong>
+    (мобильное, desktop и web), построенное на открытом Flutter Agent
+    Harness. Коротко: приложение спроектировано local-first — ключи, чаты и
+    файлы остаются на устройстве, а наружу уходит только то, что вы сами
+    отправляете выбранным AI-провайдерам.</p>
+
+    <h3>1. Что остаётся на устройстве</h3>
+    <ul>
+      <li><strong>API-ключи и секреты</strong> хранятся в Keychain
+      платформы (iOS/macOS) или в локальном защищённом хранилище
+      приложения. Они никуда не передаются, кроме как напрямую тому
+      провайдеру, которому принадлежат.</li>
+      <li><strong>Чаты, сессии, настройки и файлы</strong> (включая файлы,
+      которые агент создаёт для вас) хранятся локально на устройстве.</li>
+      <li><strong>Календарь, контакты, здоровье и умный дом</strong>
+      читаются (и изменяются) только на устройстве и только для функций,
+      которые вы вызываете. Эти данные никогда не загружаются.</li>
+    </ul>
+
+    <h3>2. Что покидает устройство и куда</h3>
+    <ul>
+      <li><strong>Запросы к AI.</strong> Когда вы общаетесь с агентом или
+      генерируете медиа (изображения, музыку, видео), соответствующие
+      промпты и контекст диалога отправляются — напрямую с устройства —
+      тем AI-провайдерам, которых <strong>вы</strong> настроили (например
+      OpenRouter или собственный endpoint). Эти провайдеры обрабатывают
+      данные по своим политикам конфиденциальности. У приложения нет
+      собственного сервера, и оно ничего не проксирует.</li>
+      <li><strong>Аналитика.</strong> Если доступна на вашей платформе,
+      приложение отправляет события Firebase Analytics только с
+      метаданными: имена событий (например «приложение запущено»,
+      «сообщение отправлено»), идентификаторы провайдера/модели и грубые
+      диапазоны (длина сообщения, счётчики). Аналитика
+      <strong>никогда</strong> не включает API-ключи, тексты сообщений,
+      промпты, содержимое файлов или пути.</li>
+    </ul>
+
+    <h3>3. Разрешения</h3>
+    <p>Все системные разрешения <strong>опциональны</strong> и
+    запрашиваются только в контексте, когда функции они нужны: уведомления
+    (напоминания и алерты агента), микрофон (голосовой ввод), календарь
+    (планирование событий), контакты (звонки/сообщения), здоровье (сводки
+    активности) и дом (умный дом). Приложение полностью работает и без них,
+    а отозвать их можно в любой момент в настройках устройства.</p>
+
+    <h3>4. Без аккаунтов, рекламы и продажи данных</h3>
+    <p>Приложение не требует аккаунта, не показывает рекламу и не продаёт,
+    не сдаёт в аренду и не передаёт ваши персональные данные третьим лицам
+    для их маркетинга. Никакого трекинга, кроме описанной выше аналитики,
+    нет.</p>
+
+    <h3>5. Конфиденциальность детей</h3>
+    <p>Приложение не предназначено для детей младше 13 лет и не собирает
+    осознанно их персональные данные.</p>
+
+    <h3>6. Изменения и контакты</h3>
+    <p>Изменения политики публикуются по этому же адресу. Вопросы — через
+    issues:
+    <a href="https://github.com/IstiN/flutter_agent_harness/issues">github.com/IstiN/flutter_agent_harness/issues</a>.</p>
+  </section>
+</main>
+</body>
+</html>

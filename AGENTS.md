@@ -351,7 +351,10 @@ factual: paths, commands, invariants — no essays.
   every 3s, 4-min cap, cancel-token aware → `unsigned_urls` or
   `GET /videos/{id}/content` mp4).
 - `site/` — static GitHub Pages landing; `.github/workflows/pages.yml`
-  builds the web demo into `app/` (never committed).
+  builds the web demo into `app/` (never committed). `site/privacy.html`
+  is the published privacy policy (`PRIVACY.md` in the repo root is the
+  source text — keep both in sync; the onboarding privacy page links to
+  `https://fa1.dev/privacy.html`).
 - `scripts/` — codegen and quality-gate scripts.
 
 ## Hard architecture rules

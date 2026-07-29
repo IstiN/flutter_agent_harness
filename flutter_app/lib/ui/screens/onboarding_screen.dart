@@ -68,10 +68,9 @@ class OnboardingScreen extends StatefulWidget {
 class _OnboardingScreenState extends State<OnboardingScreen> {
   static const _pageCount = 4;
 
-  /// No dedicated privacy policy ships with the app or the project site —
-  /// the link points at the project landing page.
-  static const _privacyPolicyUrl =
-      'https://istin.github.io/flutter_agent_harness/';
+  /// The published privacy policy (site/privacy.html, deployed to GitHub
+  /// Pages by pages.yml; the source of truth lives in PRIVACY.md).
+  static const _privacyPolicyUrl = 'https://fa1.dev/privacy.html';
 
   late final PageController _pageController = PageController(
     initialPage: widget.initialPage,
