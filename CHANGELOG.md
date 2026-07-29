@@ -729,4 +729,8 @@
 - feat(example): tile span sizes + floating mini chat bar, directional sheet swipes
 - feat(example): live app tiles on the launcher + chat sheet mini-by-default
 
+## 0.1.103
+
+- feat(example): first-launch onboarding, scene3d wiring + 3D game demo, sheet/tile polish
+
 ## Unreleased
