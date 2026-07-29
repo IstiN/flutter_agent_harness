@@ -741,4 +741,8 @@
 
 - feat(example): icons-per-row setting, tight row gap, pager bounce fix
 
+## 0.1.106
+
+- feat(example): app content respects the bottom safe area + onboarding replay
+
 ## Unreleased
