@@ -745,4 +745,8 @@
 
 - feat(example): app content respects the bottom safe area + onboarding replay
 
+## 0.1.107
+
+- docs: privacy policy — PRIVACY.md + published site page, onboarding links it
+
 ## Unreleased
