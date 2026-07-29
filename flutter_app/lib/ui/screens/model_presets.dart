@@ -175,9 +175,13 @@ bool modelPresetMatches(
 /// the preset's chat model — the same apply the default-chat-model flow
 /// performs (reconfigure + persist the last connection). Callers must check
 /// [modelPresetKeyAvailable] first; hosted presets need a key.
+///
+/// [service] may be null in the pre-connection onboarding flow: then only
+/// the slot overrides and the last connection are persisted — the boot
+/// auto-connect picks the saved connection up and builds the real service.
 Future<void> applyModelPreset({
   required ModelPreset preset,
-  required AgentService service,
+  required AgentService? service,
   required MediaModelsStore store,
   SessionKeysStore? keysStore,
   LastConnectionStore? lastConnectionStore,
@@ -207,7 +211,7 @@ Future<void> applyModelPreset({
     maxTokens: fallbackMaxTokens,
     supportsImages: modelIdSuggestsVision(preset.chatModelId),
   );
-  await service.reconfigure(config);
+  await service?.reconfigure(config);
   await lastConnectionStore?.saveFromConfig(config);
 }
 

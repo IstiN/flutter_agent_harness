@@ -401,6 +401,7 @@ class AppsStore {
     'homekit',
     'voice-notes',
     'reminders',
+    '3d-game',
   ];
 
   /// The demo apps this store seeds (see [seedBundledApps]).

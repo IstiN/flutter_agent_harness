@@ -27,29 +27,32 @@
     // Read jsr.theme fresh on every render — the object is replaced when
     // the host theme changes.
     var t = jsr.theme;
+    // Medium-widget structure (like the iOS weather widget): a compact
+    // header row on top (glyph + city), the data row pinned to the bottom
+    // (big temp left, condition right) — no dead middle space.
     jsr.render({
       type: 'container',
-      padding: [18, 12, 18, 12],
+      padding: [16, 12, 16, 12],
       child: {
-        type: 'row', crossAxisAlignment: 'center', children: [
-          { type: 'column', mainAxisSize: 'min', crossAxisAlignment: 'center',
-            children: [
-              { type: 'text', data: last ? last.icon : '🌡️',
-                style: { fontSize: 34 } },
-              { type: 'sizedBox', height: 4 },
-              { type: 'text', data: last ? last.areaName : city,
-                maxLines: 1, overflow: 'ellipsis',
-                style: { color: t.muted, fontSize: 12 } },
-            ] },
+        type: 'column', crossAxisAlignment: 'stretch', children: [
+          { type: 'row', crossAxisAlignment: 'center', children: [
+            { type: 'text', data: last ? last.icon : '🌡️',
+              style: { fontSize: 20 } },
+            { type: 'sizedBox', width: 6 },
+            { type: 'expanded', child: {
+              type: 'text', data: last ? last.areaName : city,
+              maxLines: 1, overflow: 'ellipsis',
+              style: { color: t.text, fontSize: 13, fontWeight: 'w600' } } },
+          ] },
           { type: 'expanded', child: { type: 'sizedBox' } },
-          { type: 'column', mainAxisSize: 'min', crossAxisAlignment: 'end',
-            children: [
-              { type: 'text', data: last ? last.tempC + '°' : '—',
-                style: { color: t.text, fontSize: 42, fontWeight: 'w700' } },
-              { type: 'text', data: last ? last.desc : 'Loading…',
-                maxLines: 1, overflow: 'ellipsis',
-                style: { color: t.muted, fontSize: 11 } },
-            ] },
+          { type: 'row', crossAxisAlignment: 'end', children: [
+            { type: 'text', data: last ? last.tempC + '°' : '—',
+              style: { color: t.text, fontSize: 40, fontWeight: 'w700' } },
+            { type: 'expanded', child: { type: 'sizedBox' } },
+            { type: 'text', data: last ? last.desc : 'Loading…',
+              maxLines: 1, overflow: 'ellipsis',
+              style: { color: t.muted, fontSize: 12 } },
+          ] },
         ] },
     });
   }

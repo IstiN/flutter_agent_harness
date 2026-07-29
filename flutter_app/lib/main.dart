@@ -20,10 +20,12 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/media_models_store.dart';
+import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -78,6 +80,7 @@ Future<void> main() async {
   final lastConnection = await LastConnectionStore.load(env);
   debugPrint('[fah] last connection loaded');
   final themeController = await ThemeController.load(env);
+  final onboardingStore = await OnboardingStore.load(env);
   final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
   final mediaModels = await MediaModelsStore.load(env);
   // Analytics is strictly optional. On web with placeholder options
@@ -101,6 +104,7 @@ Future<void> main() async {
       registry: registry,
       lastConnectionStore: lastConnection,
       themeController: themeController,
+      onboardingStore: onboardingStore,
       sessionKeysStore: sessionKeys,
       mediaModelsStore: mediaModels,
       analytics: analytics,
@@ -115,6 +119,7 @@ class MyApp extends StatelessWidget {
     this.registry,
     this.lastConnectionStore,
     this.themeController,
+    this.onboardingStore,
     this.sessionKeysStore,
     this.mediaModelsStore,
     this.webLlmEngine,
@@ -138,6 +143,10 @@ class MyApp extends StatelessWidget {
   /// The persisted appearance choice; `null` falls back to a shared
   /// in-memory controller defaulting to [FahThemeMode.system] (tests).
   final ThemeController? themeController;
+
+  /// The persisted first-launch onboarding flag; `null` skips onboarding
+  /// entirely (tests, and any host that never shows it).
+  final OnboardingStore? onboardingStore;
 
   /// The persisted saved-keys store; `null` skips the scope (the settings
   /// Keys section and form prefill hide, tests).
@@ -198,6 +207,7 @@ class MyApp extends StatelessWidget {
             env: env,
             registry: registry,
             lastConnectionStore: lastConnectionStore,
+            onboardingStore: onboardingStore,
             sessionKeysStore: sessionKeys,
             webLlmEngine: webLlmEngine,
             gemmaEngine: gemmaEngine,
@@ -284,12 +294,19 @@ Widget faHomeScreen({
 /// key is gone, or it was an on-device model — those re-offer the quick
 /// start instead of silently loading multi-GB weights at boot). A
 /// restorable last connection goes straight to chat.
+///
+/// First launch (no restorable connection AND the onboarding flag unseen,
+/// see [OnboardingStore]) shows the [OnboardingScreen] first; completing or
+/// skipping it sets the flag and boot continues — a model preset applied
+/// during onboarding persists a restorable connection, so boot re-evaluates
+/// and can go straight to chat.
 class BootstrapScreen extends StatefulWidget {
   const BootstrapScreen({
     super.key,
     this.env,
     this.registry,
     this.lastConnectionStore,
+    this.onboardingStore,
     this.sessionKeysStore,
     this.webLlmEngine,
     this.gemmaEngine,
@@ -305,6 +322,10 @@ class BootstrapScreen extends StatefulWidget {
 
   /// The persisted last-connection record being restored.
   final LastConnectionStore? lastConnectionStore;
+
+  /// The persisted first-launch onboarding flag; `null` never shows
+  /// onboarding (tests).
+  final OnboardingStore? onboardingStore;
 
   /// The persisted saved-keys store (hosted key resolution).
   final SessionKeysStore? sessionKeysStore;
@@ -322,6 +343,18 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// The connection being restored; null renders the setup form directly
   /// (no navigation, so the first frame already shows it).
   AgentConfig? _config;
+
+  /// Set once the onboarding flow finishes (completed or skipped) so the
+  /// boot continues to the setup form or the auto-connect.
+  var _onboardingDone = false;
+
+  /// First-launch onboarding shows only when nothing can be restored
+  /// (upgraders with a saved connection never see it) and the persisted
+  /// flag is still unseen.
+  bool get _showOnboarding {
+    final store = widget.onboardingStore;
+    return !_onboardingDone && _config == null && store != null && !store.seen;
+  }
 
   @override
   void initState() {
@@ -400,10 +433,38 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
     );
   }
 
+  Widget _buildOnboardingScreen() {
+    return OnboardingScreen(
+      onboardingStore: widget.onboardingStore,
+      lastConnectionStore: widget.lastConnectionStore,
+      onFinished: ({required bool skipped}) => _onboardingFinished(),
+    );
+  }
+
+  /// The onboarding flow ended (completed or skipped — the screen already
+  /// persisted the seen flag). A model preset applied during onboarding
+  /// saves a restorable last connection, so boot re-evaluates: restorable →
+  /// auto-connect, otherwise the setup form.
+  void _onboardingFinished() {
+    final config = restorableBootConfig(
+      connection: widget.lastConnectionStore?.connection,
+      registry: widget.registry,
+      sessionKeysStore: widget.sessionKeysStore,
+    );
+    setState(() {
+      _onboardingDone = true;
+      _config = config;
+    });
+    if (config != null) unawaited(_boot());
+  }
+
   @override
   Widget build(BuildContext context) {
     final config = _config;
-    if (config == null) return _buildSetupScreen();
+    if (config == null) {
+      if (_showOnboarding) return _buildOnboardingScreen();
+      return _buildSetupScreen();
+    }
     return const Scaffold(
       body: Center(
         child: Column(

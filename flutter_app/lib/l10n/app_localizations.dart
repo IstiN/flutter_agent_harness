@@ -1292,6 +1292,216 @@ abstract class AppLocalizations {
   /// **'Set key'**
   String get modelPresetsSetKey;
 
+  /// No description provided for @onboardingAiDisclaimer.
+  ///
+  /// In en, this message translates to:
+  /// **'Answers come from third-party AI providers you connect. AI can be wrong or incomplete — always verify important information.'**
+  String get onboardingAiDisclaimer;
+
+  /// No description provided for @onboardingAiDisclaimerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'AI can make mistakes'**
+  String get onboardingAiDisclaimerTitle;
+
+  /// No description provided for @onboardingFeatureApps.
+  ///
+  /// In en, this message translates to:
+  /// **'Builds real mini-apps with live widgets right on your home grid'**
+  String get onboardingFeatureApps;
+
+  /// No description provided for @onboardingFeatureAutomation.
+  ///
+  /// In en, this message translates to:
+  /// **'Automates your calendar, reminders and smart home'**
+  String get onboardingFeatureAutomation;
+
+  /// No description provided for @onboardingFeatureMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Generates images, music and video on demand'**
+  String get onboardingFeatureMedia;
+
+  /// No description provided for @onboardingGetStarted.
+  ///
+  /// In en, this message translates to:
+  /// **'Get started'**
+  String get onboardingGetStarted;
+
+  /// No description provided for @onboardingModelsBody.
+  ///
+  /// In en, this message translates to:
+  /// **'One tap applies a full combo — chat plus image, music and video models. You can change everything later in Settings.'**
+  String get onboardingModelsBody;
+
+  /// No description provided for @onboardingModelsSetUpLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up later'**
+  String get onboardingModelsSetUpLater;
+
+  /// No description provided for @onboardingModelsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick your models'**
+  String get onboardingModelsTitle;
+
+  /// No description provided for @onboardingNext.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get onboardingNext;
+
+  /// No description provided for @onboardingPermissionCalendar.
+  ///
+  /// In en, this message translates to:
+  /// **'Calendar'**
+  String get onboardingPermissionCalendar;
+
+  /// No description provided for @onboardingPermissionCalendarDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Event planning'**
+  String get onboardingPermissionCalendarDesc;
+
+  /// No description provided for @onboardingPermissionContacts.
+  ///
+  /// In en, this message translates to:
+  /// **'Contacts'**
+  String get onboardingPermissionContacts;
+
+  /// No description provided for @onboardingPermissionContactsDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Call and message actions'**
+  String get onboardingPermissionContactsDesc;
+
+  /// No description provided for @onboardingPermissionHealth.
+  ///
+  /// In en, this message translates to:
+  /// **'Health'**
+  String get onboardingPermissionHealth;
+
+  /// No description provided for @onboardingPermissionHealthDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Activity summaries'**
+  String get onboardingPermissionHealthDesc;
+
+  /// No description provided for @onboardingPermissionHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Home'**
+  String get onboardingPermissionHome;
+
+  /// No description provided for @onboardingPermissionHomeDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Smart home control'**
+  String get onboardingPermissionHomeDesc;
+
+  /// No description provided for @onboardingPermissionMicrophone.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone'**
+  String get onboardingPermissionMicrophone;
+
+  /// No description provided for @onboardingPermissionMicrophoneDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice input'**
+  String get onboardingPermissionMicrophoneDesc;
+
+  /// No description provided for @onboardingPermissionNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get onboardingPermissionNotifications;
+
+  /// No description provided for @onboardingPermissionNotificationsDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Reminders and alerts'**
+  String get onboardingPermissionNotificationsDesc;
+
+  /// No description provided for @onboardingPermissionsBody.
+  ///
+  /// In en, this message translates to:
+  /// **'All of these are optional — core chat works without any of them. Fa asks only in context, when a feature actually needs it, and you can change your mind anytime in the system Settings.'**
+  String get onboardingPermissionsBody;
+
+  /// No description provided for @onboardingPermissionsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Permissions, on your terms'**
+  String get onboardingPermissionsTitle;
+
+  /// No description provided for @onboardingPrivacyKeysDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'API keys live in the platform Keychain (iOS/macOS) or the local secure store — never in chat logs.'**
+  String get onboardingPrivacyKeysDesc;
+
+  /// No description provided for @onboardingPrivacyKeysTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Keys stay locked away'**
+  String get onboardingPrivacyKeysTitle;
+
+  /// No description provided for @onboardingPrivacyOnDeviceDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Your conversations and files stay on this device.'**
+  String get onboardingPrivacyOnDeviceDesc;
+
+  /// No description provided for @onboardingPrivacyOnDeviceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats and files stay on device'**
+  String get onboardingPrivacyOnDeviceTitle;
+
+  /// No description provided for @onboardingPrivacyPolicyLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy policy'**
+  String get onboardingPrivacyPolicyLink;
+
+  /// No description provided for @onboardingPrivacyProvidersDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Content is sent only to the AI providers you explicitly connect.'**
+  String get onboardingPrivacyProvidersDesc;
+
+  /// No description provided for @onboardingPrivacyProvidersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'You choose the providers'**
+  String get onboardingPrivacyProvidersTitle;
+
+  /// No description provided for @onboardingPrivacyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your data stays yours'**
+  String get onboardingPrivacyTitle;
+
+  /// No description provided for @onboardingSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get onboardingSkip;
+
+  /// No description provided for @onboardingWelcomeBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat with an AI agent that does real work, not just talk.'**
+  String get onboardingWelcomeBody;
+
+  /// No description provided for @onboardingWelcomeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Meet Fa'**
+  String get onboardingWelcomeTitle;
+
   /// No description provided for @quickStartCachedLabel.
   ///
   /// In en, this message translates to:

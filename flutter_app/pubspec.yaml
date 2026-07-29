@@ -109,6 +109,9 @@ dependencies:
   firebase_core: ^4.12.1
   firebase_analytics: ^12.4.5
 
+  # Opens the privacy policy link (onboarding privacy page) in the browser.
+  url_launcher: ^6.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -134,6 +137,7 @@ flutter:
 
   assets:
     - .env
+    - assets/apps/3d-game/
     - assets/apps/animation-showcase/
     - assets/apps/calculator/
     - assets/apps/calendar/

@@ -539,14 +539,19 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     final column = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _handle(colors),
+        // The drag handle belongs to the EXPANDED sheet only — the mini
+        // bar is a clean composer surface with no handle strip or seam
+        // (drags work anywhere on the bar anyway).
         if (sheetT > 0) ...[
+          Opacity(opacity: sheetT, child: _handle(colors)),
           Opacity(opacity: sheetT, child: _buildHeader(colors, service)),
           Divider(height: 1, color: colors.border),
           Expanded(child: _buildPager()),
           Divider(height: 1, color: colors.border),
         ] else
-          const SizedBox(height: 4),
+          // Keyed drag affordance for tests (the whole bar is draggable;
+          // this just gives finders a stable target in the mini state).
+          const SizedBox(height: 6, key: ValueKey('sessionChatMiniDragZone')),
         // The status row belongs to the mini state; the expanded sheet
         // shows the streaming progress inside the transcript itself.
         if (service.isStreaming && sheetT == 0)

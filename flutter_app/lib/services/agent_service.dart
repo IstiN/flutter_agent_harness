@@ -207,7 +207,15 @@ class AgentService extends ChangeNotifier {
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
     // progressive disclosure — metadata in the prompt, bodies via `read`.
-    await _seedBundledSkills(resolvedEnv);
+    // The timeout is not decorative: rootBundle.loadString of a > ~50 KB
+    // asset never completes inside flutter_test's FakeAsync zone (its
+    // real-IO completion never reaches the fake zone), and the contract
+    // above says seeding must NEVER block session creation.
+    try {
+      await _seedBundledSkills(resolvedEnv).timeout(const Duration(seconds: 5));
+    } on Object {
+      // Best-effort seeding — continue without it.
+    }
     final roots = defaultSkillRoots(cwd: resolvedEnv.cwd, homeDir: null);
     final skills = await discoverSkills(
       resolvedEnv,

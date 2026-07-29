@@ -718,6 +718,123 @@ class AppLocalizationsRu extends AppLocalizations {
   String get modelPresetsSetKey => 'Задать ключ';
 
   @override
+  String get onboardingAiDisclaimer =>
+      'Ответы дают сторонние ИИ-провайдеры, которых вы подключаете. ИИ может ошибаться и быть неполным — всегда проверяйте важную информацию.';
+
+  @override
+  String get onboardingAiDisclaimerTitle => 'ИИ может ошибаться';
+
+  @override
+  String get onboardingFeatureApps =>
+      'Создаёт настоящие мини-приложения с живыми виджетами прямо на домашнем экране';
+
+  @override
+  String get onboardingFeatureAutomation =>
+      'Автоматизирует календарь, напоминания и умный дом';
+
+  @override
+  String get onboardingFeatureMedia =>
+      'Генерирует изображения, музыку и видео по запросу';
+
+  @override
+  String get onboardingGetStarted => 'Начать';
+
+  @override
+  String get onboardingModelsBody =>
+      'Один тап применяет целый набор — чат плюс модели для изображений, музыки и видео. Всё можно изменить позже в настройках.';
+
+  @override
+  String get onboardingModelsSetUpLater => 'Настроить позже';
+
+  @override
+  String get onboardingModelsTitle => 'Выберите модели';
+
+  @override
+  String get onboardingNext => 'Далее';
+
+  @override
+  String get onboardingPermissionCalendar => 'Календарь';
+
+  @override
+  String get onboardingPermissionCalendarDesc => 'Планирование событий';
+
+  @override
+  String get onboardingPermissionContacts => 'Контакты';
+
+  @override
+  String get onboardingPermissionContactsDesc => 'Звонки и сообщения';
+
+  @override
+  String get onboardingPermissionHealth => 'Здоровье';
+
+  @override
+  String get onboardingPermissionHealthDesc => 'Сводки активности';
+
+  @override
+  String get onboardingPermissionHome => 'Дом';
+
+  @override
+  String get onboardingPermissionHomeDesc => 'Управление умным домом';
+
+  @override
+  String get onboardingPermissionMicrophone => 'Микрофон';
+
+  @override
+  String get onboardingPermissionMicrophoneDesc => 'Голосовой ввод';
+
+  @override
+  String get onboardingPermissionNotifications => 'Уведомления';
+
+  @override
+  String get onboardingPermissionNotificationsDesc =>
+      'Напоминания и оповещения';
+
+  @override
+  String get onboardingPermissionsBody =>
+      'Всё это необязательно — основной чат работает и без этого. Fa спрашивает разрешение только в контексте, когда функции оно действительно нужно, а изменить решение можно в любой момент в системных настройках.';
+
+  @override
+  String get onboardingPermissionsTitle => 'Разрешения — на ваших условиях';
+
+  @override
+  String get onboardingPrivacyKeysDesc =>
+      'Ключи API хранятся в системной связке ключей (iOS/macOS) или локальном защищённом хранилище — никогда в журналах чата.';
+
+  @override
+  String get onboardingPrivacyKeysTitle => 'Ключи под замком';
+
+  @override
+  String get onboardingPrivacyOnDeviceDesc =>
+      'Ваши переписки и файлы остаются на этом устройстве.';
+
+  @override
+  String get onboardingPrivacyOnDeviceTitle =>
+      'Чаты и файлы остаются на устройстве';
+
+  @override
+  String get onboardingPrivacyPolicyLink => 'Политика конфиденциальности';
+
+  @override
+  String get onboardingPrivacyProvidersDesc =>
+      'Контент отправляется только тем ИИ-провайдерам, которых вы явно подключили.';
+
+  @override
+  String get onboardingPrivacyProvidersTitle => 'Провайдеров выбираете вы';
+
+  @override
+  String get onboardingPrivacyTitle => 'Ваши данные остаются вашими';
+
+  @override
+  String get onboardingSkip => 'Пропустить';
+
+  @override
+  String get onboardingWelcomeBody =>
+      'Общайтесь с ИИ-агентом, который делает реальную работу, а не просто разговаривает.';
+
+  @override
+  String get onboardingWelcomeTitle => 'Знакомьтесь, Fa';
+
+  @override
   String quickStartCachedLabel(Object bytes, Object size) {
     return '$size · $bytes в кеше';
   }

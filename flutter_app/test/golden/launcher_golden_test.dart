@@ -555,17 +555,18 @@ void main() {
       ],
     };
 
-    /// From the mini bar (the default resting state), a tap on the handle
-    /// area opens the full sheet.
+    /// From the mini bar (the default resting state), a tap on the bar
+    /// opens the full sheet (the mini bar has no handle — the drag zone
+    /// key is a stable tap target).
     Future<void> expandSheet(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('sessionChatSheetHandle')));
+      await tester.tap(find.byKey(const ValueKey('sessionChatMiniDragZone')));
       await tester.pumpAndSettle();
     }
 
     /// Same as [expandSheet] but with timed pumps — usable while the
     /// streaming orbit animation keeps the tree from ever settling.
     Future<void> expandSheetWhileStreaming(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('sessionChatSheetHandle')));
+      await tester.tap(find.byKey(const ValueKey('sessionChatMiniDragZone')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
     }
@@ -574,7 +575,7 @@ void main() {
     /// to the round Fa icon.
     Future<void> pullDownToIcon(WidgetTester tester) async {
       await tester.drag(
-        find.byKey(const ValueKey('sessionChatSheetHandle')),
+        find.byKey(const ValueKey('sessionChatMiniDragZone')),
         const Offset(0, 400),
       );
       await tester.pumpAndSettle();

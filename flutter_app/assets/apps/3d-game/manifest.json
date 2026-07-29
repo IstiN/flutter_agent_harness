@@ -1,0 +1,24 @@
+{
+  "id": "3d-game",
+  "name": "3D Game",
+  "description": "Dodge the falling blocks in 3D — drag to steer",
+  "version": "1.0.0",
+  "icon": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2 L21 7 L12 12 L3 7 Z' fill='#22d3ee'/><path d='M3 7 L12 12 L12 22 L3 17 Z' fill='#0ea5e9'/><path d='M21 7 L12 12 L12 22 L21 17 Z' fill='#0369a1'/></svg>",
+  "allowedCommands": [],
+  "network": false,
+  "cli": {
+    "summary": "3D dodge-the-blocks game on the scene3d node (flutter_cube host)",
+    "events": [
+      { "id": "restart", "description": "Restart after game over (the overlay button)" },
+      { "id": "steer", "description": "Drag steering (payload: {dx})" }
+    ],
+    "read": {
+      "state": "yoloit app:state 3d-game — score, lives, best, running",
+      "snapshot": "yoloit app:snapshot 3d-game — full render JSON tree"
+    },
+    "examples": [
+      "yoloit app:run 3d-game",
+      "yoloit app:state 3d-game"
+    ]
+  }
+}

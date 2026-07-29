@@ -104,10 +104,6 @@ class AppLauncherScreen extends StatefulWidget {
 }
 
 class _AppLauncherScreenState extends State<AppLauncherScreen> {
-  /// Hover x-fraction band (middle of the target slot) that means FOLDER
-  /// intent while dragging; nearer an edge inserts before/after instead.
-  static const double _folderHoverBand = 0.25;
-
   /// Size of the drag-feedback icon and the fixed drag anchor (feedback
   /// centered on the pointer) — see [_onDrop].
   static const double _feedbackSize = 64;
@@ -249,17 +245,37 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     // details.offset is the drag feedback's top-left corner; the fixed
     // drag anchor recovers the pointer position.
     final fx = _fractionOnTile(targetKey, details.offset + _dragAnchor);
-    final folderTarget =
-        LauncherLayoutStore.isFolderKey(targetKey) ||
-        (draggedKey.startsWith('app:') &&
-            targetKey.startsWith('app:') &&
-            (fx - 0.5).abs() <= _folderHoverBand);
+    final bothApps =
+        draggedKey.startsWith('app:') && targetKey.startsWith('app:');
+    // Folder intent with HYSTERESIS: it arms inside the 40% center band
+    // but holds until the pointer leaves the 60% band — the highlight no
+    // longer flickers when the finger micro-jitters at the boundary.
+    final center = (fx - 0.5).abs();
+    final bool folderTarget;
+    if (LauncherLayoutStore.isFolderKey(targetKey)) {
+      folderTarget = true;
+    } else if (bothApps) {
+      folderTarget = _folderHoverKey == targetKey
+          ? center <= 0.3
+          : center <= 0.2;
+    } else {
+      folderTarget = false;
+    }
     if (folderTarget) {
       if (_folderHoverKey != targetKey || _previewOrder != null) {
         setState(() {
           _folderHoverKey = targetKey;
           _previewOrder = null;
         });
+      }
+      return;
+    }
+    // Reorder dead zone: once a preview exists, the before/after decision
+    // only flips outside fx 0.35..0.65 — dragging a big tile across a slot
+    // boundary no longer oscillates the whole grid.
+    if (_previewOrder != null && fx > 0.35 && fx < 0.65) {
+      if (_folderHoverKey != null) {
+        setState(() => _folderHoverKey = null);
       }
       return;
     }

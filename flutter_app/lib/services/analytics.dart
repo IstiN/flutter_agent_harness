@@ -105,6 +105,17 @@ final class AppAnalytics {
   /// Files were attached to a message (count only).
   void uploadAdded(int count) => _log('upload_added', {'count': count});
 
+  /// The first-launch onboarding flow was displayed.
+  void onboardingStarted() => _log('onboarding_started');
+
+  /// The onboarding flow was finished via its last-page primary button.
+  void onboardingCompleted() => _log('onboarding_completed');
+
+  /// The onboarding flow was skipped (the 0-based page it was skipped on —
+  /// never any content).
+  void onboardingSkipped(int page) =>
+      _log('onboarding_skipped', {'page': page});
+
   static String _bucket(int value, List<int> edges) {
     for (final edge in edges) {
       if (value <= edge) return '<=$edge';

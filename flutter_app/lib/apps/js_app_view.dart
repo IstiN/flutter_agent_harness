@@ -633,6 +633,12 @@ class _JsAppViewState extends State<JsAppView> {
             brightness: theme.brightness,
           ),
           mapTileProvider: widget.mapTileProvider,
+          // 3D scenes: the dispatcher singleton shared with the engine's
+          // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
+          // `jsr.scene3d.onTap` handlers in the app.
+          js3dHost: createJs3dHost(),
+          onScene3dTap: (sceneId, payload) =>
+              engine.dispatchHostEvent('scene3d.tap:$sceneId', payload),
           onEvent: (actionId, payload) {
             unawaited(engine.callEvent(actionId, payload));
           },

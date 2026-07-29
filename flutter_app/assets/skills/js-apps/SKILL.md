@@ -636,6 +636,39 @@ jsr.fa.media.readVideo({ path: 'generated/clip.mp4', question: 'What happens?' }
 
 The Fa agent has matching tools (`generate_image`, `speak`, `generate_music` — write-tier; `read_video` — read-tier), so users can also generate media and read videos by chatting — both surfaces resolve endpoints identically.
 
+### `scene3d` — real 3D scenes (games!)
+
+Renders an interactive 3D scene. Two paths:
+
+1. **Software mesh path (pure Dart, no host engine)** — give the node a `meshes` prop: `[{vertices: [[x,y,z],…], faces: [[i,j,k],…], color: '#hex'}]`. Perspective-projected, flat-shaded, ≤ ~500 triangles at interactive rates. Animate by re-rendering with a new `rotation` on a raf/timer tick. Great for low-poly models, dice, simple 3D charts.
+2. **Host engine path (for games)** — omit `meshes` and drive the scene imperatively through the `jsr.scene3d.*` bridge (the Fa host wires the runtime's dispatcher: `flutter_cube` for procedural primitives and OBJ models, `flame_3d` for `.glb`/`.gltf`). Primitives: `cube`, `sphere`, `torus`, `city`.
+
+```javascript
+// Node (in the render tree): { type: 'scene3d', id: sceneId }
+// — fill it via `expanded`; width/height props optional.
+
+jsr.scene3d.create(sceneId, {
+  camera: { position: [0, 12, 14], target: [0, 0, -4], fov: 55 },
+  light: { position: [5, 10, 8], color: '#ffffff', ambient: 0.5, diffuse: 0.7 },
+});
+jsr.scene3d.addModel(sceneId, {
+  modelId: 'player', primitive: 'cube', color: '#22d3ee',
+  position: [0, 0, 2], scale: [1.2, 1.2, 1.2],
+});
+// ONE batched transform message per frame — never N separate calls:
+jsr.scene3d.setTransforms(sceneId, [
+  { modelId: 'player', position: [x, 0, 2] },
+  { modelId: 'block-1', position: [1, 0, -6] },
+]);
+jsr.scene3d.removeModel(sceneId, 'block-1');
+jsr.scene3d.setCamera(sceneId, { position: [0, 12, 14], target: [0, 0, -4] });
+jsr.scene3d.destroy(sceneId);
+```
+
+- **Scene id** — namespace it: `'game-' + (jsr.instanceId || 'app') + '-' + Math.floor(Math.random()*1e9)` (several engines can run the same app; controllers are shared per sceneId).
+- **Input** — touch: overlay a transparent `gestureDetector` (`onPanUpdate` fires `{x,y,dx,dy}`) on top of the scene in a `stack`, like the `3d-game` demo. Tap picking: `jsr.scene3d.onTap(sceneId, fn)` receives `{modelId, point:[x,y,z]}` (nearest hit) or `{modelId: null}`. Keyboard (`jsr.onKey`) only where the host has keys.
+- **Perf rules** — game loop on `requestAnimationFrame`; mutate the scene via `setTransforms` batches, keep `jsr.render` (HUD) to a few times per second, never rebuild the whole tree per frame. Study `apps/3d-game/widget.js` (dodge-the-blocks) before writing your own.
+
 ---
 
 ## The Fa Floating Button

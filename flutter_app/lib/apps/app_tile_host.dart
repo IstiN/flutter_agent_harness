@@ -286,6 +286,9 @@ class _AppTileHostState extends State<AppTileHost> {
             brightness: theme.brightness,
           ),
           mapTileProvider: widget.mapTileProvider,
+          // 3D scenes render in tiles too (display-only — no tap picking:
+          // any tap opens the full app).
+          js3dHost: createJs3dHost(),
           // Display-only tile: any UI event opens the full app.
           onEvent: (actionId, payload) => widget.onOpen(),
         );

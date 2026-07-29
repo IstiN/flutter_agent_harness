@@ -198,6 +198,10 @@ class JsAppEngine {
       fetchHandler: _fetch,
       loadAssetHandler: _loadAsset,
       execHandler: _exec,
+      // The dispatcher singleton (cube for primitives/OBJ, flame_3d for
+      // GLB/GLTF) — shared with the renderer's `js3dHost`, which resolves
+      // the same per-sceneId controllers the bridge mutates.
+      js3dHost: createJs3dHost(),
     );
     final engine = JsWidgetEngine(config: config);
     _engine = engine;
@@ -208,6 +212,13 @@ class JsAppEngine {
     final engine = _engine;
     if (engine == null) return Future.value();
     return engine.callEvent(actionId, payload);
+  }
+
+  /// Delivers a fire-and-forget host event to the app's bootstrap listeners
+  /// (`jsr.scene3d.onTap` raycast results, keyboard) — no-op before [start]
+  /// completes. See [JsWidgetEngine.dispatchHostEvent].
+  void dispatchHostEvent(String target, Map<String, dynamic> payload) {
+    _engine?.dispatchHostEvent(target, payload);
   }
 
   /// Pushes a new `jsr.theme` map into the running app; the JS side replaces

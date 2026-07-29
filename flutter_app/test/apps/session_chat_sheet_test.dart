@@ -122,14 +122,16 @@ Future<_Harness> _pumpSheet(
 }
 
 Future<void> _expand(WidgetTester tester) async {
-  await tester.tap(find.byKey(const ValueKey('sessionChatSheetHandle')));
+  // The mini bar has no handle (it belongs to the expanded sheet) — a tap
+  // anywhere on the bar opens the sheet; the drag zone is a stable target.
+  await tester.tap(find.byKey(const ValueKey('sessionChatMiniDragZone')));
   await tester.pumpAndSettle();
 }
 
 /// Drags the mini bar down into the collapsed round-Fa-icon state.
 Future<void> _collapseToIcon(WidgetTester tester) async {
   await tester.drag(
-    find.byKey(const ValueKey('sessionChatSheetHandle')),
+    find.byKey(const ValueKey('sessionChatMiniDragZone')),
     const Offset(0, 400),
   );
   await tester.pumpAndSettle();
@@ -308,9 +310,10 @@ void main() {
       expect(find.byKey(_faButtonKey), findsNothing);
       expect(find.byType(ChatComposer), findsOneWidget);
 
-      // Second pull: collapses to the round Fa button.
+      // Second pull: collapses to the round Fa button (the mini bar has no
+      // handle — drag its body).
       await tester.drag(
-        find.byKey(const ValueKey('sessionChatSheetHandle')),
+        find.byKey(const ValueKey('sessionChatMiniDragZone')),
         const Offset(0, 400),
       );
       await tester.pumpAndSettle();
@@ -344,7 +347,7 @@ void main() {
       expect(find.byType(ChatComposer), findsOneWidget);
 
       await tester.fling(
-        find.byKey(const ValueKey('sessionChatSheetHandle')),
+        find.byKey(const ValueKey('sessionChatMiniDragZone')),
         const Offset(0, 300),
         1200,
       );

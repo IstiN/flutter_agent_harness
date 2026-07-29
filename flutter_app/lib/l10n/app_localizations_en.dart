@@ -712,6 +712,121 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelPresetsSetKey => 'Set key';
 
   @override
+  String get onboardingAiDisclaimer =>
+      'Answers come from third-party AI providers you connect. AI can be wrong or incomplete — always verify important information.';
+
+  @override
+  String get onboardingAiDisclaimerTitle => 'AI can make mistakes';
+
+  @override
+  String get onboardingFeatureApps =>
+      'Builds real mini-apps with live widgets right on your home grid';
+
+  @override
+  String get onboardingFeatureAutomation =>
+      'Automates your calendar, reminders and smart home';
+
+  @override
+  String get onboardingFeatureMedia =>
+      'Generates images, music and video on demand';
+
+  @override
+  String get onboardingGetStarted => 'Get started';
+
+  @override
+  String get onboardingModelsBody =>
+      'One tap applies a full combo — chat plus image, music and video models. You can change everything later in Settings.';
+
+  @override
+  String get onboardingModelsSetUpLater => 'Set up later';
+
+  @override
+  String get onboardingModelsTitle => 'Pick your models';
+
+  @override
+  String get onboardingNext => 'Continue';
+
+  @override
+  String get onboardingPermissionCalendar => 'Calendar';
+
+  @override
+  String get onboardingPermissionCalendarDesc => 'Event planning';
+
+  @override
+  String get onboardingPermissionContacts => 'Contacts';
+
+  @override
+  String get onboardingPermissionContactsDesc => 'Call and message actions';
+
+  @override
+  String get onboardingPermissionHealth => 'Health';
+
+  @override
+  String get onboardingPermissionHealthDesc => 'Activity summaries';
+
+  @override
+  String get onboardingPermissionHome => 'Home';
+
+  @override
+  String get onboardingPermissionHomeDesc => 'Smart home control';
+
+  @override
+  String get onboardingPermissionMicrophone => 'Microphone';
+
+  @override
+  String get onboardingPermissionMicrophoneDesc => 'Voice input';
+
+  @override
+  String get onboardingPermissionNotifications => 'Notifications';
+
+  @override
+  String get onboardingPermissionNotificationsDesc => 'Reminders and alerts';
+
+  @override
+  String get onboardingPermissionsBody =>
+      'All of these are optional — core chat works without any of them. Fa asks only in context, when a feature actually needs it, and you can change your mind anytime in the system Settings.';
+
+  @override
+  String get onboardingPermissionsTitle => 'Permissions, on your terms';
+
+  @override
+  String get onboardingPrivacyKeysDesc =>
+      'API keys live in the platform Keychain (iOS/macOS) or the local secure store — never in chat logs.';
+
+  @override
+  String get onboardingPrivacyKeysTitle => 'Keys stay locked away';
+
+  @override
+  String get onboardingPrivacyOnDeviceDesc =>
+      'Your conversations and files stay on this device.';
+
+  @override
+  String get onboardingPrivacyOnDeviceTitle => 'Chats and files stay on device';
+
+  @override
+  String get onboardingPrivacyPolicyLink => 'Privacy policy';
+
+  @override
+  String get onboardingPrivacyProvidersDesc =>
+      'Content is sent only to the AI providers you explicitly connect.';
+
+  @override
+  String get onboardingPrivacyProvidersTitle => 'You choose the providers';
+
+  @override
+  String get onboardingPrivacyTitle => 'Your data stays yours';
+
+  @override
+  String get onboardingSkip => 'Skip';
+
+  @override
+  String get onboardingWelcomeBody =>
+      'Chat with an AI agent that does real work, not just talk.';
+
+  @override
+  String get onboardingWelcomeTitle => 'Meet Fa';
+
+  @override
   String quickStartCachedLabel(Object bytes, Object size) {
     return '$size · $bytes cached';
   }

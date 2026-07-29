@@ -226,7 +226,11 @@ factual: paths, commands, invariants — no essays.
   `AppsStore.demoAppIds`, assets in `flutter_app/assets/apps/`): calculator,
   weather, stocks, crypto, animation-showcase, yolo-hello, calendar
   (`jsr.fa.calendar`), map (`map` node), health + homekit (real bridge on
-  iOS, honest demo-panel fallback elsewhere). `open_app_tool.dart` registers
+  iOS, honest demo-panel fallback elsewhere), 3d-game (`scene3d` node +
+  `jsr.scene3d.*` bridge on the runtime's flutter_cube/flame_3d dispatcher
+  — the engine's `JsRuntimeConfig` and both renderers (JsAppView,
+  AppTileHost) wire `js3dHost: createJs3dHost()`, tap picking flows back
+  via `dispatchHostEvent('scene3d.tap:<id>')`). `open_app_tool.dart` registers
   the agent tool `open_app`
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
   Live launcher tiles: a manifest `"widget"` section
@@ -292,6 +296,15 @@ factual: paths, commands, invariants — no essays.
   (system/light/dark) persisted as `theme.json`; `app_theme.dart` has
   `buildFahTheme()` (dark) + `buildFahThemeLight()`, widgets read colors via
   `FahColors.of(context)` (never `FahPalette` directly in widgets).
+- `flutter_app/lib/ui/screens/onboarding_screen.dart` — first-launch
+  onboarding: 4 pages (welcome + AI disclaimer, permissions explainer, model
+  preset mini-wizard reusing `kModelPresets`/`applyModelPreset` with a null
+  service — the combo persists as the last connection boot restores, privacy
+  + policy link via `url_launcher`), page dots, Skip on every page.
+  `BootstrapScreen` shows it once only when there is NO restorable
+  connection; the seen flag lives in
+  `lib/services/onboarding_store.dart` (`onboarding_seen.json`, same
+  tiny-store pattern as `theme.json`).
 - `flutter_app/lib/services/session_keys_store.dart` — in-app secrets:
   on iOS/macOS persisted in the platform Keychain via `keychain_store.dart`
   (the `fah/keychain` MethodChannel, service `fa.app`; file-persisted keys
