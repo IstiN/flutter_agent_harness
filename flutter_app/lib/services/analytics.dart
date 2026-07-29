@@ -27,8 +27,21 @@ final class AppAnalytics {
     instance = AppAnalytics._(
       analytics == null
           ? null
-          : (name, params) =>
-                analytics.logEvent(name: name, parameters: params),
+          : (name, params) => analytics.logEvent(
+              name: name,
+              // Firebase accepts only String/num parameter values — a bool
+              // crashes logEvent with an assertion in debug builds.
+              // Normalize at the boundary; custom sinks (tests) keep the
+              // raw typed params.
+              parameters: {
+                for (final e in params.entries)
+                  e.key: e.value is bool
+                      ? (e.value as bool)
+                            ? 'true'
+                            : 'false'
+                      : e.value,
+              },
+            ),
     );
   }
 

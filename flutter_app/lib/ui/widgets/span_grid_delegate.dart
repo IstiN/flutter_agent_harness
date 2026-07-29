@@ -90,29 +90,30 @@ List<TilePlacement> packTileSpans({
 typedef TileRect = ({double x, double y, double w, double h});
 
 /// Lays [spans] out with [packTileSpans] and converts placements to pixel
-/// rects on the [LauncherGridSpec] geometry: x/y are the top-left of the
-/// tile's slot block, w/h the exact WxH block extent.
+/// rects on the [LauncherGridSpec] geometry ([spacing] overrides the spec's
+/// default gap — the launcher stretches gaps to fill the screen width,
+/// iOS-like): x/y are the top-left of the tile's slot block, w/h the exact
+/// WxH block extent.
 List<TileRect> layOutTileRects({
   required int crossAxisCount,
   required List<TileSpan> spans,
+  double spacing = LauncherGridSpec.spacing,
 }) {
   final placements = packTileSpans(
     crossAxisCount: crossAxisCount,
     spans: spans,
   );
+  double spanCross(int cells) =>
+      cells * LauncherGridSpec.cellCrossExtent + (cells - 1) * spacing;
+  double spanMain(int cells) =>
+      cells * LauncherGridSpec.cellMainExtent + (cells - 1) * spacing;
   return [
     for (var i = 0; i < spans.length; i++)
       (
-        x:
-            placements[i].col *
-            (LauncherGridSpec.cellCrossExtent + LauncherGridSpec.spacing),
-        y:
-            placements[i].row *
-            (LauncherGridSpec.cellMainExtent + LauncherGridSpec.spacing),
-        w: LauncherGridSpec.spanCrossExtent(
-          spans[i].w.clamp(1, crossAxisCount),
-        ),
-        h: LauncherGridSpec.spanMainExtent(spans[i].h < 1 ? 1 : spans[i].h),
+        x: placements[i].col * (LauncherGridSpec.cellCrossExtent + spacing),
+        y: placements[i].row * (LauncherGridSpec.cellMainExtent + spacing),
+        w: spanCross(spans[i].w.clamp(1, crossAxisCount)),
+        h: spanMain(spans[i].h < 1 ? 1 : spans[i].h),
       ),
   ];
 }

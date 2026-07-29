@@ -104,10 +104,15 @@ class AppLauncherScreen extends StatefulWidget {
 }
 
 class _AppLauncherScreenState extends State<AppLauncherScreen> {
-  /// Size of the drag-feedback icon and the fixed drag anchor (feedback
-  /// centered on the pointer) — see [_onDrop].
+  /// Size of the drag-feedback icon for classic app tiles (widget tiles
+  /// drag a full-size card replica instead — see [_tileFeedback]).
   static const double _feedbackSize = 64;
-  static const Offset _dragAnchor = Offset(32, 32);
+
+  /// The pointer's grab point inside the dragged tile, captured by the
+  /// drag-anchor strategy at drag start: `DragTargetDetails.offset` is the
+  /// feedback's top-left corner, so `offset + _grabOffset` always recovers
+  /// the pointer — for a 64px icon and a 356px widget card alike.
+  Offset _grabOffset = const Offset(32, 32);
 
   /// Pointer speed below which a cancelled drag counts as
   /// hold-release-without-movement (the iOS "edit menu" gesture).
@@ -244,7 +249,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     if (layout == null) return;
     // details.offset is the drag feedback's top-left corner; the fixed
     // drag anchor recovers the pointer position.
-    final fx = _fractionOnTile(targetKey, details.offset + _dragAnchor);
+    final fx = _fractionOnTile(targetKey, details.offset + _grabOffset);
     final bothApps =
         draggedKey.startsWith('app:') && targetKey.startsWith('app:');
     // Folder intent with HYSTERESIS: it arms inside the 40% center band
@@ -306,18 +311,18 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// drag anchor recovers the pointer position.
   void _onDrop(String draggedKey, String targetKey, Offset avatarTopLeft) {
     final layout = _layout;
-    if (layout == null || draggedKey == targetKey) {
+    if (layout == null) {
       _clearDragPreview();
       return;
     }
-    if (LauncherLayoutStore.isFolderKey(targetKey)) {
+    if (draggedKey != targetKey && LauncherLayoutStore.isFolderKey(targetKey)) {
       layout.addToFolder(LauncherLayoutStore.folderIdOf(targetKey), draggedKey);
       _clearDragPreview();
       return;
     }
     final bothApps =
         draggedKey.startsWith('app:') && targetKey.startsWith('app:');
-    if (bothApps && _folderHoverKey == targetKey) {
+    if (draggedKey != targetKey && bothApps && _folderHoverKey == targetKey) {
       final apps = _appsById;
       final nameA = apps[draggedKey.substring(4)]?.name;
       final nameB = apps[targetKey.substring(4)]?.name;
@@ -328,31 +333,50 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       _clearDragPreview();
       return;
     }
+    // The live preview IS the arrangement the user saw — apply it as-is,
+    // even when the pointer ended over the dragged tile itself (its own
+    // slot rejects drops, which is exactly where a big tile's pointer
+    // usually is). Only without a preview fall back to the slot math.
+    final preview = _previewOrder;
+    if (preview != null) {
+      _clearDragPreview();
+      layout.applyTopLevelOrder(preview);
+      return;
+    }
+    if (draggedKey == targetKey) return;
     final order = layout.topLevelKeys;
     final from = order.indexOf(draggedKey);
     final to = launcherInsertionIndex(
       order: order,
       draggedKey: draggedKey,
       targetKey: targetKey,
-      fx: _fractionOnTile(targetKey, avatarTopLeft + _dragAnchor),
+      fx: _fractionOnTile(targetKey, avatarTopLeft + _grabOffset),
     );
-    _clearDragPreview();
     if (from < 0 || to < 0) return;
     layout.reorder(from, to);
   }
 
-  /// The drag ended: the preview always reverts. When the drag never left
-  /// its tile and carried ~no velocity, this was a hold-release WITHOUT
-  /// movement — the iOS "edit menu" gesture — so open the tile menu.
+  /// The drag ended: a real drag applies the LAST previewed arrangement
+  /// (iOS semantics — what you saw when you let go is what you get), even
+  /// when the pointer was released outside any accepting slot. When the
+  /// drag never left its tile and carried ~no velocity, this was a
+  /// hold-release WITHOUT movement — the iOS "edit menu" gesture — so
+  /// open the tile menu.
   void _onDragCanceled(String key, Velocity velocity, Offset offset) {
-    final hadPreview = _previewOrder != null || _folderHoverKey != null;
+    final preview = _previewOrder;
+    final hadPreview = preview != null || _folderHoverKey != null;
     _clearDragPreview();
-    if (hadPreview) return; // a real drag cancelled outside any target
+    if (hadPreview) {
+      // A real drag cancelled outside any target: keep the arrangement
+      // the user last saw instead of snapping back.
+      if (preview != null) _layout?.applyTopLevelOrder(preview);
+      return;
+    }
     if (velocity.pixelsPerSecond.distance > _holdMaxVelocity) return;
     final box = _tileBoxes[key];
     if (box == null || !box.hasSize) return;
     // The offset is the feedback's top-left corner; recover the pointer.
-    final pointer = offset + _dragAnchor;
+    final pointer = offset + _grabOffset;
     final local = box.globalToLocal(pointer);
     final inside =
         local.dx >= 0 &&
@@ -598,11 +622,23 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final crossAxisCount = _crossAxisCount(constraints.maxWidth);
+              // iOS-like distribution: the 16px side padding stays, the
+              // leftover width stretches the gaps (capped) so the grid
+              // always fills the screen width instead of huddling in the
+              // center with dead margins.
+              final spacing = _gridSpacing(
+                constraints.maxWidth,
+                crossAxisCount,
+              );
               final keys = _previewOrder ?? layout.topLevelKeys;
               final rects = layOutTileRects(
                 crossAxisCount: crossAxisCount,
                 spans: [for (final key in keys) _tileSpan(key, crossAxisCount)],
+                spacing: spacing,
               );
+              final gridWidth =
+                  crossAxisCount * LauncherGridSpec.cellCrossExtent +
+                  (crossAxisCount - 1) * spacing;
               return SingleChildScrollView(
                 // Bottom clearance for the floating mini chat bar (bar
                 // height + its margin above the home indicator).
@@ -614,7 +650,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 ),
                 child: Center(
                   child: SizedBox(
-                    width: LauncherGridSpec.gridCrossExtent(crossAxisCount),
+                    width: gridWidth,
                     height: packedTilesHeight(rects),
                     child: Stack(
                       children: [
@@ -659,6 +695,19 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         .clamp(1, fits);
   }
 
+  /// Gap between cells for the current width: the side padding (16+16)
+  /// stays fixed, the leftover width distributes into the gaps — iOS-like
+  /// full-width grids on any screen. Capped so huge windows keep sane
+  /// spacing (the grid then centers, as before).
+  static double _gridSpacing(double width, int columns) {
+    if (columns <= 1) return LauncherGridSpec.spacing;
+    const minSpacing = LauncherGridSpec.spacing;
+    const maxSpacing = 44.0;
+    final inner = width - 32; // the GridView's horizontal padding
+    final raw = (inner - columns * LauncherGridSpec.iconSize) / (columns - 1);
+    return raw.clamp(minSpacing, maxSpacing);
+  }
+
   /// The grid span of one tile: apps with a live tile get their WxH —
   /// the `tileSizes` override when set, else the manifest's declared size
   /// (width clamped to the column count); everything else is one icon slot.
@@ -674,6 +723,55 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       }
     }
     return (w: 1, h: 1);
+  }
+
+  /// The drag feedback: classic tiles drag their 64px icon; apps with a
+  /// live tile drag a FULL-SIZE static replica of the card (rounded panel
+  /// with the app icon and name) so it is obvious WHAT is being dragged —
+  /// spinning up a second live engine just for the avatar would be
+  /// pointless weight.
+  Widget _tileFeedback(
+    FahColors colors,
+    String key,
+    BoxConstraints constraints,
+  ) {
+    final app = key.startsWith('app:') ? _appsById[key.substring(4)] : null;
+    if (app != null && app.tileWidget != null) {
+      return Container(
+        width: constraints.maxWidth,
+        height: constraints.maxHeight,
+        decoration: BoxDecoration(
+          color: colors.panelAlt,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black38,
+              blurRadius: 16,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AppIcon(app: app, env: widget.manager.env, size: 32),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                app.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.text),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return _tileIcon(colors, key, size: _feedbackSize);
   }
 
   Widget _buildCell(FahColors colors, String key) {
@@ -693,15 +791,30 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             final folderHover = _folderHoverKey == key;
             return LongPressDraggable<String>(
               data: key,
-              dragAnchorStrategy: (draggable, context, position) => _dragAnchor,
+              // Anchor the feedback at the GRAB POINT inside the tile (and
+              // remember it for the hover/drop pointer math above): a
+              // widget card is dragged by exactly the spot the user holds.
+              dragAnchorStrategy: (draggable, context, position) {
+                final box = context.findRenderObject();
+                if (box is RenderBox && box.hasSize) {
+                  _grabOffset = box.globalToLocal(position);
+                }
+                return _grabOffset;
+              },
               onDraggableCanceled: (velocity, offset) =>
                   _onDragCanceled(key, velocity, offset),
-              onDragEnd: (_) => _clearDragPreview(),
+              // NOTE the framework's callback order: onDragEnd fires
+              // BEFORE onDraggableCanceled. Never clear the preview here
+              // on rejection — _onDragCanceled needs it to apply the last
+              // previewed arrangement.
+              onDragEnd: (details) {
+                if (details.wasAccepted) _clearDragPreview();
+              },
               feedback: Material(
                 color: Colors.transparent,
                 child: Opacity(
                   opacity: 0.9,
-                  child: _tileIcon(colors, key, size: _feedbackSize),
+                  child: _tileFeedback(colors, key, constraints),
                 ),
               ),
               childWhenDragging: Opacity(
@@ -962,7 +1075,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                         LongPressDraggable<String>(
                           data: tile,
                           dragAnchorStrategy: (draggable, context, position) =>
-                              _dragAnchor,
+                              // 64px icon feedback centered on the
+                              // pointer (folder-panel drags need no
+                              // grab-point math).
+                              const Offset(32, 32),
                           feedback: Material(
                             color: Colors.transparent,
                             child: Opacity(

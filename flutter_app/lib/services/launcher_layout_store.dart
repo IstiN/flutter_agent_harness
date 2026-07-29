@@ -243,6 +243,26 @@ class LauncherLayoutStore extends ChangeNotifier {
     _mutated();
   }
 
+  /// Replaces the whole top-level order in one go (e.g. applying a drag
+  /// preview as-is). Entries must be exactly the current top-level keys in
+  /// some order — anything else is ignored. No-op when nothing moved.
+  void applyTopLevelOrder(List<String> keys) {
+    if (keys.length != _order.length) return;
+    final current = Set<String>.of(_order);
+    var same = keys.length == _order.length;
+    for (final key in keys) {
+      if (!current.contains(key)) return;
+    }
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i] != _order[i]) same = false;
+    }
+    if (same) return;
+    _order
+      ..clear()
+      ..addAll(keys);
+    _mutated();
+  }
+
   /// Groups the top-level tiles [a] and [b] into a new folder named [name],
   /// placed where [a] sat. System tiles and folder entries cannot be
   /// grouped. Returns the new folder id, or null when the pair is invalid.

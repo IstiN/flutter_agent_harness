@@ -493,7 +493,10 @@ void main() {
         tileApps: {'alpha': '4x2'},
         tileEngineFactory: _fakeTileEngineFactory(),
       );
-      const i = 56.0, g = 16.0, cellMain = 76.0;
+      const i = 56.0, cellMain = 76.0;
+      // Dynamic spacing: 800px surface, 6 columns → (768 − 6×56)/5 = 86.4,
+      // capped at 44.
+      const g = 44.0;
       final hostRect = tester.getRect(find.byType(AppTileHost));
       final betaRect = tester.getRect(_cell('app:beta'));
       // Exact icon-unit extents: 4 slots + 3 gaps wide, 2 + 1 high.
@@ -525,13 +528,14 @@ void main() {
       expect(settingsRect.top, moreOrLessEquals(alphaRect.top, epsilon: 0.5));
       expect(settingsRect.left, greaterThan(gammaRect.left));
       expect(filesRect.top, greaterThan(settingsRect.top));
-      // 4 slots + 3 gaps = 272 wide, centered in the 390 − 32 padded area.
+      // Dynamic spacing: (390 − 32 − 4×56)/3 ≈ 44.67 → capped 44, so the
+      // grid is 4×56 + 3×44 = 356 wide, nearly filling the padded area.
       expect(
         alphaRect.left,
-        moreOrLessEquals(16 + (390 - 32 - 272) / 2, epsilon: 0.5),
+        moreOrLessEquals(16 + (390 - 32 - 356) / 2, epsilon: 0.5),
       );
       // A 5th column would NOT fit — the count stays 4.
-      expect(gammaRect.left - tester.getRect(_cell('app:beta')).left, 72.0);
+      expect(gammaRect.left - tester.getRect(_cell('app:beta')).left, 100.0);
     });
 
     testWidgets('dragging over an edge half live-reflows the grid', (
@@ -616,13 +620,14 @@ void main() {
       // No override yet → no reset entry.
       expect(find.text('Reset to default'), findsNothing);
 
-      // Pick Medium: the override lands and the tile resizes.
+      // Pick Medium: the override lands and the tile resizes (dynamic
+      // spacing 44 on the 800px surface → 4×56 + 3×44).
       await tester.tap(find.text('Medium (4×2)'));
       await tester.pumpAndSettle();
       expect(harness.layout.tileSizeFor('alpha'), (w: 4, h: 2));
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
-        moreOrLessEquals(4 * 56 + 3 * 16, epsilon: 0.5),
+        moreOrLessEquals(4 * 56 + 3 * 44, epsilon: 0.5),
       );
 
       // Menu again → current size checked, reset offered; reset clears.
@@ -675,7 +680,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
-        moreOrLessEquals(2 * 56 + 16, epsilon: 0.5),
+        // Dynamic spacing caps at 44 on the 800px surface: 2×56 + 44.
+        moreOrLessEquals(2 * 56 + 44, epsilon: 0.5),
       );
 
       // The agent reconfigures: 3 columns + a 4x2 override (clamped to 3).
@@ -692,8 +698,38 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
-        moreOrLessEquals(3 * 56 + 2 * 16, epsilon: 0.5),
+        // 3 columns, spacing still capped at 44: 3×56 + 2×44.
+        moreOrLessEquals(3 * 56 + 2 * 44, epsilon: 0.5),
       );
+    });
+
+    testWidgets('a drop over the dragged tile itself applies the preview', (
+      tester,
+    ) async {
+      final harness = await _pumpLauncher(tester);
+      final alphaRect = tester.getRect(_cell('app:alpha'));
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:gamma')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      // Hover the RIGHT half of alpha's slot → preview: alpha, gamma, beta.
+      await gesture.moveTo(Offset(alphaRect.right - 8, alphaRect.center.dy));
+      await tester.pump(const Duration(milliseconds: 300));
+      // Release over the DRAGGED tile's own (drop-rejecting) slot — the
+      // usual landing zone when dragging a big widget. The last previewed
+      // arrangement must still apply (iOS: what you saw is what you get).
+      final gammaRect = tester.getRect(_cell('app:gamma'));
+      await gesture.moveTo(gammaRect.center);
+      await tester.pump(const Duration(milliseconds: 100));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(harness.layout.topLevelKeys, [
+        'app:alpha',
+        'app:gamma',
+        'app:beta',
+        LauncherLayoutStore.settingsKey,
+        LauncherLayoutStore.filesKey,
+      ]);
     });
 
     testWidgets('live tiles still reorder by drag & drop', (tester) async {
