@@ -96,45 +96,85 @@ Map<String, dynamic> _validateObject(
       : const <String>{};
 
   for (final entry in propertySchemas.entries) {
-    final name = entry.key;
-    final propertyPath = path.isEmpty ? name : '$path.$name';
-    final propertySchema = entry.value;
-    if (propertySchema is! Map) {
-      // Unusable schema node: pass the raw value through.
-      if (arguments.containsKey(name)) validated[name] = arguments[name];
-      continue;
-    }
-    final schemaMap = propertySchema.cast<String, dynamic>();
-
-    final hasValue = arguments.containsKey(name) && arguments[name] != null;
-    if (!hasValue) {
-      final hasNullType = _schemaTypes(schemaMap).contains('null');
-      if (arguments.containsKey(name) && hasNullType) {
-        validated[name] = null;
-        continue;
-      }
-      if (schemaMap.containsKey('default')) {
-        validated[name] = schemaMap['default'];
-        continue;
-      }
-      if (requiredNames.contains(name)) {
-        errors.add('$propertyPath: missing required parameter');
-      }
-      continue;
-    }
-
-    final value = _validateValue(
-      arguments[name],
-      schemaMap,
-      propertyPath,
+    _validateDeclaredProperty(
+      entry.key,
+      entry.value,
+      arguments,
+      requiredNames,
+      path,
+      validated,
       errors,
     );
-    if (value case _Valid(:final coerced)) {
-      validated[name] = coerced;
+  }
+  _validateUndeclaredRequired(
+    requiredNames,
+    propertySchemas,
+    arguments,
+    path,
+    validated,
+    errors,
+  );
+  _passThroughUndeclared(arguments, propertySchemas, validated);
+  return validated;
+}
+
+/// Validates one declared property [name] against its [propertySchema],
+/// writing the coerced value (or injected default) into [validated] and
+/// recording violations in [errors].
+void _validateDeclaredProperty(
+  String name,
+  Object? propertySchema,
+  Map<String, dynamic> arguments,
+  Set<String> requiredNames,
+  String path,
+  Map<String, dynamic> validated,
+  List<String> errors,
+) {
+  final propertyPath = path.isEmpty ? name : '$path.$name';
+  if (propertySchema is! Map) {
+    // Unusable schema node: pass the raw value through.
+    if (arguments.containsKey(name)) validated[name] = arguments[name];
+    return;
+  }
+  final schemaMap = propertySchema.cast<String, dynamic>();
+
+  final hasValue = arguments.containsKey(name) && arguments[name] != null;
+  if (!hasValue) {
+    final hasNullType = _schemaTypes(schemaMap).contains('null');
+    if (arguments.containsKey(name) && hasNullType) {
+      validated[name] = null;
+      return;
     }
+    if (schemaMap.containsKey('default')) {
+      validated[name] = schemaMap['default'];
+      return;
+    }
+    if (requiredNames.contains(name)) {
+      errors.add('$propertyPath: missing required parameter');
+    }
+    return;
   }
 
-  // Required keys without a declared property schema: only presence matters.
+  final value = _validateValue(
+    arguments[name],
+    schemaMap,
+    propertyPath,
+    errors,
+  );
+  if (value case _Valid(:final coerced)) {
+    validated[name] = coerced;
+  }
+}
+
+/// Required keys without a declared property schema: only presence matters.
+void _validateUndeclaredRequired(
+  Set<String> requiredNames,
+  Map<String, dynamic> propertySchemas,
+  Map<String, dynamic> arguments,
+  String path,
+  Map<String, dynamic> validated,
+  List<String> errors,
+) {
   for (final name in requiredNames) {
     if (!propertySchemas.containsKey(name)) {
       if (!arguments.containsKey(name) || arguments[name] == null) {
@@ -145,16 +185,20 @@ Map<String, dynamic> _validateObject(
       }
     }
   }
+}
 
-  // Undeclared keys pass through (agenix semantics).
+/// Undeclared keys pass through (agenix semantics).
+void _passThroughUndeclared(
+  Map<String, dynamic> arguments,
+  Map<String, dynamic> propertySchemas,
+  Map<String, dynamic> validated,
+) {
   for (final entry in arguments.entries) {
     if (!validated.containsKey(entry.key) &&
         !propertySchemas.containsKey(entry.key)) {
       validated[entry.key] = entry.value;
     }
   }
-
-  return validated;
 }
 
 sealed class _ValueOutcome {
@@ -285,46 +329,66 @@ bool _matchesType(Object? value, String type) {
 /// Attempts to coerce a scalar [value] to [type]. Mirrors pi's
 /// `coercePrimitiveByType` / agenix's `_coerce`.
 _ValueOutcome _coercePrimitive(Object? value, String type) {
-  switch (type) {
-    case 'number':
-      if (value is num) return _Valid(value);
-      if (value is bool) return _Valid(value ? 1 : 0);
-      if (value is String && value.trim().isNotEmpty) {
-        final parsed = num.tryParse(value);
-        if (parsed != null) return _Valid(parsed);
-      }
-    case 'integer':
-      if (value is int) return _Valid(value);
-      if (value is double) {
-        if (value == value.roundToDouble()) return _Valid(value.toInt());
-        return const _Invalid();
-      }
-      if (value is bool) return _Valid(value ? 1 : 0);
-      if (value is String && value.trim().isNotEmpty) {
-        final parsed = num.tryParse(value);
-        if (parsed != null && parsed == parsed.roundToDouble()) {
-          return _Valid(parsed.toInt());
-        }
-      }
-    case 'boolean':
-      if (value is bool) return _Valid(value);
-      if (value is num) {
-        if (value == 1) return const _Valid(true);
-        if (value == 0) return const _Valid(false);
-      }
-      if (value is String) {
-        final lower = value.toLowerCase();
-        if (lower == 'true') return const _Valid(true);
-        if (lower == 'false') return const _Valid(false);
-      }
-    case 'string':
-      if (value is String) return _Valid(value);
-      if (value is num || value is bool) return _Valid('$value');
-    case 'null':
-      if (value == null) return const _Valid(null);
-      if (value == '' || value == 0 || value == false) {
-        return const _Valid(null);
-      }
+  return switch (type) {
+    'number' => _coerceToNumber(value),
+    'integer' => _coerceToInteger(value),
+    'boolean' => _coerceToBoolean(value),
+    'string' => _coerceToString(value),
+    'null' => _coerceToNull(value),
+    _ => const _Invalid(),
+  };
+}
+
+_ValueOutcome _coerceToNumber(Object? value) {
+  if (value is num) return _Valid(value);
+  if (value is bool) return _Valid(value ? 1 : 0);
+  if (value is String && value.trim().isNotEmpty) {
+    final parsed = num.tryParse(value);
+    if (parsed != null) return _Valid(parsed);
+  }
+  return const _Invalid();
+}
+
+_ValueOutcome _coerceToInteger(Object? value) {
+  if (value is int) return _Valid(value);
+  if (value is double) {
+    if (value == value.roundToDouble()) return _Valid(value.toInt());
+    return const _Invalid();
+  }
+  if (value is bool) return _Valid(value ? 1 : 0);
+  if (value is String && value.trim().isNotEmpty) {
+    final parsed = num.tryParse(value);
+    if (parsed != null && parsed == parsed.roundToDouble()) {
+      return _Valid(parsed.toInt());
+    }
+  }
+  return const _Invalid();
+}
+
+_ValueOutcome _coerceToBoolean(Object? value) {
+  if (value is bool) return _Valid(value);
+  if (value is num) {
+    if (value == 1) return const _Valid(true);
+    if (value == 0) return const _Valid(false);
+  }
+  if (value is String) {
+    final lower = value.toLowerCase();
+    if (lower == 'true') return const _Valid(true);
+    if (lower == 'false') return const _Valid(false);
+  }
+  return const _Invalid();
+}
+
+_ValueOutcome _coerceToString(Object? value) {
+  if (value is String) return _Valid(value);
+  if (value is num || value is bool) return _Valid('$value');
+  return const _Invalid();
+}
+
+_ValueOutcome _coerceToNull(Object? value) {
+  if (value == null) return const _Valid(null);
+  if (value == '' || value == 0 || value == false) {
+    return const _Valid(null);
   }
   return const _Invalid();
 }

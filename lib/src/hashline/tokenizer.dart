@@ -425,96 +425,157 @@ String? _scanMoveDest(String line, int index, int end) {
 ) {
   final cursor = _skipWhitespace(line, start, end);
 
-  final remEnd = _scanKeyword(line, cursor, end, hlRemKeyword);
-  if (remEnd != null) {
-    final next = _skipWhitespace(line, remEnd, end);
-    if (next != end) return null;
-    return (target: const HashlineTargetRem(), nextIndex: next);
-  }
-  final moveEnd = _scanKeyword(line, cursor, end, hlMoveKeyword);
-  if (moveEnd != null) {
-    final dest = _scanMoveDest(line, moveEnd, end);
-    if (dest == null || dest.isEmpty) return null;
-    return (target: HashlineTargetMove(dest), nextIndex: end);
-  }
+  final rem = _scanRemTarget(line, cursor, end);
+  if (rem != null) return rem;
+  final move = _scanMoveTarget(line, cursor, end);
+  if (move != null) return move;
+  final replaceBlock = _scanReplaceBlockTarget(line, cursor, end);
+  if (replaceBlock != null) return replaceBlock;
+  final replace = _scanReplaceTarget(line, cursor, end);
+  if (replace != null) return replace;
+  final deleteBlock = _scanDeleteBlockTarget(line, cursor, end);
+  if (deleteBlock != null) return deleteBlock;
+  final delete = _scanDeleteTarget(line, cursor, end);
+  if (delete != null) return delete;
+  final insertAfterBlock = _scanInsertAfterBlockTarget(line, cursor, end);
+  if (insertAfterBlock != null) return insertAfterBlock;
+  final insertEnd = _scanKeyword(line, cursor, end, hlInsertKeyword);
+  if (insertEnd != null) return _scanInsertTarget(line, insertEnd, end);
+  return null;
+}
 
-  // `SWAP.BLK N:` — resolve N to a tree-sitter block range at apply time.
+/// Scans the `REM` (remove-file) target at [cursor].
+({HashlineTarget target, int nextIndex})? _scanRemTarget(
+  String line,
+  int cursor,
+  int end,
+) {
+  final remEnd = _scanKeyword(line, cursor, end, hlRemKeyword);
+  if (remEnd == null) return null;
+  final next = _skipWhitespace(line, remEnd, end);
+  if (next != end) return null;
+  return (target: const HashlineTargetRem(), nextIndex: next);
+}
+
+/// Scans the `MV <dest>` target at [cursor].
+({HashlineTarget target, int nextIndex})? _scanMoveTarget(
+  String line,
+  int cursor,
+  int end,
+) {
+  final moveEnd = _scanKeyword(line, cursor, end, hlMoveKeyword);
+  if (moveEnd == null) return null;
+  final dest = _scanMoveDest(line, moveEnd, end);
+  if (dest == null || dest.isEmpty) return null;
+  return (target: HashlineTargetMove(dest), nextIndex: end);
+}
+
+/// Scans the `SWAP.BLK N:` target at [cursor]; N resolves to a tree-sitter
+/// block range at apply time.
+({HashlineTarget target, int nextIndex})? _scanReplaceBlockTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final replaceBlockEnd = _scanKeyword(
     line,
     cursor,
     end,
     hlReplaceBlockKeyword,
   );
-  if (replaceBlockEnd != null) {
-    final anchor = _scanLineNumber(
-      line,
-      _skipWhitespace(line, replaceBlockEnd, end),
-      end,
-    );
-    if (anchor == null) return null;
-    return (
-      target: HashlineTargetBlock(HashlineAnchor(anchor.line)),
-      nextIndex: _consumeOptionalColon(line, anchor.nextIndex, end),
-    );
-  }
+  if (replaceBlockEnd == null) return null;
+  final anchor = _scanLineNumber(
+    line,
+    _skipWhitespace(line, replaceBlockEnd, end),
+    end,
+  );
+  if (anchor == null) return null;
+  return (
+    target: HashlineTargetBlock(HashlineAnchor(anchor.line)),
+    nextIndex: _consumeOptionalColon(line, anchor.nextIndex, end),
+  );
+}
+
+/// Scans the `SWAP N.=M:` target at [cursor].
+({HashlineTarget target, int nextIndex})? _scanReplaceTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final replaceEnd = _scanKeyword(line, cursor, end, hlReplaceKeyword);
-  if (replaceEnd != null) {
-    final range = _scanHeaderRange(line, replaceEnd, end, true);
-    if (range == null) return null;
-    return (
-      target: HashlineTargetReplace(range.range),
-      nextIndex: _consumeReplaceColon(line, range.nextIndex, end),
-    );
-  }
-  // `DEL.BLK N` — like `DEL N.=M`, takes no body and no trailing colon.
+  if (replaceEnd == null) return null;
+  final range = _scanHeaderRange(line, replaceEnd, end, true);
+  if (range == null) return null;
+  return (
+    target: HashlineTargetReplace(range.range),
+    nextIndex: _consumeReplaceColon(line, range.nextIndex, end),
+  );
+}
+
+/// Scans the `DEL.BLK N` target at [cursor] — like `DEL N.=M`, takes no
+/// body and no trailing colon.
+({HashlineTarget target, int nextIndex})? _scanDeleteBlockTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final deleteBlockEnd = _scanKeyword(line, cursor, end, hlDeleteBlockKeyword);
-  if (deleteBlockEnd != null) {
-    final anchor = _scanLineNumber(
-      line,
-      _skipWhitespace(line, deleteBlockEnd, end),
-      end,
-    );
-    if (anchor == null) return null;
-    var next = _skipWhitespace(line, anchor.nextIndex, end);
-    next = _skipStrayDot(line, next, end);
-    if (next < end && line.codeUnitAt(next) == _charColon) return null;
-    return (
-      target: HashlineTargetDeleteBlock(HashlineAnchor(anchor.line)),
-      nextIndex: next,
-    );
-  }
-  // `DEL N.=M` — takes no body and no trailing colon; a colon here falls
-  // through to contamination detection.
+  if (deleteBlockEnd == null) return null;
+  final anchor = _scanLineNumber(
+    line,
+    _skipWhitespace(line, deleteBlockEnd, end),
+    end,
+  );
+  if (anchor == null) return null;
+  var next = _skipWhitespace(line, anchor.nextIndex, end);
+  next = _skipStrayDot(line, next, end);
+  if (next < end && line.codeUnitAt(next) == _charColon) return null;
+  return (
+    target: HashlineTargetDeleteBlock(HashlineAnchor(anchor.line)),
+    nextIndex: next,
+  );
+}
+
+/// Scans the `DEL N.=M` target at [cursor] — takes no body and no trailing
+/// colon; a colon here falls through to contamination detection.
+({HashlineTarget target, int nextIndex})? _scanDeleteTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final deleteEnd = _scanKeyword(line, cursor, end, hlDeleteKeyword);
-  if (deleteEnd != null) {
-    final range = _scanHeaderRange(line, deleteEnd, end, true);
-    if (range == null) return null;
-    final next = _skipStrayDot(line, range.nextIndex, end);
-    if (next < end && line.codeUnitAt(next) == _charColon) return null;
-    return (target: HashlineTargetDelete(range.range), nextIndex: next);
-  }
-  // `INS.BLK.POST N:` — insert after the last line of the block at N.
+  if (deleteEnd == null) return null;
+  final range = _scanHeaderRange(line, deleteEnd, end, true);
+  if (range == null) return null;
+  final next = _skipStrayDot(line, range.nextIndex, end);
+  if (next < end && line.codeUnitAt(next) == _charColon) return null;
+  return (target: HashlineTargetDelete(range.range), nextIndex: next);
+}
+
+/// Scans the `INS.BLK.POST N:` target at [cursor] — insert after the last
+/// line of the block at N.
+({HashlineTarget target, int nextIndex})? _scanInsertAfterBlockTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final insertAfterBlockEnd = _scanKeyword(
     line,
     cursor,
     end,
     hlInsertAfterBlockKeyword,
   );
-  if (insertAfterBlockEnd != null) {
-    final anchor = _scanLineNumber(
-      line,
-      _skipWhitespace(line, insertAfterBlockEnd, end),
-      end,
-    );
-    if (anchor == null) return null;
-    return (
-      target: HashlineTargetInsertAfterBlock(HashlineAnchor(anchor.line)),
-      nextIndex: _consumeOptionalColon(line, anchor.nextIndex, end),
-    );
-  }
-  final insertEnd = _scanKeyword(line, cursor, end, hlInsertKeyword);
-  if (insertEnd != null) return _scanInsertTarget(line, insertEnd, end);
-  return null;
+  if (insertAfterBlockEnd == null) return null;
+  final anchor = _scanLineNumber(
+    line,
+    _skipWhitespace(line, insertAfterBlockEnd, end),
+    end,
+  );
+  if (anchor == null) return null;
+  return (
+    target: HashlineTargetInsertAfterBlock(HashlineAnchor(anchor.line)),
+    nextIndex: _consumeOptionalColon(line, anchor.nextIndex, end),
+  );
 }
 
 /// Parses a full hunk-header line; `null` when the line is not exactly one

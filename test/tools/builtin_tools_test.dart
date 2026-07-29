@@ -1107,6 +1107,91 @@ void main() {
       expect(decoded.height, 20);
     });
 
+    test('throws a clean error for undecodable image bytes', () async {
+      // Valid PNG signature but a garbage payload: detected as PNG by the
+      // magic bytes, yet undecodable.
+      final bogus = Uint8List.fromList([
+        0x89,
+        0x50,
+        0x4E,
+        0x47,
+        0x0D,
+        0x0A,
+        0x1A,
+        0x0A,
+        ...List.filled(64, 0x41),
+      ]);
+      await env.writeBinaryFile('/work/bogus.png', bogus);
+      final tool = registry.lookup('read')!;
+      expect(
+        tool.execute({'path': '/work/bogus.png'}, null, null),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('Could not decode image'),
+          ),
+        ),
+      );
+    });
+
+    test('passes a small WebP original through untouched', () async {
+      final webp = Uint8List.fromList(encodeWebP(Image(width: 50, height: 40)));
+      await env.writeBinaryFile('/work/small.webp', webp);
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute(
+        {'path': '/work/small.webp'},
+        null,
+        null,
+      );
+      final note = _text(result);
+      expect(note, contains('50x40'));
+      expect(note, isNot(contains('resized')));
+      final image = result.content.whereType<ImageContent>().single;
+      expect(image.mimeType, 'image/webp');
+      // Pass-through: the original bytes are sent untouched.
+      expect(image.data, base64Encode(webp));
+    });
+
+    test('resizes a tall portrait image by its height', () async {
+      await env.writeBinaryFile('/work/tall.png', makePng(1500, 3000));
+      final tool = registry.lookup('read')!;
+      final result = await tool.execute({'path': '/work/tall.png'}, null, null);
+      final note = _text(result);
+      expect(note, contains('1500x3000'));
+      expect(note, contains('resized to 1000x2000'));
+      final images = result.content.whereType<ImageContent>().toList();
+      expect(images, hasLength(1));
+      expect(images.first.mimeType, 'image/png');
+    });
+
+    test(
+      'degrades an over-budget image within the dimension limit to JPEG',
+      () async {
+        // 1125x1125 fits the dimension clamp, but incompressible noise blows
+        // past the base64 byte budget: PNG is retried as JPEG at the SAME
+        // dimensions.
+        final noisy = makeNoisyPng(1125, 1125);
+        expect(base64Encode(noisy).length, greaterThan(4718592));
+        await env.writeBinaryFile('/work/noisy.png', noisy);
+        final tool = registry.lookup('read')!;
+        final result = await tool.execute(
+          {'path': '/work/noisy.png'},
+          null,
+          null,
+        );
+        final note = _text(result);
+        expect(note, contains('resized to 1125x1125'));
+        final images = result.content.whereType<ImageContent>().toList();
+        expect(images, hasLength(1));
+        expect(images.first.mimeType, 'image/jpeg');
+        expect(images.first.data.length, lessThan(4718592));
+        final decoded = decodeImage(base64Decode(images.first.data))!;
+        expect(decoded.width, 1125);
+        expect(decoded.height, 1125);
+      },
+    );
+
     test('adds a non-vision note when the model cannot take images', () async {
       await env.writeBinaryFile('/work/small.png', makePng(10, 10));
       final textOnly = Model(

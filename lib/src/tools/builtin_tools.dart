@@ -289,7 +289,10 @@ String? _mimeTypeForImageFormat(ImageFormat format) {
 /// of the base64 string, which equals its character length).
 int _base64Length(Uint8List bytes) => ((bytes.length + 2) ~/ 3) * 4;
 
-({
+/// The outcome of the inline-image pipeline ([_processImage] /
+/// [_resizeInlineImage]): the base64 payload to send, the ORIGINAL
+/// dimensions, and the dimensions it is actually displayed at.
+typedef _InlineImageResult = ({
   String mimeType,
   String base64,
   int width,
@@ -298,8 +301,9 @@ int _base64Length(Uint8List bytes) => ((bytes.length + 2) ~/ 3) * 4;
   int outputWidth,
   int outputHeight,
   String? convertedFrom,
-})
-_processImage(
+});
+
+_InlineImageResult _processImage(
   Uint8List bytes,
   ImageFormat format, {
   int maxDimension = _defaultImageMaxDimension,
@@ -311,10 +315,7 @@ _processImage(
   var inputFormat = format;
   String? convertedFrom;
   if (!_inlineImageFormats.contains(format)) {
-    final source = decodeImage(bytes);
-    if (source == null) {
-      throw StateError('Could not decode image');
-    }
+    final source = _decodeOrThrow(bytes);
     inputBytes = encodePng(bakeOrientation(source));
     inputFormat = ImageFormat.png;
     convertedFrom = _mimeTypeForImageFormat(format);
@@ -336,34 +337,17 @@ _processImage(
 /// size step tries PNG, then JPEG at decreasing quality
 /// ([_imageJpegQualitySteps]), shrinking dimensions by 0.75 until a candidate
 /// fits the byte budget.
-({
-  String mimeType,
-  String base64,
-  int width,
-  int height,
-  bool resized,
-  int outputWidth,
-  int outputHeight,
-  String? convertedFrom,
-})
-_resizeInlineImage(
+_InlineImageResult _resizeInlineImage(
   Uint8List bytes,
   ImageFormat format, {
   required String? convertedFrom,
   required int maxDimension,
   required int maxBase64Bytes,
 }) {
-  final decoded = decodeImage(bytes);
-  if (decoded == null) {
-    throw StateError('Could not decode image');
-  }
+  final decoded = _decodeOrThrow(bytes);
   // Bake EXIF orientation before measuring/resizing so the model sees the
   // image as displayed (pi's `applyExifOrientation`).
-  final image =
-      decoded.exif.imageIfd.hasOrientation &&
-          decoded.exif.imageIfd.orientation != 1
-      ? bakeOrientation(decoded)
-      : decoded;
+  final image = _bakeExifOrientation(decoded);
   final width = image.width;
   final height = image.height;
 
@@ -384,64 +368,25 @@ _resizeInlineImage(
     );
   }
 
-  var targetWidth = width;
-  var targetHeight = height;
-  if (width > maxDimension || height > maxDimension) {
-    if (width >= height) {
-      targetWidth = maxDimension;
-      targetHeight = (height * maxDimension / width).round();
-    } else {
-      targetHeight = maxDimension;
-      targetWidth = (width * maxDimension / height).round();
-    }
-  }
+  final (:targetWidth, :targetHeight) = _clampToMaxDimension(
+    width,
+    height,
+    maxDimension,
+  );
 
   var currentWidth = targetWidth;
   var currentHeight = targetHeight;
   while (true) {
-    final candidate = currentWidth == width && currentHeight == height
-        ? image
-        : copyResize(
-            image,
-            width: currentWidth,
-            height: currentHeight,
-            interpolation: Interpolation.cubic,
-          );
-    final png = encodePng(candidate);
-    if (_base64Length(png) < maxBase64Bytes) {
-      return (
-        mimeType: 'image/png',
-        base64: base64Encode(png),
-        width: width,
-        height: height,
-        resized: true,
-        outputWidth: currentWidth,
-        outputHeight: currentHeight,
-        convertedFrom: convertedFrom,
-      );
-    }
-    var accepted = false;
-    String? jpegBase64;
-    for (final quality in _imageJpegQualitySteps) {
-      final jpeg = encodeJpg(candidate, quality: quality);
-      if (_base64Length(jpeg) < maxBase64Bytes) {
-        jpegBase64 = base64Encode(jpeg);
-        accepted = true;
-        break;
-      }
-    }
-    if (accepted) {
-      return (
-        mimeType: 'image/jpeg',
-        base64: jpegBase64!,
-        width: width,
-        height: height,
-        resized: true,
-        outputWidth: currentWidth,
-        outputHeight: currentHeight,
-        convertedFrom: convertedFrom,
-      );
-    }
+    final fitted = _fitImageAtSize(
+      image,
+      width,
+      height,
+      currentWidth,
+      currentHeight,
+      maxBase64Bytes,
+      convertedFrom,
+    );
+    if (fitted != null) return fitted;
 
     if (currentWidth == 1 && currentHeight == 1) {
       break;
@@ -456,6 +401,104 @@ _resizeInlineImage(
   }
 
   throw StateError('Could not resize image below the inline image size limit');
+}
+
+/// Decodes [bytes], throwing when the image library cannot make sense of
+/// them (a valid signature with a garbage payload).
+Image _decodeOrThrow(Uint8List bytes) {
+  final decoded = decodeImage(bytes);
+  if (decoded == null) {
+    throw StateError('Could not decode image');
+  }
+  return decoded;
+}
+
+/// Bakes EXIF orientation into the pixels when the tag says the stored image
+/// is rotated/flipped (pi's `applyExifOrientation`); otherwise returns
+/// [decoded] untouched.
+Image _bakeExifOrientation(Image decoded) {
+  return decoded.exif.imageIfd.hasOrientation &&
+          decoded.exif.imageIfd.orientation != 1
+      ? bakeOrientation(decoded)
+      : decoded;
+}
+
+/// The initial resize target: the original dimensions when already within
+/// [maxDimension], else the aspect-preserving clamp to it (pi's
+/// `targetWidth`/`targetHeight`).
+({int targetWidth, int targetHeight}) _clampToMaxDimension(
+  int width,
+  int height,
+  int maxDimension,
+) {
+  var targetWidth = width;
+  var targetHeight = height;
+  if (width > maxDimension || height > maxDimension) {
+    if (width >= height) {
+      targetWidth = maxDimension;
+      targetHeight = (height * maxDimension / width).round();
+    } else {
+      targetHeight = maxDimension;
+      targetWidth = (width * maxDimension / height).round();
+    }
+  }
+  return (targetWidth: targetWidth, targetHeight: targetHeight);
+}
+
+/// Tries one size step: PNG first, then JPEG at decreasing quality
+/// ([_imageJpegQualitySteps]); returns null when no candidate fits the byte
+/// budget, so the caller shrinks and retries.
+_InlineImageResult? _fitImageAtSize(
+  Image image,
+  int width,
+  int height,
+  int currentWidth,
+  int currentHeight,
+  int maxBase64Bytes,
+  String? convertedFrom,
+) {
+  final candidate = currentWidth == width && currentHeight == height
+      ? image
+      : copyResize(
+          image,
+          width: currentWidth,
+          height: currentHeight,
+          interpolation: Interpolation.cubic,
+        );
+  final png = encodePng(candidate);
+  if (_base64Length(png) < maxBase64Bytes) {
+    return (
+      mimeType: 'image/png',
+      base64: base64Encode(png),
+      width: width,
+      height: height,
+      resized: true,
+      outputWidth: currentWidth,
+      outputHeight: currentHeight,
+      convertedFrom: convertedFrom,
+    );
+  }
+  String? jpegBase64;
+  for (final quality in _imageJpegQualitySteps) {
+    final jpeg = encodeJpg(candidate, quality: quality);
+    if (_base64Length(jpeg) < maxBase64Bytes) {
+      jpegBase64 = base64Encode(jpeg);
+      break;
+    }
+  }
+  if (jpegBase64 != null) {
+    return (
+      mimeType: 'image/jpeg',
+      base64: jpegBase64,
+      width: width,
+      height: height,
+      resized: true,
+      outputWidth: currentWidth,
+      outputHeight: currentHeight,
+      convertedFrom: convertedFrom,
+    );
+  }
+  return null;
 }
 
 ImageFormat? _detectImageFormat(Uint8List bytes) {
@@ -604,140 +647,172 @@ AgentTool readFileTool(
       final bytes = binaryRead.valueOrNull!;
       cancelToken?.throwIfCancelled();
 
-      final format = _detectImageFormat(bytes);
-      if (format != null && _supportedImageFormats.contains(format)) {
-        if (parsed is! ReadSelectorNone) {
-          throw StateError(
-            'Line selectors (:N, :A-B, :raw) apply to text files; '
-            "'$path' is an image.",
-          );
-        }
-        final processed = _processImage(bytes, format);
-        final note = StringBuffer()
-          ..write('[Image: $path, ${processed.width}x${processed.height}');
-        if (processed.resized) {
-          note.write(
-            ', resized to ${processed.outputWidth}x${processed.outputHeight}',
-          );
-        }
-        note.write(']');
-        // pi's `conversionHint`.
-        final convertedFrom = processed.convertedFrom;
-        if (convertedFrom != null && convertedFrom != processed.mimeType) {
-          note.write(
-            '\n[Image converted from $convertedFrom to ${processed.mimeType}.]',
-          );
-        }
-        // pi's `formatDimensionNote`: coordinate-mapping hint after resize.
-        if (processed.resized) {
-          final scale = processed.width / processed.outputWidth;
-          note.write(
-            '\n[Image: original ${processed.width}x${processed.height}, '
-            'displayed at ${processed.outputWidth}x${processed.outputHeight}. '
-            'Multiply coordinates by ${scale.toStringAsFixed(2)} to map to '
-            'original image.]',
-          );
-        }
-        // pi's `getNonVisionImageNote`.
-        final currentModel = model?.call();
-        if (currentModel != null && !currentModel.input.contains('image')) {
-          note.write(
-            '\n[Current model does not support images. The image will be '
-            'omitted from this request.]',
-          );
-        }
-        return ToolExecutionResult(
-          content: [
-            TextContent(text: note.toString()),
-            ImageContent(data: processed.base64, mimeType: processed.mimeType),
-          ],
-        );
-      }
+      final imageResult = _readImageResult(path, bytes, parsed, model);
+      if (imageResult != null) return imageResult;
 
-      final read = await env.readTextFile(path);
-      if (read.isErr) throw StateError('${read.errorOrNull}');
-      cancelToken?.throwIfCancelled();
-
-      final rawContent = read.valueOrNull!;
-      final allLines = rawContent.split('\n');
-      final totalFileLines = allLines.length;
-      final raw = isRawSelector(parsed);
-
-      // Multi-range selector: one block per in-bounds range joined by an
-      // elision separator; ranges past EOF surface as skipped notices (omp's
-      // #buildInMemoryMultiRangeResult).
-      if (parsed is ReadSelectorLines && parsed.ranges.length > 1) {
-        final multi = _formatMultiRange(
-          allLines: allLines,
-          ranges: parsed.ranges,
-          raw: raw,
-          hashlineMode: hashlineMode,
-          entityLabel: 'file',
-        );
-        var multiOutput = multi.text;
-        if (hashlineMode && !raw) {
-          final normalized = normalizeToLF(stripBom(rawContent).text);
-          final canonical = (await env.absolutePath(path)).valueOrNull ?? path;
-          final tag = store.record(canonical, normalized, multi.seenLines);
-          multiOutput = '${formatHashlineHeader(path, tag)}\n$multiOutput';
-        }
-        return ToolExecutionResult.text(multiOutput);
-      }
-
-      // Whole-file/raw or a single range: map onto the offset/limit pipeline.
-      // A selector range past EOF gets omp's graceful note instead of the
-      // offset-argument error.
-      var effectiveOffset = offset;
-      var effectiveLimit = limit;
-      if (parsed is ReadSelectorLines) {
-        final range = parsed.ranges.first;
-        if (range.startLine > totalFileLines) {
-          return ToolExecutionResult.text(
-            'Line ${range.startLine} is beyond end of file '
-            '($totalFileLines lines total). Use :1 to read from the start, '
-            'or :$totalFileLines to read the last line.',
-          );
-        }
-        effectiveOffset = range.startLine;
-        effectiveLimit = range.endLine == null
-            ? null
-            : range.endLine! - range.startLine + 1;
-      }
-
-      final formatted = _selectAndTruncate(
-        allLines: allLines,
-        entityLabel: 'file',
-        offset: effectiveOffset,
-        limit: effectiveLimit,
-        raw: raw,
-        numbered: hashlineMode && !raw,
-        path: path,
+      return _readTextContent(
+        env,
+        store,
+        path,
+        parsed,
+        offset,
+        limit,
+        hashlineMode,
+        cancelToken,
       );
-      var outputText = formatted.text;
-
-      if (hashlineMode && !raw) {
-        // Record the FULL normalized file text (the tag is a whole-file
-        // content hash) plus the 1-indexed lines actually displayed, so a
-        // later edit patch validates the tag and the seen-line guard knows
-        // which lines the model was shown.
-        final normalized = normalizeToLF(stripBom(rawContent).text);
-        final canonical = (await env.absolutePath(path)).valueOrNull ?? path;
-        final lastDisplayed =
-            formatted.startLineDisplay + formatted.displayedLines - 1;
-        final seenLines = [
-          for (
-            var line = formatted.startLineDisplay;
-            line <= lastDisplayed;
-            line++
-          )
-            line,
-        ];
-        final tag = store.record(canonical, normalized, seenLines);
-        outputText = '${formatHashlineHeader(path, tag)}\n$outputText';
-      }
-      return ToolExecutionResult.text(outputText);
     },
   );
+}
+
+/// Renders an image read: decodes/resizes to the inline limits and builds
+/// the note header. Returns null when [bytes] are not a supported image, so
+/// the caller falls through to a text read.
+ToolExecutionResult? _readImageResult(
+  String path,
+  Uint8List bytes,
+  ReadSelector parsed,
+  Model? Function()? model,
+) {
+  final format = _detectImageFormat(bytes);
+  if (format == null || !_supportedImageFormats.contains(format)) return null;
+  if (parsed is! ReadSelectorNone) {
+    throw StateError(
+      'Line selectors (:N, :A-B, :raw) apply to text files; '
+      "'$path' is an image.",
+    );
+  }
+  final processed = _processImage(bytes, format);
+  final note = StringBuffer()
+    ..write('[Image: $path, ${processed.width}x${processed.height}');
+  if (processed.resized) {
+    note.write(
+      ', resized to ${processed.outputWidth}x${processed.outputHeight}',
+    );
+  }
+  note.write(']');
+  // pi's `conversionHint`.
+  final convertedFrom = processed.convertedFrom;
+  if (convertedFrom != null && convertedFrom != processed.mimeType) {
+    note.write(
+      '\n[Image converted from $convertedFrom to ${processed.mimeType}.]',
+    );
+  }
+  // pi's `formatDimensionNote`: coordinate-mapping hint after resize.
+  if (processed.resized) {
+    final scale = processed.width / processed.outputWidth;
+    note.write(
+      '\n[Image: original ${processed.width}x${processed.height}, '
+      'displayed at ${processed.outputWidth}x${processed.outputHeight}. '
+      'Multiply coordinates by ${scale.toStringAsFixed(2)} to map to '
+      'original image.]',
+    );
+  }
+  // pi's `getNonVisionImageNote`.
+  final currentModel = model?.call();
+  if (currentModel != null && !currentModel.input.contains('image')) {
+    note.write(
+      '\n[Current model does not support images. The image will be '
+      'omitted from this request.]',
+    );
+  }
+  return ToolExecutionResult(
+    content: [
+      TextContent(text: note.toString()),
+      ImageContent(data: processed.base64, mimeType: processed.mimeType),
+    ],
+  );
+}
+
+/// The text branch of the `read` tool: selector mapping, head truncation
+/// with continuation notices, and hashline-mode numbering/recording.
+Future<ToolExecutionResult> _readTextContent(
+  ExecutionEnv env,
+  HashlineSnapshotStore store,
+  String path,
+  ReadSelector parsed,
+  int? offset,
+  int? limit,
+  bool hashlineMode,
+  CancelToken? cancelToken,
+) async {
+  final read = await env.readTextFile(path);
+  if (read.isErr) throw StateError('${read.errorOrNull}');
+  cancelToken?.throwIfCancelled();
+
+  final rawContent = read.valueOrNull!;
+  final allLines = rawContent.split('\n');
+  final totalFileLines = allLines.length;
+  final raw = isRawSelector(parsed);
+
+  // Multi-range selector: one block per in-bounds range joined by an
+  // elision separator; ranges past EOF surface as skipped notices (omp's
+  // #buildInMemoryMultiRangeResult).
+  if (parsed is ReadSelectorLines && parsed.ranges.length > 1) {
+    final multi = _formatMultiRange(
+      allLines: allLines,
+      ranges: parsed.ranges,
+      raw: raw,
+      hashlineMode: hashlineMode,
+      entityLabel: 'file',
+    );
+    var multiOutput = multi.text;
+    if (hashlineMode && !raw) {
+      final normalized = normalizeToLF(stripBom(rawContent).text);
+      final canonical = (await env.absolutePath(path)).valueOrNull ?? path;
+      final tag = store.record(canonical, normalized, multi.seenLines);
+      multiOutput = '${formatHashlineHeader(path, tag)}\n$multiOutput';
+    }
+    return ToolExecutionResult.text(multiOutput);
+  }
+
+  // Whole-file/raw or a single range: map onto the offset/limit pipeline.
+  // A selector range past EOF gets omp's graceful note instead of the
+  // offset-argument error.
+  var effectiveOffset = offset;
+  var effectiveLimit = limit;
+  if (parsed is ReadSelectorLines) {
+    final range = parsed.ranges.first;
+    if (range.startLine > totalFileLines) {
+      return ToolExecutionResult.text(
+        'Line ${range.startLine} is beyond end of file '
+        '($totalFileLines lines total). Use :1 to read from the start, '
+        'or :$totalFileLines to read the last line.',
+      );
+    }
+    effectiveOffset = range.startLine;
+    effectiveLimit = range.endLine == null
+        ? null
+        : range.endLine! - range.startLine + 1;
+  }
+
+  final formatted = _selectAndTruncate(
+    allLines: allLines,
+    entityLabel: 'file',
+    offset: effectiveOffset,
+    limit: effectiveLimit,
+    raw: raw,
+    numbered: hashlineMode && !raw,
+    path: path,
+  );
+  var outputText = formatted.text;
+
+  if (hashlineMode && !raw) {
+    // Record the FULL normalized file text (the tag is a whole-file
+    // content hash) plus the 1-indexed lines actually displayed, so a
+    // later edit patch validates the tag and the seen-line guard knows
+    // which lines the model was shown.
+    final normalized = normalizeToLF(stripBom(rawContent).text);
+    final canonical = (await env.absolutePath(path)).valueOrNull ?? path;
+    final lastDisplayed =
+        formatted.startLineDisplay + formatted.displayedLines - 1;
+    final seenLines = [
+      for (var line = formatted.startLineDisplay; line <= lastDisplayed; line++)
+        line,
+    ];
+    final tag = store.record(canonical, normalized, seenLines);
+    outputText = '${formatHashlineHeader(path, tag)}\n$outputText';
+  }
+  return ToolExecutionResult.text(outputText);
 }
 
 /// The result of [_selectAndTruncate]: the rendered text plus the window of
@@ -808,16 +883,12 @@ _SelectedText _selectAndTruncate({
   final truncation = _truncateHead(displayContent);
   String outputText;
   if (truncation.firstLineExceedsLimit) {
-    if (raw || path == null) {
-      outputText = _bytePrefixSnippet(allLines[startLine], defaultToolMaxBytes);
-    } else {
-      outputText =
-          '[Line $startLineDisplay is '
-          '${formatToolSize(_byteLength(allLines[startLine]))}, exceeds '
-          '${formatToolSize(defaultToolMaxBytes)} limit. Use bash: '
-          "sed -n '${startLineDisplay}p' $path | "
-          'head -c $defaultToolMaxBytes]';
-    }
+    outputText = _firstLineExceedsOutput(
+      allLines[startLine],
+      startLineDisplay,
+      raw,
+      path,
+    );
   } else if (truncation.truncated) {
     final endLineDisplay = startLineDisplay + truncation.outputLines - 1;
     final nextOffset = endLineDisplay + 1;
@@ -852,6 +923,26 @@ _SelectedText _selectAndTruncate({
   );
 }
 
+/// Renders the answer for a first line that alone exceeds the byte limit:
+/// a raw read or an archive member (no local path) shows a byte prefix
+/// snippet (omp's in-memory `truncateHeadBytes` path), a numbered local read
+/// points at `sed` for the oversized line.
+String _firstLineExceedsOutput(
+  String line,
+  int startLineDisplay,
+  bool raw,
+  String? path,
+) {
+  if (raw || path == null) {
+    return _bytePrefixSnippet(line, defaultToolMaxBytes);
+  }
+  return '[Line $startLineDisplay is '
+      '${formatToolSize(_byteLength(line))}, exceeds '
+      '${formatToolSize(defaultToolMaxBytes)} limit. Use bash: '
+      "sed -n '${startLineDisplay}p' $path | "
+      'head -c $defaultToolMaxBytes]';
+}
+
 /// Returns the longest leading substring of [line] whose UTF-8 encoding fits
 /// within [maxBytes] (omp's `truncateHeadBytes`), shown when a raw or
 /// archive read hits a first line that alone exceeds the byte limit.
@@ -873,6 +964,64 @@ String _bytePrefixSnippet(String line, int maxBytes) {
 /// the next call. No leading/trailing context is added — multi-range callers
 /// always specify exact bounds.
 ({String text, List<int> seenLines}) _formatMultiRange({
+  required List<String> allLines,
+  required List<LineRange> ranges,
+  required bool raw,
+  required bool hashlineMode,
+  required String entityLabel,
+}) {
+  final (
+    :notices,
+    :blocks,
+    :blockStarts,
+    :blockLengths,
+  ) = _collectMultiRangeBlocks(
+    allLines: allLines,
+    ranges: ranges,
+    raw: raw,
+    hashlineMode: hashlineMode,
+    entityLabel: entityLabel,
+  );
+
+  var output = blocks.join('\n\n…\n\n');
+  final truncation = _truncateHead(output);
+  output = truncation.content;
+
+  final seenLines = hashlineMode && !raw
+      ? _multiRangeSeenLines(
+          blocks: blocks,
+          blockStarts: blockStarts,
+          blockLengths: blockLengths,
+          outputLines: truncation.outputLines,
+        )
+      : const <int>[];
+
+  if (truncation.truncated) {
+    final note =
+        '[Output truncated: showing ${truncation.outputLines} of '
+        '${truncation.totalLines} selected lines. Use narrower ranges to '
+        'continue.]';
+    output = output.isEmpty ? note : '$output\n\n$note';
+  }
+  if (notices.isNotEmpty) {
+    output = output.isEmpty
+        ? notices.join('\n')
+        : '$output\n${notices.join('\n')}';
+  }
+  return (text: output, seenLines: seenLines);
+}
+
+/// Per-range blocks for [_formatMultiRange]: each in-bounds range emits one
+/// block (numbered in hashline mode), and ranges past EOF surface as
+/// `[… skipped]` notices. No leading/trailing context is added —
+/// multi-range callers always specify exact bounds.
+({
+  List<String> notices,
+  List<String> blocks,
+  List<int> blockStarts,
+  List<int> blockLengths,
+})
+_collectMultiRangeBlocks({
   required List<String> allLines,
   required List<LineRange> ranges,
   required bool raw,
@@ -907,40 +1056,34 @@ String _bytePrefixSnippet(String line, int maxBytes) {
     blockStarts.add(range.startLine);
     blockLengths.add(end - range.startLine + 1);
   }
+  return (
+    notices: notices,
+    blocks: blocks,
+    blockStarts: blockStarts,
+    blockLengths: blockLengths,
+  );
+}
 
-  var output = blocks.join('\n\n…\n\n');
-  final truncation = _truncateHead(output);
-  output = truncation.content;
-
-  // Seen lines for the hashline store: walk the blocks against the surviving
-  // whole-line budget (the blank/…/blank separator lines consume budget but
-  // map to no file lines).
+/// Seen lines for the hashline store: walks the blocks against the surviving
+/// whole-line budget (the blank/…/blank separator lines consume budget but
+/// map to no file lines).
+List<int> _multiRangeSeenLines({
+  required List<String> blocks,
+  required List<int> blockStarts,
+  required List<int> blockLengths,
+  required int outputLines,
+}) {
   final seenLines = <int>[];
-  if (hashlineMode && !raw) {
-    var budget = truncation.outputLines;
-    for (var i = 0; i < blocks.length && budget > 0; i++) {
-      final kept = blockLengths[i] < budget ? blockLengths[i] : budget;
-      for (var line = blockStarts[i]; line < blockStarts[i] + kept; line++) {
-        seenLines.add(line);
-      }
-      budget -= kept;
-      if (budget > 0 && i + 1 < blocks.length) budget -= 3;
+  var budget = outputLines;
+  for (var i = 0; i < blocks.length && budget > 0; i++) {
+    final kept = blockLengths[i] < budget ? blockLengths[i] : budget;
+    for (var line = blockStarts[i]; line < blockStarts[i] + kept; line++) {
+      seenLines.add(line);
     }
+    budget -= kept;
+    if (budget > 0 && i + 1 < blocks.length) budget -= 3;
   }
-
-  if (truncation.truncated) {
-    final note =
-        '[Output truncated: showing ${truncation.outputLines} of '
-        '${truncation.totalLines} selected lines. Use narrower ranges to '
-        'continue.]';
-    output = output.isEmpty ? note : '$output\n\n$note';
-  }
-  if (notices.isNotEmpty) {
-    output = output.isEmpty
-        ? notices.join('\n')
-        : '$output\n${notices.join('\n')}';
-  }
-  return (text: output, seenLines: seenLines);
+  return seenLines;
 }
 
 /// Converts a single-range selector to the offset/limit pair used by archive
@@ -1018,61 +1161,70 @@ Future<ToolExecutionResult?> _tryReadArchive(
 
     final entryBytes = archive.readFileBytes(archiveSubPath);
     cancelToken?.throwIfCancelled();
-    final text = decodeUtf8Text(entryBytes);
-    if (text == null) {
+    return _readArchiveEntryText(node, entryBytes, sel);
+  }
+  return null;
+}
+
+/// Renders an archive member's text (omp's immutable display mode): archive
+/// members are immutable — there is no edit path for bytes inside an
+/// archive, and a hashline tag keyed to the archive file would invite (and
+/// fail) edits — so the member renders without hashline anchors. Selectors
+/// still apply; a binary entry yields a note instead of bytes.
+ToolExecutionResult _readArchiveEntryText(
+  ArchiveNode node,
+  Uint8List entryBytes,
+  ReadSelector sel,
+) {
+  final text = decodeUtf8Text(entryBytes);
+  if (text == null) {
+    return ToolExecutionResult.text(
+      "[Cannot read binary archive entry '${node.path}' "
+      '(${formatToolSize(entryBytes.length)})]',
+    );
+  }
+
+  final entryLines = text.split('\n');
+  final raw = isRawSelector(sel);
+  if (sel is ReadSelectorLines) {
+    if (sel.ranges.length > 1) {
       return ToolExecutionResult.text(
-        "[Cannot read binary archive entry '${node.path}' "
-        '(${formatToolSize(entryBytes.length)})]',
+        _formatMultiRange(
+          allLines: entryLines,
+          ranges: sel.ranges,
+          raw: raw,
+          hashlineMode: false,
+          entityLabel: 'archive entry',
+        ).text,
       );
     }
-
-    // Archive members are immutable — there is no edit path for bytes inside
-    // an archive, and a hashline tag keyed to the archive file would invite
-    // (and fail) edits — so the member renders without hashline anchors
-    // (omp's immutable display mode). Selectors still apply.
-    final entryLines = text.split('\n');
-    final raw = isRawSelector(sel);
-    if (sel is ReadSelectorLines) {
-      if (sel.ranges.length > 1) {
-        return ToolExecutionResult.text(
-          _formatMultiRange(
-            allLines: entryLines,
-            ranges: sel.ranges,
-            raw: raw,
-            hashlineMode: false,
-            entityLabel: 'archive entry',
-          ).text,
-        );
-      }
-      final range = sel.ranges.first;
-      if (range.startLine > entryLines.length) {
-        return ToolExecutionResult.text(
-          'Line ${range.startLine} is beyond end of archive entry '
-          '(${entryLines.length} lines total). Use :1 to read from the '
-          'start, or :${entryLines.length} to read the last line.',
-        );
-      }
+    final range = sel.ranges.first;
+    if (range.startLine > entryLines.length) {
       return ToolExecutionResult.text(
-        _selectAndTruncate(
-          allLines: entryLines,
-          entityLabel: 'archive entry',
-          offset: range.startLine,
-          limit: range.endLine == null
-              ? null
-              : range.endLine! - range.startLine + 1,
-          raw: raw,
-        ).text,
+        'Line ${range.startLine} is beyond end of archive entry '
+        '(${entryLines.length} lines total). Use :1 to read from the '
+        'start, or :${entryLines.length} to read the last line.',
       );
     }
     return ToolExecutionResult.text(
       _selectAndTruncate(
         allLines: entryLines,
         entityLabel: 'archive entry',
+        offset: range.startLine,
+        limit: range.endLine == null
+            ? null
+            : range.endLine! - range.startLine + 1,
         raw: raw,
       ).text,
     );
   }
-  return null;
+  return ToolExecutionResult.text(
+    _selectAndTruncate(
+      allLines: entryLines,
+      entityLabel: 'archive entry',
+      raw: raw,
+    ).text,
+  );
 }
 
 /// Renders an archive directory listing (omp's `#readArchiveDirectory`):
@@ -1159,24 +1311,7 @@ Future<ToolExecutionResult?> _tryReadSqlite(
           ).take(maxSqliteTableListEntries).toList();
           return ToolExecutionResult.text(renderSqliteTableList(tables));
         case SqliteSchemaSelector(:final table, :final sampleLimit):
-          final sample = querySqliteRows(
-            db,
-            table,
-            limit: sampleLimit,
-            offset: 0,
-          );
-          var output = renderSqliteSchema(
-            getSqliteTableSchema(db, table),
-            SqliteRows(columns: sample.columns, rows: sample.rows),
-          );
-          if (sample.rows.length < sample.totalCount) {
-            final remaining = sample.totalCount - sample.rows.length;
-            output +=
-                '\n[$remaining more rows; append '
-                ':$table?limit=$defaultSqliteQueryLimit&offset=${sample.rows.length} '
-                'to the database path to continue]';
-          }
-          return ToolExecutionResult.text(output);
+          return _readSqliteSchema(db, table, sampleLimit);
         case SqliteRowSelector(:final table, :final key):
           final lookup = resolveSqliteRowLookup(db, table);
           final row = getSqliteRow(db, table, lookup, key);
@@ -1241,6 +1376,28 @@ Future<ToolExecutionResult?> _tryReadSqlite(
     }
   }
   return null;
+}
+
+/// Renders a table schema plus the first sample page (omp's schema view),
+/// with a continuation hint when the table has more rows than the sample.
+ToolExecutionResult _readSqliteSchema(
+  SqliteDatabase db,
+  String table,
+  int sampleLimit,
+) {
+  final sample = querySqliteRows(db, table, limit: sampleLimit, offset: 0);
+  var output = renderSqliteSchema(
+    getSqliteTableSchema(db, table),
+    SqliteRows(columns: sample.columns, rows: sample.rows),
+  );
+  if (sample.rows.length < sample.totalCount) {
+    final remaining = sample.totalCount - sample.rows.length;
+    output +=
+        '\n[$remaining more rows; append '
+        ':$table?limit=$defaultSqliteQueryLimit&offset=${sample.rows.length} '
+        'to the database path to continue]';
+  }
+  return ToolExecutionResult.text(output);
 }
 
 // ---------------------------------------------------------------------------

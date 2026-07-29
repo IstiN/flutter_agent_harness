@@ -140,125 +140,184 @@ final class _Converter {
     _current.write(text);
   }
 
+  /// Tag handlers keyed by tag name; a missing entry is transparent (tag
+  /// dropped, content kept).
+  late final _tagHandlers = <String, void Function(HtmlTag)>{
+    'h1': _handleHeading,
+    'h2': _handleHeading,
+    'h3': _handleHeading,
+    'h4': _handleHeading,
+    'h5': _handleHeading,
+    'h6': _handleHeading,
+    'p': _handleBlock,
+    'div': _handleBlock,
+    'section': _handleBlock,
+    'article': _handleBlock,
+    'main': _handleBlock,
+    'aside': _handleBlock,
+    'figure': _handleBlock,
+    'figcaption': _handleBlock,
+    'details': _handleBlock,
+    'summary': _handleBlock,
+    'dl': _handleBlock,
+    'dt': _handleBlock,
+    'dd': _handleBlock,
+    'header': _handleBlock,
+    'form': _handleBlock,
+    'br': _handleBr,
+    'hr': _handleHr,
+    'a': _handleLink,
+    'img': _handleImage,
+    'b': _handleBold,
+    'strong': _handleBold,
+    'i': _handleItalic,
+    'em': _handleItalic,
+    'code': _handleCodeTag,
+    'pre': _handlePre,
+    'blockquote': _handleBlockquoteTag,
+    'ul': _handleList,
+    'ol': _handleList,
+    'li': _handleLi,
+    'table': _handleTable,
+    'tr': _handleTr,
+    'td': _handleCell,
+    'th': _handleCell,
+  };
+
   void _handleTag(HtmlTag tag) {
     if (_preActive && tag.name != 'pre' && tag.name != 'code') {
       return; // markup inside <pre> is decorative (syntax highlighting)
     }
-    switch (tag.name) {
-      case 'h1' || 'h2' || 'h3' || 'h4' || 'h5' || 'h6':
-        final level = int.parse(tag.name.substring(1));
-        if (tag.closing) {
-          _current.ensureNewlines(2);
-        } else {
-          _current.ensureNewlines(2);
-          _current.write('${'#' * level} ');
-        }
-      case 'p' ||
-          'div' ||
-          'section' ||
-          'article' ||
-          'main' ||
-          'aside' ||
-          'figure' ||
-          'figcaption' ||
-          'details' ||
-          'summary' ||
-          'dl' ||
-          'dt' ||
-          'dd' ||
-          'header' ||
-          'form':
-        _current.ensureNewlines(2);
-      case 'br':
-        if (!tag.closing) _current.write('\n');
-      case 'hr':
-        if (!tag.closing) {
-          _current.ensureNewlines(2);
-          _current.write('---');
-          _current.ensureNewlines(2);
-        }
-      case 'a':
-        if (tag.closing) {
-          _closeLink();
-        } else {
-          _frames.add(_Frame('link', tag.attributes['href']));
-        }
-      case 'img':
-        if (!tag.closing) _writeImage(tag);
-      case 'b' || 'strong':
-        if (tag.closing) {
-          _closeInline('bold', '**');
-        } else {
-          _frames.add(_Frame('bold'));
-        }
-      case 'i' || 'em':
-        if (tag.closing) {
-          _closeInline('italic', '*');
-        } else {
-          _frames.add(_Frame('italic'));
-        }
-      case 'code':
-        if (_preActive) {
-          if (!tag.closing) _captureCodeLanguage(tag);
-        } else if (tag.closing) {
-          _closeCode();
-        } else {
-          _frames.add(_Frame('code'));
-        }
-      case 'pre':
-        if (tag.closing) {
-          _closePre();
-        } else if (!tag.selfClosing) {
-          _preActive = true;
-          _preLanguage = null;
-        }
-      case 'blockquote':
-        if (tag.closing) {
-          _closeBlockquote();
-        } else {
-          _frames.add(_Frame('blockquote'));
-        }
-      case 'ul' || 'ol':
-        if (tag.closing) {
-          if (_lists.isNotEmpty) _lists.removeLast();
-          _current.ensureNewlines(2);
-        } else {
-          _current.ensureNewlines(_lists.isEmpty ? 2 : 1);
-          _lists.add(_ListContext(tag.name == 'ol'));
-        }
-      case 'li':
-        if (!tag.closing && _lists.isNotEmpty) {
-          final list = _lists.last;
-          _current.ensureNewlines(1);
-          final indent = '  ' * (_lists.length - 1);
-          final marker = list.ordered ? '${list.nextIndex++}.' : '-';
-          _current.write('$indent$marker ');
-        }
-      case 'table':
-        _inTable = !tag.closing;
-        _current.ensureNewlines(2);
-      case 'tr':
-        if (!_inTable) break;
-        if (tag.closing) {
-          _current.write('\n');
-          if (_rowHasHeader && _rowCellCount > 0) {
-            _current.write('|${' --- |' * _rowCellCount}\n');
-          }
-          _rowHasHeader = false;
-          _rowCellCount = 0;
-        } else {
-          _current.ensureNewlines(1);
-          _current.write('|');
-        }
-      case 'td' || 'th':
-        if (!_inTable) break;
-        if (tag.closing) {
-          _closeCell(tag.name == 'th');
-        } else {
-          _frames.add(_Frame('cell'));
-        }
-      default:
-        break; // transparent: tag dropped, content kept
+    _tagHandlers[tag.name]?.call(tag);
+  }
+
+  void _handleHeading(HtmlTag tag) {
+    final level = int.parse(tag.name.substring(1));
+    if (tag.closing) {
+      _current.ensureNewlines(2);
+    } else {
+      _current.ensureNewlines(2);
+      _current.write('${'#' * level} ');
+    }
+  }
+
+  void _handleBlock(HtmlTag tag) {
+    _current.ensureNewlines(2);
+  }
+
+  void _handleBr(HtmlTag tag) {
+    if (!tag.closing) _current.write('\n');
+  }
+
+  void _handleHr(HtmlTag tag) {
+    if (!tag.closing) {
+      _current.ensureNewlines(2);
+      _current.write('---');
+      _current.ensureNewlines(2);
+    }
+  }
+
+  void _handleLink(HtmlTag tag) {
+    if (tag.closing) {
+      _closeLink();
+    } else {
+      _frames.add(_Frame('link', tag.attributes['href']));
+    }
+  }
+
+  void _handleImage(HtmlTag tag) {
+    if (!tag.closing) _writeImage(tag);
+  }
+
+  void _handleBold(HtmlTag tag) {
+    if (tag.closing) {
+      _closeInline('bold', '**');
+    } else {
+      _frames.add(_Frame('bold'));
+    }
+  }
+
+  void _handleItalic(HtmlTag tag) {
+    if (tag.closing) {
+      _closeInline('italic', '*');
+    } else {
+      _frames.add(_Frame('italic'));
+    }
+  }
+
+  void _handleCodeTag(HtmlTag tag) {
+    if (_preActive) {
+      if (!tag.closing) _captureCodeLanguage(tag);
+    } else if (tag.closing) {
+      _closeCode();
+    } else {
+      _frames.add(_Frame('code'));
+    }
+  }
+
+  void _handlePre(HtmlTag tag) {
+    if (tag.closing) {
+      _closePre();
+    } else if (!tag.selfClosing) {
+      _preActive = true;
+      _preLanguage = null;
+    }
+  }
+
+  void _handleBlockquoteTag(HtmlTag tag) {
+    if (tag.closing) {
+      _closeBlockquote();
+    } else {
+      _frames.add(_Frame('blockquote'));
+    }
+  }
+
+  void _handleList(HtmlTag tag) {
+    if (tag.closing) {
+      if (_lists.isNotEmpty) _lists.removeLast();
+      _current.ensureNewlines(2);
+    } else {
+      _current.ensureNewlines(_lists.isEmpty ? 2 : 1);
+      _lists.add(_ListContext(tag.name == 'ol'));
+    }
+  }
+
+  void _handleLi(HtmlTag tag) {
+    if (!tag.closing && _lists.isNotEmpty) {
+      final list = _lists.last;
+      _current.ensureNewlines(1);
+      final indent = '  ' * (_lists.length - 1);
+      final marker = list.ordered ? '${list.nextIndex++}.' : '-';
+      _current.write('$indent$marker ');
+    }
+  }
+
+  void _handleTable(HtmlTag tag) {
+    _inTable = !tag.closing;
+    _current.ensureNewlines(2);
+  }
+
+  void _handleTr(HtmlTag tag) {
+    if (!_inTable) return;
+    if (tag.closing) {
+      _current.write('\n');
+      if (_rowHasHeader && _rowCellCount > 0) {
+        _current.write('|${' --- |' * _rowCellCount}\n');
+      }
+      _rowHasHeader = false;
+      _rowCellCount = 0;
+    } else {
+      _current.ensureNewlines(1);
+      _current.write('|');
+    }
+  }
+
+  void _handleCell(HtmlTag tag) {
+    if (!_inTable) return;
+    if (tag.closing) {
+      _closeCell(tag.name == 'th');
+    } else {
+      _frames.add(_Frame('cell'));
     }
   }
 

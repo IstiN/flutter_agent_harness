@@ -84,6 +84,21 @@ final class PubDevHandler implements WebSiteHandler {
         data['name'] as String? ?? spec['name'] as String? ?? 'package';
 
     final md = StringBuffer('# $name\n\n');
+    _renderSummary(md, data, latest, spec, score);
+    _renderMetadata(md, spec);
+    _renderDependencies(md, spec);
+    _renderVersions(md, data);
+    return md.toString().trim();
+  }
+
+  /// Description, latest-version line, and the score metrics row.
+  void _renderSummary(
+    StringBuffer md,
+    Map<dynamic, dynamic> data,
+    Map<dynamic, dynamic> latest,
+    Map<dynamic, dynamic> spec,
+    Map<dynamic, dynamic>? score,
+  ) {
     final description = spec['description'] as String?;
     if (description != null && description.trim().isNotEmpty) {
       md.write('${description.trim()}\n\n');
@@ -108,7 +123,10 @@ final class PubDevHandler implements WebSiteHandler {
     ];
     if (metrics.isNotEmpty) md.write('${metrics.join(' · ')}\n');
     md.write('\n');
+  }
 
+  /// Homepage/repository/documentation links and SDK constraints.
+  void _renderMetadata(StringBuffer md, Map<dynamic, dynamic> spec) {
     for (final (label, key) in [
       ('Homepage', 'homepage'),
       ('Repository', 'repository'),
@@ -129,7 +147,10 @@ final class PubDevHandler implements WebSiteHandler {
       }
     }
     md.write('\n');
+  }
 
+  /// The dependency list, capped at 20 entries.
+  void _renderDependencies(StringBuffer md, Map<dynamic, dynamic> spec) {
     final dependencies = spec['dependencies'];
     if (dependencies is Map && dependencies.isNotEmpty) {
       md.write('## Dependencies (${dependencies.length})\n\n');
@@ -150,7 +171,10 @@ final class PubDevHandler implements WebSiteHandler {
       }
       md.write('\n');
     }
+  }
 
+  /// The five most recent versions.
+  void _renderVersions(StringBuffer md, Map<dynamic, dynamic> data) {
     final versions = data['versions'];
     if (versions is List && versions.isNotEmpty) {
       // The API lists versions ascending by publish date; show the newest few.
@@ -163,8 +187,6 @@ final class PubDevHandler implements WebSiteHandler {
         md.write('- ${entry['version']}$suffix\n');
       }
     }
-
-    return md.toString().trim();
   }
 
   /// Extracts a `YYYY-MM-DD` prefix from an ISO timestamp (omp's

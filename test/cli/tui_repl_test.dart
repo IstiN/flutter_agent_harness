@@ -554,4 +554,30 @@ void main() {
 
     expect(h.selectedModels, ['model-b']);
   });
+
+  test('stripAnsi removes SGR and cursor sequences', () {
+    expect(stripAnsi('plain'), 'plain');
+    expect(stripAnsi('\x1b[1m\x1b[36mfa> \x1b[0m'), 'fa> ');
+    expect(stripAnsi('\x1b[2;5Hx\x1b[K'), 'x');
+  });
+
+  test('truncateAnsiLine returns a short line as-is', () {
+    expect(truncateAnsiLine('hello', 10), 'hello');
+    expect(truncateAnsiLine('hello', 5), 'hello');
+  });
+
+  test('truncateAnsiLine cuts a long plain line to the width', () {
+    expect(truncateAnsiLine('hello world', 5), 'hello');
+  });
+
+  test('truncateAnsiLine preserves ANSI sequences across the cut', () {
+    const line = '\x1b[1m\x1b[36mhello world\x1b[0m';
+    expect(truncateAnsiLine(line, 5), '\x1b[1m\x1b[36mhello');
+  });
+
+  test('truncateAnsiLine counts a lone ESC as a visible column', () {
+    // A lone ESC not starting a sequence is emitted as a regular character.
+    expect(truncateAnsiLine('ab\x1bcd', 3), 'ab\x1b');
+    expect(stripAnsi('ab\x1bcd'), 'ab\x1bcd');
+  });
 }

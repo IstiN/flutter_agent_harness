@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
@@ -24,6 +26,11 @@ final class _FakeTileEngine extends JsAppEngine {
   final Map<String, dynamic> fixedTree;
   final receivedEvents = <String>[];
   var startCount = 0;
+  var disposeCount = 0;
+
+  /// When set, the next [callEvent] hangs on this completer — tests drive
+  /// the in-flight-refresh drain.
+  Completer<void>? callEventGate;
 
   @override
   Future<void> start() async {
@@ -37,6 +44,13 @@ final class _FakeTileEngine extends JsAppEngine {
     Map<String, dynamic>? payload,
   ]) async {
     receivedEvents.add(actionId);
+    await callEventGate?.future;
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCount++;
+    await super.dispose();
   }
 
   @override
@@ -168,6 +182,59 @@ void main() {
       expect(engine.receivedEvents, ['tile.refresh']);
       // Unmount to cancel the periodic timer before the test ends.
       await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('dispose drains an in-flight tile.refresh before disposing', (
+      tester,
+    ) async {
+      final harness = await _pumpHost(tester, refreshSeconds: 60);
+      final engine = harness.engines.single;
+      // The next refresh hangs on a gate we control (an evaluation in
+      // flight, exactly the TestFlight crash scenario).
+      final gate = Completer<void>();
+      engine.callEventGate = gate;
+      await tester.pump(const Duration(seconds: 61));
+      expect(engine.receivedEvents, ['tile.refresh']);
+
+      // Unmount: the engine must NOT be disposed while the refresh
+      // evaluation is in flight (freeing the JS context mid-evaluation is
+      // a native use-after-free).
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(engine.disposeCount, 0);
+
+      // The evaluation completes → the engine is freed.
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(engine.disposeCount, 1);
+    });
+
+    testWidgets('a restart drains the old engine refresh before disposing', (
+      tester,
+    ) async {
+      final fsRevision = ValueNotifier(0);
+      addTearDown(fsRevision.dispose);
+      final harness = await _pumpHost(
+        tester,
+        refreshSeconds: 60,
+        fsRevision: fsRevision,
+      );
+      final old = harness.engines.single;
+      final gate = Completer<void>();
+      old.callEventGate = gate;
+      await tester.pump(const Duration(seconds: 61));
+      expect(old.receivedEvents, ['tile.refresh']);
+
+      // Trigger the reload: the old engine is disposed only after the
+      // in-flight refresh completes.
+      fsRevision.value++;
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pump();
+      expect(old.disposeCount, 0);
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(old.disposeCount, 1);
+      expect(harness.engines, hasLength(2));
     });
 
     testWidgets('no refreshSeconds → no periodic timer', (tester) async {

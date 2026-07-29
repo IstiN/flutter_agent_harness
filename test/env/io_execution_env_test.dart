@@ -68,6 +68,100 @@ void main() {
       expect(info.size, 5);
       expect(info.kind, FileKind.file);
     });
+
+    group('error mapping', () {
+      test('missing file maps to notFound', () async {
+        final missing = await fs.readTextFile('nope.txt');
+        final error = missing.errorOrNull;
+        expect(error?.code, FileErrorCode.notFound);
+        expect(error?.path, '${tempDir.path}/nope.txt');
+      });
+
+      test('reading a directory maps to isDirectory', () async {
+        await fs.createDir('a-dir');
+        expect(
+          (await fs.readTextFile('a-dir')).errorOrNull?.code,
+          FileErrorCode.isDirectory,
+        );
+        expect(
+          (await fs.readBinaryFile('a-dir')).errorOrNull?.code,
+          FileErrorCode.isDirectory,
+        );
+      });
+
+      test(
+        'unreadable file maps to permissionDenied',
+        () async {
+          await fs.writeFile('locked.txt', 'secret');
+          final locked = '${tempDir.path}/locked.txt';
+          Process.runSync('chmod', ['000', locked]);
+          try {
+            final result = await fs.readTextFile('locked.txt');
+            expect(result.errorOrNull?.code, FileErrorCode.permissionDenied);
+          } finally {
+            Process.runSync('chmod', ['644', locked]);
+          }
+        },
+        skip: Platform.isWindows ? 'POSIX chmod semantics only' : false,
+      );
+
+      test('path through a regular file maps to notDirectory', () async {
+        await fs.writeFile('plain.txt', 'data');
+        final result = await fs.listDir('plain.txt/child');
+        expect(result.errorOrNull?.code, FileErrorCode.notDirectory);
+      });
+
+      test(
+        'a symlink loop maps to unknown',
+        () async {
+          Link('${tempDir.path}/loop-a').createSync('loop-b');
+          Link('${tempDir.path}/loop-b').createSync('loop-a');
+          final result = await fs.readTextFile('loop-a');
+          expect(result.errorOrNull?.code, FileErrorCode.unknown);
+        },
+        skip: Platform.isWindows ? 'POSIX symlink semantics only' : false,
+      );
+    });
+
+    group('remove', () {
+      test('removes a file', () async {
+        await fs.writeFile('gone.txt', 'data');
+        expect((await fs.remove('gone.txt')).isOk, isTrue);
+        expect((await fs.exists('gone.txt')).valueOrNull, isFalse);
+      });
+
+      test('removes an empty directory non-recursively', () async {
+        await fs.createDir('empty-dir');
+        expect((await fs.remove('empty-dir')).isOk, isTrue);
+        expect((await fs.exists('empty-dir')).valueOrNull, isFalse);
+      });
+
+      test('missing path without force maps to notFound', () async {
+        final result = await fs.remove('missing.txt');
+        expect(result.errorOrNull?.code, FileErrorCode.notFound);
+      });
+
+      test('missing path with force succeeds', () async {
+        expect((await fs.remove('missing.txt', force: true)).isOk, isTrue);
+      });
+
+      test(
+        'non-empty directory without recursive maps to invalid',
+        () async {
+          await fs.writeFile('full-dir/f.txt', 'data');
+          final result = await fs.remove('full-dir');
+          expect(result.errorOrNull?.code, FileErrorCode.invalid);
+          expect((await fs.exists('full-dir')).valueOrNull, isTrue);
+        },
+        skip: Platform.isWindows ? 'POSIX delete semantics only' : false,
+      );
+
+      test('non-empty directory with recursive succeeds', () async {
+        await fs.writeFile('tree/sub/f.txt', 'data');
+        expect((await fs.remove('tree', recursive: true)).isOk, isTrue);
+        expect((await fs.exists('tree')).valueOrNull, isFalse);
+      });
+    });
   });
 
   group('LocalShell', () {

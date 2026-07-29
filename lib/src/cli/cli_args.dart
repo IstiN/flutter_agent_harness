@@ -140,8 +140,83 @@ final class CliArgs extends CliArgsResult {
 /// unknown provider, `--system-prompt` combined with `--system-prompt-file`,
 /// or `-p`/`--prompt` combined with positional arguments.
 CliArgsResult parseCliArgs(List<String> args) {
+  final values = _CliArgValues();
+  for (var i = 0; i < args.length; i++) {
+    final arg = args[i];
+    if (arg == '--help' || arg == '-h') return const CliArgsHelp();
+    if (arg == '--version') return const CliArgsVersion();
+    final flag = _valueFlags[arg];
+    if (flag != null) {
+      final (canonical, apply) = flag;
+      if (i + 1 >= args.length) {
+        throw CliArgsException('$canonical requires a value');
+      }
+      apply(values, args[i + 1]);
+      i++;
+      continue;
+    }
+    // Anything not flag-like is a positional prompt fragment; unknown
+    // `-...` arguments stay an error.
+    if (arg.startsWith('-')) {
+      throw CliArgsException('unknown argument: $arg');
+    }
+    values.positionals.add(arg);
+  }
+  return values.finish();
+}
+
+/// A value-taking CLI flag: its canonical name (for error messages, so
+/// `-p` reports as `--prompt`) and the setter applying it to [_CliArgValues].
+typedef _ValueFlag = (String, void Function(_CliArgValues, String));
+
+/// Every flag that consumes the next argument as its value.
+const _valueFlags = <String, _ValueFlag>{
+  '--model': ('--model', _setModel),
+  '--provider': ('--provider', _setProvider),
+  '--base-url': ('--base-url', _setBaseUrl),
+  '--system-prompt': ('--system-prompt', _setSystemPrompt),
+  '--system-prompt-file': ('--system-prompt-file', _setSystemPromptFile),
+  '--vision-model': ('--vision-model', _setVisionModel),
+  '--vision-base-url': ('--vision-base-url', _setVisionBaseUrl),
+  '--transcribe-model': ('--transcribe-model', _setTranscribeModel),
+  '--transcribe-base-url': ('--transcribe-base-url', _setTranscribeBaseUrl),
+  '--plugin': ('--plugin', _addPlugin),
+  '--prompt-template-dir': ('--prompt-template-dir', _addPromptTemplateDir),
+  '--mode': ('--mode', _setMode),
+  '--cwd': ('--cwd', _setCwd),
+  '--session-root': ('--session-root', _setSessionRoot),
+  '--session': ('--session', _setSession),
+  '-p': ('--prompt', _setPrompt),
+  '--prompt': ('--prompt', _setPrompt),
+};
+
+void _setModel(_CliArgValues v, String value) => v.model = value;
+void _setProvider(_CliArgValues v, String value) => v.provider = value;
+void _setBaseUrl(_CliArgValues v, String value) => v.baseUrl = value;
+void _setSystemPrompt(_CliArgValues v, String value) => v.systemPrompt = value;
+void _setSystemPromptFile(_CliArgValues v, String value) =>
+    v.systemPromptFile = value;
+void _setVisionModel(_CliArgValues v, String value) => v.visionModel = value;
+void _setVisionBaseUrl(_CliArgValues v, String value) =>
+    v.visionBaseUrl = value;
+void _setTranscribeModel(_CliArgValues v, String value) =>
+    v.transcribeModel = value;
+void _setTranscribeBaseUrl(_CliArgValues v, String value) =>
+    v.transcribeBaseUrl = value;
+void _addPlugin(_CliArgValues v, String value) => v.plugins.add(value);
+void _addPromptTemplateDir(_CliArgValues v, String value) =>
+    v.promptTemplateDirs.add(value);
+void _setMode(_CliArgValues v, String value) => v.mode = value;
+void _setCwd(_CliArgValues v, String value) => v.cwd = value;
+void _setSessionRoot(_CliArgValues v, String value) => v.sessionRoot = value;
+void _setSession(_CliArgValues v, String value) => v.session = value;
+void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
+
+/// Accumulates flag values while [parseCliArgs] walks the argument list,
+/// then validates the combinations and builds the [CliArgs].
+final class _CliArgValues {
   String? model;
-  var provider = 'openai-completions';
+  String provider = 'openai-completions';
   String? baseUrl;
   String? systemPrompt;
   String? systemPromptFile;
@@ -158,106 +233,39 @@ CliArgsResult parseCliArgs(List<String> args) {
   String? prompt;
   final positionals = <String>[];
 
-  String valueFor(int index, String flag) {
-    if (index + 1 >= args.length) {
-      throw CliArgsException('$flag requires a value');
+  /// Validates flag combinations and builds the resulting [CliArgs].
+  CliArgs finish() {
+    if (!cliProviderKinds.contains(provider)) {
+      throw CliArgsException('unknown provider: $provider');
     }
-    return args[index + 1];
-  }
-
-  for (var i = 0; i < args.length; i++) {
-    switch (args[i]) {
-      case '--help' || '-h':
-        return const CliArgsHelp();
-      case '--version':
-        return const CliArgsVersion();
-      case '--model':
-        model = valueFor(i, '--model');
-        i++;
-      case '--provider':
-        provider = valueFor(i, '--provider');
-        i++;
-      case '--base-url':
-        baseUrl = valueFor(i, '--base-url');
-        i++;
-      case '--system-prompt':
-        systemPrompt = valueFor(i, '--system-prompt');
-        i++;
-      case '--system-prompt-file':
-        systemPromptFile = valueFor(i, '--system-prompt-file');
-        i++;
-      case '--vision-model':
-        visionModel = valueFor(i, '--vision-model');
-        i++;
-      case '--vision-base-url':
-        visionBaseUrl = valueFor(i, '--vision-base-url');
-        i++;
-      case '--transcribe-model':
-        transcribeModel = valueFor(i, '--transcribe-model');
-        i++;
-      case '--transcribe-base-url':
-        transcribeBaseUrl = valueFor(i, '--transcribe-base-url');
-        i++;
-      case '--plugin':
-        plugins.add(valueFor(i, '--plugin'));
-        i++;
-      case '--prompt-template-dir':
-        promptTemplateDirs.add(valueFor(i, '--prompt-template-dir'));
-        i++;
-      case '--mode':
-        mode = valueFor(i, '--mode');
-        i++;
-      case '--cwd':
-        cwd = valueFor(i, '--cwd');
-        i++;
-      case '--session-root':
-        sessionRoot = valueFor(i, '--session-root');
-        i++;
-      case '--session':
-        session = valueFor(i, '--session');
-        i++;
-      case '-p' || '--prompt':
-        prompt = valueFor(i, '--prompt');
-        i++;
-      default:
-        // Anything not flag-like is a positional prompt fragment; unknown
-        // `-...` arguments stay an error.
-        if (args[i].startsWith('-')) {
-          throw CliArgsException('unknown argument: ${args[i]}');
-        }
-        positionals.add(args[i]);
+    if (systemPrompt != null && systemPromptFile != null) {
+      throw CliArgsException(
+        'cannot combine --system-prompt and --system-prompt-file',
+      );
     }
-  }
-  if (!cliProviderKinds.contains(provider)) {
-    throw CliArgsException('unknown provider: $provider');
-  }
-  if (systemPrompt != null && systemPromptFile != null) {
-    throw CliArgsException(
-      'cannot combine --system-prompt and --system-prompt-file',
+    if (prompt != null && positionals.isNotEmpty) {
+      throw CliArgsException(
+        'cannot combine -p/--prompt with positional prompt arguments',
+      );
+    }
+    return CliArgs(
+      model: model,
+      provider: provider,
+      baseUrl: baseUrl,
+      systemPrompt: systemPrompt,
+      systemPromptFile: systemPromptFile,
+      visionModel: visionModel,
+      visionBaseUrl: visionBaseUrl,
+      transcribeModel: transcribeModel,
+      transcribeBaseUrl: transcribeBaseUrl,
+      plugins: plugins,
+      promptTemplateDirs: promptTemplateDirs,
+      mode: mode,
+      cwd: cwd,
+      sessionRoot: sessionRoot,
+      session: session,
+      prompt: prompt,
+      positionals: positionals,
     );
   }
-  if (prompt != null && positionals.isNotEmpty) {
-    throw CliArgsException(
-      'cannot combine -p/--prompt with positional prompt arguments',
-    );
-  }
-  return CliArgs(
-    model: model,
-    provider: provider,
-    baseUrl: baseUrl,
-    systemPrompt: systemPrompt,
-    systemPromptFile: systemPromptFile,
-    visionModel: visionModel,
-    visionBaseUrl: visionBaseUrl,
-    transcribeModel: transcribeModel,
-    transcribeBaseUrl: transcribeBaseUrl,
-    plugins: plugins,
-    promptTemplateDirs: promptTemplateDirs,
-    mode: mode,
-    cwd: cwd,
-    sessionRoot: sessionRoot,
-    session: session,
-    prompt: prompt,
-    positionals: positionals,
-  );
 }

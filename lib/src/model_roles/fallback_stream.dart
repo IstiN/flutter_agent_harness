@@ -185,6 +185,30 @@ final class _RateLimited extends _AttemptOutcome {
   final AssistantMessage error;
 }
 
+/// Mutable state of one [_drive] call, extracted so the event-loop phases
+/// can live in small methods instead of closures over shared locals.
+final class _DriveState {
+  _DriveState(this.entryIndex) : tried = {entryIndex};
+
+  /// The chain entry currently being attempted.
+  int entryIndex;
+
+  /// Entries already tried in this call.
+  final Set<int> tried;
+
+  /// Paid retries spent on the current entry.
+  var attemptsOnEntry = 0;
+
+  /// Rate-limit failures seen in this call.
+  var failures = 0;
+
+  /// The most recent retryable failure (forwarded if the chain exhausts).
+  _RateLimited? lastFailure;
+
+  /// The credential for the next attempt (null = re-select).
+  ApiKeyCredential? credential;
+}
+
 /// A [StreamFunction] over an ordered [ChainEntry] list with omp's
 /// rate-limit policy: rotate keys for free, retry the entry with capped
 /// exponential backoff, then fail over to the next entry — every step
@@ -287,110 +311,25 @@ final class FallbackStreamFunction {
     Context context,
     CancelToken? cancelToken,
   ) async {
-    var entryIndex = _firstAvailableIndex();
-    _activeIndex = entryIndex;
-    final tried = <int>{entryIndex};
-    var attemptsOnEntry = 0;
-    var failures = 0;
-    _RateLimited? lastFailure;
-    ApiKeyCredential? credential;
-
-    // Selects the next entry after the current one gave up. Returns false
-    // when the chain is exhausted (the last failure has been forwarded).
-    Future<bool> failOver() async {
-      final next = _failover(
-        entryIndex,
-        tried,
-        lastFailure,
-        failures: failures,
-      );
-      if (next == null) {
-        _forwardLastFailure(out, _entries[entryIndex], lastFailure);
-        return false;
-      }
-      entryIndex = next;
-      _activeIndex = next;
-      tried.add(next);
-      attemptsOnEntry = 0;
-      // A fresh entry always gets one attempt with its ring's best
-      // credential: backoff guides key *selection*, but a benched shared
-      // credential must not block the take-over (different model, often a
-      // different quota bucket).
-      final ring = _entries[next].keyRing;
-      credential = ring.availableCredential ?? ring.currentCredential;
-      return true;
-    }
-
-    // Paid same-entry retry: sleeps once, then forces the next iteration to
-    // run an attempt. Returns false on abort or when control moved on.
-    Future<bool> sleepAndRetry(Duration delay, String reason) async {
-      attemptsOnEntry++;
-      failures++;
-      _notify(
-        FallbackNotice(
-          kind: FallbackNoticeKind.retry,
-          fromModel: _entries[entryIndex].label,
-          delay: delay,
-          attempt: failures,
-          reason: reason,
-        ),
-      );
-      if (!await _sleeper(delay, cancelToken)) {
-        _pushAborted(out, _entries[entryIndex].model);
-        return false;
-      }
-      // After the wait: a single-key ring reuses its (benched) key — omp
-      // retries the current credential after local backoff; our own bench
-      // must not deadlock the retry. Multi-key rings re-select, picking up
-      // any sibling whose backoff lapsed during the sleep.
-      credential = _entries[entryIndex].keyRing.length == 1
-          ? _entries[entryIndex].keyRing.currentCredential
-          : null;
-      return true;
-    }
+    final state = _DriveState(_firstAvailableIndex());
+    _activeIndex = state.entryIndex;
 
     while (true) {
       if (cancelToken?.isCancelled ?? false) {
-        _pushAborted(out, _entries[entryIndex].model);
+        _pushAborted(out, _entries[state.entryIndex].model);
         return;
       }
-      final entry = _entries[entryIndex];
+      final entry = _entries[state.entryIndex];
 
       // Credential selection: affinity key unless benched (omp's
       // skip-blocked-sibling rule).
-      credential ??= entry.keyRing.availableCredential;
-      if (credential == null) {
-        // Every key is benched right now.
-        if (attemptsOnEntry >= policy.retriesPerEntry) {
-          if (!await failOver()) return;
-          continue;
-        }
-        final Duration wait;
-        if (entry.keyRing.length > 1) {
-          // omp's sibling-credential wait: pause until the earliest benched
-          // key frees up (plus its 1s buffer).
-          wait =
-              entry.keyRing.earliestBackoffEnd!.difference(_now()) +
-              const Duration(seconds: 1);
-        } else {
-          wait = _retryDelay(attemptsOnEntry + 1, lastFailure?.retryAfter);
-        }
-        if (wait > policy.maxWait) {
-          if (!await failOver()) return;
-          continue;
-        }
-        if (!await sleepAndRetry(
-          wait,
-          lastFailure == null
-              ? 'all API keys in backoff'
-              : _shortReasonText(lastFailure.error),
-        )) {
-          return;
-        }
+      state.credential ??= entry.keyRing.availableCredential;
+      if (state.credential == null) {
+        if (!await _onNoCredential(out, state, entry, cancelToken)) return;
         continue;
       }
 
-      final attemptCredential = credential;
+      final attemptCredential = state.credential;
       if (attemptCredential == null) continue;
       final outcome = await _runAttempt(
         out,
@@ -402,43 +341,168 @@ final class FallbackStreamFunction {
       switch (outcome) {
         case _Forwarded():
           return;
-        case _RateLimited(:final retryAfter, :final error):
-          lastFailure = outcome;
-          entry.keyRing.reportRateLimited(
-            attemptCredential.name,
-            retryAfter ?? policy.keyBackoff,
-          );
-          // omp order: free credential switch first, then paid retries, then
-          // model fallback.
-          final rotated = entry.keyRing.rotate(attemptCredential.name);
-          if (rotated != null) {
-            entry.keyRing.stickTo(rotated);
-            failures++;
-            _notify(
-              FallbackNotice(
-                kind: FallbackNoticeKind.keyRotation,
-                fromModel: entry.label,
-                apiKeyName: rotated.name,
-                delay: Duration.zero,
-                attempt: failures,
-                reason: _shortReasonText(error),
-              ),
-            );
-            credential = rotated;
-            continue;
+        case _RateLimited():
+          if (!await _onRateLimited(
+            out,
+            state,
+            entry,
+            attemptCredential,
+            outcome,
+            cancelToken,
+          )) {
+            return;
           }
-          if (attemptsOnEntry >= policy.retriesPerEntry) {
-            if (!await failOver()) return;
-            continue;
-          }
-          final delay = _retryDelay(attemptsOnEntry + 1, retryAfter);
-          if (delay > policy.maxWait) {
-            if (!await failOver()) return;
-            continue;
-          }
-          if (!await sleepAndRetry(delay, _shortReasonText(error))) return;
       }
     }
+  }
+
+  /// Selects the next entry after the current one gave up. Returns false
+  /// when the chain is exhausted (the last failure has been forwarded).
+  bool _failOver(AssistantMessageEventStream out, _DriveState state) {
+    final next = _failover(
+      state.entryIndex,
+      state.tried,
+      state.lastFailure,
+      failures: state.failures,
+    );
+    if (next == null) {
+      _forwardLastFailure(out, _entries[state.entryIndex], state.lastFailure);
+      return false;
+    }
+    state.entryIndex = next;
+    _activeIndex = next;
+    state.tried.add(next);
+    state.attemptsOnEntry = 0;
+    // A fresh entry always gets one attempt with its ring's best
+    // credential: backoff guides key *selection*, but a benched shared
+    // credential must not block the take-over (different model, often a
+    // different quota bucket).
+    final ring = _entries[next].keyRing;
+    state.credential = ring.availableCredential ?? ring.currentCredential;
+    return true;
+  }
+
+  /// Paid same-entry retry: sleeps once, then forces the next iteration to
+  /// run an attempt. Returns false on abort or when control moved on.
+  Future<bool> _sleepAndRetry(
+    AssistantMessageEventStream out,
+    _DriveState state,
+    Duration delay,
+    String reason,
+    CancelToken? cancelToken,
+  ) async {
+    state.attemptsOnEntry++;
+    state.failures++;
+    _notify(
+      FallbackNotice(
+        kind: FallbackNoticeKind.retry,
+        fromModel: _entries[state.entryIndex].label,
+        delay: delay,
+        attempt: state.failures,
+        reason: reason,
+      ),
+    );
+    if (!await _sleeper(delay, cancelToken)) {
+      _pushAborted(out, _entries[state.entryIndex].model);
+      return false;
+    }
+    // After the wait: a single-key ring reuses its (benched) key — omp
+    // retries the current credential after local backoff; our own bench
+    // must not deadlock the retry. Multi-key rings re-select, picking up
+    // any sibling whose backoff lapsed during the sleep.
+    state.credential = _entries[state.entryIndex].keyRing.length == 1
+        ? _entries[state.entryIndex].keyRing.currentCredential
+        : null;
+    return true;
+  }
+
+  /// Every key of [entry] is benched right now: wait for the earliest to
+  /// free up, or fail over when the retries are spent / the wait exceeds
+  /// the cap. Returns false when the run ends (exhausted or aborted).
+  Future<bool> _onNoCredential(
+    AssistantMessageEventStream out,
+    _DriveState state,
+    ChainEntry entry,
+    CancelToken? cancelToken,
+  ) async {
+    if (state.attemptsOnEntry >= policy.retriesPerEntry) {
+      return _failOver(out, state);
+    }
+    final Duration wait;
+    if (entry.keyRing.length > 1) {
+      // omp's sibling-credential wait: pause until the earliest benched
+      // key frees up (plus its 1s buffer).
+      wait =
+          entry.keyRing.earliestBackoffEnd!.difference(_now()) +
+          const Duration(seconds: 1);
+    } else {
+      wait = _retryDelay(
+        state.attemptsOnEntry + 1,
+        state.lastFailure?.retryAfter,
+      );
+    }
+    if (wait > policy.maxWait) {
+      return _failOver(out, state);
+    }
+    final lastFailure = state.lastFailure;
+    return _sleepAndRetry(
+      out,
+      state,
+      wait,
+      lastFailure == null
+          ? 'all API keys in backoff'
+          : _shortReasonText(lastFailure.error),
+      cancelToken,
+    );
+  }
+
+  /// Handles a retryable rate-limit — omp order: free credential switch
+  /// first, then paid retries, then model fallback. Returns false when the
+  /// run ends (exhausted or aborted).
+  Future<bool> _onRateLimited(
+    AssistantMessageEventStream out,
+    _DriveState state,
+    ChainEntry entry,
+    ApiKeyCredential attemptCredential,
+    _RateLimited outcome,
+    CancelToken? cancelToken,
+  ) async {
+    state.lastFailure = outcome;
+    entry.keyRing.reportRateLimited(
+      attemptCredential.name,
+      outcome.retryAfter ?? policy.keyBackoff,
+    );
+    final rotated = entry.keyRing.rotate(attemptCredential.name);
+    if (rotated != null) {
+      entry.keyRing.stickTo(rotated);
+      state.failures++;
+      _notify(
+        FallbackNotice(
+          kind: FallbackNoticeKind.keyRotation,
+          fromModel: entry.label,
+          apiKeyName: rotated.name,
+          delay: Duration.zero,
+          attempt: state.failures,
+          reason: _shortReasonText(outcome.error),
+        ),
+      );
+      state.credential = rotated;
+      return true;
+    }
+    if (state.attemptsOnEntry >= policy.retriesPerEntry) {
+      return _failOver(out, state);
+    }
+    final delay = _retryDelay(state.attemptsOnEntry + 1, outcome.retryAfter);
+    if (delay > policy.maxWait) {
+      return _failOver(out, state);
+    }
+    return _sleepAndRetry(
+      out,
+      state,
+      delay,
+      _shortReasonText(outcome.error),
+      cancelToken,
+    );
   }
 
   /// Picks the next chain entry after [from], skipping entries already tried

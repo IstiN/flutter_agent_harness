@@ -144,7 +144,16 @@ class _AppTileHostState extends State<AppTileHost> {
     widget.fsRevision?.removeListener(_onFsRevision);
     _reloadDebounce?.cancel();
     _refreshTimer?.cancel();
-    unawaited(_engine?.dispose() ?? Future.value());
+    final engine = _engine;
+    if (engine != null && _inFlightRefresh.isNotEmpty) {
+      // Freeing the JS context while a tile.refresh evaluation is in
+      // flight is a native use-after-free (TestFlight SIGSEGV) — chain
+      // the dispose behind the drain (bounded), keeping the engine
+      // referenced until then.
+      unawaited(_drainRefreshes().then((_) => engine.dispose()));
+    } else {
+      unawaited(_engine?.dispose() ?? Future.value());
+    }
     super.dispose();
   }
 
@@ -157,6 +166,32 @@ class _AppTileHostState extends State<AppTileHost> {
     _reloadDebounce = Timer(const Duration(milliseconds: 600), () {
       if (mounted) unawaited(_restart());
     });
+  }
+
+  /// In-flight `tile.refresh` calls. A restart/dispose MUST wait for them
+  /// before freeing the engine's JS context: evaluating on a freed context
+  /// is a native use-after-free — the TestFlight SIGSEGV in
+  /// `JSC::JSLock::lock` (timer → callEvent → evaluate → dead VM).
+  final Set<Future<void>> _inFlightRefresh = {};
+
+  /// Fires one `tile.refresh` event on [engine], unless it was meanwhile
+  /// replaced or the host went away. Tracked in [_inFlightRefresh].
+  void _fireTileRefresh(JsAppEngine engine) {
+    if (!mounted || !identical(_engine, engine)) return;
+    final future = engine
+        .callEvent('tile.refresh', const {})
+        .then((_) {})
+        .catchError((_) {});
+    _inFlightRefresh.add(future);
+    unawaited(future.whenComplete(() => _inFlightRefresh.remove(future)));
+  }
+
+  /// Waits (bounded) for in-flight refresh calls — see [_inFlightRefresh].
+  Future<void> _drainRefreshes() {
+    if (_inFlightRefresh.isEmpty) return Future.value();
+    return Future.wait(
+      List.of(_inFlightRefresh),
+    ).timeout(const Duration(seconds: 3), onTimeout: () => []);
   }
 
   Future<void> _restart() async {
@@ -176,7 +211,11 @@ class _AppTileHostState extends State<AppTileHost> {
     });
     _refreshTimer?.cancel();
     _refreshTimer = null;
-    if (old != null) await old.dispose();
+    if (old != null) {
+      // Drain in-flight refresh calls BEFORE freeing the JS context.
+      await _drainRefreshes();
+      await old.dispose();
+    }
     // No real JS engines under `flutter test` without an explicit factory —
     // show the icon fallback instead (see [_kFlutterTest]).
     if (_kFlutterTest && widget.engineFactory == null) {
@@ -221,7 +260,7 @@ class _AppTileHostState extends State<AppTileHost> {
       final refreshSeconds = widget.app.tileWidget?.refreshSeconds;
       if (refreshSeconds != null) {
         _refreshTimer = Timer.periodic(Duration(seconds: refreshSeconds), (_) {
-          unawaited(engine.callEvent('tile.refresh', const {}));
+          _fireTileRefresh(engine);
         });
       }
     } on Object catch (error) {

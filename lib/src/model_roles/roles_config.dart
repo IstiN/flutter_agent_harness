@@ -367,22 +367,28 @@ bool pathPatternMatches(String pattern, String cwd, {String? homeDir}) {
   if (pat.isEmpty || dir.isEmpty) return false;
 
   if (pat.contains('*')) {
-    final regex = StringBuffer('^');
-    for (var i = 0; i < pat.length; i++) {
-      final char = pat[i];
-      if (char == '*') {
-        final doubleStar = i + 1 < pat.length && pat[i + 1] == '*';
-        regex.write(doubleStar ? '.*' : '[^/]*');
-        if (doubleStar) i++;
-      } else {
-        regex.write(RegExp.escape(char));
-      }
-    }
-    regex.write(r'$');
-    return RegExp(regex.toString()).hasMatch(dir);
+    return _globPatternMatches(pat, dir);
   }
 
   return dir == pat || dir.startsWith('$pat/');
+}
+
+/// Whether the glob [pattern] (`*` matches any run of non-`/` characters,
+/// `**` matches anything, including `/`) matches [dir] lexically.
+bool _globPatternMatches(String pattern, String dir) {
+  final regex = StringBuffer('^');
+  for (var i = 0; i < pattern.length; i++) {
+    final char = pattern[i];
+    if (char == '*') {
+      final doubleStar = i + 1 < pattern.length && pattern[i + 1] == '*';
+      regex.write(doubleStar ? '.*' : '[^/]*');
+      if (doubleStar) i++;
+    } else {
+      regex.write(RegExp.escape(char));
+    }
+  }
+  regex.write(r'$');
+  return RegExp(regex.toString()).hasMatch(dir);
 }
 
 /// Model-role configuration: role → ordered fallback chains, path-scoped

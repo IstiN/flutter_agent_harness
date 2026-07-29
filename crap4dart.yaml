@@ -17,9 +17,9 @@ exclude:
 
 crap:
   enabled: true
-  # Current max CRAP score in the repo (2026-07-29, after the first
-  # cleanup round dropped it from 356.34). Only down from here.
-  threshold: 65.1
+  # Current max CRAP score in the repo (2026-07-29 — yellow zone reached
+  # after the cleanup rounds 356.34 → 65.1 → 16). Only down from here.
+  threshold: 16.0
 
 coverage:
   # scripts/pre-commit regenerates this (dart test --coverage) right

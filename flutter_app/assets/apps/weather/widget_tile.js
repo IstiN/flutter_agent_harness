@@ -46,7 +46,7 @@
           ] },
           { type: 'expanded', child: { type: 'sizedBox' } },
           { type: 'row', crossAxisAlignment: 'end', children: [
-            { type: 'text', data: last ? last.tempC + '°' : '—',
+            { type: 'text', data: last && last.tempC != null ? last.tempC + '°' : '—',
               style: { color: t.text, fontSize: 40, fontWeight: 'w700' } },
             { type: 'expanded', child: { type: 'sizedBox' } },
             { type: 'text', data: last ? last.desc : 'Loading…',
@@ -60,7 +60,15 @@
   function load() {
     var url = 'https://wttr.in/' + encodeURIComponent(city) + '?format=j1';
     jsr.fetchJson(url).then(function(data) {
-      if (!data || data.__error) return; // keep the last good payload
+      if (!data || data.__error) {
+        // Never strand the tile on 'Loading…' forever: with no cached
+        // payload show an honest offline state (kept on the next refresh).
+        if (!last) {
+          last = { icon: '⚠️', areaName: city, tempC: null, desc: 'Offline' };
+          render();
+        }
+        return; // keep the last good payload
+      }
       var cur = data.current_condition[0];
       var area = data.nearest_area[0];
       last = {

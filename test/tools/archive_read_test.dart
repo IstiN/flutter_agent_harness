@@ -26,6 +26,42 @@ Uint8List _tarBytes() => TarEncoder().encodeBytes(_fixtureArchive());
 
 Uint8List _tgzBytes() => GZipEncoder().encodeBytes(_tarBytes());
 
+/// One minimal tar entry (512-byte header + zero-padded content); the
+/// high-level `Archive` API dedupes same-name entries, so duplicates only
+/// exist in hand-built bytes.
+List<int> _tarEntry(String name, List<int> content, {bool directory = false}) {
+  final header = List<int>.filled(512, 0);
+  void writeString(int offset, String value) {
+    header.setRange(offset, offset + value.length, ascii.encode(value));
+  }
+
+  writeString(0, name);
+  writeString(100, '0000644');
+  writeString(108, '0000000');
+  writeString(116, '0000000');
+  writeString(124, content.length.toRadixString(8).padLeft(11, '0'));
+  writeString(136, '00000000000');
+  header[156] = directory ? 0x35 : 0x30; // '5' directory, '0' file
+  writeString(257, 'ustar');
+  writeString(263, '00');
+  header.setRange(148, 156, List<int>.filled(8, 0x20));
+  var checksum = 0;
+  for (final byte in header) {
+    checksum += byte;
+  }
+  writeString(148, "${checksum.toRadixString(8).padLeft(6, '0')}\x00 ");
+  final padded = List<int>.filled((content.length + 511) ~/ 512 * 512, 0);
+  padded.setRange(0, content.length, content);
+  return [...header, ...padded];
+}
+
+Uint8List _tarWithEntries(List<List<int>> entries) {
+  return Uint8List.fromList([
+    ...entries.expand((entry) => entry),
+    ...List<int>.filled(1024, 0),
+  ]);
+}
+
 void main() {
   group('parseArchivePathCandidates', () {
     test('splits archive from inner path', () {
@@ -207,6 +243,70 @@ void main() {
           ),
         ),
       );
+    });
+
+    group('duplicate entries at the same path', () {
+      test('a file replaces an earlier directory entry', () {
+        final reader = ArchiveReader.decode(
+          _tarWithEntries([
+            _tarEntry('dup/', const [], directory: true),
+            _tarEntry('dup', ascii.encode('content')),
+          ]),
+          ArchiveFormat.tar,
+        );
+        expect(reader.getNode('dup')!.isDirectory, isFalse);
+        expect(utf8.decode(reader.readFileBytes('dup')), 'content');
+      });
+
+      test('a directory entry never replaces an earlier file', () {
+        final reader = ArchiveReader.decode(
+          _tarWithEntries([
+            _tarEntry('keep', ascii.encode('content')),
+            _tarEntry('keep/', const [], directory: true),
+          ]),
+          ArchiveFormat.tar,
+        );
+        expect(reader.getNode('keep')!.isDirectory, isFalse);
+        expect(utf8.decode(reader.readFileBytes('keep')), 'content');
+      });
+
+      // The decoder dedupes exact same-name entries, so same-kind
+      // duplicates are spelled `'x'` + `'./x'` — both normalize to `x`.
+      test('a duplicate file keeps the first content and size', () {
+        final reader = ArchiveReader.decode(
+          _tarWithEntries([
+            _tarEntry('twice', ascii.encode('first')),
+            _tarEntry('./twice', ascii.encode('second!')),
+          ]),
+          ArchiveFormat.tar,
+        );
+        expect(reader.getNode('twice')!.size, 5);
+        expect(utf8.decode(reader.readFileBytes('twice')), 'first');
+      });
+
+      test('a duplicate file fills in a zero size from the later entry', () {
+        final reader = ArchiveReader.decode(
+          _tarWithEntries([
+            _tarEntry('empty', const []),
+            _tarEntry('./empty', ascii.encode('data')),
+          ]),
+          ArchiveFormat.tar,
+        );
+        expect(reader.getNode('empty')!.size, 4);
+        expect(utf8.decode(reader.readFileBytes('empty')), '');
+      });
+
+      test('duplicate directory entries stay a directory', () {
+        final reader = ArchiveReader.decode(
+          _tarWithEntries([
+            _tarEntry('dd/', const [], directory: true),
+            _tarEntry('./dd/', const [], directory: true),
+          ]),
+          ArchiveFormat.tar,
+        );
+        expect(reader.getNode('dd')!.isDirectory, isTrue);
+        expect(reader.getNode('dd')!.size, 0);
+      });
     });
   });
 

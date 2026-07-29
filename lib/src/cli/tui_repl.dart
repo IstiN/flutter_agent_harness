@@ -150,6 +150,27 @@ final class TuiRepl {
 
   bool get _hostExited => isExited?.call() ?? false;
 
+  /// Keys that move the slash-menu selection (or are ignored).
+  static const _menuScrollKeys = {
+    KeyType.shiftTab,
+    KeyType.up,
+    KeyType.down,
+    KeyType.pageUp,
+    KeyType.pageDown,
+    KeyType.unknown,
+  };
+
+  /// Keys that edit the input buffer (cursor motion and text edits).
+  static const _editKeys = {
+    KeyType.left,
+    KeyType.right,
+    KeyType.home,
+    KeyType.end,
+    KeyType.backspace,
+    KeyType.delete,
+    KeyType.char,
+  };
+
   void _handleKey(KeyEvent key) {
     // When the model picker is open, typing filters the list instead of
     // editing the input buffer.
@@ -157,7 +178,19 @@ final class TuiRepl {
       _handleModelMenuKey(key);
       return;
     }
+    if (_menuScrollKeys.contains(key.type)) {
+      _handleMenuScrollKey(key);
+      return;
+    }
+    if (_editKeys.contains(key.type)) {
+      _handleEditKey(key);
+      return;
+    }
+    _handleMenuAcceptKey(key);
+  }
 
+  /// Enter/escape/tab: accept the open menu, close it, or submit the line.
+  void _handleMenuAcceptKey(KeyEvent key) {
     switch (key.type) {
       case KeyType.enter:
         if (_menuOpen) {
@@ -172,9 +205,15 @@ final class TuiRepl {
       case KeyType.tab:
         if (_menuOpen) _acceptMenuItem();
         break;
-      case KeyType.shiftTab:
-        if (_menuOpen && _menuSelected > 0) _menuSelected--;
+      default:
         break;
+    }
+  }
+
+  /// Arrow/page keys: move the slash-menu selection when it is open.
+  void _handleMenuScrollKey(KeyEvent key) {
+    switch (key.type) {
+      case KeyType.shiftTab:
       case KeyType.up:
         if (_menuOpen && _menuSelected > 0) _menuSelected--;
         break;
@@ -183,6 +222,20 @@ final class TuiRepl {
           _menuSelected++;
         }
         break;
+      case KeyType.pageUp:
+        if (_menuOpen) _menuSelected = 0;
+        break;
+      case KeyType.pageDown:
+        if (_menuOpen) _menuSelected = _menuItems.length - 1;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /// Cursor motion and text editing of the input buffer.
+  void _handleEditKey(KeyEvent key) {
+    switch (key.type) {
       case KeyType.left:
         if (_cursor > 0) _cursor--;
         break;
@@ -210,13 +263,7 @@ final class TuiRepl {
           _updateMenu();
         }
         break;
-      case KeyType.pageUp:
-        if (_menuOpen) _menuSelected = 0;
-        break;
-      case KeyType.pageDown:
-        if (_menuOpen) _menuSelected = _menuItems.length - 1;
-        break;
-      case KeyType.unknown:
+      default:
         break;
     }
   }
@@ -224,6 +271,16 @@ final class TuiRepl {
   /// Keys while the model picker is open: typing filters the list, arrows
   /// navigate, enter/tab accept, escape closes; editing keys are ignored.
   void _handleModelMenuKey(KeyEvent key) {
+    if (key.type == KeyType.char || key.type == KeyType.backspace) {
+      _handleModelFilterKey(key);
+      return;
+    }
+    _handleModelNavKey(key);
+  }
+
+  /// Model picker filter editing: typed characters extend the filter,
+  /// backspace shrinks it.
+  void _handleModelFilterKey(KeyEvent key) {
     switch (key.type) {
       case KeyType.char:
         final ch = key.char;
@@ -241,6 +298,15 @@ final class TuiRepl {
           _refreshModelMenu();
         }
         return;
+      default:
+        return;
+    }
+  }
+
+  /// Model picker navigation: arrows/page keys move the selection, enter/tab
+  /// accept, escape closes; every other key is ignored.
+  void _handleModelNavKey(KeyEvent key) {
+    switch (key.type) {
       case KeyType.enter:
       case KeyType.tab:
         _acceptMenuItem();
@@ -249,6 +315,7 @@ final class TuiRepl {
         _closeMenu();
         return;
       case KeyType.up:
+      case KeyType.shiftTab:
         if (_menuSelected > 0) _menuSelected--;
         return;
       case KeyType.down:
@@ -260,15 +327,7 @@ final class TuiRepl {
       case KeyType.pageDown:
         _menuSelected = _menuItems.isEmpty ? 0 : _menuItems.length - 1;
         return;
-      case KeyType.shiftTab:
-        if (_menuSelected > 0) _menuSelected--;
-        return;
-      case KeyType.home:
-      case KeyType.end:
-      case KeyType.left:
-      case KeyType.right:
-      case KeyType.delete:
-      case KeyType.unknown:
+      default:
         return;
     }
   }
@@ -520,31 +579,37 @@ final class TuiRepl {
   }
 
   /// Truncates [line] to [width] visible columns, preserving ANSI sequences.
-  String _truncate(String line, int width) {
-    if (_stripAnsi(line).length <= width) return line;
-    final out = StringBuffer();
-    var visible = 0;
-    var i = 0;
-    while (i < line.length && visible < width) {
-      if (line[i] == '\x1b') {
-        final match = RegExp(
-          r'^\x1b\[[0-9;]*[A-Za-z]',
-        ).firstMatch(line.substring(i));
-        if (match != null) {
-          out.write(match.group(0));
-          i += match.group(0)!.length;
-          continue;
-        }
-      }
-      out.write(line[i]);
-      visible++;
-      i++;
-    }
-    return out.toString();
-  }
+  String _truncate(String line, int width) => truncateAnsiLine(line, width);
 
-  String _stripAnsi(String text) {
-    // Remove ANSI SGR and cursor sequences for column counting.
-    return text.replaceAll(RegExp(r'\x1B\[[0-9;]*[A-Za-z]'), '');
+  String _stripAnsi(String text) => stripAnsi(text);
+}
+
+/// Truncates [line] to [width] visible columns, preserving ANSI sequences.
+String truncateAnsiLine(String line, int width) {
+  if (stripAnsi(line).length <= width) return line;
+  final out = StringBuffer();
+  var visible = 0;
+  var i = 0;
+  while (i < line.length && visible < width) {
+    if (line[i] == '\x1b') {
+      final match = RegExp(
+        r'^\x1b\[[0-9;]*[A-Za-z]',
+      ).firstMatch(line.substring(i));
+      if (match != null) {
+        out.write(match.group(0));
+        i += match.group(0)!.length;
+        continue;
+      }
+    }
+    out.write(line[i]);
+    visible++;
+    i++;
   }
+  return out.toString();
+}
+
+/// Removes ANSI SGR and cursor sequences from [text] for column counting.
+String stripAnsi(String text) {
+  // Remove ANSI SGR and cursor sequences for column counting.
+  return text.replaceAll(RegExp(r'\x1B\[[0-9;]*[A-Za-z]'), '');
 }

@@ -134,6 +134,26 @@ void main() {
         // Sorted to (1-2, 2-) and merged into a single open range from 1.
         expect(_text(result), 'a\nb\nc\nd');
       });
+
+      test('over-limit multi-range output truncates with a hint', () async {
+        final content = List.generate(2600, (i) => 'l${i + 1}').join('\n');
+        await env.writeFile('big.txt', content);
+        final result = await tool.execute(
+          {'path': 'big.txt:1-1500,1601-2600'},
+          null,
+          null,
+        );
+        final text = _text(result);
+        expect(text, startsWith('l1\n'));
+        expect(text, isNot(contains('l2600')));
+        expect(
+          text,
+          contains(
+            '[Output truncated: showing 2000 of 2503 selected lines. '
+            'Use narrower ranges to continue.]',
+          ),
+        );
+      });
     });
 
     group(':raw', () {
@@ -184,6 +204,30 @@ void main() {
           null,
         );
         expect(_text(result), 'a\n\n…\n\nd');
+      });
+
+      test(
+        'a first line over the byte limit yields a byte prefix snippet',
+        () async {
+          await env.writeFile('big.txt', 'x' * 60000);
+          final result = await tool.execute(
+            {'path': 'big.txt:raw'},
+            null,
+            null,
+          );
+          // Raw reads show the longest fitting prefix instead of the sed
+          // hint, with no continuation notice.
+          expect(_text(result), 'x' * 51200);
+        },
+      );
+
+      test('the byte prefix snippet walks back to a UTF-8 boundary', () async {
+        // '€' is 3 UTF-8 bytes straddling the 51200-byte cut.
+        final line = '${'x' * 51199}€${'y' * 1000}';
+        await env.writeFile('big.txt', line);
+        final result = await tool.execute({'path': 'big.txt:raw'}, null, null);
+        // The cut drops the straddling '€' entirely (no replacement char).
+        expect(_text(result), 'x' * 51199);
       });
     });
 

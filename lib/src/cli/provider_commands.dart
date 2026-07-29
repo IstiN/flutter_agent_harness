@@ -111,15 +111,7 @@ extension on AgentCli {
   }) async {
     final controller = _tuiController;
     if (_useTui && controller != null) {
-      final stray = _wizardPickerAnswer;
-      if (stray != null && !stray.isCompleted) stray.complete(null);
-      final pending = Completer<String?>();
-      _wizardPickerAnswer = pending;
-      controller.openPicker('wizard:$title', title, [
-        for (final (key, label, description) in options)
-          MenuItem(key: key, label: label, description: description),
-      ], initialKey: initialKey);
-      return pending.future;
+      return _pickOptionTui(controller, title, options, initialKey: initialKey);
     }
     io.writeln(title);
     for (var i = 0; i < options.length; i++) {
@@ -140,6 +132,26 @@ extension on AgentCli {
         '(1-${options.length}, Ctrl-C to cancel)',
       );
     }
+  }
+
+  /// The TUI variant of [_pickOption]: opens the menu on the controller
+  /// and resolves with the picked key (or null on cancel). A stray pending
+  /// picker answer is completed defensively as cancelled.
+  Future<String?> _pickOptionTui(
+    FaTuiController controller,
+    String title,
+    List<FlowOption> options, {
+    String? initialKey,
+  }) {
+    final stray = _wizardPickerAnswer;
+    if (stray != null && !stray.isCompleted) stray.complete(null);
+    final pending = Completer<String?>();
+    _wizardPickerAnswer = pending;
+    controller.openPicker('wizard:$title', title, [
+      for (final (key, label, description) in options)
+        MenuItem(key: key, label: label, description: description),
+    ], initialKey: initialKey);
+    return pending.future;
   }
 
   /// The flow's `/models` fetch with the same key resolution the provider
@@ -166,39 +178,8 @@ extension on AgentCli {
     final modelId = setup.modelId.isNotEmpty
         ? setup.modelId
         : _agent.state.model.id;
-    String? keyName;
     final token = setup.token;
-    if (token != null) {
-      // A same-name edit keeps the entry's existing store name (stable key
-      // slot); a new entry (or a rename) gets a NAME-scoped one, so several
-      // accounts on the same endpoint keep separate keys instead of
-      // overwriting one host-scoped entry.
-      final existing = editName != null ? registry?.find(editName) : null;
-      keyName =
-          existing != null && existing.keyName != null && setup.name == editName
-          ? existing.keyName!
-          : CustomProviderRegistry.keyNameFor(
-              setup.baseUrl,
-              providerName: setup.name,
-            );
-      final keys = config.secureKeys;
-      if (keys != null && keys.available) {
-        await keys.save(keyName, token);
-        config.onSecretStored?.call(keyName, token);
-      } else {
-        // No secure store OR the write failed (locked/managed keychain):
-        // the key still applies to this session via the switch below, but
-        // cannot persist with the entry.
-        keyName = null;
-        io.writeln(
-          'could not save the key to the secure store (unavailable, locked, '
-          'or managed) — it applies to this session only and is not saved '
-          'with the provider',
-        );
-      }
-    } else if (editName != null) {
-      keyName = registry?.find(editName)?.keyName;
-    }
+    final keyName = await _persistSetupKey(setup, editName);
     CustomProviderEntry? entry;
     if (registry != null) {
       // Renaming on edit: drop the old entry so the new name replaces it.
@@ -233,6 +214,48 @@ extension on AgentCli {
     );
   }
 
+  /// The key-name/persistence step of [_applyCustomProviderSetup]: returns
+  /// the secure-store key name the entry should carry, or null when no key
+  /// persists (keyless, session-only, or a failed/unavailable store). A
+  /// same-name edit keeps the entry's existing store name (stable key
+  /// slot); a new entry (or a rename) gets a NAME-scoped one, so several
+  /// accounts on the same endpoint keep separate keys instead of
+  /// overwriting one host-scoped entry. Without a fresh token the edit
+  /// keeps the entry's existing key name.
+  Future<String?> _persistSetupKey(
+    CustomProviderSetup setup,
+    String? editName,
+  ) async {
+    final registry = config.customProviders;
+    final token = setup.token;
+    if (token == null) {
+      return editName != null ? registry?.find(editName)?.keyName : null;
+    }
+    final existing = editName != null ? registry?.find(editName) : null;
+    final keyName =
+        existing != null && existing.keyName != null && setup.name == editName
+        ? existing.keyName!
+        : CustomProviderRegistry.keyNameFor(
+            setup.baseUrl,
+            providerName: setup.name,
+          );
+    final keys = config.secureKeys;
+    if (keys != null && keys.available) {
+      await keys.save(keyName, token);
+      config.onSecretStored?.call(keyName, token);
+      return keyName;
+    }
+    // No secure store OR the write failed (locked/managed keychain):
+    // the key still applies to this session via the switch below, but
+    // cannot persist with the entry.
+    io.writeln(
+      'could not save the key to the secure store (unavailable, locked, '
+      'or managed) — it applies to this session only and is not saved '
+      'with the provider',
+    );
+    return null;
+  }
+
   /// Switches to a saved registry entry (picker or typed `/provider <name>`):
   /// restores its last-used model and marks it active.
   Future<void> _switchToSavedProvider(CustomProviderEntry entry) async {
@@ -261,19 +284,42 @@ extension on AgentCli {
   /// first, then the catalog presets, then the `+ Add provider` wizard
   /// entry last. A saved selection restores the entry's last-used model.
   void _openProviderPicker() {
+    final items = <MenuItem>[
+      ..._savedProviderItems(),
+      ..._catalogProviderItems(),
+      const MenuItem(
+        key: 'custom',
+        label: '+ Add provider',
+        description: 'guided setup: api type, url, key, model',
+      ),
+    ];
+    _tuiController?.openPicker('provider', 'Select provider', items);
+  }
+
+  /// The picker's saved-custom-provider entries (registry order), each
+  /// marked `(current)` when it is the active one.
+  Iterable<MenuItem> _savedProviderItems() {
     final registry = config.customProviders;
+    if (registry == null) return const [];
+    final activeName = _activeCustomName;
+    return [
+      for (final entry in registry.entries)
+        MenuItem(
+          key: 'saved:${entry.name}',
+          label: entry.name,
+          description:
+              '${entry.baseUrl} · ${entry.modelId}'
+              '${entry.name == activeName ? ' (current)' : ''}',
+        ),
+    ];
+  }
+
+  /// The picker's catalog presets; the active provider is marked
+  /// `(current)` unless a saved custom provider is active instead.
+  Iterable<MenuItem> _catalogProviderItems() {
     final current = _agent.state.model.provider;
     final activeName = _activeCustomName;
-    final items = <MenuItem>[
-      if (registry != null)
-        for (final entry in registry.entries)
-          MenuItem(
-            key: 'saved:${entry.name}',
-            label: entry.name,
-            description:
-                '${entry.baseUrl} · ${entry.modelId}'
-                '${entry.name == activeName ? ' (current)' : ''}',
-          ),
+    return [
       for (final spec in providerCatalog.values)
         MenuItem(
           key: spec.name,
@@ -282,13 +328,7 @@ extension on AgentCli {
               '${spec.defaultBaseUrl}'
               '${spec.name == current && activeName == null ? ' (current)' : ''}',
         ),
-      const MenuItem(
-        key: 'custom',
-        label: '+ Add provider',
-        description: 'guided setup: api type, url, key, model',
-      ),
     ];
-    _tuiController?.openPicker('provider', 'Select provider', items);
   }
 
   /// `/provider [name] [baseUrl] [token] | custom` — shows the active
@@ -481,44 +521,7 @@ extension on AgentCli {
     final storeAvailable = keys != null && keys.available;
     switch (args.first) {
       case 'set':
-        if (args.length != 3) {
-          io.writeln('usage: /key set <NAME> <value>');
-          return;
-        }
-        if (!_keyNamePattern.hasMatch(args[1])) {
-          io.writeln('invalid key name: ${args[1]} (use [A-Za-z0-9_]+)');
-          return;
-        }
-        if (!storeAvailable) {
-          io.writeln(
-            'secure storage unavailable on this host — '
-            'set ${args[1]} in the environment instead',
-          );
-          return;
-        }
-        if (!await keys.save(args[1], args[2])) {
-          io.writeln(
-            'could not save ${args[1]} to ${keys.label}: the write failed '
-            '(locked or managed keychain?) — '
-            'set ${args[1]} in the environment instead',
-          );
-          return;
-        }
-        config.onSecretStored?.call(args[1], args[2]);
-        io.writeln('saved ${args[1]} to ${keys.label}');
-        // When the stored key serves the active provider, pick it up
-        // immediately. Roles mode resolves keys from the resolver's startup
-        // snapshot, so there it takes effect on the next start.
-        final spec = catalogProvider(_providerKind);
-        if (config.modelRolesResolver != null) {
-          io.writeln('  takes effect on the next start (roles mode)');
-        } else if (spec != null && spec.apiKeyEnvNames.contains(args[1])) {
-          _apiKey = args[2];
-          _explicitToken = false;
-          _streamFunction = providerStreamFunction(spec.kind, args[2]);
-          _agent.streamFunction = _streamFunction;
-          io.writeln('  active provider key updated');
-        }
+        await _handleKeySet(args);
       case 'delete':
         if (args.length != 2) {
           io.writeln('usage: /key delete <NAME>');
@@ -536,6 +539,52 @@ extension on AgentCli {
         io.writeln('removed ${args[1]} from ${keys.label}');
       default:
         io.writeln('usage: /key [set <NAME> <value> | delete <NAME>]');
+    }
+  }
+
+  /// `/key set <NAME> <value>`: validates the name, writes the value to
+  /// the secure store, and picks the key up immediately when it serves the
+  /// active provider (roles mode applies it on the next start).
+  Future<void> _handleKeySet(List<String> args) async {
+    final keys = config.secureKeys;
+    final storeAvailable = keys != null && keys.available;
+    if (args.length != 3) {
+      io.writeln('usage: /key set <NAME> <value>');
+      return;
+    }
+    if (!_keyNamePattern.hasMatch(args[1])) {
+      io.writeln('invalid key name: ${args[1]} (use [A-Za-z0-9_]+)');
+      return;
+    }
+    if (!storeAvailable) {
+      io.writeln(
+        'secure storage unavailable on this host — '
+        'set ${args[1]} in the environment instead',
+      );
+      return;
+    }
+    if (!await keys.save(args[1], args[2])) {
+      io.writeln(
+        'could not save ${args[1]} to ${keys.label}: the write failed '
+        '(locked or managed keychain?) — '
+        'set ${args[1]} in the environment instead',
+      );
+      return;
+    }
+    config.onSecretStored?.call(args[1], args[2]);
+    io.writeln('saved ${args[1]} to ${keys.label}');
+    // When the stored key serves the active provider, pick it up
+    // immediately. Roles mode resolves keys from the resolver's startup
+    // snapshot, so there it takes effect on the next start.
+    final spec = catalogProvider(_providerKind);
+    if (config.modelRolesResolver != null) {
+      io.writeln('  takes effect on the next start (roles mode)');
+    } else if (spec != null && spec.apiKeyEnvNames.contains(args[1])) {
+      _apiKey = args[2];
+      _explicitToken = false;
+      _streamFunction = providerStreamFunction(spec.kind, args[2]);
+      _agent.streamFunction = _streamFunction;
+      io.writeln('  active provider key updated');
     }
   }
 
@@ -615,25 +664,41 @@ extension on AgentCli {
   /// friends) describe the default endpoint and must never hijack a custom
   /// one (the user's OpenRouter key silently serving api.aiin.by).
   String? _providerKeyFor(ProviderSpec spec, String baseUrl) {
+    if (baseUrl == spec.defaultBaseUrl) {
+      return _defaultEndpointKey(spec, baseUrl);
+    }
+    return _customEndpointKey(baseUrl);
+  }
+
+  /// Key resolution for the spec's DEFAULT hosted endpoint: env value →
+  /// host-scoped store key → legacy env-name store key (documented order).
+  String? _defaultEndpointKey(ProviderSpec spec, String baseUrl) {
     final read = config.envVarValue;
     final keys = config.secureKeys;
-    if (baseUrl == spec.defaultBaseUrl) {
-      for (final name in spec.apiKeyEnvNames) {
-        final value = read?.call(name);
-        if (value != null && value.isNotEmpty && value != keys?.read(name)) {
-          return value;
-        }
+    for (final name in spec.apiKeyEnvNames) {
+      final value = read?.call(name);
+      if (value != null && value.isNotEmpty && value != keys?.read(name)) {
+        return value;
       }
-      if (keys != null) {
-        final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
-        if (scoped != null && scoped.isNotEmpty) return scoped;
-        for (final name in spec.apiKeyEnvNames) {
-          final value = keys.read(name);
-          if (value != null && value.isNotEmpty) return value;
-        }
-      }
-      return null;
     }
+    if (keys != null) {
+      final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
+      if (scoped != null && scoped.isNotEmpty) return scoped;
+      for (final name in spec.apiKeyEnvNames) {
+        final value = keys.read(name);
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+    return null;
+  }
+
+  /// Key resolution for ANY OTHER endpoint: only the endpoint-scoped store
+  /// keys (the active custom entry's key name, then the host-scoped one) —
+  /// the spec's env names (`OPENROUTER_API_KEY` & friends) describe the
+  /// default endpoint and must never hijack a custom one (the user's
+  /// OpenRouter key silently serving api.aiin.by).
+  String? _customEndpointKey(String baseUrl) {
+    final keys = config.secureKeys;
     if (keys != null) {
       final entryKey = _activeCustomKeyName();
       if (entryKey != null) {
@@ -696,11 +761,16 @@ extension on AgentCli {
 
   // ------------------------------------------------------------- models
 
+  /// Whether the model list still needs its background fetch: no cached
+  /// models yet and no fetch already in flight.
+  bool get _modelCacheNeedsRefresh =>
+      _modelCache.isEmpty && _modelCacheFuture == null;
+
   List<MenuItem> _buildModelMenu(String filter) {
     // If we have no cached models yet, kick off a background fetch and show a
     // loading placeholder. The picker will refresh automatically when the list
     // arrives.
-    if (_modelCache.isEmpty && _modelCacheFuture == null) {
+    if (_modelCacheNeedsRefresh) {
       unawaited(_refreshModelCache());
     }
     final models = _modelCandidates(filter);
@@ -785,7 +855,7 @@ extension on AgentCli {
   /// OpenAI-compatible endpoints the list is fetched live from `/v1/models`
   /// and cached.
   Future<void> _listModels(String filter) async {
-    if (_modelCache.isEmpty && _modelCacheFuture == null) {
+    if (_modelCacheNeedsRefresh) {
       await _refreshModelCache();
     }
     final candidates = _modelCandidates(filter);

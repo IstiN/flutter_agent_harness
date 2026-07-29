@@ -230,7 +230,11 @@ factual: paths, commands, invariants — no essays.
   `jsr.scene3d.*` bridge on the runtime's flutter_cube/flame_3d dispatcher
   — the engine's `JsRuntimeConfig` and both renderers (JsAppView,
   AppTileHost) wire `js3dHost: createJs3dHost()`, tap picking flows back
-  via `dispatchHostEvent('scene3d.tap:<id>')`). `open_app_tool.dart` registers
+  via `dispatchHostEvent('scene3d.tap:<id>')`). Demo seeding is
+  ownership-aware: `apps/.demo_seeds.json` records sha256 of each file as
+  last seeded — a file whose content no longer matches is user/agent-owned
+  and never overwritten (`resetDemoApp(id)` force-restores the reference
+  version, `storage.json` untouched). `open_app_tool.dart` registers
   the agent tool `open_app`
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
   Live launcher tiles: a manifest `"widget"` section

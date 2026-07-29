@@ -153,34 +153,7 @@ String serializeConversation(List<Message> messages) {
                   .join();
         if (text.isNotEmpty) parts.add('[User]: $text');
       case AssistantMessage(:final content):
-        final textParts = <String>[];
-        final thinkingParts = <String>[];
-        final toolCalls = <String>[];
-        for (final block in content) {
-          switch (block) {
-            case TextContent(:final text):
-              textParts.add(text);
-            case ThinkingContent(:final thinking):
-              thinkingParts.add(thinking);
-            case ToolCall(:final name, :final arguments):
-              final args = arguments.entries
-                  .map(
-                    (entry) => '${entry.key}=${_safeJsonEncode(entry.value)}',
-                  )
-                  .join(', ');
-              toolCalls.add('$name($args)');
-            default:
-          }
-        }
-        if (thinkingParts.isNotEmpty) {
-          parts.add('[Assistant thinking]: ${thinkingParts.join('\n')}');
-        }
-        if (textParts.isNotEmpty) {
-          parts.add('[Assistant]: ${textParts.join('\n')}');
-        }
-        if (toolCalls.isNotEmpty) {
-          parts.add('[Assistant tool calls]: ${toolCalls.join('; ')}');
-        }
+        _serializeAssistantMessage(content, parts);
       case ToolResultMessage(:final content):
         final text = content
             .whereType<TextContent>()
@@ -196,6 +169,40 @@ String serializeConversation(List<Message> messages) {
   }
 
   return parts.join('\n\n');
+}
+
+/// Serializes one assistant message into `[Assistant thinking]:`,
+/// `[Assistant]:`, and `[Assistant tool calls]:` lines appended to [parts].
+void _serializeAssistantMessage(
+  List<ContentBlock> content,
+  List<String> parts,
+) {
+  final textParts = <String>[];
+  final thinkingParts = <String>[];
+  final toolCalls = <String>[];
+  for (final block in content) {
+    switch (block) {
+      case TextContent(:final text):
+        textParts.add(text);
+      case ThinkingContent(:final thinking):
+        thinkingParts.add(thinking);
+      case ToolCall(:final name, :final arguments):
+        final args = arguments.entries
+            .map((entry) => '${entry.key}=${_safeJsonEncode(entry.value)}')
+            .join(', ');
+        toolCalls.add('$name($args)');
+      default:
+    }
+  }
+  if (thinkingParts.isNotEmpty) {
+    parts.add('[Assistant thinking]: ${thinkingParts.join('\n')}');
+  }
+  if (textParts.isNotEmpty) {
+    parts.add('[Assistant]: ${textParts.join('\n')}');
+  }
+  if (toolCalls.isNotEmpty) {
+    parts.add('[Assistant tool calls]: ${toolCalls.join('; ')}');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -750,6 +757,43 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
   };
 }
 
+/// Threads the previous compaction (at [prevCompactionIndex], or none when
+/// negative) into a preparation: its summary for iterative updates, its kept
+/// boundary as the new summarize-region start, and its accumulated file
+/// operations into [fileOps].
+({String? previousSummary, int boundaryStart}) _previousCompactionContext(
+  List<SessionRecord> pathEntries,
+  int prevCompactionIndex,
+  FileOperations fileOps,
+) {
+  String? previousSummary;
+  var boundaryStart = 0;
+  if (prevCompactionIndex >= 0) {
+    final prevCompaction = pathEntries[prevCompactionIndex] as CompactionRecord;
+    previousSummary = prevCompaction.summary;
+    final firstKeptEntryIndex = pathEntries.indexWhere(
+      (entry) => entry.id == prevCompaction.firstKeptEntryId,
+    );
+    boundaryStart = firstKeptEntryIndex >= 0
+        ? firstKeptEntryIndex
+        : prevCompactionIndex + 1;
+    if (prevCompaction.fromHook != true) {
+      final details = prevCompaction.details;
+      if (details is Map) {
+        final readFiles = details['readFiles'];
+        if (readFiles is List) {
+          fileOps.read.addAll(readFiles.whereType<String>());
+        }
+        final modifiedFiles = details['modifiedFiles'];
+        if (modifiedFiles is List) {
+          fileOps.edited.addAll(modifiedFiles.whereType<String>());
+        }
+      }
+    }
+  }
+  return (previousSummary: previousSummary, boundaryStart: boundaryStart);
+}
+
 /// The compaction pipeline over a [Session], mirroring pi's harness-level
 /// `compact()`.
 ///
@@ -802,32 +846,13 @@ final class CompactionManager {
     }
 
     final fileOps = createFileOps();
-    String? previousSummary;
-    var boundaryStart = 0;
-    if (prevCompactionIndex >= 0) {
-      final prevCompaction =
-          pathEntries[prevCompactionIndex] as CompactionRecord;
-      previousSummary = prevCompaction.summary;
-      final firstKeptEntryIndex = pathEntries.indexWhere(
-        (entry) => entry.id == prevCompaction.firstKeptEntryId,
-      );
-      boundaryStart = firstKeptEntryIndex >= 0
-          ? firstKeptEntryIndex
-          : prevCompactionIndex + 1;
-      if (prevCompaction.fromHook != true) {
-        final details = prevCompaction.details;
-        if (details is Map) {
-          final readFiles = details['readFiles'];
-          if (readFiles is List) {
-            fileOps.read.addAll(readFiles.whereType<String>());
-          }
-          final modifiedFiles = details['modifiedFiles'];
-          if (modifiedFiles is List) {
-            fileOps.edited.addAll(modifiedFiles.whereType<String>());
-          }
-        }
-      }
-    }
+    final prevContext = _previousCompactionContext(
+      pathEntries,
+      prevCompactionIndex,
+      fileOps,
+    );
+    final previousSummary = prevContext.previousSummary;
+    final boundaryStart = prevContext.boundaryStart;
 
     final cutPoint = findCutPoint(
       pathEntries,

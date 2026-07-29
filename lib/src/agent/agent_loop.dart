@@ -691,12 +691,12 @@ Future<List<Message>> _runAgentLoop({
 
       // Inject queued messages before the next assistant response.
       if (pendingMessages.isNotEmpty) {
-        for (final message in pendingMessages) {
-          await emit(MessageStartEvent(message));
-          await emit(MessageEndEvent(message));
-          currentContext.messages.add(message);
-          newMessages.add(message);
-        }
+        await _injectPendingMessages(
+          pendingMessages,
+          emit,
+          currentContext,
+          newMessages,
+        );
         pendingMessages = const [];
       }
 
@@ -716,33 +716,17 @@ Future<List<Message>> _runAgentLoop({
         return newMessages;
       }
 
-      final toolCalls = message.content.whereType<ToolCall>().toList();
-
-      final toolResults = <ToolResultMessage>[];
-      hasMoreToolCalls = false;
-      if (toolCalls.isNotEmpty) {
-        // A "length" stop means the output was cut off by the token limit, so
-        // every tool call in the message may carry truncated arguments. Fail
-        // them all instead of executing potentially borked calls.
-        final batch = message.stopReason == StopReason.length
-            ? await _failToolCallsFromTruncatedMessage(toolCalls, emit)
-            : await _executeToolCalls(
-                currentContext,
-                message,
-                toolCalls,
-                currentConfig,
-                toolExecutor,
-                cancelToken,
-                emit,
-              );
-        toolResults.addAll(batch.messages);
-        hasMoreToolCalls = !batch.terminate;
-
-        for (final result in toolResults) {
-          currentContext.messages.add(result);
-          newMessages.add(result);
-        }
-      }
+      final toolPhase = await _runToolCallPhase(
+        currentContext,
+        message,
+        currentConfig,
+        toolExecutor,
+        cancelToken,
+        emit,
+        newMessages,
+      );
+      final toolResults = toolPhase.results;
+      hasMoreToolCalls = toolPhase.hasMore;
 
       final turnResults = List<ToolResultMessage>.unmodifiable(toolResults);
       await emit(TurnEndEvent(message: message, toolResults: turnResults));
@@ -779,6 +763,65 @@ Future<List<Message>> _runAgentLoop({
 
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));
   return newMessages;
+}
+
+/// Emits and appends the queued steering/follow-up [pendingMessages] before
+/// the next assistant response.
+Future<void> _injectPendingMessages(
+  List<Message> pendingMessages,
+  AgentEventSink emit,
+  Context currentContext,
+  List<Message> newMessages,
+) async {
+  for (final message in pendingMessages) {
+    await emit(MessageStartEvent(message));
+    await emit(MessageEndEvent(message));
+    currentContext.messages.add(message);
+    newMessages.add(message);
+  }
+}
+
+/// Executes the assistant [message]'s tool calls (or fails them all when the
+/// message was truncated by the token limit), appending the results to the
+/// context and [newMessages]. Returns the results and whether tool turns
+/// continue.
+Future<({List<ToolResultMessage> results, bool hasMore})> _runToolCallPhase(
+  Context currentContext,
+  AssistantMessage message,
+  AgentLoopConfig currentConfig,
+  ToolExecutor toolExecutor,
+  CancelToken? cancelToken,
+  AgentEventSink emit,
+  List<Message> newMessages,
+) async {
+  final toolCalls = message.content.whereType<ToolCall>().toList();
+
+  final toolResults = <ToolResultMessage>[];
+  var hasMoreToolCalls = false;
+  if (toolCalls.isNotEmpty) {
+    // A "length" stop means the output was cut off by the token limit, so
+    // every tool call in the message may carry truncated arguments. Fail
+    // them all instead of executing potentially borked calls.
+    final batch = message.stopReason == StopReason.length
+        ? await _failToolCallsFromTruncatedMessage(toolCalls, emit)
+        : await _executeToolCalls(
+            currentContext,
+            message,
+            toolCalls,
+            currentConfig,
+            toolExecutor,
+            cancelToken,
+            emit,
+          );
+    toolResults.addAll(batch.messages);
+    hasMoreToolCalls = !batch.terminate;
+
+    for (final result in toolResults) {
+      currentContext.messages.add(result);
+      newMessages.add(result);
+    }
+  }
+  return (results: toolResults, hasMore: hasMoreToolCalls);
 }
 
 Future<List<Message>> _steeringMessages(AgentLoopConfig config) async {

@@ -48,3 +48,44 @@ List<String> replayLinesTui(
       return const [];
   }
 }
+
+/// One compact line-mode replay entry (≤ [maxRows] rows), or none for
+/// messages the replay skips (tool results — their calls are already
+/// shown).
+List<String> replayLines(Message message, {required int maxRows}) {
+  final String text;
+  final String prefix;
+  switch (message) {
+    case UserMessage(:final content):
+      prefix = 'you: ';
+      text = content is String
+          ? content
+          : (content as List<ContentBlock>)
+                .whereType<TextContent>()
+                .map((b) => b.text)
+                .join(' ');
+    case AssistantMessage(:final content):
+      final texts = content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join(' ')
+          .trim();
+      final calls = content
+          .whereType<ToolCall>()
+          .map((c) => '[${c.name}]')
+          .join(' ');
+      text = [texts, calls].where((s) => s.isNotEmpty).join(' ');
+      prefix = 'fa:  ';
+    default:
+      return const [];
+  }
+  if (text.trim().isEmpty) return const [];
+  final rows = text.split('\n');
+  final head = rows.take(maxRows).toList();
+  final suffix = rows.length > maxRows ? ' …' : '';
+  final indent = ' ' * prefix.length;
+  return [
+    for (var i = 0; i < head.length; i++)
+      '${i == 0 ? prefix : indent}${head[i]}${i == head.length - 1 ? suffix : ''}',
+  ];
+}

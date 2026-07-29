@@ -40,16 +40,71 @@ void main() {
       expect(apps.single.declaredPermissions.llm, isTrue);
       expect(apps.single.declaredPermissions.allowedCommands, contains('echo'));
 
-      // Demo files are refreshed when the bundled content changed —
-      // identical files stay untouched, local edits are replaced by the
-      // updated bundled version (demos are samples, not user data).
+      // Seeding refreshes demos ONLY where nothing was customized: a
+      // locally edited file (hash differs from the last-seeded one) is
+      // user-owned now and is left alone.
       await env.writeFile(
         'apps/demo/manifest.json',
         _manifest.replaceAll('Demo App', 'Edited App'),
       );
       await store.seedBundledApps(['demo']);
       apps = await store.listApps();
-      expect(apps.single.name, 'Demo App');
+      expect(apps.single.name, 'Edited App');
+
+      // …while an untouched sibling file still refreshes when the BUNDLE
+      // changes (the manifest stays user-owned and preserved).
+      final storeV2 = AppsStore(
+        env,
+        readAsset: (path) async =>
+            path.endsWith('widget.js') ? '// v2' : _fakeAssets(path),
+      );
+      await storeV2.seedBundledApps(['demo']);
+      expect(
+        (await env.readTextFile('apps/demo/widget.js')).valueOrNull,
+        '// v2',
+      );
+      apps = await store.listApps();
+      expect(apps.single.name, 'Edited App');
+    });
+
+    test(
+      'a legacy (pre-hash) customized file is conservatively preserved',
+      () async {
+        final env = MemoryExecutionEnv();
+        // A demo app folder exists from before hash tracking, with a local
+        // edit — no recorded hash to prove ownership either way.
+        await env.writeFile(
+          'apps/demo/manifest.json',
+          _manifest.replaceAll('Demo App', 'Legacy Edit'),
+        );
+        final store = AppsStore(env, readAsset: _fakeAssets);
+        await store.seedBundledApps(['demo']);
+        expect(
+          (await env.readTextFile('apps/demo/manifest.json')).valueOrNull,
+          contains('Legacy Edit'),
+        );
+      },
+    );
+
+    test('resetDemoApp force-restores a customized demo', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(
+        env,
+        readAsset: _fakeAssets,
+        seedDemoIds: const ['demo'],
+      );
+      await store.seedBundledApps(['demo']);
+      await env.writeFile(
+        'apps/demo/manifest.json',
+        _manifest.replaceAll('Demo App', 'Edited App'),
+      );
+      expect(await store.resetDemoApp('demo'), isTrue);
+      expect(
+        (await env.readTextFile('apps/demo/manifest.json')).valueOrNull,
+        contains('Demo App'),
+      );
+      // And after the reset, refreshes flow again (hash re-recorded).
+      expect(await store.resetDemoApp('nope'), isFalse);
     });
 
     test('seeds the svg icon file when the manifest references one', () async {

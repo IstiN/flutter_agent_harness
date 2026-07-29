@@ -204,8 +204,7 @@ AssistantMessageEventStream streamAnthropic(
   // Blocks accumulate in the shared state holder; each event carries a
   // fresh immutable snapshot of them (pi mutates one `output` object).
   final state = ProviderStreamState(model);
-  final blocks = state.blocks;
-  final blocksByEventIndex = <int, StreamingBlock>{};
+  final session = _AnthropicStreamSession(model, eventStream, state);
 
   unawaited(
     runProviderStream(
@@ -214,281 +213,331 @@ AssistantMessageEventStream streamAnthropic(
       cancelToken,
       httpClient,
       ownsClient: client == null,
-      body: () async {
-        final compat = _getCompat(model);
-        final apiKey = _getClientApiKey(
-          model.provider,
-          options?.apiKey,
-          options?.headers,
-        );
-        final params = await applyPayloadHook(
-          _buildParams(model, context, options, compat),
-          model,
-          options?.onPayload,
-        );
-
-        cancelToken?.throwIfCancelled();
-
-        final request =
-            http.Request('POST', Uri.parse('${model.baseUrl}/v1/messages'))
-              ..headers.addAll(
-                _buildHeaders(model, context, options, compat, apiKey),
-              )
-              ..body = jsonEncode(params);
-
-        final response = await startProviderResponse(
-          eventStream,
-          state,
-          httpClient,
-          request,
-          cancelToken,
-          options?.onResponse,
-        );
-
-        var sawMessageStart = false;
-        var sawMessageStop = false;
-
-        void applyUsage(
-          Map<String, dynamic> rawUsage, {
-          required bool initial,
-        }) {
-          // message_start seeds every field; message_delta only overwrites
-          // fields that are present, preserving message_start values when
-          // proxies omit them (pi's null-preserving merge).
-          var input = rawUsage['input_tokens'] as int?;
-          var output = rawUsage['output_tokens'] as int?;
-          var cacheRead = rawUsage['cache_read_input_tokens'] as int?;
-          var cacheWrite = rawUsage['cache_creation_input_tokens'] as int?;
-          final cacheCreation = rawUsage['cache_creation'];
-          final cacheWrite1h = cacheCreation is Map
-              ? cacheCreation['ephemeral_1h_input_tokens'] as int?
-              : null;
-          if (initial) {
-            input ??= 0;
-            output ??= 0;
-            cacheRead ??= 0;
-            cacheWrite ??= 0;
-          }
-          // Anthropic reports reasoning tokens in
-          // `output_tokens_details.thinking_tokens` on the final message_delta
-          // usage (a subset of output_tokens).
-          final outputDetails = rawUsage['output_tokens_details'];
-          final reasoning = outputDetails is Map
-              ? outputDetails['thinking_tokens'] as int?
-              : null;
-
-          final merged = state.usage.copyWith(
-            input: input,
-            output: output,
-            cacheRead: cacheRead,
-            cacheWrite: cacheWrite,
-            cacheWrite1h: cacheWrite1h,
-            reasoning: reasoning,
-          );
-          // Anthropic doesn't provide total_tokens; compute from components.
-          state.usage = calculateCost(
-            merged.copyWith(
-              totalTokens:
-                  merged.input +
-                  merged.output +
-                  merged.cacheRead +
-                  merged.cacheWrite,
-            ),
-            model,
-          );
-        }
-
-        final iterator = createSseIterator(response, cancelToken);
-
-        // Ported from pi's `iterateAnthropicEvents`: only the message events
-        // are parsed, an `error` event aborts, and a stream that started but
-        // never saw message_stop is a failure.
-        while (await iterator.moveNext()) {
-          final sse = iterator.current;
-          if (sse.event == 'error') {
-            throw StateError(sse.data);
-          }
-          if (!_anthropicMessageEvents.contains(sse.event)) {
-            continue;
-          }
-
-          final Map<String, dynamic> event;
-          try {
-            final parsed = parseJsonWithRepair(sse.data);
-            if (parsed is! Map<String, dynamic>) {
-              throw const FormatException('SSE data is not a JSON object');
-            }
-            event = parsed;
-            final type = event['type'];
-            if (type == 'message_start') {
-              sawMessageStart = true;
-            } else if (type == 'message_stop') {
-              sawMessageStop = true;
-            }
-          } catch (error) {
-            throw StateError(
-              'Could not parse Anthropic SSE event ${sse.event}: $error; '
-              'data=${sse.data}; raw=${sse.raw.join(r'\n')}',
-            );
-          }
-
-          final type = event['type'];
-          if (type == 'message_start') {
-            final message = event['message'];
-            if (message is Map<String, dynamic>) {
-              state.responseId = message['id'] as String?;
-              final rawUsage = message['usage'];
-              if (rawUsage is Map<String, dynamic>) {
-                // Capture initial token usage from message_start so we have
-                // input token counts even if the stream is aborted early.
-                applyUsage(rawUsage, initial: true);
-              }
-            }
-          } else if (type == 'content_block_start') {
-            final index = event['index'] as int?;
-            final contentBlock = event['content_block'];
-            if (index != null && contentBlock is Map<String, dynamic>) {
-              final StreamingBlock? block = switch (contentBlock['type']) {
-                'text' => TextStreamingBlock(),
-                'thinking' => ThinkingStreamingBlock(signature: ''),
-                'redacted_thinking' => ThinkingStreamingBlock(
-                  signature: contentBlock['data'] as String? ?? '',
-                  redacted: true,
-                  initialText: '[Reasoning redacted]',
-                ),
-                'tool_use' => ToolCallStreamingBlock(
-                  id: contentBlock['id'] as String? ?? '',
-                  name: contentBlock['name'] as String? ?? '',
-                  initialArguments:
-                      contentBlock['input'] is Map<String, dynamic>
-                      ? contentBlock['input'] as Map<String, dynamic>
-                      : null,
-                ),
-                _ => null,
-              };
-              if (block != null) {
-                blocks.add(block);
-                blocksByEventIndex[index] = block;
-                final startIndex = blocks.indexOf(block);
-                switch (block) {
-                  case TextStreamingBlock():
-                    eventStream.push(
-                      TextStartEvent(
-                        contentIndex: startIndex,
-                        partial: state.snapshot(),
-                      ),
-                    );
-                  case ThinkingStreamingBlock():
-                    eventStream.push(
-                      ThinkingStartEvent(
-                        contentIndex: startIndex,
-                        partial: state.snapshot(),
-                      ),
-                    );
-                  case ToolCallStreamingBlock():
-                    eventStream.push(
-                      ToolCallStartEvent(
-                        contentIndex: startIndex,
-                        partial: state.snapshot(),
-                      ),
-                    );
-                }
-              }
-            }
-          } else if (type == 'content_block_delta') {
-            final index = event['index'] as int?;
-            final delta = event['delta'];
-            final block = index != null ? blocksByEventIndex[index] : null;
-            if (block != null && delta is Map<String, dynamic>) {
-              final deltaType = delta['type'];
-              if (deltaType == 'text_delta' && block is TextStreamingBlock) {
-                final text = delta['text'] as String? ?? '';
-                block.text.write(text);
-                eventStream.push(
-                  TextDeltaEvent(
-                    contentIndex: blocks.indexOf(block),
-                    delta: text,
-                    partial: state.snapshot(),
-                  ),
-                );
-              } else if (deltaType == 'thinking_delta' &&
-                  block is ThinkingStreamingBlock) {
-                final thinking = delta['thinking'] as String? ?? '';
-                block.thinking.write(thinking);
-                eventStream.push(
-                  ThinkingDeltaEvent(
-                    contentIndex: blocks.indexOf(block),
-                    delta: thinking,
-                    partial: state.snapshot(),
-                  ),
-                );
-              } else if (deltaType == 'input_json_delta' &&
-                  block is ToolCallStreamingBlock) {
-                final partialJson = delta['partial_json'] as String? ?? '';
-                block.partialArgs.write(partialJson);
-                eventStream.push(
-                  ToolCallDeltaEvent(
-                    contentIndex: blocks.indexOf(block),
-                    delta: partialJson,
-                    partial: state.snapshot(),
-                  ),
-                );
-              } else if (deltaType == 'signature_delta' &&
-                  block is ThinkingStreamingBlock) {
-                // Signatures accumulate silently; pi pushes no event here.
-                block.signature =
-                    (block.signature ?? '') +
-                    (delta['signature'] as String? ?? '');
-              }
-            }
-          } else if (type == 'content_block_stop') {
-            final index = event['index'] as int?;
-            final block = index != null ? blocksByEventIndex[index] : null;
-            if (block != null) {
-              pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
-            }
-          } else if (type == 'message_delta') {
-            final delta = event['delta'];
-            if (delta is Map<String, dynamic>) {
-              final rawStopReason = delta['stop_reason'];
-              if (rawStopReason is String) {
-                final stopDetails = delta['stop_details'];
-                final result = _mapStopReason(
-                  rawStopReason,
-                  stopDetails is Map<String, dynamic> ? stopDetails : null,
-                );
-                state.stopReason = result.reason;
-                state.errorMessage = result.errorMessage;
-              }
-            }
-            final rawUsage = event['usage'];
-            if (rawUsage is Map<String, dynamic>) {
-              applyUsage(rawUsage, initial: false);
-            }
-          }
-          // message_stop carries no payload; it only terminates the stream.
-        }
-
-        if (sawMessageStart && !sawMessageStop) {
-          throw StateError('Anthropic stream ended before message_stop');
-        }
-
-        if (cancelToken?.isCancelled ?? false) {
-          throw const AbortedError();
-        }
-        if (state.stopReason == StopReason.aborted ||
-            state.stopReason == StopReason.error) {
-          throw StateError(state.errorMessage ?? 'An unknown error occurred');
-        }
-
-        eventStream.push(
-          DoneEvent(reason: state.stopReason, message: state.snapshot()),
-        );
-      },
+      body: () => session.run(context, options, httpClient, cancelToken),
     ),
   );
 
   return eventStream;
+}
+
+/// Per-request SSE state machine for [streamAnthropic].
+///
+/// Ported from the body of pi's `stream` in `anthropic-messages.ts` (the
+/// request build plus `iterateAnthropicEvents` loop). Holds the mutable
+/// streaming state (block table, message_start/message_stop flags) so each
+/// SSE event type can be handled by a small dedicated method.
+final class _AnthropicStreamSession {
+  _AnthropicStreamSession(this.model, this.eventStream, this.state)
+    : blocks = state.blocks;
+
+  final Model model;
+  final AssistantMessageEventStream eventStream;
+  final ProviderStreamState state;
+
+  /// Aliases [ProviderStreamState.blocks] (the snapshot source of truth).
+  final List<StreamingBlock> blocks;
+  final Map<int, StreamingBlock> blocksByEventIndex = <int, StreamingBlock>{};
+  var sawMessageStart = false;
+  var sawMessageStop = false;
+
+  /// Builds and sends the request, then consumes the SSE stream. Never
+  /// returns a provider failure normally — errors propagate so
+  /// `runProviderStream` can surface them as an [ErrorEvent].
+  Future<void> run(
+    Context context,
+    AnthropicOptions? options,
+    http.Client httpClient,
+    CancelToken? cancelToken,
+  ) async {
+    final compat = _getCompat(model);
+    final apiKey = _getClientApiKey(
+      model.provider,
+      options?.apiKey,
+      options?.headers,
+    );
+    final params = await applyPayloadHook(
+      _buildParams(model, context, options, compat),
+      model,
+      options?.onPayload,
+    );
+
+    cancelToken?.throwIfCancelled();
+
+    final request =
+        http.Request('POST', Uri.parse('${model.baseUrl}/v1/messages'))
+          ..headers.addAll(
+            _buildHeaders(model, context, options, compat, apiKey),
+          )
+          ..body = jsonEncode(params);
+
+    final response = await startProviderResponse(
+      eventStream,
+      state,
+      httpClient,
+      request,
+      cancelToken,
+      options?.onResponse,
+    );
+
+    final iterator = createSseIterator(response, cancelToken);
+
+    // Ported from pi's `iterateAnthropicEvents`: only the message events
+    // are parsed, an `error` event aborts, and a stream that started but
+    // never saw message_stop is a failure.
+    while (await iterator.moveNext()) {
+      _handleSseEvent(iterator.current);
+    }
+
+    if (sawMessageStart && !sawMessageStop) {
+      throw StateError('Anthropic stream ended before message_stop');
+    }
+
+    if (cancelToken?.isCancelled ?? false) {
+      throw const AbortedError();
+    }
+    if (state.stopReason == StopReason.aborted ||
+        state.stopReason == StopReason.error) {
+      throw StateError(state.errorMessage ?? 'An unknown error occurred');
+    }
+
+    eventStream.push(
+      DoneEvent(reason: state.stopReason, message: state.snapshot()),
+    );
+  }
+
+  /// Parses one raw SSE event and dispatches it to the per-type handler.
+  void _handleSseEvent(ServerSentEvent sse) {
+    if (sse.event == 'error') {
+      throw StateError(sse.data);
+    }
+    if (!_anthropicMessageEvents.contains(sse.event)) {
+      return;
+    }
+
+    final Map<String, dynamic> event;
+    try {
+      final parsed = parseJsonWithRepair(sse.data);
+      if (parsed is! Map<String, dynamic>) {
+        throw const FormatException('SSE data is not a JSON object');
+      }
+      event = parsed;
+      final type = event['type'];
+      if (type == 'message_start') {
+        sawMessageStart = true;
+      } else if (type == 'message_stop') {
+        sawMessageStop = true;
+      }
+    } catch (error) {
+      throw StateError(
+        'Could not parse Anthropic SSE event ${sse.event}: $error; '
+        'data=${sse.data}; raw=${sse.raw.join(r'\n')}',
+      );
+    }
+
+    final type = event['type'];
+    if (type == 'message_start') {
+      _handleMessageStart(event);
+    } else if (type == 'content_block_start') {
+      _handleContentBlockStart(event);
+    } else if (type == 'content_block_delta') {
+      _handleContentBlockDelta(event);
+    } else if (type == 'content_block_stop') {
+      _handleContentBlockStop(event);
+    } else if (type == 'message_delta') {
+      _handleMessageDelta(event);
+    }
+    // message_stop carries no payload; it only terminates the stream.
+  }
+
+  void _handleMessageStart(Map<String, dynamic> event) {
+    final message = event['message'];
+    if (message is Map<String, dynamic>) {
+      state.responseId = message['id'] as String?;
+      final rawUsage = message['usage'];
+      if (rawUsage is Map<String, dynamic>) {
+        // Capture initial token usage from message_start so we have
+        // input token counts even if the stream is aborted early.
+        _applyUsage(rawUsage, initial: true);
+      }
+    }
+  }
+
+  void _handleContentBlockStart(Map<String, dynamic> event) {
+    final index = event['index'] as int?;
+    final contentBlock = event['content_block'];
+    if (index != null && contentBlock is Map<String, dynamic>) {
+      final block = _createStreamingBlock(contentBlock);
+      if (block != null) {
+        blocks.add(block);
+        blocksByEventIndex[index] = block;
+        final startIndex = blocks.indexOf(block);
+        switch (block) {
+          case TextStreamingBlock():
+            eventStream.push(
+              TextStartEvent(
+                contentIndex: startIndex,
+                partial: state.snapshot(),
+              ),
+            );
+          case ThinkingStreamingBlock():
+            eventStream.push(
+              ThinkingStartEvent(
+                contentIndex: startIndex,
+                partial: state.snapshot(),
+              ),
+            );
+          case ToolCallStreamingBlock():
+            eventStream.push(
+              ToolCallStartEvent(
+                contentIndex: startIndex,
+                partial: state.snapshot(),
+              ),
+            );
+        }
+      }
+    }
+  }
+
+  /// Creates the scratch block for a `content_block_start`, or `null` for
+  /// block types pi does not stream (unknown types are ignored).
+  StreamingBlock? _createStreamingBlock(Map<String, dynamic> contentBlock) {
+    return switch (contentBlock['type']) {
+      'text' => TextStreamingBlock(),
+      'thinking' => ThinkingStreamingBlock(signature: ''),
+      'redacted_thinking' => ThinkingStreamingBlock(
+        signature: contentBlock['data'] as String? ?? '',
+        redacted: true,
+        initialText: '[Reasoning redacted]',
+      ),
+      'tool_use' => ToolCallStreamingBlock(
+        id: contentBlock['id'] as String? ?? '',
+        name: contentBlock['name'] as String? ?? '',
+        initialArguments: contentBlock['input'] is Map<String, dynamic>
+            ? contentBlock['input'] as Map<String, dynamic>
+            : null,
+      ),
+      _ => null,
+    };
+  }
+
+  void _handleContentBlockDelta(Map<String, dynamic> event) {
+    final index = event['index'] as int?;
+    final delta = event['delta'];
+    final block = index != null ? blocksByEventIndex[index] : null;
+    if (block != null && delta is Map<String, dynamic>) {
+      final deltaType = delta['type'];
+      if (deltaType == 'text_delta' && block is TextStreamingBlock) {
+        final text = delta['text'] as String? ?? '';
+        block.text.write(text);
+        eventStream.push(
+          TextDeltaEvent(
+            contentIndex: blocks.indexOf(block),
+            delta: text,
+            partial: state.snapshot(),
+          ),
+        );
+      } else if (deltaType == 'thinking_delta' &&
+          block is ThinkingStreamingBlock) {
+        final thinking = delta['thinking'] as String? ?? '';
+        block.thinking.write(thinking);
+        eventStream.push(
+          ThinkingDeltaEvent(
+            contentIndex: blocks.indexOf(block),
+            delta: thinking,
+            partial: state.snapshot(),
+          ),
+        );
+      } else if (deltaType == 'input_json_delta' &&
+          block is ToolCallStreamingBlock) {
+        final partialJson = delta['partial_json'] as String? ?? '';
+        block.partialArgs.write(partialJson);
+        eventStream.push(
+          ToolCallDeltaEvent(
+            contentIndex: blocks.indexOf(block),
+            delta: partialJson,
+            partial: state.snapshot(),
+          ),
+        );
+      } else if (deltaType == 'signature_delta' &&
+          block is ThinkingStreamingBlock) {
+        // Signatures accumulate silently; pi pushes no event here.
+        block.signature =
+            (block.signature ?? '') + (delta['signature'] as String? ?? '');
+      }
+    }
+  }
+
+  void _handleContentBlockStop(Map<String, dynamic> event) {
+    final index = event['index'] as int?;
+    final block = index != null ? blocksByEventIndex[index] : null;
+    if (block != null) {
+      pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
+    }
+  }
+
+  void _handleMessageDelta(Map<String, dynamic> event) {
+    final delta = event['delta'];
+    if (delta is Map<String, dynamic>) {
+      final rawStopReason = delta['stop_reason'];
+      if (rawStopReason is String) {
+        final stopDetails = delta['stop_details'];
+        final result = _mapStopReason(
+          rawStopReason,
+          stopDetails is Map<String, dynamic> ? stopDetails : null,
+        );
+        state.stopReason = result.reason;
+        state.errorMessage = result.errorMessage;
+      }
+    }
+    final rawUsage = event['usage'];
+    if (rawUsage is Map<String, dynamic>) {
+      _applyUsage(rawUsage, initial: false);
+    }
+  }
+
+  void _applyUsage(Map<String, dynamic> rawUsage, {required bool initial}) {
+    // message_start seeds every field; message_delta only overwrites
+    // fields that are present, preserving message_start values when
+    // proxies omit them (pi's null-preserving merge).
+    var input = rawUsage['input_tokens'] as int?;
+    var output = rawUsage['output_tokens'] as int?;
+    var cacheRead = rawUsage['cache_read_input_tokens'] as int?;
+    var cacheWrite = rawUsage['cache_creation_input_tokens'] as int?;
+    final cacheCreation = rawUsage['cache_creation'];
+    final cacheWrite1h = cacheCreation is Map
+        ? cacheCreation['ephemeral_1h_input_tokens'] as int?
+        : null;
+    if (initial) {
+      input ??= 0;
+      output ??= 0;
+      cacheRead ??= 0;
+      cacheWrite ??= 0;
+    }
+    // Anthropic reports reasoning tokens in
+    // `output_tokens_details.thinking_tokens` on the final message_delta
+    // usage (a subset of output_tokens).
+    final outputDetails = rawUsage['output_tokens_details'];
+    final reasoning = outputDetails is Map
+        ? outputDetails['thinking_tokens'] as int?
+        : null;
+
+    final merged = state.usage.copyWith(
+      input: input,
+      output: output,
+      cacheRead: cacheRead,
+      cacheWrite: cacheWrite,
+      cacheWrite1h: cacheWrite1h,
+      reasoning: reasoning,
+    );
+    // Anthropic doesn't provide total_tokens; compute from components.
+    state.usage = calculateCost(
+      merged.copyWith(
+        totalTokens:
+            merged.input + merged.output + merged.cacheRead + merged.cacheWrite,
+      ),
+      model,
+    );
+  }
 }
 
 /// Ported from pi's `assertRequestAuth`: an explicit API key wins; otherwise
@@ -699,149 +748,202 @@ List<Map<String, dynamic>> _convertMessages(
     final message = messages[i];
 
     if (message is UserMessage) {
-      final content = message.content;
-      if (content is String) {
-        if (content.trim().isNotEmpty) {
-          params.add({'role': 'user', 'content': content});
-        }
-      } else {
-        final blocks = <Map<String, dynamic>>[];
-        for (final item in content as List<ContentBlock>) {
-          switch (item) {
-            case TextContent():
-              blocks.add({'type': 'text', 'text': item.text});
-            case ImageContent():
-              blocks.add({
-                'type': 'image',
-                'source': {
-                  'type': 'base64',
-                  'media_type': item.mimeType,
-                  'data': item.data,
-                },
-              });
-            case ThinkingContent() || ToolCall():
-              // Not valid in user messages; skip defensively.
-              break;
-          }
-        }
-        final filtered = [
-          for (final block in blocks)
-            if (block['type'] != 'text' ||
-                (block['text'] as String).trim().isNotEmpty)
-              block,
-        ];
-        if (filtered.isEmpty) {
-          continue;
-        }
-        params.add({'role': 'user', 'content': filtered});
+      final converted = _convertUserMessage(message);
+      if (converted != null) {
+        params.add(converted);
       }
     } else if (message is AssistantMessage) {
-      final blocks = <Map<String, dynamic>>[];
-
-      for (final block in message.content) {
-        switch (block) {
-          case TextContent():
-            if (block.text.trim().isEmpty) {
-              continue;
-            }
-            blocks.add({'type': 'text', 'text': block.text});
-          case ThinkingContent():
-            // Redacted thinking: pass the opaque payload back as
-            // redacted_thinking.
-            if (block.redacted) {
-              blocks.add({
-                'type': 'redacted_thinking',
-                'data': block.thinkingSignature,
-              });
-              continue;
-            }
-            final signature = block.thinkingSignature;
-            final hasSignature =
-                signature != null && signature.trim().isNotEmpty;
-            if (block.thinking.trim().isEmpty && !hasSignature) {
-              continue;
-            }
-            // If the thinking signature is missing/empty (e.g., from an
-            // aborted stream), convert to plain text for Anthropic. Some
-            // compatible providers emit and accept empty signatures, so let
-            // marked models preserve the block.
-            if (!hasSignature) {
-              blocks.add(
-                allowEmptySignature
-                    ? {
-                        'type': 'thinking',
-                        'thinking': block.thinking,
-                        'signature': '',
-                      }
-                    : {'type': 'text', 'text': block.thinking},
-              );
-            } else {
-              blocks.add({
-                'type': 'thinking',
-                'thinking': block.thinking,
-                'signature': signature,
-              });
-            }
-          case ToolCall():
-            blocks.add({
-              'type': 'tool_use',
-              'id': _normalizeToolCallId(block.id),
-              'name': block.name,
-              'input': block.arguments,
-            });
-          case ImageContent():
-            // Not valid in assistant messages; skip defensively.
-            break;
-        }
+      final converted = _convertAssistantMessage(
+        message,
+        allowEmptySignature: allowEmptySignature,
+      );
+      if (converted != null) {
+        params.add(converted);
       }
-      if (blocks.isEmpty) {
-        continue;
-      }
-      params.add({'role': 'assistant', 'content': blocks});
     } else if (message is ToolResultMessage) {
-      // Collect all consecutive toolResult messages into a single user
-      // message of tool_result blocks (Anthropic requires this grouping).
-      final toolResults = <Map<String, dynamic>>[];
-      var j = i;
-      for (; j < messages.length && messages[j] is ToolResultMessage; j++) {
-        final toolMessage = messages[j] as ToolResultMessage;
-        toolResults.add({
-          'type': 'tool_result',
-          'tool_use_id': _normalizeToolCallId(toolMessage.toolCallId),
-          'content': _convertContentBlocks(toolMessage.content),
-          'is_error': toolMessage.isError,
-        });
-      }
-
+      final group = _convertToolResultGroup(messages, i);
+      params.add(group.message);
       // Skip the messages we've already processed.
-      i = j - 1;
-
-      params.add({'role': 'user', 'content': toolResults});
+      i = group.lastIndex;
     }
   }
 
   // Add cache_control to the last user message to cache conversation history.
   if (cacheControl != null && params.isNotEmpty) {
-    final lastMessage = params.last;
-    if (lastMessage['role'] == 'user') {
-      final content = lastMessage['content'];
-      if (content is List && content.isNotEmpty) {
-        final lastBlock = content.last;
-        if (lastBlock is Map &&
-            (lastBlock['type'] == 'text' ||
-                lastBlock['type'] == 'image' ||
-                lastBlock['type'] == 'tool_result')) {
-          lastBlock['cache_control'] = cacheControl;
-        }
-      } else if (content is String) {
-        lastMessage['content'] = [
-          {'type': 'text', 'text': content, 'cache_control': cacheControl},
-        ];
-      }
-    }
+    _applyCacheControlToLastUserMessage(params.last, cacheControl);
   }
 
   return params;
+}
+
+/// Converts a [UserMessage] to Anthropic format, or returns `null` when the
+/// message has no non-empty content (the caller then skips it).
+Map<String, dynamic>? _convertUserMessage(UserMessage message) {
+  final content = message.content;
+  if (content is String) {
+    if (content.trim().isNotEmpty) {
+      return {'role': 'user', 'content': content};
+    }
+    return null;
+  }
+
+  final blocks = _convertUserContentBlocks(content as List<ContentBlock>);
+  final filtered = [
+    for (final block in blocks)
+      if (block['type'] != 'text' ||
+          (block['text'] as String).trim().isNotEmpty)
+        block,
+  ];
+  if (filtered.isEmpty) {
+    return null;
+  }
+  return {'role': 'user', 'content': filtered};
+}
+
+/// Converts user content blocks: text and images map one-to-one; anything
+/// else is not valid in user messages and is skipped defensively.
+List<Map<String, dynamic>> _convertUserContentBlocks(
+  List<ContentBlock> content,
+) {
+  final blocks = <Map<String, dynamic>>[];
+  for (final item in content) {
+    switch (item) {
+      case TextContent():
+        blocks.add({'type': 'text', 'text': item.text});
+      case ImageContent():
+        blocks.add({
+          'type': 'image',
+          'source': {
+            'type': 'base64',
+            'media_type': item.mimeType,
+            'data': item.data,
+          },
+        });
+      case ThinkingContent() || ToolCall():
+        // Not valid in user messages; skip defensively.
+        break;
+    }
+  }
+  return blocks;
+}
+
+/// Converts an [AssistantMessage] to Anthropic format, or returns `null`
+/// when nothing convertible remains (the caller then skips it).
+Map<String, dynamic>? _convertAssistantMessage(
+  AssistantMessage message, {
+  required bool allowEmptySignature,
+}) {
+  final blocks = <Map<String, dynamic>>[];
+
+  for (final block in message.content) {
+    switch (block) {
+      case TextContent():
+        if (block.text.trim().isEmpty) {
+          continue;
+        }
+        blocks.add({'type': 'text', 'text': block.text});
+      case ThinkingContent():
+        final converted = _convertThinkingBlock(
+          block,
+          allowEmptySignature: allowEmptySignature,
+        );
+        if (converted != null) {
+          blocks.add(converted);
+        }
+      case ToolCall():
+        blocks.add({
+          'type': 'tool_use',
+          'id': _normalizeToolCallId(block.id),
+          'name': block.name,
+          'input': block.arguments,
+        });
+      case ImageContent():
+        // Not valid in assistant messages; skip defensively.
+        break;
+    }
+  }
+  if (blocks.isEmpty) {
+    return null;
+  }
+  return {'role': 'assistant', 'content': blocks};
+}
+
+/// Converts one [ThinkingContent] block, or returns `null` when it carries
+/// neither thinking text nor a signature (the caller then skips it).
+Map<String, dynamic>? _convertThinkingBlock(
+  ThinkingContent block, {
+  required bool allowEmptySignature,
+}) {
+  // Redacted thinking: pass the opaque payload back as redacted_thinking.
+  if (block.redacted) {
+    return {'type': 'redacted_thinking', 'data': block.thinkingSignature};
+  }
+  final signature = block.thinkingSignature;
+  final hasSignature = signature != null && signature.trim().isNotEmpty;
+  if (block.thinking.trim().isEmpty && !hasSignature) {
+    return null;
+  }
+  // If the thinking signature is missing/empty (e.g., from an
+  // aborted stream), convert to plain text for Anthropic. Some
+  // compatible providers emit and accept empty signatures, so let
+  // marked models preserve the block.
+  if (!hasSignature) {
+    return allowEmptySignature
+        ? {'type': 'thinking', 'thinking': block.thinking, 'signature': ''}
+        : {'type': 'text', 'text': block.thinking};
+  }
+  return {
+    'type': 'thinking',
+    'thinking': block.thinking,
+    'signature': signature,
+  };
+}
+
+/// Collects the run of consecutive [ToolResultMessage]s starting at
+/// [startIndex] into a single user message of tool_result blocks (Anthropic
+/// requires this grouping). Returns it plus the index of the last consumed
+/// message so the caller can skip ahead.
+({Map<String, dynamic> message, int lastIndex}) _convertToolResultGroup(
+  List<Message> messages,
+  int startIndex,
+) {
+  final toolResults = <Map<String, dynamic>>[];
+  var j = startIndex;
+  for (; j < messages.length && messages[j] is ToolResultMessage; j++) {
+    final toolMessage = messages[j] as ToolResultMessage;
+    toolResults.add({
+      'type': 'tool_result',
+      'tool_use_id': _normalizeToolCallId(toolMessage.toolCallId),
+      'content': _convertContentBlocks(toolMessage.content),
+      'is_error': toolMessage.isError,
+    });
+  }
+  return (message: {'role': 'user', 'content': toolResults}, lastIndex: j - 1);
+}
+
+/// Adds a cache breakpoint to the last user message to cache conversation
+/// history: onto its last text/image/tool_result block when it is a block
+/// list, or by wrapping a plain-string content into one.
+void _applyCacheControlToLastUserMessage(
+  Map<String, dynamic> lastMessage,
+  Map<String, dynamic> cacheControl,
+) {
+  if (lastMessage['role'] == 'user') {
+    final content = lastMessage['content'];
+    if (content is List && content.isNotEmpty) {
+      final lastBlock = content.last;
+      if (lastBlock is Map &&
+          (lastBlock['type'] == 'text' ||
+              lastBlock['type'] == 'image' ||
+              lastBlock['type'] == 'tool_result')) {
+        lastBlock['cache_control'] = cacheControl;
+      }
+    } else if (content is String) {
+      lastMessage['content'] = [
+        {'type': 'text', 'text': content, 'cache_control': cacheControl},
+      ];
+    }
+  }
 }
 
 List<Map<String, dynamic>> _convertTools(

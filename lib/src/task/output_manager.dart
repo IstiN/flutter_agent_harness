@@ -124,6 +124,45 @@ final class AgentUrlResolution {
 /// Throws [AgentUrlException] on malformed URLs, unknown ids, conflicting
 /// extraction syntax, or non-JSON content named for extraction.
 AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
+  final parsed = _splitAgentUrl(url);
+  final hasPathExtraction = parsed.urlPath.isNotEmpty && parsed.urlPath != '/';
+  if (hasPathExtraction && parsed.query != null) {
+    throw AgentUrlException(
+      '$agentUrlScheme:// URL cannot combine path extraction with ?q=',
+    );
+  }
+
+  // A subagent allocates its own children as dot-qualified ids
+  // (`Parent.Child`), so the slash path form is first tried as a hierarchy
+  // separator. Only when no such nested output exists does the path fall
+  // back to dot-path JSON extraction (omp semantics).
+  final segments = [
+    for (final raw in parsed.urlPath.split('/'))
+      if (raw.isNotEmpty) Uri.decodeComponent(raw),
+  ];
+  final nestedId =
+      segments.isNotEmpty && segments.every((s) => !s.contains('.'))
+      ? [parsed.outputId, ...segments].join('.')
+      : null;
+
+  final resolved = _resolveRawContent(store, parsed.outputId, nestedId);
+  final resolvedNested = nestedId != null && resolved.id == nestedId;
+  final extract =
+      parsed.query != null || (hasPathExtraction && !resolvedNested);
+  if (!extract) {
+    return AgentUrlResolution(
+      id: resolved.id,
+      content: resolved.content,
+      contentType: 'text/markdown',
+    );
+  }
+  return _extractJsonContent(resolved, parsed.query, segments.join('.'));
+}
+
+/// Splits an `agent://` [url] into its output id, slash path, and `?q=`
+/// query (normalized to `null` when absent or empty), enforcing the scheme
+/// and output-id rules of the protocol.
+({String outputId, String urlPath, String? query}) _splitAgentUrl(String url) {
   const prefix = '$agentUrlScheme://';
   if (!url.startsWith(prefix)) {
     throw AgentUrlException('Not an $agentUrlScheme:// URL: $url');
@@ -148,73 +187,58 @@ AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
   if (queryPart != null && queryPart.isNotEmpty) {
     queryParam = Uri.splitQueryString(queryPart)['q'];
   }
-  final hasPathExtraction = urlPath.isNotEmpty && urlPath != '/';
-  final hasQueryExtraction = queryParam != null && queryParam.isNotEmpty;
-  if (hasPathExtraction && hasQueryExtraction) {
-    throw AgentUrlException(
-      '$agentUrlScheme:// URL cannot combine path extraction with ?q=',
-    );
-  }
+  if (queryParam != null && queryParam.isEmpty) queryParam = null;
+  return (outputId: outputId, urlPath: urlPath, query: queryParam);
+}
 
-  // A subagent allocates its own children as dot-qualified ids
-  // (`Parent.Child`), so the slash path form is first tried as a hierarchy
-  // separator. Only when no such nested output exists does the path fall
-  // back to dot-path JSON extraction (omp semantics).
-  final segments = [
-    for (final raw in urlPath.split('/'))
-      if (raw.isNotEmpty) Uri.decodeComponent(raw),
-  ];
-  final nestedId =
-      segments.isNotEmpty && segments.every((s) => !s.contains('.'))
-      ? [outputId, ...segments].join('.')
-      : null;
-
-  String resolvedId;
-  String rawContent;
+/// Fetches the raw stored content for [outputId], preferring the
+/// dot-qualified [nestedId] when the URL hopped the output hierarchy and
+/// such a nested output exists (omp semantics).
+({String id, String content}) _resolveRawContent(
+  AgentOutputStore store,
+  String outputId,
+  String? nestedId,
+) {
   if (nestedId != null && store.contains(nestedId)) {
-    resolvedId = nestedId;
-    rawContent = store.get(nestedId)!;
-  } else {
-    final content = store.get(outputId);
-    if (content == null) {
-      final available = store.availableIds;
-      throw AgentUrlException(
-        'Not found: ${nestedId ?? outputId}\n'
-        'Available: ${available.isEmpty ? 'none' : available.join(', ')}',
-      );
-    }
-    resolvedId = outputId;
-    rawContent = content;
+    return (id: nestedId, content: store.get(nestedId)!);
   }
-
-  final resolvedNested = nestedId != null && resolvedId == nestedId;
-  final extract = hasQueryExtraction || (hasPathExtraction && !resolvedNested);
-  if (!extract) {
-    return AgentUrlResolution(
-      id: resolvedId,
-      content: rawContent,
-      contentType: 'text/markdown',
+  final content = store.get(outputId);
+  if (content == null) {
+    final available = store.availableIds;
+    throw AgentUrlException(
+      'Not found: ${nestedId ?? outputId}\n'
+      'Available: ${available.isEmpty ? 'none' : available.join(', ')}',
     );
   }
+  return (id: outputId, content: content);
+}
 
+/// Decodes [resolved] content as JSON and extracts [queryParam] (or
+/// [pathQuery] when no explicit `?q=` was given) from it; an empty query
+/// re-prints the whole document.
+AgentUrlResolution _extractJsonContent(
+  ({String id, String content}) resolved,
+  String? queryParam,
+  String pathQuery,
+) {
   final Object? jsonValue;
   try {
-    jsonValue = jsonDecode(rawContent);
+    jsonValue = jsonDecode(resolved.content);
   } on FormatException catch (error) {
     throw AgentUrlException(
-      'Output $resolvedId is not valid JSON: ${error.message}',
+      'Output ${resolved.id} is not valid JSON: ${error.message}',
     );
   }
 
-  final query = hasQueryExtraction ? queryParam : segments.join('.');
+  final query = queryParam ?? pathQuery;
   if (query.isEmpty) {
     return AgentUrlResolution(
-      id: resolvedId,
+      id: resolved.id,
       content: const JsonEncoder.withIndent('  ').convert(jsonValue),
       contentType: 'application/json',
     );
   }
-  final extracted = _walkJsonPath(jsonValue, query, resolvedId);
+  final extracted = _walkJsonPath(jsonValue, query, resolved.id);
   String content;
   try {
     content = const JsonEncoder.withIndent('  ').convert(extracted);
@@ -222,7 +246,7 @@ AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
     content = '$extracted';
   }
   return AgentUrlResolution(
-    id: resolvedId,
+    id: resolved.id,
     content: content,
     contentType: 'application/json',
     notes: ['Extracted: $query'],

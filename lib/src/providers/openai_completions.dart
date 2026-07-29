@@ -132,11 +132,15 @@ AssistantMessageEventStream streamOpenAICompletions(
   // the pieces in a shared state holder and build an immutable snapshot per
   // event instead.
   final state = ProviderStreamState(model);
-  final blocks = state.blocks;
-  final toolCallBlocksByIndex = <int, ToolCallStreamingBlock>{};
-  final toolCallBlocksById = <String, ToolCallStreamingBlock>{};
-  final pendingReasoningDetailsByToolCallId = <String, String>{};
-  var hasFinishReason = false;
+  final session = _OpenAICompletionsSession(
+    model,
+    context,
+    options,
+    eventStream,
+    state,
+    cancelToken,
+    httpClient,
+  );
 
   unawaited(
     runProviderStream(
@@ -145,343 +149,409 @@ AssistantMessageEventStream streamOpenAICompletions(
       cancelToken,
       httpClient,
       ownsClient: client == null,
-      body: () async {
-        final compat = _getCompat(model);
-        final params = await applyPayloadHook(
-          _buildParams(model, context, options, compat),
-          model,
-          options?.onPayload,
-        );
-
-        cancelToken?.throwIfCancelled();
-
-        final request =
-            http.Request('POST', Uri.parse('${model.baseUrl}/chat/completions'))
-              ..headers.addAll(_buildHeaders(model, options))
-              ..body = jsonEncode(params);
-
-        final response = await startProviderResponse(
-          eventStream,
-          state,
-          httpClient,
-          request,
-          cancelToken,
-          options?.onResponse,
-        );
-
-        TextStreamingBlock? textBlock;
-        ThinkingStreamingBlock? thinkingBlock;
-
-        int contentIndex(StreamingBlock block) => blocks.indexOf(block);
-
-        AssistantMessage snapshot() => state.snapshot();
-
-        TextStreamingBlock ensureTextBlock() {
-          var block = textBlock;
-          if (block == null) {
-            block = TextStreamingBlock();
-            textBlock = block;
-            blocks.add(block);
-            eventStream.push(
-              TextStartEvent(
-                contentIndex: contentIndex(block),
-                partial: snapshot(),
-              ),
-            );
-          }
-          return block;
-        }
-
-        ThinkingStreamingBlock ensureThinkingBlock(String thinkingSignature) {
-          var block = thinkingBlock;
-          if (block == null) {
-            block = ThinkingStreamingBlock(signature: thinkingSignature);
-            thinkingBlock = block;
-            blocks.add(block);
-            eventStream.push(
-              ThinkingStartEvent(
-                contentIndex: contentIndex(block),
-                partial: snapshot(),
-              ),
-            );
-          }
-          return block;
-        }
-
-        void applyPendingReasoningDetail(ToolCallStreamingBlock block) {
-          if (block.id.isEmpty) {
-            return;
-          }
-          final pending = pendingReasoningDetailsByToolCallId.remove(block.id);
-          if (pending != null) {
-            block.thoughtSignature = pending;
-          }
-        }
-
-        ToolCallStreamingBlock ensureToolCallBlock(
-          Map<String, dynamic> toolCall,
-        ) {
-          final streamIndex = toolCall['index'] is int
-              ? toolCall['index'] as int
-              : null;
-          final id = toolCall['id'] as String?;
-          var block = streamIndex != null
-              ? toolCallBlocksByIndex[streamIndex]
-              : null;
-          block ??= id != null ? toolCallBlocksById[id] : null;
-          if (block == null) {
-            final function = toolCall['function'];
-            block = ToolCallStreamingBlock(
-              id: id ?? '',
-              name: function is Map ? function['name'] as String? ?? '' : '',
-              streamIndex: streamIndex,
-            );
-            if (streamIndex != null) {
-              toolCallBlocksByIndex[streamIndex] = block;
-            }
-            if (id != null) {
-              toolCallBlocksById[id] = block;
-            }
-            blocks.add(block);
-            eventStream.push(
-              ToolCallStartEvent(
-                contentIndex: contentIndex(block),
-                partial: snapshot(),
-              ),
-            );
-          }
-          if (streamIndex != null && block.streamIndex == null) {
-            block.streamIndex = streamIndex;
-            toolCallBlocksByIndex[streamIndex] = block;
-          }
-          if (id != null) {
-            toolCallBlocksById[id] = block;
-          }
-          applyPendingReasoningDetail(block);
-          return block;
-        }
-
-        final iterator = createSseIterator(response, cancelToken);
-
-        while (await iterator.moveNext()) {
-          final data = iterator.current.data.trim();
-          if (data.isEmpty || data == '[DONE]') {
-            continue;
-          }
-          final chunk = jsonDecode(data);
-          if (chunk is! Map<String, dynamic>) {
-            continue;
-          }
-
-          // Each chunk in a streamed completion carries the same id.
-          state.responseId ??= chunk['id'] as String?;
-          final chunkModel = chunk['model'];
-          if (chunkModel is String &&
-              chunkModel.isNotEmpty &&
-              chunkModel != model.id) {
-            state.responseModel ??= chunkModel;
-          }
-          final rawUsage = chunk['usage'];
-          if (rawUsage is Map<String, dynamic>) {
-            state.usage = _parseChunkUsage(rawUsage, model);
-          }
-
-          final choices = chunk['choices'];
-          final choice = choices is List && choices.isNotEmpty
-              ? choices.first
-              : null;
-          if (choice is! Map<String, dynamic>) {
-            continue;
-          }
-
-          // Fallback: some providers (e.g., Moonshot) return usage in
-          // choice.usage instead of the standard chunk.usage.
-          if (rawUsage == null) {
-            final choiceUsage = choice['usage'];
-            if (choiceUsage is Map<String, dynamic>) {
-              state.usage = _parseChunkUsage(choiceUsage, model);
-            }
-          }
-
-          final finishReason = choice['finish_reason'];
-          if (finishReason != null) {
-            final result = _mapStopReason(finishReason as String);
-            state.stopReason = result.reason;
-            state.errorMessage = result.errorMessage;
-            hasFinishReason = true;
-          }
-
-          final delta = choice['delta'];
-          if (delta is! Map<String, dynamic>) {
-            continue;
-          }
-
-          final content = delta['content'];
-          if (content is String && content.isNotEmpty) {
-            final block = ensureTextBlock();
-            block.text.write(content);
-            eventStream.push(
-              TextDeltaEvent(
-                contentIndex: contentIndex(block),
-                delta: content,
-                partial: snapshot(),
-              ),
-            );
-          }
-
-          // Some endpoints return reasoning in reasoning_content (llama.cpp),
-          // or reasoning (other openai compatible endpoints). Use the first
-          // non-empty reasoning field to avoid duplication (e.g., chutes.ai
-          // returns both reasoning_content and reasoning with same content).
-          const reasoningFields = [
-            'reasoning_content',
-            'reasoning',
-            'reasoning_text',
-          ];
-          String? foundReasoningField;
-          for (final field in reasoningFields) {
-            final value = delta[field];
-            if (value is String && value.isNotEmpty) {
-              foundReasoningField = field;
-              break;
-            }
-          }
-          if (foundReasoningField != null) {
-            var reasoningDelta = delta[foundReasoningField] as String;
-            final block = ensureThinkingBlock(foundReasoningField);
-            // Some OpenAI-compatible relays send the reasoning as overlapping
-            // fragments (sliding window) or full snapshots so far instead of
-            // clean deltas — appending those verbatim stutters
-            // ("Продродололжжж…"). Trim the overlap: the longest prefix of
-            // the chunk that already sits at the tail of what we have.
-            reasoningDelta = _dedupeOverlap(block.thinking, reasoningDelta);
-            if (reasoningDelta.isNotEmpty) {
-              block.thinking.write(reasoningDelta);
-              eventStream.push(
-                ThinkingDeltaEvent(
-                  contentIndex: contentIndex(block),
-                  delta: reasoningDelta,
-                  partial: snapshot(),
-                ),
-              );
-            }
-          }
-
-          final toolCalls = delta['tool_calls'];
-          if (toolCalls is List) {
-            for (final rawToolCall in toolCalls) {
-              if (rawToolCall is! Map<String, dynamic>) {
-                continue;
-              }
-              final block = ensureToolCallBlock(rawToolCall);
-              final id = rawToolCall['id'] as String?;
-              if (block.id.isEmpty && id != null) {
-                block.id = id;
-                toolCallBlocksById[id] = block;
-              }
-              final function = rawToolCall['function'];
-              if (function is Map) {
-                final name = function['name'] as String?;
-                if (block.name.isEmpty && name != null) {
-                  block.name = name;
-                }
-              }
-              var toolDelta = '';
-              if (function is Map && function['arguments'] is String) {
-                toolDelta = function['arguments'] as String;
-                block.partialArgs.write(toolDelta);
-              }
-              eventStream.push(
-                ToolCallDeltaEvent(
-                  contentIndex: contentIndex(block),
-                  delta: toolDelta,
-                  partial: snapshot(),
-                ),
-              );
-            }
-          }
-
-          final reasoningDetails = delta['reasoning_details'];
-          if (reasoningDetails is List) {
-            for (final detail in reasoningDetails) {
-              if (_isEncryptedReasoningDetail(detail)) {
-                final map = detail as Map<String, dynamic>;
-                final serialized = jsonEncode(map);
-                final matching = toolCallBlocksById[map['id']];
-                if (matching != null) {
-                  matching.thoughtSignature = serialized;
-                } else {
-                  pendingReasoningDetailsByToolCallId[map['id'] as String] =
-                      serialized;
-                }
-              } else if (detail is Map<String, dynamic>) {
-                // OpenRouter routes some models' reasoning (e.g. NVIDIA
-                // nemotron) as reasoning_details text entries instead of a
-                // plain `reasoning` delta field — surface those as thinking
-                // too, otherwise the turn looks silent.
-                //
-                // Gemini models send BOTH: a `reasoning` delta field AND
-                // reasoning_details text carrying the SAME content (as
-                // cumulative snapshots) — writing both stutters
-                // ("The The user user…"). Run the text through the same
-                // overlap dedupe as the reasoning field: identical or
-                // snapshot content collapses to the new suffix only.
-                final detailText = detail['text'];
-                if (detailText is String && detailText.isNotEmpty) {
-                  final block = ensureThinkingBlock('reasoning_details');
-                  final detailDelta = _dedupeOverlap(
-                    block.thinking,
-                    detailText,
-                  );
-                  if (detailDelta.isNotEmpty) {
-                    block.thinking.write(detailDelta);
-                    eventStream.push(
-                      ThinkingDeltaEvent(
-                        contentIndex: contentIndex(block),
-                        delta: detailDelta,
-                        partial: snapshot(),
-                      ),
-                    );
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        for (final block in List.of(blocks)) {
-          pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
-        }
-
-        if (cancelToken?.isCancelled ?? false) {
-          throw const AbortedError();
-        }
-        if (state.stopReason == StopReason.error) {
-          throw StateError(
-            state.errorMessage ?? 'Provider returned an error stop reason',
-          );
-        }
-        // Some providers (seen on OpenRouter free-tier models) close the SSE
-        // stream without a final finish_reason chunk. The accumulated content
-        // is complete as far as we know, so keep the default natural stop
-        // instead of failing the whole turn — but flag the silent truncation
-        // so the UI can note the reply may be cut off. A genuinely truncated
-        // tool call surfaces as an args-parse error downstream, which the
-        // agent loop already feeds back to the model as a tool error.
-        if (!hasFinishReason) {
-          state.stopReason = StopReason.stop;
-          state.errorMessage ??=
-              'stream ended without finish_reason — the reply may be truncated';
-        }
-
-        eventStream.push(
-          DoneEvent(reason: state.stopReason, message: state.snapshot()),
-        );
-      },
+      body: session.run,
     ),
   );
 
   return eventStream;
+}
+
+/// Per-stream session for [streamOpenAICompletions]: owns the mutable
+/// accumulation state pi keeps in closures around one `output` object plus
+/// the per-block streaming helpers, so [run] reads as the same phase
+/// sequence as pi's `stream` body.
+final class _OpenAICompletionsSession {
+  _OpenAICompletionsSession(
+    this.model,
+    this.context,
+    this.options,
+    this.eventStream,
+    this.state,
+    this.cancelToken,
+    this.httpClient,
+  );
+
+  final Model model;
+  final Context context;
+  final OpenAICompletionsOptions? options;
+  final AssistantMessageEventStream eventStream;
+  final ProviderStreamState state;
+  final CancelToken? cancelToken;
+  final http.Client httpClient;
+
+  final toolCallBlocksByIndex = <int, ToolCallStreamingBlock>{};
+  final toolCallBlocksById = <String, ToolCallStreamingBlock>{};
+  final pendingReasoningDetailsByToolCallId = <String, String>{};
+  var hasFinishReason = false;
+
+  TextStreamingBlock? textBlock;
+  ThinkingStreamingBlock? thinkingBlock;
+
+  List<StreamingBlock> get blocks => state.blocks;
+
+  int _contentIndex(StreamingBlock block) => blocks.indexOf(block);
+
+  /// Request setup → SSE consumption → finish/usage handling.
+  Future<void> run() async {
+    final response = await _startRequest();
+    await _consumeSse(response);
+    _finish();
+  }
+
+  Future<http.StreamedResponse> _startRequest() async {
+    final compat = _getCompat(model);
+    final params = await applyPayloadHook(
+      _buildParams(model, context, options, compat),
+      model,
+      options?.onPayload,
+    );
+
+    cancelToken?.throwIfCancelled();
+
+    final request =
+        http.Request('POST', Uri.parse('${model.baseUrl}/chat/completions'))
+          ..headers.addAll(_buildHeaders(model, options))
+          ..body = jsonEncode(params);
+
+    return startProviderResponse(
+      eventStream,
+      state,
+      httpClient,
+      request,
+      cancelToken,
+      options?.onResponse,
+    );
+  }
+
+  Future<void> _consumeSse(http.StreamedResponse response) async {
+    final iterator = createSseIterator(response, cancelToken);
+
+    while (await iterator.moveNext()) {
+      final data = iterator.current.data.trim();
+      if (data.isEmpty || data == '[DONE]') {
+        continue;
+      }
+      final chunk = jsonDecode(data);
+      if (chunk is! Map<String, dynamic>) {
+        continue;
+      }
+      _handleChunk(chunk);
+    }
+  }
+
+  /// Translates one SSE chunk into stream events: chunk-level metadata and
+  /// usage first, then the (single) choice's finish reason and delta.
+  void _handleChunk(Map<String, dynamic> chunk) {
+    // Each chunk in a streamed completion carries the same id.
+    state.responseId ??= chunk['id'] as String?;
+    final chunkModel = chunk['model'];
+    if (chunkModel is String &&
+        chunkModel.isNotEmpty &&
+        chunkModel != model.id) {
+      state.responseModel ??= chunkModel;
+    }
+    final rawUsage = chunk['usage'];
+    if (rawUsage is Map<String, dynamic>) {
+      state.usage = _parseChunkUsage(rawUsage, model);
+    }
+
+    final choice = _firstChoice(chunk);
+    if (choice == null) {
+      return;
+    }
+
+    // Fallback: some providers (e.g., Moonshot) return usage in
+    // choice.usage instead of the standard chunk.usage.
+    if (rawUsage == null) {
+      final choiceUsage = choice['usage'];
+      if (choiceUsage is Map<String, dynamic>) {
+        state.usage = _parseChunkUsage(choiceUsage, model);
+      }
+    }
+
+    _applyFinishReason(choice);
+
+    final delta = choice['delta'];
+    if (delta is! Map<String, dynamic>) {
+      return;
+    }
+
+    _handleContentDelta(delta);
+    _handleReasoningDelta(delta);
+    _handleToolCallsDelta(delta);
+    _handleReasoningDetailsDelta(delta);
+  }
+
+  Map<String, dynamic>? _firstChoice(Map<String, dynamic> chunk) {
+    final choices = chunk['choices'];
+    final choice = choices is List && choices.isNotEmpty ? choices.first : null;
+    return choice is Map<String, dynamic> ? choice : null;
+  }
+
+  void _applyFinishReason(Map<String, dynamic> choice) {
+    final finishReason = choice['finish_reason'];
+    if (finishReason != null) {
+      final result = _mapStopReason(finishReason as String);
+      state.stopReason = result.reason;
+      state.errorMessage = result.errorMessage;
+      hasFinishReason = true;
+    }
+  }
+
+  void _handleContentDelta(Map<String, dynamic> delta) {
+    final content = delta['content'];
+    if (content is String && content.isNotEmpty) {
+      final block = _ensureTextBlock();
+      block.text.write(content);
+      eventStream.push(
+        TextDeltaEvent(
+          contentIndex: _contentIndex(block),
+          delta: content,
+          partial: state.snapshot(),
+        ),
+      );
+    }
+  }
+
+  void _handleReasoningDelta(Map<String, dynamic> delta) {
+    // Some endpoints return reasoning in reasoning_content (llama.cpp),
+    // or reasoning (other openai compatible endpoints). Use the first
+    // non-empty reasoning field to avoid duplication (e.g., chutes.ai
+    // returns both reasoning_content and reasoning with same content).
+    const reasoningFields = [
+      'reasoning_content',
+      'reasoning',
+      'reasoning_text',
+    ];
+    String? foundReasoningField;
+    for (final field in reasoningFields) {
+      final value = delta[field];
+      if (value is String && value.isNotEmpty) {
+        foundReasoningField = field;
+        break;
+      }
+    }
+    if (foundReasoningField == null) {
+      return;
+    }
+    var reasoningDelta = delta[foundReasoningField] as String;
+    final block = _ensureThinkingBlock(foundReasoningField);
+    // Some OpenAI-compatible relays send the reasoning as overlapping
+    // fragments (sliding window) or full snapshots so far instead of
+    // clean deltas — appending those verbatim stutters
+    // ("Продродололжжж…"). Trim the overlap: the longest prefix of
+    // the chunk that already sits at the tail of what we have.
+    reasoningDelta = _dedupeOverlap(block.thinking, reasoningDelta);
+    if (reasoningDelta.isNotEmpty) {
+      block.thinking.write(reasoningDelta);
+      eventStream.push(
+        ThinkingDeltaEvent(
+          contentIndex: _contentIndex(block),
+          delta: reasoningDelta,
+          partial: state.snapshot(),
+        ),
+      );
+    }
+  }
+
+  void _handleToolCallsDelta(Map<String, dynamic> delta) {
+    final toolCalls = delta['tool_calls'];
+    if (toolCalls is! List) {
+      return;
+    }
+    for (final rawToolCall in toolCalls) {
+      if (rawToolCall is! Map<String, dynamic>) {
+        continue;
+      }
+      final block = _ensureToolCallBlock(rawToolCall);
+      final id = rawToolCall['id'] as String?;
+      if (block.id.isEmpty && id != null) {
+        block.id = id;
+        toolCallBlocksById[id] = block;
+      }
+      final function = rawToolCall['function'];
+      if (function is Map) {
+        final name = function['name'] as String?;
+        if (block.name.isEmpty && name != null) {
+          block.name = name;
+        }
+      }
+      var toolDelta = '';
+      if (function is Map && function['arguments'] is String) {
+        toolDelta = function['arguments'] as String;
+        block.partialArgs.write(toolDelta);
+      }
+      eventStream.push(
+        ToolCallDeltaEvent(
+          contentIndex: _contentIndex(block),
+          delta: toolDelta,
+          partial: state.snapshot(),
+        ),
+      );
+    }
+  }
+
+  void _handleReasoningDetailsDelta(Map<String, dynamic> delta) {
+    final reasoningDetails = delta['reasoning_details'];
+    if (reasoningDetails is! List) {
+      return;
+    }
+    for (final detail in reasoningDetails) {
+      if (_isEncryptedReasoningDetail(detail)) {
+        final map = detail as Map<String, dynamic>;
+        final serialized = jsonEncode(map);
+        final matching = toolCallBlocksById[map['id']];
+        if (matching != null) {
+          matching.thoughtSignature = serialized;
+        } else {
+          pendingReasoningDetailsByToolCallId[map['id'] as String] = serialized;
+        }
+      } else if (detail is Map<String, dynamic>) {
+        _handleReasoningDetailText(detail);
+      }
+    }
+  }
+
+  /// OpenRouter routes some models' reasoning (e.g. NVIDIA nemotron) as
+  /// reasoning_details text entries instead of a plain `reasoning` delta
+  /// field — surface those as thinking too, otherwise the turn looks silent.
+  ///
+  /// Gemini models send BOTH: a `reasoning` delta field AND
+  /// reasoning_details text carrying the SAME content (as cumulative
+  /// snapshots) — writing both stutters ("The The user user…"). Run the
+  /// text through the same overlap dedupe as the reasoning field: identical
+  /// or snapshot content collapses to the new suffix only.
+  void _handleReasoningDetailText(Map<String, dynamic> detail) {
+    final detailText = detail['text'];
+    if (detailText is String && detailText.isNotEmpty) {
+      final block = _ensureThinkingBlock('reasoning_details');
+      final detailDelta = _dedupeOverlap(block.thinking, detailText);
+      if (detailDelta.isNotEmpty) {
+        block.thinking.write(detailDelta);
+        eventStream.push(
+          ThinkingDeltaEvent(
+            contentIndex: _contentIndex(block),
+            delta: detailDelta,
+            partial: state.snapshot(),
+          ),
+        );
+      }
+    }
+  }
+
+  TextStreamingBlock _ensureTextBlock() {
+    var block = textBlock;
+    if (block == null) {
+      block = TextStreamingBlock();
+      textBlock = block;
+      blocks.add(block);
+      eventStream.push(
+        TextStartEvent(
+          contentIndex: _contentIndex(block),
+          partial: state.snapshot(),
+        ),
+      );
+    }
+    return block;
+  }
+
+  ThinkingStreamingBlock _ensureThinkingBlock(String thinkingSignature) {
+    var block = thinkingBlock;
+    if (block == null) {
+      block = ThinkingStreamingBlock(signature: thinkingSignature);
+      thinkingBlock = block;
+      blocks.add(block);
+      eventStream.push(
+        ThinkingStartEvent(
+          contentIndex: _contentIndex(block),
+          partial: state.snapshot(),
+        ),
+      );
+    }
+    return block;
+  }
+
+  void _applyPendingReasoningDetail(ToolCallStreamingBlock block) {
+    if (block.id.isEmpty) {
+      return;
+    }
+    final pending = pendingReasoningDetailsByToolCallId.remove(block.id);
+    if (pending != null) {
+      block.thoughtSignature = pending;
+    }
+  }
+
+  ToolCallStreamingBlock _ensureToolCallBlock(Map<String, dynamic> toolCall) {
+    final streamIndex = toolCall['index'] is int
+        ? toolCall['index'] as int
+        : null;
+    final id = toolCall['id'] as String?;
+    var block = streamIndex != null ? toolCallBlocksByIndex[streamIndex] : null;
+    block ??= id != null ? toolCallBlocksById[id] : null;
+    if (block == null) {
+      final function = toolCall['function'];
+      block = ToolCallStreamingBlock(
+        id: id ?? '',
+        name: function is Map ? function['name'] as String? ?? '' : '',
+        streamIndex: streamIndex,
+      );
+      if (streamIndex != null) {
+        toolCallBlocksByIndex[streamIndex] = block;
+      }
+      if (id != null) {
+        toolCallBlocksById[id] = block;
+      }
+      blocks.add(block);
+      eventStream.push(
+        ToolCallStartEvent(
+          contentIndex: _contentIndex(block),
+          partial: state.snapshot(),
+        ),
+      );
+    }
+    if (streamIndex != null && block.streamIndex == null) {
+      block.streamIndex = streamIndex;
+      toolCallBlocksByIndex[streamIndex] = block;
+    }
+    if (id != null) {
+      toolCallBlocksById[id] = block;
+    }
+    _applyPendingReasoningDetail(block);
+    return block;
+  }
+
+  /// Block-end events, abort/error propagation, the no-finish-reason
+  /// fallback, and the final [DoneEvent].
+  void _finish() {
+    for (final block in List.of(blocks)) {
+      pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
+    }
+
+    if (cancelToken?.isCancelled ?? false) {
+      throw const AbortedError();
+    }
+    if (state.stopReason == StopReason.error) {
+      throw StateError(
+        state.errorMessage ?? 'Provider returned an error stop reason',
+      );
+    }
+    // Some providers (seen on OpenRouter free-tier models) close the SSE
+    // stream without a final finish_reason chunk. The accumulated content
+    // is complete as far as we know, so keep the default natural stop
+    // instead of failing the whole turn — but flag the silent truncation
+    // so the UI can note the reply may be cut off. A genuinely truncated
+    // tool call surfaces as an args-parse error downstream, which the
+    // agent loop already feeds back to the model as a tool error.
+    if (!hasFinishReason) {
+      state.stopReason = StopReason.stop;
+      state.errorMessage ??=
+          'stream ended without finish_reason — the reply may be truncated';
+    }
+
+    eventStream.push(
+      DoneEvent(reason: state.stopReason, message: state.snapshot()),
+    );
+  }
 }
 
 String _truncate40(String value) {
@@ -614,20 +684,6 @@ List<Map<String, dynamic>> _convertMessages(
 ) {
   final params = <Map<String, dynamic>>[];
 
-  String normalizeToolCallId(String id) {
-    // Handle pipe-separated IDs from OpenAI Responses API
-    // (format: {call_id}|{id}): extract the call_id part, sanitize to
-    // allowed chars, and truncate to 40 chars (OpenAI limit).
-    if (id.contains('|')) {
-      final callId = id.split('|').first;
-      return _truncate40(callId.replaceAll(RegExp('[^a-zA-Z0-9_-]'), '_'));
-    }
-    if (model.provider == 'openai') {
-      return _truncate40(id);
-    }
-    return id;
-  }
-
   if (context.systemPrompt != null) {
     params.add({'role': 'system', 'content': context.systemPrompt});
   }
@@ -636,159 +692,232 @@ List<Map<String, dynamic>> _convertMessages(
   for (var i = 0; i < messages.length; i++) {
     final message = messages[i];
     if (message is UserMessage) {
-      final content = message.content;
-      if (content is String) {
-        params.add({'role': 'user', 'content': content});
-      } else {
-        final parts = <Map<String, dynamic>>[];
-        for (final item in content as List<ContentBlock>) {
-          switch (item) {
-            case TextContent():
-              parts.add({'type': 'text', 'text': item.text});
-            case ImageContent():
-              parts.add({
-                'type': 'image_url',
-                'image_url': {
-                  'url': 'data:${item.mimeType};base64,${item.data}',
-                },
-              });
-            case ThinkingContent() || ToolCall():
-              // Not valid in user messages; skip defensively.
-              break;
-          }
-        }
-        if (parts.isEmpty) {
-          continue;
-        }
-        params.add({'role': 'user', 'content': parts});
+      final converted = _convertUserMessage(message);
+      if (converted != null) {
+        params.add(converted);
       }
     } else if (message is AssistantMessage) {
-      final assistantMsg = <String, dynamic>{'role': 'assistant'};
-
-      final assistantText = [
-        for (final block in message.content)
-          if (block is TextContent && block.text.trim().isNotEmpty) block.text,
-      ].join();
-
-      final thinkingBlocks = [
-        for (final block in message.content)
-          if (block is ThinkingContent && block.thinking.trim().isNotEmpty)
-            block,
-      ];
-      if (thinkingBlocks.isNotEmpty) {
-        // Always send assistant content as a plain string (OpenAI Chat
-        // Completions API standard format); see pi for why arrays of text
-        // parts break some models.
-        if (assistantText.isNotEmpty) {
-          assistantMsg['content'] = assistantText;
-        }
-        // Use the signature from the first thinking block if available (for
-        // llama.cpp server + gpt-oss).
-        final signature = thinkingBlocks.first.thinkingSignature;
-        if (signature != null && signature.isNotEmpty) {
-          assistantMsg[signature] = thinkingBlocks
-              .map((block) => block.thinking)
-              .join('\n');
-        }
-      } else if (assistantText.isNotEmpty) {
-        assistantMsg['content'] = assistantText;
+      final converted = _convertAssistantMessage(message, model);
+      if (converted != null) {
+        params.add(converted);
       }
-
-      final toolCalls = [
-        for (final block in message.content)
-          if (block is ToolCall) block,
-      ];
-      if (toolCalls.isNotEmpty) {
-        assistantMsg['tool_calls'] = [
-          for (final toolCall in toolCalls)
-            {
-              'id': normalizeToolCallId(toolCall.id),
-              'type': 'function',
-              'function': {
-                'name': toolCall.name,
-                'arguments': jsonEncode(toolCall.arguments),
-              },
-            },
-        ];
-        final reasoningDetails = [
-          for (final toolCall in toolCalls)
-            if (toolCall.thoughtSignature != null)
-              _tryJsonDecode(toolCall.thoughtSignature!),
-        ].nonNulls.toList();
-        if (reasoningDetails.isNotEmpty) {
-          assistantMsg['reasoning_details'] = reasoningDetails;
-        }
-      }
-
-      // Skip assistant messages that have no content and no tool calls.
-      final hasContent =
-          assistantMsg['content'] is String &&
-          (assistantMsg['content'] as String).isNotEmpty;
-      if (!hasContent && !assistantMsg.containsKey('tool_calls')) {
-        continue;
-      }
-      params.add(assistantMsg);
     } else if (message is ToolResultMessage) {
-      final imageBlocks = <Map<String, dynamic>>[];
-      var j = i;
-
-      for (; j < messages.length && messages[j] is ToolResultMessage; j++) {
-        final toolMessage = messages[j] as ToolResultMessage;
-
-        // Extract text and image content.
-        final textResult = [
-          for (final block in toolMessage.content)
-            if (block is TextContent) block.text,
-        ].join('\n');
-        final images = [
-          for (final block in toolMessage.content)
-            if (block is ImageContent) block,
-        ];
-
-        // Always send tool result with text (or placeholder if only images).
-        final hasText = textResult.isNotEmpty;
-        final toolResultText = hasText
-            ? textResult
-            : images.isNotEmpty
-            ? '(see attached image)'
-            : '(no tool output)';
-        final toolResultMsg = <String, dynamic>{
-          'role': 'tool',
-          'content': toolResultText,
-          'tool_call_id': normalizeToolCallId(toolMessage.toolCallId),
-        };
-        if (compat.requiresToolResultName && toolMessage.toolName.isNotEmpty) {
-          toolResultMsg['name'] = toolMessage.toolName;
-        }
-        params.add(toolResultMsg);
-
-        if (images.isNotEmpty && model.input.contains('image')) {
-          for (final block in images) {
-            imageBlocks.add({
-              'type': 'image_url',
-              'image_url': {
-                'url': 'data:${block.mimeType};base64,${block.data}',
-              },
-            });
-          }
-        }
-      }
-
-      i = j - 1;
-
-      if (imageBlocks.isNotEmpty) {
-        params.add({
-          'role': 'user',
-          'content': [
-            {'type': 'text', 'text': 'Attached image(s) from tool result:'},
-            ...imageBlocks,
-          ],
-        });
-      }
+      // Tool results arrive in consecutive runs; convert the whole run (and
+      // its image fan-out) in one go, then skip the consumed tail.
+      i = _convertToolResultRun(messages, i, model, compat, params) - 1;
     }
   }
 
   return params;
+}
+
+String _normalizeToolCallId(String id, Model model) {
+  // Handle pipe-separated IDs from OpenAI Responses API
+  // (format: {call_id}|{id}): extract the call_id part, sanitize to
+  // allowed chars, and truncate to 40 chars (OpenAI limit).
+  if (id.contains('|')) {
+    final callId = id.split('|').first;
+    return _truncate40(callId.replaceAll(RegExp('[^a-zA-Z0-9_-]'), '_'));
+  }
+  if (model.provider == 'openai') {
+    return _truncate40(id);
+  }
+  return id;
+}
+
+Map<String, dynamic>? _convertUserMessage(UserMessage message) {
+  final content = message.content;
+  if (content is String) {
+    return {'role': 'user', 'content': content};
+  }
+  final parts = <Map<String, dynamic>>[];
+  for (final item in content as List<ContentBlock>) {
+    switch (item) {
+      case TextContent():
+        parts.add({'type': 'text', 'text': item.text});
+      case ImageContent():
+        parts.add({
+          'type': 'image_url',
+          'image_url': {'url': 'data:${item.mimeType};base64,${item.data}'},
+        });
+      case ThinkingContent() || ToolCall():
+        // Not valid in user messages; skip defensively.
+        break;
+    }
+  }
+  if (parts.isEmpty) {
+    return null;
+  }
+  return {'role': 'user', 'content': parts};
+}
+
+Map<String, dynamic>? _convertAssistantMessage(
+  AssistantMessage message,
+  Model model,
+) {
+  final assistantMsg = <String, dynamic>{'role': 'assistant'};
+
+  _applyAssistantContent(assistantMsg, message.content);
+  _applyAssistantToolCalls(assistantMsg, message.content, model);
+
+  // Skip assistant messages that have no content and no tool calls.
+  final hasContent =
+      assistantMsg['content'] is String &&
+      (assistantMsg['content'] as String).isNotEmpty;
+  if (!hasContent && !assistantMsg.containsKey('tool_calls')) {
+    return null;
+  }
+  return assistantMsg;
+}
+
+void _applyAssistantContent(
+  Map<String, dynamic> assistantMsg,
+  List<ContentBlock> content,
+) {
+  final assistantText = _assistantText(content);
+  final thinkingBlocks = _thinkingBlocks(content);
+  if (thinkingBlocks.isNotEmpty) {
+    // Always send assistant content as a plain string (OpenAI Chat
+    // Completions API standard format); see pi for why arrays of text
+    // parts break some models.
+    if (assistantText.isNotEmpty) {
+      assistantMsg['content'] = assistantText;
+    }
+    // Use the signature from the first thinking block if available (for
+    // llama.cpp server + gpt-oss).
+    final signature = thinkingBlocks.first.thinkingSignature;
+    if (signature != null && signature.isNotEmpty) {
+      assistantMsg[signature] = thinkingBlocks
+          .map((block) => block.thinking)
+          .join('\n');
+    }
+  } else if (assistantText.isNotEmpty) {
+    assistantMsg['content'] = assistantText;
+  }
+}
+
+String _assistantText(List<ContentBlock> content) {
+  return [
+    for (final block in content)
+      if (block is TextContent && block.text.trim().isNotEmpty) block.text,
+  ].join();
+}
+
+List<ThinkingContent> _thinkingBlocks(List<ContentBlock> content) {
+  return [
+    for (final block in content)
+      if (block is ThinkingContent && block.thinking.trim().isNotEmpty) block,
+  ];
+}
+
+void _applyAssistantToolCalls(
+  Map<String, dynamic> assistantMsg,
+  List<ContentBlock> content,
+  Model model,
+) {
+  final toolCalls = [
+    for (final block in content)
+      if (block is ToolCall) block,
+  ];
+  if (toolCalls.isEmpty) {
+    return;
+  }
+  assistantMsg['tool_calls'] = [
+    for (final toolCall in toolCalls)
+      {
+        'id': _normalizeToolCallId(toolCall.id, model),
+        'type': 'function',
+        'function': {
+          'name': toolCall.name,
+          'arguments': jsonEncode(toolCall.arguments),
+        },
+      },
+  ];
+  final reasoningDetails = [
+    for (final toolCall in toolCalls)
+      if (toolCall.thoughtSignature != null)
+        _tryJsonDecode(toolCall.thoughtSignature!),
+  ].nonNulls.toList();
+  if (reasoningDetails.isNotEmpty) {
+    assistantMsg['reasoning_details'] = reasoningDetails;
+  }
+}
+
+/// Converts the consecutive run of [ToolResultMessage]s starting at [start]
+/// (plus the vision-model image fan-out user message) into [params]; returns
+/// the index just past the consumed run.
+int _convertToolResultRun(
+  List<Message> messages,
+  int start,
+  Model model,
+  _ResolvedCompat compat,
+  List<Map<String, dynamic>> params,
+) {
+  final imageBlocks = <Map<String, dynamic>>[];
+  var j = start;
+
+  for (; j < messages.length && messages[j] is ToolResultMessage; j++) {
+    final toolMessage = messages[j] as ToolResultMessage;
+    params.add(_convertToolResult(toolMessage, model, compat));
+    if (model.input.contains('image')) {
+      imageBlocks.addAll(_toolResultImageParts(toolMessage));
+    }
+  }
+
+  if (imageBlocks.isNotEmpty) {
+    params.add({
+      'role': 'user',
+      'content': [
+        {'type': 'text', 'text': 'Attached image(s) from tool result:'},
+        ...imageBlocks,
+      ],
+    });
+  }
+
+  return j;
+}
+
+Map<String, dynamic> _convertToolResult(
+  ToolResultMessage toolMessage,
+  Model model,
+  _ResolvedCompat compat,
+) {
+  // Extract text and image content.
+  final textResult = [
+    for (final block in toolMessage.content)
+      if (block is TextContent) block.text,
+  ].join('\n');
+  final hasImages = toolMessage.content.any((block) => block is ImageContent);
+
+  // Always send tool result with text (or placeholder if only images).
+  final hasText = textResult.isNotEmpty;
+  final toolResultText = hasText
+      ? textResult
+      : hasImages
+      ? '(see attached image)'
+      : '(no tool output)';
+  final toolResultMsg = <String, dynamic>{
+    'role': 'tool',
+    'content': toolResultText,
+    'tool_call_id': _normalizeToolCallId(toolMessage.toolCallId, model),
+  };
+  if (compat.requiresToolResultName && toolMessage.toolName.isNotEmpty) {
+    toolResultMsg['name'] = toolMessage.toolName;
+  }
+  return toolResultMsg;
+}
+
+List<Map<String, dynamic>> _toolResultImageParts(
+  ToolResultMessage toolMessage,
+) {
+  return [
+    for (final block in toolMessage.content)
+      if (block is ImageContent)
+        {
+          'type': 'image_url',
+          'image_url': {'url': 'data:${block.mimeType};base64,${block.data}'},
+        },
+  ];
 }
 
 List<Map<String, dynamic>> _convertTools(List<Tool> tools) {

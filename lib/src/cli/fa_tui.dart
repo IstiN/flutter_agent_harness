@@ -433,141 +433,77 @@ final class FaTuiModel extends TeaModel {
     // Output is handled before the exit check so trailing writes (e.g. the
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
-    if (msg is OutputMsg) {
-      final newLines = _appendOutput(outputLines, msg.text, msg.newline);
-      final next = copyWith(outputLines: newLines);
-      final nextWrapped = next._wrappedLines();
-      // Auto-follow the stream while the latch holds; preserve the scroll
-      // position (clamped) when the user scrolled up.
-      final nextOffset = followTail
-          ? _scrollBottom(nextWrapped)
-          : _clampScroll(scrollOffset, nextWrapped);
-      return (next.copyWith(scrollOffset: nextOffset), null);
-    }
+    if (msg is OutputMsg) return _handleOutputMsg(msg);
     // Busy/spinner messages are handled before the exit check for the same
     // reason as output: /exit arrives wrapped in sendBusy(true/false) calls,
     // and quitting here would land in the same drained batch as the farewell
     // output and skip its render. The host's delayed _QuitRequestedMsg is
     // the only quit path that matters.
-    if (msg is BusyMsg) {
-      // Kick the spinner loop when going busy; the loop stops itself on the
-      // first tick that finds the model idle again. Going idle also unpins
-      // the sticky user echo.
-      return (
-        copyWith(
-          busy: msg.busy,
-          spinnerFrame: 0,
-          stickyLines: msg.busy ? null : const [],
-          stickyIndex: msg.busy ? null : -1,
-        ),
-        msg.busy ? _scheduleSpinnerTick() : null,
-      );
-    }
-    if (msg is SpinnerTickMsg) {
-      if (!busy) return (this, null);
-      return (copyWith(spinnerFrame: spinnerFrame + 1), _scheduleSpinnerTick());
-    }
-    if (msg is DrainQueueMsg) {
-      // The host drains queued messages as separate turns after the run
-      // settles; echo them into the history as they are handed out.
-      final queued = queue;
-      msg.completer.complete(queued);
-      if (queued.isEmpty) return (this, null);
-      var lines = outputLines;
-      for (final message in queued) {
-        lines = _echoAppend(lines, message);
-      }
-      final cleared = copyWith(queue: const [], outputLines: lines);
-      final next = cleared.copyWith(
-        scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
-        followTail: true,
-      );
-      return (next, null);
-    }
+    if (msg is BusyMsg) return _handleBusyMsg(msg);
+    if (msg is SpinnerTickMsg) return _handleSpinnerTick();
+    if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
     if (isExited()) return (this, () => quit());
-    if (msg is _ModelsRefreshMsg) {
-      // Only refresh while the model picker is actually open — the message
-      // also arrives when the slash menu (or no menu) is up and must not
-      // clobber its items.
-      if (!menuOpen || !menuModelMode) return (this, null);
-      final items = callbacks.buildModelMenu(modelFilter);
-      final selected = items.isEmpty
-          ? 0
-          : menuSelected.clamp(0, items.length - 1);
-      return (copyWith(menuItems: items, menuSelected: selected), null);
+    return _updateAfterExitCheck(msg);
+  }
+
+  (Model, Cmd?) _handleOutputMsg(OutputMsg msg) {
+    final newLines = _appendOutput(outputLines, msg.text, msg.newline);
+    final next = copyWith(outputLines: newLines);
+    final nextWrapped = next._wrappedLines();
+    // Auto-follow the stream while the latch holds; preserve the scroll
+    // position (clamped) when the user scrolled up.
+    final nextOffset = followTail
+        ? _scrollBottom(nextWrapped)
+        : _clampScroll(scrollOffset, nextWrapped);
+    return (next.copyWith(scrollOffset: nextOffset), null);
+  }
+
+  (Model, Cmd?) _handleBusyMsg(BusyMsg msg) {
+    // Kick the spinner loop when going busy; the loop stops itself on the
+    // first tick that finds the model idle again. Going idle also unpins
+    // the sticky user echo.
+    return (
+      copyWith(
+        busy: msg.busy,
+        spinnerFrame: 0,
+        stickyLines: msg.busy ? null : const [],
+        stickyIndex: msg.busy ? null : -1,
+      ),
+      msg.busy ? _scheduleSpinnerTick() : null,
+    );
+  }
+
+  (Model, Cmd?) _handleSpinnerTick() {
+    if (!busy) return (this, null);
+    return (copyWith(spinnerFrame: spinnerFrame + 1), _scheduleSpinnerTick());
+  }
+
+  (Model, Cmd?) _handleDrainQueue(DrainQueueMsg msg) {
+    // The host drains queued messages as separate turns after the run
+    // settles; echo them into the history as they are handed out.
+    final queued = queue;
+    msg.completer.complete(queued);
+    if (queued.isEmpty) return (this, null);
+    var lines = outputLines;
+    for (final message in queued) {
+      lines = _echoAppend(lines, message);
     }
-    if (msg is _OpenModelMenuMsg) {
-      final items = callbacks.buildModelMenu('');
-      return (
-        copyWith(
-          menuOpen: true,
-          menuModelMode: true,
-          modelFilter: '',
-          menuItems: items,
-          menuSelected: 0,
-          pickerId: 'models',
-          pickerTitle: '',
-        ),
-        null,
-      );
-    }
-    if (msg is OpenPickerMsg) {
-      return (
-        copyWith(
-          menuOpen: true,
-          menuModelMode: true,
-          modelFilter: '',
-          menuItems: msg.items,
-          menuSelected: msg.initialIndex.clamp(
-            0,
-            msg.items.isEmpty ? 0 : msg.items.length - 1,
-          ),
-          pickerId: msg.pickerId,
-          pickerTitle: msg.title,
-        ),
-        null,
-      );
-    }
-    if (msg is _QuitRequestedMsg) {
-      return (this, () => quit());
-    }
-    if (msg is WindowSizeMsg) {
-      // Clamp the scroll offset to the new visible area so resizing cannot
-      // leave it out of bounds (which showed >100% progress), then clear
-      // the screen so no old frame artifacts survive the relayout. Wrapped
-      // rows are recomputed at the NEW width.
-      final resized = copyWith(termWidth: msg.width, termHeight: msg.height);
-      final wrapped = resized._wrappedLines(msg.width);
-      return (
-        resized.copyWith(
-          scrollOffset: resized._clampScroll(scrollOffset, wrapped),
-        ),
-        () async => ClearScreenMsg(),
-      );
-    }
-    if (msg is MouseWheelMsg) {
-      // Mouse wheel scrolls the chat history, like Copilot's transcript pane.
-      final delta = switch (msg.mouse.button) {
-        MouseButton.wheelUp => -3,
-        MouseButton.wheelDown => 3,
-        _ => 0,
-      };
-      if (delta != 0) {
-        return (_scrolledTo(scrollOffset + delta), null);
-      }
-      return (this, null);
-    }
-    if (msg is PasteMsg) {
-      final before = inputText.substring(0, cursor);
-      final after = inputText.substring(cursor);
-      return (
-        copyWith(
-          inputText: before + msg.content + after,
-          cursor: cursor + msg.content.length,
-        ),
-        null,
-      );
-    }
+    final cleared = copyWith(queue: const [], outputLines: lines);
+    final next = cleared.copyWith(
+      scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+      followTail: true,
+    );
+    return (next, null);
+  }
+
+  (Model, Cmd?) _updateAfterExitCheck(Msg msg) {
+    if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
+    if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
+    if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
+    if (msg is _QuitRequestedMsg) return (this, () => quit());
+    if (msg is WindowSizeMsg) return _handleWindowSize(msg);
+    if (msg is MouseWheelMsg) return _handleMouseWheel(msg);
+    if (msg is PasteMsg) return _handlePaste(msg);
 
     // dart_tui's input decoder groups up to 4 ASCII bytes into a single rune,
     // and the cursor would advance by 1 instead of the inserted text length.
@@ -576,22 +512,116 @@ final class FaTuiModel extends TeaModel {
     if (msg is KeyPressMsg &&
         msg.keyEvent.code == KeyCode.rune &&
         msg.keyEvent.text.length > 1) {
-      Model current = this;
-      Cmd? lastCmd;
-      for (final ch in msg.keyEvent.text.split('')) {
-        final result = current.update(
-          KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)),
-        );
-        current = result.$1;
-        if (result.$2 != null) lastCmd = result.$2;
-      }
-      return (current, lastCmd);
+      return _handleMultiCharRunes(msg);
     }
 
-    if (msg is KeyMsg) {
-      return _handleKey(msg);
+    if (msg is KeyMsg) return _handleKey(msg);
+    return (this, null);
+  }
+
+  (Model, Cmd?) _handleModelsRefresh() {
+    // Only refresh while the model picker is actually open — the message
+    // also arrives when the slash menu (or no menu) is up and must not
+    // clobber its items.
+    if (!menuOpen || !menuModelMode) return (this, null);
+    return _refreshedModelMenu();
+  }
+
+  /// Rebuilds the open model picker's items, keeping the selection in
+  /// bounds.
+  (Model, Cmd?) _refreshedModelMenu() {
+    final items = callbacks.buildModelMenu(modelFilter);
+    final selected = items.isEmpty
+        ? 0
+        : menuSelected.clamp(0, items.length - 1);
+    return (copyWith(menuItems: items, menuSelected: selected), null);
+  }
+
+  (Model, Cmd?) _handleOpenModelMenu() {
+    final items = callbacks.buildModelMenu('');
+    return (
+      copyWith(
+        menuOpen: true,
+        menuModelMode: true,
+        modelFilter: '',
+        menuItems: items,
+        menuSelected: 0,
+        pickerId: 'models',
+        pickerTitle: '',
+      ),
+      null,
+    );
+  }
+
+  (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
+    return (
+      copyWith(
+        menuOpen: true,
+        menuModelMode: true,
+        modelFilter: '',
+        menuItems: msg.items,
+        menuSelected: msg.initialIndex.clamp(
+          0,
+          msg.items.isEmpty ? 0 : msg.items.length - 1,
+        ),
+        pickerId: msg.pickerId,
+        pickerTitle: msg.title,
+      ),
+      null,
+    );
+  }
+
+  (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
+    // Clamp the scroll offset to the new visible area so resizing cannot
+    // leave it out of bounds (which showed >100% progress), then clear
+    // the screen so no old frame artifacts survive the relayout. Wrapped
+    // rows are recomputed at the NEW width.
+    final resized = copyWith(termWidth: msg.width, termHeight: msg.height);
+    final wrapped = resized._wrappedLines(msg.width);
+    return (
+      resized.copyWith(
+        scrollOffset: resized._clampScroll(scrollOffset, wrapped),
+      ),
+      () async => ClearScreenMsg(),
+    );
+  }
+
+  (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
+    // Mouse wheel scrolls the chat history, like Copilot's transcript pane.
+    final delta = switch (msg.mouse.button) {
+      MouseButton.wheelUp => -3,
+      MouseButton.wheelDown => 3,
+      _ => 0,
+    };
+    if (delta != 0) {
+      return (_scrolledTo(scrollOffset + delta), null);
     }
     return (this, null);
+  }
+
+  (Model, Cmd?) _handlePaste(PasteMsg msg) {
+    final before = inputText.substring(0, cursor);
+    final after = inputText.substring(cursor);
+    return (
+      copyWith(
+        inputText: before + msg.content + after,
+        cursor: cursor + msg.content.length,
+      ),
+      null,
+    );
+  }
+
+  (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
+    Model current = this;
+    Cmd? lastCmd;
+    for (final ch in msg.keyEvent.text.split('')) {
+      final result = current.update(
+        KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)),
+      );
+      current = result.$1;
+      if (result.$2 != null) lastCmd = result.$2;
+    }
+    return (current, lastCmd);
   }
 
   (Model, Cmd?) _handleKey(KeyMsg msg) {
@@ -600,115 +630,112 @@ final class FaTuiModel extends TeaModel {
 
     // Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
     // typing keeps editing the input so `/models` can be typed in full.
-    if (menuOpen) {
-      switch (msg.key) {
-        case 'esc':
-          return (copyWith(menuOpen: false), null);
-        case 'up':
-          return (
-            copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
-            null,
-          );
-        case 'down':
-          return (
-            copyWith(
-              menuSelected: menuSelected < menuItems.length - 1
-                  ? menuSelected + 1
-                  : menuSelected,
-            ),
-            null,
-          );
-        case 'enter':
-        case 'tab':
-          if (menuItems.isEmpty) return (this, null);
-          final item = menuItems[menuSelected];
-          if (item.key == '/model' || item.key == '/models') {
-            return (
-              copyWith(
-                menuModelMode: true,
-                menuItems: callbacks.buildModelMenu(''),
-                menuSelected: 0,
-                modelFilter: '',
-                pickerId: 'models',
-                pickerTitle: '',
-              ),
-              null,
-            );
-          }
-          // Commands that open a host-side picker (/sessions, /mode,
-          // /approval) submit immediately instead of filling the input.
-          if (callbacks.opensPicker?.call(item.key) ?? false) {
-            return (
-              copyWith(menuOpen: false, inputText: '', cursor: 0),
-              () async {
-                await callbacks.onSubmit(item.key);
-                return null;
-              },
-            );
-          }
-          return (
-            copyWith(
-              inputText: item.key,
-              cursor: item.key.length,
-              menuOpen: false,
-            ),
-            null,
-          );
-        case 'backspace':
-          if (cursor > 0 && inputText.isNotEmpty) {
-            final nextText =
-                inputText.substring(0, cursor - 1) +
-                inputText.substring(cursor);
-            final nextCursor = cursor - 1;
-            return (
-              _updateMenuForInput(
-                copyWith(inputText: nextText, cursor: nextCursor),
-              ),
-              null,
-            );
-          }
-          return (this, null);
-        default:
-          final text = msg.keyEvent.text;
-          if (text.isNotEmpty && text.length == 1) {
-            final nextText =
-                inputText.substring(0, cursor) +
-                text +
-                inputText.substring(cursor);
-            final nextCursor = cursor + 1;
-            return (
-              _updateMenuForInput(
-                copyWith(inputText: nextText, cursor: nextCursor),
-              ),
-              null,
-            );
-          }
-          return (this, null);
-      }
-    }
+    if (menuOpen) return _handleSlashMenuKey(msg);
 
     // Normal input editing.
+    return _handleControlKey(msg) ??
+        _handleScrollKey(msg) ??
+        _handleCursorNavKey(msg) ??
+        _handleEditKey(msg);
+  }
+
+  /// Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
+  /// typing keeps editing the input so `/models` can be typed in full.
+  (Model, Cmd?) _handleSlashMenuKey(KeyMsg msg) {
+    switch (msg.key) {
+      case 'esc':
+        return (copyWith(menuOpen: false), null);
+      case 'up':
+        return (
+          copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
+          null,
+        );
+      case 'down':
+        return (
+          copyWith(
+            menuSelected: menuSelected < menuItems.length - 1
+                ? menuSelected + 1
+                : menuSelected,
+          ),
+          null,
+        );
+      case 'enter':
+      case 'tab':
+        return _acceptSlashMenuItem();
+      case 'backspace':
+        if (cursor > 0 && inputText.isNotEmpty) {
+          final nextText =
+              inputText.substring(0, cursor - 1) + inputText.substring(cursor);
+          final nextCursor = cursor - 1;
+          return (
+            _updateMenuForInput(
+              copyWith(inputText: nextText, cursor: nextCursor),
+            ),
+            null,
+          );
+        }
+        return (this, null);
+      default:
+        final text = msg.keyEvent.text;
+        if (text.isNotEmpty && text.length == 1) {
+          final nextText =
+              inputText.substring(0, cursor) +
+              text +
+              inputText.substring(cursor);
+          final nextCursor = cursor + 1;
+          return (
+            _updateMenuForInput(
+              copyWith(inputText: nextText, cursor: nextCursor),
+            ),
+            null,
+          );
+        }
+        return (this, null);
+    }
+  }
+
+  /// Slash-menu accept (enter/tab): fills the input with the picked command,
+  /// or switches into the models picker, or submits picker-opening commands
+  /// (/sessions, /mode, /approval) immediately.
+  (Model, Cmd?) _acceptSlashMenuItem() {
+    if (menuItems.isEmpty) return (this, null);
+    final item = menuItems[menuSelected];
+    if (item.key == '/model' || item.key == '/models') {
+      return (
+        copyWith(
+          menuModelMode: true,
+          menuItems: callbacks.buildModelMenu(''),
+          menuSelected: 0,
+          modelFilter: '',
+          pickerId: 'models',
+          pickerTitle: '',
+        ),
+        null,
+      );
+    }
+    // Commands that open a host-side picker (/sessions, /mode,
+    // /approval) submit immediately instead of filling the input.
+    if (callbacks.opensPicker?.call(item.key) ?? false) {
+      return (
+        copyWith(menuOpen: false, inputText: '', cursor: 0),
+        () async {
+          await callbacks.onSubmit(item.key);
+          return null;
+        },
+      );
+    }
+    return (
+      copyWith(inputText: item.key, cursor: item.key.length, menuOpen: false),
+      null,
+    );
+  }
+
+  /// Normal-mode control keys (submit/steer/newline/interrupt/abort); null
+  /// when the key belongs to another cluster.
+  (Model, Cmd?)? _handleControlKey(KeyMsg msg) {
     switch (msg.key) {
       case 'enter':
-        // Enter submits; Shift+Enter inserts a newline. Terminals that do not
-        // distinguish Shift+Enter in the input stream are handled through the
-        // host modifier check (Core Graphics on macOS, like pi's helper).
-        if (callbacks.isShiftPressed?.call() ?? false) {
-          return _insertNewlineAtCursor();
-        }
-        final line = inputText.trim();
-        // Empty submits are NOT dropped: guided flows (custom provider
-        // setup) use "empty = keep the default" answers, and the host's
-        // line handler ignores stray empties outside a pending prompt.
-        if (busy &&
-            line.isNotEmpty &&
-            !line.startsWith('/') &&
-            !line.startsWith('!')) {
-          // While a run streams, plain messages queue up (kimi-cli); slash
-          // and bang commands execute immediately via the normal path.
-          return _enqueue(line);
-        }
-        return _submit(line);
+        return _handleEnterKey();
       case 'ctrl+s':
         if (busy) {
           // Busy Ctrl+S steers the pending input plus every queued message
@@ -733,6 +760,38 @@ final class FaTuiModel extends TeaModel {
         // never quits the program.
         callbacks.onInterrupt?.call();
         return (this, null);
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode Enter: submit, queue while busy, or Shift+Enter newline.
+  (Model, Cmd?) _handleEnterKey() {
+    // Enter submits; Shift+Enter inserts a newline. Terminals that do not
+    // distinguish Shift+Enter in the input stream are handled through the
+    // host modifier check (Core Graphics on macOS, like pi's helper).
+    if (callbacks.isShiftPressed?.call() ?? false) {
+      return _insertNewlineAtCursor();
+    }
+    final line = inputText.trim();
+    // Empty submits are NOT dropped: guided flows (custom provider
+    // setup) use "empty = keep the default" answers, and the host's
+    // line handler ignores stray empties outside a pending prompt.
+    if (busy &&
+        line.isNotEmpty &&
+        !line.startsWith('/') &&
+        !line.startsWith('!')) {
+      // While a run streams, plain messages queue up (kimi-cli); slash
+      // and bang commands execute immediately via the normal path.
+      return _enqueue(line);
+    }
+    return _submit(line);
+  }
+
+  /// Normal-mode history scroll keys; null when the key belongs to another
+  /// cluster.
+  (Model, Cmd?)? _handleScrollKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'up':
         if (inputText.isEmpty) {
           // With a non-empty queue, ↑ pops the last queued message back into
@@ -760,6 +819,15 @@ final class FaTuiModel extends TeaModel {
         return (_scrolledTo(scrollOffset - _viewportHeight), null);
       case 'pgdown':
         return (_scrolledTo(scrollOffset + _viewportHeight), null);
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode cursor motion keys; null when the key belongs to another
+  /// cluster.
+  (Model, Cmd?)? _handleCursorNavKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'left':
         return (copyWith(cursor: cursor > 0 ? cursor - 1 : 0), null);
       case 'right':
@@ -776,6 +844,15 @@ final class FaTuiModel extends TeaModel {
         return (copyWith(cursor: 0), null);
       case 'end':
         return (copyWith(cursor: inputText.length), null);
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode text-editing keys (deletion and character insert); catches
+  /// every key the other clusters did not claim.
+  (Model, Cmd?) _handleEditKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'backspace':
         if (cursor == 0 || inputText.isEmpty) return (this, null);
         final nextText =
@@ -798,26 +875,7 @@ final class FaTuiModel extends TeaModel {
           null,
         );
       case 'ctrl+w':
-        // Kill the word before the cursor (readline's unix-word-rubout):
-        // trailing whitespace first, then the word itself.
-        if (cursor == 0) return (this, null);
-        var end = cursor;
-        while (end > 0 && inputText[end - 1] == ' ') {
-          end--;
-        }
-        while (end > 0 && inputText[end - 1] != ' ') {
-          end--;
-        }
-        return (
-          _updateMenuForInput(
-            copyWith(
-              inputText:
-                  inputText.substring(0, end) + inputText.substring(cursor),
-              cursor: end,
-            ),
-          ),
-          null,
-        );
+        return _killWordBeforeCursor();
       case 'delete':
         if (cursor >= inputText.length) return (this, null);
         final nextText =
@@ -842,10 +900,38 @@ final class FaTuiModel extends TeaModel {
     }
   }
 
+  /// Ctrl+W: kill the word before the cursor (readline's unix-word-rubout):
+  /// trailing whitespace first, then the word itself.
+  (Model, Cmd?) _killWordBeforeCursor() {
+    if (cursor == 0) return (this, null);
+    var end = cursor;
+    while (end > 0 && inputText[end - 1] == ' ') {
+      end--;
+    }
+    while (end > 0 && inputText[end - 1] != ' ') {
+      end--;
+    }
+    return (
+      _updateMenuForInput(
+        copyWith(
+          inputText: inputText.substring(0, end) + inputText.substring(cursor),
+          cursor: end,
+        ),
+      ),
+      null,
+    );
+  }
+
   /// Picker mode: arrows navigate, enter/tab select, esc closes. Only the
   /// models picker has a type-to-filter input; generic pickers (sessions,
   /// mode, approval, ...) navigate a static item list.
   (Model, Cmd?) _handlePickerKey(KeyMsg msg) {
+    return _handlePickerNavKey(msg) ?? _handlePickerSelectKey(msg);
+  }
+
+  /// Picker navigation keys (esc/arrows/pgup/pgdown); null when the key
+  /// belongs to the select/filter cluster.
+  (Model, Cmd?)? _handlePickerNavKey(KeyMsg msg) {
     final isModelsPicker = pickerId == 'models';
     switch (msg.key) {
       case 'esc':
@@ -874,6 +960,15 @@ final class FaTuiModel extends TeaModel {
           copyWith(menuSelected: menuItems.isEmpty ? 0 : menuItems.length - 1),
           null,
         );
+      default:
+        return null;
+    }
+  }
+
+  /// Picker select/filter keys (backspace/enter/tab/type-to-filter).
+  (Model, Cmd?) _handlePickerSelectKey(KeyMsg msg) {
+    final isModelsPicker = pickerId == 'models';
+    switch (msg.key) {
       case 'backspace':
         if (isModelsPicker && modelFilter.isNotEmpty) {
           final nextFilter = modelFilter.substring(0, modelFilter.length - 1);
@@ -904,22 +999,29 @@ final class FaTuiModel extends TeaModel {
           },
         );
       default:
-        if (!isModelsPicker) return (this, null);
-        final text = msg.keyEvent.text;
-        if (text.isNotEmpty && text.length == 1) {
-          if (text == ' ' && modelFilter.isEmpty) return (this, null);
-          final nextFilter = modelFilter + text;
-          return (
-            copyWith(
-              modelFilter: nextFilter,
-              menuItems: callbacks.buildModelMenu(nextFilter),
-              menuSelected: 0,
-            ),
-            null,
-          );
-        }
-        return (this, null);
+        return _pickerTypeFilter(msg);
     }
+  }
+
+  /// Models-picker type-to-filter: each printable character extends the
+  /// filter and rebuilds the item list.
+  (Model, Cmd?) _pickerTypeFilter(KeyMsg msg) {
+    final isModelsPicker = pickerId == 'models';
+    if (!isModelsPicker) return (this, null);
+    final text = msg.keyEvent.text;
+    if (text.isNotEmpty && text.length == 1) {
+      if (text == ' ' && modelFilter.isEmpty) return (this, null);
+      final nextFilter = modelFilter + text;
+      return (
+        copyWith(
+          modelFilter: nextFilter,
+          menuItems: callbacks.buildModelMenu(nextFilter),
+          menuSelected: 0,
+        ),
+        null,
+      );
+    }
+    return (this, null);
   }
 
   static bool _isWordBreak(String ch) => ch == ' ' || ch == '\n' || ch == '\t';
@@ -1109,13 +1211,7 @@ final class FaTuiModel extends TeaModel {
     final height = _viewportHeight;
     final md = AnsiMarkdown(width: termWidth);
 
-    // The sticky user echo pinned to the top while a run streams and the
-    // echo itself has scrolled out of view (Copilot-style).
-    if (_stickyActive) {
-      for (final line in stickyLines) {
-        b.writeln(md.formatLine(line));
-      }
-    }
+    _writeStickyEcho(b, md);
 
     // Output history, padded to a fixed height. Markdown is formatted and
     // ANSI-safely wrapped to physical rows (SGR-only output, escapes never
@@ -1124,15 +1220,72 @@ final class FaTuiModel extends TeaModel {
     // triggered by scrolling reuses the rows computed on the last change.
     final wrapped = _wrappedLines();
     final offset = _clampScroll(scrollOffset, wrapped);
+    _writeHistoryRows(b, height, wrapped, offset);
+    _writeScrollIndicator(b, wrapped, offset);
+
+    // Menu above input.
+    _writeMenu(b);
+
+    _writeBusyAndQueue(b);
+
+    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b);
+    b.writeln(_dim('─' * termWidth));
+    // The status line stays plain; the busy indicator lives above the input.
+    // Truncated to the width like every other chrome row — a wrapped status
+    // line shifts the whole frame by one row on every repaint.
+    b.write(_dim(_fitWidth(callbacks.statusLine())));
+
+    final lines = b.toString().split('\n');
+    final inputStartRow = lines.length - 2 - _inputLineCount;
+    final cursorRow = inputStartRow + cursorInputLine;
+    final cursorX = cursorScreenCol;
+    // Cursor management: while a run streams, HIDE the physical cursor —
+    // the renderer's cell diff re-homes it only when the last frame line
+    // changes (a spinner tick), so between ticks it was left sitting inside
+    // the streamed text (the visible mid-text jump). When idle, show it and
+    // home it into the input zone; the nonce-varying SGR suffix forces that
+    // row to differ on every content change, so the home sequence re-emits
+    // even when the only changed row is mid-history (a lone output append
+    // while idle used to strand the cursor inside the transcript).
+    final idleSuffix = '\x1b[0m' * (frameNonce % 4);
+    final cursorLine = busy
+        ? '\x1b[?25l'
+        : '\x1b[?25h$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';
+    return View(
+      content: b.toString() + cursorLine,
+      cursor: Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
+      mouseMode: MouseMode.cellMotion,
+    );
+  }
+
+  /// The sticky user echo pinned to the top while a run streams and the
+  /// echo itself has scrolled out of view (Copilot-style).
+  void _writeStickyEcho(StringBuffer b, AnsiMarkdown md) {
+    if (_stickyActive) {
+      for (final line in stickyLines) {
+        b.writeln(md.formatLine(line));
+      }
+    }
+  }
+
+  /// The [height]-row window of the wrapped output history at [offset].
+  void _writeHistoryRows(
+    StringBuffer b,
+    int height,
+    List<String> wrapped,
+    int offset,
+  ) {
     for (var i = 0; i < height; i++) {
       final row = offset + i;
       b.writeln(row < wrapped.length ? wrapped[row] : '');
     }
+  }
 
-    // Scroll progress indicator — only while the user scrolled away from
-    // the live edge (a "you are here" hint); while following, the row stays
-    // blank so the layout never shifts. (A transient viewport shrink, e.g.
-    // the busy row, must not light it up spuriously.)
+  /// Scroll progress indicator — only while the user scrolled away from
+  /// the live edge (a "you are here" hint); while following, the row stays
+  /// blank so the layout never shifts. (A transient viewport shrink, e.g.
+  /// the busy row, must not light it up spuriously.)
+  void _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
     final bottom = _scrollBottom(wrapped);
     if (!followTail && offset < bottom) {
       final scrollPercent = bottom == 0
@@ -1150,8 +1303,10 @@ final class FaTuiModel extends TeaModel {
     } else {
       b.writeln();
     }
+  }
 
-    // Menu above input.
+  /// The slash/model/picker menu block above the input zone.
+  void _writeMenu(StringBuffer b) {
     if (menuOpen && menuItems.isNotEmpty) {
       final title = menuModelMode
           ? pickerId == 'models'
@@ -1163,31 +1318,34 @@ final class FaTuiModel extends TeaModel {
       final (start, end) = _menuWindow();
       if (start > 0) b.writeln(_dim('  ↑ more'));
       for (var i = start; i < end; i++) {
-        final item = menuItems[i];
-        final selected = i == menuSelected;
-        final desc = item.description.isNotEmpty ? ' ${item.description}' : '';
-        // Menu rows must never exceed the width: a soft-wrapped chrome line
-        // desyncs the renderer's row math and smears frames on every key.
-        final full = '${item.label}$desc';
-        final prefix = selected ? '${_accent('▸')} ' : '  ';
-        if (full.length <= termWidth - 2) {
-          if (selected) {
-            b.writeln('$prefix${_accent(item.label)}${_dim(desc)}');
-          } else {
-            b.writeln('$prefix${item.label}${_dim(desc)}');
-          }
-        } else {
-          final text = _fitWidth(full, termWidth - 2);
-          b.writeln(selected ? '$prefix${_accent(text)}' : '$prefix$text');
-        }
+        b.writeln(_menuItemRow(menuItems[i], i == menuSelected));
       }
       if (end < menuItems.length) b.writeln(_dim('  ↓ more'));
     }
+  }
 
-    // The busy indicator sits directly above the input zone (like pi's
-    // "Working…" row), so it is visible next to the cursor while a run
-    // streams. Queued messages (kimi-cli) render under it, one dim line per
-    // message plus the edit/steer hint, all above the framed input zone.
+  /// One menu row (label + dim description, truncated to the width).
+  String _menuItemRow(MenuItem item, bool selected) {
+    final desc = item.description.isNotEmpty ? ' ${item.description}' : '';
+    // Menu rows must never exceed the width: a soft-wrapped chrome line
+    // desyncs the renderer's row math and smears frames on every key.
+    final full = '${item.label}$desc';
+    final prefix = selected ? '${_accent('▸')} ' : '  ';
+    if (full.length <= termWidth - 2) {
+      if (selected) {
+        return '$prefix${_accent(item.label)}${_dim(desc)}';
+      }
+      return '$prefix${item.label}${_dim(desc)}';
+    }
+    final text = _fitWidth(full, termWidth - 2);
+    return selected ? '$prefix${_accent(text)}' : '$prefix$text';
+  }
+
+  /// The busy indicator sits directly above the input zone (like pi's
+  /// "Working…" row), so it is visible next to the cursor while a run
+  /// streams. Queued messages (kimi-cli) render under it, one dim line per
+  /// message plus the edit/steer hint, all above the framed input zone.
+  void _writeBusyAndQueue(StringBuffer b) {
     if (busy) {
       final frame = _spinnerFrames[spinnerFrame % _spinnerFrames.length];
       b.writeln('${_accent2Plain(frame)} ${_dim('Working…')}');
@@ -1203,7 +1361,11 @@ final class FaTuiModel extends TeaModel {
       b.writeln(_dim('↑ to edit · ctrl-s to send immediately'));
     }
     b.writeln(_dim('─' * termWidth));
+  }
 
+  /// The framed input lines with horizontal cursor-window scrolling; returns
+  /// the cursor's input line index and screen column for the cursor home.
+  (int, int) _writeInputLines(StringBuffer b) {
     final beforeCursor = inputText.substring(0, cursor);
     final cursorInputLine = '\n'.allMatches(beforeCursor).length;
     final lastNl = beforeCursor.lastIndexOf('\n');
@@ -1232,33 +1394,7 @@ final class FaTuiModel extends TeaModel {
       b.write(line);
     }
     b.writeln();
-    b.writeln(_dim('─' * termWidth));
-    // The status line stays plain; the busy indicator lives above the input.
-    // Truncated to the width like every other chrome row — a wrapped status
-    // line shifts the whole frame by one row on every repaint.
-    b.write(_dim(_fitWidth(callbacks.statusLine())));
-
-    final lines = b.toString().split('\n');
-    final inputStartRow = lines.length - 2 - inputLines.length;
-    final cursorRow = inputStartRow + cursorInputLine;
-    final cursorX = cursorScreenCol;
-    // Cursor management: while a run streams, HIDE the physical cursor —
-    // the renderer's cell diff re-homes it only when the last frame line
-    // changes (a spinner tick), so between ticks it was left sitting inside
-    // the streamed text (the visible mid-text jump). When idle, show it and
-    // home it into the input zone; the nonce-varying SGR suffix forces that
-    // row to differ on every content change, so the home sequence re-emits
-    // even when the only changed row is mid-history (a lone output append
-    // while idle used to strand the cursor inside the transcript).
-    final idleSuffix = '\x1b[0m' * (frameNonce % 4);
-    final cursorLine = busy
-        ? '\x1b[?25l'
-        : '\x1b[?25h$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';
-    return View(
-      content: b.toString() + cursorLine,
-      cursor: Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
-      mouseMode: MouseMode.cellMotion,
-    );
+    return (cursorInputLine, cursorScreenCol);
   }
 
   static List<String> _appendOutput(

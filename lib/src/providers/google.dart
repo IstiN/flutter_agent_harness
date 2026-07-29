@@ -165,7 +165,6 @@ AssistantMessageEventStream streamGoogle(
   // Blocks accumulate in the shared state holder; each event carries a
   // fresh immutable snapshot of them (pi mutates one `output` object).
   final state = ProviderStreamState(model);
-  final blocks = state.blocks;
 
   unawaited(
     runProviderStream(
@@ -208,18 +207,9 @@ AssistantMessageEventStream streamGoogle(
           options?.onResponse,
         );
 
-        // pi tracks `currentBlock` (the open text/thinking block); tool-call
-        // parts close it and emit their events immediately.
-        StreamingBlock? currentBlock;
-        int blockIndex() => blocks.length - 1;
-
-        void endCurrentBlock() {
-          final block = currentBlock;
-          if (block != null) {
-            pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
-            currentBlock = null;
-          }
-        }
+        // pi tracks `currentBlock` (the open text/thinking block) inline;
+        // here that cursor lives in the chunk handler.
+        final handler = _GoogleChunkHandler(eventStream, state, model);
 
         final iterator = createSseIterator(response, cancelToken);
 
@@ -240,172 +230,10 @@ AssistantMessageEventStream streamGoogle(
             throw StateError('Could not parse Google SSE event: $error');
           }
 
-          final error = chunk['error'];
-          if (error is Map) {
-            final message = error['message'];
-            throw StateError(message is String ? message : jsonEncode(error));
-          }
-
-          // Keep the first non-empty response id (pi: `output.responseId ||=
-          // chunk.responseId`).
-          final responseId = chunk['responseId'];
-          if (responseId is String && responseId.isNotEmpty) {
-            state.responseId ??= responseId;
-          }
-
-          final candidates = chunk['candidates'];
-          final candidate = candidates is List && candidates.isNotEmpty
-              ? candidates.first
-              : null;
-          if (candidate is Map<String, dynamic>) {
-            final content = candidate['content'];
-            final parts = content is Map ? content['parts'] : null;
-            if (parts is List) {
-              for (final rawPart in parts) {
-                if (rawPart is! Map<String, dynamic>) {
-                  continue;
-                }
-
-                final text = rawPart['text'];
-                if (text is String) {
-                  final isThinking = rawPart['thought'] == true;
-                  if (currentBlock == null ||
-                      (isThinking && currentBlock is! ThinkingStreamingBlock) ||
-                      (!isThinking && currentBlock is! TextStreamingBlock)) {
-                    endCurrentBlock();
-                    if (isThinking) {
-                      currentBlock = ThinkingStreamingBlock();
-                      blocks.add(currentBlock!);
-                      eventStream.push(
-                        ThinkingStartEvent(
-                          contentIndex: blockIndex(),
-                          partial: state.snapshot(),
-                        ),
-                      );
-                    } else {
-                      currentBlock = TextStreamingBlock();
-                      blocks.add(currentBlock!);
-                      eventStream.push(
-                        TextStartEvent(
-                          contentIndex: blockIndex(),
-                          partial: state.snapshot(),
-                        ),
-                      );
-                    }
-                  }
-                  final thoughtSignature =
-                      rawPart['thoughtSignature'] as String?;
-                  final block = currentBlock!;
-                  if (block is ThinkingStreamingBlock) {
-                    block.thinking.write(text);
-                    block.signature = _retainThoughtSignature(
-                      block.signature,
-                      thoughtSignature,
-                    );
-                    eventStream.push(
-                      ThinkingDeltaEvent(
-                        contentIndex: blockIndex(),
-                        delta: text,
-                        partial: state.snapshot(),
-                      ),
-                    );
-                  } else if (block is TextStreamingBlock) {
-                    block.text.write(text);
-                    block.textSignature = _retainThoughtSignature(
-                      block.textSignature,
-                      thoughtSignature,
-                    );
-                    eventStream.push(
-                      TextDeltaEvent(
-                        contentIndex: blockIndex(),
-                        delta: text,
-                        partial: state.snapshot(),
-                      ),
-                    );
-                  }
-                }
-
-                final functionCall = rawPart['functionCall'];
-                if (functionCall is Map<String, dynamic>) {
-                  endCurrentBlock();
-
-                  // Generate a unique ID if not provided or if it's a
-                  // duplicate (ported from pi).
-                  final providedId = functionCall['id'] as String?;
-                  final needsNewId =
-                      providedId == null ||
-                      blocks.any(
-                        (b) =>
-                            b is ToolCallStreamingBlock && b.id == providedId,
-                      );
-                  final name = functionCall['name'] as String? ?? '';
-                  final toolCallId = needsNewId
-                      ? '${name}_${DateTime.now().millisecondsSinceEpoch}'
-                            '_${_toolCallCounter += 1}'
-                      : providedId;
-
-                  final arguments = functionCall['args'] is Map<String, dynamic>
-                      ? functionCall['args'] as Map<String, dynamic>
-                      : const <String, dynamic>{};
-                  final block = ToolCallStreamingBlock(
-                    id: toolCallId,
-                    name: name,
-                  )..thoughtSignature = rawPart['thoughtSignature'] as String?;
-                  final argsJson = jsonEncode(arguments);
-                  block.partialArgs.write(argsJson);
-
-                  blocks.add(block);
-                  eventStream.push(
-                    ToolCallStartEvent(
-                      contentIndex: blockIndex(),
-                      partial: state.snapshot(),
-                    ),
-                  );
-                  eventStream.push(
-                    ToolCallDeltaEvent(
-                      contentIndex: blockIndex(),
-                      delta: argsJson,
-                      partial: state.snapshot(),
-                    ),
-                  );
-                  pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
-                }
-              }
-            }
-
-            final finishReason = candidate['finishReason'];
-            if (finishReason is String) {
-              state.stopReason = _mapStopReason(finishReason);
-              if (blocks.any((b) => b is ToolCallStreamingBlock)) {
-                state.stopReason = StopReason.toolUse;
-              }
-            }
-          }
-
-          final usageMetadata = chunk['usageMetadata'];
-          if (usageMetadata is Map<String, dynamic>) {
-            final prompt = usageMetadata['promptTokenCount'] as int? ?? 0;
-            final cached =
-                usageMetadata['cachedContentTokenCount'] as int? ?? 0;
-            final candidatesTokens =
-                usageMetadata['candidatesTokenCount'] as int? ?? 0;
-            final thoughts = usageMetadata['thoughtsTokenCount'] as int? ?? 0;
-            state.usage = calculateCost(
-              Usage(
-                input: prompt - cached,
-                output: candidatesTokens + thoughts,
-                cacheRead: cached,
-                cacheWrite: 0,
-                reasoning: thoughts,
-                totalTokens: usageMetadata['totalTokenCount'] as int? ?? 0,
-                cost: const UsageCost(),
-              ),
-              model,
-            );
-          }
+          handler.processChunk(chunk);
         }
 
-        endCurrentBlock();
+        handler.endCurrentBlock();
 
         if (cancelToken?.isCancelled ?? false) {
           throw const AbortedError();
@@ -423,6 +251,225 @@ AssistantMessageEventStream streamGoogle(
   );
 
   return eventStream;
+}
+
+/// Per-request SSE chunk handler for [streamGoogle]: owns the open-block
+/// cursor (pi's `currentBlock`) and translates raw `streamGenerateContent`
+/// chunks into pushed events. Extracted mechanically from `streamGoogle`'s
+/// stream body (pi's chunk loop).
+final class _GoogleChunkHandler {
+  _GoogleChunkHandler(this._eventStream, this._state, this._model);
+
+  final AssistantMessageEventStream _eventStream;
+  final ProviderStreamState _state;
+  final Model _model;
+
+  List<StreamingBlock> get _blocks => _state.blocks;
+
+  /// pi tracks `currentBlock` (the open text/thinking block); tool-call
+  /// parts close it and emit their events immediately.
+  StreamingBlock? _currentBlock;
+
+  int _blockIndex() => _blocks.length - 1;
+
+  /// Closes the open text/thinking block, if any.
+  void endCurrentBlock() {
+    final block = _currentBlock;
+    if (block != null) {
+      pushBlockEndEvent(_eventStream, _blocks, block, _state.snapshot);
+      _currentBlock = null;
+    }
+  }
+
+  /// Handles one decoded SSE chunk: provider errors, the response id, the
+  /// first candidate (content parts + finish reason), and usage metadata.
+  void processChunk(Map<String, dynamic> chunk) {
+    final error = chunk['error'];
+    if (error is Map) {
+      final message = error['message'];
+      throw StateError(message is String ? message : jsonEncode(error));
+    }
+
+    // Keep the first non-empty response id (pi: `output.responseId ||=
+    // chunk.responseId`).
+    final responseId = chunk['responseId'];
+    if (responseId is String && responseId.isNotEmpty) {
+      _state.responseId ??= responseId;
+    }
+
+    final candidates = chunk['candidates'];
+    final candidate = candidates is List && candidates.isNotEmpty
+        ? candidates.first
+        : null;
+    if (candidate is Map<String, dynamic>) {
+      _processCandidate(candidate);
+    }
+
+    final usageMetadata = chunk['usageMetadata'];
+    if (usageMetadata is Map<String, dynamic>) {
+      _processUsage(usageMetadata);
+    }
+  }
+
+  /// Translates one candidate: its content parts and its finish reason.
+  void _processCandidate(Map<String, dynamic> candidate) {
+    final content = candidate['content'];
+    final parts = content is Map ? content['parts'] : null;
+    if (parts is List) {
+      for (final rawPart in parts) {
+        if (rawPart is! Map<String, dynamic>) {
+          continue;
+        }
+        _processPart(rawPart);
+      }
+    }
+
+    final finishReason = candidate['finishReason'];
+    if (finishReason is String) {
+      _state.stopReason = _mapStopReason(finishReason);
+      if (_blocks.any((b) => b is ToolCallStreamingBlock)) {
+        _state.stopReason = StopReason.toolUse;
+      }
+    }
+  }
+
+  /// Translates one content part: a text/thought part and/or a function
+  /// call part.
+  void _processPart(Map<String, dynamic> rawPart) {
+    final text = rawPart['text'];
+    if (text is String) {
+      _processTextPart(text, rawPart);
+    }
+
+    final functionCall = rawPart['functionCall'];
+    if (functionCall is Map<String, dynamic>) {
+      _processFunctionCallPart(rawPart, functionCall);
+    }
+  }
+
+  /// Appends a text/thought delta, opening a fresh block when the block
+  /// kind switches (text ↔ thinking) and retaining thought signatures.
+  void _processTextPart(String text, Map<String, dynamic> rawPart) {
+    final isThinking = rawPart['thought'] == true;
+    if (_currentBlock == null ||
+        (isThinking && _currentBlock is! ThinkingStreamingBlock) ||
+        (!isThinking && _currentBlock is! TextStreamingBlock)) {
+      endCurrentBlock();
+      if (isThinking) {
+        _currentBlock = ThinkingStreamingBlock();
+        _blocks.add(_currentBlock!);
+        _eventStream.push(
+          ThinkingStartEvent(
+            contentIndex: _blockIndex(),
+            partial: _state.snapshot(),
+          ),
+        );
+      } else {
+        _currentBlock = TextStreamingBlock();
+        _blocks.add(_currentBlock!);
+        _eventStream.push(
+          TextStartEvent(
+            contentIndex: _blockIndex(),
+            partial: _state.snapshot(),
+          ),
+        );
+      }
+    }
+    final thoughtSignature = rawPart['thoughtSignature'] as String?;
+    final block = _currentBlock!;
+    if (block is ThinkingStreamingBlock) {
+      block.thinking.write(text);
+      block.signature = _retainThoughtSignature(
+        block.signature,
+        thoughtSignature,
+      );
+      _eventStream.push(
+        ThinkingDeltaEvent(
+          contentIndex: _blockIndex(),
+          delta: text,
+          partial: _state.snapshot(),
+        ),
+      );
+    } else if (block is TextStreamingBlock) {
+      block.text.write(text);
+      block.textSignature = _retainThoughtSignature(
+        block.textSignature,
+        thoughtSignature,
+      );
+      _eventStream.push(
+        TextDeltaEvent(
+          contentIndex: _blockIndex(),
+          delta: text,
+          partial: _state.snapshot(),
+        ),
+      );
+    }
+  }
+
+  /// Emits a complete tool-call block (start + args delta + end) for a
+  /// `functionCall` part, closing the open text/thinking block first.
+  void _processFunctionCallPart(
+    Map<String, dynamic> rawPart,
+    Map<String, dynamic> functionCall,
+  ) {
+    endCurrentBlock();
+
+    // Generate a unique ID if not provided or if it's a duplicate (ported
+    // from pi).
+    final providedId = functionCall['id'] as String?;
+    final needsNewId =
+        providedId == null ||
+        _blocks.any((b) => b is ToolCallStreamingBlock && b.id == providedId);
+    final name = functionCall['name'] as String? ?? '';
+    final toolCallId = needsNewId
+        ? '${name}_${DateTime.now().millisecondsSinceEpoch}'
+              '_${_toolCallCounter += 1}'
+        : providedId;
+
+    final arguments = functionCall['args'] is Map<String, dynamic>
+        ? functionCall['args'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    final block = ToolCallStreamingBlock(id: toolCallId, name: name)
+      ..thoughtSignature = rawPart['thoughtSignature'] as String?;
+    final argsJson = jsonEncode(arguments);
+    block.partialArgs.write(argsJson);
+
+    _blocks.add(block);
+    _eventStream.push(
+      ToolCallStartEvent(
+        contentIndex: _blockIndex(),
+        partial: _state.snapshot(),
+      ),
+    );
+    _eventStream.push(
+      ToolCallDeltaEvent(
+        contentIndex: _blockIndex(),
+        delta: argsJson,
+        partial: _state.snapshot(),
+      ),
+    );
+    pushBlockEndEvent(_eventStream, _blocks, block, _state.snapshot);
+  }
+
+  /// Applies `usageMetadata` to the running usage/cost totals.
+  void _processUsage(Map<String, dynamic> usageMetadata) {
+    final prompt = usageMetadata['promptTokenCount'] as int? ?? 0;
+    final cached = usageMetadata['cachedContentTokenCount'] as int? ?? 0;
+    final candidatesTokens = usageMetadata['candidatesTokenCount'] as int? ?? 0;
+    final thoughts = usageMetadata['thoughtsTokenCount'] as int? ?? 0;
+    _state.usage = calculateCost(
+      Usage(
+        input: prompt - cached,
+        output: candidatesTokens + thoughts,
+        cacheRead: cached,
+        cacheWrite: 0,
+        reasoning: thoughts,
+        totalTokens: usageMetadata['totalTokenCount'] as int? ?? 0,
+        cost: const UsageCost(),
+      ),
+      _model,
+    );
+  }
 }
 
 /// Ported from pi's API-key requirement: an explicit API key wins; otherwise
@@ -625,175 +672,260 @@ String? _retainThoughtSignature(String? existing, String? incoming) {
 List<Map<String, dynamic>> _convertMessages(Model model, Context context) {
   final contents = <Map<String, dynamic>>[];
   final includeId = _requiresToolCallId(model.id);
-  String normalizeId(String id) => includeId ? _normalizeToolCallId(id) : id;
 
   for (final message in downgradeUnsupportedImages(context.messages, model)) {
     if (message is UserMessage) {
-      final content = message.content;
-      if (content is String) {
-        contents.add({
-          'role': 'user',
-          'parts': [
-            {'text': content},
-          ],
-        });
-      } else {
-        final parts = <Map<String, dynamic>>[];
-        for (final item in content as List<ContentBlock>) {
-          switch (item) {
-            case TextContent():
-              parts.add({'text': item.text});
-            case ImageContent():
-              parts.add({
-                'inlineData': {'mimeType': item.mimeType, 'data': item.data},
-              });
-            case ThinkingContent() || ToolCall():
-              // Not valid in user messages; skip defensively.
-              break;
-          }
-        }
-        if (parts.isEmpty) {
-          continue;
-        }
-        contents.add({'role': 'user', 'parts': parts});
+      final content = _convertUserMessage(message);
+      if (content != null) {
+        contents.add(content);
       }
     } else if (message is AssistantMessage) {
-      final parts = <Map<String, dynamic>>[];
-      // Only keep thinking blocks/signatures when the message is from the
-      // same provider and model.
-      final isSameProviderAndModel =
-          message.provider == model.provider && message.model == model.id;
-
-      for (final block in message.content) {
-        switch (block) {
-          case TextContent():
-            // Skip empty text blocks.
-            if (block.text.trim().isEmpty) {
-              continue;
-            }
-            final thoughtSignature = _resolveThoughtSignature(
-              isSameProviderAndModel,
-              block.textSignature,
-            );
-            parts.add({
-              'text': block.text,
-              'thoughtSignature': ?thoughtSignature,
-            });
-          case ThinkingContent():
-            // Skip empty thinking blocks.
-            if (block.thinking.trim().isEmpty) {
-              continue;
-            }
-            if (isSameProviderAndModel) {
-              final thoughtSignature = _resolveThoughtSignature(
-                isSameProviderAndModel,
-                block.thinkingSignature,
-              );
-              parts.add({
-                'thought': true,
-                'text': block.thinking,
-                'thoughtSignature': ?thoughtSignature,
-              });
-            } else {
-              // Other provider/model: convert to plain text (no tags to
-              // avoid the model mimicking them).
-              parts.add({'text': block.thinking});
-            }
-          case ToolCall():
-            final thoughtSignature = _resolveThoughtSignature(
-              isSameProviderAndModel,
-              block.thoughtSignature,
-            );
-            parts.add({
-              'functionCall': {
-                'name': block.name,
-                'args': block.arguments,
-                if (includeId) 'id': normalizeId(block.id),
-              },
-              'thoughtSignature': ?thoughtSignature,
-            });
-          case ImageContent():
-            // Not valid in assistant messages; skip defensively.
-            break;
-        }
+      final content = _convertAssistantMessage(message, model, includeId);
+      if (content != null) {
+        contents.add(content);
       }
-
-      if (parts.isEmpty) {
-        continue;
-      }
-      contents.add({'role': 'model', 'parts': parts});
     } else if (message is ToolResultMessage) {
-      final textResult = [
-        for (final block in message.content)
-          if (block is TextContent) block.text,
-      ].join('\n');
-      final imageContent = [
-        for (final block in message.content)
-          if (block is ImageContent && model.input.contains('image')) block,
-      ];
-
-      final hasText = textResult.isNotEmpty;
-      final hasImages = imageContent.isNotEmpty;
-
-      // Gemini 3+ supports images nested inside functionResponse.parts;
-      // Gemini < 3 needs a separate user image turn (ported from pi).
-      final multimodal = _supportsMultimodalFunctionResponse(model.id);
-
-      // Use "output" key for success, "error" key for errors, per the SDK
-      // documentation.
-      final responseValue = hasText
-          ? textResult
-          : hasImages
-          ? '(see attached image)'
-          : '';
-
-      final imageParts = [
-        for (final image in imageContent)
-          {
-            'inlineData': {'mimeType': image.mimeType, 'data': image.data},
-          },
-      ];
-
-      final functionResponsePart = {
-        'functionResponse': {
-          'name': message.toolName,
-          'response': message.isError
-              ? {'error': responseValue}
-              : {'output': responseValue},
-          if (hasImages && multimodal) 'parts': imageParts,
-          if (includeId) 'id': normalizeId(message.toolCallId),
-        },
-      };
-
-      // Cloud Code Assist requires all function responses in a single user
-      // turn: merge into the previous user turn of function responses.
-      final lastContent = contents.isNotEmpty ? contents.last : null;
-      final lastParts = lastContent?['parts'];
-      if (lastContent?['role'] == 'user' &&
-          lastParts is List &&
-          lastParts.any((p) => p is Map && p.containsKey('functionResponse'))) {
-        lastParts.add(functionResponsePart);
-      } else {
-        contents.add({
-          'role': 'user',
-          'parts': [functionResponsePart],
-        });
-      }
-
-      // For Gemini < 3, add images in a separate user message.
-      if (hasImages && !multimodal) {
-        contents.add({
-          'role': 'user',
-          'parts': [
-            {'text': 'Tool result image:'},
-            ...imageParts,
-          ],
-        });
-      }
+      _appendToolResultMessage(contents, message, model, includeId);
     }
   }
 
   return contents;
+}
+
+/// Converts a user message to a Gemini user `Content`, or null when it has
+/// no convertible parts. Ported from pi's `convertMessages` user branch.
+Map<String, dynamic>? _convertUserMessage(UserMessage message) {
+  final content = message.content;
+  if (content is String) {
+    return {
+      'role': 'user',
+      'parts': [
+        {'text': content},
+      ],
+    };
+  }
+  final parts = <Map<String, dynamic>>[];
+  for (final item in content as List<ContentBlock>) {
+    switch (item) {
+      case TextContent():
+        parts.add({'text': item.text});
+      case ImageContent():
+        parts.add({
+          'inlineData': {'mimeType': item.mimeType, 'data': item.data},
+        });
+      case ThinkingContent() || ToolCall():
+        // Not valid in user messages; skip defensively.
+        break;
+    }
+  }
+  if (parts.isEmpty) {
+    return null;
+  }
+  return {'role': 'user', 'parts': parts};
+}
+
+/// Converts an assistant message to a Gemini model `Content`, or null when
+/// it has no convertible parts. Ported from pi's `convertMessages` assistant
+/// branch.
+Map<String, dynamic>? _convertAssistantMessage(
+  AssistantMessage message,
+  Model model,
+  bool includeId,
+) {
+  final parts = <Map<String, dynamic>>[];
+  // Only keep thinking blocks/signatures when the message is from the
+  // same provider and model.
+  final isSameProviderAndModel =
+      message.provider == model.provider && message.model == model.id;
+
+  for (final block in message.content) {
+    final part = _convertAssistantBlock(
+      block,
+      isSameProviderAndModel,
+      includeId,
+    );
+    if (part != null) {
+      parts.add(part);
+    }
+  }
+
+  if (parts.isEmpty) {
+    return null;
+  }
+  return {'role': 'model', 'parts': parts};
+}
+
+/// Converts one assistant content block to a Gemini part, or null when the
+/// block is skipped (empty text/thinking, invalid image). Ported from pi's
+/// `convertMessages` assistant-block switch.
+Map<String, dynamic>? _convertAssistantBlock(
+  ContentBlock block,
+  bool isSameProviderAndModel,
+  bool includeId,
+) {
+  switch (block) {
+    case TextContent():
+      // Skip empty text blocks.
+      if (block.text.trim().isEmpty) {
+        return null;
+      }
+      final thoughtSignature = _resolveThoughtSignature(
+        isSameProviderAndModel,
+        block.textSignature,
+      );
+      return {'text': block.text, 'thoughtSignature': ?thoughtSignature};
+    case ThinkingContent():
+      // Skip empty thinking blocks.
+      if (block.thinking.trim().isEmpty) {
+        return null;
+      }
+      if (isSameProviderAndModel) {
+        final thoughtSignature = _resolveThoughtSignature(
+          isSameProviderAndModel,
+          block.thinkingSignature,
+        );
+        return {
+          'thought': true,
+          'text': block.thinking,
+          'thoughtSignature': ?thoughtSignature,
+        };
+      }
+      // Other provider/model: convert to plain text (no tags to
+      // avoid the model mimicking them).
+      return {'text': block.thinking};
+    case ToolCall():
+      final thoughtSignature = _resolveThoughtSignature(
+        isSameProviderAndModel,
+        block.thoughtSignature,
+      );
+      return {
+        'functionCall': {
+          'name': block.name,
+          'args': block.arguments,
+          if (includeId) 'id': _normalizeToolCallId(block.id),
+        },
+        'thoughtSignature': ?thoughtSignature,
+      };
+    case ImageContent():
+      // Not valid in assistant messages; skip defensively.
+      return null;
+  }
+}
+
+/// Extracts the joined text of a tool result (pi: text blocks joined with
+/// newlines).
+String _toolResultText(ToolResultMessage message) {
+  return [
+    for (final block in message.content)
+      if (block is TextContent) block.text,
+  ].join('\n');
+}
+
+/// Extracts the images of a tool result when the model accepts image input.
+List<ImageContent> _toolResultImages(ToolResultMessage message, Model model) {
+  return [
+    for (final block in message.content)
+      if (block is ImageContent && model.input.contains('image')) block,
+  ];
+}
+
+/// Builds the `functionResponse` part for a tool result. Uses the "output"
+/// key for success, the "error" key for errors, per the SDK documentation.
+/// Ported from pi's `convertMessages` tool-result branch.
+Map<String, dynamic> _buildFunctionResponsePart(
+  ToolResultMessage message,
+  String responseValue,
+  List<Map<String, dynamic>> imageParts, {
+  required bool hasImages,
+  required bool multimodal,
+  required bool includeId,
+}) {
+  return {
+    'functionResponse': {
+      'name': message.toolName,
+      'response': message.isError
+          ? {'error': responseValue}
+          : {'output': responseValue},
+      if (hasImages && multimodal) 'parts': imageParts,
+      if (includeId) 'id': _normalizeToolCallId(message.toolCallId),
+    },
+  };
+}
+
+/// Cloud Code Assist requires all function responses in a single user
+/// turn: merge into the previous user turn of function responses.
+void _appendFunctionResponsePart(
+  List<Map<String, dynamic>> contents,
+  Map<String, dynamic> functionResponsePart,
+) {
+  final lastContent = contents.isNotEmpty ? contents.last : null;
+  final lastParts = lastContent?['parts'];
+  if (lastContent?['role'] == 'user' &&
+      lastParts is List &&
+      lastParts.any((p) => p is Map && p.containsKey('functionResponse'))) {
+    lastParts.add(functionResponsePart);
+  } else {
+    contents.add({
+      'role': 'user',
+      'parts': [functionResponsePart],
+    });
+  }
+}
+
+/// Converts a tool result into Gemini function-response user turn(s):
+/// merges into a previous function-response user turn and, for Gemini < 3,
+/// appends images in a separate user message. Ported from pi's
+/// `convertMessages` tool-result branch.
+void _appendToolResultMessage(
+  List<Map<String, dynamic>> contents,
+  ToolResultMessage message,
+  Model model,
+  bool includeId,
+) {
+  final textResult = _toolResultText(message);
+  final imageContent = _toolResultImages(message, model);
+
+  final hasText = textResult.isNotEmpty;
+  final hasImages = imageContent.isNotEmpty;
+
+  // Gemini 3+ supports images nested inside functionResponse.parts;
+  // Gemini < 3 needs a separate user image turn (ported from pi).
+  final multimodal = _supportsMultimodalFunctionResponse(model.id);
+
+  final responseValue = hasText
+      ? textResult
+      : hasImages
+      ? '(see attached image)'
+      : '';
+
+  final imageParts = [
+    for (final image in imageContent)
+      {
+        'inlineData': {'mimeType': image.mimeType, 'data': image.data},
+      },
+  ];
+
+  final functionResponsePart = _buildFunctionResponsePart(
+    message,
+    responseValue,
+    imageParts,
+    hasImages: hasImages,
+    multimodal: multimodal,
+    includeId: includeId,
+  );
+
+  _appendFunctionResponsePart(contents, functionResponsePart);
+
+  // For Gemini < 3, add images in a separate user message.
+  if (hasImages && !multimodal) {
+    contents.add({
+      'role': 'user',
+      'parts': [
+        {'text': 'Tool result image:'},
+        ...imageParts,
+      ],
+    });
+  }
 }
 
 const _jsonSchemaMetaDeclarations = {

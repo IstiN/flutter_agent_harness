@@ -404,101 +404,131 @@ final class _PromptToolStreamParser {
       case TextDeltaEvent():
         _feed(event.delta);
       case ThinkingStartEvent():
-        _closeText();
-        _blocks.add(ThinkingStreamingBlock());
-        _out.push(
-          ThinkingStartEvent(
-            contentIndex: _blocks.length - 1,
-            partial: _snapshot(),
-          ),
-        );
+        _handleThinkingStart();
       case ThinkingDeltaEvent():
-        final block = _blocks.lastOrNull;
-        if (block is ThinkingStreamingBlock) {
-          block.thinking.write(event.delta);
-          _out.push(
-            ThinkingDeltaEvent(
-              contentIndex: _blocks.length - 1,
-              delta: event.delta,
-              partial: _snapshot(),
-            ),
-          );
-        }
+        _handleThinkingDelta(event);
       case ThinkingEndEvent():
-        final block = _blocks.lastOrNull;
-        if (block is ThinkingStreamingBlock) {
-          pushBlockEndEvent(_out, _blocks, block, _snapshot);
-        }
+        _handleThinkingEnd();
       case ToolCallStartEvent():
-        // Mirror a native tool call (wrapping a function-calling stream
-        // stays transparent).
-        final toolCall = event.partial.content.length > event.contentIndex
-            ? event.partial.content[event.contentIndex]
-            : null;
-        if (toolCall is ToolCall) {
-          _closeText();
-          _sawToolCall = true;
-          _blocks.add(
-            ToolCallStreamingBlock(id: toolCall.id, name: toolCall.name)
-              ..thoughtSignature = toolCall.thoughtSignature,
-          );
-          _out.push(
-            ToolCallStartEvent(
-              contentIndex: _blocks.length - 1,
-              partial: _snapshot(),
-            ),
-          );
-        }
+        _handleToolCallStart(event);
       case ToolCallDeltaEvent():
-        final block = _blocks.lastOrNull;
-        if (block is ToolCallStreamingBlock) {
-          block.partialArgs.write(event.delta);
-          _out.push(
-            ToolCallDeltaEvent(
-              contentIndex: _blocks.length - 1,
-              delta: event.delta,
-              partial: _snapshot(),
-            ),
-          );
-        }
+        _handleToolCallDelta(event);
       case ToolCallEndEvent():
-        final block = _blocks.lastOrNull;
-        if (block is ToolCallStreamingBlock) {
-          _sawToolCall = true;
-          pushBlockEndEvent(_out, _blocks, block, _snapshot);
-        }
+        _handleToolCallEnd();
       case DoneEvent():
-        _flush();
-        _terminated = true;
-        final reason = _sawToolCall ? StopReason.toolUse : event.reason;
-        _out.push(
-          DoneEvent(
-            reason: reason,
-            message: event.message.copyWith(
-              content: [
-                for (final block in _blocks)
-                  block.toContentBlock(finalize: true),
-              ],
-              stopReason: reason,
-            ),
-          ),
-        );
+        _handleDone(event);
       case ErrorEvent():
-        _flush();
-        _terminated = true;
-        _out.push(
-          ErrorEvent(
-            reason: event.reason,
-            error: event.error.copyWith(
-              content: [
-                for (final block in _blocks)
-                  block.toContentBlock(finalize: true),
-              ],
-            ),
-            retryAfter: event.retryAfter,
-          ),
-        );
+        _handleError(event);
     }
+  }
+
+  void _handleThinkingStart() {
+    _closeText();
+    _blocks.add(ThinkingStreamingBlock());
+    _out.push(
+      ThinkingStartEvent(
+        contentIndex: _blocks.length - 1,
+        partial: _snapshot(),
+      ),
+    );
+  }
+
+  void _handleThinkingDelta(ThinkingDeltaEvent event) {
+    final block = _blocks.lastOrNull;
+    if (block is ThinkingStreamingBlock) {
+      block.thinking.write(event.delta);
+      _out.push(
+        ThinkingDeltaEvent(
+          contentIndex: _blocks.length - 1,
+          delta: event.delta,
+          partial: _snapshot(),
+        ),
+      );
+    }
+  }
+
+  void _handleThinkingEnd() {
+    final block = _blocks.lastOrNull;
+    if (block is ThinkingStreamingBlock) {
+      pushBlockEndEvent(_out, _blocks, block, _snapshot);
+    }
+  }
+
+  void _handleToolCallStart(ToolCallStartEvent event) {
+    // Mirror a native tool call (wrapping a function-calling stream
+    // stays transparent).
+    final toolCall = event.partial.content.length > event.contentIndex
+        ? event.partial.content[event.contentIndex]
+        : null;
+    if (toolCall is ToolCall) {
+      _closeText();
+      _sawToolCall = true;
+      _blocks.add(
+        ToolCallStreamingBlock(id: toolCall.id, name: toolCall.name)
+          ..thoughtSignature = toolCall.thoughtSignature,
+      );
+      _out.push(
+        ToolCallStartEvent(
+          contentIndex: _blocks.length - 1,
+          partial: _snapshot(),
+        ),
+      );
+    }
+  }
+
+  void _handleToolCallDelta(ToolCallDeltaEvent event) {
+    final block = _blocks.lastOrNull;
+    if (block is ToolCallStreamingBlock) {
+      block.partialArgs.write(event.delta);
+      _out.push(
+        ToolCallDeltaEvent(
+          contentIndex: _blocks.length - 1,
+          delta: event.delta,
+          partial: _snapshot(),
+        ),
+      );
+    }
+  }
+
+  void _handleToolCallEnd() {
+    final block = _blocks.lastOrNull;
+    if (block is ToolCallStreamingBlock) {
+      _sawToolCall = true;
+      pushBlockEndEvent(_out, _blocks, block, _snapshot);
+    }
+  }
+
+  void _handleDone(DoneEvent event) {
+    _flush();
+    _terminated = true;
+    final reason = _sawToolCall ? StopReason.toolUse : event.reason;
+    _out.push(
+      DoneEvent(
+        reason: reason,
+        message: event.message.copyWith(
+          content: [
+            for (final block in _blocks) block.toContentBlock(finalize: true),
+          ],
+          stopReason: reason,
+        ),
+      ),
+    );
+  }
+
+  void _handleError(ErrorEvent event) {
+    _flush();
+    _terminated = true;
+    _out.push(
+      ErrorEvent(
+        reason: event.reason,
+        error: event.error.copyWith(
+          content: [
+            for (final block in _blocks) block.toContentBlock(finalize: true),
+          ],
+        ),
+        retryAfter: event.retryAfter,
+      ),
+    );
   }
 
   /// Converts a defensive failure (throwing inner stream, or a stream that

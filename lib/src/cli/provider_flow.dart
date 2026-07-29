@@ -151,11 +151,55 @@ Future<void> runCustomProviderFlow(
   if (typeKey == null) return cancelled();
   final spec = providerCatalog[typeKey]!;
 
-  // 2. Base URL: Enter applies the shown default (the spec's hosted URL on
-  // add, the entry's current URL on edit).
+  // 2. Base URL.
+  final baseUrl = await _askBaseUrl(io, config, spec, cancelled);
+  if (baseUrl == null) return;
+
+  // 3. Display name.
+  final name = await _askProviderName(config, baseUrl, cancelled);
+  if (name == null) return;
+
+  // 4. API key.
+  final keyStep = await _askApiToken(io, config, spec, cancelled);
+  if (keyStep.aborted) return;
+
+  // 5. Model.
+  final modelStep = await _askModelId(
+    io,
+    config,
+    spec,
+    baseUrl,
+    keyStep.token,
+    cancelled,
+  );
+  if (modelStep.aborted) return;
+
+  await config.applyResult(
+    CustomProviderSetup(
+      spec: spec,
+      baseUrl: baseUrl,
+      name: name,
+      modelId: modelStep.modelId,
+      token: keyStep.token,
+    ),
+  );
+}
+
+/// Step 2 — base URL: Enter applies the shown default (the spec's hosted
+/// URL on add, the entry's current URL on edit). Returns null on abort
+/// (cancelled or invalid — the message is already printed).
+Future<String?> _askBaseUrl(
+  CliIO io,
+  CustomProviderFlowConfig config,
+  ProviderSpec spec,
+  void Function() cancelled,
+) async {
   final urlDefault = config.initialBaseUrl ?? spec.defaultBaseUrl;
   final urlAnswer = await config.askLine('base URL (empty = $urlDefault): ');
-  if (urlAnswer == null) return cancelled();
+  if (urlAnswer == null) {
+    cancelled();
+    return null;
+  }
   final baseUrl = (urlAnswer.trim().isEmpty ? urlDefault : urlAnswer.trim())
       .replaceAll(RegExp(r'/+$'), '');
   if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
@@ -163,78 +207,108 @@ Future<void> runCustomProviderFlow(
       'invalid base URL: ${urlAnswer.trim()} (want http(s)://...) — '
       'setup aborted',
     );
-    return;
+    return null;
   }
+  return baseUrl;
+}
 
-  // 3. Display name: Enter keeps the host-derived default (or the entry's
-  // current name on edit). Custom names distinguish entries that share one
-  // URL (different keys/accounts).
+/// Step 3 — display name: Enter keeps the host-derived default (or the
+/// entry's current name on edit). Custom names distinguish entries that
+/// share one URL (different keys/accounts). Returns null on cancel.
+Future<String?> _askProviderName(
+  CustomProviderFlowConfig config,
+  String baseUrl,
+  void Function() cancelled,
+) async {
   final nameDefault = config.initialName ?? config.deriveName(baseUrl);
   final nameAnswer = await config.askLine(
     'provider name (empty = $nameDefault): ',
   );
-  if (nameAnswer == null) return cancelled();
-  final name = nameAnswer.trim().isEmpty ? nameDefault : nameAnswer.trim();
+  if (nameAnswer == null) {
+    cancelled();
+    return null;
+  }
+  return nameAnswer.trim().isEmpty ? nameDefault : nameAnswer.trim();
+}
 
-  // 4. API key (empty = keyless; skipped in roles mode, and on edit an
-  // empty answer keeps the entry's existing key).
-  String? token;
+/// Step 4 — API key (empty = keyless; skipped in roles mode, and on edit
+/// an empty answer keeps the entry's existing key).
+Future<({bool aborted, String? token})> _askApiToken(
+  CliIO io,
+  CustomProviderFlowConfig config,
+  ProviderSpec spec,
+  void Function() cancelled,
+) async {
   if (config.rolesActive) {
     io.writeln(
       'roles mode: the key resolves from the environment '
       '(${spec.apiKeyEnvNames.first}) — no key step',
     );
-  } else {
-    final keyAnswer = await config.askLine('API key (empty for none): ');
-    if (keyAnswer == null) return cancelled();
-    final key = keyAnswer.trim();
-    if (key.isNotEmpty) token = key;
+    return (aborted: false, token: null);
   }
+  final keyAnswer = await config.askLine('API key (empty for none): ');
+  if (keyAnswer == null) {
+    cancelled();
+    return (aborted: true, token: null);
+  }
+  final key = keyAnswer.trim();
+  return (aborted: false, token: key.isNotEmpty ? key : null);
+}
 
-  // 4. Model: the endpoint's list when it has one (plus a manual-entry
-  // option), manual entry otherwise; empty keeps the default.
+/// Step 5 — model: the endpoint's list when it has one (plus a
+/// manual-entry option), manual entry otherwise; empty keeps the default.
+Future<({bool aborted, String modelId})> _askModelId(
+  CliIO io,
+  CustomProviderFlowConfig config,
+  ProviderSpec spec,
+  String baseUrl,
+  String? token,
+  void Function() cancelled,
+) async {
   var modelId = config.initialModelId ?? config.currentModelId();
-  if (spec.kind == 'openai-completions') {
-    io.writeln('fetching models from $baseUrl/models ...');
-    final models = await config.fetchModels(spec, baseUrl, token: token);
-    if (models.isNotEmpty) {
-      final picked = await config.pickOption('model', [
-        for (final id in models) (id, id, ''),
-        ('', '+ enter manually', ''),
-      ], initialKey: models.contains(modelId) ? modelId : null);
-      if (picked == null) return cancelled();
-      if (picked.isNotEmpty) {
-        modelId = picked;
-      } else {
-        final manual = await config.askLine(
-          "model id (empty keeps '$modelId'): ",
-        );
-        if (manual == null) return cancelled();
-        final answer = manual.trim();
-        if (answer.isNotEmpty) modelId = answer;
-      }
-    } else {
-      final manual = await config.askLine(
-        "no model list from the endpoint — model id (empty keeps '$modelId'): ",
-      );
-      if (manual == null) return cancelled();
-      final answer = manual.trim();
-      if (answer.isNotEmpty) modelId = answer;
-    }
-  } else {
-    final manual = await config.askLine("model id (empty keeps '$modelId'): ");
-    if (manual == null) return cancelled();
-    final answer = manual.trim();
-    if (answer.isNotEmpty) modelId = answer;
+  if (spec.kind != 'openai-completions') {
+    return _askManualModelId(config, modelId, cancelled);
   }
+  io.writeln('fetching models from $baseUrl/models ...');
+  final models = await config.fetchModels(spec, baseUrl, token: token);
+  if (models.isEmpty) {
+    return _askManualModelId(
+      config,
+      modelId,
+      cancelled,
+      prefix: 'no model list from the endpoint — ',
+    );
+  }
+  final picked = await config.pickOption('model', [
+    for (final id in models) (id, id, ''),
+    ('', '+ enter manually', ''),
+  ], initialKey: models.contains(modelId) ? modelId : null);
+  if (picked == null) {
+    cancelled();
+    return (aborted: true, modelId: modelId);
+  }
+  if (picked.isNotEmpty) {
+    modelId = picked;
+    return (aborted: false, modelId: modelId);
+  }
+  return _askManualModelId(config, modelId, cancelled);
+}
 
-  await config.applyResult(
-    CustomProviderSetup(
-      spec: spec,
-      baseUrl: baseUrl,
-      name: name,
-      modelId: modelId,
-      token: token,
-    ),
+/// The manual model-id prompt shared by every fallback path; an empty
+/// answer keeps [modelId].
+Future<({bool aborted, String modelId})> _askManualModelId(
+  CustomProviderFlowConfig config,
+  String modelId,
+  void Function() cancelled, {
+  String prefix = '',
+}) async {
+  final manual = await config.askLine(
+    "${prefix}model id (empty keeps '$modelId'): ",
   );
+  if (manual == null) {
+    cancelled();
+    return (aborted: true, modelId: modelId);
+  }
+  final answer = manual.trim();
+  return (aborted: false, modelId: answer.isNotEmpty ? answer : modelId);
 }

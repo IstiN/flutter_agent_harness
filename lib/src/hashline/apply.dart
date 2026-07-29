@@ -126,6 +126,35 @@ HashlineApplyResult applyHashlineEdits(String text, List<HashlineEdit> edits) {
   _validateLineBounds(targetEdits, fileLines);
 
   // Partition edits into bof, eof, and anchor-targeted buckets.
+  final partitioned = _partitionEdits(targetEdits);
+  _applyAnchorEditsByLine(
+    fileLines,
+    partitioned.anchorEdits,
+    trackFirstChanged,
+  );
+
+  if (partitioned.bofLines.isNotEmpty) {
+    _insertAtStart(fileLines, partitioned.bofLines);
+    trackFirstChanged(1);
+  }
+  final eofChangedLine = _insertAtEnd(fileLines, partitioned.eofLines);
+  if (eofChangedLine != null) trackFirstChanged(eofChangedLine);
+
+  return HashlineApplyResult(
+    text: fileLines.join('\n'),
+    firstChangedLine: firstChangedLine,
+  );
+}
+
+/// Edits partitioned into bof, eof, and anchor-targeted buckets.
+typedef _PartitionedEdits = ({
+  List<String> bofLines,
+  List<String> eofLines,
+  List<_IndexedEdit> anchorEdits,
+});
+
+/// Partitions [targetEdits] into bof, eof, and anchor-targeted buckets.
+_PartitionedEdits _partitionEdits(List<HashlineEdit> targetEdits) {
   final bofLines = <String>[];
   final eofLines = <String>[];
   final anchorEdits = <_IndexedEdit>[];
@@ -139,8 +168,16 @@ HashlineApplyResult applyHashlineEdits(String text, List<HashlineEdit> edits) {
       anchorEdits.add((edit: edit, idx: idx));
     }
   }
+  return (bofLines: bofLines, eofLines: eofLines, anchorEdits: anchorEdits);
+}
 
-  // Apply per-line buckets bottom-up so earlier indices stay valid.
+/// Applies the anchor-targeted buckets bottom-up so earlier indices stay
+/// valid.
+void _applyAnchorEditsByLine(
+  List<String> fileLines,
+  List<_IndexedEdit> anchorEdits,
+  void Function(int line) trackFirstChanged,
+) {
   final byLine = _bucketAnchorEditsByLine(anchorEdits);
   final sortedLines = byLine.keys.toList()..sort((a, b) => b.compareTo(a));
   for (final line in sortedLines) {
@@ -184,16 +221,4 @@ HashlineApplyResult applyHashlineEdits(String text, List<HashlineEdit> edits) {
     fileLines.replaceRange(index, index + 1, replacement);
     trackFirstChanged(line);
   }
-
-  if (bofLines.isNotEmpty) {
-    _insertAtStart(fileLines, bofLines);
-    trackFirstChanged(1);
-  }
-  final eofChangedLine = _insertAtEnd(fileLines, eofLines);
-  if (eofChangedLine != null) trackFirstChanged(eofChangedLine);
-
-  return HashlineApplyResult(
-    text: fileLines.join('\n'),
-    firstChangedLine: firstChangedLine,
-  );
 }

@@ -62,6 +62,7 @@ import '../web_search/web_search.dart';
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
 import 'prompt_templates.dart';
 import 'slash_menu.dart';
+import 'tui_helpers.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 
@@ -862,6 +863,28 @@ class AgentCli {
   }
 
   Future<void> _runTuiRepl() async {
+    final controller = _createTuiController();
+    _tuiController = controller;
+    final tuiIo = io;
+    if (tuiIo is _TuiCliIO) tuiIo._tui = controller;
+
+    // The banner is part of the TUI output history so it stays visible above
+    // the input line inside the alternate screen.
+    await _printBanner();
+    await _replayRestoredSession();
+
+    // Warm the model cache in the background so the first /models picker is
+    // fast; failures are silent and the cache falls back to the hardcoded list.
+    unawaited(_refreshModelCache());
+
+    await controller.run();
+    if (tuiIo is _TuiCliIO) tuiIo._tui = null;
+    _tuiController = null;
+  }
+
+  /// Wires the TUI controller's callbacks to the line handler, pickers, and
+  /// interrupt/steer paths.
+  FaTuiController _createTuiController() {
     late final FaTuiController controller;
     controller = FaTuiController(
       callbacks: FaTuiCallbacks(
@@ -894,26 +917,15 @@ class AgentCli {
       ),
       isExited: () => _exited,
     );
-    _tuiController = controller;
-    final tuiIo = io;
-    if (tuiIo is _TuiCliIO) tuiIo._tui = controller;
+    return controller;
+  }
 
-    // The banner is part of the TUI output history so it stays visible above
-    // the input line inside the alternate screen.
-    await _printBanner();
-
+  /// Replays the transcript when the TUI opens on a restored session.
+  Future<void> _replayRestoredSession() async {
     final resumedLabel = await _resumedSessionLabel();
     if (resumedLabel != null) {
       _replayRestoredHistory(_agent.state.messages, resumedLabel);
     }
-
-    // Warm the model cache in the background so the first /models picker is
-    // fast; failures are silent and the cache falls back to the hardcoded list.
-    unawaited(_refreshModelCache());
-
-    await controller.run();
-    if (tuiIo is _TuiCliIO) tuiIo._tui = null;
-    _tuiController = null;
   }
 
   /// A TUI submit: runs the line, waits for the run to settle, drains the
@@ -947,21 +959,14 @@ class AgentCli {
   }
 
   /// Drains queued messages one-by-one as separate turns (kimi-cli
-  /// semantics), capped to bound a self-sustaining queue; an Esc abort
+  /// semantics) — the loop itself is [drainQueueRounds]; an Esc abort
   /// discards the queue instead of starting new work.
-  Future<void> _drainTuiQueue(FaTuiController controller) async {
-    var drainedRounds = 0;
-    for (;;) {
-      final queued = await controller.drainQueue();
-      if (queued.isEmpty) break;
-      if (_abortRequested || drainedRounds >= 20) {
-        io.writeln('queued message(s) dropped');
-        break;
-      }
-      drainedRounds++;
-      await _drainTuiRound(queued);
-    }
-  }
+  Future<void> _drainTuiQueue(FaTuiController controller) => drainQueueRounds(
+    drain: controller.drainQueue,
+    runRound: _drainTuiRound,
+    abortRequested: () => _abortRequested,
+    onDropped: () => io.writeln('queued message(s) dropped'),
+  );
 
   /// One drain round: every queued message as its own turn, stopping early
   /// when an Esc abort discards the rest of the queue.
@@ -986,39 +991,41 @@ class AgentCli {
     // Wizard pickers (a guided flow's multiple-choice questions) complete
     // their pending answer instead of the command handlers.
     if (_completeWizardPicker(pickerId, key)) return;
-    switch (pickerId) {
-      case 'sessions':
-        await _tuiPickSession(key);
-      case 'mode':
-        await _switchMode(key);
-      case 'approval':
-        _handleApprovalMode(key);
-      case 'provider':
-        await _tuiPickProvider(key);
-    }
+    await _tuiPickerHandlers[pickerId]?.call(key);
   }
+
+  /// Picker id → the handler the typed slash command would have used.
+  late final Map<String, Future<void> Function(String)> _tuiPickerHandlers = {
+    'sessions': _tuiPickSession,
+    'mode': _switchMode,
+    'approval': (key) async => _handleApprovalMode(key),
+    'provider': _tuiPickProvider,
+  };
 
   /// Completes the pending wizard-picker answer for [pickerId] (null [key]
   /// = dismissed with Esc); returns whether a wizard was waiting.
   bool _completeWizardPicker(String pickerId, String? key) {
     final wizard = _wizardPickerAnswer;
     if (wizard == null || !pickerId.startsWith('wizard:')) return false;
+    _finishWizardPicker(wizard, key);
+    return true;
+  }
+
+  /// Resolves [wizard] (defensively no-op when already completed) and clears
+  /// the pending answer.
+  void _finishWizardPicker(Completer<String?> wizard, String? key) {
     if (!wizard.isCompleted) wizard.complete(key);
     _wizardPickerAnswer = null;
-    return true;
   }
 
   /// A sessions-picker selection: the key is the index into the most recent
   /// `/sessions` listing.
   Future<void> _tuiPickSession(String key) async {
-    final index = int.tryParse(key);
-    final list = _lastSessionList;
-    if (index != null && list != null && index >= 0 && index < list.length) {
-      final metadata = list[index];
-      final session = await _repo.open(metadata);
-      final label = await session.getSessionName() ?? metadata.id;
-      await _switchToMetadata(metadata, label);
-    }
+    final metadata = listItemAt(_lastSessionList, int.tryParse(key) ?? -1);
+    if (metadata == null) return;
+    final session = await _repo.open(metadata);
+    final label = await session.getSessionName() ?? metadata.id;
+    await _switchToMetadata(metadata, label);
   }
 
   /// A provider-picker selection: `custom` starts the guided flow,
@@ -1027,14 +1034,20 @@ class AgentCli {
   Future<void> _tuiPickProvider(String key) async {
     if (key == 'custom') {
       _startProviderFlow();
-    } else if (key.startsWith('saved:')) {
-      final entry = config.customProviders?.find(
-        key.substring('saved:'.length),
-      );
-      if (entry != null) await _switchToSavedProvider(entry);
-    } else {
-      await _handleProviderCommand(key);
+      return;
     }
+    if (key.startsWith('saved:')) {
+      await _tuiPickSavedProvider(key.substring('saved:'.length));
+      return;
+    }
+    await _handleProviderCommand(key);
+  }
+
+  /// A `saved:<name>` provider-picker selection restores the saved custom
+  /// provider when it still exists.
+  Future<void> _tuiPickSavedProvider(String name) async {
+    final entry = config.customProviders?.find(name);
+    if (entry != null) await _switchToSavedProvider(entry);
   }
 
   /// A generic picker dismissed with Esc: wizard pickers resolve their
@@ -1054,6 +1067,17 @@ class AgentCli {
       return;
     }
     _lastSessionList = sessions;
+    _tuiController?.openPicker(
+      'sessions',
+      'Sessions',
+      await _sessionPickerItems(sessions),
+    );
+  }
+
+  /// Numbered picker items for [sessions], marking the active session.
+  Future<List<MenuItem>> _sessionPickerItems(
+    List<SessionMetadata> sessions,
+  ) async {
     final current = await _session?.getMetadata();
     final items = <MenuItem>[];
     for (var i = 0; i < sessions.length; i++) {
@@ -1071,7 +1095,7 @@ class AgentCli {
         ),
       );
     }
-    _tuiController?.openPicker('sessions', 'Sessions', items);
+    return items;
   }
 
   void _openModePicker() {
@@ -1294,45 +1318,9 @@ class AgentCli {
     dim: _style.dim,
   );
 
-  /// One compact replay entry (≤ [maxRows] rows), or none for messages the
-  /// replay skips (tool results — their calls are already shown).
-  List<String> _replayLines(Message message, int maxRows) {
-    final String text;
-    final String prefix;
-    switch (message) {
-      case UserMessage(:final content):
-        prefix = 'you: ';
-        text = content is String
-            ? content
-            : (content as List<ContentBlock>)
-                  .whereType<TextContent>()
-                  .map((b) => b.text)
-                  .join(' ');
-      case AssistantMessage(:final content):
-        final texts = content
-            .whereType<TextContent>()
-            .map((b) => b.text)
-            .join(' ')
-            .trim();
-        final calls = content
-            .whereType<ToolCall>()
-            .map((c) => '[${c.name}]')
-            .join(' ');
-        text = [texts, calls].where((s) => s.isNotEmpty).join(' ');
-        prefix = 'fa:  ';
-      default:
-        return const [];
-    }
-    if (text.trim().isEmpty) return const [];
-    final rows = text.split('\n');
-    final head = rows.take(maxRows).toList();
-    final suffix = rows.length > maxRows ? ' …' : '';
-    final indent = ' ' * prefix.length;
-    return [
-      for (var i = 0; i < head.length; i++)
-        '${i == 0 ? prefix : indent}${head[i]}${i == head.length - 1 ? suffix : ''}',
-    ];
-  }
+  /// One compact replay entry (≤ [maxRows] rows) — see [replayLines].
+  List<String> _replayLines(Message message, int maxRows) =>
+      replayLines(message, maxRows: maxRows);
 
   /// `/resume`: switches to the most recently created session for the
   /// current directory (the repo lists sessions newest-first).
@@ -1514,22 +1502,40 @@ class AgentCli {
     final spec = catalogProvider(_rolesDriven ? model.provider : _providerKind);
     final names = spec?.apiKeyEnvNames;
     if (names == null || names.isEmpty) return null;
-    final keys = config.secureKeys;
     // An explicit /provider token (or a saved custom entry's key) IS the
     // active key: name its store slot. The value is never printed.
-    if (!_rolesDriven && _explicitToken) {
-      final entryKey = _activeCustomKeyName();
-      if (entryKey != null && keys?.read(entryKey) != null) {
-        return 'key: $entryKey';
-      }
-      final scoped = CustomProviderRegistry.keyNameFor(model.baseUrl);
-      if (keys?.read(scoped) != null) return 'key: $scoped';
-      return 'key: provided';
+    if (!_rolesDriven && _explicitToken) return _explicitTokenKeyStatus(model);
+    return _resolvedKeyStatus(model, spec, names);
+  }
+
+  /// Key status when an explicit token or saved-entry key is in play.
+  String _explicitTokenKeyStatus(Model model) {
+    final entryKey = _activeCustomKeyName();
+    if (entryKey != null && config.secureKeys?.read(entryKey) != null) {
+      return 'key: $entryKey';
     }
-    // Genuine environment values first (they differ from the store's entry);
-    // then the active custom entry's slot (multi-account entries use
-    // name-scoped ones), the host-scoped slot, and legacy env-name entries
-    // (env or store — indistinguishable here).
+    return _scopedTokenKeyStatus(model);
+  }
+
+  /// Key status fallback for an explicit token: the host-scoped store slot,
+  /// or the anonymous "provided" marker.
+  String _scopedTokenKeyStatus(Model model) {
+    final scoped = CustomProviderRegistry.keyNameFor(model.baseUrl);
+    if (config.secureKeys?.read(scoped) != null) return 'key: $scoped';
+    return 'key: provided';
+  }
+
+  /// Key status from the resolution order: genuine environment values first
+  /// (they differ from the store's entry); then the active custom entry's
+  /// slot (multi-account entries use name-scoped ones), the host-scoped
+  /// slot, and legacy env-name entries (env or store — indistinguishable
+  /// here).
+  String? _resolvedKeyStatus(
+    Model model,
+    ProviderSpec? spec,
+    List<String> names,
+  ) {
+    final keys = config.secureKeys;
     for (final name in names) {
       final value = config.envVarValue?.call(name);
       if (value != null && value.isNotEmpty && value != keys?.read(name)) {
@@ -1881,6 +1887,16 @@ class AgentCli {
   Future<void> _handleCommand(String trimmed) async {
     final command = trimmed.split(RegExp(r'\s+')).first;
     final rest = trimmed.substring(command.length).trim();
+    if (await _handleInfoCommand(command, rest)) return;
+    if (await _handleModelProviderCommand(command, rest)) return;
+    if (await _handleSessionSwitchCommand(command, rest)) return;
+    if (await _handleModeCommand(command, rest)) return;
+    await _handleUnknownCommand(trimmed, command, rest);
+  }
+
+  /// Info/session-lifecycle commands without a TUI picker variant. Returns
+  /// whether [command] was handled.
+  Future<bool> _handleInfoCommand(String command, String rest) async {
     switch (command) {
       case '/exit':
         io.writeln('bye');
@@ -1893,6 +1909,26 @@ class AgentCli {
         _listTaskJobs(rest);
       case '/skills':
         _listSkills();
+      case '/allow':
+        _handleAllow(rest);
+      case '/reset':
+        _agent.reset();
+        _checkpoints.clear();
+        _ttsr?.reset();
+        _session = await _createSession();
+        _persistedCount = 0;
+        io.writeln('new session started');
+      case '/compact':
+        await _compact('[compacted]');
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  /// Model and provider commands. Returns whether [command] was handled.
+  Future<bool> _handleModelProviderCommand(String command, String rest) async {
+    switch (command) {
       case '/model':
         await _handleModelCommand(rest);
       case '/models':
@@ -1909,15 +1945,16 @@ class AgentCli {
         _startProviderEditFlow();
       case '/key':
         await _handleKeyCommand(rest);
-      case '/reset':
-        _agent.reset();
-        _checkpoints.clear();
-        _ttsr?.reset();
-        _session = await _createSession();
-        _persistedCount = 0;
-        io.writeln('new session started');
-      case '/compact':
-        await _compact('[compacted]');
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  /// Session switching/naming commands. Returns whether [command] was
+  /// handled.
+  Future<bool> _handleSessionSwitchCommand(String command, String rest) async {
+    switch (command) {
       case '/sessions':
         // In the TUI a bare /sessions opens the picker (same as /models);
         // with an argument or in line mode it prints the list.
@@ -1942,6 +1979,15 @@ class AgentCli {
         }
       case '/resume':
         await _resumeLastSession();
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  /// Mode and approval commands. Returns whether [command] was handled.
+  Future<bool> _handleModeCommand(String command, String rest) async {
+    switch (command) {
       case '/mode':
         if (rest.isEmpty && _useTui && _tuiController != null) {
           _openModePicker();
@@ -1954,28 +2000,37 @@ class AgentCli {
         } else {
           _handleApprovalMode(rest);
         }
-      case '/allow':
-        _handleAllow(rest);
       case '/code' || '/architect' || '/review':
         await _switchMode(command.substring(1));
       default:
-        final pluginHandler = _pluginSlashCommands[command];
-        if (pluginHandler != null) {
-          await pluginHandler(rest.split(RegExp(r'\s+')));
-          return;
-        }
-        final expanded = expandPromptTemplate(trimmed, _templates);
-        if (expanded != trimmed) {
-          _startRun(expanded);
-          return;
-        }
-        // Unknown slash command: treat it as a filter for the command menu.
-        if (trimmed.startsWith('/') && trimmed.length > 1) {
-          _printSlashMenu(trimmed);
-          return;
-        }
-        io.writeln('unknown command: $command (try /help)');
+        return false;
     }
+    return true;
+  }
+
+  /// Anything that is not a builtin command: a plugin slash command, a
+  /// prompt template, a menu filter, or simply unknown.
+  Future<void> _handleUnknownCommand(
+    String trimmed,
+    String command,
+    String rest,
+  ) async {
+    final pluginHandler = _pluginSlashCommands[command];
+    if (pluginHandler != null) {
+      await pluginHandler(rest.split(RegExp(r'\s+')));
+      return;
+    }
+    final expanded = expandPromptTemplate(trimmed, _templates);
+    if (expanded != trimmed) {
+      _startRun(expanded);
+      return;
+    }
+    // Unknown slash command: treat it as a filter for the command menu.
+    if (trimmed.startsWith('/') && trimmed.length > 1) {
+      _printSlashMenu(trimmed);
+      return;
+    }
+    io.writeln('unknown command: $command (try /help)');
   }
 
   Future<void> _handleMode(String rest) async {
@@ -2104,6 +2159,18 @@ class AgentCli {
     int index,
     int total,
   ) async {
+    _printAskQuestion(question, index, total);
+    if (question.options.isEmpty) return _readFreeTextAnswer();
+    final multiHint = question.multiSelect ? ', m = multi-select' : '';
+    io.writeln(
+      '[ask] 1-${question.options.length} = select$multiHint, '
+      'empty = your own answer, ! = cancel',
+    );
+    return _askSelectOption(question);
+  }
+
+  /// The question header and numbered option list (recommended flagged).
+  void _printAskQuestion(AskQuestion question, int index, int total) {
     final progress = total > 1 ? ' (${index + 1}/$total)' : '';
     io.writeln('[ask] ${question.question}$progress');
     for (var i = 0; i < question.options.length; i++) {
@@ -2116,17 +2183,11 @@ class AgentCli {
         '$suffix',
       );
     }
-    if (question.options.isEmpty) {
-      io.writeln('[ask] type your answer (empty = cancel):');
-      final text = await _nextAskLine();
-      if (text == null || text.isEmpty) return null;
-      return AskAnswer.text(text);
-    }
-    final multiHint = question.multiSelect ? ', m = multi-select' : '';
-    io.writeln(
-      '[ask] 1-${question.options.length} = select$multiHint, '
-      'empty = your own answer, ! = cancel',
-    );
+  }
+
+  /// The single-select loop: a number picks an option, empty input falls
+  /// through to free-text, `m` enters multi-select, `!` cancels.
+  Future<AskAnswer?> _askSelectOption(AskQuestion question) async {
     while (true) {
       final line = await _nextAskLine();
       if (line == null || line == '!') return null;
@@ -2403,23 +2464,32 @@ class AgentCli {
       }
       return;
     }
-    if (filter.isEmpty) {
-      io.writeln(_style.bold('[Commands]'));
-    } else {
-      io.writeln(_style.bold('[Commands matching "$filter"]'));
-    }
+    io.writeln(
+      _style.bold(
+        filter.isEmpty ? '[Commands]' : '[Commands matching "$filter"]',
+      ),
+    );
     for (final entry in entries) {
       final name = entry.key.padRight(18);
       io.writeln('  ${_style.cyan(name)} ${entry.value}');
     }
-    if (_pluginSlashCommands.isNotEmpty && filter.isEmpty) {
+    // Plugin commands, prompt templates, and the steer hint are part of the
+    // full listing only, never of a filtered one.
+    if (filter.isNotEmpty) return;
+    _printHelpExtras();
+  }
+
+  /// The full-listing appendix: plugin commands, prompt templates, and the
+  /// steer hint.
+  void _printHelpExtras() {
+    if (_pluginSlashCommands.isNotEmpty) {
       io.writeln('');
       io.writeln(_style.bold('[Plugin commands]'));
       for (final entry in _pluginSlashCommands.entries) {
         io.writeln('  ${_style.cyan(entry.key)}');
       }
     }
-    if (_templates.isNotEmpty && filter.isEmpty) {
+    if (_templates.isNotEmpty) {
       io.writeln('');
       io.writeln(_style.bold('[Prompt templates]'));
       for (final t in _templates) {
@@ -2427,14 +2497,12 @@ class AgentCli {
         io.writeln('  ${_style.cyan('/${t.name}')} $hint');
       }
     }
-    if (filter.isEmpty) {
-      io.writeln('');
-      io.writeln(
-        _style.dim(
-          'While a run streams, type to steer the agent; Ctrl-C aborts.',
-        ),
-      );
-    }
+    io.writeln('');
+    io.writeln(
+      _style.dim(
+        'While a run streams, type to steer the agent; Ctrl-C aborts.',
+      ),
+    );
   }
 
   void _printSlashMenu(String prefix) {
@@ -2572,63 +2640,9 @@ class AgentCli {
       case MessageStartEvent(:final message):
         if (message is AssistantMessage) _assistantPrefixPrinted = false;
       case MessageUpdateEvent(:final assistantMessageEvent):
-        if (assistantMessageEvent is TextDeltaEvent) {
-          // The answer text starts on its own line after the dimmed
-          // thinking block.
-          if (_streamedThinking && !_streamedText) io.write('\n');
-          _writeAssistantPrefix();
-          io.write(assistantMessageEvent.delta);
-          _streamedText = true;
-        } else if (assistantMessageEvent is ThinkingDeltaEvent && _useTui) {
-          // Reasoning models stream long thinking before any text; showing
-          // it dimmed under the user message is the TUI's progress signal.
-          io.write(_style.dim(assistantMessageEvent.delta));
-          _streamedThinking = true;
-        }
+        _onMessageUpdate(assistantMessageEvent);
       case MessageEndEvent(:final message):
-        if (message is AssistantMessage) {
-          if (_streamedText || _streamedThinking) {
-            // The trailing newline of the streamed text belongs to the
-            // primary channel (write), not to diagnostics (writeln) — a
-            // headless host routes only writeln to stderr.
-            io.write('\n');
-            _streamedText = false;
-            _streamedThinking = false;
-          }
-          switch (message.stopReason) {
-            case StopReason.error:
-              io.writeln(_errorLine(message.errorMessage ?? 'unknown error'));
-            case StopReason.aborted:
-              // A TTSR abort is a rule trigger, not a failure — the
-              // controller already announced it (omp renders a
-              // notification instead of the aborted stop reason).
-              if (!(_ttsr?.isAbortPending ?? false)) {
-                io.writeln('aborted: ${message.errorMessage ?? 'aborted'}');
-              }
-            default:
-              // A tolerated silent truncation (no finish_reason) is flagged
-              // on the message — tell the user the reply may be cut off.
-              if (message.errorMessage != null) {
-                io.writeln(_style.dim('(${message.errorMessage})'));
-                break;
-              }
-              // A turn that ends with neither text nor tool calls leaves the
-              // user staring at silence (seen with OpenRouter free models
-              // that burn the whole completion on reasoning). Say so.
-              final hasText = message.content.any(
-                (c) => c is TextContent && c.text.trim().isNotEmpty,
-              );
-              final hasToolCalls = message.content.any((c) => c is ToolCall);
-              if (!hasText && !hasToolCalls) {
-                io.writeln(
-                  _style.dim(
-                    '(empty response: the model returned no text — '
-                    'it may be rate-limited or reasoning-only)',
-                  ),
-                );
-              }
-          }
-        }
+        if (message is AssistantMessage) _onAssistantMessageEnd(message);
       case ToolExecutionStartEvent(:final toolName, :final args):
         io.writeln(
           '${_style.bold(_style.indigo('[$toolName]'))} '
@@ -2639,23 +2653,102 @@ class AgentCli {
         :final result,
         :final isError,
       ):
-        final tool = _style.bold(_style.indigo('[$toolName]'));
-        if (isError) {
-          final text = result.content
-              .whereType<TextContent>()
-              .map((block) => block.text)
-              .join();
-          var snippet = text.split('\n').first;
-          if (snippet.length > 120) {
-            snippet = '${snippet.substring(0, 120)}...';
-          }
-          io.writeln('$tool ${_style.red('error')}: $snippet');
-        } else {
-          io.writeln('$tool ${_style.teal('done')}');
-        }
+        _onToolExecutionEnd(toolName, result, isError: isError);
       case TurnEndEvent(:final message):
         _usage.add(message.usage);
       default:
+    }
+  }
+
+  /// Streaming deltas: answer text (with the once-per-message prefix) and —
+  /// TUI only — dimmed thinking as the progress signal.
+  void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
+    if (assistantMessageEvent is TextDeltaEvent) {
+      // The answer text starts on its own line after the dimmed
+      // thinking block.
+      if (_streamedThinking && !_streamedText) io.write('\n');
+      _writeAssistantPrefix();
+      io.write(assistantMessageEvent.delta);
+      _streamedText = true;
+    } else if (assistantMessageEvent is ThinkingDeltaEvent && _useTui) {
+      // Reasoning models stream long thinking before any text; showing
+      // it dimmed under the user message is the TUI's progress signal.
+      io.write(_style.dim(assistantMessageEvent.delta));
+      _streamedThinking = true;
+    }
+  }
+
+  /// End of an assistant message: flush the stream newline, then report the
+  /// stop reason (errors, aborts, silent truncations, empty responses).
+  void _onAssistantMessageEnd(AssistantMessage message) {
+    if (_streamedText || _streamedThinking) {
+      // The trailing newline of the streamed text belongs to the
+      // primary channel (write), not to diagnostics (writeln) — a
+      // headless host routes only writeln to stderr.
+      io.write('\n');
+      _streamedText = false;
+      _streamedThinking = false;
+    }
+    switch (message.stopReason) {
+      case StopReason.error:
+        io.writeln(_errorLine(message.errorMessage ?? 'unknown error'));
+      case StopReason.aborted:
+        // A TTSR abort is a rule trigger, not a failure — the
+        // controller already announced it (omp renders a
+        // notification instead of the aborted stop reason).
+        if (!(_ttsr?.isAbortPending ?? false)) {
+          io.writeln('aborted: ${message.errorMessage ?? 'aborted'}');
+        }
+      default:
+        _noteQuietMessageEnd(message);
+    }
+  }
+
+  /// The non-error/non-abort stop reasons: a tolerated silent truncation
+  /// warning, or a note when the turn produced neither text nor tool calls.
+  void _noteQuietMessageEnd(AssistantMessage message) {
+    // A tolerated silent truncation (no finish_reason) is flagged
+    // on the message — tell the user the reply may be cut off.
+    if (message.errorMessage != null) {
+      io.writeln(_style.dim('(${message.errorMessage})'));
+      return;
+    }
+    // A turn that ends with neither text nor tool calls leaves the
+    // user staring at silence (seen with OpenRouter free models
+    // that burn the whole completion on reasoning). Say so.
+    final hasText = message.content.any(
+      (c) => c is TextContent && c.text.trim().isNotEmpty,
+    );
+    final hasToolCalls = message.content.any((c) => c is ToolCall);
+    if (!hasText && !hasToolCalls) {
+      io.writeln(
+        _style.dim(
+          '(empty response: the model returned no text — '
+          'it may be rate-limited or reasoning-only)',
+        ),
+      );
+    }
+  }
+
+  /// Tool result line: a red error snippet or a teal done marker.
+  void _onToolExecutionEnd(
+    String toolName,
+    ToolExecutionResult result, {
+    required bool isError,
+  }) {
+    final tool = _style.bold(_style.indigo('[$toolName]'));
+    if (isError) {
+      final text = result.content
+          .whereType<TextContent>()
+          .map((block) => block.text)
+          .join();
+      var snippet = text.split('\n').first;
+      if (snippet.length > 120) {
+        snippet = '${snippet.substring(0, 120)}...';
+      }
+      io.writeln('$tool ${_style.red('error')}: $snippet');
+    } else {
+      io.writeln('$tool ${_style.teal('done')}');
     }
   }
 

@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -447,49 +448,134 @@ class AppsStore {
   Future<String> readWidgetSource(JsAppInfo app) async =>
       (await _env.readTextFile(app.widgetPath)).getOrThrow();
 
-  /// Copies bundled demo apps (see [seedDemoIds]) into `apps/`. Files are
-  /// refreshed when the bundled content changed (demo apps are samples, not
-  /// user data — custom apps should use their own id). A manifest whose
-  /// `icon` points at an `.svg` file gets that file copied alongside, and a
-  /// manifest with a `"widget"` section gets its tile entry file copied when
-  /// the asset exists.
+  /// File (under the env's `apps/`) recording the content hashes of
+  /// demo-app files AS LAST SEEDED by us. Seeding compares each on-disk
+  /// file against its recorded hash: a mismatch means the user (or the
+  /// agent) took ownership of the file, and the refresh leaves it alone —
+  /// bundled demos update only where nothing was customized. A file whose
+  /// recorded hash is missing (pre-feature installs) and whose content
+  /// differs from the bundle is conservatively treated as user-owned.
+  static const String demoSeedsFile = 'apps/.demo_seeds.json';
+
+  /// Force-restores a demo app's bundled code files (manifest, widget.js,
+  /// tile entry, svg icon) and re-records their seed hashes, so future
+  /// refreshes flow again — the escape hatch for a demo app the user (or
+  /// an agent) customized and wants back to the reference version.
+  /// `storage.json` (the app's user data) is NOT touched. Returns false
+  /// for unknown demo ids.
+  Future<bool> resetDemoApp(String appId) async {
+    if (!seedDemoIds.contains(appId)) return false;
+    await _seedDemoApp(appId, force: true);
+    return true;
+  }
+
+  /// Copies bundled demo apps (see [seedDemoIds]) into `apps/`, refreshing
+  /// files ONLY when the user did not customize them (see [demoSeedsFile]
+  /// for the ownership rule). A manifest whose `icon` points at an `.svg`
+  /// file gets that file copied alongside, and a manifest with a
+  /// `"widget"` section gets its tile entry file copied when the asset
+  /// exists.
   Future<void> seedBundledApps([List<String>? demoIds]) async {
+    final hashes = await _readSeedHashes();
+    var hashesChanged = false;
     for (final id in demoIds ?? seedDemoIds) {
-      final manifest = await _readAsset('$bundledAssetRoot/$id/manifest.json');
-      final widget = await _readAsset('$bundledAssetRoot/$id/widget.js');
-      await _writeIfChanged('apps/$id/manifest.json', manifest);
-      await _writeIfChanged('apps/$id/widget.js', widget);
-      try {
-        final decoded = jsonDecode(manifest);
-        if (decoded is Map<String, Object?>) {
-          final icon = decoded['icon']?.toString() ?? '';
-          if (icon.toLowerCase().endsWith('.svg')) {
-            final svg = await _readAsset('$bundledAssetRoot/$id/$icon');
-            await _writeIfChanged('apps/$id/$icon', svg);
-          }
-          final tile = decoded['widget'];
-          if (tile is Map<String, Object?>) {
-            final entry = JsTileWidgetInfo.fromJson(tile).entry;
-            try {
-              final tileSource = await _readAsset(
-                '$bundledAssetRoot/$id/$entry',
-              );
-              await _writeIfChanged('apps/$id/$entry', tileSource);
-            } on Object {
-              // The manifest declares a tile but no asset ships it — the
-              // tile host will surface the missing file at render time.
-            }
-          }
-        }
-      } on FormatException {
-        // Keep the app even if its manifest doesn't parse.
-      }
+      hashesChanged = await _seedDemoApp(id, hashes: hashes) || hashesChanged;
+    }
+    if (hashesChanged) {
+      await _env.writeFile(demoSeedsFile, jsonEncode(hashes));
     }
   }
 
-  Future<void> _writeIfChanged(String path, String content) async {
-    final existing = await _env.readTextFile(path);
-    if (existing.valueOrNull == content) return;
-    await _env.writeFile(path, content);
+  /// Seeds one demo app; returns true when the hash records changed.
+  /// [hashes] is the shared store mutated in place (omit with [force] to
+  /// persist immediately).
+  Future<bool> _seedDemoApp(
+    String id, {
+    Map<String, Map<String, String>>? hashes,
+    bool force = false,
+  }) async {
+    final ownStore = hashes == null;
+    final store = hashes ?? await _readSeedHashes();
+    var changed = false;
+    final manifest = await _readAsset('$bundledAssetRoot/$id/manifest.json');
+    final widget = await _readAsset('$bundledAssetRoot/$id/widget.js');
+    final files = <String, String>{
+      'manifest.json': manifest,
+      'widget.js': widget,
+    };
+    try {
+      final decoded = jsonDecode(manifest);
+      if (decoded is Map<String, Object?>) {
+        final icon = decoded['icon']?.toString() ?? '';
+        if (icon.toLowerCase().endsWith('.svg')) {
+          files[icon] = await _readAsset('$bundledAssetRoot/$id/$icon');
+        }
+        final tile = decoded['widget'];
+        if (tile is Map<String, Object?>) {
+          final entry = JsTileWidgetInfo.fromJson(tile).entry;
+          try {
+            files[entry] = await _readAsset('$bundledAssetRoot/$id/$entry');
+          } on Object {
+            // The manifest declares a tile but no asset ships it — the
+            // tile host will surface the missing file at render time.
+          }
+        }
+      }
+    } on FormatException {
+      // Keep the app even if its manifest doesn't parse.
+    }
+    final appHashes = store.putIfAbsent(id, () => {});
+    for (final file in files.entries) {
+      final path = 'apps/$id/${file.key}';
+      final bundled = file.value;
+      final newHash = _digest(bundled);
+      final recorded = appHashes[file.key];
+      final current = (await _env.readTextFile(path)).valueOrNull;
+      if (current == bundled) {
+        // Already current — just make sure the hash is recorded.
+        if (recorded != newHash) {
+          appHashes[file.key] = newHash;
+          changed = true;
+        }
+        continue;
+      }
+      final userModified =
+          current != null && (recorded == null || _digest(current) != recorded);
+      if (userModified && !force) {
+        // The user (or the agent) owns this file now — never overwrite.
+        continue;
+      }
+      await _env.writeFile(path, bundled);
+      if (recorded != newHash) {
+        appHashes[file.key] = newHash;
+        changed = true;
+      }
+    }
+    if (ownStore && changed) {
+      await _env.writeFile(demoSeedsFile, jsonEncode(store));
+    }
+    return changed;
   }
+
+  Future<Map<String, Map<String, String>>> _readSeedHashes() async {
+    final text = (await _env.readTextFile(demoSeedsFile)).valueOrNull;
+    if (text == null) return {};
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, Object?>) return {};
+      return {
+        for (final app in decoded.entries)
+          if (app.value is Map<String, Object?>)
+            app.key: {
+              for (final file in (app.value! as Map<String, Object?>).entries)
+                file.key: file.value.toString(),
+            },
+      };
+    } on Object {
+      return {};
+    }
+  }
+
+  static String _digest(String content) =>
+      sha256.convert(utf8.encode(content)).toString();
 }
