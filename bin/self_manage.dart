@@ -142,14 +142,22 @@ int _compareVersions(String a, String b) {
 /// `fa update`: downloads the latest release binary for this platform and
 /// swaps it in (atomic rename on Unix; rename-aside of the locked exe on
 /// Windows). Pub-global installs re-activate; dev runs are refused.
-Future<int> runSelfUpdate({required String currentVersion}) async {
-  final install = _detectInstall();
+///
+/// [detectInstall], [newClient], and [runProcess] are test seams; the
+/// defaults are the real platform behavior.
+Future<int> runSelfUpdate({
+  required String currentVersion,
+  Install Function() detectInstall = _detectInstall,
+  http.Client Function() newClient = http.Client.new,
+  Future<ProcessResult> Function(String, List<String>) runProcess = Process.run,
+}) async {
+  final install = detectInstall();
   if (install.kind == InstallKind.devRun) {
     _warn('fa update works for installed binaries, not source runs.');
     return 1;
   }
 
-  final client = http.Client();
+  final client = newClient();
   try {
     _say('current version: $currentVersion');
     final tag = await _latestTag(client);
@@ -169,7 +177,7 @@ Future<int> runSelfUpdate({required String currentVersion}) async {
       // A stale or half-written snapshot: pub believes a NEWER spec than the
       // running binary, so a plain activate no-ops (or chokes decoding the
       // old snapshot). Force a clean re-activation then.
-      final listed = await Process.run('dart', ['pub', 'global', 'list']);
+      final listed = await runProcess('dart', ['pub', 'global', 'list']);
       final activeVersion = RegExp(
         r'flutter_agent_harness\s+(\d+\.\d+\.\d+)',
       ).firstMatch('${listed.stdout}${listed.stderr}')?.group(1);
@@ -179,7 +187,7 @@ Future<int> runSelfUpdate({required String currentVersion}) async {
           'rebuilding the activated snapshot '
           '(spec $activeVersion, running $currentVersion)…',
         );
-        final deactivate = await Process.run('dart', [
+        final deactivate = await runProcess('dart', [
           'pub',
           'global',
           'deactivate',
@@ -188,7 +196,7 @@ Future<int> runSelfUpdate({required String currentVersion}) async {
         stdout.write(deactivate.stdout);
         stderr.write(deactivate.stderr);
       }
-      final result = await Process.run('dart', [
+      final result = await runProcess('dart', [
         'pub',
         'global',
         'activate',
@@ -237,7 +245,7 @@ Future<int> runSelfUpdate({required String currentVersion}) async {
       File(staging).renameSync(target);
     } else {
       await File(staging).rename(target);
-      await Process.run('chmod', ['+x', target]);
+      await runProcess('chmod', ['+x', target]);
     }
     _say('updated to $latest — restart fa to use it.');
     return 0;
@@ -260,21 +268,29 @@ Future<bool> _confirm(String question) async {
 
 /// `fa uninstall`: confirmation, PATH cleanup, binary removal, and an
 /// optional second confirmation for the `~/.fah` data directory.
-Future<int> runSelfUninstall() async {
-  final install = _detectInstall();
+///
+/// [detectInstall], [confirm], [runProcess], and [environment] are test
+/// seams; the defaults are the real platform behavior.
+Future<int> runSelfUninstall({
+  Install Function() detectInstall = _detectInstall,
+  Future<bool> Function(String) confirm = _confirm,
+  Future<ProcessResult> Function(String, List<String>) runProcess = Process.run,
+  Map<String, String>? environment,
+}) async {
+  final install = detectInstall();
   if (install.kind == InstallKind.devRun) {
     _warn('fa uninstall works for installed binaries, not source runs.');
     return 1;
   }
 
-  if (!await _confirm('Uninstall fa (binary + PATH entry)?')) {
+  if (!await confirm('Uninstall fa (binary + PATH entry)?')) {
     _say('aborted.');
     return 1;
   }
 
   if (install.kind == InstallKind.pubGlobal) {
     _say('deactivating via dart pub global…');
-    final result = await Process.run('dart', [
+    final result = await runProcess('dart', [
       'pub',
       'global',
       'deactivate',
@@ -299,12 +315,12 @@ Future<int> runSelfUninstall() async {
     _say('removed ${install.executable}');
   }
 
-  final home =
-      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+  final env = environment ?? Platform.environment;
+  final home = env['HOME'] ?? env['USERPROFILE'];
   if (home != null && home.isNotEmpty) {
     final dataDir = Directory('$home/.fah');
     if (dataDir.existsSync() &&
-        await _confirm('Also delete $home/.fah (sessions, config, logs)?')) {
+        await confirm('Also delete $home/.fah (sessions, config, logs)?')) {
       dataDir.deleteSync(recursive: true);
       _say('removed ${dataDir.path}');
     } else if (dataDir.existsSync()) {

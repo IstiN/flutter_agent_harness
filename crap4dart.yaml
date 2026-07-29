@@ -1,0 +1,29 @@
+# crap4dart configuration for flutter_agent_harness.
+# https://github.com/IstiN/crap4dart
+#
+# RATCHET: the CRAP threshold is pinned at the current worst score
+# (356.34, `_handleKey` in bin/../tui_repl.dart) — pushes may only make
+# the codebase BETTER, never worse. Lower the threshold whenever the top
+# offenders are fixed (run: dart pub global run crap4dart analyze).
+
+sources: [lib, bin]
+
+exclude:
+  - '**.g.dart'
+  - '**.freezed.dart'
+  - '**.mocks.dart'
+  - 'build/**'
+  - 'vendor/**'
+
+crap:
+  enabled: true
+  # Current max CRAP score in the repo (2026-07-29, after the first
+  # cleanup round dropped it from 356.34). Only down from here.
+  threshold: 65.1
+
+coverage:
+  # scripts/pre-commit regenerates this (dart test --coverage) right
+  # before the CRAP step runs.
+  lcov_path: coverage/lcov.info
+  required: true
+  branch_coverage: true

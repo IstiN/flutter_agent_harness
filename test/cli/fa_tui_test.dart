@@ -13,10 +13,12 @@ void main() {
     void Function()? onInterrupt,
     Map<String, String>? picked,
     List<List<String>>? steered,
+    bool Function()? isShiftPressed,
   }) {
     return FaTuiCallbacks(
       onSubmit: (line) async => submitted.add(line),
       onInterrupt: onInterrupt,
+      isShiftPressed: isShiftPressed,
       opensPicker: (key) => key == '/sessions',
       onPickerSelected: (pickerId, key) async => picked?[pickerId] = key,
       onSteer: (messages) async => steered?.add(messages),
@@ -953,6 +955,227 @@ void main() {
       merged = send(merged, OutputMsg(folded.toString()));
 
       expect(merged.outputLines, separate.outputLines);
+    });
+  });
+
+  group('editing and picker keys', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    FaTuiModel typed(FaTuiModel m, String text) {
+      for (final ch in text.split('')) {
+        m = send(m, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
+      }
+      return m;
+    }
+
+    KeyPressMsg ctrl(String ch) => KeyPressMsg(
+      TeaKey(code: KeyCode.rune, text: ch, modifiers: {KeyMod.ctrl}),
+    );
+
+    test('home/end/right/backspace/delete edit the buffer', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'abc');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
+      expect(model.inputText, 'ac');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.right)));
+      expect(model.cursor, 2);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.home)));
+      expect(model.cursor, 0);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.delete)));
+      expect(model.inputText, 'c');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.end)));
+      expect(model.cursor, 1);
+    });
+
+    test('alt+left and alt+right jump by words', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'foo bar');
+      model = send(
+        model,
+        KeyPressMsg(const TeaKey(code: KeyCode.left, modifiers: {KeyMod.alt})),
+      );
+      expect(model.cursor, 4);
+      model = send(
+        model,
+        KeyPressMsg(const TeaKey(code: KeyCode.right, modifiers: {KeyMod.alt})),
+      );
+      expect(model.cursor, 7);
+    });
+
+    test('ctrl+o inserts a newline at the cursor', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'ab');
+      model = send(model, ctrl('o'));
+      expect(model.inputText, 'ab\n');
+      expect(model.cursor, 3);
+    });
+
+    test('shift+enter inserts a newline when the host reports shift', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(isShiftPressed: () => true),
+        isExited: () => false,
+      );
+      model = typed(model, 'ab');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      expect(model.inputText, 'ab\n');
+      expect(model.cursor, 3);
+    });
+
+    test('ctrl+s submits the input when idle', () async {
+      final submitted = <String>[];
+      var model = FaTuiModel(
+        callbacks: callbacks(submitted: submitted),
+        isExited: () => false,
+      );
+      model = typed(model, 'hi');
+      final result = model.update(ctrl('s'));
+      await result.$2?.call();
+      expect(submitted, ['hi']);
+    });
+
+    test('ctrl+c interrupts and returns a quit command', () {
+      var interrupted = false;
+      final model = FaTuiModel(
+        callbacks: callbacks(onInterrupt: () => interrupted = true),
+        isExited: () => false,
+      );
+      final result = model.update(ctrl('c'));
+      expect(interrupted, isTrue);
+      expect(result.$2, isNotNull);
+    });
+
+    test('generic picker arrows and page keys navigate with clamping', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = send(
+        model,
+        OpenPickerMsg('sessions', 'Sessions', const [
+          MenuItem(key: 'a', label: 'a'),
+          MenuItem(key: 'b', label: 'b'),
+          MenuItem(key: 'c', label: 'c'),
+        ]),
+      );
+      expect(model.menuSelected, 0);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      // Clamped at the last item.
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      expect(model.menuSelected, 2);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.menuSelected, 1);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageDown)));
+      expect(model.menuSelected, 2);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
+      expect(model.menuSelected, 0);
+    });
+
+    test('generic picker backspace is a no-op', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = send(
+        model,
+        OpenPickerMsg('sessions', 'Sessions', const [
+          MenuItem(key: 'a', label: 'a'),
+        ]),
+      );
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
+      expect(model.menuOpen, isTrue);
+      expect(model.menuSelected, 0);
+    });
+
+    test('models picker backspace edits the filter', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, '/models ab');
+      expect(model.modelFilter, 'ab');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
+      expect(model.modelFilter, 'a');
+      expect(model.menuItems.single.key, 'model-a');
+    });
+
+    test('slash menu escape closes it', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, '/');
+      expect(model.menuOpen, isTrue);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
+      expect(model.menuOpen, isFalse);
+    });
+
+    test('slash menu arrows navigate the items', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, '/');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      expect(model.menuSelected, 1);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.menuSelected, 0);
+    });
+
+    test('accepting /model from the slash menu opens the model picker', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, '/');
+      // /help, /exit, /model — select the third.
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      expect(model.pickerId, 'models');
+      expect(model.menuModelMode, isTrue);
+      expect(model.menuItems, hasLength(2));
+    });
+
+    test('slash menu backspace keeps editing the input', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, '/h');
+      expect(model.menuItems, hasLength(1));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
+      expect(model.inputText, '/');
+      expect(model.menuItems, hasLength(4));
+    });
+
+    test('pageDown scrolls the history back down', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termHeight: 12,
+      );
+      for (var i = 0; i < 30; i++) {
+        model = send(model, OutputMsg('line $i', newline: true));
+      }
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
+      final scrolledUp = model.scrollOffset;
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageDown)));
+      expect(model.scrollOffset, greaterThan(scrolledUp));
+    });
+
+    test('paste inserts at the cursor', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'ad');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, PasteMsg('bc'));
+      expect(model.inputText, 'abcd');
+      expect(model.cursor, 3);
+    });
+
+    test('a multi-char rune splits into single key events', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = send(
+        model,
+        KeyPressMsg(TeaKey(code: KeyCode.rune, text: 'paste')),
+      );
+      expect(model.inputText, 'paste');
+      expect(model.cursor, 5);
+    });
+
+    test('resize clamps the scroll offset and requests a clear', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termHeight: 12,
+      );
+      for (var i = 0; i < 30; i++) {
+        model = send(model, OutputMsg('line $i', newline: true));
+      }
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
+      final result = model.update(WindowSizeMsg(120, 20));
+      expect(result.$2, isNotNull);
+      expect((result.$1 as FaTuiModel).termWidth, 120);
     });
   });
 }

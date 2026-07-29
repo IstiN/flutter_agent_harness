@@ -4,6 +4,8 @@
 
 import 'dart:io';
 
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:test/test.dart';
 
 import '../../bin/self_manage.dart';
@@ -73,6 +75,264 @@ void main() {
         executablePath: exe.path,
       );
       expect(install.kind, InstallKind.binary);
+    });
+  });
+
+  group('runSelfUpdate', () {
+    /// A client whose permalink request 302s to the given tag's release page.
+    http.Client redirectToTag(String tag) => MockClient((request) async {
+      if (request.url.host == 'github.com' &&
+          request.url.path.endsWith('/releases/latest')) {
+        return http.Response(
+          '',
+          302,
+          headers: {
+            'location':
+                'https://github.com/IstiN/flutter_agent_harness/'
+                'releases/tag/$tag',
+          },
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    Install binaryInstall(String path) => Install(InstallKind.binary, path);
+
+    test('a dev run is refused', () async {
+      final code = await runSelfUpdate(
+        currentVersion: '0.1.0',
+        detectInstall: () => const Install(InstallKind.devRun, 'bin/fah.dart'),
+      );
+      expect(code, 1);
+    });
+
+    test('already up to date returns 0 without downloading', () async {
+      final client = redirectToTag('v0.1.0');
+      final code = await runSelfUpdate(
+        currentVersion: '0.1.0',
+        detectInstall: () => binaryInstall('${temp.path}/fa'),
+        newClient: () => client,
+      );
+      expect(code, 0);
+    });
+
+    test('unreachable GitHub (API fallback fails) returns 1', () async {
+      final client = MockClient((request) async {
+        if (request.url.host == 'github.com') {
+          return http.Response('', 200); // no location header
+        }
+        return http.Response('rate limited', 403);
+      });
+      final code = await runSelfUpdate(
+        currentVersion: '0.1.0',
+        detectInstall: () => binaryInstall('${temp.path}/fa'),
+        newClient: () => client,
+      );
+      expect(code, 1);
+    });
+
+    test('binary update downloads and swaps the executable', () async {
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/releases/latest')) {
+          return http.Response(
+            '',
+            302,
+            headers: {
+              'location':
+                  'https://github.com/IstiN/flutter_agent_harness/'
+                  'releases/tag/v9.9.9',
+            },
+          );
+        }
+        return http.Response.bytes('new-binary'.codeUnits, 200);
+      });
+      final processes = <List<String>>[];
+      final code = await runSelfUpdate(
+        currentVersion: '0.1.0',
+        detectInstall: () => binaryInstall(target.path),
+        newClient: () => client,
+        runProcess: (exe, args) async {
+          processes.add([exe, ...args]);
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+      expect(code, 0);
+      expect(target.readAsStringSync(), 'new-binary');
+      expect(File('${target.path}.new').existsSync(), isFalse);
+      if (!Platform.isWindows) {
+        expect(processes, [
+          ['chmod', '+x', target.path],
+        ]);
+      }
+    });
+
+    test('a failed download returns 1 and keeps the old binary', () async {
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final client = MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response('{"tag_name": "v9.9.9"}', 200);
+        }
+        if (request.url.path.endsWith('/releases/latest')) {
+          // No location header: exercise the JSON API fallback.
+          return http.Response('', 200);
+        }
+        return http.Response('gone', 404);
+      });
+      final code = await runSelfUpdate(
+        currentVersion: '0.1.0',
+        detectInstall: () => binaryInstall(target.path),
+        newClient: () => client,
+      );
+      expect(code, 1);
+      expect(target.readAsStringSync(), 'old');
+    });
+
+    test(
+      'pub-global update reactivates, rebuilding a stale snapshot',
+      () async {
+        final processes = <List<String>>[];
+        final code = await runSelfUpdate(
+          currentVersion: '0.1.0',
+          detectInstall: () =>
+              const Install(InstallKind.pubGlobal, '/home/.pub-cache/bin/fa'),
+          newClient: () => redirectToTag('v9.9.9'),
+          runProcess: (exe, args) async {
+            processes.add(args);
+            final listOut = args.contains('list')
+                ? 'flutter_agent_harness 0.2.0'
+                : '';
+            return ProcessResult(0, 0, listOut, '');
+          },
+        );
+        expect(code, 0);
+        // The 0.2.0 spec is newer than the running 0.1.0: deactivate first.
+        expect(processes[0], ['pub', 'global', 'list']);
+        expect(processes[1], [
+          'pub',
+          'global',
+          'deactivate',
+          'flutter_agent_harness',
+        ]);
+        expect(processes[2], [
+          'pub',
+          'global',
+          'activate',
+          'flutter_agent_harness',
+        ]);
+      },
+    );
+
+    test(
+      'pub-global update without a stale snapshot skips deactivate',
+      () async {
+        final processes = <List<String>>[];
+        final code = await runSelfUpdate(
+          currentVersion: '0.1.0',
+          detectInstall: () =>
+              const Install(InstallKind.pubGlobal, '/home/.pub-cache/bin/fa'),
+          newClient: () => redirectToTag('v9.9.9'),
+          runProcess: (exe, args) async {
+            processes.add(args);
+            final listOut = args.contains('list')
+                ? 'flutter_agent_harness 0.1.0'
+                : '';
+            return ProcessResult(0, 0, listOut, '');
+          },
+        );
+        expect(code, 0);
+        expect(processes.length, 2);
+        expect(processes[1], [
+          'pub',
+          'global',
+          'activate',
+          'flutter_agent_harness',
+        ]);
+      },
+    );
+  });
+
+  group('runSelfUninstall', () {
+    test('a dev run is refused', () async {
+      final code = await runSelfUninstall(
+        detectInstall: () => const Install(InstallKind.devRun, 'bin/fah.dart'),
+      );
+      expect(code, 1);
+    });
+
+    test('declining the confirmation aborts', () async {
+      final code = await runSelfUninstall(
+        detectInstall: () => Install(InstallKind.binary, '${temp.path}/fa'),
+        confirm: (question) async => false,
+      );
+      expect(code, 1);
+    });
+
+    test('pub-global uninstall deactivates via pub', () async {
+      final processes = <List<String>>[];
+      final code = await runSelfUninstall(
+        detectInstall: () =>
+            const Install(InstallKind.pubGlobal, '/home/.pub-cache/bin/fa'),
+        confirm: (question) async => true,
+        runProcess: (exe, args) async {
+          processes.add(args);
+          return ProcessResult(0, 0, '', '');
+        },
+        environment: const {},
+      );
+      expect(code, 0);
+      expect(processes, [
+        ['pub', 'global', 'deactivate', 'flutter_agent_harness'],
+      ]);
+    });
+
+    test(
+      'binary uninstall removes the executable and a confirmed data dir',
+      () async {
+        final exe = File('${temp.path}/fa')..writeAsStringSync('bin');
+        final home = Directory('${temp.path}/home')..createSync();
+        final dataDir = Directory('${home.path}/.fah')..createSync();
+        File('${dataDir.path}/config.yaml').writeAsStringSync('x');
+        final code = await runSelfUninstall(
+          detectInstall: () => Install(InstallKind.binary, exe.path),
+          confirm: (question) async => true,
+          environment: {'HOME': home.path},
+        );
+        expect(code, 0);
+        expect(exe.existsSync(), isFalse);
+        expect(dataDir.existsSync(), isFalse);
+      },
+    );
+
+    test('binary uninstall keeps the data dir when declined', () async {
+      final exe = File('${temp.path}/fa')..writeAsStringSync('bin');
+      final home = Directory('${temp.path}/home')..createSync();
+      final dataDir = Directory('${home.path}/.fah')..createSync();
+      var asks = 0;
+      final code = await runSelfUninstall(
+        detectInstall: () => Install(InstallKind.binary, exe.path),
+        confirm: (question) async => asks++ == 0,
+        environment: {'HOME': home.path},
+      );
+      expect(code, 0);
+      expect(exe.existsSync(), isFalse);
+      expect(dataDir.existsSync(), isTrue);
+    });
+
+    test('no data dir means no second confirmation', () async {
+      final exe = File('${temp.path}/fa')..writeAsStringSync('bin');
+      final home = Directory('${temp.path}/home')..createSync();
+      var asks = 0;
+      final code = await runSelfUninstall(
+        detectInstall: () => Install(InstallKind.binary, exe.path),
+        confirm: (question) async {
+          asks++;
+          return true;
+        },
+        environment: {'HOME': home.path},
+      );
+      expect(code, 0);
+      expect(asks, 1);
     });
   });
 }

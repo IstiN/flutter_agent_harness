@@ -365,4 +365,193 @@ void main() {
     await run;
     expect(h.out.toString(), contains('\x1b[?1049l'));
   });
+
+  test('cursor motion and editing keys edit the buffer', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    for (final ch in 'abc'.split('')) {
+      h.input.add(KeyEvent(char: ch, type: KeyType.char));
+    }
+    await h.pump();
+    h.input.add(const KeyEvent(type: KeyType.left));
+    h.input.add(const KeyEvent(type: KeyType.left));
+    await h.pump();
+    // Cursor on 'b': backspace deletes 'a'.
+    h.input.add(const KeyEvent(type: KeyType.backspace));
+    await h.pump();
+    // Append at the end.
+    h.input.add(const KeyEvent(type: KeyType.end));
+    h.input.add(const KeyEvent(char: 'd', type: KeyType.char));
+    await h.pump();
+    // Home + delete removes the leading 'b'.
+    h.input.add(const KeyEvent(type: KeyType.home));
+    h.input.add(const KeyEvent(type: KeyType.delete));
+    await h.pump();
+    // Right past the end is a no-op; submit what remains.
+    h.input.add(const KeyEvent(type: KeyType.right));
+    h.input.add(const KeyEvent(type: KeyType.right));
+    h.input.add(const KeyEvent(type: KeyType.enter));
+    await h.pump();
+
+    await h.finish();
+    await run;
+
+    expect(h.submitted, ['cd']);
+  });
+
+  test('unknown keys are ignored', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.input.add(const KeyEvent(type: KeyType.unknown));
+    h.input.add(const KeyEvent(char: 'a', type: KeyType.char));
+    h.input.add(const KeyEvent(type: KeyType.enter));
+    await h.pump();
+
+    await h.finish();
+    await run;
+
+    expect(h.submitted, ['a']);
+  });
+
+  test('tab accepts the selected slash command', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.input.add(const KeyEvent(char: '/', type: KeyType.char));
+    await h.pump();
+    h.input.add(const KeyEvent(type: KeyType.tab));
+    await h.pump();
+    h.input.add(const KeyEvent(type: KeyType.enter));
+    await h.pump();
+
+    await h.finish();
+    await run;
+
+    expect(h.submitted, ['/help']);
+  });
+
+  test(
+    'slash menu arrows, shiftTab, and page keys move the selection',
+    () async {
+      final h = _Harness();
+      final run = h.repl.run(h.input.stream);
+
+      h.input.add(const KeyEvent(char: '/', type: KeyType.char));
+      await h.pump();
+      h.input.add(const KeyEvent(type: KeyType.pageDown));
+      await h.pump();
+      // Last item is /model: pageUp + down lands on /exit.
+      h.input.add(const KeyEvent(type: KeyType.pageUp));
+      h.input.add(const KeyEvent(type: KeyType.down));
+      await h.pump();
+      // up then shiftTab return to the first item, down again to /exit.
+      h.input.add(const KeyEvent(type: KeyType.up));
+      h.input.add(const KeyEvent(type: KeyType.shiftTab));
+      h.input.add(const KeyEvent(type: KeyType.down));
+      await h.pump();
+      h.input.add(const KeyEvent(type: KeyType.enter));
+      await h.pump();
+      h.input.add(const KeyEvent(type: KeyType.enter));
+      await h.pump();
+
+      await h.finish();
+      await run;
+
+      expect(h.submitted, ['/exit']);
+    },
+  );
+
+  test('model picker backspace edits the filter', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.openModelMenu();
+    await h.pump();
+    h.input.add(const KeyEvent(char: 'b', type: KeyType.char));
+    await h.pump();
+    expect(h.out.toString(), contains('[Select model: b]'));
+
+    h.input.add(const KeyEvent(type: KeyType.backspace));
+    await h.pump();
+    // The filter is cleared: the latest title redraw has no ': b' suffix.
+    final output = h.out.toString();
+    final lastTitle = output.lastIndexOf('[Select model');
+    expect(lastTitle, greaterThanOrEqualTo(0));
+    expect(output.substring(lastTitle, lastTitle + 14), '[Select model]');
+
+    await h.finish();
+    await run;
+  });
+
+  test('model picker escape closes the picker', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.openModelMenu();
+    await h.pump();
+    expect(h.out.toString(), contains('[Select model]'));
+
+    h.input.add(const KeyEvent(type: KeyType.escape));
+    await h.pump();
+    final lastFrame = h.out.toString().split('\x1b[?2026l').last;
+    expect(lastFrame, isNot(contains('[Select model]')));
+
+    await h.finish();
+    await run;
+  });
+
+  test('model picker navigation clamps and page keys jump', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.openModelMenu();
+    await h.pump();
+    // up at the top stays; pageDown jumps to the last item; down clamps.
+    h.input.add(const KeyEvent(type: KeyType.up));
+    h.input.add(const KeyEvent(type: KeyType.pageDown));
+    h.input.add(const KeyEvent(type: KeyType.down));
+    await h.pump();
+    // pageUp + shiftTab stay at the top; down selects model-b.
+    h.input.add(const KeyEvent(type: KeyType.pageUp));
+    h.input.add(const KeyEvent(type: KeyType.shiftTab));
+    h.input.add(const KeyEvent(type: KeyType.down));
+    await h.pump();
+    h.input.add(const KeyEvent(type: KeyType.enter));
+    await h.pump();
+
+    await h.finish();
+    await run;
+
+    expect(h.selectedModels, ['model-b']);
+  });
+
+  test('model picker ignores editing and unknown keys', () async {
+    final h = _Harness();
+    final run = h.repl.run(h.input.stream);
+
+    h.repl.openModelMenu();
+    await h.pump();
+    for (final type in [
+      KeyType.home,
+      KeyType.end,
+      KeyType.left,
+      KeyType.right,
+      KeyType.delete,
+      KeyType.unknown,
+    ]) {
+      h.input.add(KeyEvent(type: type));
+    }
+    await h.pump();
+    // Still open and functional.
+    h.input.add(const KeyEvent(type: KeyType.down));
+    h.input.add(const KeyEvent(type: KeyType.enter));
+    await h.pump();
+
+    await h.finish();
+    await run;
+
+    expect(h.selectedModels, ['model-b']);
+  });
 }

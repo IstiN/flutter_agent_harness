@@ -2,7 +2,7 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  QUALITY GATE — DO NOT LOWER THESE THRESHOLDS WITHOUT TEAM APPROVAL       ║
 # ║  Every commit must pass: file size, analyze, tests, coverage ≥ 80%,       ║
-# ║  duplication < 1%.                                                        ║
+# ║  CRAP ratchet (crap4dart.yaml), duplication < 1%.                         ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 # Pre-commit hook for flutter_agent_harness (pure Dart package).
@@ -92,7 +92,29 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5. CODE DUPLICATION GUARD
+# 5. CRAP RATCHET (complexity × coverage; threshold pinned in crap4dart.yaml)
+# ═══════════════════════════════════════════════════════════════════════════
+if command -v dart >/dev/null 2>&1 && \
+   dart pub global run crap4dart --version >/dev/null 2>&1; then
+  echo "🔍 Checking CRAP scores (ratchet: only down from the pinned max)..."
+  # Reuses the fresh coverage/lcov.info produced above.
+  if dart pub global run crap4dart analyze; then
+    echo "✅ CRAP gate OK"
+  else
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════════════════╗"
+    echo "║  ❌ QUALITY GATE FAILED — CRAP RATCHET                                    ║"
+    echo "╚═══════════════════════════════════════════════════════════════════════════╝"
+    echo "   A method's CRAP score exceeded the pinned max in crap4dart.yaml."
+    echo "   Simplify it or add tests — the threshold only goes DOWN."
+    exit 1
+  fi
+else
+  echo "⚠️  crap4dart not activated (dart pub global activate crap4dart 0.1.1) — skipping CRAP gate"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 6. CODE DUPLICATION GUARD
 # ═══════════════════════════════════════════════════════════════════════════
 if command -v jscpd >/dev/null 2>&1; then
   echo "🔍 Checking code duplication (thresholds: core < ${DUP_THRESHOLD}%, flutter_app < ${DUP_THRESHOLD_APP}%)..."

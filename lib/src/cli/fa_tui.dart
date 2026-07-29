@@ -595,92 +595,8 @@ final class FaTuiModel extends TeaModel {
   }
 
   (Model, Cmd?) _handleKey(KeyMsg msg) {
-    // Picker mode: arrows navigate, enter/tab select, esc closes. Only the
-    // models picker has a type-to-filter input; generic pickers (sessions,
-    // mode, approval, ...) navigate a static item list.
-    if (menuOpen && menuModelMode) {
-      final isModelsPicker = pickerId == 'models';
-      switch (msg.key) {
-        case 'esc':
-          if (!isModelsPicker && pickerId.isNotEmpty) {
-            callbacks.onPickerCancelled?.call(pickerId);
-          }
-          return (copyWith(menuOpen: false, modelFilter: ''), null);
-        case 'up':
-          return (
-            copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
-            null,
-          );
-        case 'down':
-          return (
-            copyWith(
-              menuSelected: menuSelected < menuItems.length - 1
-                  ? menuSelected + 1
-                  : menuSelected,
-            ),
-            null,
-          );
-        case 'pgup':
-          return (copyWith(menuSelected: 0), null);
-        case 'pgdown':
-          return (
-            copyWith(
-              menuSelected: menuItems.isEmpty ? 0 : menuItems.length - 1,
-            ),
-            null,
-          );
-        case 'backspace':
-          if (isModelsPicker && modelFilter.isNotEmpty) {
-            final nextFilter = modelFilter.substring(0, modelFilter.length - 1);
-            return (
-              copyWith(
-                modelFilter: nextFilter,
-                menuItems: callbacks.buildModelMenu(nextFilter),
-                menuSelected: 0,
-              ),
-              null,
-            );
-          }
-          return (this, null);
-        case 'enter':
-        case 'tab':
-          if (menuItems.isEmpty) return (this, null);
-          final item = menuItems[menuSelected];
-          if (item.key.isEmpty) return (this, null);
-          return (
-            copyWith(
-              menuOpen: false,
-              modelFilter: '',
-              inputText: '',
-              cursor: 0,
-            ),
-            () async {
-              if (isModelsPicker) {
-                await callbacks.onModelSelected(item.key);
-              } else {
-                await callbacks.onPickerSelected?.call(pickerId, item.key);
-              }
-              return null;
-            },
-          );
-        default:
-          if (!isModelsPicker) return (this, null);
-          final text = msg.keyEvent.text;
-          if (text.isNotEmpty && text.length == 1) {
-            if (text == ' ' && modelFilter.isEmpty) return (this, null);
-            final nextFilter = modelFilter + text;
-            return (
-              copyWith(
-                modelFilter: nextFilter,
-                menuItems: callbacks.buildModelMenu(nextFilter),
-                menuSelected: 0,
-              ),
-              null,
-            );
-          }
-          return (this, null);
-      }
-    }
+    // Picker mode: arrows navigate, enter/tab select, esc closes.
+    if (menuOpen && menuModelMode) return _handlePickerKey(msg);
 
     // Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
     // typing keeps editing the input so `/models` can be typed in full.
@@ -918,6 +834,86 @@ final class FaTuiModel extends TeaModel {
           return (
             _updateMenuForInput(
               copyWith(inputText: nextText, cursor: nextCursor),
+            ),
+            null,
+          );
+        }
+        return (this, null);
+    }
+  }
+
+  /// Picker mode: arrows navigate, enter/tab select, esc closes. Only the
+  /// models picker has a type-to-filter input; generic pickers (sessions,
+  /// mode, approval, ...) navigate a static item list.
+  (Model, Cmd?) _handlePickerKey(KeyMsg msg) {
+    final isModelsPicker = pickerId == 'models';
+    switch (msg.key) {
+      case 'esc':
+        if (!isModelsPicker && pickerId.isNotEmpty) {
+          callbacks.onPickerCancelled?.call(pickerId);
+        }
+        return (copyWith(menuOpen: false, modelFilter: ''), null);
+      case 'up':
+        return (
+          copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
+          null,
+        );
+      case 'down':
+        return (
+          copyWith(
+            menuSelected: menuSelected < menuItems.length - 1
+                ? menuSelected + 1
+                : menuSelected,
+          ),
+          null,
+        );
+      case 'pgup':
+        return (copyWith(menuSelected: 0), null);
+      case 'pgdown':
+        return (
+          copyWith(menuSelected: menuItems.isEmpty ? 0 : menuItems.length - 1),
+          null,
+        );
+      case 'backspace':
+        if (isModelsPicker && modelFilter.isNotEmpty) {
+          final nextFilter = modelFilter.substring(0, modelFilter.length - 1);
+          return (
+            copyWith(
+              modelFilter: nextFilter,
+              menuItems: callbacks.buildModelMenu(nextFilter),
+              menuSelected: 0,
+            ),
+            null,
+          );
+        }
+        return (this, null);
+      case 'enter':
+      case 'tab':
+        if (menuItems.isEmpty) return (this, null);
+        final item = menuItems[menuSelected];
+        if (item.key.isEmpty) return (this, null);
+        return (
+          copyWith(menuOpen: false, modelFilter: '', inputText: '', cursor: 0),
+          () async {
+            if (isModelsPicker) {
+              await callbacks.onModelSelected(item.key);
+            } else {
+              await callbacks.onPickerSelected?.call(pickerId, item.key);
+            }
+            return null;
+          },
+        );
+      default:
+        if (!isModelsPicker) return (this, null);
+        final text = msg.keyEvent.text;
+        if (text.isNotEmpty && text.length == 1) {
+          if (text == ' ' && modelFilter.isEmpty) return (this, null);
+          final nextFilter = modelFilter + text;
+          return (
+            copyWith(
+              modelFilter: nextFilter,
+              menuItems: callbacks.buildModelMenu(nextFilter),
+              menuSelected: 0,
             ),
             null,
           );

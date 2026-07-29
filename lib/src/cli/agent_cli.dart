@@ -61,6 +61,8 @@ import '../web_search/web_search.dart';
 // of the root library get a no-op stub with the same host-facing API.
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
 import 'prompt_templates.dart';
+import 'slash_menu.dart';
+import 'tui_replay.dart';
 import 'tui_repl.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
@@ -863,49 +865,7 @@ class AgentCli {
     late final FaTuiController controller;
     controller = FaTuiController(
       callbacks: FaTuiCallbacks(
-        onSubmit: (line) async {
-          controller.sendBusy(true);
-          try {
-            await _handleLine(line);
-            // Runs are fire-and-forget (_startRun only records the future):
-            // wait for the run to actually settle so the busy spinner lives
-            // for the whole stream instead of flashing for one frame.
-            await _settled;
-            // Drain queued messages one-by-one as separate turns (kimi-cli
-            // semantics), capped to bound a self-sustaining queue; an Esc
-            // abort discards the queue instead of starting new work.
-            var drainedRounds = 0;
-            for (;;) {
-              final queued = await controller.drainQueue();
-              if (queued.isEmpty) break;
-              if (_abortRequested || drainedRounds >= 20) {
-                io.writeln('queued message(s) dropped');
-                break;
-              }
-              drainedRounds++;
-              for (final msg in queued) {
-                await _handleLine(msg);
-                await _settled;
-                if (_abortRequested) break;
-              }
-            }
-          } finally {
-            _abortRequested = false;
-            controller.sendBusy(false);
-          }
-          // `/exit` marks the session exited during handling. Quit in a later
-          // event-loop batch: dart_tui drains the whole queue before rendering
-          // and skips the render when a quit lands in the same batch, which
-          // would swallow the farewell output just pushed above.
-          if (_exited) {
-            unawaited(
-              Future<void>.delayed(
-                const Duration(milliseconds: 100),
-                controller.sendQuit,
-              ),
-            );
-          }
-        },
+        onSubmit: (line) => _handleTuiSubmit(controller, line),
         onModelSelected: _tuiSelectModel,
         buildSlashMenu: _buildSlashMenu,
         buildModelMenu: _buildModelMenu,
@@ -956,83 +916,131 @@ class AgentCli {
     _tuiController = null;
   }
 
-  List<MenuItem> _buildSlashMenu(String prefix) {
-    final lower = prefix.toLowerCase();
-    final items = <MenuItem>[];
-    for (final entry in _slashCommands.entries) {
-      if (entry.key.toLowerCase().contains(lower) ||
-          entry.value.toLowerCase().contains(lower)) {
-        items.add(
-          MenuItem(key: entry.key, label: entry.key, description: entry.value),
-        );
-      }
+  /// A TUI submit: runs the line, waits for the run to settle, drains the
+  /// queued messages, and schedules the quit when `/exit` marked the
+  /// session exited.
+  Future<void> _handleTuiSubmit(FaTuiController controller, String line) async {
+    controller.sendBusy(true);
+    try {
+      await _handleLine(line);
+      // Runs are fire-and-forget (_startRun only records the future):
+      // wait for the run to actually settle so the busy spinner lives
+      // for the whole stream instead of flashing for one frame.
+      await _settled;
+      await _drainTuiQueue(controller);
+    } finally {
+      _abortRequested = false;
+      controller.sendBusy(false);
     }
-    for (final entry in _pluginSlashCommands.entries) {
-      if (entry.key.toLowerCase().contains(lower)) {
-        items.add(MenuItem(key: entry.key, label: entry.key));
-      }
+    // `/exit` marks the session exited during handling. Quit in a later
+    // event-loop batch: dart_tui drains the whole queue before rendering
+    // and skips the render when a quit lands in the same batch, which
+    // would swallow the farewell output just pushed above.
+    if (_exited) {
+      unawaited(
+        Future<void>.delayed(
+          const Duration(milliseconds: 100),
+          controller.sendQuit,
+        ),
+      );
     }
-    for (final t in _templates) {
-      final name = '/${t.name}';
-      if (name.toLowerCase().contains(lower)) {
-        items.add(
-          MenuItem(key: name, label: name, description: t.argumentHint ?? ''),
-        );
-      }
-    }
-    return items;
   }
+
+  /// Drains queued messages one-by-one as separate turns (kimi-cli
+  /// semantics), capped to bound a self-sustaining queue; an Esc abort
+  /// discards the queue instead of starting new work.
+  Future<void> _drainTuiQueue(FaTuiController controller) async {
+    var drainedRounds = 0;
+    for (;;) {
+      final queued = await controller.drainQueue();
+      if (queued.isEmpty) break;
+      if (_abortRequested || drainedRounds >= 20) {
+        io.writeln('queued message(s) dropped');
+        break;
+      }
+      drainedRounds++;
+      await _drainTuiRound(queued);
+    }
+  }
+
+  /// One drain round: every queued message as its own turn, stopping early
+  /// when an Esc abort discards the rest of the queue.
+  Future<void> _drainTuiRound(List<String> queued) async {
+    for (final msg in queued) {
+      await _handleLine(msg);
+      await _settled;
+      if (_abortRequested) break;
+    }
+  }
+
+  List<MenuItem> _buildSlashMenu(String prefix) => buildSlashMenuItems(
+    prefix,
+    slashCommands: _slashCommands,
+    pluginSlashCommands: _pluginSlashCommands,
+    templates: _templates,
+  );
 
   /// Routes a generic TUI picker selection (sessions/mode/approval) to the
   /// same handlers the typed slash command would use.
   Future<void> _tuiPickerSelected(String pickerId, String key) async {
     // Wizard pickers (a guided flow's multiple-choice questions) complete
     // their pending answer instead of the command handlers.
-    final wizard = _wizardPickerAnswer;
-    if (wizard != null && pickerId.startsWith('wizard:')) {
-      if (!wizard.isCompleted) wizard.complete(key);
-      _wizardPickerAnswer = null;
-      return;
-    }
+    if (_completeWizardPicker(pickerId, key)) return;
     switch (pickerId) {
       case 'sessions':
-        final index = int.tryParse(key);
-        final list = _lastSessionList;
-        if (index != null &&
-            list != null &&
-            index >= 0 &&
-            index < list.length) {
-          final metadata = list[index];
-          final session = await _repo.open(metadata);
-          final label = await session.getSessionName() ?? metadata.id;
-          await _switchToMetadata(metadata, label);
-        }
+        await _tuiPickSession(key);
       case 'mode':
         await _switchMode(key);
       case 'approval':
         _handleApprovalMode(key);
       case 'provider':
-        if (key == 'custom') {
-          _startProviderFlow();
-        } else if (key.startsWith('saved:')) {
-          final entry = config.customProviders?.find(
-            key.substring('saved:'.length),
-          );
-          if (entry != null) await _switchToSavedProvider(entry);
-        } else {
-          await _handleProviderCommand(key);
-        }
+        await _tuiPickProvider(key);
+    }
+  }
+
+  /// Completes the pending wizard-picker answer for [pickerId] (null [key]
+  /// = dismissed with Esc); returns whether a wizard was waiting.
+  bool _completeWizardPicker(String pickerId, String? key) {
+    final wizard = _wizardPickerAnswer;
+    if (wizard == null || !pickerId.startsWith('wizard:')) return false;
+    if (!wizard.isCompleted) wizard.complete(key);
+    _wizardPickerAnswer = null;
+    return true;
+  }
+
+  /// A sessions-picker selection: the key is the index into the most recent
+  /// `/sessions` listing.
+  Future<void> _tuiPickSession(String key) async {
+    final index = int.tryParse(key);
+    final list = _lastSessionList;
+    if (index != null && list != null && index >= 0 && index < list.length) {
+      final metadata = list[index];
+      final session = await _repo.open(metadata);
+      final label = await session.getSessionName() ?? metadata.id;
+      await _switchToMetadata(metadata, label);
+    }
+  }
+
+  /// A provider-picker selection: `custom` starts the guided flow,
+  /// `saved:<name>` switches to a saved custom provider, anything else is a
+  /// catalog provider name.
+  Future<void> _tuiPickProvider(String key) async {
+    if (key == 'custom') {
+      _startProviderFlow();
+    } else if (key.startsWith('saved:')) {
+      final entry = config.customProviders?.find(
+        key.substring('saved:'.length),
+      );
+      if (entry != null) await _switchToSavedProvider(entry);
+    } else {
+      await _handleProviderCommand(key);
     }
   }
 
   /// A generic picker dismissed with Esc: wizard pickers resolve their
   /// pending answer as cancelled (the flow then aborts cleanly).
   void _tuiPickerCancelled(String pickerId) {
-    final wizard = _wizardPickerAnswer;
-    if (wizard != null && pickerId.startsWith('wizard:')) {
-      if (!wizard.isCompleted) wizard.complete(null);
-      _wizardPickerAnswer = null;
-    }
+    _completeWizardPicker(pickerId, null);
   }
 
   /// The sessions shown by the most recent `/sessions` picker, so a picker
@@ -1277,50 +1285,14 @@ class AgentCli {
     return message.content.whereType<ToolCall>().isNotEmpty;
   }
 
-  /// TUI-mode replay entry in the ACTIVE session's format: the user message
-  /// as the same background echo box the TUI draws at submit time, the
-  /// assistant text as raw markdown ([AnsiMarkdown] styles it at render
-  /// time, exactly like a live stream), and the tool calls of a
-  /// text-bearing message as one dim indicator row. Call-only assistant
-  /// messages collapse through the pending-runs machinery instead.
-  List<String> _replayLinesTui(Message message) {
-    const maxRows = 20;
-    final width = io.columns > 0 ? io.columns : 80;
-    switch (message) {
-      case UserMessage(:final content):
-        final text = content is String
-            ? content
-            : (content as List<ContentBlock>)
-                  .whereType<TextContent>()
-                  .map((b) => b.text)
-                  .join('\n');
-        if (text.trim().isEmpty) return const [];
-        const bg = '\x1b[48;2;30;34;42m';
-        const reset = '\x1b[0m';
-        return [
-          _style.dim('─' * width),
-          for (final line in text.split('\n')) '$bg$line$reset',
-          '',
-        ];
-      case AssistantMessage(:final content):
-        final texts = content
-            .whereType<TextContent>()
-            .map((b) => b.text)
-            .join('\n')
-            .trim();
-        if (texts.isEmpty) return const [];
-        final rows = texts.split('\n');
-        final head = rows.take(maxRows).toList();
-        if (rows.length > maxRows) head[head.length - 1] = '${head.last} …';
-        final calls = content
-            .whereType<ToolCall>()
-            .map((c) => '[${c.name}]')
-            .join(' ');
-        return [...head, if (calls.isNotEmpty) _style.dim(calls)];
-      default:
-        return const [];
-    }
-  }
+  /// TUI-mode replay entry in the ACTIVE session's format — see
+  /// [replayLinesTui]; the width follows the terminal and dimming the CLI
+  /// style.
+  List<String> _replayLinesTui(Message message) => replayLinesTui(
+    message,
+    width: io.columns > 0 ? io.columns : 80,
+    dim: _style.dim,
+  );
 
   /// One compact replay entry (≤ [maxRows] rows), or none for messages the
   /// replay skips (tool results — their calls are already shown).

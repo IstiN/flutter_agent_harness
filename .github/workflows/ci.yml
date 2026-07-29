@@ -71,6 +71,11 @@ jobs:
       - name: Coverage ratchet (lib/ >= 80%)
         run: python3 scripts/check_coverage.py 80
 
+      - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
+        run: |
+          dart pub global activate crap4dart 0.1.1
+          dart pub global run crap4dart analyze
+
       - name: Duplication guard (lib/ < 1%)
         run: |
           npx --yes jscpd@5 --min-tokens 50 --min-lines 5 --reporters json \

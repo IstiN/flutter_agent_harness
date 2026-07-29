@@ -1311,4 +1311,242 @@ void main() {
       expect(jsonEncode(roundTripped.toJson()), jsonEncode(context.toJson()));
     });
   });
+
+  group('message conversion', () {
+    /// Streams [context] through a capturing client and returns the decoded
+    /// request body.
+    Future<Map<String, dynamic>> sentBody(Model model, Context context) async {
+      Map<String, dynamic>? body;
+      final client = http_testing.MockClient.streaming((
+        request,
+        requestBody,
+      ) async {
+        body =
+            jsonDecode(await requestBody.bytesToString())
+                as Map<String, dynamic>;
+        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+      });
+      final stream = streamOpenAICompletions(
+        model,
+        context,
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+      await stream.result;
+      return body!;
+    }
+
+    List<dynamic> messagesOf(Map<String, dynamic> body) =>
+        body['messages'] as List<dynamic>;
+
+    test('pipe-separated tool call ids reduce to the call id part', () async {
+      final body = await sentBody(
+        testModel,
+        Context(
+          messages: [
+            AssistantMessage(
+              content: const [
+                ToolCall(id: 'call_abc|rest', name: 'read', arguments: {}),
+              ],
+              api: 'openai-completions',
+              provider: 'openai',
+              model: 'gpt-4o-mini',
+              usage: Usage.zero,
+              stopReason: StopReason.toolUse,
+              timestamp: DateTime.utc(2026),
+            ),
+            ToolResultMessage(
+              toolCallId: 'call_abc|rest',
+              toolName: 'read',
+              content: const [TextContent(text: 'done')],
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        ),
+      );
+      final messages = messagesOf(body);
+      final toolCalls =
+          (messages[0] as Map<String, dynamic>)['tool_calls'] as List<dynamic>;
+      expect((toolCalls.single as Map<String, dynamic>)['id'], 'call_abc');
+      expect((messages[1] as Map<String, dynamic>)['tool_call_id'], 'call_abc');
+    });
+
+    test(
+      'thinking and tool call blocks are skipped in user messages',
+      () async {
+        final body = await sentBody(
+          testModel,
+          Context(
+            messages: [
+              UserMessage(
+                content: const [
+                  TextContent(text: 'hi'),
+                  ThinkingContent(thinking: 'not valid here'),
+                  ToolCall(id: 'c1', name: 'read', arguments: {}),
+                ],
+                timestamp: DateTime.utc(2026),
+              ),
+            ],
+          ),
+        );
+        expect(messagesOf(body), [
+          {
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': 'hi'},
+            ],
+          },
+        ]);
+      },
+    );
+
+    test('assistant thinking is sent under the signature key', () async {
+      final body = await sentBody(
+        testModel,
+        Context(
+          messages: [
+            AssistantMessage(
+              content: const [
+                TextContent(text: 'answer'),
+                ThinkingContent(
+                  thinking: 'hmm',
+                  thinkingSignature: 'reasoning_content',
+                ),
+              ],
+              api: 'openai-completions',
+              provider: 'openai',
+              model: 'gpt-4o-mini',
+              usage: Usage.zero,
+              stopReason: StopReason.stop,
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        ),
+      );
+      final assistant = messagesOf(body).single as Map<String, dynamic>;
+      expect(assistant['content'], 'answer');
+      expect(assistant['reasoning_content'], 'hmm');
+    });
+
+    test('decodable thought signatures add reasoning_details', () async {
+      final body = await sentBody(
+        testModel,
+        Context(
+          messages: [
+            AssistantMessage(
+              content: const [
+                ToolCall(
+                  id: 'c1',
+                  name: 'read',
+                  arguments: {},
+                  thoughtSignature: '{"type":"reasoning.text"}',
+                ),
+              ],
+              api: 'openai-completions',
+              provider: 'openai',
+              model: 'gpt-4o-mini',
+              usage: Usage.zero,
+              stopReason: StopReason.toolUse,
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        ),
+      );
+      final assistant = messagesOf(body).single as Map<String, dynamic>;
+      expect(assistant['reasoning_details'], [
+        {'type': 'reasoning.text'},
+      ]);
+    });
+
+    test(
+      'an assistant message with neither content nor tool calls is skipped',
+      () async {
+        final body = await sentBody(
+          testModel,
+          Context(
+            messages: [
+              UserMessage.text('hi', timestamp: DateTime.utc(2026)),
+              AssistantMessage(
+                content: const [ThinkingContent(thinking: 'unsigned')],
+                api: 'openai-completions',
+                provider: 'openai',
+                model: 'gpt-4o-mini',
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.utc(2026),
+              ),
+            ],
+          ),
+        );
+        expect(messagesOf(body), [
+          {'role': 'user', 'content': 'hi'},
+        ]);
+      },
+    );
+
+    test(
+      'an image-only tool result attaches the image for vision models',
+      () async {
+        final body = await sentBody(
+          testModel,
+          Context(
+            messages: [
+              ToolResultMessage(
+                toolCallId: 'c1',
+                toolName: 'read',
+                content: const [
+                  ImageContent(data: 'aGk=', mimeType: 'image/png'),
+                ],
+                isError: false,
+                timestamp: DateTime.utc(2026),
+              ),
+            ],
+          ),
+        );
+        final messages = messagesOf(body);
+        expect(
+          (messages[0] as Map<String, dynamic>)['content'],
+          '(see attached image)',
+        );
+        final followUp = messages[1] as Map<String, dynamic>;
+        expect(followUp['role'], 'user');
+        expect(followUp['content'], [
+          {'type': 'text', 'text': 'Attached image(s) from tool result:'},
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/png;base64,aGk='},
+          },
+        ]);
+      },
+    );
+
+    test('compat requiresToolResultName adds the tool name', () async {
+      final namedModel = Model(
+        id: 'gpt-4o-mini',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        contextWindow: 128000,
+        maxTokens: 16384,
+        compat: const OpenAICompletionsCompat(requiresToolResultName: true),
+      );
+      final body = await sentBody(
+        namedModel,
+        Context(
+          messages: [
+            ToolResultMessage(
+              toolCallId: 'c1',
+              toolName: 'read',
+              content: const [TextContent(text: 'done')],
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        ),
+      );
+      final tool = messagesOf(body).single as Map<String, dynamic>;
+      expect(tool['name'], 'read');
+    });
+  });
 }

@@ -154,53 +154,8 @@ final class TuiRepl {
     // When the model picker is open, typing filters the list instead of
     // editing the input buffer.
     if (_menuOpen && _menuModelMode) {
-      switch (key.type) {
-        case KeyType.char:
-          final ch = key.char;
-          if (ch != null && ch.length == 1) {
-            // Ignore the first space after the picker opens: `/models open`
-            // should start filtering at `open`, not at the separating space.
-            if (ch == ' ' && _modelFilter.isEmpty) return;
-            _modelFilter += ch;
-            _refreshModelMenu();
-          }
-          return;
-        case KeyType.backspace:
-          if (_modelFilter.isNotEmpty) {
-            _modelFilter = _modelFilter.substring(0, _modelFilter.length - 1);
-            _refreshModelMenu();
-          }
-          return;
-        case KeyType.enter:
-        case KeyType.tab:
-          _acceptMenuItem();
-          return;
-        case KeyType.escape:
-          _closeMenu();
-          return;
-        case KeyType.up:
-          if (_menuSelected > 0) _menuSelected--;
-          return;
-        case KeyType.down:
-          if (_menuSelected < _menuItems.length - 1) _menuSelected++;
-          return;
-        case KeyType.pageUp:
-          _menuSelected = 0;
-          return;
-        case KeyType.pageDown:
-          _menuSelected = _menuItems.isEmpty ? 0 : _menuItems.length - 1;
-          return;
-        case KeyType.shiftTab:
-          if (_menuSelected > 0) _menuSelected--;
-          return;
-        case KeyType.home:
-        case KeyType.end:
-        case KeyType.left:
-        case KeyType.right:
-        case KeyType.delete:
-        case KeyType.unknown:
-          return;
-      }
+      _handleModelMenuKey(key);
+      return;
     }
 
     switch (key.type) {
@@ -263,6 +218,58 @@ final class TuiRepl {
         break;
       case KeyType.unknown:
         break;
+    }
+  }
+
+  /// Keys while the model picker is open: typing filters the list, arrows
+  /// navigate, enter/tab accept, escape closes; editing keys are ignored.
+  void _handleModelMenuKey(KeyEvent key) {
+    switch (key.type) {
+      case KeyType.char:
+        final ch = key.char;
+        if (ch != null && ch.length == 1) {
+          // Ignore the first space after the picker opens: `/models open`
+          // should start filtering at `open`, not at the separating space.
+          if (ch == ' ' && _modelFilter.isEmpty) return;
+          _modelFilter += ch;
+          _refreshModelMenu();
+        }
+        return;
+      case KeyType.backspace:
+        if (_modelFilter.isNotEmpty) {
+          _modelFilter = _modelFilter.substring(0, _modelFilter.length - 1);
+          _refreshModelMenu();
+        }
+        return;
+      case KeyType.enter:
+      case KeyType.tab:
+        _acceptMenuItem();
+        return;
+      case KeyType.escape:
+        _closeMenu();
+        return;
+      case KeyType.up:
+        if (_menuSelected > 0) _menuSelected--;
+        return;
+      case KeyType.down:
+        if (_menuSelected < _menuItems.length - 1) _menuSelected++;
+        return;
+      case KeyType.pageUp:
+        _menuSelected = 0;
+        return;
+      case KeyType.pageDown:
+        _menuSelected = _menuItems.isEmpty ? 0 : _menuItems.length - 1;
+        return;
+      case KeyType.shiftTab:
+        if (_menuSelected > 0) _menuSelected--;
+        return;
+      case KeyType.home:
+      case KeyType.end:
+      case KeyType.left:
+      case KeyType.right:
+      case KeyType.delete:
+      case KeyType.unknown:
+        return;
     }
   }
 
