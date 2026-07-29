@@ -733,4 +733,8 @@
 
 - feat(example): first-launch onboarding, scene3d wiring + 3D game demo, sheet/tile polish
 
+## 0.1.104
+
+- fix(example): reliable tile drops, full-width grid, widget drag cards
+
 ## Unreleased
