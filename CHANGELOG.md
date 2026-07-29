@@ -749,4 +749,8 @@
 
 - docs: privacy policy — PRIVACY.md + published site page, onboarding links it
 
+## 0.1.108
+
+- fix(example): TestFlight JSC crash, ownership-aware demo sync, CRAP yellow zone
+
 ## Unreleased
