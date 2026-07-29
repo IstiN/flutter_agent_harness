@@ -2203,6 +2203,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Auto'**
   String get settingsIconsPerRowAuto;
+
+  /// No description provided for @settingsShowOnboarding.
+  ///
+  /// In en, this message translates to:
+  /// **'Show welcome tour'**
+  String get settingsShowOnboarding;
 }
 
 class _AppLocalizationsDelegate

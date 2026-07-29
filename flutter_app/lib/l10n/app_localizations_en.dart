@@ -1216,4 +1216,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsIconsPerRowAuto => 'Auto';
+
+  @override
+  String get settingsShowOnboarding => 'Show welcome tour';
 }

@@ -353,5 +353,6 @@
   "settingsVisionLabel": "Supports images (vision)",
   "settingsIconsPerRow": "Icons per row",
   "settingsIconsPerRowHint": "Home grid columns; Auto is 4 on phone, 6 on wide screens",
-  "settingsIconsPerRowAuto": "Auto"
+  "settingsIconsPerRowAuto": "Auto",
+  "settingsShowOnboarding": "Show welcome tour"
 }

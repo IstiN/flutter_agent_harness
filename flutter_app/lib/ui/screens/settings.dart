@@ -29,6 +29,7 @@ import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/model_presets.dart';
+import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
@@ -2175,6 +2176,13 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
+              OnboardingReplaySection(
+                mediaModelsStore: MediaModelsScope.maybeOf(context),
+                lastConnectionStore: lastConnectionStore,
+              ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
               const DebugLogsSection(),
               const SizedBox(height: 24),
             ],
@@ -2245,6 +2253,64 @@ class HomeGridSection extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// The settings "Welcome tour" row: replays the first-launch onboarding
+/// (Meet Fa / permissions / model presets / privacy) without touching the
+/// seen flag — purely a demo/replay entry point.
+class OnboardingReplaySection extends StatelessWidget {
+  const OnboardingReplaySection({
+    super.key,
+    this.mediaModelsStore,
+    this.lastConnectionStore,
+  });
+
+  /// Forwarded to the onboarding model-preset wizard (falls back to the
+  /// nearest scope there).
+  final MediaModelsStore? mediaModelsStore;
+
+  /// Updated when a preset is applied during the replay.
+  final LastConnectionStore? lastConnectionStore;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () {
+        unawaited(
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (context) => OnboardingScreen(
+                // No seen-flag store: a replay never changes first-launch
+                // state — finishing just pops back to settings.
+                mediaModelsStore: mediaModelsStore,
+                lastConnectionStore: lastConnectionStore,
+                onFinished: ({required bool skipped}) =>
+                    Navigator.of(context).pop(),
+              ),
+            ),
+          ),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.waving_hand_outlined, size: 20, color: colors.dim),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                context.l10n.settingsShowOnboarding,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+          ],
+        ),
+      ),
     );
   }
 }

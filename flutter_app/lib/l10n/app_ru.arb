@@ -350,5 +350,6 @@
   "settingsVisionLabel": "Поддерживает изображения (vision)",
   "settingsIconsPerRow": "Иконок в ряд",
   "settingsIconsPerRowHint": "Колонок в сетке домашнего экрана; Авто — 4 на телефоне, 6 на широких",
-  "settingsIconsPerRowAuto": "Авто"
+  "settingsIconsPerRowAuto": "Авто",
+  "settingsShowOnboarding": "Показать приветствие"
 }

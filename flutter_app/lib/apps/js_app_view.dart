@@ -479,7 +479,13 @@ class _JsAppViewState extends State<JsAppView> {
                     key: _boundaryKey,
                     child: ColoredBox(
                       color: theme.scaffoldBackgroundColor,
-                      child: _buildBody(theme),
+                      // Chrome apps (with the AppBar) keep their content
+                      // above the home indicator — HUD rows at the very
+                      // bottom must not clip into it. Immersive full-chrome
+                      // apps (maps) stay edge-to-edge.
+                      child: fullChrome
+                          ? _buildBody(theme)
+                          : SafeArea(top: false, child: _buildBody(theme)),
                     ),
                   ),
                 ),

@@ -1225,4 +1225,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsIconsPerRowAuto => 'Авто';
+
+  @override
+  String get settingsShowOnboarding => 'Показать приветствие';
 }
