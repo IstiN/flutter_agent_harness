@@ -737,4 +737,8 @@
 
 - fix(example): reliable tile drops, full-width grid, widget drag cards
 
+## 0.1.105
+
+- feat(example): icons-per-row setting, tight row gap, pager bounce fix
+
 ## Unreleased
