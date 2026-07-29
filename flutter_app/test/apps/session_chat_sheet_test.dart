@@ -197,6 +197,56 @@ void main() {
       expect(find.byKey(_pagerKey), findsOneWidget);
     });
 
+    testWidgets('a persisted page opened by swiping stays put (no bounce)', (
+      tester,
+    ) async {
+      // Seed an on-disk session: a chat from "yesterday" that is NOT live.
+      // (runAsync: the fake stream's idle completion needs the real event
+      // loop, not FakeAsync pumps.)
+      final env = MemoryExecutionEnv();
+      final seed = _fakeService(env);
+      late final SessionMetadata persistedMeta;
+      await tester.runAsync(() async {
+        await seed.initialize();
+        await seed.sendText('old chat');
+        await seed.waitForIdle();
+        persistedMeta = (await seed.listSessions()).single;
+      });
+      seed.dispose();
+
+      final live = _fakeService(env);
+      addTearDown(live.dispose);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-live', live);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _expand(tester);
+      // Two pages: the live session, then the persisted one on the right.
+      expect(find.byKey(_pagerKey), findsOneWidget);
+
+      // Swipe to the rightmost (persisted) page: it opens lazily and the
+      // pager must SETTLE there — the old bug duplicated the session
+      // (live + persisted) and bounced the pager back a page.
+      await tester.fling(find.byKey(_pagerKey), const Offset(-300, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(manager.activeId, persistedMeta.id);
+      expect(manager.sessions, hasLength(2));
+      // Still the rightmost page: no jump back to page 0.
+      expect(find.text('old chat'), findsOneWidget);
+
+      // Swiping right again is a no-op (it IS the last page).
+      await tester.fling(find.byKey(_pagerKey), const Offset(-300, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(manager.activeId, persistedMeta.id);
+    });
+
     testWidgets('the icon auto-grows to the mini bar when the stream starts', (
       tester,
     ) async {

@@ -2185,6 +2185,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Supports images (vision)'**
   String get settingsVisionLabel;
+
+  /// No description provided for @settingsIconsPerRow.
+  ///
+  /// In en, this message translates to:
+  /// **'Icons per row'**
+  String get settingsIconsPerRow;
+
+  /// No description provided for @settingsIconsPerRowHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Home grid columns; Auto is 4 on phone, 6 on wide screens'**
+  String get settingsIconsPerRowHint;
+
+  /// No description provided for @settingsIconsPerRowAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get settingsIconsPerRowAuto;
 }
 
 class _AppLocalizationsDelegate

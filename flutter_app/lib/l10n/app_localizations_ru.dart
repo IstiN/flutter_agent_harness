@@ -1215,4 +1215,14 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsVisionLabel => 'Поддерживает изображения (vision)';
+
+  @override
+  String get settingsIconsPerRow => 'Иконок в ряд';
+
+  @override
+  String get settingsIconsPerRowHint =>
+      'Колонок в сетке домашнего экрана; Авто — 4 на телефоне, 6 на широких';
+
+  @override
+  String get settingsIconsPerRowAuto => 'Авто';
 }

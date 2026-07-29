@@ -490,6 +490,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           service: service,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,
+          // The same store instance the launcher listens to — grid changes
+          // apply live.
+          layoutStore: _layout,
         ),
       ),
     );
@@ -635,6 +638,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 crossAxisCount: crossAxisCount,
                 spans: [for (final key in keys) _tileSpan(key, crossAxisCount)],
                 spacing: spacing,
+                // Only the CROSS-axis gaps stretch with the screen width —
+                // the row gap stays the tight spec default.
+                mainAxisSpacing: LauncherGridSpec.spacing,
               );
               final gridWidth =
                   crossAxisCount * LauncherGridSpec.cellCrossExtent +
@@ -652,7 +658,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                   child: SizedBox(
                     width: gridWidth,
                     height: packedTilesHeight(rects),
+                    // No clipping: edge-column labels bleed a few px into
+                    // the screen padding (iOS-style) instead of being cut
+                    // mid-glyph at the grid's edge.
                     child: Stack(
+                      clipBehavior: Clip.none,
                       children: [
                         for (var i = 0; i < keys.length; i++)
                           AnimatedPositioned(
@@ -663,7 +673,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                             top: rects[i].y,
                             width: rects[i].w,
                             height: rects[i].h,
-                            child: _buildCell(colors, keys[i]),
+                            child: _buildCell(colors, keys[i], spacing),
                           ),
                       ],
                     ),
@@ -774,7 +784,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     return _tileIcon(colors, key, size: _feedbackSize);
   }
 
-  Widget _buildCell(FahColors colors, String key) {
+  Widget _buildCell(FahColors colors, String key, double spacing) {
     return LayoutBuilder(
       builder: (context, constraints) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -819,14 +829,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               ),
               childWhenDragging: Opacity(
                 opacity: 0.35,
-                child: _tileContent(colors, key),
+                child: _tileContent(colors, key, spacing),
               ),
               child: AnimatedScale(
                 scale: folderHover
                     ? 1.12
                     : (candidateData.isNotEmpty ? 1.08 : 1),
                 duration: const Duration(milliseconds: 120),
-                child: _tileContent(colors, key),
+                child: _tileContent(colors, key, spacing),
               ),
             );
           },
@@ -840,7 +850,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// manifest section, the live tile ([AppTileHost]) filling its WxH span
   /// edge-to-edge with the icon block it replaces. Taps launch/navigate;
   /// folder taps open the folder panel.
-  Widget _tileContent(FahColors colors, String key) {
+  Widget _tileContent(FahColors colors, String key, double spacing) {
     final theme = Theme.of(context);
     if (key.startsWith('app:')) {
       final app = _appsById[key.substring(4)];
@@ -873,11 +883,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             height: LauncherGridSpec.labelHeight,
             // iOS-style: the label may bleed into the (empty) inter-icon
             // gap, so it measures up to one cell PITCH wide, not just the
-            // icon square — keeps names like "Pomodoro" readable.
+            // icon square — keeps names like "Habit Tracker" readable.
             child: OverflowBox(
               alignment: Alignment.topCenter,
-              maxWidth:
-                  LauncherGridSpec.cellCrossExtent + LauncherGridSpec.spacing,
+              maxWidth: LauncherGridSpec.cellCrossExtent + spacing,
               child: Text(
                 _tileLabel(key),
                 maxLines: 1,
@@ -1092,9 +1101,17 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                           ),
                           childWhenDragging: Opacity(
                             opacity: 0.35,
-                            child: _tileContent(colors, tile),
+                            child: _tileContent(
+                              colors,
+                              tile,
+                              LauncherGridSpec.spacing,
+                            ),
                           ),
-                          child: _tileContent(colors, tile),
+                          child: _tileContent(
+                            colors,
+                            tile,
+                            LauncherGridSpec.spacing,
+                          ),
                         ),
                     ],
                   ),

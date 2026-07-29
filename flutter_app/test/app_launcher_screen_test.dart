@@ -494,14 +494,17 @@ void main() {
         tileEngineFactory: _fakeTileEngineFactory(),
       );
       const i = 56.0, cellMain = 76.0;
-      // Dynamic spacing: 800px surface, 6 columns → (768 − 6×56)/5 = 86.4,
-      // capped at 44.
-      const g = 44.0;
+      // Dynamic cross-axis spacing: 800px surface, 6 columns →
+      // (768 − 6×56)/5 = 86.4, capped at 44; the row gap stays 16.
+      const g = 44.0, gr = 16.0;
       final hostRect = tester.getRect(find.byType(AppTileHost));
       final betaRect = tester.getRect(_cell('app:beta'));
-      // Exact icon-unit extents: 4 slots + 3 gaps wide, 2 + 1 high.
+      // Exact icon-unit extents: 4 slots + 3 gaps wide, 2 + 1 row-gap high.
       expect(hostRect.width, moreOrLessEquals(4 * i + 3 * g, epsilon: 0.5));
-      expect(hostRect.height, moreOrLessEquals(2 * cellMain + g, epsilon: 0.5));
+      expect(
+        hostRect.height,
+        moreOrLessEquals(2 * cellMain + gr, epsilon: 0.5),
+      );
       // Beta packs first-fit beside the tile: SAME row, left edge exactly
       // 4 slots + 4 gaps to the right of the tile's left edge.
       expect(hostRect.top, moreOrLessEquals(betaRect.top, epsilon: 0.5));

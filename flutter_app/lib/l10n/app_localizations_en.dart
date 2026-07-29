@@ -1206,4 +1206,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsVisionLabel => 'Supports images (vision)';
+
+  @override
+  String get settingsIconsPerRow => 'Icons per row';
+
+  @override
+  String get settingsIconsPerRowHint =>
+      'Home grid columns; Auto is 4 on phone, 6 on wide screens';
+
+  @override
+  String get settingsIconsPerRowAuto => 'Auto';
 }

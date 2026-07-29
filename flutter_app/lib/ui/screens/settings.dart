@@ -18,6 +18,7 @@ import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -2060,6 +2061,7 @@ class SettingsScreen extends StatelessWidget {
     required this.service,
     this.registry,
     this.lastConnectionStore,
+    this.layoutStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -2076,6 +2078,11 @@ class SettingsScreen extends StatelessWidget {
   /// The last-connection store: updated on every successful apply (see
   /// [LastConnectionStore]).
   final LastConnectionStore? lastConnectionStore;
+
+  /// The launcher home-grid layout: when present, the Home grid section
+  /// (icons per row) edits it live — the launcher listens to the same
+  /// store instance.
+  final LauncherLayoutStore? layoutStore;
 
   /// Engine override for the downloaded-models section (tests); defaults to
   /// the platform singleton.
@@ -2138,6 +2145,12 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
+              if (layoutStore != null) ...[
+                HomeGridSection(layoutStore: layoutStore!),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
               KeysSection(registry: registry),
               const SizedBox(height: 24),
               const Divider(),
@@ -2168,6 +2181,70 @@ class SettingsScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The settings "Home grid" section: how many icon columns the launcher
+/// home shows (Auto = 4 on narrow screens, 6 on wide). Writes the
+/// `grid.columns` override into the shared [LauncherLayoutStore] — the
+/// launcher listens to the same instance and reflows live.
+class HomeGridSection extends StatelessWidget {
+  const HomeGridSection({super.key, required this.layoutStore});
+
+  /// The launcher's layout store (shared instance).
+  final LauncherLayoutStore layoutStore;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return ListenableBuilder(
+      listenable: layoutStore,
+      builder: (context, _) {
+        final current = layoutStore.gridColumns;
+        return Row(
+          children: [
+            Icon(Icons.grid_view_outlined, size: 20, color: colors.dim),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    context.l10n.settingsIconsPerRow,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  Text(
+                    context.l10n.settingsIconsPerRowHint,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                  ),
+                ],
+              ),
+            ),
+            DropdownButton<int?>(
+              value: current,
+              underline: const SizedBox.shrink(),
+              items: [
+                DropdownMenuItem<int?>(
+                  child: Text(context.l10n.settingsIconsPerRowAuto),
+                ),
+                for (
+                  var n = LauncherLayoutStore.minGridColumns;
+                  n <= LauncherLayoutStore.maxGridColumns;
+                  n++
+                )
+                  DropdownMenuItem<int?>(
+                    value: n,
+                    child: Text('$n'), // l10n:ignore — bare column count
+                  ),
+              ],
+              onChanged: (value) => layoutStore.setGridColumns(value),
+            ),
+          ],
+        );
+      },
     );
   }
 }

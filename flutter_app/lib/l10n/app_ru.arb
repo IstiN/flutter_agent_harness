@@ -144,7 +144,7 @@
   "keysAddDialogTitle": "Добавить ключ",
   "keysAddNameDuplicate": "Ключ с таким именем уже существует.",
   "keysAddNameHint": "GITHUB_TOKEN",
-  "keysAddNameInvalid": "Используйте A\u2013Z, 0\u20139 и подчёркивания, начиная с буквы.",
+  "keysAddNameInvalid": "Используйте A–Z, 0–9 и подчёркивания, начиная с буквы.",
   "keysAddNameLabel": "Имя",
   "keysDeleteBody": "Сохранённое значение удаляется с этого устройства. Значение из файла .env, если оно есть, снова вступит в силу.",
   "keysDeleteTitle": "Удалить {name}?",
@@ -347,5 +347,8 @@
   "uploadTooLarge": "Загрузка слишком большая: {total} превышает лимит {max} на один пакет.",
   "webllmCacheManagedByOs": "На этой платформе on-device модели управляются хранилищем ОС/приложения.",
   "webllmCacheTitle": "Загруженные модели",
-  "settingsVisionLabel": "Поддерживает изображения (vision)"
+  "settingsVisionLabel": "Поддерживает изображения (vision)",
+  "settingsIconsPerRow": "Иконок в ряд",
+  "settingsIconsPerRowHint": "Колонок в сетке домашнего экрана; Авто — 4 на телефоне, 6 на широких",
+  "settingsIconsPerRowAuto": "Авто"
 }

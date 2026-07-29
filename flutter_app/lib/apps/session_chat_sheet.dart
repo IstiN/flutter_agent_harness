@@ -208,6 +208,22 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   /// switch) keep the pager on the active session.
   void _onManagerChanged() {
     if (!mounted) return;
+    // A persisted page the pager just opened went LIVE: drop its duplicate
+    // persisted entry immediately. Without this the session appears TWICE
+    // (live + persisted), page indices shift, and _onManagerChanged's jump
+    // bounces the user off the rightmost page — it looks unreachable.
+    final liveIds = _liveSessions.map((s) => s.id).toSet();
+    final filtered = [
+      for (final m in _persisted)
+        if (!liveIds.contains(m.id)) m,
+    ];
+    if (filtered.length != _persisted.length) _persisted = filtered;
+    // Live count changes (session opened/closed) also re-sync the
+    // persisted tail from disk (closed sessions reappear there).
+    if (liveIds.length != _lastLiveCount) {
+      _lastLiveCount = liveIds.length;
+      unawaited(_reloadPersisted());
+    }
     final index = _activeIndex();
     if (_pager.hasClients && _liveSessions.isNotEmpty) {
       final current = _pager.page?.round() ?? _pager.initialPage;
@@ -217,6 +233,10 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     }
     setState(() {});
   }
+
+  /// Last seen live-session count — drives the persisted-tail resync in
+  /// [_onManagerChanged].
+  var _lastLiveCount = -1;
 
   void _onPageChanged(int index) {
     if (index < _liveSessions.length) {
