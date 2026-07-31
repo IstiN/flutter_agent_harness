@@ -144,16 +144,10 @@ class _AppTileHostState extends State<AppTileHost> {
     widget.fsRevision?.removeListener(_onFsRevision);
     _reloadDebounce?.cancel();
     _refreshTimer?.cancel();
-    final engine = _engine;
-    if (engine != null && _inFlightRefresh.isNotEmpty) {
-      // Freeing the JS context while a tile.refresh evaluation is in
-      // flight is a native use-after-free (TestFlight SIGSEGV) — chain
-      // the dispose behind the drain (bounded), keeping the engine
-      // referenced until then.
-      unawaited(_drainRefreshes().then((_) => engine.dispose()));
-    } else {
-      unawaited(_engine?.dispose() ?? Future.value());
-    }
+    // Immediate: the process-wide lifecycle lock (JsAppEngine) orders this
+    // native release before any new engine's native context creation; the
+    // runtime's own `_isLive` guard no-ops evaluations queued behind it.
+    unawaited(_engine?.dispose() ?? Future.value());
     super.dispose();
   }
 
@@ -168,30 +162,13 @@ class _AppTileHostState extends State<AppTileHost> {
     });
   }
 
-  /// In-flight `tile.refresh` calls. A restart/dispose MUST wait for them
-  /// before freeing the engine's JS context: evaluating on a freed context
-  /// is a native use-after-free — the TestFlight SIGSEGV in
-  /// `JSC::JSLock::lock` (timer → callEvent → evaluate → dead VM).
-  final Set<Future<void>> _inFlightRefresh = {};
-
   /// Fires one `tile.refresh` event on [engine], unless it was meanwhile
-  /// replaced or the host went away. Tracked in [_inFlightRefresh].
+  /// replaced or the host went away. The native use-after-free class of
+  /// bugs is addressed at the source: every engine start/dispose is
+  /// serialized process-wide (see [JsAppEngine]).
   void _fireTileRefresh(JsAppEngine engine) {
     if (!mounted || !identical(_engine, engine)) return;
-    final future = engine
-        .callEvent('tile.refresh', const {})
-        .then((_) {})
-        .catchError((_) {});
-    _inFlightRefresh.add(future);
-    unawaited(future.whenComplete(() => _inFlightRefresh.remove(future)));
-  }
-
-  /// Waits (bounded) for in-flight refresh calls — see [_inFlightRefresh].
-  Future<void> _drainRefreshes() {
-    if (_inFlightRefresh.isEmpty) return Future.value();
-    return Future.wait(
-      List.of(_inFlightRefresh),
-    ).timeout(const Duration(seconds: 3), onTimeout: () => []);
+    unawaited(engine.callEvent('tile.refresh', const {}));
   }
 
   Future<void> _restart() async {
@@ -211,11 +188,11 @@ class _AppTileHostState extends State<AppTileHost> {
     });
     _refreshTimer?.cancel();
     _refreshTimer = null;
-    if (old != null) {
-      // Drain in-flight refresh calls BEFORE freeing the JS context.
-      await _drainRefreshes();
-      await old.dispose();
-    }
+    // Disposed immediately — the process-wide lifecycle lock (JsAppEngine)
+    // orders this native release before any new engine's native context is
+    // created; a delayed release is exactly what used to free a REUSED
+    // context address out from under the next engine.
+    if (old != null) await old.dispose();
     // No real JS engines under `flutter test` without an explicit factory —
     // show the icon fallback instead (see [_kFlutterTest]).
     if (_kFlutterTest && widget.engineFactory == null) {

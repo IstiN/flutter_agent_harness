@@ -18,6 +18,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
@@ -284,5 +285,36 @@ void main() {
     await tester.pumpAndSettle();
 
     await expectGolden(tester, 'sidebar_delete_dialog');
+  });
+
+  testWidgets('rename session dialog — dark and light', (tester) async {
+    await pumpGolden(
+      tester,
+      const Scaffold(
+        body: Center(
+          child: RenameSessionDialog(
+            initialTitle: 'Ship checklist',
+            derivedName: 'Jul 14 10:24',
+          ),
+        ),
+      ),
+      size: goldenSizeDesktop,
+    );
+    await expectGolden(tester, 'sidebar_rename_dialog_dark');
+
+    await pumpGolden(
+      tester,
+      const Scaffold(
+        body: Center(
+          child: RenameSessionDialog(
+            initialTitle: 'Ship checklist',
+            derivedName: 'Jul 14 10:24',
+          ),
+        ),
+      ),
+      size: goldenSizeDesktop,
+      theme: buildFahThemeLight(),
+    );
+    await expectGolden(tester, 'sidebar_rename_dialog_light');
   });
 }

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 import 'package:js_widget_runtime/js_widget_runtime.dart';
@@ -172,11 +173,46 @@ class JsAppEngine {
   JsWidgetEngine? _engine;
   JsResolveCallback? _resolve;
 
+  /// Process-wide lifecycle lock serializing [start] and [dispose] across
+  /// ALL engines. Root cause of the TestFlight SIGSEGV: native JS contexts
+  /// are address-keyed (`JavascriptCoreRuntime._instanceMap`) — an engine
+  /// disposed LATE (its async dispose gap, or a deferred chain) can release
+  /// the native context AFTER the allocator handed the same address to a
+  /// NEW engine, freeing that engine's live context out from under it
+  /// (use-after-free in `JSC::JSLock::lock`). Serializing start/dispose
+  /// guarantees a native release always completes before the next native
+  /// context is created.
+  static Future<void> _lifecycleChain = Future<void>.value();
+
+  /// Runs [action] after every previously queued lifecycle action.
+  static Future<T> _lifecycle<T>(Future<T> Function() action) {
+    final next = _lifecycleChain.then((_) => action());
+    _lifecycleChain = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
+  /// True under `flutter test` (the binding class name, no dart:io so it's
+  /// web-safe). There the static chain DEADLOCKS: a real engine start's
+  /// native work never completes inside the widget-test fake zone, which
+  /// would stall every later engine in the process. Tests exercise the
+  /// unserialized path (the production hazard is native and untestable).
+  static bool get _inWidgetTest {
+    final binding = WidgetsBinding.instance;
+    return binding.runtimeType.toString().contains('TestWidgetsFlutterBinding');
+  }
+
+  /// Serializes [action] process-wide in production; runs it directly
+  /// under widget tests (see [_inWidgetTest]).
+  static Future<T> _guardLifecycle<T>(Future<T> Function() action) =>
+      _inWidgetTest ? action() : _lifecycle(action);
+
   Map<String, dynamic>? get exportedState => _engine?.exportedState;
   List<Map<String, dynamic>> peekLogs() => _engine?.peekLogs() ?? const [];
 
   /// Starts (or restarts) the JS engine with the current [entryFile].
-  Future<void> start() async {
+  Future<void> start() => _guardLifecycle(_start);
+
+  Future<void> _start() async {
     final old = _engine;
     _engine = null;
     if (old != null) await old.dispose();
@@ -232,13 +268,15 @@ class JsAppEngine {
     return Future.value();
   }
 
-  Future<void> dispose() async {
+  /// Disposes the engine and releases its native JS context — serialized
+  /// with every other engine's start/dispose (see [_lifecycle]).
+  Future<void> dispose() => _guardLifecycle(() async {
     final engine = _engine;
     _engine = null;
     if (engine != null) await engine.dispose();
     tree.dispose();
     backHandlerRegistered.dispose();
-  }
+  });
 
   // --- storage persistence -------------------------------------------------
 
