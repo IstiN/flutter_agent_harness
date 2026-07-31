@@ -296,6 +296,23 @@ void main() {
       }
     });
 
+    test(
+      'shrinks the widest columns until the table fits the render width',
+      () {
+        final table = buildSqliteAsciiTable(
+          ['a', 'b', 'c'],
+          [
+            {'a': 'x' * 40, 'b': 'y' * 40, 'c': 'z' * 40},
+          ],
+        );
+        for (final line in table.split('\n')) {
+          expect(line.length, lessThanOrEqualTo(120));
+        }
+        // All three columns still render (shrunk, not dropped).
+        expect(table.split('\n').first, allOf(contains('a'), contains('c')));
+      },
+    );
+
     test('falls back to vertical blocks beyond 19 columns', () {
       final columns = [for (var i = 1; i <= 21; i++) 'c$i'];
       final row = {for (final column in columns) column: 'v'};

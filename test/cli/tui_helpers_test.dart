@@ -68,6 +68,39 @@ void main() {
     });
   });
 
+  group('runQueuedTurns', () {
+    test('runs each message and waits for it to settle', () async {
+      final handled = <String>[];
+      var settles = 0;
+      await runQueuedTurns(
+        queued: const ['a', 'b', 'c'],
+        handle: (msg) async => handled.add(msg),
+        settled: () async => settles++,
+        abortRequested: () => false,
+      );
+      expect(handled, ['a', 'b', 'c']);
+      expect(settles, 3);
+    });
+
+    test(
+      'an abort discards the rest of the queue after the running turn',
+      () async {
+        final handled = <String>[];
+        var aborts = 0;
+        await runQueuedTurns(
+          queued: const ['a', 'b', 'c'],
+          handle: (msg) async {
+            handled.add(msg);
+            aborts++;
+          },
+          settled: () async {},
+          abortRequested: () => aborts >= 2,
+        );
+        expect(handled, ['a', 'b']);
+      },
+    );
+  });
+
   group('listItemAt', () {
     test('returns the element for a valid index', () {
       expect(listItemAt(['a', 'b', 'c'], 1), 'b');

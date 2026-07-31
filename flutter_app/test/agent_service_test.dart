@@ -479,6 +479,49 @@ void main() {
       expect(toolMsg.content, contains('echo: hi'));
     });
 
+    test('one tool call surfaces exactly ONE tool message (no duplicate '
+        'from the tool-result message event)', () async {
+      final env = MemoryExecutionEnv();
+      final echoTool = AgentTool(
+        name: 'echo',
+        description: 'Echoes the input back.',
+        parameters: const {
+          'type': 'object',
+          'properties': {
+            'x': {'type': 'string'},
+          },
+          'required': ['x'],
+        },
+        execute: (arguments, cancelToken, onUpdate) async {
+          return ToolExecutionResult.text('echo: ${arguments['x']}');
+        },
+      );
+      final service = AgentService(
+        agent: _createAgent(
+          _toolThenText('echo: hi', 'done'),
+          tools: [echoTool],
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      service.approval.mode = ApprovalMode.yolo;
+      await service.initialize();
+
+      await service.sendText('call echo');
+      await service.waitForIdle();
+
+      // Regression: ToolExecutionEndEvent and the ToolResultMessage's
+      // MessageEndEvent both fired per call and each appended a 'tool'
+      // message — every tool tile rendered twice, and the duplicate lost
+      // the isError flag.
+      final toolMessages = service.messages
+          .where((m) => m.role == 'tool')
+          .toList();
+      expect(toolMessages, hasLength(1));
+      expect(toolMessages.single.toolName, 'echo');
+      service.dispose();
+    });
+
     test('a tool-only turn leaves no empty assistant bubble', () async {
       final env = MemoryExecutionEnv();
       final echoTool = AgentTool(

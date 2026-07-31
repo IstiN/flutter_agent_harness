@@ -1,5 +1,10 @@
 # flutter_agent_harness
 
+[![CI](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml/badge.svg)](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml)
+[![pub package](https://img.shields.io/pub/v/flutter_agent_harness.svg)](https://pub.dev/packages/flutter_agent_harness)
+[![CRAP max 8.0 — green zone](https://img.shields.io/badge/CRAP%20max-8.0-brightgreen)](https://github.com/IstiN/crap4dart)
+[![coverage ≥ 80%](https://img.shields.io/badge/coverage-%E2%89%A5%2093%25-brightgreen)](https://github.com/IstiN/flutter_agent_harness)
+
 Cross-platform AI agent harness for Dart and Flutter — streaming provider
 adapters, an agent loop with native tool calling, JSONL session persistence,
 and context compaction. Architecture ported from

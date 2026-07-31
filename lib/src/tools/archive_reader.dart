@@ -279,32 +279,42 @@ final class ArchiveReader {
     if (normalizedPath == null) {
       throw StateError("Archive path cannot contain '..'");
     }
-    if (normalizedPath.isNotEmpty) {
-      final entry = _entries[normalizedPath];
-      if (entry == null) {
-        throw StateError("Archive path '$normalizedPath' not found");
-      }
-      if (!entry.isDirectory) {
-        throw StateError("Archive path '$normalizedPath' is not a directory");
-      }
-    }
+    _requireDirectory(normalizedPath);
 
     final prefix = normalizedPath.isEmpty ? '' : '$normalizedPath/';
     final children = <String, ArchiveDirectoryEntry>{};
     for (final entry in _entries.values) {
-      if (normalizedPath.isNotEmpty && !entry.path.startsWith(prefix)) {
-        continue;
-      }
-      final remainder = entry.path.substring(prefix.length);
-      if (remainder.isEmpty || remainder.contains('/')) continue;
-      children[entry.path] = ArchiveDirectoryEntry(
-        path: entry.path,
-        isDirectory: entry.isDirectory,
-        size: entry.size,
-        name: remainder,
-      );
+      final child = _childEntry(entry, prefix);
+      if (child == null) continue;
+      children[child.path] = child;
     }
     return children.values.toList();
+  }
+
+  /// Throws when [normalizedPath] names a missing or non-directory node.
+  void _requireDirectory(String normalizedPath) {
+    if (normalizedPath.isEmpty) return;
+    final entry = _entries[normalizedPath];
+    if (entry == null) {
+      throw StateError("Archive path '$normalizedPath' not found");
+    }
+    if (!entry.isDirectory) {
+      throw StateError("Archive path '$normalizedPath' is not a directory");
+    }
+  }
+
+  /// [entry] as a direct child of the directory addressed by [prefix], or
+  /// null when the entry lies outside it or deeper than one level.
+  ArchiveDirectoryEntry? _childEntry(_IndexEntry entry, String prefix) {
+    if (prefix.isNotEmpty && !entry.path.startsWith(prefix)) return null;
+    final remainder = entry.path.substring(prefix.length);
+    if (remainder.isEmpty || remainder.contains('/')) return null;
+    return ArchiveDirectoryEntry(
+      path: entry.path,
+      isDirectory: entry.isDirectory,
+      size: entry.size,
+      name: remainder,
+    );
   }
 
   /// Reads the (inflated) bytes of a file member. Throws when the member is

@@ -1178,4 +1178,40 @@ void main() {
       expect((result.$1 as FaTuiModel).termWidth, 120);
     });
   });
+
+  group('FaTuiController pre-run queueing', () {
+    test('sendOutput before run buffers and flushes without a program', () {
+      // Pre-run sends flush straight into the pending queue (the program
+      // replays them at run time); none of this touches a terminal.
+      final controller = FaTuiController(
+        callbacks: callbacks(),
+        isExited: () => false,
+      );
+      expect(
+        () => controller
+          ..sendOutput('hello')
+          ..sendOutput(' world', newline: true)
+          ..sendOutput(''),
+        returnsNormally,
+      );
+    });
+
+    test('openPicker resolves the initial selection by key', () {
+      final controller = FaTuiController(
+        callbacks: callbacks(),
+        isExited: () => false,
+      );
+      const items = [
+        MenuItem(key: 'a', label: 'a'),
+        MenuItem(key: 'b', label: 'b'),
+      ];
+      expect(
+        () => controller
+          ..openPicker('sessions', 'Sessions', items, initialKey: 'b')
+          ..openPicker('sessions', 'Sessions', items, initialKey: 'missing')
+          ..openPicker('sessions', 'Sessions', items),
+        returnsNormally,
+      );
+    });
+  });
 }

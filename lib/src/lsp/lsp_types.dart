@@ -283,13 +283,27 @@ final class LspWorkspaceEdit {
     if (json is! Map<String, dynamic>) return null;
     final textEdits = <String, List<LspTextEdit>>{};
     final versions = <String, int?>{};
-    var skipped = 0;
 
     void push(String uri, List<LspTextEdit> edits) {
       if (edits.isEmpty) return;
       (textEdits[uri] ??= []).addAll(edits);
     }
 
+    _collectChanges(json, push);
+    final skipped = _collectDocumentChanges(json, push, versions);
+
+    return LspWorkspaceEdit(
+      textEdits: textEdits,
+      documentVersions: versions,
+      skippedResourceOps: skipped,
+    );
+  }
+
+  /// Collects the legacy `changes` map edits into [push].
+  static void _collectChanges(
+    Map<String, dynamic> json,
+    void Function(String uri, List<LspTextEdit> edits) push,
+  ) {
     final changes = json['changes'];
     if (changes is Map<String, dynamic>) {
       for (final entry in changes.entries) {
@@ -301,37 +315,51 @@ final class LspWorkspaceEdit {
         ]);
       }
     }
+  }
 
+  /// Collects `documentChanges` entries into [push]/[versions] and returns
+  /// the number of skipped resource operations.
+  static int _collectDocumentChanges(
+    Map<String, dynamic> json,
+    void Function(String uri, List<LspTextEdit> edits) push,
+    Map<String, int?> versions,
+  ) {
+    var skipped = 0;
     final documentChanges = json['documentChanges'];
     if (documentChanges is List) {
       for (final change in documentChanges) {
         if (change is! Map<String, dynamic>) continue;
-        final textDocument = change['textDocument'];
-        final edits = change['edits'];
-        if (textDocument is Map<String, dynamic> && edits is List) {
-          final uri = textDocument['uri'] as String?;
-          if (uri == null) continue;
-          final version = (textDocument['version'] as num?)?.toInt();
-          // The most specific (last) version wins for the guard.
-          versions[uri] = version;
-          push(uri, [
-            for (final edit in edits)
-              if (edit is Map<String, dynamic> &&
-                  edit.containsKey('range') &&
-                  edit.containsKey('newText'))
-                LspTextEdit.fromJson(edit),
-          ]);
-        } else if (change['kind'] is String) {
-          skipped++;
-        }
+        if (_collectDocumentChange(change, push, versions)) skipped++;
       }
     }
+    return skipped;
+  }
 
-    return LspWorkspaceEdit(
-      textEdits: textEdits,
-      documentVersions: versions,
-      skippedResourceOps: skipped,
-    );
+  /// Handles one `documentChanges` entry; returns true when it was a
+  /// resource operation (not applied by this port).
+  static bool _collectDocumentChange(
+    Map<String, dynamic> change,
+    void Function(String uri, List<LspTextEdit> edits) push,
+    Map<String, int?> versions,
+  ) {
+    final textDocument = change['textDocument'];
+    final edits = change['edits'];
+    if (textDocument is Map<String, dynamic> && edits is List) {
+      final uri = textDocument['uri'] as String?;
+      if (uri == null) return false;
+      final version = (textDocument['version'] as num?)?.toInt();
+      // The most specific (last) version wins for the guard.
+      versions[uri] = version;
+      push(uri, [
+        for (final edit in edits)
+          if (edit is Map<String, dynamic> &&
+              edit.containsKey('range') &&
+              edit.containsKey('newText'))
+            LspTextEdit.fromJson(edit),
+      ]);
+      return false;
+    }
+    return change['kind'] is String;
   }
 
   /// Text edits keyed by document URI (omp's `flattenWorkspaceTextEdits`).

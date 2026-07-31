@@ -1,5 +1,6 @@
 import 'package:flutter_agent_harness/src/cli/prompt_templates.dart';
 import 'package:flutter_agent_harness/src/cli/slash_menu.dart';
+import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -88,4 +89,97 @@ void main() {
       expect(items.single.description, '');
     });
   });
+
+  group('helpLines', () {
+    final style = _PlainStyle();
+
+    test(
+      'the full listing includes plugins, templates, and the steer hint',
+      () async {
+        final lines = helpLines(
+          pluginSlashCommands: {'/deploy': (args) async {}},
+          templates: [template('review', argumentHint: '<file>')],
+          style: style,
+        );
+        expect(lines.first, '[Commands]');
+        expect(
+          lines,
+          containsAllInOrder([
+            '  /exit              quit',
+            '',
+            '[Plugin commands]',
+            '  /deploy',
+            '',
+            '[Prompt templates]',
+            '  /review <file>',
+            '',
+            'While a run streams, type to steer the agent; Ctrl-C aborts.',
+          ]),
+        );
+      },
+    );
+
+    test('a filtered listing matches name or description, without extras', () {
+      final lines = helpLines(
+        filter: 'quit',
+        pluginSlashCommands: {'/deploy': (args) async {}},
+        templates: [template('review')],
+        style: style,
+      );
+      expect(lines, [
+        '[Commands matching "quit"]',
+        '  /exit              quit',
+      ]);
+    });
+
+    test('a filter matching nothing yields the unknown-command line', () {
+      final lines = helpLines(
+        filter: 'zzz',
+        pluginSlashCommands: const {},
+        templates: const [],
+        style: style,
+      );
+      expect(lines, ['unknown command: /zzz (try /help)']);
+    });
+
+    test(
+      'the full listing without plugins or templates ends with the hint',
+      () {
+        final lines = helpLines(
+          pluginSlashCommands: const {},
+          templates: const [],
+          style: style,
+        );
+        expect(lines.last, contains('type to steer the agent'));
+        expect(lines, isNot(contains('[Plugin commands]')));
+        expect(lines, isNot(contains('[Prompt templates]')));
+      },
+    );
+  });
+
+  group('lineModeMenuLines', () {
+    test('numbers every builtin command', () {
+      final lines = lineModeMenuLines(_PlainStyle());
+      expect(lines.first, '');
+      expect(lines[1], '[Commands]');
+      expect(lines[2], startsWith('  1) /exit'));
+      expect(lines, hasLength(builtinSlashCommands.length + 3));
+      expect(lines.last, '');
+    });
+  });
+}
+
+class _PlainStyle implements TuiStyle {
+  @override
+  String bold(String text) => text;
+  @override
+  String dim(String text) => text;
+  @override
+  String cyan(String text) => text;
+  @override
+  String green(String text) => text;
+  @override
+  String yellow(String text) => text;
+  @override
+  String magenta(String text) => text;
 }

@@ -76,6 +76,43 @@ void main() {
       );
       expect(install.kind, InstallKind.binary);
     });
+
+    test('a file shorter than 4 bytes does not throw', () {
+      // Regression: the magic-byte matcher must not read past EOF.
+      final stub = fakeExe(const [0x0A]);
+      final install = classifyInstall(
+        scriptPath: stub.path,
+        executablePath: stub.path,
+      );
+      expect(install.kind, InstallKind.pubGlobal);
+    });
+
+    test('a 2-byte MZ stub is still a PE binary', () {
+      final exe = fakeExe(const [0x4D, 0x5A]);
+      final install = classifyInstall(
+        scriptPath: exe.path,
+        executablePath: exe.path,
+      );
+      expect(install.kind, InstallKind.binary);
+    });
+  });
+
+  group('isYesAnswer', () {
+    test('y and yes are affirmative in any casing', () {
+      expect(isYesAnswer('y'), isTrue);
+      expect(isYesAnswer('yes'), isTrue);
+      expect(isYesAnswer('Y'), isTrue);
+      expect(isYesAnswer('Yes'), isTrue);
+      expect(isYesAnswer(' YES '), isTrue);
+    });
+
+    test('anything else — including null and empty — is a NO', () {
+      expect(isYesAnswer(null), isFalse);
+      expect(isYesAnswer(''), isFalse);
+      expect(isYesAnswer('n'), isFalse);
+      expect(isYesAnswer('no'), isFalse);
+      expect(isYesAnswer('yeah'), isFalse);
+    });
   });
 
   group('runSelfUpdate', () {

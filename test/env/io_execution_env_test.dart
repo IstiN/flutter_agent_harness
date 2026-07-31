@@ -55,6 +55,43 @@ void main() {
       expect(missing.errorOrNull?.code, FileErrorCode.notFound);
     });
 
+    test('readTextLines with maxLines truncates the output', () async {
+      await fs.writeFile('many.txt', 'a\nb\nc\nd\n');
+      expect((await fs.readTextLines('many.txt', maxLines: 2)).getOrThrow(), [
+        'a',
+        'b',
+      ]);
+    });
+
+    test(
+      'readTextLines with maxLines above the line count reads all',
+      () async {
+        await fs.writeFile('few.txt', 'a\nb\n');
+        expect((await fs.readTextLines('few.txt', maxLines: 10)).getOrThrow(), [
+          'a',
+          'b',
+        ]);
+      },
+    );
+
+    test('readTextLines with non-positive maxLines returns empty', () async {
+      await fs.writeFile('z.txt', 'a\nb\n');
+      expect(
+        (await fs.readTextLines('z.txt', maxLines: 0)).getOrThrow(),
+        isEmpty,
+      );
+      expect(
+        (await fs.readTextLines('z.txt', maxLines: -3)).getOrThrow(),
+        isEmpty,
+      );
+    });
+
+    test('readTextLines on a missing file maps to notFound', () async {
+      final result = await fs.readTextLines('nope.txt');
+      expect(result.errorOrNull?.code, FileErrorCode.notFound);
+      expect(result.errorOrNull?.path, '${tempDir.path}/nope.txt');
+    });
+
     test('absolutePath resolves relatives against cwd', () async {
       expect(
         (await fs.absolutePath('x.txt')).getOrThrow(),

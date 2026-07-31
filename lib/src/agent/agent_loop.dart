@@ -667,12 +667,7 @@ Future<List<Message>> _runAgentLoop({
   );
   var currentConfig = config;
 
-  await emit(const AgentStartEvent());
-  await emit(const TurnStartEvent());
-  for (final prompt in prompts) {
-    await emit(MessageStartEvent(prompt));
-    await emit(MessageEndEvent(prompt));
-  }
+  await _emitRunStart(prompts, emit);
 
   var firstTurn = true;
   // Check for steering messages at start (user may have typed while waiting).
@@ -683,22 +678,17 @@ Future<List<Message>> _runAgentLoop({
   while (true) {
     var hasMoreToolCalls = true;
     while (hasMoreToolCalls || pendingMessages.isNotEmpty) {
-      if (firstTurn) {
-        firstTurn = false;
-      } else {
-        await emit(const TurnStartEvent());
-      }
+      await _emitTurnStart(firstTurn, emit);
+      firstTurn = false;
 
       // Inject queued messages before the next assistant response.
-      if (pendingMessages.isNotEmpty) {
-        await _injectPendingMessages(
-          pendingMessages,
-          emit,
-          currentContext,
-          newMessages,
-        );
-        pendingMessages = const [];
-      }
+      await _injectPendingMessages(
+        pendingMessages,
+        emit,
+        currentContext,
+        newMessages,
+      );
+      pendingMessages = const [];
 
       final message = await _streamAssistantResponse(
         currentContext,
@@ -709,12 +699,8 @@ Future<List<Message>> _runAgentLoop({
       );
       newMessages.add(message);
 
-      if (message.stopReason == StopReason.error ||
-          message.stopReason == StopReason.aborted) {
-        await emit(TurnEndEvent(message: message, toolResults: const []));
-        await emit(AgentEndEvent(List.unmodifiable(newMessages)));
-        return newMessages;
-      }
+      final terminal = await _terminalRunMessages(message, newMessages, emit);
+      if (terminal != null) return terminal;
 
       final toolPhase = await _runToolCallPhase(
         currentContext,
@@ -739,12 +725,11 @@ Future<List<Message>> _runAgentLoop({
           newMessages: List.unmodifiable(newMessages),
         ),
       );
-      if (turnUpdate != null) {
-        if (turnUpdate.context != null) currentContext = turnUpdate.context!;
-        if (turnUpdate.model != null) {
-          currentConfig = currentConfig.copyWith(model: turnUpdate.model);
-        }
-      }
+      (currentContext, currentConfig) = _applyTurnUpdate(
+        currentContext,
+        currentConfig,
+        turnUpdate,
+      );
 
       pendingMessages = await _steeringMessages(currentConfig);
     }
@@ -763,6 +748,55 @@ Future<List<Message>> _runAgentLoop({
 
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));
   return newMessages;
+}
+
+/// Emits the run-start sequence: `agent_start`, the first `turn_start`, and
+/// the lifecycle events of every prompt message.
+Future<void> _emitRunStart(List<Message> prompts, AgentEventSink emit) async {
+  await emit(const AgentStartEvent());
+  await emit(const TurnStartEvent());
+  for (final prompt in prompts) {
+    await emit(MessageStartEvent(prompt));
+    await emit(MessageEndEvent(prompt));
+  }
+}
+
+/// Emits `turn_start` for every turn after the first (the first turn's start
+/// was already emitted by [_emitRunStart]).
+Future<void> _emitTurnStart(bool firstTurn, AgentEventSink emit) async {
+  if (!firstTurn) await emit(const TurnStartEvent());
+}
+
+/// Ends the run when the assistant [message] failed or was aborted, emitting
+/// the closing `turn_end`/`agent_end` and returning the run's messages.
+/// Returns `null` for a healthy message so the turn continues.
+Future<List<Message>?> _terminalRunMessages(
+  AssistantMessage message,
+  List<Message> newMessages,
+  AgentEventSink emit,
+) async {
+  if (message.stopReason != StopReason.error &&
+      message.stopReason != StopReason.aborted) {
+    return null;
+  }
+  await emit(TurnEndEvent(message: message, toolResults: const []));
+  await emit(AgentEndEvent(List.unmodifiable(newMessages)));
+  return newMessages;
+}
+
+/// Applies a [PrepareNextTurnHook]'s [turnUpdate]: replaces the context
+/// and/or model for the next turn; `null` keeps the current ones.
+(Context, AgentLoopConfig) _applyTurnUpdate(
+  Context currentContext,
+  AgentLoopConfig currentConfig,
+  AgentLoopTurnUpdate? turnUpdate,
+) {
+  if (turnUpdate == null) return (currentContext, currentConfig);
+  if (turnUpdate.context != null) currentContext = turnUpdate.context!;
+  if (turnUpdate.model != null) {
+    currentConfig = currentConfig.copyWith(model: turnUpdate.model);
+  }
+  return (currentContext, currentConfig);
 }
 
 /// Emits and appends the queued steering/follow-up [pendingMessages] before
@@ -848,6 +882,51 @@ Future<AssistantMessage> _streamAssistantResponse(
     );
   }
 
+  final requestContext = await _buildRequestContext(
+    context,
+    config,
+    cancelToken,
+  );
+
+  AssistantMessageEventStream response;
+  try {
+    response = streamFunction(
+      config.model,
+      requestContext,
+      cancelToken: cancelToken,
+    );
+  } catch (error) {
+    return _finishWithoutStream(
+      context,
+      emit,
+      _terminalMessage(config.model, StopReason.error, '$error'),
+    );
+  }
+
+  final streamed = await _consumeResponseStream(response, context, emit);
+  if (streamed.finished != null) return streamed.finished!;
+
+  // The provider stream closed without a terminal event (provider bug).
+  const errorText = 'Provider stream ended without a terminal event';
+  final base =
+      streamed.partial ??
+      _terminalMessage(config.model, StopReason.error, errorText);
+  return _finishWithoutStream(
+    context,
+    emit,
+    base.copyWith(stopReason: StopReason.error, errorMessage: errorText),
+    replaceLast: streamed.addedPartial,
+  );
+}
+
+/// Applies the request-payload rewrites before a provider call: the
+/// `transformContext` hook and the orphaned-tool-call repair. Only the
+/// request payload is rewritten, never the transcript.
+Future<Context> _buildRequestContext(
+  Context context,
+  AgentLoopConfig config,
+  CancelToken? cancelToken,
+) async {
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
   var requestContext = context;
@@ -869,22 +948,22 @@ Future<AssistantMessage> _streamAssistantResponse(
       tools: requestContext.tools,
     );
   }
+  return requestContext;
+}
 
-  AssistantMessageEventStream response;
-  try {
-    response = streamFunction(
-      config.model,
-      requestContext,
-      cancelToken: cancelToken,
-    );
-  } catch (error) {
-    return _finishWithoutStream(
-      context,
-      emit,
-      _terminalMessage(config.model, StopReason.error, '$error'),
-    );
-  }
-
+/// Consumes the provider [response] stream, emitting message lifecycle
+/// events and keeping the partial message in [context.messages] up to date
+/// (partial-first). On a terminal event the finished message is returned in
+/// `finished`; when the stream closes without one, `finished` is `null` and
+/// `partial`/`addedPartial` describe the last partial snapshot.
+Future<
+  ({AssistantMessage? finished, AssistantMessage? partial, bool addedPartial})
+>
+_consumeResponseStream(
+  AssistantMessageEventStream response,
+  Context context,
+  AgentEventSink emit,
+) async {
   AssistantMessage? partialMessage;
   var addedPartial = false;
 
@@ -896,7 +975,11 @@ Future<AssistantMessage> _streamAssistantResponse(
         addedPartial = true;
         await emit(MessageStartEvent(partial));
       case DoneEvent() || ErrorEvent():
-        return _finishStreamed(context, emit, addedPartial, event);
+        return (
+          finished: await _finishStreamed(context, emit, addedPartial, event),
+          partial: partialMessage,
+          addedPartial: addedPartial,
+        );
       default:
         if (partialMessage != null) {
           partialMessage = event.partial;
@@ -911,17 +994,7 @@ Future<AssistantMessage> _streamAssistantResponse(
     }
   }
 
-  // The provider stream closed without a terminal event (provider bug).
-  const errorText = 'Provider stream ended without a terminal event';
-  final base =
-      partialMessage ??
-      _terminalMessage(config.model, StopReason.error, errorText);
-  return _finishWithoutStream(
-    context,
-    emit,
-    base.copyWith(stopReason: StopReason.error, errorMessage: errorText),
-    replaceLast: addedPartial,
-  );
+  return (finished: null, partial: partialMessage, addedPartial: addedPartial);
 }
 
 Future<AssistantMessage> _finishStreamed(
@@ -1247,33 +1320,59 @@ Future<_ToolCallPreparation> _prepareToolCall(
   }
 
   try {
-    final beforeToolCall = config.beforeToolCall;
-    if (beforeToolCall != null) {
-      final beforeResult = await beforeToolCall(
-        BeforeToolCallContext(
-          assistantMessage: assistantMessage,
-          toolCall: toolCall,
-          context: context,
-        ),
-        cancelToken,
-      );
-      if (cancelToken != null && cancelToken.isCancelled) {
-        return _ImmediateToolCall(_errorToolResult('Operation aborted'), true);
-      }
-      if (beforeResult != null && beforeResult.block) {
-        return _ImmediateToolCall(
-          _errorToolResult(beforeResult.reason ?? 'Tool execution was blocked'),
-          true,
-        );
-      }
-    }
-    if (cancelToken != null && cancelToken.isCancelled) {
-      return _ImmediateToolCall(_errorToolResult('Operation aborted'), true);
-    }
-    return _PreparedToolCall();
+    return await _runBeforeToolCallHook(
+      context,
+      assistantMessage,
+      toolCall,
+      config,
+      cancelToken,
+    );
   } catch (error) {
     return _ImmediateToolCall(_errorToolResult('$error'), true);
   }
+}
+
+/// Runs the `beforeToolCall` hook (when configured) with the abort checks.
+/// A throw propagates to [_prepareToolCall], which converts it into an error
+/// tool result (pi semantics).
+Future<_ToolCallPreparation> _runBeforeToolCallHook(
+  Context context,
+  AssistantMessage assistantMessage,
+  ToolCall toolCall,
+  AgentLoopConfig config,
+  CancelToken? cancelToken,
+) async {
+  final beforeToolCall = config.beforeToolCall;
+  if (beforeToolCall != null) {
+    final beforeResult = await beforeToolCall(
+      BeforeToolCallContext(
+        assistantMessage: assistantMessage,
+        toolCall: toolCall,
+        context: context,
+      ),
+      cancelToken,
+    );
+    final abortedAfterHook = _abortIfCancelled(cancelToken);
+    if (abortedAfterHook != null) return abortedAfterHook;
+    if (beforeResult != null && beforeResult.block) {
+      return _ImmediateToolCall(
+        _errorToolResult(beforeResult.reason ?? 'Tool execution was blocked'),
+        true,
+      );
+    }
+  }
+  final aborted = _abortIfCancelled(cancelToken);
+  if (aborted != null) return aborted;
+  return _PreparedToolCall();
+}
+
+/// The abort check shared by the tool-call preparation paths: an immediate
+/// error result when [cancelToken] is already cancelled, `null` otherwise.
+_ToolCallPreparation? _abortIfCancelled(CancelToken? cancelToken) {
+  if (cancelToken != null && cancelToken.isCancelled) {
+    return _ImmediateToolCall(_errorToolResult('Operation aborted'), true);
+  }
+  return null;
 }
 
 Tool? _findTool(Context context, String name) {

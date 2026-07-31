@@ -211,6 +211,39 @@ void main() {
     );
   });
 
+  test('looks rows up by a REAL primary key, coercing numeric keys', () async {
+    final db = sqlite3.open('${tempDir.path}/real.db');
+    db.execute('CREATE TABLE prices (id REAL PRIMARY KEY, label TEXT)');
+    db.execute("INSERT INTO prices (id, label) VALUES (1.5, 'a'), (2.5, 'b')");
+    db.dispose();
+
+    final found = await tool.execute(
+      {'path': 'real.db:prices:1.5'},
+      null,
+      null,
+    );
+    expect(_text(found), 'id: 1.5\nlabel: a');
+
+    // A non-numeric key on a REAL primary key stays a string and matches
+    // nothing (omp coerces best-effort instead of throwing).
+    final missing = await tool.execute(
+      {'path': 'real.db:prices:abc'},
+      null,
+      null,
+    );
+    expect(_text(missing), "No row found in table 'prices' for key 'abc'.");
+  });
+
+  test('looks rows up by a TEXT primary key without coercion', () async {
+    final db = sqlite3.open('${tempDir.path}/text.db');
+    db.execute('CREATE TABLE tags (code TEXT PRIMARY KEY, v TEXT)');
+    db.execute("INSERT INTO tags (code, v) VALUES ('x1', 'one')");
+    db.dispose();
+
+    final result = await tool.execute({'path': 'text.db:tags:x1'}, null, null);
+    expect(_text(result), 'code: x1\nv: one');
+  });
+
   test('raw queries are capped and say how to page', () async {
     final db = sqlite3.open('${tempDir.path}/huge.db');
     db.execute('CREATE TABLE t (v TEXT)');

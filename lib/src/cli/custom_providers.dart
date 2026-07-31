@@ -157,24 +157,33 @@ final class CustomProviderRegistry {
   /// host-scoped entry.
   static String keyNameFor(String baseUrl, {String? providerName}) {
     final uri = Uri.tryParse(baseUrl);
-    var host = uri?.host ?? baseUrl;
-    if (host.isEmpty) host = 'custom';
-    final port = uri?.port;
-    final defaultPort = uri?.scheme == 'https' ? 443 : 80;
-    if (port != null && port != defaultPort) host = '${host}_$port';
-    final sanitized = host
-        .toUpperCase()
-        .replaceAll(RegExp('[^A-Z0-9]+'), '_')
-        .replaceAll(RegExp('^_+|_+\$'), '');
+    final sanitized = _sanitizeKeyHost(_hostWithPort(uri, baseUrl));
     final base = 'FA_KEY_${sanitized.isEmpty ? 'CUSTOM' : sanitized}';
-    final name = providerName
-        ?.toUpperCase()
-        .replaceAll(RegExp('[^A-Z0-9]+'), '_')
-        .replaceAll(RegExp('^_+|_+\$'), '');
+    final name = providerName == null ? null : _sanitizeKeyHost(providerName);
     // A provider named after its host (the default derived name) must not
     // double the suffix: FA_KEY_API_AIIN_BY, not FA_KEY_API_AIIN_BY_API_AIIN_BY.
     return name == null || name.isEmpty || name == sanitized
         ? base
         : '${base}_$name';
+  }
+
+  /// The host part of [uri] (falling back to [baseUrl]), with a non-default
+  /// port appended.
+  static String _hostWithPort(Uri? uri, String baseUrl) {
+    var host = uri?.host ?? baseUrl;
+    if (host.isEmpty) host = 'custom';
+    final port = uri?.port;
+    final defaultPort = uri?.scheme == 'https' ? 443 : 80;
+    if (port != null && port != defaultPort) host = '${host}_$port';
+    return host;
+  }
+
+  /// Uppercased, non-alphanumerics collapsed to `_`, edge underscores
+  /// trimmed.
+  static String _sanitizeKeyHost(String value) {
+    return value
+        .toUpperCase()
+        .replaceAll(RegExp('[^A-Z0-9]+'), '_')
+        .replaceAll(RegExp('^_+|_+\$'), '');
   }
 }

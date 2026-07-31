@@ -194,30 +194,66 @@ final class ApprovalManager {
     required Map<String, dynamic> arguments,
   }) async {
     // 1. An explicit deny wins over everything, the interceptor included.
+    final denied = _denyOverrideOutcome(toolName);
+    if (denied != null) return denied;
+
+    // 2. Critical bash patterns force a prompt regardless of mode or
+    //    allow-policy — even under yolo and after "approve always".
+    final critical = await _criticalBashOutcome(
+      toolName: toolName,
+      tier: tier,
+      arguments: arguments,
+    );
+    if (critical != null) return critical;
+
+    // 3. Remaining per-tool overrides.
+    final overridden = await _overrideOutcome(
+      toolName: toolName,
+      tier: tier,
+      arguments: arguments,
+    );
+    if (overridden != null) return overridden;
+
+    // 4. Session always-allow ("approve always" answers, `/allow`).
+    if (_alwaysAllow.contains(toolName)) {
+      return const ApprovalOutcome.allowed();
+    }
+
+    // 5. Session mode vs. tool tier.
+    return _modeOutcome(toolName: toolName, tier: tier, arguments: arguments);
+  }
+
+  ApprovalOutcome? _denyOverrideOutcome(String toolName) {
     if (_overrides[toolName] == ApprovalPolicy.deny) {
       return ApprovalOutcome.denied(
         'Tool "$toolName" is denied by the configured approval policy.',
       );
     }
+    return null;
+  }
 
-    // 2. Critical bash patterns force a prompt regardless of mode or
-    //    allow-policy — even under yolo and after "approve always".
-    if (toolName == bashToolName) {
-      final command = arguments['command'];
-      final label = command is String
-          ? matchCriticalBashCommand(command)
-          : null;
-      if (label != null) {
-        return _requestDecision(
-          toolName: toolName,
-          tier: tier,
-          arguments: arguments,
-          reason: 'Critical pattern detected: $label',
-        );
-      }
-    }
+  Future<ApprovalOutcome>? _criticalBashOutcome({
+    required String toolName,
+    required ApprovalTier tier,
+    required Map<String, dynamic> arguments,
+  }) {
+    if (toolName != bashToolName) return null;
+    final command = arguments['command'];
+    final label = command is String ? matchCriticalBashCommand(command) : null;
+    if (label == null) return null;
+    return _requestDecision(
+      toolName: toolName,
+      tier: tier,
+      arguments: arguments,
+      reason: 'Critical pattern detected: $label',
+    );
+  }
 
-    // 3. Remaining per-tool overrides.
+  Future<ApprovalOutcome?> _overrideOutcome({
+    required String toolName,
+    required ApprovalTier tier,
+    required Map<String, dynamic> arguments,
+  }) async {
     switch (_overrides[toolName]) {
       case ApprovalPolicy.allow:
         return const ApprovalOutcome.allowed();
@@ -229,15 +265,15 @@ final class ApprovalManager {
           reason: 'Tool "$toolName" is set to always ask for approval',
         );
       case ApprovalPolicy.deny || null:
-        break; // deny was handled first; nothing overrides here.
+        return null; // deny was handled first; nothing overrides here.
     }
+  }
 
-    // 4. Session always-allow ("approve always" answers, `/allow`).
-    if (_alwaysAllow.contains(toolName)) {
-      return const ApprovalOutcome.allowed();
-    }
-
-    // 5. Session mode vs. tool tier.
+  Future<ApprovalOutcome> _modeOutcome({
+    required String toolName,
+    required ApprovalTier tier,
+    required Map<String, dynamic> arguments,
+  }) async {
     switch (mode) {
       case ApprovalMode.yolo:
         return const ApprovalOutcome.allowed();

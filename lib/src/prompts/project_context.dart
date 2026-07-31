@@ -52,14 +52,7 @@ Future<List<ProjectContextFile>> loadProjectContextFiles(
   final byDir = <List<ProjectContextFile>>[];
   var dir = env.cwd;
   for (;;) {
-    final dirFiles = <ProjectContextFile>[];
-    for (final name in projectContextFileNames) {
-      final path = '$dir/$name';
-      final content = (await env.readTextFile(path)).valueOrNull;
-      if (content != null && content.trim().isNotEmpty) {
-        dirFiles.add(ProjectContextFile(path: path, content: content));
-      }
-    }
+    final dirFiles = await _contextFilesInDir(env, dir);
     if (dirFiles.isNotEmpty) byDir.add(dirFiles);
     if ((await env.exists('$dir/.git')).valueOrNull ?? false) break;
     final parent = _parentOf(dir);
@@ -67,17 +60,44 @@ Future<List<ProjectContextFile>> loadProjectContextFiles(
     dir = parent;
   }
 
-  if (userFile != null) {
-    final content = (await env.readTextFile(userFile)).valueOrNull;
-    if (content != null && content.trim().isNotEmpty) {
-      found.add(ProjectContextFile(path: userFile, content: content));
-    }
-  }
+  final user = await _loadUserFile(env, userFile);
+  if (user != null) found.add(user);
   // Farthest first, closest (most specific) last.
   for (final dirFiles in byDir.reversed) {
     found.addAll(dirFiles);
   }
   return _applyBudget(found);
+}
+
+/// Collects the present, non-empty [projectContextFileNames] files of one
+/// directory.
+Future<List<ProjectContextFile>> _contextFilesInDir(
+  ExecutionEnv env,
+  String dir,
+) async {
+  final dirFiles = <ProjectContextFile>[];
+  for (final name in projectContextFileNames) {
+    final path = '$dir/$name';
+    final content = (await env.readTextFile(path)).valueOrNull;
+    if (content != null && content.trim().isNotEmpty) {
+      dirFiles.add(ProjectContextFile(path: path, content: content));
+    }
+  }
+  return dirFiles;
+}
+
+/// Loads the user-level context file (e.g. `~/.fah/AGENTS.md`, pi's global
+/// layer), or null when absent or empty.
+Future<ProjectContextFile?> _loadUserFile(
+  ExecutionEnv env,
+  String? userFile,
+) async {
+  if (userFile == null) return null;
+  final content = (await env.readTextFile(userFile)).valueOrNull;
+  if (content != null && content.trim().isNotEmpty) {
+    return ProjectContextFile(path: userFile, content: content);
+  }
+  return null;
 }
 
 String _parentOf(String dir) {

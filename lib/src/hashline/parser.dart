@@ -45,31 +45,48 @@ final _bareLiteralValueRe = RegExp(
 String? _detectContamination(String text) {
   final trimmed = text.trimLeft();
   if (trimmed.isEmpty) return null;
-  if (trimmed.startsWith('*** Update File:') ||
-      trimmed.startsWith('*** Add File:') ||
-      trimmed.startsWith('*** Delete File:') ||
-      trimmed.startsWith('*** Move to:')) {
-    final preview = trimmed.length > 48
-        ? '${trimmed.substring(0, 48)}…'
-        : trimmed;
-    return 'apply_patch sentinel ${repr(preview)} is not valid in hashline. '
-        'File sections start with `[path#HASH]` (no `Update File:` / '
-        '`Add File:` keyword). Use `SWAP N${hlRangeSep}M:`, '
-        '`DEL N${hlRangeSep}M`, or `INS.PRE|POST|HEAD|TAIL:` ops.';
+  return _detectApplyPatchSentinel(trimmed) ??
+      _detectDiffHunkHeader(trimmed) ??
+      _detectVerbMisuse(trimmed);
+}
+
+/// The apply_patch file sentinels (`*** Update File:` and friends).
+String? _detectApplyPatchSentinel(String trimmed) {
+  if (!trimmed.startsWith('*** Update File:') &&
+      !trimmed.startsWith('*** Add File:') &&
+      !trimmed.startsWith('*** Delete File:') &&
+      !trimmed.startsWith('*** Move to:')) {
+    return null;
   }
+  final preview = trimmed.length > 48
+      ? '${trimmed.substring(0, 48)}…'
+      : trimmed;
+  return 'apply_patch sentinel ${repr(preview)} is not valid in hashline. '
+      'File sections start with `[path#HASH]` (no `Update File:` / '
+      '`Add File:` keyword). Use `SWAP N${hlRangeSep}M:`, '
+      '`DEL N${hlRangeSep}M`, or `INS.PRE|POST|HEAD|TAIL:` ops.';
+}
+
+/// Unified-diff hunk headers, both the full `@@ -N,M +N,M @@` form and
+/// bare `@@`-bracketed variants.
+String? _detectDiffHunkHeader(String trimmed) {
   if (RegExp(r'^@@\s+[-+]?\d+,\d+\s+[-+]?\d+,\d+\s+@@').hasMatch(trimmed)) {
     return 'unified-diff hunk header (`@@ -N,M +N,M @@`) is not valid in '
         'hashline. Use `SWAP N${hlRangeSep}M:`, `DEL N${hlRangeSep}M`, or '
         '`INS.PRE|POST|HEAD|TAIL:` ops.';
   }
-  if (trimmed.startsWith('@@')) {
-    final preview = trimmed.length > 48
-        ? '${trimmed.substring(0, 48)}…'
-        : trimmed;
-    return '`@@`-bracketed hunk header ${repr(preview)} is not valid in '
-        'hashline. Drop the `@@ ... @@` brackets and write a verb header '
-        'such as `SWAP N${hlRangeSep}M:`.';
-  }
+  if (!trimmed.startsWith('@@')) return null;
+  final preview = trimmed.length > 48
+      ? '${trimmed.substring(0, 48)}…'
+      : trimmed;
+  return '`@@`-bracketed hunk header ${repr(preview)} is not valid in '
+      'hashline. Drop the `@@ ... @@` brackets and write a verb header '
+      'such as `SWAP N${hlRangeSep}M:`.';
+}
+
+/// Verb-less or mis-verbed hunk headers: `DEL N:M:` with a colon, a lone
+/// line number, or a bare `N-M` range with no verb.
+String? _detectVerbMisuse(String trimmed) {
   if (RegExp(
     r'^DEL\s+[1-9]\d*(?:\s*(?:\.\.|\.=|-|…|\s)\s*[1-9]\d*)?\s*:',
   ).hasMatch(trimmed)) {
@@ -83,13 +100,11 @@ String? _detectContamination(String text) {
   final bareRange = RegExp(
     r'^([1-9]\d*)\s*[-. …=]+\s*([1-9]\d*)\s*:?$',
   ).firstMatch(trimmed);
-  if (bareRange != null) {
-    return 'bare range hunk header ${repr(trimmed)} is not valid. Hunk '
-        'headers need a verb: write '
-        '`SWAP ${bareRange[1]}$hlRangeSep${bareRange[2]}:` or '
-        '`DEL ${bareRange[1]}$hlRangeSep${bareRange[2]}`.';
-  }
-  return null;
+  if (bareRange == null) return null;
+  return 'bare range hunk header ${repr(trimmed)} is not valid. Hunk '
+      'headers need a verb: write '
+      '`SWAP ${bareRange[1]}$hlRangeSep${bareRange[2]}:` or '
+      '`DEL ${bareRange[1]}$hlRangeSep${bareRange[2]}`.';
 }
 
 final class _PendingComment {
@@ -158,34 +173,47 @@ final class HashlineParser {
   void feed(HashlineToken token) {
     if (_terminated) return;
     switch (token) {
-      case HashlineEnvelopeBeginToken():
-        _consumePendingSkippableComments();
-      case HashlineEnvelopeEndToken():
-        _consumePendingSkippableComments();
-        _terminated = true;
-      case HashlineAbortToken():
-        _terminated = true;
-      case HashlineHeaderToken():
-        _consumePendingSkippableComments();
-        _flushPending();
-      case HashlineBlankToken():
-        _consumePendingSkippableComments();
-        _handleBlank('', token.lineNum);
-      case HashlinePayloadToken():
-        _consumePendingSkippableComments();
-        _handleLiteralPayload(token.text, token.lineNum);
       case HashlineRawToken():
-        if (_pending == null && _isSkippableCommentLine(token.text)) {
-          _skippableComments.add(
-            _PendingComment(text: token.text, lineNum: token.lineNum),
-          );
-          return;
-        }
-        _consumePendingSkippableComments();
-        _handleRaw(token.text, token.lineNum);
+        _feedRawToken(token);
       case HashlineOpToken():
         _discardPendingSkippableComments();
         _handleOp(token.target, token.lineNum);
+      case HashlineAbortToken():
+        _terminated = true;
+      default:
+        _feedBodyToken(token);
+    }
+  }
+
+  /// Raw rows that begin a skippable `#` comment run outside a hunk body are
+  /// buffered until a non-comment token decides whether they were noise.
+  void _feedRawToken(HashlineRawToken token) {
+    if (_pending == null && _isSkippableCommentLine(token.text)) {
+      _skippableComments.add(
+        _PendingComment(text: token.text, lineNum: token.lineNum),
+      );
+      return;
+    }
+    _consumePendingSkippableComments();
+    _handleRaw(token.text, token.lineNum);
+  }
+
+  /// Envelope, header, blank, and payload tokens all consume any buffered
+  /// skippable comments first, then run their own step.
+  void _feedBodyToken(HashlineToken token) {
+    _consumePendingSkippableComments();
+    switch (token) {
+      case HashlineEnvelopeEndToken():
+        _terminated = true;
+      case HashlineHeaderToken():
+        _flushPending();
+      case HashlineBlankToken():
+        _handleBlank('', token.lineNum);
+      case HashlinePayloadToken():
+        _handleLiteralPayload(token.text, token.lineNum);
+      default:
+        // EnvelopeBegin: comments consumed above, nothing further.
+        break;
     }
   }
 
@@ -194,19 +222,27 @@ final class HashlineParser {
       case HashlineTargetReplace(:final range):
       case HashlineTargetDelete(:final range):
         _validateRangeOrder(range, lineNum);
-      case HashlineTargetBlock():
-      case HashlineTargetDeleteBlock():
-      case HashlineTargetInsertAfterBlock():
-        throw const HashlineFormatException(blockOpsUnavailable);
-      case HashlineTargetRem():
-        throw const HashlineFormatException(remUnsupported);
-      case HashlineTargetMove():
-        throw const HashlineFormatException(moveUnsupported);
       default:
-        break;
+        _rejectUnsupportedOp(target);
     }
     _flushPending();
     _pending = _Pending(target: target, lineNum: lineNum);
+  }
+
+  /// The tree-sitter block ops and the file-level ops are recognized by the
+  /// tokenizer but rejected by this port with focused "unsupported" errors.
+  void _rejectUnsupportedOp(HashlineTarget target) {
+    if (target is HashlineTargetBlock ||
+        target is HashlineTargetDeleteBlock ||
+        target is HashlineTargetInsertAfterBlock) {
+      throw const HashlineFormatException(blockOpsUnavailable);
+    }
+    if (target is HashlineTargetRem) {
+      throw const HashlineFormatException(remUnsupported);
+    }
+    if (target is HashlineTargetMove) {
+      throw const HashlineFormatException(moveUnsupported);
+    }
   }
 
   /// Finishes parsing and returns the edits plus warnings.
@@ -264,29 +300,7 @@ final class HashlineParser {
     }
     final pending = _pending;
     if (pending != null) {
-      if (text.trim().isEmpty) {
-        _handleBlank(text, lineNum);
-        return;
-      }
-      if (pending.target is HashlineTargetDelete) {
-        throw const HashlineFormatException(deleteTakesNoBody);
-      }
-      if (text.trimLeft().codeUnitAt(0) == 45 /* - */ ) {
-        throw const HashlineFormatException(minusRowRejected);
-      }
-      if (!_warnings.contains(bareBodyAutoPipedWarning)) {
-        _warnings.add(bareBodyAutoPipedWarning);
-      }
-      _commitDeferredBlanks(pending);
-      // Defer read-output line-number stripping to _flushPending: a bare
-      // "N:text" row is only a copy-paste artifact from snapshot output when
-      // *every* bare row in the hunk carries that prefix. Stripping a row in
-      // isolation would corrupt a genuine body that merely starts with
-      // "digits:" (YAML ports "42:hello", timestamps "12:30") when it sits
-      // next to an unprefixed sibling.
-      pending.payloads.add(
-        _PayloadRow(text: text, lineNum: lineNum, bare: true),
-      );
+      _handleRawBodyRow(pending, text, lineNum);
       return;
     }
     if (text.trim().isEmpty) return;
@@ -295,6 +309,32 @@ final class HashlineParser {
       '`SWAP N${hlRangeSep}M:`, `DEL N${hlRangeSep}M`, or '
       '`INS.PRE|POST|HEAD|TAIL:` above the body. Got ${repr(text)}.',
     );
+  }
+
+  /// A raw (non-`+`) row inside a hunk body: auto-converted to a bare
+  /// payload row ([bareBodyAutoPipedWarning]).
+  void _handleRawBodyRow(_Pending pending, String text, int lineNum) {
+    if (text.trim().isEmpty) {
+      _handleBlank(text, lineNum);
+      return;
+    }
+    if (pending.target is HashlineTargetDelete) {
+      throw const HashlineFormatException(deleteTakesNoBody);
+    }
+    if (text.trimLeft().codeUnitAt(0) == 45 /* - */ ) {
+      throw const HashlineFormatException(minusRowRejected);
+    }
+    if (!_warnings.contains(bareBodyAutoPipedWarning)) {
+      _warnings.add(bareBodyAutoPipedWarning);
+    }
+    _commitDeferredBlanks(pending);
+    // Defer read-output line-number stripping to _flushPending: a bare
+    // "N:text" row is only a copy-paste artifact from snapshot output when
+    // *every* bare row in the hunk carries that prefix. Stripping a row in
+    // isolation would corrupt a genuine body that merely starts with
+    // "digits:" (YAML ports "42:hello", timestamps "12:30") when it sits
+    // next to an unprefixed sibling.
+    pending.payloads.add(_PayloadRow(text: text, lineNum: lineNum, bare: true));
   }
 
   /// A blank row inside a hunk body is ambiguous: interior blanks are body
@@ -326,28 +366,42 @@ final class HashlineParser {
   /// output; a mixed set means the `N:` is genuine payload content and must
   /// stay. Rows authored with an explicit `+` are not bare, never stripped.
   void _stripBarePrefixesIfUniform(List<_PayloadRow> payloads) {
-    var sawBare = false;
-    var allLiteralValues = true;
-    for (final row in payloads) {
-      if (!row.bare || row.text.trim().isEmpty) continue;
-      sawBare = true;
-      final stripped = stripOneLeadingHashlinePrefix(row.text);
-      if (identical(stripped, row.text) || stripped == row.text) return;
-      allLiteralValues =
-          allLiteralValues && _bareLiteralValueRe.hasMatch(stripped);
-    }
-    if (!sawBare) return;
-    // A body where every stripped remainder is a lone quoted/numeric literal
-    // is the shape of a numeric-keyed dict or YAML mapping (`1: "one",`),
-    // not read-output paste; stripping the "N:" keys would mangle every
-    // line.
-    if (allLiteralValues) return;
+    if (!_barePrefixesAreUniform(payloads)) return;
     for (final row in payloads) {
       if (row.bare && row.text.trim().isNotEmpty) {
         row.text = stripOneLeadingHashlinePrefix(row.text);
       }
     }
   }
+
+  /// The stripped remainder of [row]'s text, or null when the row carries no
+  /// read-output line-number prefix.
+  String? _strippedPrefixRemainder(_PayloadRow row) {
+    final stripped = stripOneLeadingHashlinePrefix(row.text);
+    if (identical(stripped, row.text) || stripped == row.text) return null;
+    return stripped;
+  }
+
+  /// Whether every bare row carries a strippable `N:` prefix AND the
+  /// stripped remainders are not all lone quoted/numeric literals.
+  bool _barePrefixesAreUniform(List<_PayloadRow> payloads) {
+    final rows = payloads.where(_isCountableBareRow);
+    if (rows.isEmpty) return false;
+    final remainders = rows.map(_strippedPrefixRemainder);
+    if (remainders.any((remainder) => remainder == null)) return false;
+    // A body where every stripped remainder is a lone quoted/numeric literal
+    // is the shape of a numeric-keyed dict or YAML mapping (`1: "one",`),
+    // not read-output paste; stripping the "N:" keys would mangle every
+    // line.
+    return remainders.whereType<String>().any(
+      (remainder) => !_bareLiteralValueRe.hasMatch(remainder),
+    );
+  }
+
+  /// Whether [row] counts for the bare-prefix uniformity check: a bare row
+  /// with non-blank text.
+  bool _isCountableBareRow(_PayloadRow row) =>
+      row.bare && row.text.trim().isNotEmpty;
 
   void _pushInsert(
     HashlineCursor cursor,
@@ -382,50 +436,63 @@ final class HashlineParser {
     _stripBarePrefixesIfUniform(payloads);
 
     if (target is HashlineTargetDelete) {
-      for (final anchor in _expandRange(target.range)) {
-        _pushDelete(anchor, lineNum);
-      }
+      _pushDeleteRange(target.range, lineNum);
       return;
     }
     if (payloads.isEmpty) {
-      if (target is HashlineTargetReplace) {
-        // An empty SWAP body lowers to a pure deletion of the range (omp
-        // semantics: `SWAP N.=M:` with no `+` rows deletes the lines).
-        for (final anchor in _expandRange(target.range)) {
-          _pushDelete(anchor, lineNum);
-        }
-        return;
-      }
-      throw const HashlineFormatException(emptyInsert);
+      _flushEmptyBody(target, lineNum);
+      return;
     }
+    _flushBody(target, lineNum, payloads);
+  }
+
+  void _pushDeleteRange(HashlineRange range, int lineNum) {
+    for (final anchor in _expandRange(range)) {
+      _pushDelete(anchor, lineNum);
+    }
+  }
+
+  /// A hunk with no body rows: an empty SWAP body lowers to a pure deletion
+  /// of the range (omp semantics: `SWAP N.=M:` with no `+` rows deletes the
+  /// lines); every other op requires at least one body row.
+  void _flushEmptyBody(HashlineTarget target, int lineNum) {
+    if (target is HashlineTargetReplace) {
+      _pushDeleteRange(target.range, lineNum);
+      return;
+    }
+    throw const HashlineFormatException(emptyInsert);
+  }
+
+  void _flushBody(
+    HashlineTarget target,
+    int lineNum,
+    List<_PayloadRow> payloads,
+  ) {
     if (target is HashlineTargetReplace) {
       final cursor = HashlineCursorBefore(target.range.start);
       for (final payload in payloads) {
         _pushInsert(cursor, payload.text, lineNum, replacement: true);
       }
-      for (final anchor in _expandRange(target.range)) {
-        _pushDelete(anchor, lineNum);
-      }
+      _pushDeleteRange(target.range, lineNum);
       return;
     }
-    if (target is HashlineTargetInsertBefore) {
-      for (final payload in payloads) {
-        _pushInsert(HashlineCursorBefore(target.anchor), payload.text, lineNum);
-      }
-      return;
-    }
-    if (target is HashlineTargetInsertAfter) {
-      for (final payload in payloads) {
-        _pushInsert(HashlineCursorAfter(target.anchor), payload.text, lineNum);
-      }
-      return;
-    }
-    final cursor = target is HashlineTargetBof
-        ? const HashlineCursorBof()
-        : const HashlineCursorEof();
+    final cursor = _insertCursorFor(target);
     for (final payload in payloads) {
       _pushInsert(cursor, payload.text, lineNum);
     }
+  }
+
+  /// The cursor a non-replace insert target lowers to.
+  HashlineCursor _insertCursorFor(HashlineTarget target) {
+    if (target is HashlineTargetInsertBefore) {
+      return HashlineCursorBefore(target.anchor);
+    }
+    if (target is HashlineTargetInsertAfter) {
+      return HashlineCursorAfter(target.anchor);
+    }
+    return target is HashlineTargetBof
+        ? const HashlineCursorBof()
+        : const HashlineCursorEof();
   }
 }
 

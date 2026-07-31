@@ -120,44 +120,54 @@ final class CliConfig {
       ..write('model: $modelId\n')
       ..write('baseUrl: $baseUrl\n')
       ..write('mode: $mode\n')
-      ..write('approvalMode: $approvalMode\n');
-    if (allowedTools.isEmpty) {
-      buffer.write('allowedTools: []\n');
-    } else {
-      buffer.write('allowedTools:\n');
-      for (final tool in allowedTools) {
-        buffer.write('  - $tool\n');
-      }
-    }
-    if (promptOverrides.isNotEmpty) {
-      // JSON-quoted values are valid yaml scalars and keep inline multi-line
-      // prompt text round-trippable (same convention as the ttsr section).
-      buffer.write('prompts:\n');
-      for (final entry in promptOverrides.entries) {
-        buffer.write('  ${entry.key}: ${jsonEncode(entry.value)}\n');
-      }
-    }
+      ..write('approvalMode: $approvalMode\n')
+      ..write(_allowedToolsYaml())
+      ..write(_promptOverridesYaml());
     final roles = modelRoles;
     if (roles != null) buffer.write(roles.toYaml());
     final ttsrConfig = ttsr;
     if (ttsrConfig != null) buffer.write(ttsrConfig.toYaml());
-    if (customProviders.isNotEmpty) {
-      buffer.write('customProviders:\n');
-      for (final entry in customProviders) {
-        buffer.write(
-          '  - name: ${entry.name}\n'
-          '    apiType: ${entry.apiType}\n'
-          '    baseUrl: ${entry.baseUrl}\n',
-        );
-        if (entry.keyName != null) {
-          buffer.write('    keyName: ${entry.keyName}\n');
-        }
-        buffer.write('    modelId: ${entry.modelId}\n');
-      }
-    }
+    buffer.write(_customProvidersYaml());
     final modelsConfig = models;
     if (modelsConfig != null && !modelsConfig.isEmpty) {
       buffer.write(modelsConfig.toYaml());
+    }
+    return buffer.toString();
+  }
+
+  String _allowedToolsYaml() {
+    if (allowedTools.isEmpty) return 'allowedTools: []\n';
+    final buffer = StringBuffer('allowedTools:\n');
+    for (final tool in allowedTools) {
+      buffer.write('  - $tool\n');
+    }
+    return buffer.toString();
+  }
+
+  String _promptOverridesYaml() {
+    if (promptOverrides.isEmpty) return '';
+    // JSON-quoted values are valid yaml scalars and keep inline multi-line
+    // prompt text round-trippable (same convention as the ttsr section).
+    final buffer = StringBuffer('prompts:\n');
+    for (final entry in promptOverrides.entries) {
+      buffer.write('  ${entry.key}: ${jsonEncode(entry.value)}\n');
+    }
+    return buffer.toString();
+  }
+
+  String _customProvidersYaml() {
+    if (customProviders.isEmpty) return '';
+    final buffer = StringBuffer('customProviders:\n');
+    for (final entry in customProviders) {
+      buffer.write(
+        '  - name: ${entry.name}\n'
+        '    apiType: ${entry.apiType}\n'
+        '    baseUrl: ${entry.baseUrl}\n',
+      );
+      if (entry.keyName != null) {
+        buffer.write('    keyName: ${entry.keyName}\n');
+      }
+      buffer.write('    modelId: ${entry.modelId}\n');
     }
     return buffer.toString();
   }

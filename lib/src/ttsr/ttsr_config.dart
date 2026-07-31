@@ -142,30 +142,20 @@ final class TtsrConfig {
     if (node is! YamlMap) {
       throw ConfigException('"$where" must be a map');
     }
-    final name = node['name'];
-    if (name is! String || name.trim().isEmpty) {
-      throw ConfigException('"$where.name" must be a non-empty string');
-    }
-    final patterns = _stringList(node['pattern'] ?? node['patterns']);
-    if (patterns == null || patterns.isEmpty) {
-      throw ConfigException(
-        '"$where.pattern" must be a regex string or a non-empty list',
-      );
-    }
-    final body = node['body'];
-    if (body is! String || body.isEmpty) {
-      throw ConfigException('"$where.body" must be a non-empty string');
-    }
-    final path = node['path'];
-    if (path != null && path is! String) {
-      throw ConfigException('"$where.path" must be a string');
-    }
+    final name = _requireNonEmptyString(node['name'], '$where.name');
+    final patterns = _requirePatterns(node, where);
+    final body = _requireNonEmptyString(
+      node['body'],
+      '$where.body',
+      trim: false,
+    );
+    final path = _optionalPath(node, where, sourcePath);
     final scopeTokens = _stringList(node['scope']);
     return TtsrRule(
       name: name.trim(),
       patterns: patterns,
       body: body,
-      path: (path as String?) ?? sourcePath,
+      path: path,
       enabled: _bool(node['enabled'], '$where.enabled', fallback: true),
       scope: TtsrScope.parse(
         scopeTokens,
@@ -173,6 +163,37 @@ final class TtsrConfig {
         warnings: warnings,
       ),
     );
+  }
+
+  /// Reads a required string field; the name rule additionally rejects
+  /// whitespace-only values via [trim].
+  static String _requireNonEmptyString(
+    Object? value,
+    String where, {
+    bool trim = true,
+  }) {
+    if (value is! String || (trim ? value.trim().isEmpty : value.isEmpty)) {
+      throw ConfigException('"$where" must be a non-empty string');
+    }
+    return value;
+  }
+
+  static List<String> _requirePatterns(YamlMap node, String where) {
+    final patterns = _stringList(node['pattern'] ?? node['patterns']);
+    if (patterns == null || patterns.isEmpty) {
+      throw ConfigException(
+        '"$where.pattern" must be a regex string or a non-empty list',
+      );
+    }
+    return patterns;
+  }
+
+  static String? _optionalPath(YamlMap node, String where, String? sourcePath) {
+    final path = node['path'];
+    if (path != null && path is! String) {
+      throw ConfigException('"$where.path" must be a string');
+    }
+    return (path as String?) ?? sourcePath;
   }
 
   /// Accepts a single string or a yaml list of strings (omp's

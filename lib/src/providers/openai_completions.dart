@@ -242,32 +242,14 @@ final class _OpenAICompletionsSession {
   /// Translates one SSE chunk into stream events: chunk-level metadata and
   /// usage first, then the (single) choice's finish reason and delta.
   void _handleChunk(Map<String, dynamic> chunk) {
-    // Each chunk in a streamed completion carries the same id.
-    state.responseId ??= chunk['id'] as String?;
-    final chunkModel = chunk['model'];
-    if (chunkModel is String &&
-        chunkModel.isNotEmpty &&
-        chunkModel != model.id) {
-      state.responseModel ??= chunkModel;
-    }
-    final rawUsage = chunk['usage'];
-    if (rawUsage is Map<String, dynamic>) {
-      state.usage = _parseChunkUsage(rawUsage, model);
-    }
+    _applyChunkMetadata(chunk);
 
     final choice = _firstChoice(chunk);
     if (choice == null) {
       return;
     }
 
-    // Fallback: some providers (e.g., Moonshot) return usage in
-    // choice.usage instead of the standard chunk.usage.
-    if (rawUsage == null) {
-      final choiceUsage = choice['usage'];
-      if (choiceUsage is Map<String, dynamic>) {
-        state.usage = _parseChunkUsage(choiceUsage, model);
-      }
-    }
+    _applyChoiceUsageFallback(chunk, choice);
 
     _applyFinishReason(choice);
 
@@ -286,6 +268,37 @@ final class _OpenAICompletionsSession {
     final choices = chunk['choices'];
     final choice = choices is List && choices.isNotEmpty ? choices.first : null;
     return choice is Map<String, dynamic> ? choice : null;
+  }
+
+  /// Chunk-level metadata: response id, response model, and chunk.usage.
+  void _applyChunkMetadata(Map<String, dynamic> chunk) {
+    // Each chunk in a streamed completion carries the same id.
+    state.responseId ??= chunk['id'] as String?;
+    final chunkModel = chunk['model'];
+    if (chunkModel is String &&
+        chunkModel.isNotEmpty &&
+        chunkModel != model.id) {
+      state.responseModel ??= chunkModel;
+    }
+    final rawUsage = chunk['usage'];
+    if (rawUsage is Map<String, dynamic>) {
+      state.usage = _parseChunkUsage(rawUsage, model);
+    }
+  }
+
+  /// Fallback: some providers (e.g., Moonshot) return usage in
+  /// choice.usage instead of the standard chunk.usage.
+  void _applyChoiceUsageFallback(
+    Map<String, dynamic> chunk,
+    Map<String, dynamic> choice,
+  ) {
+    if (chunk['usage'] != null) {
+      return;
+    }
+    final choiceUsage = choice['usage'];
+    if (choiceUsage is Map<String, dynamic>) {
+      state.usage = _parseChunkUsage(choiceUsage, model);
+    }
   }
 
   void _applyFinishReason(Map<String, dynamic> choice) {
@@ -363,31 +376,48 @@ final class _OpenAICompletionsSession {
       if (rawToolCall is! Map<String, dynamic>) {
         continue;
       }
-      final block = _ensureToolCallBlock(rawToolCall);
-      final id = rawToolCall['id'] as String?;
-      if (block.id.isEmpty && id != null) {
-        block.id = id;
-        toolCallBlocksById[id] = block;
+      _handleSingleToolCallDelta(rawToolCall);
+    }
+  }
+
+  /// Applies one streamed `tool_calls` entry: late id/name assignment,
+  /// arguments append, and the per-entry [ToolCallDeltaEvent].
+  void _handleSingleToolCallDelta(Map<String, dynamic> rawToolCall) {
+    final block = _ensureToolCallBlock(rawToolCall);
+    _applyToolCallIdentity(block, rawToolCall);
+    final function = rawToolCall['function'];
+    var toolDelta = '';
+    if (function is Map && function['arguments'] is String) {
+      toolDelta = function['arguments'] as String;
+      block.partialArgs.write(toolDelta);
+    }
+    eventStream.push(
+      ToolCallDeltaEvent(
+        contentIndex: _contentIndex(block),
+        delta: toolDelta,
+        partial: state.snapshot(),
+      ),
+    );
+  }
+
+  /// Late id/name assignment for a streaming tool-call block (they arrive
+  /// spread across chunks: the first chunk carries them, later ones only
+  /// argument fragments).
+  void _applyToolCallIdentity(
+    ToolCallStreamingBlock block,
+    Map<String, dynamic> rawToolCall,
+  ) {
+    final id = rawToolCall['id'] as String?;
+    if (block.id.isEmpty && id != null) {
+      block.id = id;
+      toolCallBlocksById[id] = block;
+    }
+    final function = rawToolCall['function'];
+    if (function is Map) {
+      final name = function['name'] as String?;
+      if (block.name.isEmpty && name != null) {
+        block.name = name;
       }
-      final function = rawToolCall['function'];
-      if (function is Map) {
-        final name = function['name'] as String?;
-        if (block.name.isEmpty && name != null) {
-          block.name = name;
-        }
-      }
-      var toolDelta = '';
-      if (function is Map && function['arguments'] is String) {
-        toolDelta = function['arguments'] as String;
-        block.partialArgs.write(toolDelta);
-      }
-      eventStream.push(
-        ToolCallDeltaEvent(
-          contentIndex: _contentIndex(block),
-          delta: toolDelta,
-          partial: state.snapshot(),
-        ),
-      );
     }
   }
 
@@ -486,29 +516,8 @@ final class _OpenAICompletionsSession {
         ? toolCall['index'] as int
         : null;
     final id = toolCall['id'] as String?;
-    var block = streamIndex != null ? toolCallBlocksByIndex[streamIndex] : null;
-    block ??= id != null ? toolCallBlocksById[id] : null;
-    if (block == null) {
-      final function = toolCall['function'];
-      block = ToolCallStreamingBlock(
-        id: id ?? '',
-        name: function is Map ? function['name'] as String? ?? '' : '',
-        streamIndex: streamIndex,
-      );
-      if (streamIndex != null) {
-        toolCallBlocksByIndex[streamIndex] = block;
-      }
-      if (id != null) {
-        toolCallBlocksById[id] = block;
-      }
-      blocks.add(block);
-      eventStream.push(
-        ToolCallStartEvent(
-          contentIndex: _contentIndex(block),
-          partial: state.snapshot(),
-        ),
-      );
-    }
+    var block = _lookupToolCallBlock(streamIndex, id);
+    block ??= _createToolCallBlock(toolCall, streamIndex, id);
     if (streamIndex != null && block.streamIndex == null) {
       block.streamIndex = streamIndex;
       toolCallBlocksByIndex[streamIndex] = block;
@@ -517,6 +526,42 @@ final class _OpenAICompletionsSession {
       toolCallBlocksById[id] = block;
     }
     _applyPendingReasoningDetail(block);
+    return block;
+  }
+
+  /// Finds an existing tool-call block by stream index first, then by id.
+  ToolCallStreamingBlock? _lookupToolCallBlock(int? streamIndex, String? id) {
+    var block = streamIndex != null ? toolCallBlocksByIndex[streamIndex] : null;
+    block ??= id != null ? toolCallBlocksById[id] : null;
+    return block;
+  }
+
+  /// Registers a new tool-call block under both indexes and pushes its
+  /// [ToolCallStartEvent].
+  ToolCallStreamingBlock _createToolCallBlock(
+    Map<String, dynamic> toolCall,
+    int? streamIndex,
+    String? id,
+  ) {
+    final function = toolCall['function'];
+    final block = ToolCallStreamingBlock(
+      id: id ?? '',
+      name: function is Map ? function['name'] as String? ?? '' : '',
+      streamIndex: streamIndex,
+    );
+    if (streamIndex != null) {
+      toolCallBlocksByIndex[streamIndex] = block;
+    }
+    if (id != null) {
+      toolCallBlocksById[id] = block;
+    }
+    blocks.add(block);
+    eventStream.push(
+      ToolCallStartEvent(
+        contentIndex: _contentIndex(block),
+        partial: state.snapshot(),
+      ),
+    );
     return block;
   }
 
@@ -652,6 +697,18 @@ Map<String, dynamic> _buildParams(
     params['temperature'] = options!.temperature;
   }
 
+  _applyToolsParam(params, context);
+
+  if (options?.toolChoice != null) {
+    params['tool_choice'] = options!.toolChoice;
+  }
+
+  _applyReasoningParam(params, model, options, compat);
+
+  return params;
+}
+
+void _applyToolsParam(Map<String, dynamic> params, Context context) {
   if (context.tools != null && context.tools!.isNotEmpty) {
     params['tools'] = _convertTools(context.tools!);
   } else if (_hasToolHistory(context.messages)) {
@@ -659,11 +716,14 @@ Map<String, dynamic> _buildParams(
     // has tool_calls/tool_results.
     params['tools'] = const <Object>[];
   }
+}
 
-  if (options?.toolChoice != null) {
-    params['tool_choice'] = options!.toolChoice;
-  }
-
+void _applyReasoningParam(
+  Map<String, dynamic> params,
+  Model model,
+  OpenAICompletionsOptions? options,
+  _ResolvedCompat compat,
+) {
   if (model.reasoning && options?.reasoningEffort != null) {
     if (compat.thinkingFormat == ThinkingFormat.openrouter) {
       // OpenRouter normalizes reasoning across providers via a nested
@@ -673,8 +733,6 @@ Map<String, dynamic> _buildParams(
       params['reasoning_effort'] = options!.reasoningEffort;
     }
   }
-
-  return params;
 }
 
 List<Map<String, dynamic>> _convertMessages(

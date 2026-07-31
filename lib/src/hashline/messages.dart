@@ -20,6 +20,26 @@ final class HashlineFormatException implements Exception {
 /// Lines of context shown either side of a hash mismatch.
 const mismatchContextLines = 2;
 
+/// The set of 1-based line numbers to display for [anchorLines]: every
+/// anchor ±[mismatchContextLines], clamped to the file. Out-of-range anchors
+/// contribute no rows.
+Set<int> _anchoredDisplayLines(List<int> anchorLines, int fileLineCount) {
+  final displayLines = <int>{};
+  for (final line in anchorLines) {
+    if (line < 1 || line > fileLineCount) continue;
+    final lo = line - mismatchContextLines < 1
+        ? 1
+        : line - mismatchContextLines;
+    final hi = line + mismatchContextLines > fileLineCount
+        ? fileLineCount
+        : line + mismatchContextLines;
+    for (var lineNum = lo; lineNum <= hi; lineNum++) {
+      displayLines.add(lineNum);
+    }
+  }
+  return displayLines;
+}
+
 /// Numbered `LINE:TEXT` rows around [anchorLines] (±[mismatchContextLines]),
 /// `*`-marking anchors, `...` between non-adjacent runs. Out-of-range anchors
 /// contribute no rows.
@@ -27,23 +47,11 @@ List<String> formatAnchoredContext(
   List<int> anchorLines,
   List<String> fileLines,
 ) {
-  final displayLines = <int>{};
-  for (final line in anchorLines) {
-    if (line < 1 || line > fileLines.length) continue;
-    final lo = line - mismatchContextLines < 1
-        ? 1
-        : line - mismatchContextLines;
-    final hi = line + mismatchContextLines > fileLines.length
-        ? fileLines.length
-        : line + mismatchContextLines;
-    for (var lineNum = lo; lineNum <= hi; lineNum++) {
-      displayLines.add(lineNum);
-    }
-  }
   final anchorSet = anchorLines.toSet();
   final rows = <String>[];
   var previous = -1;
-  final sorted = displayLines.toList()..sort();
+  final sorted = _anchoredDisplayLines(anchorLines, fileLines.length).toList()
+    ..sort();
   for (final lineNum in sorted) {
     if (previous != -1 && lineNum > previous + 1) rows.add('...');
     previous = lineNum;
@@ -131,6 +139,11 @@ String pathRecoveredFromTagMessage(
       '$hlFilePrefix$resolvedPath${hlFileHashSep}TAG$hlFileSuffix.';
 }
 
+/// Appends one `N` or `N-M` range part closing at [prev].
+void _addRangePart(List<String> parts, int start, int prev) {
+  parts.add(start == prev ? '$start' : '$start-$prev');
+}
+
 /// Compresses a line list into a sorted `1-4, 7, 10-12` range string.
 String formatLineRanges(List<int> lines) {
   final sorted = lines.toSet().toList()..sort();
@@ -144,7 +157,7 @@ String formatLineRanges(List<int> lines) {
       prev = current;
       continue;
     }
-    parts.add(start == prev ? '$start' : '$start-$prev');
+    _addRangePart(parts, start, prev);
     if (current == null) break;
     start = current;
     prev = current;

@@ -57,6 +57,18 @@ final class LspServerConfig {
     final rootMarkers = _stringList(json['rootMarkers']);
     if (command is! String || command.isEmpty) return null;
     if (fileTypes == null || rootMarkers == null) return null;
+    return _fromValidJson(name, command, fileTypes, rootMarkers, json);
+  }
+
+  /// Builds the config once the required fields validated; the remaining
+  /// fields are all optional.
+  static LspServerConfig _fromValidJson(
+    String name,
+    String command,
+    List<String> fileTypes,
+    List<String> rootMarkers,
+    Map<String, dynamic> json,
+  ) {
     final initOptions = json['initOptions'] ?? json['initializationOptions'];
     return LspServerConfig(
       name: name,
@@ -196,6 +208,22 @@ final class LspConfig {
 
     final warnings = <String>[];
     final servers = Map<String, LspServerConfig>.of(base.servers);
+    _mergeServers(parsed, servers, warnings);
+    final idleTimeout = _idleTimeoutFor(parsed, base.idleTimeout);
+    return LspConfig(
+      servers: servers,
+      idleTimeout: idleTimeout,
+      warnings: warnings,
+    );
+  }
+
+  /// Merges the `servers` section of [parsed] field-wise over [servers];
+  /// invalid entries are dropped with a warning.
+  static void _mergeServers(
+    Map<String, dynamic> parsed,
+    Map<String, LspServerConfig> servers,
+    List<String> warnings,
+  ) {
     final rawServers = parsed['servers'];
     if (rawServers is Map<String, dynamic>) {
       for (final entry in rawServers.entries) {
@@ -213,19 +241,20 @@ final class LspConfig {
         }
       }
     }
+  }
 
-    var idleTimeout = base.idleTimeout;
+  /// Resolves `idleTimeoutMs` from [parsed] over [fallback].
+  static Duration _idleTimeoutFor(
+    Map<String, dynamic> parsed,
+    Duration fallback,
+  ) {
     final idleTimeoutMs = parsed['idleTimeoutMs'];
     if (idleTimeoutMs is num) {
-      idleTimeout = idleTimeoutMs <= 0
+      return idleTimeoutMs <= 0
           ? Duration.zero
           : Duration(milliseconds: idleTimeoutMs.toInt());
     }
-    return LspConfig(
-      servers: servers,
-      idleTimeout: idleTimeout,
-      warnings: warnings,
-    );
+    return fallback;
   }
 
   /// Configured servers by name.
@@ -275,11 +304,7 @@ final class LspConfig {
     final slash = dir.lastIndexOf('/');
     dir = slash <= 0 ? '/' : dir.substring(0, slash);
     while (true) {
-      for (final marker in server.rootMarkers) {
-        final candidate = dir == '/' ? '/$marker' : '$dir/$marker';
-        final exists = await env.exists(candidate);
-        if (exists.isOk && exists.valueOrNull == true) return dir;
-      }
+      if (await _hasRootMarker(env, dir, server.rootMarkers)) return dir;
       if (dir == '/') break;
       final parent = dir.lastIndexOf('/');
       final next = parent <= 0 ? '/' : dir.substring(0, parent);
@@ -287,5 +312,19 @@ final class LspConfig {
       dir = next;
     }
     return env.cwd;
+  }
+
+  /// Whether [dir] contains one of the server's root markers.
+  static Future<bool> _hasRootMarker(
+    ExecutionEnv env,
+    String dir,
+    List<String> rootMarkers,
+  ) async {
+    for (final marker in rootMarkers) {
+      final candidate = dir == '/' ? '/$marker' : '$dir/$marker';
+      final exists = await env.exists(candidate);
+      if (exists.isOk && exists.valueOrNull == true) return true;
+    }
+    return false;
   }
 }

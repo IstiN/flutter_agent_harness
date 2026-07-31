@@ -210,6 +210,29 @@ List<AskQuestion> _parseQuestions(Object? raw) {
   return [for (final entry in raw) _parseQuestion(entry)];
 }
 
+/// Parses the optional `options` list of one question; absent means a
+/// free-form question (empty list).
+List<AskOption> _parseOptions(Object? rawOptions) {
+  if (rawOptions == null) return const [];
+  if (rawOptions is! List) {
+    throw StateError('"options" must be a list');
+  }
+  final options = <AskOption>[];
+  for (final rawOption in rawOptions) {
+    if (rawOption is! Map || rawOption['label'] is! String) {
+      throw StateError('each option needs a "label"');
+    }
+    final description = rawOption['description'];
+    options.add(
+      AskOption(
+        label: rawOption['label'] as String,
+        description: description is String ? description : null,
+      ),
+    );
+  }
+  return options;
+}
+
 AskQuestion _parseQuestion(Object? raw) {
   if (raw is! Map) {
     throw StateError('each question must be an object');
@@ -218,25 +241,7 @@ AskQuestion _parseQuestion(Object? raw) {
   if (question is! String || question.trim().isEmpty) {
     throw StateError('each question needs a non-empty "question" text');
   }
-  final options = <AskOption>[];
-  final rawOptions = raw['options'];
-  if (rawOptions != null) {
-    if (rawOptions is! List) {
-      throw StateError('"options" must be a list');
-    }
-    for (final rawOption in rawOptions) {
-      if (rawOption is! Map || rawOption['label'] is! String) {
-        throw StateError('each option needs a "label"');
-      }
-      final description = rawOption['description'];
-      options.add(
-        AskOption(
-          label: rawOption['label'] as String,
-          description: description is String ? description : null,
-        ),
-      );
-    }
-  }
+  final options = _parseOptions(raw['options']);
   return AskQuestion(
     question: question,
     options: options,

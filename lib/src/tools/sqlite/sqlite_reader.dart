@@ -348,6 +348,16 @@ String? _whereClauseControlViolation(String sql) {
   return null;
 }
 
+/// The character at [index], or null past the end of [sql].
+String? _whereClauseCharAt(String sql, int index) {
+  return index < sql.length ? sql[index] : null;
+}
+
+/// Whether [char] continues an identifier token (`[A-Za-z0-9_]`).
+bool _isWhereClauseIdentChar(String? char) {
+  return char != null && RegExp(r'[A-Za-z0-9_]').hasMatch(char);
+}
+
 /// Splits [sql] into lowercased identifier tokens (`[A-Za-z0-9_]` runs)
 /// outside string literals.
 List<String> _whereClauseTokens(String sql) {
@@ -355,9 +365,8 @@ List<String> _whereClauseTokens(String sql) {
   var tokenStart = -1;
   var index = 0;
   while (index <= sql.length) {
-    final char = index < sql.length ? sql[index] : null;
-    final isIdent = char != null && RegExp(r'[A-Za-z0-9_]').hasMatch(char);
-    if (isIdent) {
+    final char = _whereClauseCharAt(sql, index);
+    if (_isWhereClauseIdentChar(char)) {
       if (tokenStart < 0) tokenStart = index;
     } else {
       if (tokenStart >= 0) {
@@ -466,19 +475,7 @@ SqliteSelector _parseTableQuerySelector(
       order != null ||
       where != null;
   if (hasQueryParams) {
-    const knownKeys = {'limit', 'offset', 'order', 'where'};
-    for (final keyName in params.keys) {
-      if (!knownKeys.contains(keyName)) {
-        throw StateError("Unsupported SQLite query parameter '$keyName'");
-      }
-    }
-    return SqliteQuerySelector(
-      table: table,
-      limit: _parseLimit(params['limit'], defaultSqliteQueryLimit),
-      offset: _parseOffset(params['offset']),
-      order: order,
-      where: where,
-    );
+    return _buildQuerySelector(table, params, order, where);
   }
 
   if (params.isNotEmpty) {
@@ -488,6 +485,29 @@ SqliteSelector _parseTableQuerySelector(
   }
 
   return SqliteSchemaSelector(table);
+}
+
+/// Builds the paged-query selector once any query parameter applies: rejects
+/// unknown keys and parses `limit`/`offset` (omp's paged-query branch).
+SqliteSelector _buildQuerySelector(
+  String table,
+  Map<String, String> params,
+  String? order,
+  String? where,
+) {
+  const knownKeys = {'limit', 'offset', 'order', 'where'};
+  for (final keyName in params.keys) {
+    if (!knownKeys.contains(keyName)) {
+      throw StateError("Unsupported SQLite query parameter '$keyName'");
+    }
+  }
+  return SqliteQuerySelector(
+    table: table,
+    limit: _parseLimit(params['limit'], defaultSqliteQueryLimit),
+    offset: _parseOffset(params['offset']),
+    order: order,
+    where: where,
+  );
 }
 
 /// Parses the table/query selector tail of a SQLite path (omp's
@@ -672,11 +692,9 @@ Object _coerceLookupValue(String key, String type) {
   return key;
 }
 
-String _resolveOrderClause(String? order, List<String> columns) {
-  if (order == null) return '';
-  final trimmed = order.trim();
-  if (trimmed.isEmpty) return '';
-
+/// Splits an `order` value into its column and direction parts (`column` or
+/// `column:asc|desc`; the direction defaults to `asc`).
+({String column, String direction}) _splitOrderSpec(String trimmed) {
   final separatorIndex = trimmed.lastIndexOf(':');
   final column = separatorIndex == -1
       ? trimmed
@@ -684,6 +702,15 @@ String _resolveOrderClause(String? order, List<String> columns) {
   final direction = separatorIndex == -1
       ? 'asc'
       : trimmed.substring(separatorIndex + 1).trim().toLowerCase();
+  return (column: column, direction: direction);
+}
+
+String _resolveOrderClause(String? order, List<String> columns) {
+  if (order == null) return '';
+  final trimmed = order.trim();
+  if (trimmed.isEmpty) return '';
+
+  final (:column, :direction) = _splitOrderSpec(trimmed);
   if (!columns.contains(column)) {
     throw StateError("SQLite order column '$column' not found in table schema");
   }
@@ -855,18 +882,12 @@ String _buildVerticalBlocks(
   ].join('\n\n');
 }
 
-/// Renders rows as a width-capped ASCII table (omp's `buildAsciiTable`).
-String buildSqliteAsciiTable(
+/// Initial per-column widths: the widest header/cell content, clamped to the
+/// [_minColumnWidth]..[maxSqliteColumnWidth] band (omp's measuring pass).
+List<int> _measureColumnWidths(
   List<String> columns,
   List<Map<String, Object?>> rows,
 ) {
-  if (columns.isEmpty) {
-    return rows.isEmpty ? '(no rows)' : '(rows returned without named columns)';
-  }
-  if (!_tableFitsAtMinimum(columns.length)) {
-    return _buildVerticalBlocks(columns, rows);
-  }
-
   final widths = [
     for (final column in columns)
       _sanitizeCell(column).length.clamp(_minColumnWidth, maxSqliteColumnWidth),
@@ -879,8 +900,13 @@ String buildSqliteAsciiTable(
       if (cellWidth > widths[index]) widths[index] = cellWidth;
     }
   }
+  return widths;
+}
 
-  final overhead = columns.length * _columnSeparatorWidth + _tableFrameWidth;
+/// Shrinks [widths] in place, one cell off the widest column per pass, until
+/// the whole table fits [maxSqliteRenderWidth] (omp's shrink loop).
+void _shrinkWidthsToFit(List<int> widths, int columnCount) {
+  final overhead = columnCount * _columnSeparatorWidth + _tableFrameWidth;
   var totalWidth = widths.fold(overhead, (sum, width) => sum + width);
   while (totalWidth > maxSqliteRenderWidth) {
     var widestIndex = -1;
@@ -898,7 +924,15 @@ String buildSqliteAsciiTable(
     }
     totalWidth = widths.fold(overhead, (sum, width) => sum + width);
   }
+}
 
+/// Renders header, divider, and body rows at [widths], capping every line at
+/// [maxSqliteRenderWidth] (omp's emit pass).
+String _renderTableLines(
+  List<String> columns,
+  List<int> widths,
+  List<Map<String, Object?>> rows,
+) {
   final header =
       '| ${[for (var i = 0; i < columns.length; i++) _padCell(columns[i], widths[i])].join(' | ')} |';
   final divider =
@@ -907,20 +941,14 @@ String buildSqliteAsciiTable(
 
   if (rows.isEmpty) {
     lines.add('(no rows)');
-    return lines
-        .map(
-          (line) =>
-              truncateSqliteWidth(_replaceTabs(line), maxSqliteRenderWidth),
-        )
-        .join('\n');
-  }
-
-  for (final row in rows) {
-    final cells = [
-      for (var i = 0; i < columns.length; i++)
-        _padCell(stringifySqliteValue(row[columns[i]]), widths[i]),
-    ];
-    lines.add('| ${cells.join(' | ')} |');
+  } else {
+    for (final row in rows) {
+      final cells = [
+        for (var i = 0; i < columns.length; i++)
+          _padCell(stringifySqliteValue(row[columns[i]]), widths[i]),
+      ];
+      lines.add('| ${cells.join(' | ')} |');
+    }
   }
 
   return lines
@@ -928,6 +956,23 @@ String buildSqliteAsciiTable(
         (line) => truncateSqliteWidth(_replaceTabs(line), maxSqliteRenderWidth),
       )
       .join('\n');
+}
+
+/// Renders rows as a width-capped ASCII table (omp's `buildAsciiTable`).
+String buildSqliteAsciiTable(
+  List<String> columns,
+  List<Map<String, Object?>> rows,
+) {
+  if (columns.isEmpty) {
+    return rows.isEmpty ? '(no rows)' : '(rows returned without named columns)';
+  }
+  if (!_tableFitsAtMinimum(columns.length)) {
+    return _buildVerticalBlocks(columns, rows);
+  }
+
+  final widths = _measureColumnWidths(columns, rows);
+  _shrinkWidthsToFit(widths, columns.length);
+  return _renderTableLines(columns, widths, rows);
 }
 
 /// Renders the table list (omp's `renderTableList`).

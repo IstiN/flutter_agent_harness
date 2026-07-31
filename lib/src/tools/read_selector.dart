@@ -94,24 +94,28 @@ LineRange? parseLineRangeChunk(String sel) {
   final sep = match.group(2) == '..' ? '-' : match.group(2);
   final rhsText = match.group(3);
   final rhs = rhsText != null ? int.parse(rhsText) : null;
-  int? rawEnd;
+  return LineRange(rawStart, _chunkEnd(rawStart, sep, rhs));
+}
+
+/// The inclusive end line for a chunk (null = open-ended): `+K` counts K
+/// lines from the start, `-M` ends at M, `-` alone is open-ended.
+int? _chunkEnd(int rawStart, String? sep, int? rhs) {
   if (sep == '+') {
     if (rhs == null || rhs < 1) {
       throw StateError(
         'Invalid range $rawStart+${rhs ?? 0}: count must be >= 1.',
       );
     }
-    rawEnd = rawStart + rhs - 1;
-  } else if (sep == '-') {
-    // `301-` is shorthand for "from 301 onward" — equivalent to bare `301`.
-    if (rhs != null) {
-      if (rhs < rawStart) {
-        throw StateError('Invalid range $rawStart-$rhs: end must be >= start.');
-      }
-      rawEnd = rhs;
-    }
+    return rawStart + rhs - 1;
   }
-  return LineRange(rawStart, rawEnd);
+  // `301-` is shorthand for "from 301 onward" — equivalent to bare `301`.
+  if (sep == '-' && rhs != null) {
+    if (rhs < rawStart) {
+      throw StateError('Invalid range $rawStart-$rhs: end must be >= start.');
+    }
+    return rhs;
+  }
+  return null;
 }
 
 /// Parses a comma-separated list of line ranges (e.g. `5-16,960-973`).
@@ -119,33 +123,48 @@ LineRange? parseLineRangeChunk(String sel) {
 /// merged so downstream consumers can stream the file in a single forward
 /// pass per range. Returns null when any chunk is not range-shaped.
 List<LineRange>? parseLineRanges(String sel) {
-  final chunks = sel.split(',');
+  final parsed = _parseRangeChunks(sel);
+  if (parsed == null) return null;
+  parsed.sort((a, b) => a.startLine.compareTo(b.startLine));
+  return _mergeRanges(parsed);
+}
+
+/// Every chunk parsed, or null when any chunk is not range-shaped.
+List<LineRange>? _parseRangeChunks(String sel) {
   final parsed = <LineRange>[];
-  for (final chunk in chunks) {
+  for (final chunk in sel.split(',')) {
     final range = parseLineRangeChunk(chunk);
     if (range == null) return null;
     parsed.add(range);
   }
   if (parsed.isEmpty) return null;
-  parsed.sort((a, b) => a.startLine.compareTo(b.startLine));
+  return parsed;
+}
 
+/// Ascending ranges with overlapping/adjacent ones merged.
+List<LineRange> _mergeRanges(List<LineRange> parsed) {
   final merged = <LineRange>[parsed[0]];
   for (var i = 1; i < parsed.length; i++) {
-    final current = parsed[i];
-    final last = merged.last;
-    // Open-ended (endLine null) means "to EOF" — any later range is absorbed.
-    if (last.endLine == null) continue;
-    // Merge when current starts within (or immediately after) the last range.
-    if (current.startLine <= last.endLine! + 1) {
-      final currentEnd = current.endLine;
-      if (currentEnd == null || currentEnd > last.endLine!) {
-        merged[merged.length - 1] = LineRange(last.startLine, currentEnd);
-      }
-      continue;
-    }
-    merged.add(current);
+    _mergeInto(merged, parsed[i]);
   }
   return merged;
+}
+
+/// Merges [current] into the last merged range when they overlap or touch;
+/// an open-ended last range ("to EOF") absorbs everything after it.
+void _mergeInto(List<LineRange> merged, LineRange current) {
+  final last = merged.last;
+  // Open-ended (endLine null) means "to EOF" — any later range is absorbed.
+  if (last.endLine == null) return;
+  // Merge when current starts within (or immediately after) the last range.
+  if (current.startLine <= last.endLine! + 1) {
+    final currentEnd = current.endLine;
+    if (currentEnd == null || currentEnd > last.endLine!) {
+      merged[merged.length - 1] = LineRange(last.startLine, currentEnd);
+    }
+    return;
+  }
+  merged.add(current);
 }
 
 /// Result of splitting a read path into its filesystem path and an optional
@@ -271,26 +290,7 @@ ReadSelector parseSel(String? sel) {
 
   // Compound selector: `1-50:raw` or `raw:1-50`. Split into chunks and accept
   // exactly one line range (possibly multi) plus the literal `raw`.
-  if (sel.contains(':')) {
-    final chunks = sel.split(':');
-    if (chunks.length == 2) {
-      final a = chunks[0];
-      final b = chunks[1];
-      final aIsRaw = a.toLowerCase() == 'raw';
-      final bIsRaw = b.toLowerCase() == 'raw';
-      final rangeChunk = aIsRaw ? b : (bIsRaw ? a : null);
-      if (rangeChunk != null) {
-        final ranges = parseLineRanges(rangeChunk);
-        if (ranges != null) {
-          return ReadSelectorLines(ranges, raw: true);
-        }
-      }
-    }
-    if (chunks.every(_selectorChunkLooksReadLike)) throw _invalidSelector(sel);
-    // Unrecognized compound — fall through (sqlite/archive consume their own
-    // colon syntax).
-    return const ReadSelectorNone();
-  }
+  if (sel.contains(':')) return _parseCompoundSel(sel);
 
   if (sel.toLowerCase() == 'raw') return const ReadSelectorRaw();
   final ranges = parseLineRanges(sel);
@@ -299,6 +299,31 @@ ReadSelector parseSel(String? sel) {
   }
   // Unrecognized selectors fall through; sqlite/archive readers consume
   // their own colon syntax.
+  return const ReadSelectorNone();
+}
+
+/// Parses a `range:raw` / `raw:range` compound. Compounds that LOOK
+/// read-like yet are malformed throw (omp's `invalidSelector`), so a
+/// mistyped selector never silently widens into a whole-file read;
+/// anything else is [ReadSelectorNone] (sqlite/archive colon syntax).
+ReadSelector _parseCompoundSel(String sel) {
+  final chunks = sel.split(':');
+  if (chunks.length == 2) {
+    final a = chunks[0];
+    final b = chunks[1];
+    final aIsRaw = a.toLowerCase() == 'raw';
+    final bIsRaw = b.toLowerCase() == 'raw';
+    final rangeChunk = aIsRaw ? b : (bIsRaw ? a : null);
+    if (rangeChunk != null) {
+      final ranges = parseLineRanges(rangeChunk);
+      if (ranges != null) {
+        return ReadSelectorLines(ranges, raw: true);
+      }
+    }
+  }
+  if (chunks.every(_selectorChunkLooksReadLike)) throw _invalidSelector(sel);
+  // Unrecognized compound — fall through (sqlite/archive consume their own
+  // colon syntax).
   return const ReadSelectorNone();
 }
 

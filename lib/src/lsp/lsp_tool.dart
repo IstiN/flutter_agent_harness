@@ -160,11 +160,8 @@ AgentTool lspTool(ExecutionEnv env, {required LspToolConfig config}) {
       final character = (arguments['character'] as num?)?.toInt() ?? 1;
       final newName = arguments['newName'] as String?;
 
-      if (op == 'rename' && (newName == null || newName.isEmpty)) {
-        return ToolExecutionResult.text(
-          'newName is required for the rename op',
-        );
-      }
+      final nameError = _renameNameError(op, newName);
+      if (nameError != null) return ToolExecutionResult.text(nameError);
 
       final manager = await ensureManager();
       final absolute = (await env.absolutePath(path)).valueOrNull ?? path;
@@ -187,21 +184,13 @@ AgentTool lspTool(ExecutionEnv env, {required LspToolConfig config}) {
       final server = client.config;
       final uri = fileToUri(absolute);
       final capturedVersion = client.diagnosticsVersion;
-      if (op == 'diagnostics') {
-        // Sync the on-disk content so the server re-analyzes and publishes
-        // fresh diagnostics (omp's refreshFile); opens the file when new.
-        client.syncContent(
-          absolute,
-          read.valueOrNull!,
-          server.languageIdFor(path),
-        );
-      } else {
-        client.ensureOpen(
-          absolute,
-          read.valueOrNull!,
-          server.languageIdFor(path),
-        );
-      }
+      _syncDocument(
+        client,
+        op,
+        absolute,
+        read.valueOrNull!,
+        server.languageIdFor(path),
+      );
       cancelToken?.throwIfCancelled();
 
       try {
@@ -250,6 +239,31 @@ AgentTool lspTool(ExecutionEnv env, {required LspToolConfig config}) {
   );
 }
 
+/// The validation error for the rename op's `newName`, or null when valid.
+String? _renameNameError(String op, String? newName) {
+  if (op == 'rename' && (newName == null || newName.isEmpty)) {
+    return 'newName is required for the rename op';
+  }
+  return null;
+}
+
+/// Pushes the on-disk content to the server. For `diagnostics` this syncs
+/// the on-disk content so the server re-analyzes and publishes fresh
+/// diagnostics (omp's refreshFile); other ops just open the file when new.
+void _syncDocument(
+  LspClient client,
+  String op,
+  String absolute,
+  String content,
+  String languageId,
+) {
+  if (op == 'diagnostics') {
+    client.syncContent(absolute, content, languageId);
+  } else {
+    client.ensureOpen(absolute, content, languageId);
+  }
+}
+
 /// Waits for a diagnostics publish newer than [capturedVersion] (bounded
 /// by [wait]), then renders the cached diagnostics for [uri].
 Future<ToolExecutionResult> _diagnostics(
@@ -260,43 +274,13 @@ Future<ToolExecutionResult> _diagnostics(
   int capturedVersion,
   Duration wait,
 ) async {
-  if (client.diagnosticsVersion <= capturedVersion) {
-    final completer = Completer<void>();
-    late final StreamSubscription<String> sub;
-    sub = client.diagnosticsStream.listen((_) {
-      if (client.diagnosticsVersion > capturedVersion &&
-          !completer.isCompleted) {
-        completer.complete();
-      }
-    });
-    final timer = Timer(wait, () {
-      if (!completer.isCompleted) completer.complete();
-    });
-    await completer.future;
-    timer.cancel();
-    await sub.cancel();
-  }
+  await _waitForDiagnostics(client, capturedVersion, wait);
 
   final found = client.diagnostics[uri] ?? const <LspDiagnostic>[];
   if (found.isEmpty) return ToolExecutionResult.text('OK');
 
-  final sorted = [...found]
-    ..sort((a, b) {
-      final bySeverity = a.severity.wireValue - b.severity.wireValue;
-      if (bySeverity != 0) return bySeverity;
-      final byLine = a.range.start.line - b.range.start.line;
-      return byLine != 0
-          ? byLine
-          : a.range.start.character - b.range.start.character;
-    });
-  final counts = <LspDiagnosticSeverity, int>{};
-  for (final diagnostic in sorted) {
-    counts[diagnostic.severity] = (counts[diagnostic.severity] ?? 0) + 1;
-  }
-  final summary = [
-    for (final severity in LspDiagnosticSeverity.values)
-      if (counts[severity] case final count?) '$count ${severity.label}(s)',
-  ].join(', ');
+  final sorted = _sortDiagnostics(found);
+  final summary = _severitySummary(sorted);
 
   final buffer = StringBuffer()
     ..writeln('${formatPathRelativeToCwd(absolute, env.cwd)}: $summary:');
@@ -315,6 +299,53 @@ Future<ToolExecutionResult> _diagnostics(
     buffer.writeln('  ... and ${sorted.length - shown.length} more');
   }
   return ToolExecutionResult.text(buffer.toString().trimRight());
+}
+
+/// Blocks until a diagnostics publish newer than [capturedVersion] lands,
+/// bounded by [wait].
+Future<void> _waitForDiagnostics(
+  LspClient client,
+  int capturedVersion,
+  Duration wait,
+) async {
+  if (client.diagnosticsVersion > capturedVersion) return;
+  final completer = Completer<void>();
+  late final StreamSubscription<String> sub;
+  sub = client.diagnosticsStream.listen((_) {
+    if (client.diagnosticsVersion > capturedVersion && !completer.isCompleted) {
+      completer.complete();
+    }
+  });
+  final timer = Timer(wait, () {
+    if (!completer.isCompleted) completer.complete();
+  });
+  await completer.future;
+  timer.cancel();
+  await sub.cancel();
+}
+
+/// Severity-first ordering (then line, then column).
+List<LspDiagnostic> _sortDiagnostics(List<LspDiagnostic> found) {
+  return [...found]..sort((a, b) {
+    final bySeverity = a.severity.wireValue - b.severity.wireValue;
+    if (bySeverity != 0) return bySeverity;
+    final byLine = a.range.start.line - b.range.start.line;
+    return byLine != 0
+        ? byLine
+        : a.range.start.character - b.range.start.character;
+  });
+}
+
+/// Renders the per-severity counts (`2 error(s), 1 warning(s)`).
+String _severitySummary(List<LspDiagnostic> sorted) {
+  final counts = <LspDiagnosticSeverity, int>{};
+  for (final diagnostic in sorted) {
+    counts[diagnostic.severity] = (counts[diagnostic.severity] ?? 0) + 1;
+  }
+  return [
+    for (final severity in LspDiagnosticSeverity.values)
+      if (counts[severity] case final count?) '$count ${severity.label}(s)',
+  ].join(', ');
 }
 
 /// Runs a location-returning request (`definition`/`references`) and
@@ -403,7 +434,16 @@ Future<ToolExecutionResult> _rename(
     openFileVersions: client.openFiles,
   );
 
-  // Sync the changed documents back so the server's view matches disk.
+  await _syncRenamedFiles(env, client, applied);
+  return _renderRenameResult(env, edit, applied);
+}
+
+/// Syncs the changed documents back so the server's view matches disk.
+Future<void> _syncRenamedFiles(
+  ExecutionEnv env,
+  LspClient client,
+  List<LspAppliedChange> applied,
+) async {
   for (final change in applied) {
     if (!client.openFiles.containsKey(fileToUri(change.path))) continue;
     final read = await env.readTextFile(change.path);
@@ -414,7 +454,14 @@ Future<ToolExecutionResult> _rename(
       client.config.languageIdFor(change.path),
     );
   }
+}
 
+/// Renders the per-file edit counts (omp's `edits.ts` shape).
+ToolExecutionResult _renderRenameResult(
+  ExecutionEnv env,
+  LspWorkspaceEdit edit,
+  List<LspAppliedChange> applied,
+) {
   final buffer = StringBuffer()
     ..writeln('Applied rename to ${applied.length} file(s):');
   for (final change in applied) {

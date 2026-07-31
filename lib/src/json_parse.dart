@@ -94,31 +94,7 @@ String repairJson(String json) {
     }
 
     if (char == '\\') {
-      final nextChar = index + 1 < json.length ? json[index + 1] : null;
-      if (nextChar == null) {
-        repaired.write(r'\\');
-        continue;
-      }
-
-      if (nextChar == 'u') {
-        final unicodeDigits = json.substring(
-          index + 2,
-          min(index + 6, json.length),
-        );
-        if (RegExp('^[0-9a-fA-F]{4}\$').hasMatch(unicodeDigits)) {
-          repaired.write('\\u$unicodeDigits');
-          index += 5;
-          continue;
-        }
-      }
-
-      if (_validJsonEscapes.contains(nextChar)) {
-        repaired.write('\\$nextChar');
-        index += 1;
-        continue;
-      }
-
-      repaired.write(r'\\');
+      index = _writeEscaped(repaired, json, index);
       continue;
     }
 
@@ -128,4 +104,34 @@ String repairJson(String json) {
   }
 
   return repaired.toString();
+}
+
+/// Handles a backslash inside a string: writes a valid escape verbatim
+/// (including a full `XXXX` sequence) or doubles an invalid/truncated
+/// one. Returns the new loop index.
+int _writeEscaped(StringBuffer repaired, String json, int index) {
+  final nextChar = index + 1 < json.length ? json[index + 1] : null;
+  if (nextChar == null) {
+    repaired.write(r'\\');
+    return index;
+  }
+
+  if (nextChar == 'u') {
+    final unicodeDigits = json.substring(
+      index + 2,
+      min(index + 6, json.length),
+    );
+    if (RegExp('^[0-9a-fA-F]{4}\$').hasMatch(unicodeDigits)) {
+      repaired.write('\\u$unicodeDigits');
+      return index + 5;
+    }
+  }
+
+  if (_validJsonEscapes.contains(nextChar)) {
+    repaired.write('\\$nextChar');
+    return index + 1;
+  }
+
+  repaired.write(r'\\');
+  return index;
 }

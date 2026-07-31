@@ -211,27 +211,7 @@ AssistantMessageEventStream streamGoogle(
         // here that cursor lives in the chunk handler.
         final handler = _GoogleChunkHandler(eventStream, state, model);
 
-        final iterator = createSseIterator(response, cancelToken);
-
-        while (await iterator.moveNext()) {
-          final data = iterator.current.data.trim();
-          if (data.isEmpty) {
-            continue;
-          }
-
-          final Map<String, dynamic> chunk;
-          try {
-            final parsed = parseJsonWithRepair(data);
-            if (parsed is! Map<String, dynamic>) {
-              throw const FormatException('SSE data is not a JSON object');
-            }
-            chunk = parsed;
-          } catch (error) {
-            throw StateError('Could not parse Google SSE event: $error');
-          }
-
-          handler.processChunk(chunk);
-        }
+        await _consumeSseStream(response, cancelToken, handler);
 
         handler.endCurrentBlock();
 
@@ -251,6 +231,37 @@ AssistantMessageEventStream streamGoogle(
   );
 
   return eventStream;
+}
+
+/// Consumes the SSE body of [response], decoding each `data:` event into a
+/// JSON chunk and feeding it to [handler]. Extracted verbatim from
+/// [streamGoogle]'s stream body (pi's chunk loop).
+Future<void> _consumeSseStream(
+  http.StreamedResponse response,
+  CancelToken? cancelToken,
+  _GoogleChunkHandler handler,
+) async {
+  final iterator = createSseIterator(response, cancelToken);
+
+  while (await iterator.moveNext()) {
+    final data = iterator.current.data.trim();
+    if (data.isEmpty) {
+      continue;
+    }
+
+    final Map<String, dynamic> chunk;
+    try {
+      final parsed = parseJsonWithRepair(data);
+      if (parsed is! Map<String, dynamic>) {
+        throw const FormatException('SSE data is not a JSON object');
+      }
+      chunk = parsed;
+    } catch (error) {
+      throw StateError('Could not parse Google SSE event: $error');
+    }
+
+    handler.processChunk(chunk);
+  }
 }
 
 /// Per-request SSE chunk handler for [streamGoogle]: owns the open-block
@@ -284,24 +295,11 @@ final class _GoogleChunkHandler {
   /// Handles one decoded SSE chunk: provider errors, the response id, the
   /// first candidate (content parts + finish reason), and usage metadata.
   void processChunk(Map<String, dynamic> chunk) {
-    final error = chunk['error'];
-    if (error is Map) {
-      final message = error['message'];
-      throw StateError(message is String ? message : jsonEncode(error));
-    }
+    _throwIfErrorChunk(chunk);
+    _retainResponseId(chunk);
 
-    // Keep the first non-empty response id (pi: `output.responseId ||=
-    // chunk.responseId`).
-    final responseId = chunk['responseId'];
-    if (responseId is String && responseId.isNotEmpty) {
-      _state.responseId ??= responseId;
-    }
-
-    final candidates = chunk['candidates'];
-    final candidate = candidates is List && candidates.isNotEmpty
-        ? candidates.first
-        : null;
-    if (candidate is Map<String, dynamic>) {
+    final candidate = _firstCandidate(chunk);
+    if (candidate != null) {
       _processCandidate(candidate);
     }
 
@@ -309,6 +307,35 @@ final class _GoogleChunkHandler {
     if (usageMetadata is Map<String, dynamic>) {
       _processUsage(usageMetadata);
     }
+  }
+
+  /// Provider errors arrive as chunks with an `error` object; they abort the
+  /// stream by throwing (pi: `chunk.error` check in the chunk loop).
+  void _throwIfErrorChunk(Map<String, dynamic> chunk) {
+    final error = chunk['error'];
+    if (error is Map) {
+      final message = error['message'];
+      throw StateError(message is String ? message : jsonEncode(error));
+    }
+  }
+
+  /// Keep the first non-empty response id (pi: `output.responseId ||=
+  /// chunk.responseId`).
+  void _retainResponseId(Map<String, dynamic> chunk) {
+    final responseId = chunk['responseId'];
+    if (responseId is String && responseId.isNotEmpty) {
+      _state.responseId ??= responseId;
+    }
+  }
+
+  /// Returns the first candidate of the chunk, or null when the `candidates`
+  /// list is missing, empty, or its first entry is not an object.
+  Map<String, dynamic>? _firstCandidate(Map<String, dynamic> chunk) {
+    final candidates = chunk['candidates'];
+    final candidate = candidates is List && candidates.isNotEmpty
+        ? candidates.first
+        : null;
+    return candidate is Map<String, dynamic> ? candidate : null;
   }
 
   /// Translates one candidate: its content parts and its finish reason.
@@ -355,28 +382,39 @@ final class _GoogleChunkHandler {
         (isThinking && _currentBlock is! ThinkingStreamingBlock) ||
         (!isThinking && _currentBlock is! TextStreamingBlock)) {
       endCurrentBlock();
-      if (isThinking) {
-        _currentBlock = ThinkingStreamingBlock();
-        _blocks.add(_currentBlock!);
-        _eventStream.push(
-          ThinkingStartEvent(
-            contentIndex: _blockIndex(),
-            partial: _state.snapshot(),
-          ),
-        );
-      } else {
-        _currentBlock = TextStreamingBlock();
-        _blocks.add(_currentBlock!);
-        _eventStream.push(
-          TextStartEvent(
-            contentIndex: _blockIndex(),
-            partial: _state.snapshot(),
-          ),
-        );
-      }
+      _openTextBlock(isThinking);
     }
     final thoughtSignature = rawPart['thoughtSignature'] as String?;
-    final block = _currentBlock!;
+    _appendTextDelta(_currentBlock!, text, thoughtSignature);
+  }
+
+  /// Opens a fresh thinking or text block and pushes its start event.
+  void _openTextBlock(bool isThinking) {
+    if (isThinking) {
+      _currentBlock = ThinkingStreamingBlock();
+      _blocks.add(_currentBlock!);
+      _eventStream.push(
+        ThinkingStartEvent(
+          contentIndex: _blockIndex(),
+          partial: _state.snapshot(),
+        ),
+      );
+    } else {
+      _currentBlock = TextStreamingBlock();
+      _blocks.add(_currentBlock!);
+      _eventStream.push(
+        TextStartEvent(contentIndex: _blockIndex(), partial: _state.snapshot()),
+      );
+    }
+  }
+
+  /// Writes [text] into the open block, retains its thought signature, and
+  /// pushes the matching delta event.
+  void _appendTextDelta(
+    StreamingBlock block,
+    String text,
+    String? thoughtSignature,
+  ) {
     if (block is ThinkingStreamingBlock) {
       block.thinking.write(text);
       block.signature = _retainThoughtSignature(
@@ -515,14 +553,6 @@ Map<String, dynamic> _buildParams(
     'contents': _convertMessages(model, context),
   };
 
-  final generationConfig = <String, dynamic>{};
-  if (options?.temperature != null) {
-    generationConfig['temperature'] = options!.temperature;
-  }
-  if (options?.maxTokens != null) {
-    generationConfig['maxOutputTokens'] = options!.maxTokens;
-  }
-
   if (context.systemPrompt != null) {
     params['systemInstruction'] = {
       'parts': [
@@ -531,6 +561,23 @@ Map<String, dynamic> _buildParams(
     };
   }
 
+  _addToolsParams(params, context, options);
+
+  final generationConfig = _buildGenerationConfig(model, options);
+  if (generationConfig.isNotEmpty) {
+    params['generationConfig'] = generationConfig;
+  }
+
+  return params;
+}
+
+/// Adds the top-level `tools` and `toolConfig` params (ported from pi's
+/// `buildParams` tools branch).
+void _addToolsParams(
+  Map<String, dynamic> params,
+  Context context,
+  GoogleOptions? options,
+) {
   final tools = context.tools;
   if (tools != null && tools.isNotEmpty) {
     params['tools'] = _convertTools(
@@ -543,27 +590,49 @@ Map<String, dynamic> _buildParams(
       };
     }
   }
+}
 
-  final thinking = options?.thinking;
-  if (thinking != null && model.reasoning) {
-    if (thinking.enabled) {
-      generationConfig['thinkingConfig'] = {
-        'includeThoughts': true,
-        if (thinking.level != null)
-          'thinkingLevel': thinking.level
-        else if (thinking.budgetTokens != null)
-          'thinkingBudget': thinking.budgetTokens,
-      };
-    } else {
-      generationConfig['thinkingConfig'] = _getDisabledThinkingConfig(model);
-    }
+/// Builds the `generationConfig` map: temperature, maxOutputTokens, and the
+/// thinking config (ported from pi's `buildParams` config mapping).
+Map<String, dynamic> _buildGenerationConfig(
+  Model model,
+  GoogleOptions? options,
+) {
+  final generationConfig = <String, dynamic>{};
+  if (options?.temperature != null) {
+    generationConfig['temperature'] = options!.temperature;
+  }
+  if (options?.maxTokens != null) {
+    generationConfig['maxOutputTokens'] = options!.maxTokens;
   }
 
-  if (generationConfig.isNotEmpty) {
-    params['generationConfig'] = generationConfig;
+  final thinkingConfig = _buildThinkingConfig(model, options?.thinking);
+  if (thinkingConfig != null) {
+    generationConfig['thinkingConfig'] = thinkingConfig;
   }
 
-  return params;
+  return generationConfig;
+}
+
+/// Builds the `thinkingConfig` map for a reasoning model, or null when no
+/// thinking options apply (ported from pi's `buildParams` thinking branch).
+Map<String, dynamic>? _buildThinkingConfig(
+  Model model,
+  GoogleThinking? thinking,
+) {
+  if (thinking == null || !model.reasoning) {
+    return null;
+  }
+  if (!thinking.enabled) {
+    return _getDisabledThinkingConfig(model);
+  }
+  return {
+    'includeThoughts': true,
+    if (thinking.level != null)
+      'thinkingLevel': thinking.level
+    else if (thinking.budgetTokens != null)
+      'thinkingBudget': thinking.budgetTokens,
+  };
 }
 
 /// Ported from pi's `isGemini3ProModel`.
@@ -763,53 +832,81 @@ Map<String, dynamic>? _convertAssistantBlock(
   bool isSameProviderAndModel,
   bool includeId,
 ) {
-  switch (block) {
-    case TextContent():
-      // Skip empty text blocks.
-      if (block.text.trim().isEmpty) {
-        return null;
-      }
-      final thoughtSignature = _resolveThoughtSignature(
-        isSameProviderAndModel,
-        block.textSignature,
-      );
-      return {'text': block.text, 'thoughtSignature': ?thoughtSignature};
-    case ThinkingContent():
-      // Skip empty thinking blocks.
-      if (block.thinking.trim().isEmpty) {
-        return null;
-      }
-      if (isSameProviderAndModel) {
-        final thoughtSignature = _resolveThoughtSignature(
-          isSameProviderAndModel,
-          block.thinkingSignature,
-        );
-        return {
-          'thought': true,
-          'text': block.thinking,
-          'thoughtSignature': ?thoughtSignature,
-        };
-      }
-      // Other provider/model: convert to plain text (no tags to
-      // avoid the model mimicking them).
-      return {'text': block.thinking};
-    case ToolCall():
-      final thoughtSignature = _resolveThoughtSignature(
-        isSameProviderAndModel,
-        block.thoughtSignature,
-      );
-      return {
-        'functionCall': {
-          'name': block.name,
-          'args': block.arguments,
-          if (includeId) 'id': _normalizeToolCallId(block.id),
-        },
-        'thoughtSignature': ?thoughtSignature,
-      };
-    case ImageContent():
-      // Not valid in assistant messages; skip defensively.
-      return null;
+  return switch (block) {
+    TextContent() => _convertAssistantTextBlock(block, isSameProviderAndModel),
+    ThinkingContent() => _convertAssistantThinkingBlock(
+      block,
+      isSameProviderAndModel,
+    ),
+    ToolCall() => _convertAssistantToolCallBlock(
+      block,
+      isSameProviderAndModel,
+      includeId,
+    ),
+    // Not valid in assistant messages; skip defensively.
+    ImageContent() => null,
+  };
+}
+
+/// Ported from pi's assistant-block `TextContent` case.
+Map<String, dynamic>? _convertAssistantTextBlock(
+  TextContent block,
+  bool isSameProviderAndModel,
+) {
+  // Skip empty text blocks.
+  if (block.text.trim().isEmpty) {
+    return null;
   }
+  final thoughtSignature = _resolveThoughtSignature(
+    isSameProviderAndModel,
+    block.textSignature,
+  );
+  return {'text': block.text, 'thoughtSignature': ?thoughtSignature};
+}
+
+/// Ported from pi's assistant-block `ThinkingContent` case.
+Map<String, dynamic>? _convertAssistantThinkingBlock(
+  ThinkingContent block,
+  bool isSameProviderAndModel,
+) {
+  // Skip empty thinking blocks.
+  if (block.thinking.trim().isEmpty) {
+    return null;
+  }
+  if (isSameProviderAndModel) {
+    final thoughtSignature = _resolveThoughtSignature(
+      isSameProviderAndModel,
+      block.thinkingSignature,
+    );
+    return {
+      'thought': true,
+      'text': block.thinking,
+      'thoughtSignature': ?thoughtSignature,
+    };
+  }
+  // Other provider/model: convert to plain text (no tags to
+  // avoid the model mimicking them).
+  return {'text': block.thinking};
+}
+
+/// Ported from pi's assistant-block `ToolCall` case.
+Map<String, dynamic> _convertAssistantToolCallBlock(
+  ToolCall block,
+  bool isSameProviderAndModel,
+  bool includeId,
+) {
+  final thoughtSignature = _resolveThoughtSignature(
+    isSameProviderAndModel,
+    block.thoughtSignature,
+  );
+  return {
+    'functionCall': {
+      'name': block.name,
+      'args': block.arguments,
+      if (includeId) 'id': _normalizeToolCallId(block.id),
+    },
+    'thoughtSignature': ?thoughtSignature,
+  };
 }
 
 /// Extracts the joined text of a tool result (pi: text blocks joined with

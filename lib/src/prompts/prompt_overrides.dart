@@ -74,21 +74,8 @@ Map<String, String> parsePromptOverrideMap(Object? node) {
   }
   final result = <String, String>{};
   for (final entry in node.entries) {
-    final name = entry.key;
-    final value = entry.value;
-    if (name is! String || !overridablePromptNames.containsKey(name)) {
-      throw ConfigException(
-        'unknown prompt override "$name" — supported names: '
-        '${overridablePromptNames.keys.join(', ')}',
-      );
-    }
-    if (value is! String || value.trim().isEmpty) {
-      throw ConfigException(
-        '"prompts.$name" must be a non-empty string '
-        '(a file path or inline text)',
-      );
-    }
-    result[name] = value;
+    final name = _overrideName(entry.key);
+    result[name] = _overrideValue(name, entry.value);
   }
   if (result.containsKey(systemPromptAlias) &&
       result.containsKey(codeModePromptName)) {
@@ -98,6 +85,28 @@ Map<String, String> parsePromptOverrideMap(Object? node) {
     );
   }
   return result;
+}
+
+/// Validates one `prompts:` entry name against [overridablePromptNames].
+String _overrideName(Object? name) {
+  if (name is! String || !overridablePromptNames.containsKey(name)) {
+    throw ConfigException(
+      'unknown prompt override "$name" — supported names: '
+      '${overridablePromptNames.keys.join(', ')}',
+    );
+  }
+  return name;
+}
+
+/// Validates one `prompts:` entry value (a file path or inline text).
+String _overrideValue(String name, Object? value) {
+  if (value is! String || value.trim().isEmpty) {
+    throw ConfigException(
+      '"prompts.$name" must be a non-empty string '
+      '(a file path or inline text)',
+    );
+  }
+  return value;
 }
 
 /// Resolved prompt overrides: canonical prompt name → override text.

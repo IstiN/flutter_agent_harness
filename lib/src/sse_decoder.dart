@@ -137,26 +137,18 @@ class SseDecoder extends StreamTransformerBase<String, ServerSentEvent> {
 
     await for (final chunk in stream) {
       buffer += chunk;
-      var consumed = _consumeLine(buffer);
-      while (consumed != null) {
-        buffer = consumed.rest;
-        final event = _decodeSseLine(consumed.line, state);
-        if (event != null) {
-          yield event;
-        }
-        consumed = _consumeLine(buffer);
+      final (rest, events) = _drainSseLines(buffer, state);
+      buffer = rest;
+      for (final event in events) {
+        yield event;
       }
     }
 
     // Flush whatever the final chunk left behind.
-    var consumed = _consumeLine(buffer);
-    while (consumed != null) {
-      buffer = consumed.rest;
-      final event = _decodeSseLine(consumed.line, state);
-      if (event != null) {
-        yield event;
-      }
-      consumed = _consumeLine(buffer);
+    final (rest, events) = _drainSseLines(buffer, state);
+    buffer = rest;
+    for (final event in events) {
+      yield event;
     }
 
     if (buffer.isNotEmpty) {
@@ -170,5 +162,24 @@ class SseDecoder extends StreamTransformerBase<String, ServerSentEvent> {
     if (trailingEvent != null) {
       yield trailingEvent;
     }
+  }
+
+  /// Decodes every complete line in [buffer], returning the unconsumed rest
+  /// and the parsed events.
+  (String, List<ServerSentEvent>) _drainSseLines(
+    String buffer,
+    _SseDecoderState state,
+  ) {
+    final events = <ServerSentEvent>[];
+    var consumed = _consumeLine(buffer);
+    while (consumed != null) {
+      buffer = consumed.rest;
+      final event = _decodeSseLine(consumed.line, state);
+      if (event != null) {
+        events.add(event);
+      }
+      consumed = _consumeLine(buffer);
+    }
+    return (buffer, events);
   }
 }

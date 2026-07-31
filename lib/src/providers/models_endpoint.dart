@@ -45,24 +45,53 @@ ModelsEndpointInfo parseModelsResponse(String body) {
   final maxTokens = <String, int>{};
   if (data is List) {
     for (final entry in data) {
-      if (entry is! Map) continue;
-      final idValue = entry['id'] ?? entry['alias'] ?? entry['name'];
-      if (idValue is! String || idValue.isEmpty) continue;
-      final id = idValue;
-      ids.add(id);
-      final window =
-          entry['context_length'] ??
-          entry['context_window'] ??
-          entry['max_context_length'];
-      if (window is num && window > 0) windows[id] = window.round();
-      final topProvider = entry['top_provider'];
-      final cap =
-          entry['max_completion_tokens'] ??
-          (topProvider is Map ? topProvider['max_completion_tokens'] : null) ??
-          entry['max_output_tokens'];
-      if (cap is num && cap > 0) maxTokens[id] = cap.round();
+      _collectModelEntry(entry, ids, windows, maxTokens);
     }
   }
   ids.sort();
   return (ids, windows, maxTokens);
+}
+
+/// Collects one `/models` entry into [ids], [windows], and [maxTokens];
+/// entries without a usable id (or not a map at all) are skipped.
+void _collectModelEntry(
+  Object? entry,
+  List<String> ids,
+  Map<String, int> windows,
+  Map<String, int> maxTokens,
+) {
+  if (entry is! Map) return;
+  final idValue = entry['id'] ?? entry['alias'] ?? entry['name'];
+  if (idValue is! String || idValue.isEmpty) return;
+  final id = idValue;
+  ids.add(id);
+  final window = _reportedWindow(entry);
+  if (window != null) windows[id] = window;
+  final cap = _reportedMaxTokens(entry);
+  if (cap != null) maxTokens[id] = cap;
+}
+
+/// The reported context window (`context_length` for OpenRouter,
+/// `context_window`, `max_context_length` for LM Studio and friends), or
+/// null when the entry reports none.
+int? _reportedWindow(Map<dynamic, dynamic> entry) {
+  final window =
+      entry['context_length'] ??
+      entry['context_window'] ??
+      entry['max_context_length'];
+  if (window is num && window > 0) return window.round();
+  return null;
+}
+
+/// The reported max output tokens (`max_completion_tokens` for OpenRouter,
+/// then its `top_provider` nested form, `max_output_tokens`), or null when
+/// the entry reports none.
+int? _reportedMaxTokens(Map<dynamic, dynamic> entry) {
+  final topProvider = entry['top_provider'];
+  final cap =
+      entry['max_completion_tokens'] ??
+      (topProvider is Map ? topProvider['max_completion_tokens'] : null) ??
+      entry['max_output_tokens'];
+  if (cap is num && cap > 0) return cap.round();
+  return null;
 }

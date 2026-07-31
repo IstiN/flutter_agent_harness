@@ -145,30 +145,45 @@ String serializeConversation(List<Message> messages) {
   for (final msg in messages) {
     switch (msg) {
       case UserMessage(:final content):
-        final text = content is String
-            ? content
-            : (content as List<ContentBlock>)
-                  .whereType<TextContent>()
-                  .map((block) => block.text)
-                  .join();
-        if (text.isNotEmpty) parts.add('[User]: $text');
+        _serializeUserMessage(content, parts);
       case AssistantMessage(:final content):
         _serializeAssistantMessage(content, parts);
       case ToolResultMessage(:final content):
-        final text = content
-            .whereType<TextContent>()
-            .map((block) => block.text)
-            .join();
-        if (text.isNotEmpty) {
-          parts.add(
-            '[Tool result]: ${_truncateForSummary(text, _toolResultMaxChars)}',
-          );
-        }
+        _serializeToolResultMessage(content, parts);
       default:
     }
   }
 
   return parts.join('\n\n');
+}
+
+/// Serializes one user message into a `[User]:` line appended to [parts]
+/// (empty text is skipped; image blocks are ignored).
+void _serializeUserMessage(Object content, List<String> parts) {
+  final text = content is String
+      ? content
+      : (content as List<ContentBlock>)
+            .whereType<TextContent>()
+            .map((block) => block.text)
+            .join();
+  if (text.isNotEmpty) parts.add('[User]: $text');
+}
+
+/// Serializes one tool-result message into a truncated `[Tool result]:` line
+/// appended to [parts] (empty text is skipped).
+void _serializeToolResultMessage(
+  List<ContentBlock> content,
+  List<String> parts,
+) {
+  final text = content
+      .whereType<TextContent>()
+      .map((block) => block.text)
+      .join();
+  if (text.isNotEmpty) {
+    parts.add(
+      '[Tool result]: ${_truncateForSummary(text, _toolResultMaxChars)}',
+    );
+  }
 }
 
 /// Serializes one assistant message into `[Assistant thinking]:`,
@@ -181,18 +196,7 @@ void _serializeAssistantMessage(
   final thinkingParts = <String>[];
   final toolCalls = <String>[];
   for (final block in content) {
-    switch (block) {
-      case TextContent(:final text):
-        textParts.add(text);
-      case ThinkingContent(:final thinking):
-        thinkingParts.add(thinking);
-      case ToolCall(:final name, :final arguments):
-        final args = arguments.entries
-            .map((entry) => '${entry.key}=${_safeJsonEncode(entry.value)}')
-            .join(', ');
-        toolCalls.add('$name($args)');
-      default:
-    }
+    _classifyAssistantBlock(block, textParts, thinkingParts, toolCalls);
   }
   if (thinkingParts.isNotEmpty) {
     parts.add('[Assistant thinking]: ${thinkingParts.join('\n')}');
@@ -202,6 +206,28 @@ void _serializeAssistantMessage(
   }
   if (toolCalls.isNotEmpty) {
     parts.add('[Assistant tool calls]: ${toolCalls.join('; ')}');
+  }
+}
+
+/// Routes one assistant content [block] into the text, thinking, or tool-call
+/// accumulator (other block kinds, e.g. images, are ignored).
+void _classifyAssistantBlock(
+  ContentBlock block,
+  List<String> textParts,
+  List<String> thinkingParts,
+  List<String> toolCalls,
+) {
+  switch (block) {
+    case TextContent(:final text):
+      textParts.add(text);
+    case ThinkingContent(:final thinking):
+      thinkingParts.add(thinking);
+    case ToolCall(:final name, :final arguments):
+      final args = arguments.entries
+          .map((entry) => '${entry.key}=${_safeJsonEncode(entry.value)}')
+          .join(', ');
+      toolCalls.add('$name($args)');
+    default:
   }
 }
 
@@ -419,6 +445,53 @@ int findTurnStartIndex(
   return -1;
 }
 
+/// Walks entries backwards from [endIndex], accumulating estimated tokens
+/// until [keepRecentTokens] is exhausted, then snaps the cut forward to the
+/// first valid cut point at or after the budget-crossing entry (never a tool
+/// result). Defaults to the first valid cut point when the budget is never
+/// reached.
+int _accumulateCutIndex(
+  List<SessionRecord> entries,
+  int startIndex,
+  int endIndex,
+  int keepRecentTokens,
+  List<int> cutPoints,
+) {
+  var accumulatedTokens = 0;
+  var cutIndex = cutPoints.first;
+
+  for (var i = endIndex - 1; i >= startIndex; i--) {
+    final entry = entries[i];
+    if (entry is! MessageRecord) continue;
+    accumulatedTokens += estimateTokens(entry.message);
+    if (accumulatedTokens >= keepRecentTokens) {
+      for (final cutPoint in cutPoints) {
+        if (cutPoint >= i) {
+          cutIndex = cutPoint;
+          break;
+        }
+      }
+      break;
+    }
+  }
+  return cutIndex;
+}
+
+/// Snaps [cutIndex] backwards over non-message records so configuration
+/// entries stay with the kept region.
+int _snapBackOverNonMessages(
+  List<SessionRecord> entries,
+  int cutIndex,
+  int startIndex,
+) {
+  while (cutIndex > startIndex) {
+    final prevEntry = entries[cutIndex - 1];
+    if (prevEntry is CompactionRecord || prevEntry is MessageRecord) break;
+    cutIndex--;
+  }
+  return cutIndex;
+}
+
 /// Find the compaction cut point that keeps approximately [keepRecentTokens]
 /// recent tokens.
 ///
@@ -441,28 +514,14 @@ CutPointResult findCutPoint(
       isSplitTurn: false,
     );
   }
-  var accumulatedTokens = 0;
-  var cutIndex = cutPoints.first;
-
-  for (var i = endIndex - 1; i >= startIndex; i--) {
-    final entry = entries[i];
-    if (entry is! MessageRecord) continue;
-    accumulatedTokens += estimateTokens(entry.message);
-    if (accumulatedTokens >= keepRecentTokens) {
-      for (final cutPoint in cutPoints) {
-        if (cutPoint >= i) {
-          cutIndex = cutPoint;
-          break;
-        }
-      }
-      break;
-    }
-  }
-  while (cutIndex > startIndex) {
-    final prevEntry = entries[cutIndex - 1];
-    if (prevEntry is CompactionRecord || prevEntry is MessageRecord) break;
-    cutIndex--;
-  }
+  var cutIndex = _accumulateCutIndex(
+    entries,
+    startIndex,
+    endIndex,
+    keepRecentTokens,
+    cutPoints,
+  );
+  cutIndex = _snapBackOverNonMessages(entries, cutIndex, startIndex);
   final cutEntry = entries[cutIndex];
   final isUserMessage =
       cutEntry is MessageRecord && cutEntry.message.role == 'user';
@@ -794,6 +853,35 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
   return (previousSummary: previousSummary, boundaryStart: boundaryStart);
 }
 
+/// Index of the last [CompactionRecord] in [pathEntries], or -1 when there
+/// is none.
+int _findLastCompactionIndex(List<SessionRecord> pathEntries) {
+  for (var i = pathEntries.length - 1; i >= 0; i--) {
+    if (pathEntries[i] is CompactionRecord) return i;
+  }
+  return -1;
+}
+
+/// Summarizable messages of the entries in `[start, end)`, in order.
+List<Message> _summarizableMessagesInRange(
+  List<SessionRecord> pathEntries,
+  int start,
+  int end,
+) {
+  final messages = <Message>[];
+  for (var i = start; i < end; i++) {
+    messages.addAll(_entryToSummarizableMessages(pathEntries[i]));
+  }
+  return messages;
+}
+
+/// Adds the file operations of every message in [messages] to [fileOps].
+void _accumulateFileOps(List<Message> messages, FileOperations fileOps) {
+  for (final message in messages) {
+    extractFileOpsFromMessage(message, fileOps);
+  }
+}
+
 /// The compaction pipeline over a [Session], mirroring pi's harness-level
 /// `compact()`.
 ///
@@ -837,13 +925,7 @@ final class CompactionManager {
       return null;
     }
 
-    var prevCompactionIndex = -1;
-    for (var i = pathEntries.length - 1; i >= 0; i--) {
-      if (pathEntries[i] is CompactionRecord) {
-        prevCompactionIndex = i;
-        break;
-      }
-    }
+    final prevCompactionIndex = _findLastCompactionIndex(pathEntries);
 
     final fileOps = createFileOps();
     final prevContext = _previousCompactionContext(
@@ -865,26 +947,20 @@ final class CompactionManager {
     final historyEnd = cutPoint.isSplitTurn
         ? cutPoint.turnStartIndex
         : cutPoint.firstKeptEntryIndex;
-    final messagesToSummarize = <Message>[];
-    for (var i = boundaryStart; i < historyEnd; i++) {
-      messagesToSummarize.addAll(_entryToSummarizableMessages(pathEntries[i]));
-    }
-    final turnPrefixMessages = <Message>[];
-    if (cutPoint.isSplitTurn) {
-      for (
-        var i = cutPoint.turnStartIndex;
-        i < cutPoint.firstKeptEntryIndex;
-        i++
-      ) {
-        turnPrefixMessages.addAll(_entryToSummarizableMessages(pathEntries[i]));
-      }
-    }
-    for (final message in messagesToSummarize) {
-      extractFileOpsFromMessage(message, fileOps);
-    }
-    for (final message in turnPrefixMessages) {
-      extractFileOpsFromMessage(message, fileOps);
-    }
+    final messagesToSummarize = _summarizableMessagesInRange(
+      pathEntries,
+      boundaryStart,
+      historyEnd,
+    );
+    final turnPrefixMessages = cutPoint.isSplitTurn
+        ? _summarizableMessagesInRange(
+            pathEntries,
+            cutPoint.turnStartIndex,
+            cutPoint.firstKeptEntryIndex,
+          )
+        : <Message>[];
+    _accumulateFileOps(messagesToSummarize, fileOps);
+    _accumulateFileOps(turnPrefixMessages, fileOps);
     final fileLists = computeFileLists(fileOps);
 
     return CompactionPreparation(

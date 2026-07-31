@@ -120,8 +120,20 @@ final class LspClientManager {
     final starting = _starting[key];
     if (starting != null) return starting;
 
-    // Fail fast on a recent deterministic failure instead of re-spawning a
-    // broken server (and paying its full init wait) on every call.
+    _throwIfInBackoff(key, server);
+
+    final future = _startClient(key, server, root);
+    _starting[key] = future;
+    try {
+      return await future;
+    } finally {
+      _starting.remove(key);
+    }
+  }
+
+  /// Fails fast on a recent deterministic failure instead of re-spawning a
+  /// broken server (and paying its full init wait) on every call.
+  void _throwIfInBackoff(String key, LspServerConfig server) {
     final failure = _failures[key];
     if (failure != null) {
       if (DateTime.now().difference(failure.$1) < initFailureBackoff) {
@@ -131,14 +143,6 @@ final class LspClientManager {
         );
       }
       _failures.remove(key);
-    }
-
-    final future = _startClient(key, server, root);
-    _starting[key] = future;
-    try {
-      return await future;
-    } finally {
-      _starting.remove(key);
     }
   }
 

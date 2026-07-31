@@ -171,6 +171,22 @@ _PartitionedEdits _partitionEdits(List<HashlineEdit> targetEdits) {
   return (bofLines: bofLines, eofLines: eofLines, anchorEdits: anchorEdits);
 }
 
+/// One line's bucket of edits classified into insert positions plus the
+/// delete flag.
+final class _LineBucketPlan {
+  final beforeInsertLines = <String>[];
+  final afterInsertLines = <String>[];
+  final replacementLines = <String>[];
+  var deleteLine = false;
+
+  /// True when the bucket changes nothing on its line.
+  bool get isNoop =>
+      beforeInsertLines.isEmpty &&
+      replacementLines.isEmpty &&
+      afterInsertLines.isEmpty &&
+      !deleteLine;
+}
+
 /// Applies the anchor-targeted buckets bottom-up so earlier indices stay
 /// valid.
 void _applyAnchorEditsByLine(
@@ -181,44 +197,57 @@ void _applyAnchorEditsByLine(
   final byLine = _bucketAnchorEditsByLine(anchorEdits);
   final sortedLines = byLine.keys.toList()..sort((a, b) => b.compareTo(a));
   for (final line in sortedLines) {
-    final bucket = byLine[line]!;
-    bucket.sort((a, b) => a.idx.compareTo(b.idx));
+    _applyLineBucket(fileLines, line, byLine[line]!, trackFirstChanged);
+  }
+}
 
-    final index = line - 1;
-    final currentLine = index < fileLines.length ? fileLines[index] : '';
-    final beforeInsertLines = <String>[];
-    final afterInsertLines = <String>[];
-    final replacementLines = <String>[];
-    var deleteLine = false;
+/// Applies one line's bucket: replaces the line with the merged insert /
+/// replacement / delete outcome.
+void _applyLineBucket(
+  List<String> fileLines,
+  int line,
+  List<_IndexedEdit> bucket,
+  void Function(int line) trackFirstChanged,
+) {
+  bucket.sort((a, b) => a.idx.compareTo(b.idx));
+  final plan = _planLineBucket(bucket);
+  if (plan.isNoop) return;
 
-    for (final entry in bucket) {
-      final edit = entry.edit;
-      if (edit is HashlineInsert && edit.replacement) {
-        replacementLines.add(edit.text);
-      } else if (edit is HashlineInsert && edit.cursor is HashlineCursorAfter) {
-        afterInsertLines.add(edit.text);
-      } else if (edit is HashlineInsert) {
-        beforeInsertLines.add(edit.text);
-      } else if (edit is HashlineDelete) {
-        deleteLine = true;
-      }
-    }
-    if (beforeInsertLines.isEmpty &&
-        replacementLines.isEmpty &&
-        afterInsertLines.isEmpty &&
-        !deleteLine) {
-      continue;
-    }
+  final index = line - 1;
+  final currentLine = index < fileLines.length ? fileLines[index] : '';
+  final replacement = plan.deleteLine
+      ? [
+          ...plan.beforeInsertLines,
+          ...plan.replacementLines,
+          ...plan.afterInsertLines,
+        ]
+      : [
+          ...plan.beforeInsertLines,
+          ...plan.replacementLines,
+          currentLine,
+          ...plan.afterInsertLines,
+        ];
+  fileLines.replaceRange(index, index + 1, replacement);
+  trackFirstChanged(line);
+}
 
-    final replacement = deleteLine
-        ? [...beforeInsertLines, ...replacementLines, ...afterInsertLines]
-        : [
-            ...beforeInsertLines,
-            ...replacementLines,
-            currentLine,
-            ...afterInsertLines,
-          ];
-    fileLines.replaceRange(index, index + 1, replacement);
-    trackFirstChanged(line);
+/// Classifies one line's bucket into insert positions plus the delete flag.
+_LineBucketPlan _planLineBucket(List<_IndexedEdit> bucket) {
+  final plan = _LineBucketPlan();
+  for (final entry in bucket) {
+    _classifyBucketEdit(entry.edit, plan);
+  }
+  return plan;
+}
+
+void _classifyBucketEdit(HashlineEdit edit, _LineBucketPlan plan) {
+  if (edit is HashlineInsert && edit.replacement) {
+    plan.replacementLines.add(edit.text);
+  } else if (edit is HashlineInsert && edit.cursor is HashlineCursorAfter) {
+    plan.afterInsertLines.add(edit.text);
+  } else if (edit is HashlineInsert) {
+    plan.beforeInsertLines.add(edit.text);
+  } else if (edit is HashlineDelete) {
+    plan.deleteLine = true;
   }
 }

@@ -158,6 +158,42 @@ List<Message> _entryToMessages(SessionRecord entry) {
   };
 }
 
+/// Cumulative file tracking from nested branch summaries, so file lists
+/// survive summarization-of-summaries (omp parity).
+void _accumulateNestedFileOps(
+  List<SessionRecord> entries,
+  FileOperations fileOps,
+) {
+  for (final entry in entries) {
+    if (entry is BranchSummaryRecord && entry.details is Map) {
+      final details = entry.details! as Map;
+      final readFiles = details['readFiles'];
+      if (readFiles is List) fileOps.read.addAll(readFiles.whereType<String>());
+      final modifiedFiles = details['modifiedFiles'];
+      if (modifiedFiles is List) {
+        fileOps.edited.addAll(modifiedFiles.whereType<String>());
+      }
+    }
+  }
+}
+
+/// Whether adding [tokens] to [totalTokens] would exceed [tokenBudget]
+/// (`tokenBudget: 0` means no limit).
+bool _exceedsBudget(int tokenBudget, int totalTokens, int tokens) {
+  return tokenBudget > 0 && totalTokens + tokens > tokenBudget;
+}
+
+/// Summary entries squeeze in anyway when nearly full — they are important
+/// context (omp parity).
+bool _squeezeInSummaryEntry(
+  SessionRecord entry,
+  int tokenBudget,
+  int totalTokens,
+) {
+  return (entry is CompactionRecord || entry is BranchSummaryRecord) &&
+      totalTokens < tokenBudget * 0.9;
+}
+
 /// Prepare entries for summarization within [tokenBudget] (omp's
 /// `prepareBranchEntries`): walks NEWEST to OLDEST, keeping the most recent
 /// context when the branch is too long. File operations accumulate from ALL
@@ -173,17 +209,7 @@ BranchPreparation prepareBranchEntries(
 
   // First pass: cumulative file tracking from nested branch summaries, so
   // file lists survive summarization-of-summaries (omp parity).
-  for (final entry in entries) {
-    if (entry is BranchSummaryRecord && entry.details is Map) {
-      final details = entry.details! as Map;
-      final readFiles = details['readFiles'];
-      if (readFiles is List) fileOps.read.addAll(readFiles.whereType<String>());
-      final modifiedFiles = details['modifiedFiles'];
-      if (modifiedFiles is List) {
-        fileOps.edited.addAll(modifiedFiles.whereType<String>());
-      }
-    }
-  }
+  _accumulateNestedFileOps(entries, fileOps);
 
   // Second pass: newest to oldest, until the token budget is exhausted.
   for (var i = entries.length - 1; i >= 0; i--) {
@@ -197,11 +223,8 @@ BranchPreparation prepareBranchEntries(
       0,
       (sum, message) => sum + estimateTokens(message),
     );
-    if (tokenBudget > 0 && totalTokens + tokens > tokenBudget) {
-      // Summary entries squeeze in anyway when nearly full — they are
-      // important context (omp parity).
-      if ((entry is CompactionRecord || entry is BranchSummaryRecord) &&
-          totalTokens < tokenBudget * 0.9) {
+    if (_exceedsBudget(tokenBudget, totalTokens, tokens)) {
+      if (_squeezeInSummaryEntry(entry, tokenBudget, totalTokens)) {
         messages.insertAll(0, entryMessages);
         totalTokens += tokens;
       }

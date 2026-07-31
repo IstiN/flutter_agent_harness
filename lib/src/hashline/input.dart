@@ -141,38 +141,10 @@ String _normalizeFallbackInput(String input, String? fallbackPath) {
   return '$hlFilePrefix$path$hlFileSuffix\n$input';
 }
 
-List<_RawSection> _splitRawSections(String input, String? fallbackPath) {
-  final stripped = _stripLeadingBlankLines(
-    _normalizeFallbackInput(input, fallbackPath),
-  );
-  final lines = stripped.split(RegExp(r'\r?\n'));
-  final firstLine = lines.isEmpty ? '' : lines[0];
-
-  if (_parseHashlineHeaderLine(firstLine) == null) {
-    // Catch unified-diff hunk-header contamination on the first line so the
-    // model sees a focused error.
-    final firstTrimmed = firstLine.trimRight();
-    if (RegExp(
-      r'^@@\s+[-+]?\d+,\d+\s+[-+]?\d+,\d+\s+@@',
-    ).hasMatch(firstTrimmed)) {
-      throw const HashlineFormatException(
-        'unified-diff hunk header (`@@ -N,M +N,M @@`) is not valid in '
-        'hashline. File sections start with `[path#HASH]`; use `SWAP`, '
-        '`DEL`, or `INS` ops.',
-      );
-    }
-    final previewSource = firstLine.length > 120
-        ? firstLine.substring(0, 120)
-        : firstLine;
-    throw HashlineFormatException(
-      'input must begin with "[PATH${hlFileHashSep}HASH]" on the first '
-      'non-blank line for anchored edits; got: ${repr(previewSource)}. '
-      'Example: "[src/foo.ts$hlFileHashSep${hlFileHashExamples[0]}]" then '
-      'edit ops.',
-    );
-  }
-
-  final sections = <_RawSection>[];
+/// Mutable accumulator for [_splitRawSections]: the section currently being
+/// built, its body lines, and the sections completed so far.
+final class _SectionCollector {
+  final List<_RawSection> sections = [];
   _RawSection? current;
   var currentLines = <String>[];
 
@@ -191,7 +163,36 @@ List<_RawSection> _splitRawSections(String input, String? fallbackPath) {
     }
     currentLines = [];
   }
+}
 
+/// The input does not start with a `[PATH#HASH]` header: raise the focused
+/// first-line diagnostic (unified-diff hunk headers get their own message).
+Never _throwInvalidFirstLine(String firstLine) {
+  // Catch unified-diff hunk-header contamination on the first line so the
+  // model sees a focused error.
+  final firstTrimmed = firstLine.trimRight();
+  if (RegExp(
+    r'^@@\s+[-+]?\d+,\d+\s+[-+]?\d+,\d+\s+@@',
+  ).hasMatch(firstTrimmed)) {
+    throw const HashlineFormatException(
+      'unified-diff hunk header (`@@ -N,M +N,M @@`) is not valid in '
+      'hashline. File sections start with `[path#HASH]`; use `SWAP`, '
+      '`DEL`, or `INS` ops.',
+    );
+  }
+  final previewSource = firstLine.length > 120
+      ? firstLine.substring(0, 120)
+      : firstLine;
+  throw HashlineFormatException(
+    'input must begin with "[PATH${hlFileHashSep}HASH]" on the first '
+    'non-blank line for anchored edits; got: ${repr(previewSource)}. '
+    'Example: "[src/foo.ts$hlFileHashSep${hlFileHashExamples[0]}]" then '
+    'edit ops.',
+  );
+}
+
+/// Walks [lines], routing headers to [collector] and appending body rows.
+void _collectSectionLines(_SectionCollector collector, List<String> lines) {
   for (final line in lines) {
     final trimmed = line.trimRight();
     final token = classifyHashlineLine(line, 0);
@@ -206,16 +207,31 @@ List<_RawSection> _splitRawSections(String input, String? fallbackPath) {
     if (trimmed.startsWith(hlFilePrefix)) {
       final header = _parseHashlineHeaderLine(line);
       if (header != null) {
-        flush();
-        current = header;
-        currentLines = [];
+        collector.flush();
+        collector.current = header;
+        collector.currentLines = [];
         continue;
       }
     }
-    currentLines.add(line);
+    collector.currentLines.add(line);
   }
-  flush();
-  return sections;
+}
+
+List<_RawSection> _splitRawSections(String input, String? fallbackPath) {
+  final stripped = _stripLeadingBlankLines(
+    _normalizeFallbackInput(input, fallbackPath),
+  );
+  final lines = stripped.split(RegExp(r'\r?\n'));
+  final firstLine = lines.isEmpty ? '' : lines[0];
+
+  if (_parseHashlineHeaderLine(firstLine) == null) {
+    _throwInvalidFirstLine(firstLine);
+  }
+
+  final collector = _SectionCollector();
+  _collectSectionLines(collector, lines);
+  collector.flush();
+  return collector.sections;
 }
 
 final class _SectionAccumulator {

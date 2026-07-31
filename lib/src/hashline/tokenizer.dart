@@ -66,6 +66,15 @@ bool _markerLineEquals(String line, String marker) {
   return end == marker.length && line.startsWith(marker);
 }
 
+/// The `[start, end)` slice of [text], dropping a single trailing CR (omp's
+/// per-line CR tolerance in `splitHashlineLines`).
+String _sliceWithoutTrailingCr(String text, int start, int end) {
+  if (end > start && text.codeUnitAt(end - 1) == _charCarriageReturn) {
+    end--;
+  }
+  return text.substring(start, end);
+}
+
 /// Splits [text] into lines on LF, dropping a single trailing CR per line
 /// (omp's `splitHashlineLines`).
 List<String> splitHashlineLines(String text) {
@@ -74,19 +83,11 @@ List<String> splitHashlineLines(String text) {
   var start = 0;
   for (var index = 0; index < text.length; index++) {
     if (text.codeUnitAt(index) != _charLineFeed) continue;
-    var end = index;
-    if (end > start && text.codeUnitAt(end - 1) == _charCarriageReturn) {
-      end--;
-    }
-    lines.add(text.substring(start, end));
+    lines.add(_sliceWithoutTrailingCr(text, start, index));
     start = index + 1;
   }
   if (start < text.length) {
-    var end = text.length;
-    if (end > start && text.codeUnitAt(end - 1) == _charCarriageReturn) {
-      end--;
-    }
-    lines.add(text.substring(start, end));
+    lines.add(_sliceWithoutTrailingCr(text, start, text.length));
   }
   return lines;
 }
@@ -122,6 +123,29 @@ HashlineAnchor parseLid(String raw, int lineNum) {
   return HashlineAnchor(number.line);
 }
 
+/// Whether [code] is a single-character lenient range separator:
+/// whitespace, `,`, `-`, or `…`.
+bool _isSingleCharRangeSeparator(int code) =>
+    _isWhitespaceCode(code) ||
+    code == _charComma ||
+    code == _charHyphen ||
+    code == _charEllipsis;
+
+/// Whether [cursor] starts a two-character `..` or `.=` range separator.
+bool _isDotRangeSeparator(String line, int cursor, int end) =>
+    line.codeUnitAt(cursor) == _charDot &&
+    cursor + 1 < end &&
+    (line.codeUnitAt(cursor + 1) == _charDot ||
+        line.codeUnitAt(cursor + 1) == _charEquals);
+
+/// Length of the range-separator token at [cursor] (1 or 2); 0 when [cursor]
+/// does not start a separator.
+int _rangeSeparatorLength(String line, int cursor, int end) {
+  if (_isSingleCharRangeSeparator(line.codeUnitAt(cursor))) return 1;
+  if (_isDotRangeSeparator(line, cursor, end)) return 2;
+  return 0;
+}
+
 /// Consumes the lenient range separators omp accepts between two line
 /// numbers: whitespace, `,`, `-`, `…`, `..`, or `.=`. Returns the index of
 /// the second number, or `null`.
@@ -129,26 +153,10 @@ int? _scanRangeSeparator(String line, int index, int end) {
   var cursor = index;
   var consumedSeparator = false;
   while (cursor < end) {
-    final code = line.codeUnitAt(cursor);
-    if (_isWhitespaceCode(code)) {
-      cursor++;
-      consumedSeparator = true;
-      continue;
-    }
-    if (code == _charComma || code == _charHyphen || code == _charEllipsis) {
-      cursor++;
-      consumedSeparator = true;
-      continue;
-    }
-    if (code == _charDot &&
-        cursor + 1 < end &&
-        (line.codeUnitAt(cursor + 1) == _charDot ||
-            line.codeUnitAt(cursor + 1) == _charEquals)) {
-      cursor += 2;
-      consumedSeparator = true;
-      continue;
-    }
-    break;
+    final length = _rangeSeparatorLength(line, cursor, end);
+    if (length == 0) break;
+    cursor += length;
+    consumedSeparator = true;
   }
   if (!consumedSeparator) return null;
   if (cursor >= end || !_isNonZeroDigitCode(line.codeUnitAt(cursor))) {
@@ -324,43 +332,36 @@ int _consumeReplaceColon(String line, int index, int end) {
   return _skipWhitespace(line, afterEquals + 1, end);
 }
 
-/// Scans the `.PRE N` / `.POST N` / `.HEAD` / `.TAIL` suffix of an `INS`
-/// hunk header.
-({HashlineTarget target, int nextIndex})? _scanInsertTarget(
+/// Scans one `INS` suffix of the form `<keyword> N:` (e.g. `PRE 5:`);
+/// [makeTarget] builds the before/after variant.
+({HashlineTarget target, int nextIndex})? _scanInsertAnchorTarget(
   String line,
-  int index,
+  int cursor,
+  int end,
+  String keyword,
+  HashlineTarget Function(HashlineAnchor anchor) makeTarget,
+) {
+  final keywordEnd = _scanKeyword(line, cursor, end, keyword);
+  if (keywordEnd == null) return null;
+  final anchor = _scanLineNumber(
+    line,
+    _skipWhitespace(line, keywordEnd, end),
+    end,
+  );
+  if (anchor == null) return null;
+  return (
+    target: makeTarget(HashlineAnchor(anchor.line)),
+    nextIndex: _consumeOptionalColon(line, anchor.nextIndex, end),
+  );
+}
+
+/// Scans the `INS` edge suffixes `HEAD:` (insert at file start) and `TAIL:`
+/// (insert at file end) — no anchor line.
+({HashlineTarget target, int nextIndex})? _scanInsertEdgeTarget(
+  String line,
+  int cursor,
   int end,
 ) {
-  if (index >= end || line.codeUnitAt(index) != _charDot) return null;
-  final cursor = _skipWhitespace(line, index + 1, end);
-  final beforeEnd = _scanKeyword(line, cursor, end, hlInsertBefore);
-  if (beforeEnd != null) {
-    final anchor = _scanLineNumber(
-      line,
-      _skipWhitespace(line, beforeEnd, end),
-      end,
-    );
-    if (anchor == null) return null;
-    final nextIndex = _consumeOptionalColon(line, anchor.nextIndex, end);
-    return (
-      target: HashlineTargetInsertBefore(HashlineAnchor(anchor.line)),
-      nextIndex: nextIndex,
-    );
-  }
-  final afterEnd = _scanKeyword(line, cursor, end, hlInsertAfter);
-  if (afterEnd != null) {
-    final anchor = _scanLineNumber(
-      line,
-      _skipWhitespace(line, afterEnd, end),
-      end,
-    );
-    if (anchor == null) return null;
-    final nextIndex = _consumeOptionalColon(line, anchor.nextIndex, end);
-    return (
-      target: HashlineTargetInsertAfter(HashlineAnchor(anchor.line)),
-      nextIndex: nextIndex,
-    );
-  }
   final headEnd = _scanKeyword(line, cursor, end, hlInsertHead);
   if (headEnd != null) {
     return (
@@ -378,6 +379,32 @@ int _consumeReplaceColon(String line, int index, int end) {
   return null;
 }
 
+/// Scans the `.PRE N` / `.POST N` / `.HEAD` / `.TAIL` suffix of an `INS`
+/// hunk header.
+({HashlineTarget target, int nextIndex})? _scanInsertTarget(
+  String line,
+  int index,
+  int end,
+) {
+  if (index >= end || line.codeUnitAt(index) != _charDot) return null;
+  final cursor = _skipWhitespace(line, index + 1, end);
+  return _scanInsertAnchorTarget(
+        line,
+        cursor,
+        end,
+        hlInsertBefore,
+        HashlineTargetInsertBefore.new,
+      ) ??
+      _scanInsertAnchorTarget(
+        line,
+        cursor,
+        end,
+        hlInsertAfter,
+        HashlineTargetInsertAfter.new,
+      ) ??
+      _scanInsertEdgeTarget(line, cursor, end);
+}
+
 /// Removes matching surrounding single or double quotes from [pathText]
 /// (omp's `unquotePath`, shared by the tokenizer and the section splitter).
 String unquoteHashlinePath(String pathText) {
@@ -390,53 +417,95 @@ String unquoteHashlinePath(String pathText) {
   return pathText;
 }
 
+/// Scans a quoted `MV` destination path starting at the quote at [cursor];
+/// `\` escapes the next character. `null` when unterminated or when
+/// non-whitespace trails the closing quote.
+String? _scanQuotedMoveDest(String line, int cursor, int end) {
+  final quote = line[cursor];
+  var next = cursor + 1;
+  while (next < end) {
+    final ch = line[next];
+    if (ch == r'\' && next + 1 < end) {
+      next += 2;
+      continue;
+    }
+    if (ch == quote) {
+      final after = _skipWhitespace(line, next + 1, end);
+      return after == end
+          ? unquoteHashlinePath(line.substring(cursor, next + 1))
+          : null;
+    }
+    next++;
+  }
+  return null;
+}
+
 /// Scans a (possibly quoted) `MV` destination path.
 String? _scanMoveDest(String line, int index, int end) {
   final cursor = _skipWhitespace(line, index, end);
   if (cursor >= end) return null;
   final first = line.codeUnitAt(cursor);
   if (first == 34 /* " */ || first == 39 /* ' */ ) {
-    final quote = line[cursor];
-    var next = cursor + 1;
-    while (next < end) {
-      final ch = line[next];
-      if (ch == r'\' && next + 1 < end) {
-        next += 2;
-        continue;
-      }
-      if (ch == quote) {
-        final after = _skipWhitespace(line, next + 1, end);
-        return after == end
-            ? unquoteHashlinePath(line.substring(cursor, next + 1))
-            : null;
-      }
-      next++;
-    }
-    return null;
+    return _scanQuotedMoveDest(line, cursor, end);
   }
   return unquoteHashlinePath(line.substring(cursor, end).trim());
 }
 
-/// Scans any hunk-header target at [start].
+/// Scans any hunk-header target at [start]. Families are tried in turn;
+/// within each family the `.BLK` variant precedes the plain keyword (as in
+/// the original single-chain order).
 ({HashlineTarget target, int nextIndex})? _scanHunkAnchor(
   String line,
   int start,
   int end,
 ) {
   final cursor = _skipWhitespace(line, start, end);
+  return _scanFileHunkTarget(line, cursor, end) ??
+      _scanReplaceHunkTarget(line, cursor, end) ??
+      _scanDeleteHunkTarget(line, cursor, end) ??
+      _scanInsertHunkTarget(line, cursor, end);
+}
 
+/// Scans the file-level targets (`REM`, `MV <dest>`) at [cursor].
+({HashlineTarget target, int nextIndex})? _scanFileHunkTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final rem = _scanRemTarget(line, cursor, end);
   if (rem != null) return rem;
-  final move = _scanMoveTarget(line, cursor, end);
-  if (move != null) return move;
+  return _scanMoveTarget(line, cursor, end);
+}
+
+/// Scans the replace-family targets (`SWAP.BLK N:`, `SWAP N.=M:`) at
+/// [cursor].
+({HashlineTarget target, int nextIndex})? _scanReplaceHunkTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final replaceBlock = _scanReplaceBlockTarget(line, cursor, end);
   if (replaceBlock != null) return replaceBlock;
-  final replace = _scanReplaceTarget(line, cursor, end);
-  if (replace != null) return replace;
+  return _scanReplaceTarget(line, cursor, end);
+}
+
+/// Scans the delete-family targets (`DEL.BLK N`, `DEL N.=M`) at [cursor].
+({HashlineTarget target, int nextIndex})? _scanDeleteHunkTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final deleteBlock = _scanDeleteBlockTarget(line, cursor, end);
   if (deleteBlock != null) return deleteBlock;
-  final delete = _scanDeleteTarget(line, cursor, end);
-  if (delete != null) return delete;
+  return _scanDeleteTarget(line, cursor, end);
+}
+
+/// Scans the insert-family targets (`INS.BLK.POST N:`, `INS.*`) at [cursor].
+({HashlineTarget target, int nextIndex})? _scanInsertHunkTarget(
+  String line,
+  int cursor,
+  int end,
+) {
   final insertAfterBlock = _scanInsertAfterBlockTarget(line, cursor, end);
   if (insertAfterBlock != null) return insertAfterBlock;
   final insertEnd = _scanKeyword(line, cursor, end, hlInsertKeyword);
@@ -590,43 +659,62 @@ HashlineTarget? tryParseHunkHeader(String line) {
   return scan.target;
 }
 
-/// Parses a `[PATH]` / `[PATH#TAG]` header line; `null` when malformed.
-({String path, String? fileHash})? tryParseHeader(String line) {
-  if (!line.startsWith(hlFilePrefix)) return null;
+/// Index just past the header body (i.e. at the `]` suffix); `null` when
+/// the bracketed shape is malformed.
+int? _headerBodyEnd(String line) {
   final end = _trimEndIndex(line);
   if (hlFilePrefix.length + hlFileSuffix.length >= end) return null;
   if (line.codeUnitAt(end - 1) != hlFileSuffix.codeUnitAt(0)) return null;
   final bodyEnd = end - hlFileSuffix.length;
   if (hlFilePrefix.length >= bodyEnd) return null;
+  return bodyEnd;
+}
 
-  // The snapshot tag, when present, is the trailing `#XXXX` block inside the
-  // bracketed header. We detect it from the suffix so the path may
-  // legitimately contain whitespace.
+/// The trailing `#XXXX` snapshot tag inside the bracketed header, when
+/// present and all-hex. We detect it from the suffix so the path may
+/// legitimately contain whitespace.
+({int pathEnd, String fileHash})? _scanTrailingHash(String line, int bodyEnd) {
+  final trailingHashStart = bodyEnd - hlFileHashLength - 1;
+  if (trailingHashStart < hlFilePrefix.length ||
+      line.codeUnitAt(trailingHashStart) != _charHash) {
+    return null;
+  }
+  for (var probe = trailingHashStart + 1; probe < bodyEnd; probe++) {
+    if (!_isHexDigitCode(line.codeUnitAt(probe))) return null;
+  }
+  return (
+    pathEnd: trailingHashStart,
+    fileHash: line.substring(trailingHashStart + 1, bodyEnd).toUpperCase(),
+  );
+}
+
+/// Whether the path body `[hlFilePrefix.length, pathEnd)` is free of `#`.
+bool _pathBodyClean(String line, int pathEnd) {
+  for (var i = hlFilePrefix.length; i < pathEnd; i++) {
+    if (line.codeUnitAt(i) == _charHash) return false;
+  }
+  return true;
+}
+
+/// Parses a `[PATH]` / `[PATH#TAG]` header line; `null` when malformed.
+({String path, String? fileHash})? tryParseHeader(String line) {
+  if (!line.startsWith(hlFilePrefix)) return null;
+  final bodyEnd = _headerBodyEnd(line);
+  if (bodyEnd == null) return null;
+
   var pathEnd = bodyEnd;
   String? fileHash;
-  final trailingHashStart = bodyEnd - hlFileHashLength - 1;
-  if (trailingHashStart >= hlFilePrefix.length &&
-      line.codeUnitAt(trailingHashStart) == _charHash) {
-    var allHex = true;
-    for (var probe = trailingHashStart + 1; probe < bodyEnd; probe++) {
-      if (!_isHexDigitCode(line.codeUnitAt(probe))) {
-        allHex = false;
-        break;
-      }
-    }
-    if (allHex) {
-      pathEnd = trailingHashStart;
-      fileHash = line.substring(trailingHashStart + 1, bodyEnd).toUpperCase();
-    }
+  final tag = _scanTrailingHash(line, bodyEnd);
+  if (tag != null) {
+    pathEnd = tag.pathEnd;
+    fileHash = tag.fileHash;
   }
 
   // The header grammar uses `#` as the path/tag separator and does not allow
   // `#` inside filenames. Anything `#` left in the path body — short tags,
   // non-hex tags, over-long tags, stale-tag copy-paste — means the header is
   // malformed.
-  for (var i = hlFilePrefix.length; i < pathEnd; i++) {
-    if (line.codeUnitAt(i) == _charHash) return null;
-  }
+  if (!_pathBodyClean(line, pathEnd)) return null;
 
   if (pathEnd == hlFilePrefix.length) return null;
   final path = line.substring(hlFilePrefix.length, pathEnd);
@@ -700,9 +788,9 @@ final class HashlineRawToken extends HashlineToken {
   final String text;
 }
 
-/// Classifies one input line (omp's `classifyLine`).
-HashlineToken classifyHashlineLine(String line, int lineNum) {
-  if (line.isEmpty) return HashlineBlankToken(lineNum: lineNum);
+/// Classifies a patch envelope marker line (`*** Begin/End Patch`,
+/// `*** Abort`); `null` for non-marker lines.
+HashlineToken? _classifyEnvelopeMarker(String line, int lineNum) {
   if (_markerLineEquals(line, beginPatchMarker)) {
     return HashlineEnvelopeBeginToken(lineNum: lineNum);
   }
@@ -712,31 +800,51 @@ HashlineToken classifyHashlineLine(String line, int lineNum) {
   if (_markerLineEquals(line, abortPatchMarker)) {
     return HashlineAbortToken(lineNum: lineNum);
   }
-  final firstCode = line.codeUnitAt(0);
-  if (line.startsWith(hlFilePrefix)) {
-    final header = tryParseHeader(line);
-    if (header != null) {
-      return HashlineHeaderToken(
-        lineNum: lineNum,
-        path: header.path,
-        fileHash: header.fileHash,
-      );
-    }
-  }
+  return null;
+}
+
+/// Classifies a `[PATH]` / `[PATH#TAG]` section header line; `null` when the
+/// line does not start with `[` or the header is malformed.
+HashlineToken? _classifyHeaderLine(String line, int lineNum) {
+  if (!line.startsWith(hlFilePrefix)) return null;
+  final header = tryParseHeader(line);
+  if (header == null) return null;
+  return HashlineHeaderToken(
+    lineNum: lineNum,
+    path: header.path,
+    fileHash: header.fileHash,
+  );
+}
+
+/// Whether the first non-whitespace run at [lead] starts a hunk keyword.
+bool _startsWithHunkKeyword(String line, int lead) =>
+    line.startsWith(hlReplaceKeyword, lead) ||
+    line.startsWith(hlDeleteKeyword, lead) ||
+    line.startsWith(hlInsertKeyword, lead) ||
+    line.startsWith(hlRemKeyword, lead) ||
+    line.startsWith(hlMoveKeyword, lead);
+
+/// Classifies a hunk-header line (`SWAP`, `DEL`, `INS.*`, `REM`, `MV`,
+/// `*.BLK`); `null` when the leading keyword is absent or the hunk header
+/// is malformed.
+HashlineToken? _classifyHunkLine(String line, int lineNum) {
   final lead = _skipWhitespace(line, 0);
-  final isHunkLead =
-      line.startsWith(hlReplaceKeyword, lead) ||
-      line.startsWith(hlDeleteKeyword, lead) ||
-      line.startsWith(hlInsertKeyword, lead) ||
-      line.startsWith(hlRemKeyword, lead) ||
-      line.startsWith(hlMoveKeyword, lead);
-  if (isHunkLead) {
-    final hunk = tryParseHunkHeader(line);
-    if (hunk != null) {
-      return HashlineOpToken(lineNum: lineNum, target: hunk);
-    }
-  }
-  if (firstCode == hlPayloadReplace.codeUnitAt(0)) {
+  if (!_startsWithHunkKeyword(line, lead)) return null;
+  final hunk = tryParseHunkHeader(line);
+  if (hunk == null) return null;
+  return HashlineOpToken(lineNum: lineNum, target: hunk);
+}
+
+/// Classifies one input line (omp's `classifyLine`).
+HashlineToken classifyHashlineLine(String line, int lineNum) {
+  if (line.isEmpty) return HashlineBlankToken(lineNum: lineNum);
+  final marker = _classifyEnvelopeMarker(line, lineNum);
+  if (marker != null) return marker;
+  final header = _classifyHeaderLine(line, lineNum);
+  if (header != null) return header;
+  final hunk = _classifyHunkLine(line, lineNum);
+  if (hunk != null) return hunk;
+  if (line.codeUnitAt(0) == hlPayloadReplace.codeUnitAt(0)) {
     return HashlinePayloadToken(lineNum: lineNum, text: line.substring(1));
   }
   return HashlineRawToken(lineNum: lineNum, text: line);

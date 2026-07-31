@@ -132,21 +132,9 @@ AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
     );
   }
 
-  // A subagent allocates its own children as dot-qualified ids
-  // (`Parent.Child`), so the slash path form is first tried as a hierarchy
-  // separator. Only when no such nested output exists does the path fall
-  // back to dot-path JSON extraction (omp semantics).
-  final segments = [
-    for (final raw in parsed.urlPath.split('/'))
-      if (raw.isNotEmpty) Uri.decodeComponent(raw),
-  ];
-  final nestedId =
-      segments.isNotEmpty && segments.every((s) => !s.contains('.'))
-      ? [parsed.outputId, ...segments].join('.')
-      : null;
-
-  final resolved = _resolveRawContent(store, parsed.outputId, nestedId);
-  final resolvedNested = nestedId != null && resolved.id == nestedId;
+  final hop = _resolveUrlPath(parsed.outputId, parsed.urlPath);
+  final resolved = _resolveRawContent(store, parsed.outputId, hop.nestedId);
+  final resolvedNested = hop.nestedId != null && resolved.id == hop.nestedId;
   final extract =
       parsed.query != null || (hasPathExtraction && !resolvedNested);
   if (!extract) {
@@ -156,7 +144,28 @@ AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
       contentType: 'text/markdown',
     );
   }
-  return _extractJsonContent(resolved, parsed.query, segments.join('.'));
+  return _extractJsonContent(resolved, parsed.query, hop.segments.join('.'));
+}
+
+/// Decodes the slash [urlPath] into dot-path [segments] and the
+/// dot-qualified nested output id they name. A subagent allocates its own
+/// children as dot-qualified ids (`Parent.Child`), so the slash path form is
+/// first tried as a hierarchy separator. Only when no such nested output
+/// exists does the path fall back to dot-path JSON extraction (omp
+/// semantics); a segment containing a dot is never a hierarchy hop.
+({String? nestedId, List<String> segments}) _resolveUrlPath(
+  String outputId,
+  String urlPath,
+) {
+  final segments = [
+    for (final raw in urlPath.split('/'))
+      if (raw.isNotEmpty) Uri.decodeComponent(raw),
+  ];
+  final nestedId =
+      segments.isNotEmpty && segments.every((s) => !s.contains('.'))
+      ? [outputId, ...segments].join('.')
+      : null;
+  return (nestedId: nestedId, segments: segments);
 }
 
 /// Splits an `agent://` [url] into its output id, slash path, and `?q=`
@@ -172,6 +181,17 @@ AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
   final pathPart = queryIndex >= 0 ? rest.substring(0, queryIndex) : rest;
   final queryPart = queryIndex >= 0 ? rest.substring(queryIndex + 1) : null;
 
+  final path = _splitPathPart(pathPart);
+  return (
+    outputId: path.outputId,
+    urlPath: path.urlPath,
+    query: _parseQueryParam(queryPart),
+  );
+}
+
+/// Splits [pathPart] at the first slash into the output id and the
+/// remaining slash path; the output id must not be empty.
+({String outputId, String urlPath}) _splitPathPart(String pathPart) {
   final slashIndex = pathPart.indexOf('/');
   final outputId = slashIndex >= 0
       ? pathPart.substring(0, slashIndex)
@@ -182,13 +202,18 @@ AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
       '$agentUrlScheme:// URL requires an output ID: $agentUrlScheme://<id>',
     );
   }
+  return (outputId: outputId, urlPath: urlPath);
+}
 
+/// The `q` parameter of [queryPart], normalized to `null` when absent or
+/// empty.
+String? _parseQueryParam(String? queryPart) {
   String? queryParam;
   if (queryPart != null && queryPart.isNotEmpty) {
     queryParam = Uri.splitQueryString(queryPart)['q'];
   }
   if (queryParam != null && queryParam.isEmpty) queryParam = null;
-  return (outputId: outputId, urlPath: urlPath, query: queryParam);
+  return queryParam;
 }
 
 /// Fetches the raw stored content for [outputId], preferring the
@@ -260,26 +285,50 @@ Object? _walkJsonPath(Object? jsonValue, String path, String id) {
   var current = jsonValue;
   for (final segment in path.split('.')) {
     if (segment.isEmpty) continue;
-    if (current is Map) {
-      if (!current.containsKey(segment)) {
-        throw AgentUrlException(
-          'Path "$path" not found in $id: no key "$segment"',
-        );
-      }
-      current = current[segment];
-    } else if (current is List) {
-      final index = int.tryParse(segment);
-      if (index == null || index < 0 || index >= current.length) {
-        throw AgentUrlException(
-          'Path "$path" not found in $id: no index "$segment"',
-        );
-      }
-      current = current[index];
-    } else {
-      throw AgentUrlException(
-        'Path "$path" not found in $id: "$segment" descends into a scalar',
-      );
-    }
+    current = _descendJsonSegment(current, segment, path, id);
   }
   return current;
+}
+
+/// One step of the dot-path walk: a map key, a numeric list index, or a
+/// failure when [current] is a scalar.
+Object? _descendJsonSegment(
+  Object? current,
+  String segment,
+  String path,
+  String id,
+) {
+  if (current is Map) {
+    return _descendMapKey(current, segment, path, id);
+  }
+  if (current is List) {
+    return _descendListIndex(current, segment, path, id);
+  }
+  throw AgentUrlException(
+    'Path "$path" not found in $id: "$segment" descends into a scalar',
+  );
+}
+
+/// The value of [segment] in [current], which must contain the key.
+Object? _descendMapKey(Map current, String segment, String path, String id) {
+  if (!current.containsKey(segment)) {
+    throw AgentUrlException('Path "$path" not found in $id: no key "$segment"');
+  }
+  return current[segment];
+}
+
+/// The element at numeric [segment] in [current], which must be in range.
+Object? _descendListIndex(
+  List current,
+  String segment,
+  String path,
+  String id,
+) {
+  final index = int.tryParse(segment);
+  if (index == null || index < 0 || index >= current.length) {
+    throw AgentUrlException(
+      'Path "$path" not found in $id: no index "$segment"',
+    );
+  }
+  return current[index];
 }

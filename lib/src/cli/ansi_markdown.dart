@@ -86,15 +86,8 @@ final class AnsiMarkdown {
     // Pre-styled lines (the user echo carries a background): pad the
     // background out to the CURRENT width — the stored line predates any
     // terminal resize.
-    if (line.startsWith('\x1b[48')) {
-      final visible = line.replaceAll(_ansiRe, '');
-      final pad = width - visible.length;
-      if (pad <= 0) return line;
-      final body = line.endsWith(_reset)
-          ? line.substring(0, line.length - _reset.length)
-          : line;
-      return '$body${' ' * pad}$_reset';
-    }
+    final preStyled = _formatPreStyled(line);
+    if (preStyled != null) return preStyled;
 
     // Full-width rules are stored baked at submit-time width; re-render them
     // at the current width so a resize never leaves ragged bars behind.
@@ -103,8 +96,29 @@ final class AnsiMarkdown {
       return '$_dim${'─' * width}$_reset';
     }
 
-    // Code fences swallow everything between the markers verbatim (pi:
-    // content indented 2 spaces, no background, dim border lines).
+    final fenced = _formatFence(line);
+    if (fenced != null) return fenced;
+
+    return _formatMarkdownLine(line);
+  }
+
+  /// Pre-styled background lines padded to the current width; null for
+  /// ordinary lines.
+  String? _formatPreStyled(String line) {
+    if (!line.startsWith('\x1b[48')) return null;
+    final visible = line.replaceAll(_ansiRe, '');
+    final pad = width - visible.length;
+    if (pad <= 0) return line;
+    final body = line.endsWith(_reset)
+        ? line.substring(0, line.length - _reset.length)
+        : line;
+    return '$body${' ' * pad}$_reset';
+  }
+
+  /// Code fences swallow everything between the markers verbatim (pi:
+  /// content indented 2 spaces, no background, dim border lines). Null for
+  /// markdown content outside a fence.
+  String? _formatFence(String line) {
     if (_fenceRe.hasMatch(line)) {
       _inFence = !_inFence;
       return '$_dim$line$_reset';
@@ -112,7 +126,12 @@ final class AnsiMarkdown {
     if (_inFence) {
       return '  $line';
     }
+    return null;
+  }
 
+  /// Markdown block forms: headers, horizontal rules, quotes, bullets —
+  /// anything else goes through inline formatting.
+  String _formatMarkdownLine(String line) {
     final header = _headerRe.firstMatch(line);
     if (header != null) {
       final level = header.group(1)!.length;
@@ -134,25 +153,29 @@ final class AnsiMarkdown {
       return '${quote.group(1)}$_dim│$_reset $_dim$_italic$body$_reset';
     }
     final bullet = _bulletRe.firstMatch(line);
-    if (bullet != null) {
-      final marker = bullet.group(2)!;
-      final body = bullet.group(3)!;
-      // Task list items keep their checkbox (pi renders [x] / [ ]).
-      final task = _taskRe.firstMatch(body);
-      // One-char marker = a `-`*`+` bullet (numeric markers are `12.` —
-      // always longer), so no regex is needed on this per-line hot path.
-      final renderedMarker = marker.length == 1
-          ? '$_teal•$_reset'
-          : '$_teal$marker$_reset';
-      if (task != null) {
-        final checked = task.group(1)!.toLowerCase() == 'x';
-        final box = checked ? '$_teal[✓]$_reset' : '$_dim[ ]$_reset';
-        return '${bullet.group(1)}$renderedMarker $box '
-            '${_formatInline(task.group(2)!)}';
-      }
-      return '${bullet.group(1)}$renderedMarker ${_formatInline(body)}';
-    }
+    if (bullet != null) return _formatBullet(bullet);
     return _formatInline(line);
+  }
+
+  /// Bullet and task-list lines: `-`/`+` markers become a teal `•`, numeric
+  /// markers stay literal; task items keep their checkbox (pi renders
+  /// [x] / [ ]).
+  String _formatBullet(RegExpMatch bullet) {
+    final marker = bullet.group(2)!;
+    final body = bullet.group(3)!;
+    final task = _taskRe.firstMatch(body);
+    // One-char marker = a `-`*`+` bullet (numeric markers are `12.` —
+    // always longer), so no regex is needed on this per-line hot path.
+    final renderedMarker = marker.length == 1
+        ? '$_teal•$_reset'
+        : '$_teal$marker$_reset';
+    if (task != null) {
+      final checked = task.group(1)!.toLowerCase() == 'x';
+      final box = checked ? '$_teal[✓]$_reset' : '$_dim[ ]$_reset';
+      return '${bullet.group(1)}$renderedMarker $box '
+          '${_formatInline(task.group(2)!)}';
+    }
+    return '${bullet.group(1)}$renderedMarker ${_formatInline(body)}';
   }
 
   /// Inline spans: links, inline code, bold, strikethrough, italic. Code
@@ -198,24 +221,14 @@ final class AnsiMarkdown {
         cells[1].every((c) => _tableSeparatorCellRe.hasMatch(c));
     if (!uniform || columnCount < 2 || !hasSeparator) {
       // Not a clean table: emit raw, inline-formatted like any other line.
-      return [for (final row in rows) _formatInline(row)];
+      return _rawTableRows(rows);
     }
 
     final widths = List<int>.filled(columnCount, 0);
     // Column widths come from the FORMATTED cells: inline markers (the
     // backticks of `code`, ** of bold, ...) render away, so sizing columns
     // by raw text would push the separators right of the header's grid.
-    final formatted = <int, List<String>>{};
-    for (var r = 0; r < rows.length; r++) {
-      if (r == 1) continue; // separator row has no content width
-      formatted[r] = [
-        for (var c = 0; c < columnCount; c++) _formatInline(cells[r][c]),
-      ];
-      for (var c = 0; c < columnCount; c++) {
-        final visible = _visibleLength(formatted[r]![c]);
-        if (visible > widths[c]) widths[c] = visible;
-      }
-    }
+    final formatted = _formattedCells(rows, cells, widths);
     // ' cell ' per column plus ' │ ' joins; pi falls back to raw when the
     // table does not fit — so do we.
     final total =
@@ -223,21 +236,59 @@ final class AnsiMarkdown {
         columnCount * 2 +
         (columnCount - 1) * 3;
     if (total > width) {
-      return [for (final row in rows) _formatInline(row)];
+      return _rawTableRows(rows);
     }
 
+    return _renderTableRows(rows, widths, formatted);
+  }
+
+  /// Raw rows, inline-formatted like any other line (malformed or too-wide
+  /// tables).
+  List<String> _rawTableRows(List<String> rows) {
+    return [for (final row in rows) _formatInline(row)];
+  }
+
+  /// The inline-formatted cells keyed by row (the separator row carries no
+  /// content width), with per-column max visible widths accumulated into
+  /// [widths].
+  Map<int, List<String>> _formattedCells(
+    List<String> rows,
+    List<List<String>> cells,
+    List<int> widths,
+  ) {
+    final formatted = <int, List<String>>{};
+    for (var r = 0; r < rows.length; r++) {
+      if (r == 1) continue; // separator row has no content width
+      formatted[r] = [
+        for (var c = 0; c < cells[r].length; c++) _formatInline(cells[r][c]),
+      ];
+      for (var c = 0; c < cells[r].length; c++) {
+        final visible = _visibleLength(formatted[r]![c]);
+        if (visible > widths[c]) widths[c] = visible;
+      }
+    }
+    return formatted;
+  }
+
+  /// Emits the grid rows: padded cells joined by dim `│`, the separator row
+  /// as a dim `───┼───` line, the header row bold.
+  List<String> _renderTableRows(
+    List<String> rows,
+    List<int> widths,
+    Map<int, List<String>> formatted,
+  ) {
     final out = <String>[];
     for (var r = 0; r < rows.length; r++) {
       if (r == 1) {
         // Separator row: '───┼───' in dim.
         out.add(
-          '$_dim${[for (var c = 0; c < columnCount; c++) '─' * (widths[c] + 2)].join('┼')}$_reset',
+          '$_dim${[for (var c = 0; c < widths.length; c++) '─' * (widths[c] + 2)].join('┼')}$_reset',
         );
         continue;
       }
       final isHeader = r == 0;
       final renderedCells = <String>[];
-      for (var c = 0; c < columnCount; c++) {
+      for (var c = 0; c < widths.length; c++) {
         final styled = formatted[r]![c];
         final padded = styled + ' ' * (widths[c] - _visibleLength(styled));
         renderedCells.add(isHeader ? '$_bold$padded$_reset' : padded);

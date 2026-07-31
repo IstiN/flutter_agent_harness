@@ -171,6 +171,14 @@ final class TuiRepl {
     KeyType.char,
   };
 
+  /// Keys that only move the cursor within the input buffer.
+  static const _cursorKeys = {
+    KeyType.left,
+    KeyType.right,
+    KeyType.home,
+    KeyType.end,
+  };
+
   void _handleKey(KeyEvent key) {
     // When the model picker is open, typing filters the list instead of
     // editing the input buffer.
@@ -212,16 +220,29 @@ final class TuiRepl {
 
   /// Arrow/page keys: move the slash-menu selection when it is open.
   void _handleMenuScrollKey(KeyEvent key) {
+    if (key.type == KeyType.shiftTab || key.type == KeyType.up) {
+      _scrollMenuUp();
+      return;
+    }
+    if (key.type == KeyType.down) {
+      _scrollMenuDown();
+      return;
+    }
+    _handleMenuPageKey(key);
+  }
+
+  void _scrollMenuUp() {
+    if (_menuOpen && _menuSelected > 0) _menuSelected--;
+  }
+
+  void _scrollMenuDown() {
+    if (_menuOpen && _menuSelected < _menuItems.length - 1) {
+      _menuSelected++;
+    }
+  }
+
+  void _handleMenuPageKey(KeyEvent key) {
     switch (key.type) {
-      case KeyType.shiftTab:
-      case KeyType.up:
-        if (_menuOpen && _menuSelected > 0) _menuSelected--;
-        break;
-      case KeyType.down:
-        if (_menuOpen && _menuSelected < _menuItems.length - 1) {
-          _menuSelected++;
-        }
-        break;
       case KeyType.pageUp:
         if (_menuOpen) _menuSelected = 0;
         break;
@@ -235,6 +256,19 @@ final class TuiRepl {
 
   /// Cursor motion and text editing of the input buffer.
   void _handleEditKey(KeyEvent key) {
+    if (_cursorKeys.contains(key.type)) {
+      _handleCursorKey(key);
+      return;
+    }
+    if (key.type == KeyType.char) {
+      _handleCharKey(key);
+      return;
+    }
+    _handleDeleteKey(key);
+  }
+
+  /// Cursor motion within the input buffer.
+  void _handleCursorKey(KeyEvent key) {
     switch (key.type) {
       case KeyType.left:
         if (_cursor > 0) _cursor--;
@@ -248,6 +282,23 @@ final class TuiRepl {
       case KeyType.end:
         _cursor = _text.length;
         break;
+      default:
+        break;
+    }
+  }
+
+  /// Character insertion into the input buffer.
+  void _handleCharKey(KeyEvent key) {
+    final ch = key.char;
+    if (ch != null && ch.length == 1) {
+      _insert(ch);
+      _updateMenu();
+    }
+  }
+
+  /// Backspace/delete: remove a character from the input buffer.
+  void _handleDeleteKey(KeyEvent key) {
+    switch (key.type) {
       case KeyType.backspace:
         _deleteLeft();
         _updateMenu();
@@ -255,13 +306,6 @@ final class TuiRepl {
       case KeyType.delete:
         _deleteRight();
         _updateMenu();
-        break;
-      case KeyType.char:
-        final ch = key.char;
-        if (ch != null && ch.length == 1) {
-          _insert(ch);
-          _updateMenu();
-        }
         break;
       default:
         break;
@@ -281,46 +325,62 @@ final class TuiRepl {
   /// Model picker filter editing: typed characters extend the filter,
   /// backspace shrinks it.
   void _handleModelFilterKey(KeyEvent key) {
-    switch (key.type) {
-      case KeyType.char:
-        final ch = key.char;
-        if (ch != null && ch.length == 1) {
-          // Ignore the first space after the picker opens: `/models open`
-          // should start filtering at `open`, not at the separating space.
-          if (ch == ' ' && _modelFilter.isEmpty) return;
-          _modelFilter += ch;
-          _refreshModelMenu();
-        }
-        return;
-      case KeyType.backspace:
-        if (_modelFilter.isNotEmpty) {
-          _modelFilter = _modelFilter.substring(0, _modelFilter.length - 1);
-          _refreshModelMenu();
-        }
-        return;
-      default:
-        return;
+    if (key.type == KeyType.char) {
+      _extendModelFilter(key);
+      return;
+    }
+    if (key.type == KeyType.backspace) {
+      _shrinkModelFilter();
+    }
+  }
+
+  void _extendModelFilter(KeyEvent key) {
+    final ch = key.char;
+    if (ch != null && ch.length == 1) {
+      // Ignore the first space after the picker opens: `/models open`
+      // should start filtering at `open`, not at the separating space.
+      if (ch == ' ' && _modelFilter.isEmpty) return;
+      _modelFilter += ch;
+      _refreshModelMenu();
+    }
+  }
+
+  void _shrinkModelFilter() {
+    if (_modelFilter.isNotEmpty) {
+      _modelFilter = _modelFilter.substring(0, _modelFilter.length - 1);
+      _refreshModelMenu();
     }
   }
 
   /// Model picker navigation: arrows/page keys move the selection, enter/tab
   /// accept, escape closes; every other key is ignored.
   void _handleModelNavKey(KeyEvent key) {
+    if (key.type == KeyType.enter || key.type == KeyType.tab) {
+      _acceptMenuItem();
+      return;
+    }
+    if (key.type == KeyType.escape) {
+      _closeMenu();
+      return;
+    }
+    _handleModelMoveKey(key);
+  }
+
+  /// Model picker selection movement: arrows/page keys.
+  void _handleModelMoveKey(KeyEvent key) {
+    if (key.type == KeyType.up || key.type == KeyType.shiftTab) {
+      if (_menuSelected > 0) _menuSelected--;
+      return;
+    }
+    if (key.type == KeyType.down) {
+      if (_menuSelected < _menuItems.length - 1) _menuSelected++;
+      return;
+    }
+    _handleModelPageKey(key);
+  }
+
+  void _handleModelPageKey(KeyEvent key) {
     switch (key.type) {
-      case KeyType.enter:
-      case KeyType.tab:
-        _acceptMenuItem();
-        return;
-      case KeyType.escape:
-        _closeMenu();
-        return;
-      case KeyType.up:
-      case KeyType.shiftTab:
-        if (_menuSelected > 0) _menuSelected--;
-        return;
-      case KeyType.down:
-        if (_menuSelected < _menuItems.length - 1) _menuSelected++;
-        return;
       case KeyType.pageUp:
         _menuSelected = 0;
         return;
@@ -490,37 +550,59 @@ final class TuiRepl {
     lines.add('${style.bold(style.cyan(prompt))}$_text');
 
     if (_menuOpen && _menuItems.isNotEmpty) {
-      final title = _menuModelMode
-          ? style.bold(
-              '[Select model${_modelFilter.isNotEmpty ? ': $_modelFilter' : ''}]',
-            )
-          : style.bold('[Commands]');
-      lines.add(title);
-      var start = 0;
-      if (_menuItems.length > _maxMenuItems) {
-        start = (_menuSelected - (_maxMenuItems ~/ 2)).clamp(
-          0,
-          _menuItems.length - _maxMenuItems,
-        );
-      }
-      final end = _menuItems.length < start + _maxMenuItems
-          ? _menuItems.length
-          : start + _maxMenuItems;
-      if (start > 0) lines.add(style.dim('  ↑ more'));
-      for (var i = start; i < end; i++) {
-        final item = _menuItems[i];
-        final selected = i == _menuSelected;
-        final prefix = selected ? style.green('▸ ') : '  ';
-        final label = selected ? style.bold(item.label) : item.label;
-        final desc = item.description.isNotEmpty
-            ? ' ${style.dim(item.description)}'
-            : '';
-        lines.add('$prefix$label$desc');
-      }
-      if (end < _menuItems.length) lines.add(style.dim('  ↓ more'));
+      lines.addAll(_buildMenuSection());
     }
 
     return lines;
+  }
+
+  /// Builds the menu block appended under the prompt while a menu is open:
+  /// the title, then the scrolled window of item rows between the ↑/↓
+  /// "more" markers.
+  List<String> _buildMenuSection() {
+    final lines = <String>[_menuTitle()];
+    final (start, end) = _menuWindow();
+    if (start > 0) lines.add(style.dim('  ↑ more'));
+    for (var i = start; i < end; i++) {
+      lines.add(_buildMenuRow(i));
+    }
+    if (end < _menuItems.length) lines.add(style.dim('  ↓ more'));
+    return lines;
+  }
+
+  String _menuTitle() {
+    return _menuModelMode
+        ? style.bold(
+            '[Select model${_modelFilter.isNotEmpty ? ': $_modelFilter' : ''}]',
+          )
+        : style.bold('[Commands]');
+  }
+
+  /// The visible window `[start, end)` into [_menuItems], centered on the
+  /// selection when the list is longer than [_maxMenuItems].
+  (int, int) _menuWindow() {
+    var start = 0;
+    if (_menuItems.length > _maxMenuItems) {
+      start = (_menuSelected - (_maxMenuItems ~/ 2)).clamp(
+        0,
+        _menuItems.length - _maxMenuItems,
+      );
+    }
+    final end = _menuItems.length < start + _maxMenuItems
+        ? _menuItems.length
+        : start + _maxMenuItems;
+    return (start, end);
+  }
+
+  String _buildMenuRow(int index) {
+    final item = _menuItems[index];
+    final selected = index == _menuSelected;
+    final prefix = selected ? style.green('▸ ') : '  ';
+    final label = selected ? style.bold(item.label) : item.label;
+    final desc = item.description.isNotEmpty
+        ? ' ${style.dim(item.description)}'
+        : '';
+    return '$prefix$label$desc';
   }
 
   /// Pads/truncates the frame to exactly [rows] lines. The input line is

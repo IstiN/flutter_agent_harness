@@ -154,67 +154,24 @@ final class TaskExecutor {
     Stopwatch stopwatch,
     TaskSpawnProgressCallback? onProgress,
   ) async {
-    final definition = registry.resolve(agentName);
-    if (definition == null) {
-      throw StateError(
-        'Unknown agent type "$agentName" — available: '
-        '${registry.agents.map((a) => a.name).join(', ')}',
-      );
-    }
+    final definition = _resolveDefinition(agentName);
     onProgress?.call(index, id, TaskSpawnPhase.running);
 
     final toolRegistry = ToolRegistry(
       registry.toolSurfaceFor(definition, childTools),
     );
-
-    // Cheap-role resolution (omp's agent `model` frontmatter): a configured
-    // role wins; anything else inherits the parent wiring.
-    var childModel = model;
-    var childStream = streamFunction;
-    final role = definition.modelRole;
-    final rolesResolver = this.rolesResolver;
-    if (role != null && rolesResolver != null) {
-      final resolved = rolesResolver.resolveRole(role);
-      if (resolved != null) {
-        childModel = resolved.model;
-        childStream = resolved.stream;
-      }
-    }
-
-    final systemPrompt = StringBuffer(definition.systemPrompt.trim());
-    if (context.trim().isNotEmpty) {
-      systemPrompt
-        ..writeln()
-        ..writeln()
-        ..writeln('# CONTEXT')
-        ..write(context.trim());
-    }
-
-    final userPrompt = StringBuffer(
-      taskAssignmentPrompt.replaceAll('{{task}}', item.task.trim()),
-    );
-    if (item.outputSchema != null) {
-      userPrompt
-        ..writeln()
-        ..writeln()
-        ..write(
-          taskSchemaOutputPrompt.replaceAll(
-            '{{schema}}',
-            const JsonEncoder.withIndent('  ').convert(item.outputSchema),
-          ),
-        );
-    }
+    final wiring = _resolveChildWiring(definition);
 
     final child = Agent(
-      model: childModel,
-      systemPrompt: systemPrompt.toString(),
-      streamFunction: childStream,
+      model: wiring.model,
+      systemPrompt: _buildSystemPrompt(definition, context),
+      streamFunction: wiring.stream,
       toolRegistry: toolRegistry,
     );
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
-    await child.prompt(userPrompt.toString());
+    await child.prompt(_buildUserPrompt(item));
     cancelToken?.throwIfCancelled();
 
     final finalText = _finalAssistantText(child);
@@ -233,18 +190,7 @@ final class TaskExecutor {
 
     final capped = _capOutput(storedContent);
     store.put(id, capped.$1);
-
-    var tokens = 0;
-    var requests = 0;
-    for (final message in child.state.messages) {
-      if (message is AssistantMessage) {
-        requests++;
-        tokens +=
-            message.usage.input +
-            message.usage.output +
-            message.usage.cacheWrite;
-      }
-    }
+    final usage = _usageStats(child);
 
     final failed = structured?.status == StructuredValidationStatus.invalid;
     onProgress?.call(
@@ -261,12 +207,91 @@ final class TaskExecutor {
       output: capped.$1,
       truncated: capped.$2,
       duration: stopwatch.elapsed,
-      tokens: tokens,
-      requests: requests,
-      model: childModel.id,
+      tokens: usage.tokens,
+      requests: usage.requests,
+      model: wiring.model.id,
       error: failed ? 'schema_violation: ${structured!.error}' : null,
       structuredOutput: structured,
     );
+  }
+
+  /// Resolves [agentName] to its definition or throws listing the available
+  /// agent types.
+  TaskAgentDefinition _resolveDefinition(String agentName) {
+    final definition = registry.resolve(agentName);
+    if (definition == null) {
+      throw StateError(
+        'Unknown agent type "$agentName" — available: '
+        '${registry.agents.map((a) => a.name).join(', ')}',
+      );
+    }
+    return definition;
+  }
+
+  /// Cheap-role resolution (omp's agent `model` frontmatter): a configured
+  /// role wins; anything else inherits the parent wiring.
+  ({Model model, StreamFunction stream}) _resolveChildWiring(
+    TaskAgentDefinition definition,
+  ) {
+    final role = definition.modelRole;
+    final rolesResolver = this.rolesResolver;
+    if (role != null && rolesResolver != null) {
+      final resolved = rolesResolver.resolveRole(role);
+      if (resolved != null) {
+        return (model: resolved.model, stream: resolved.stream);
+      }
+    }
+    return (model: model, stream: streamFunction);
+  }
+
+  /// The child's system prompt: the definition's prompt plus the shared
+  /// batch context under a `# CONTEXT` heading.
+  String _buildSystemPrompt(TaskAgentDefinition definition, String context) {
+    final systemPrompt = StringBuffer(definition.systemPrompt.trim());
+    if (context.trim().isNotEmpty) {
+      systemPrompt
+        ..writeln()
+        ..writeln()
+        ..writeln('# CONTEXT')
+        ..write(context.trim());
+    }
+    return systemPrompt.toString();
+  }
+
+  /// The child's assignment prompt, with the schema instructions appended
+  /// when the item carries an `outputSchema`.
+  String _buildUserPrompt(TaskItem item) {
+    final userPrompt = StringBuffer(
+      taskAssignmentPrompt.replaceAll('{{task}}', item.task.trim()),
+    );
+    if (item.outputSchema != null) {
+      userPrompt
+        ..writeln()
+        ..writeln()
+        ..write(
+          taskSchemaOutputPrompt.replaceAll(
+            '{{schema}}',
+            const JsonEncoder.withIndent('  ').convert(item.outputSchema),
+          ),
+        );
+    }
+    return userPrompt.toString();
+  }
+
+  /// Token/request totals across the child's assistant messages.
+  static ({int tokens, int requests}) _usageStats(Agent child) {
+    var tokens = 0;
+    var requests = 0;
+    for (final message in child.state.messages) {
+      if (message is AssistantMessage) {
+        requests++;
+        tokens +=
+            message.usage.input +
+            message.usage.output +
+            message.usage.cacheWrite;
+      }
+    }
+    return (tokens: tokens, requests: requests);
   }
 
   /// Parses the child's final output as JSON and validates it against
@@ -280,6 +305,53 @@ final class TaskExecutor {
     required String finalText,
     CancelToken? cancelToken,
   }) async {
+    final rejected = _rejectUnusableSchema(outputSchema, finalText);
+    if (rejected != null) return rejected;
+
+    var text = finalText;
+    var retried = false;
+    while (true) {
+      final attempt = _validateOnce(text, outputSchema);
+      if (attempt.errors.isEmpty) {
+        return (
+          structured: StructuredTaskOutput(
+            status: StructuredValidationStatus.valid,
+            data: attempt.data,
+          ),
+          // Store the typed object itself so its fields stay addressable
+          // via `agent://<id>/<dot.path>` (omp stores the finalized JSON).
+          outputContent: const JsonEncoder.withIndent(
+            '  ',
+          ).convert(attempt.data),
+        );
+      }
+      if (retried) {
+        return (
+          structured: StructuredTaskOutput(
+            status: StructuredValidationStatus.invalid,
+            data: attempt.data,
+            error: attempt.errors.join('; '),
+          ),
+          outputContent: text,
+        );
+      }
+      retried = true;
+      await child.prompt(
+        taskSchemaFixPrompt.replaceAll(
+          '{{errors}}',
+          attempt.errors.map((e) => '- $e').join('\n'),
+        ),
+      );
+      cancelToken?.throwIfCancelled();
+      text = _finalAssistantText(child);
+    }
+  }
+
+  /// Rejects schemas that are neither a JSON Schema object nor `true`
+  /// (`false` rejects every output, anything else is unsupported). Returns
+  /// the terminal outcome, or `null` when the schema is usable.
+  static ({StructuredTaskOutput structured, String outputContent})?
+  _rejectUnusableSchema(Object outputSchema, String finalText) {
     if (outputSchema is! Map && outputSchema != true) {
       if (outputSchema == false) {
         return (
@@ -300,54 +372,32 @@ final class TaskExecutor {
         outputContent: finalText,
       );
     }
+    return null;
+  }
 
-    var text = finalText;
-    var retried = false;
-    while (true) {
-      final data = _extractJsonValue(text);
-      final List<String> errors;
-      if (data == null) {
-        errors = const ['the final output contains no JSON document'];
-      } else if (outputSchema is Map) {
-        errors = validateJsonValue(
+  /// One parse + validate pass over [text] (omp's per-attempt validation).
+  static ({Object? data, List<String> errors}) _validateOnce(
+    String text,
+    Object outputSchema,
+  ) {
+    final data = _extractJsonValue(text);
+    if (data == null) {
+      return (
+        data: null,
+        errors: const ['the final output contains no JSON document'],
+      );
+    }
+    if (outputSchema is Map) {
+      return (
+        data: data,
+        errors: validateJsonValue(
           value: data,
           schema: outputSchema.cast<String, dynamic>(),
-        );
-      } else {
-        // outputSchema == true: any parseable JSON document is accepted.
-        errors = const [];
-      }
-      if (errors.isEmpty) {
-        return (
-          structured: StructuredTaskOutput(
-            status: StructuredValidationStatus.valid,
-            data: data,
-          ),
-          // Store the typed object itself so its fields stay addressable
-          // via `agent://<id>/<dot.path>` (omp stores the finalized JSON).
-          outputContent: const JsonEncoder.withIndent('  ').convert(data),
-        );
-      }
-      if (retried) {
-        return (
-          structured: StructuredTaskOutput(
-            status: StructuredValidationStatus.invalid,
-            data: data,
-            error: errors.join('; '),
-          ),
-          outputContent: text,
-        );
-      }
-      retried = true;
-      await child.prompt(
-        taskSchemaFixPrompt.replaceAll(
-          '{{errors}}',
-          errors.map((e) => '- $e').join('\n'),
         ),
       );
-      cancelToken?.throwIfCancelled();
-      text = _finalAssistantText(child);
     }
+    // outputSchema == true: any parseable JSON document is accepted.
+    return (data: data, errors: const []);
   }
 
   /// The concatenated text of the child's last assistant message.
@@ -429,14 +479,26 @@ final class TaskExecutor {
   static Object? _extractJsonValue(String text) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return null;
-    final direct = _tryParseJson(trimmed);
-    if (direct != null) return direct;
+    return _tryParseJson(trimmed) ??
+        _jsonFromLastFence(trimmed) ??
+        _jsonFromOutermostSpan(trimmed);
+  }
+
+  /// The first parseable JSON document inside a fenced code block, trying
+  /// the last fence first.
+  static Object? _jsonFromLastFence(String trimmed) {
     final fence = RegExp('```(?:json|JSON)?\\s*\\r?\\n([\\s\\S]*?)```');
     final matches = fence.allMatches(trimmed).toList();
     for (final match in matches.reversed) {
       final value = _tryParseJson(match.group(1)!.trim());
       if (value != null) return value;
     }
+    return null;
+  }
+
+  /// The first parseable JSON document spanning the outermost `{…}` or
+  /// `[…]` of [trimmed].
+  static Object? _jsonFromOutermostSpan(String trimmed) {
     for (final pair in const [('{', '}'), ('[', ']')]) {
       final start = trimmed.indexOf(pair.$1);
       final end = trimmed.lastIndexOf(pair.$2);

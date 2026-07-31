@@ -1567,5 +1567,61 @@ void main() {
       expect(messages[1], isA<AssistantMessage>());
       expect(messages[2], isA<UserMessage>());
     });
+
+    test('/resume reports when already on the latest session', () async {
+      final fake = FakeStreamFunction([textTurn('hello')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      io.sendLine('hi');
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      final io2 = FakeCliIO();
+      addTearDown(io2.close);
+      final fake2 = FakeStreamFunction([textTurn('again')]);
+      final cli2 = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+        ),
+        io: io2,
+        streamFunction: fake2.call,
+      );
+      final run2 = cli2.run();
+      await waitForIt(() => io2.out.toString().contains('fa'));
+      // The startup session is newer than the first run's, so /resume is
+      // already there.
+      io2.sendLine('/resume');
+      await waitForIt(
+        () => io2.out.toString().contains('already on the latest session'),
+      );
+      io2.sendLine('/exit');
+      await run2;
+    });
+
+    test('/skills lists the discovered skills', () async {
+      await env.createDir('/work/.git');
+      await env.createDir('/work/.fah/skills/deploy');
+      await env.writeFile(
+        '/work/.fah/skills/deploy/SKILL.md',
+        '---\nname: deploy\ndescription: Deploy the app\n---\n'
+            'Deploy body here.\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => cli.systemPrompt.contains('<name>deploy</name>'));
+      io.sendLine('/skills');
+      await waitForIt(() => io.out.toString().contains('skills:'));
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('deploy — Deploy the app'));
+      expect(output, contains('/work/.fah/skills/deploy/SKILL.md (project)'));
+    });
   });
 }

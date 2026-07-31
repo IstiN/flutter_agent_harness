@@ -252,19 +252,25 @@ List<WebSearchSource> parseDuckDuckGoResults(String html, {int? limit}) {
 
   for (var i = 0; i < tokens.length; i++) {
     final token = tokens[i];
-    if (token is! HtmlTag || token.closing || token.name != 'div') continue;
-    if (!token.hasClass('result')) continue;
+    if (token is! HtmlTag || !_isResultContainer(token)) continue;
 
     final end = _subtreeEnd(tokens, i);
     final source = _parseResultBlock(tokens, i + 1, end);
-    if (source != null && seen.add(source.url)) {
-      results.add(source);
-      if (limit != null && results.length >= limit) return results;
-    }
     i = end;
+    if (source == null || !seen.add(source.url)) continue;
+    results.add(source);
+    if (_resultLimitReached(results, limit)) return results;
   }
   return results;
 }
+
+/// Whether [token] opens a result container (`<div class="… result …">`).
+bool _isResultContainer(HtmlTag token) =>
+    !token.closing && token.name == 'div' && token.hasClass('result');
+
+/// Whether [results] has reached the requested [limit] (null = no limit).
+bool _resultLimitReached(List<WebSearchSource> results, int? limit) =>
+    limit != null && results.length >= limit;
 
 /// Finds the close-tag index of the subtree rooted at the open tag
 /// [openIndex] (see [skipHtmlSubtree]).
@@ -274,34 +280,67 @@ int _subtreeEnd(List<Object> tokens, int openIndex) =>
 /// Extracts the title link and snippet from one result block
 /// (`tokens[start..end]`, exclusive of the container's own tags).
 WebSearchSource? _parseResultBlock(List<Object> tokens, int start, int end) {
+  final block = _ResultBlock();
+  var i = start;
+  while (i < end) {
+    i = _scanResultToken(tokens, i, block);
+  }
+
+  final url = block.url;
+  final title = block.title;
+  if (url == null || title == null) return null;
+  return WebSearchSource(title: title, url: url, snippet: block.snippet);
+}
+
+/// Mutable state accumulated while scanning one result block.
+final class _ResultBlock {
   String? url;
   String? title;
   String? snippet;
+}
 
-  for (var i = start; i < end; i++) {
-    final token = tokens[i];
-    if (token is! HtmlTag || token.closing) continue;
+/// Processes the token at [i], capturing the title link or snippet into
+/// [block], and returns the next index to scan.
+int _scanResultToken(List<Object> tokens, int i, _ResultBlock block) {
+  final token = tokens[i];
+  if (token is! HtmlTag || token.closing) return i + 1;
 
-    if (url == null && token.name == 'a' && token.hasClass('result__a')) {
-      final textEnd = _subtreeEnd(tokens, i);
-      url = unwrapDuckDuckGoUrl(token.attributes['href'] ?? '');
-      final text = _collectText(tokens, i + 1, textEnd);
-      title = text.isEmpty ? null : text;
-      i = textEnd;
-      continue;
-    }
-    if (snippet == null &&
-        (token.name == 'a' || token.name == 'div' || token.name == 'span') &&
-        token.hasClass('result__snippet')) {
-      final textEnd = _subtreeEnd(tokens, i);
-      final text = _collectText(tokens, i + 1, textEnd);
-      snippet = text.isEmpty ? null : text;
-      i = textEnd;
-    }
+  if (block.url == null && _isResultTitleLink(token)) {
+    return _captureTitleLink(tokens, i, block);
   }
+  if (block.snippet == null && _isResultSnippetTag(token)) {
+    return _captureSnippet(tokens, i, block);
+  }
+  return i + 1;
+}
 
-  if (url == null || title == null) return null;
-  return WebSearchSource(title: title, url: url, snippet: snippet);
+/// Whether [token] is the result title link (`<a class="… result__a …">`).
+bool _isResultTitleLink(HtmlTag token) =>
+    token.name == 'a' && token.hasClass('result__a');
+
+/// Whether [token] carries the result snippet text.
+bool _isResultSnippetTag(HtmlTag token) =>
+    (token.name == 'a' || token.name == 'div' || token.name == 'span') &&
+    token.hasClass('result__snippet');
+
+/// Captures the URL and title text of the title link at [i]; returns the
+/// index past its subtree.
+int _captureTitleLink(List<Object> tokens, int i, _ResultBlock block) {
+  final token = tokens[i] as HtmlTag;
+  final textEnd = _subtreeEnd(tokens, i);
+  block.url = unwrapDuckDuckGoUrl(token.attributes['href'] ?? '');
+  final text = _collectText(tokens, i + 1, textEnd);
+  block.title = text.isEmpty ? null : text;
+  return textEnd + 1;
+}
+
+/// Captures the snippet text of the snippet element at [i]; returns the
+/// index past its subtree.
+int _captureSnippet(List<Object> tokens, int i, _ResultBlock block) {
+  final textEnd = _subtreeEnd(tokens, i);
+  final text = _collectText(tokens, i + 1, textEnd);
+  block.snippet = text.isEmpty ? null : text;
+  return textEnd + 1;
 }
 
 /// Concatenates the decoded text of `tokens[start..end]` (markup dropped).
@@ -381,14 +420,17 @@ final class BraveSearchProvider implements WebSearchProvider {
     if (description != null && description.trim().isNotEmpty) {
       snippets.add(description.trim());
     }
-    final extra = item['extra_snippets'];
-    if (extra is List) {
-      for (final snippet in extra) {
-        if (snippet is! String || snippet.trim().isEmpty) continue;
-        if (!snippets.contains(snippet.trim())) snippets.add(snippet.trim());
-      }
-    }
+    _collectExtraSnippets(snippets, item['extra_snippets']);
     return snippets.isEmpty ? null : snippets.join('\n');
+  }
+
+  /// Appends the distinct, non-blank `extra_snippets` entries to [snippets].
+  static void _collectExtraSnippets(List<String> snippets, Object? extra) {
+    if (extra is! List) return;
+    for (final snippet in extra) {
+      if (snippet is! String || snippet.trim().isEmpty) continue;
+      if (!snippets.contains(snippet.trim())) snippets.add(snippet.trim());
+    }
   }
 }
 
@@ -483,18 +525,28 @@ List<WebSearchSource> _mapJsonResults(
   final sources = <WebSearchSource>[];
   if (results is! List) return sources;
   for (final item in results) {
-    if (item is! Map) continue;
-    final url = item['url'] as String?;
-    if (url == null || url.isEmpty) continue;
-    final title = item['title'] as String?;
-    sources.add(
-      WebSearchSource(
-        title: title != null && title.trim().isNotEmpty ? title : url,
-        url: url,
-        snippet: snippetOf(item),
-      ),
-    );
+    final source = _mapJsonResult(item, snippetOf);
+    if (source == null) continue;
+    sources.add(source);
     if (sources.length >= count) break;
   }
   return sources;
+}
+
+/// Maps one JSON result entry to a source, or null when it is unusable (not
+/// an object, or missing a URL). Missing titles fall back to the URL (omp's
+/// shared source normalization).
+WebSearchSource? _mapJsonResult(
+  Object? item,
+  String? Function(Map<dynamic, dynamic> item) snippetOf,
+) {
+  if (item is! Map) return null;
+  final url = item['url'] as String?;
+  if (url == null || url.isEmpty) return null;
+  final title = item['title'] as String?;
+  return WebSearchSource(
+    title: title != null && title.trim().isNotEmpty ? title : url,
+    url: url,
+    snippet: snippetOf(item),
+  );
 }

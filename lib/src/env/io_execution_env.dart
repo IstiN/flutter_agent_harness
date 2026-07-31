@@ -24,39 +24,43 @@ FileError _toFileError(Object error, String path) {
     );
   }
   if (error is FileSystemException) {
-    final osError = error.osError;
-    if (osError != null) {
-      // EPERM / EACCES on POSIX; ERROR_ACCESS_DENIED (5) on Windows.
-      if (osError.errorCode == 13 ||
-          osError.errorCode == 1 ||
-          osError.errorCode == 5) {
-        return FileError(
-          FileErrorCode.permissionDenied,
-          error.message,
-          path: path,
-          cause: error,
-        );
-      }
-      // ENOTDIR on POSIX.
-      if (osError.errorCode == 20) {
-        return FileError(
-          FileErrorCode.notDirectory,
-          error.message,
-          path: path,
-          cause: error,
-        );
-      }
-    }
-    return FileError(
-      FileErrorCode.unknown,
-      error.message,
-      path: path,
-      cause: error,
-    );
+    return _fromFileSystemException(error, path);
   }
   return FileError(
     FileErrorCode.unknown,
     error.toString(),
+    path: path,
+    cause: error,
+  );
+}
+
+FileError _fromFileSystemException(FileSystemException error, String path) {
+  final osError = error.osError;
+  if (osError != null) {
+    // EPERM / EACCES on POSIX; ERROR_ACCESS_DENIED (5) on Windows.
+    if (osError.errorCode == 13 ||
+        osError.errorCode == 1 ||
+        osError.errorCode == 5) {
+      return FileError(
+        FileErrorCode.permissionDenied,
+        error.message,
+        path: path,
+        cause: error,
+      );
+    }
+    // ENOTDIR on POSIX.
+    if (osError.errorCode == 20) {
+      return FileError(
+        FileErrorCode.notDirectory,
+        error.message,
+        path: path,
+        cause: error,
+      );
+    }
+  }
+  return FileError(
+    FileErrorCode.unknown,
+    error.message,
     path: path,
     cause: error,
   );
@@ -345,24 +349,20 @@ final class LocalShell implements Shell {
     return base;
   }
 
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
+  static Future<Result<Process, ExecutionError>> _start(
+    String command,
     ShellExecOptions? options,
-  }) async {
-    final token = options?.cancelToken;
-    if (token?.isCancelled ?? false) {
-      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
-    }
+  ) async {
     final executable = Platform.isWindows ? 'cmd' : 'sh';
     final args = Platform.isWindows ? ['/c', command] : ['-c', command];
-    Process process;
     try {
-      process = await Process.start(
-        executable,
-        args,
-        workingDirectory: options?.cwd,
-        environment: _environment(options),
+      return Ok(
+        await Process.start(
+          executable,
+          args,
+          workingDirectory: options?.cwd,
+          environment: _environment(options),
+        ),
       );
     } on Object catch (error) {
       return Err(
@@ -373,35 +373,96 @@ final class LocalShell implements Shell {
         ),
       );
     }
+  }
+
+  static void _collect(
+    StringBuffer target,
+    String chunk,
+    void Function(String)? callback,
+    Process process,
+    void Function(ExecutionError) onError,
+  ) {
+    target.write(chunk);
+    if (callback == null) return;
+    try {
+      callback(chunk);
+    } on Object catch (error) {
+      onError(
+        ExecutionError(
+          ExecutionErrorCode.callbackError,
+          error.toString(),
+          cause: error,
+        ),
+      );
+      process.kill();
+    }
+  }
+
+  static Result<ShellExecResult, ExecutionError> _result({
+    required ExecutionError? callbackError,
+    required bool timedOut,
+    required Duration? timeout,
+    required bool cancelled,
+    required StringBuffer stdout,
+    required StringBuffer stderr,
+    required int exitCode,
+  }) {
+    if (callbackError != null) return Err(callbackError);
+    if (timedOut) {
+      return Err(
+        ExecutionError(ExecutionErrorCode.timeout, 'timeout: $timeout'),
+      );
+    }
+    if (cancelled) {
+      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+    }
+    return Ok(
+      ShellExecResult(
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+        exitCode: exitCode,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    final token = options?.cancelToken;
+    if (token?.isCancelled ?? false) {
+      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+    }
+    final started = await _start(command, options);
+    if (started.isErr) return Err(started.errorOrNull!);
+    final process = started.valueOrNull!;
 
     final stdout = StringBuffer();
     final stderr = StringBuffer();
     ExecutionError? callbackError;
-    void collect(
-      StringBuffer target,
-      String chunk,
-      void Function(String)? callback,
-    ) {
-      target.write(chunk);
-      if (callback == null) return;
-      try {
-        callback(chunk);
-      } on Object catch (error) {
-        callbackError = ExecutionError(
-          ExecutionErrorCode.callbackError,
-          error.toString(),
-          cause: error,
-        );
-        process.kill();
-      }
-    }
-
     final stdoutDone = process.stdout
         .transform(utf8.decoder)
-        .forEach((chunk) => collect(stdout, chunk, options?.onStdout));
+        .forEach(
+          (chunk) => _collect(
+            stdout,
+            chunk,
+            options?.onStdout,
+            process,
+            (error) => callbackError = error,
+          ),
+        );
     final stderrDone = process.stderr
         .transform(utf8.decoder)
-        .forEach((chunk) => collect(stderr, chunk, options?.onStderr));
+        .forEach(
+          (chunk) => _collect(
+            stderr,
+            chunk,
+            options?.onStderr,
+            process,
+            (error) => callbackError = error,
+          ),
+        );
 
     Timer? timer;
     var timedOut = false;
@@ -422,21 +483,14 @@ final class LocalShell implements Shell {
     timer?.cancel();
     await Future.wait([stdoutDone, stderrDone]);
 
-    if (callbackError != null) return Err(callbackError!);
-    if (timedOut) {
-      return Err(
-        ExecutionError(ExecutionErrorCode.timeout, 'timeout: $timeout'),
-      );
-    }
-    if (token?.isCancelled ?? false) {
-      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
-    }
-    return Ok(
-      ShellExecResult(
-        stdout: stdout.toString(),
-        stderr: stderr.toString(),
-        exitCode: exitCode,
-      ),
+    return _result(
+      callbackError: callbackError,
+      timedOut: timedOut,
+      timeout: timeout,
+      cancelled: token?.isCancelled ?? false,
+      stdout: stdout,
+      stderr: stderr,
+      exitCode: exitCode,
     );
   }
 }

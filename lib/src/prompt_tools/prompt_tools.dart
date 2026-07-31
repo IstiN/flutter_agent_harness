@@ -253,23 +253,29 @@ Object? _toolSchema(Object? schema, bool slim) {
 /// (`type`, `properties`, `required`, `items`, `enum`, `anyOf`, etc.).
 Object? _stripSchemaMeta(Object? value) {
   if (value is Map<String, dynamic>) {
-    final result = <String, dynamic>{};
-    for (final entry in value.entries) {
-      final key = entry.key;
-      if (key == 'description' ||
-          key == 'title' ||
-          key == 'default' ||
-          key == 'examples') {
-        continue;
-      }
-      result[key] = _stripSchemaMeta(entry.value);
-    }
-    return result;
+    return _stripSchemaMetaMap(value);
   }
   if (value is List<dynamic>) {
     return value.map(_stripSchemaMeta).toList();
   }
   return value;
+}
+
+/// Strips the verbose metadata keys from one schema map (see
+/// [_stripSchemaMeta]).
+Map<String, dynamic> _stripSchemaMetaMap(Map<String, dynamic> value) {
+  final result = <String, dynamic>{};
+  for (final entry in value.entries) {
+    final key = entry.key;
+    if (key == 'description' ||
+        key == 'title' ||
+        key == 'default' ||
+        key == 'examples') {
+      continue;
+    }
+    result[key] = _stripSchemaMeta(entry.value);
+  }
+  return result;
 }
 
 /// Converts [message] for a prompt-based tool-calling conversation.
@@ -281,28 +287,36 @@ Message _transformMessage(Message message) {
     );
   }
   if (message is AssistantMessage) {
-    if (!message.content.any((block) => block is ToolCall)) {
-      return message;
-    }
-    final content = <ContentBlock>[];
-    for (final block in message.content) {
-      switch (block) {
-        case TextContent():
-          // Skip empty text blocks, mirroring the provider adapters.
-          if (block.text.trim().isNotEmpty) {
-            content.add(block);
-          }
-        case ToolCall():
-          content.add(TextContent(text: _serializeToolCall(block)));
-        case ThinkingContent() || ImageContent():
-          // Reasoning is streaming scratch; images are invalid in assistant
-          // messages. Drop both.
-          break;
-      }
-    }
-    return message.copyWith(content: content);
+    return _transformAssistantMessage(message);
   }
   return message;
+}
+
+/// Re-serializes a historical [AssistantMessage] containing [ToolCall]
+/// blocks as fenced `tool_call` text (round-trip fidelity). Thinking blocks
+/// are dropped (reasoning is streaming scratch; Google does the same for
+/// cross-provider history).
+Message _transformAssistantMessage(AssistantMessage message) {
+  if (!message.content.any((block) => block is ToolCall)) {
+    return message;
+  }
+  final content = <ContentBlock>[];
+  for (final block in message.content) {
+    switch (block) {
+      case TextContent():
+        // Skip empty text blocks, mirroring the provider adapters.
+        if (block.text.trim().isNotEmpty) {
+          content.add(block);
+        }
+      case ToolCall():
+        content.add(TextContent(text: _serializeToolCall(block)));
+      case ThinkingContent() || ImageContent():
+        // Reasoning is streaming scratch; images are invalid in assistant
+        // messages. Drop both.
+        break;
+    }
+  }
+  return message.copyWith(content: content);
 }
 
 /// Re-serializes a historical [ToolCall] as a fenced `tool_call` block.
@@ -397,28 +411,46 @@ final class _PromptToolStreamParser {
     switch (event) {
       case StartEvent():
         _out.push(StartEvent(partial: _snapshot()));
-      case TextStartEvent() || TextEndEvent():
-        // Inner block boundaries are ignored; text blocks are re-derived
-        // from the parsed stream.
-        break;
       case TextDeltaEvent():
         _feed(event.delta);
+      case DoneEvent():
+        _handleDone(event);
+      case ErrorEvent():
+        _handleError(event);
+      default:
+        _handleBlockEvent(event);
+    }
+  }
+
+  /// Thinking block events (mirrored through); everything else falls through
+  /// to [_handleToolCallEvent].
+  void _handleBlockEvent(AssistantMessageEvent event) {
+    switch (event) {
       case ThinkingStartEvent():
         _handleThinkingStart();
       case ThinkingDeltaEvent():
         _handleThinkingDelta(event);
       case ThinkingEndEvent():
         _handleThinkingEnd();
+      default:
+        _handleToolCallEvent(event);
+    }
+  }
+
+  /// Native tool-call block events (mirrored through, with the inner block
+  /// indices re-derived from the parsed stream). Inner text block boundaries
+  /// also reach here via the defaults and are ignored; text blocks are
+  /// re-derived from the parsed stream.
+  void _handleToolCallEvent(AssistantMessageEvent event) {
+    switch (event) {
       case ToolCallStartEvent():
         _handleToolCallStart(event);
       case ToolCallDeltaEvent():
         _handleToolCallDelta(event);
       case ToolCallEndEvent():
         _handleToolCallEnd();
-      case DoneEvent():
-        _handleDone(event);
-      case ErrorEvent():
-        _handleError(event);
+      default:
+        break;
     }
   }
 
@@ -562,24 +594,8 @@ final class _PromptToolStreamParser {
     var chunk = delta;
     while (true) {
       if (_inToolBlock) {
-        _blockBuffer.write(chunk);
-        final buffered = _blockBuffer.toString();
-        final closerIndex = _findCloser(buffered);
-        if (closerIndex == -1) {
-          if (buffered.length > _options.maxBlockSize) {
-            // Overflow: emit the block as plain text and resume text mode.
-            _inToolBlock = false;
-            _emitText('$_consumedOpener$buffered');
-            _blockBuffer.clear();
-          }
-          return;
-        }
-        final body = buffered.substring(0, closerIndex);
-        final rest = buffered.substring(closerIndex + _closerMarker.length);
-        _blockBuffer.clear();
-        _inToolBlock = false;
-        _finishBlock(body);
-        if (rest.isEmpty) {
+        final rest = _feedToolBlockChunk(chunk);
+        if (rest == null) {
           return;
         }
         chunk = rest;
@@ -605,6 +621,30 @@ final class _PromptToolStreamParser {
         return;
       }
     }
+  }
+
+  /// Buffers [chunk] into the open `tool_call` block. Returns the remainder
+  /// after a closed block (to be re-fed in text mode), or null when the
+  /// chunk was fully consumed (block still open, or overflow flushed).
+  String? _feedToolBlockChunk(String chunk) {
+    _blockBuffer.write(chunk);
+    final buffered = _blockBuffer.toString();
+    final closerIndex = _findCloser(buffered);
+    if (closerIndex == -1) {
+      if (buffered.length > _options.maxBlockSize) {
+        // Overflow: emit the block as plain text and resume text mode.
+        _inToolBlock = false;
+        _emitText('$_consumedOpener$buffered');
+        _blockBuffer.clear();
+      }
+      return null;
+    }
+    final body = buffered.substring(0, closerIndex);
+    final rest = buffered.substring(closerIndex + _closerMarker.length);
+    _blockBuffer.clear();
+    _inToolBlock = false;
+    _finishBlock(body);
+    return rest.isEmpty ? null : rest;
   }
 
   /// Parses a closed block body and emits the tool-call event triple, or

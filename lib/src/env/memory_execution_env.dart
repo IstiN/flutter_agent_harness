@@ -210,6 +210,18 @@ final class MemoryFileSystem implements FileSystem {
       );
     }
     final prefix = resolved == '/' ? '/' : '$resolved/';
+    final children = _childNames(resolved, prefix);
+    final infos = <FileInfo>[];
+    for (final name in children) {
+      final childPath = '$prefix$name';
+      final info = await fileInfo(childPath);
+      if (info.isOk) infos.add(info.valueOrNull!);
+    }
+    infos.sort((a, b) => a.name.compareTo(b.name));
+    return Ok(infos);
+  }
+
+  Set<String> _childNames(String resolved, String prefix) {
     final children = <String>{};
     for (final dir in _dirs) {
       if (dir.startsWith(prefix) && dir != resolved) {
@@ -221,14 +233,7 @@ final class MemoryFileSystem implements FileSystem {
         children.add(file.substring(prefix.length).split('/').first);
       }
     }
-    final infos = <FileInfo>[];
-    for (final name in children) {
-      final childPath = '$prefix$name';
-      final info = await fileInfo(childPath);
-      if (info.isOk) infos.add(info.valueOrNull!);
-    }
-    infos.sort((a, b) => a.name.compareTo(b.name));
-    return Ok(infos);
+    return children;
   }
 
   @override
@@ -283,6 +288,13 @@ final class MemoryFileSystem implements FileSystem {
       _files.remove(resolved);
       return const Ok(null);
     }
+    return _removeDir(resolved, recursive: recursive);
+  }
+
+  Result<void, FileError> _removeDir(
+    String resolved, {
+    required bool recursive,
+  }) {
     final prefix = '$resolved/';
     final hasChildren =
         _dirs.any((d) => d.startsWith(prefix)) ||

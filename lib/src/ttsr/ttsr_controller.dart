@@ -179,28 +179,40 @@ final class TtsrController {
     // Defensive: a throwing listener would propagate into the loop and fail
     // the run, so the controller never lets its own errors escape.
     try {
-      switch (event) {
-        case TurnStartEvent():
-          // omp resets the stream buffer on every turn start.
-          _manager.resetBuffer();
-        case TurnEndEvent():
-          // omp counts completed turns for the repeat-after-gap policy.
-          _manager.incrementMessageCount();
-        case MessageUpdateEvent(:final assistantMessageEvent):
-          _checkStreamDelta(assistantMessageEvent);
-        case AgentEndEvent():
-          // A run that ends with no TTSR abort pending breaks the retry
-          // chain: reset the storm-guard counter. (The retry's own clean
-          // completion lands here while `_retryInFlight` is still true —
-          // that flag only gates `settled`, not the chain reset.)
-          if (!_abortPending && !(_retryTimer?.isActive ?? false)) {
-            _injectionsThisChain = 0;
-            _maybeCompleteSettled();
-          }
-        default:
-      }
+      _dispatchAgentEvent(event);
     } on Object catch (error) {
       _onWarning?.call('TTSR event handling failed: $error');
+    }
+  }
+
+  void _dispatchAgentEvent(AgentEvent event) {
+    // omp resets the stream buffer on every turn start.
+    if (event is TurnStartEvent) {
+      _manager.resetBuffer();
+      return;
+    }
+    // omp counts completed turns for the repeat-after-gap policy.
+    if (event is TurnEndEvent) {
+      _manager.incrementMessageCount();
+      return;
+    }
+    if (event is MessageUpdateEvent) {
+      _checkStreamDelta(event.assistantMessageEvent);
+      return;
+    }
+    if (event is AgentEndEvent) {
+      _onAgentEnd();
+    }
+  }
+
+  void _onAgentEnd() {
+    // A run that ends with no TTSR abort pending breaks the retry
+    // chain: reset the storm-guard counter. (The retry's own clean
+    // completion lands here while `_retryInFlight` is still true —
+    // that flag only gates `settled`, not the chain reset.)
+    if (!_abortPending && !(_retryTimer?.isActive ?? false)) {
+      _injectionsThisChain = 0;
+      _maybeCompleteSettled();
     }
   }
 
@@ -296,17 +308,7 @@ final class TtsrController {
     _abortPending = false;
     _retryInFlight = true;
     try {
-      // omp's contextMode: discard drops the partial/aborted assistant
-      // message before the retry; keep leaves it and appends the reminder
-      // after it.
-      var messages = _agent.state.messages;
-      if (_manager.settings.contextMode == TtsrContextMode.discard &&
-          messages.isNotEmpty &&
-          messages.last is AssistantMessage &&
-          _isFailedGeneration(messages.last as AssistantMessage)) {
-        _agent.state.messages = messages.sublist(0, messages.length - 1);
-        messages = _agent.state.messages;
-      }
+      var messages = _prunedForContextMode();
 
       final content = _buildInjectionContent();
       if (content == null) {
@@ -319,21 +321,7 @@ final class TtsrController {
       // on the retry (omp's once-per-session repeat gate).
       _manager.markInjectedByNames(ruleNames);
 
-      final sink = _sink;
-      final session = sink?.session();
-      if (session != null && sink != null) {
-        try {
-          // Flush the host-pending messages (in discard mode the dropped
-          // partial is already gone, so it never reaches the tree; the tree
-          // then mirrors the pruned transcript).
-          for (var i = sink.persistedMessageCount(); i < messages.length; i++) {
-            await sink.persistMessage(messages[i]);
-          }
-          await sink.persistInjection(content, ruleNames);
-        } on Object catch (error) {
-          _onWarning?.call('TTSR injection persistence failed: $error');
-        }
-      }
+      await _persistInjection(messages, content, ruleNames);
 
       _injectionsThisChain++;
       _agent.state.messages = [...messages, UserMessage.text(content)];
@@ -347,6 +335,45 @@ final class TtsrController {
     } finally {
       _retryInFlight = false;
       _maybeCompleteSettled();
+    }
+  }
+
+  /// Applies omp's contextMode pruning to the transcript: discard drops the
+  /// partial/aborted assistant message before the retry; keep leaves it and
+  /// appends the reminder after it. Returns the resulting message list.
+  List<Message> _prunedForContextMode() {
+    final messages = _agent.state.messages;
+    if (_manager.settings.contextMode == TtsrContextMode.discard &&
+        messages.isNotEmpty &&
+        messages.last is AssistantMessage &&
+        _isFailedGeneration(messages.last as AssistantMessage)) {
+      _agent.state.messages = messages.sublist(0, messages.length - 1);
+      return _agent.state.messages;
+    }
+    return messages;
+  }
+
+  /// Persists the host-pending transcript messages and the injection through
+  /// the sink (when the host has a session). Best-effort: failures degrade
+  /// to a warning.
+  Future<void> _persistInjection(
+    List<Message> messages,
+    String content,
+    List<String> ruleNames,
+  ) async {
+    final sink = _sink;
+    final session = sink?.session();
+    if (session == null || sink == null) return;
+    try {
+      // Flush the host-pending messages (in discard mode the dropped
+      // partial is already gone, so it never reaches the tree; the tree
+      // then mirrors the pruned transcript).
+      for (var i = sink.persistedMessageCount(); i < messages.length; i++) {
+        await sink.persistMessage(messages[i]);
+      }
+      await sink.persistInjection(content, ruleNames);
+    } on Object catch (error) {
+      _onWarning?.call('TTSR injection persistence failed: $error');
     }
   }
 

@@ -182,6 +182,24 @@ _Truncation _truncateHead(
       firstLineExceedsLimit: true,
     );
   }
+  final (:kept, :truncatedBy) = _keptHeadLines(lines, maxLines, maxBytes);
+  return _Truncation(
+    content: kept.join('\n'),
+    truncated: true,
+    totalLines: lines.length,
+    outputLines: kept.length,
+    truncatedBy: kept.length >= maxLines ? _TruncatedBy.lines : truncatedBy,
+  );
+}
+
+/// The keep-loop of [_truncateHead]: walks [lines] in order, keeping whole
+/// lines until [maxLines] or [maxBytes] is hit, and reports which limit
+/// stopped the walk.
+({List<String> kept, _TruncatedBy truncatedBy}) _keptHeadLines(
+  List<String> lines,
+  int maxLines,
+  int maxBytes,
+) {
   final kept = <String>[];
   var keptBytes = 0;
   var truncatedBy = _TruncatedBy.lines;
@@ -194,13 +212,7 @@ _Truncation _truncateHead(
     kept.add(lines[i]);
     keptBytes += lineBytes;
   }
-  return _Truncation(
-    content: kept.join('\n'),
-    truncated: true,
-    totalLines: lines.length,
-    outputLines: kept.length,
-    truncatedBy: kept.length >= maxLines ? _TruncatedBy.lines : truncatedBy,
-  );
+  return (kept: kept, truncatedBy: truncatedBy);
 }
 
 /// Keeps the last [maxLines] lines / [maxBytes] bytes of [content],
@@ -374,6 +386,33 @@ _InlineImageResult _resizeInlineImage(
     maxDimension,
   );
 
+  final fitted = _shrinkInlineImageToFit(
+    image,
+    width,
+    height,
+    targetWidth,
+    targetHeight,
+    maxBase64Bytes,
+    convertedFrom,
+  );
+  if (fitted != null) return fitted;
+
+  throw StateError('Could not resize image below the inline image size limit');
+}
+
+/// The shrink loop of [_resizeInlineImage]: tries [_fitImageAtSize] at the
+/// current size, then shrinks dimensions by 0.75 and retries, until a
+/// candidate fits the byte budget. Returns null when the shrink stalls (see
+/// [shrinkStepStalls]) so the caller can fail with pi's error.
+_InlineImageResult? _shrinkInlineImageToFit(
+  Image image,
+  int width,
+  int height,
+  int targetWidth,
+  int targetHeight,
+  int maxBase64Bytes,
+  String? convertedFrom,
+) {
   var currentWidth = targetWidth;
   var currentHeight = targetHeight;
   while (true) {
@@ -388,19 +427,32 @@ _InlineImageResult _resizeInlineImage(
     );
     if (fitted != null) return fitted;
 
-    if (currentWidth == 1 && currentHeight == 1) {
-      break;
-    }
-    final nextWidth = currentWidth == 1 ? 1 : currentWidth * 3 ~/ 4;
-    final nextHeight = currentHeight == 1 ? 1 : currentHeight * 3 ~/ 4;
-    if (nextWidth == currentWidth && nextHeight == currentHeight) {
-      break;
+    final (nextWidth, nextHeight) = nextShrinkStep(currentWidth, currentHeight);
+    if (shrinkStepStalls(currentWidth, currentHeight, nextWidth, nextHeight)) {
+      return null;
     }
     currentWidth = nextWidth;
     currentHeight = nextHeight;
   }
+}
 
-  throw StateError('Could not resize image below the inline image size limit');
+/// One 0.75 shrink step of the inline-image shrink loop (a dimension already
+/// at 1 stays there).
+(int, int) nextShrinkStep(int width, int height) =>
+    (width == 1 ? 1 : width * 3 ~/ 4, height == 1 ? 1 : height * 3 ~/ 4);
+
+/// The shrink loop's safety valves: the step stalls at 1x1 or when the 0.75
+/// shrink stops making progress. Unreachable via the public API with default
+/// limits — even a maximal source clamps to [_defaultImageMaxDimension] and
+/// fits the byte budget long before the step stalls.
+bool shrinkStepStalls(
+  int currentWidth,
+  int currentHeight,
+  int nextWidth,
+  int nextHeight,
+) {
+  return (currentWidth == 1 && currentHeight == 1) ||
+      (nextWidth == currentWidth && nextHeight == currentHeight);
 }
 
 /// Decodes [bytes], throwing when the image library cannot make sense of
@@ -619,27 +671,16 @@ AgentTool readFileTool(
       // selector interpretation.
       final split = await splitPathAndSelPreferringLiteral(rawPath, env);
       final parsed = parseSel(split.sel);
-      if (parsed is! ReadSelectorNone && (offset != null || limit != null)) {
-        throw StateError(
-          'offset/limit cannot be combined with a path selector; use one or '
-          'the other.',
-        );
-      }
+      _checkSelectorOffsetCombo(parsed, offset, limit);
 
-      // Archive and SQLite targets consume their own colon syntax, so probe
-      // them on the RAW path — unless it was kept literal because a real
-      // file with a selector-shaped name exists (omp's rawPathIsLiteral).
-      final rawPathIsLiteral =
-          split.sel == null && splitPathAndSel(rawPath).sel != null;
-      if (!rawPathIsLiteral) {
-        final archiveResult = await _tryReadArchive(env, rawPath, cancelToken);
-        if (archiveResult != null) return archiveResult;
-        final sqliteResult = await _tryReadSqlite(env, rawPath, sqlite);
-        if (sqliteResult != null) {
-          cancelToken?.throwIfCancelled();
-          return sqliteResult;
-        }
-      }
+      final extended = await _readExtendedTarget(
+        env,
+        rawPath,
+        split,
+        sqlite,
+        cancelToken,
+      );
+      if (extended != null) return extended;
 
       final path = split.path;
       final binaryRead = await env.readBinaryFile(path);
@@ -664,6 +705,40 @@ AgentTool readFileTool(
   );
 }
 
+/// Rejects the offset/limit arguments combined with a path selector: the
+/// selector already pins the window, so mixing both is ambiguous.
+void _checkSelectorOffsetCombo(ReadSelector parsed, int? offset, int? limit) {
+  if (parsed is! ReadSelectorNone && (offset != null || limit != null)) {
+    throw StateError(
+      'offset/limit cannot be combined with a path selector; use one or '
+      'the other.',
+    );
+  }
+}
+
+/// Probes [rawPath] for the extended read targets (archive inner paths and
+/// SQLite databases), which consume their own colon syntax. Returns null when
+/// neither resolves — the caller falls through to a plain file read.
+Future<ToolExecutionResult?> _readExtendedTarget(
+  ExecutionEnv env,
+  String rawPath,
+  SplitReadPath split,
+  SqliteEngine? sqlite,
+  CancelToken? cancelToken,
+) async {
+  // Archive and SQLite targets consume their own colon syntax, so probe
+  // them on the RAW path — unless it was kept literal because a real
+  // file with a selector-shaped name exists (omp's rawPathIsLiteral).
+  final rawPathIsLiteral =
+      split.sel == null && splitPathAndSel(rawPath).sel != null;
+  if (rawPathIsLiteral) return null;
+  final archiveResult = await _tryReadArchive(env, rawPath, cancelToken);
+  if (archiveResult != null) return archiveResult;
+  final sqliteResult = await _tryReadSqlite(env, rawPath, sqlite);
+  if (sqliteResult != null) cancelToken?.throwIfCancelled();
+  return sqliteResult;
+}
+
 /// Renders an image read: decodes/resizes to the inline limits and builds
 /// the note header. Returns null when [bytes] are not a supported image, so
 /// the caller falls through to a text read.
@@ -682,6 +757,22 @@ ToolExecutionResult? _readImageResult(
     );
   }
   final processed = _processImage(bytes, format);
+  return ToolExecutionResult(
+    content: [
+      TextContent(text: _imageNoteHeader(path, processed, model)),
+      ImageContent(data: processed.base64, mimeType: processed.mimeType),
+    ],
+  );
+}
+
+/// Builds the note header of an image read: the `[Image: …]` line plus the
+/// conversion, resize-mapping, and non-vision hints (pi's `conversionHint`,
+/// `formatDimensionNote`, and `getNonVisionImageNote`).
+String _imageNoteHeader(
+  String path,
+  _InlineImageResult processed,
+  Model? Function()? model,
+) {
   final note = StringBuffer()
     ..write('[Image: $path, ${processed.width}x${processed.height}');
   if (processed.resized) {
@@ -715,12 +806,7 @@ ToolExecutionResult? _readImageResult(
       'omitted from this request.]',
     );
   }
-  return ToolExecutionResult(
-    content: [
-      TextContent(text: note.toString()),
-      ImageContent(data: processed.base64, mimeType: processed.mimeType),
-    ],
-  );
+  return note.toString();
 }
 
 /// The text branch of the `read` tool: selector mapping, head truncation
@@ -741,78 +827,165 @@ Future<ToolExecutionResult> _readTextContent(
 
   final rawContent = read.valueOrNull!;
   final allLines = rawContent.split('\n');
-  final totalFileLines = allLines.length;
   final raw = isRawSelector(parsed);
 
   // Multi-range selector: one block per in-bounds range joined by an
   // elision separator; ranges past EOF surface as skipped notices (omp's
   // #buildInMemoryMultiRangeResult).
   if (parsed is ReadSelectorLines && parsed.ranges.length > 1) {
-    final multi = _formatMultiRange(
-      allLines: allLines,
-      ranges: parsed.ranges,
-      raw: raw,
-      hashlineMode: hashlineMode,
-      entityLabel: 'file',
+    return _readMultiRangeText(
+      env,
+      store,
+      path,
+      rawContent,
+      allLines,
+      parsed,
+      raw,
+      hashlineMode,
     );
-    var multiOutput = multi.text;
-    if (hashlineMode && !raw) {
-      final normalized = normalizeToLF(stripBom(rawContent).text);
-      final canonical = (await env.absolutePath(path)).valueOrNull ?? path;
-      final tag = store.record(canonical, normalized, multi.seenLines);
-      multiOutput = '${formatHashlineHeader(path, tag)}\n$multiOutput';
-    }
-    return ToolExecutionResult.text(multiOutput);
   }
 
   // Whole-file/raw or a single range: map onto the offset/limit pipeline.
   // A selector range past EOF gets omp's graceful note instead of the
   // offset-argument error.
-  var effectiveOffset = offset;
-  var effectiveLimit = limit;
-  if (parsed is ReadSelectorLines) {
-    final range = parsed.ranges.first;
-    if (range.startLine > totalFileLines) {
-      return ToolExecutionResult.text(
-        'Line ${range.startLine} is beyond end of file '
-        '($totalFileLines lines total). Use :1 to read from the start, '
-        'or :$totalFileLines to read the last line.',
-      );
-    }
-    effectiveOffset = range.startLine;
-    effectiveLimit = range.endLine == null
-        ? null
-        : range.endLine! - range.startLine + 1;
+  final window = _singleRangeWindow(parsed, allLines.length, offset, limit);
+  final beyondEofNote = window.beyondEofNote;
+  if (beyondEofNote != null) {
+    return ToolExecutionResult.text(beyondEofNote);
   }
 
   final formatted = _selectAndTruncate(
     allLines: allLines,
     entityLabel: 'file',
-    offset: effectiveOffset,
-    limit: effectiveLimit,
+    offset: window.offset,
+    limit: window.limit,
     raw: raw,
     numbered: hashlineMode && !raw,
     path: path,
   );
-  var outputText = formatted.text;
-
-  if (hashlineMode && !raw) {
-    // Record the FULL normalized file text (the tag is a whole-file
-    // content hash) plus the 1-indexed lines actually displayed, so a
-    // later edit patch validates the tag and the seen-line guard knows
-    // which lines the model was shown.
-    final normalized = normalizeToLF(stripBom(rawContent).text);
-    final canonical = (await env.absolutePath(path)).valueOrNull ?? path;
-    final lastDisplayed =
-        formatted.startLineDisplay + formatted.displayedLines - 1;
-    final seenLines = [
-      for (var line = formatted.startLineDisplay; line <= lastDisplayed; line++)
-        line,
-    ];
-    final tag = store.record(canonical, normalized, seenLines);
-    outputText = '${formatHashlineHeader(path, tag)}\n$outputText';
-  }
+  final outputText = await _withHashlineHeader(
+    env,
+    store,
+    path,
+    rawContent,
+    formatted,
+    raw,
+    hashlineMode,
+  );
   return ToolExecutionResult.text(outputText);
+}
+
+/// The multi-range branch of [_readTextContent] (omp's
+/// `#buildInMemoryMultiRangeResult`): one block per in-bounds range joined
+/// by an elision separator, with the hashline header prepended in hashline
+/// mode.
+Future<ToolExecutionResult> _readMultiRangeText(
+  ExecutionEnv env,
+  HashlineSnapshotStore store,
+  String path,
+  String rawContent,
+  List<String> allLines,
+  ReadSelectorLines parsed,
+  bool raw,
+  bool hashlineMode,
+) async {
+  final multi = _formatMultiRange(
+    allLines: allLines,
+    ranges: parsed.ranges,
+    raw: raw,
+    hashlineMode: hashlineMode,
+    entityLabel: 'file',
+  );
+  var multiOutput = multi.text;
+  if (hashlineMode && !raw) {
+    final tag = await _recordHashlineSnapshot(
+      env,
+      store,
+      path,
+      rawContent,
+      multi.seenLines,
+    );
+    multiOutput = '${formatHashlineHeader(path, tag)}\n$multiOutput';
+  }
+  return ToolExecutionResult.text(multiOutput);
+}
+
+/// Maps a single-range selector onto the offset/limit pair for the shared
+/// pipeline; a range past EOF yields omp's graceful note instead. A
+/// non-range selector (whole-file or raw) keeps the caller's [offset] and
+/// [limit] arguments.
+({int? offset, int? limit, String? beyondEofNote}) _singleRangeWindow(
+  ReadSelector parsed,
+  int totalFileLines,
+  int? offset,
+  int? limit,
+) {
+  if (parsed is! ReadSelectorLines) {
+    return (offset: offset, limit: limit, beyondEofNote: null);
+  }
+  final range = parsed.ranges.first;
+  if (range.startLine > totalFileLines) {
+    return (
+      offset: null,
+      limit: null,
+      beyondEofNote:
+          'Line ${range.startLine} is beyond end of file '
+          '($totalFileLines lines total). Use :1 to read from the start, '
+          'or :$totalFileLines to read the last line.',
+    );
+  }
+  return (
+    offset: range.startLine,
+    limit: range.endLine == null ? null : range.endLine! - range.startLine + 1,
+    beyondEofNote: null,
+  );
+}
+
+/// Prepends the `[path#TAG]` hashline header to the formatted output in
+/// hashline mode, recording the full normalized file text plus the displayed
+/// line window in [store]; otherwise returns the text unchanged.
+Future<String> _withHashlineHeader(
+  ExecutionEnv env,
+  HashlineSnapshotStore store,
+  String path,
+  String rawContent,
+  _SelectedText formatted,
+  bool raw,
+  bool hashlineMode,
+) async {
+  if (!hashlineMode || raw) return formatted.text;
+  // Record the FULL normalized file text (the tag is a whole-file
+  // content hash) plus the 1-indexed lines actually displayed, so a
+  // later edit patch validates the tag and the seen-line guard knows
+  // which lines the model was shown.
+  final lastDisplayed =
+      formatted.startLineDisplay + formatted.displayedLines - 1;
+  final seenLines = [
+    for (var line = formatted.startLineDisplay; line <= lastDisplayed; line++)
+      line,
+  ];
+  final tag = await _recordHashlineSnapshot(
+    env,
+    store,
+    path,
+    rawContent,
+    seenLines,
+  );
+  return '${formatHashlineHeader(path, tag)}\n${formatted.text}';
+}
+
+/// Records [rawContent] (normalized to LF, BOM stripped) under the canonical
+/// absolute [path] in [store] and returns the minted whole-file tag.
+Future<String> _recordHashlineSnapshot(
+  ExecutionEnv env,
+  HashlineSnapshotStore store,
+  String path,
+  String rawContent,
+  List<int> seenLines,
+) async {
+  final normalized = normalizeToLF(stripBom(rawContent).text);
+  final canonical = (await env.absolutePath(path)).valueOrNull ?? path;
+  return store.record(canonical, normalized, seenLines);
 }
 
 /// The result of [_selectAndTruncate]: the rendered text plus the window of
@@ -855,72 +1028,135 @@ _SelectedText _selectAndTruncate({
   bool numbered = false,
   String? path,
 }) {
-  final totalFileLines = allLines.length;
   final startLine = offset != null && offset > 1 ? offset - 1 : 0;
   final startLineDisplay = startLine + 1;
-  if (startLine >= allLines.length) {
-    throw StateError(
-      'Offset $offset is beyond end of $entityLabel '
-      '($totalFileLines lines total)',
-    );
-  }
-
-  String selectedContent;
-  int? userLimitedLines;
-  if (limit != null) {
-    final endLine = (startLine + limit) < allLines.length
-        ? startLine + limit
-        : allLines.length;
-    selectedContent = allLines.sublist(startLine, endLine).join('\n');
-    userLimitedLines = endLine - startLine;
-  } else {
-    selectedContent = allLines.sublist(startLine).join('\n');
-  }
+  final (:selectedContent, :userLimitedLines) = _selectLineWindow(
+    allLines,
+    entityLabel,
+    offset,
+    startLine,
+    limit,
+  );
 
   final displayContent = numbered
       ? formatNumberedLines(selectedContent, startLineDisplay)
       : selectedContent;
   final truncation = _truncateHead(displayContent);
-  String outputText;
-  if (truncation.firstLineExceedsLimit) {
-    outputText = _firstLineExceedsOutput(
-      allLines[startLine],
-      startLineDisplay,
-      raw,
-      path,
-    );
-  } else if (truncation.truncated) {
-    final endLineDisplay = startLineDisplay + truncation.outputLines - 1;
-    final nextOffset = endLineDisplay + 1;
-    outputText = truncation.content;
-    if (!raw) {
-      if (truncation.truncatedBy == _TruncatedBy.lines) {
-        outputText +=
-            '\n\n[Showing lines $startLineDisplay-$endLineDisplay of '
-            '$totalFileLines. Use offset=$nextOffset to continue.]';
-      } else {
-        outputText +=
-            '\n\n[Showing lines $startLineDisplay-$endLineDisplay of '
-            '$totalFileLines (${formatToolSize(defaultToolMaxBytes)} limit). '
-            'Use offset=$nextOffset to continue.]';
-      }
-    }
-  } else if (!raw &&
-      userLimitedLines != null &&
-      startLine + userLimitedLines < allLines.length) {
-    final remaining = allLines.length - (startLine + userLimitedLines);
-    final nextOffset = startLine + userLimitedLines + 1;
-    outputText =
-        '${truncation.content}\n\n[$remaining more lines in $entityLabel. '
-        'Use offset=$nextOffset to continue.]';
-  } else {
-    outputText = truncation.content;
-  }
+  final outputText = _selectedOutputText(
+    allLines: allLines,
+    entityLabel: entityLabel,
+    startLine: startLine,
+    startLineDisplay: startLineDisplay,
+    userLimitedLines: userLimitedLines,
+    raw: raw,
+    path: path,
+    truncation: truncation,
+  );
   return _SelectedText(
     text: outputText,
     startLineDisplay: startLineDisplay,
     displayedLines: truncation.outputLines,
   );
+}
+
+/// Selects the [offset]/[limit] line window out of [allLines] (pi's
+/// offset/limit mapping): throws when [offset] is past EOF, and reports how
+/// many lines the caller's limit actually selected (for the "N more lines"
+/// notice).
+({String selectedContent, int? userLimitedLines}) _selectLineWindow(
+  List<String> allLines,
+  String entityLabel,
+  int? offset,
+  int startLine,
+  int? limit,
+) {
+  if (startLine >= allLines.length) {
+    throw StateError(
+      'Offset $offset is beyond end of $entityLabel '
+      '(${allLines.length} lines total)',
+    );
+  }
+  if (limit != null) {
+    final endLine = (startLine + limit) < allLines.length
+        ? startLine + limit
+        : allLines.length;
+    return (
+      selectedContent: allLines.sublist(startLine, endLine).join('\n'),
+      userLimitedLines: endLine - startLine,
+    );
+  }
+  return (
+    selectedContent: allLines.sublist(startLine).join('\n'),
+    userLimitedLines: null,
+  );
+}
+
+/// Renders the truncated selection with the continuation notices (pi's
+/// `truncateHead` notices): the first-line-over-bytes answer, the
+/// "showing lines A-B of N" notice, or the "N more lines" notice when a
+/// caller limit left lines behind.
+String _selectedOutputText({
+  required List<String> allLines,
+  required String entityLabel,
+  required int startLine,
+  required int startLineDisplay,
+  required int? userLimitedLines,
+  required bool raw,
+  required String? path,
+  required _Truncation truncation,
+}) {
+  if (truncation.firstLineExceedsLimit) {
+    return _firstLineExceedsOutput(
+      allLines[startLine],
+      startLineDisplay,
+      raw,
+      path,
+    );
+  }
+  if (truncation.truncated) {
+    return _truncatedNoticeOutput(
+      startLineDisplay,
+      allLines.length,
+      truncation,
+      raw,
+    );
+  }
+  if (!raw &&
+      userLimitedLines != null &&
+      startLine + userLimitedLines < allLines.length) {
+    final remaining = allLines.length - (startLine + userLimitedLines);
+    final nextOffset = startLine + userLimitedLines + 1;
+    return '${truncation.content}\n\n[$remaining more lines in $entityLabel. '
+        'Use offset=$nextOffset to continue.]';
+  }
+  return truncation.content;
+}
+
+/// The truncated branch of [_selectedOutputText]: the surviving head plus
+/// the "showing lines A-B of N" continuation notice (suppressed in raw
+/// mode), which names the byte limit when that was what stopped the head.
+String _truncatedNoticeOutput(
+  int startLineDisplay,
+  int totalFileLines,
+  _Truncation truncation,
+  bool raw,
+) {
+  final endLineDisplay = startLineDisplay + truncation.outputLines - 1;
+  final nextOffset = endLineDisplay + 1;
+  var outputText = truncation.content;
+  if (!raw) {
+    if (truncation.truncatedBy == _TruncatedBy.lines) {
+      outputText +=
+          '\n\n[Showing lines $startLineDisplay-$endLineDisplay of '
+          '$totalFileLines. Use offset=$nextOffset to continue.]';
+    } else {
+      outputText +=
+          '\n\n[Showing lines $startLineDisplay-$endLineDisplay of '
+          '$totalFileLines (${formatToolSize(defaultToolMaxBytes)} limit). '
+          'Use offset=$nextOffset to continue.]';
+    }
+  }
+  return outputText;
 }
 
 /// Renders the answer for a first line that alone exceeds the byte limit:
@@ -1120,50 +1356,76 @@ Future<ToolExecutionResult?> _tryReadArchive(
     final info = await env.fileInfo(candidate.archivePath);
     if (info.isErr) continue;
     if (info.valueOrNull!.kind != FileKind.file) continue;
-
-    final bytesRead = await env.readBinaryFile(candidate.archivePath);
-    if (bytesRead.isErr) throw StateError('${bytesRead.errorOrNull}');
-    cancelToken?.throwIfCancelled();
-    final format = archiveFormatFromPath(candidate.archivePath)!;
-    final archive = ArchiveReader.decode(bytesRead.valueOrNull!, format);
-    cancelToken?.throwIfCancelled();
-
-    // `archive.zip:inner.txt:50-60`: peel the selector off the member path.
-    final subSplit = splitPathAndSel(candidate.subPath);
-    var sel = parseSel(subSplit.sel);
-    var archiveSubPath = subSplit.path;
-    var node = archive.getNode(archiveSubPath);
-    if (node == null && archiveSubPath.isNotEmpty) {
-      // `archive.zip:500` / `archive.zip:raw`: the whole subPath is a
-      // selector on the archive root, not a member name. Member names take
-      // precedence (the getNode above); fall back to root + selector (omp).
-      final wholeSel = parseSel(archiveSubPath);
-      if (wholeSel is! ReadSelectorNone) {
-        node = archive.getNode('');
-        archiveSubPath = '';
-        sel = wholeSel;
-      }
-    }
-    if (node == null) {
-      throw StateError("Path '$rawPath' not found inside archive");
-    }
-
-    if (node.isDirectory) {
-      if (sel is ReadSelectorLines && sel.ranges.length > 1) {
-        throw StateError(
-          'Multi-range line selectors are not supported for archive '
-          'directory listings.',
-        );
-      }
-      final (:offset, :limit) = _selToOffsetLimit(sel);
-      return _readArchiveDirectory(archive, archiveSubPath, offset, limit);
-    }
-
-    final entryBytes = archive.readFileBytes(archiveSubPath);
-    cancelToken?.throwIfCancelled();
-    return _readArchiveEntryText(node, entryBytes, sel);
+    return _readArchiveCandidate(env, rawPath, candidate, cancelToken);
   }
   return null;
+}
+
+/// Reads the archive named by [candidate]: resolves the member (or the
+/// archive root), then renders the directory listing or the member's text.
+Future<ToolExecutionResult> _readArchiveCandidate(
+  ExecutionEnv env,
+  String rawPath,
+  ArchivePathCandidate candidate,
+  CancelToken? cancelToken,
+) async {
+  final bytesRead = await env.readBinaryFile(candidate.archivePath);
+  if (bytesRead.isErr) throw StateError('${bytesRead.errorOrNull}');
+  cancelToken?.throwIfCancelled();
+  final format = archiveFormatFromPath(candidate.archivePath)!;
+  final archive = ArchiveReader.decode(bytesRead.valueOrNull!, format);
+  cancelToken?.throwIfCancelled();
+
+  final (:node, :archiveSubPath, :sel) = _resolveArchiveMember(
+    archive,
+    rawPath,
+    candidate.subPath,
+  );
+
+  if (node.isDirectory) {
+    if (sel is ReadSelectorLines && sel.ranges.length > 1) {
+      throw StateError(
+        'Multi-range line selectors are not supported for archive '
+        'directory listings.',
+      );
+    }
+    final (:offset, :limit) = _selToOffsetLimit(sel);
+    return _readArchiveDirectory(archive, archiveSubPath, offset, limit);
+  }
+
+  final entryBytes = archive.readFileBytes(archiveSubPath);
+  cancelToken?.throwIfCancelled();
+  return _readArchiveEntryText(node, entryBytes, sel);
+}
+
+/// Resolves [subPath] against [archive] (omp's member-then-root-selector
+/// fallback): `archive.zip:inner.txt:50-60` peels the selector off the
+/// member path, while `archive.zip:500` / `archive.zip:raw` re-reads the
+/// whole subPath as a selector on the archive root when no member matches.
+/// Member names take precedence over the root-selector interpretation.
+/// Throws when the member (or root) does not exist.
+({ArchiveNode node, String archiveSubPath, ReadSelector sel})
+_resolveArchiveMember(ArchiveReader archive, String rawPath, String subPath) {
+  // `archive.zip:inner.txt:50-60`: peel the selector off the member path.
+  final subSplit = splitPathAndSel(subPath);
+  var sel = parseSel(subSplit.sel);
+  var archiveSubPath = subSplit.path;
+  var node = archive.getNode(archiveSubPath);
+  if (node == null && archiveSubPath.isNotEmpty) {
+    // `archive.zip:500` / `archive.zip:raw`: the whole subPath is a
+    // selector on the archive root, not a member name. Member names take
+    // precedence (the getNode above); fall back to root + selector (omp).
+    final wholeSel = parseSel(archiveSubPath);
+    if (wholeSel is! ReadSelectorNone) {
+      node = archive.getNode('');
+      archiveSubPath = '';
+      sel = wholeSel;
+    }
+  }
+  if (node == null) {
+    throw StateError("Path '$rawPath' not found inside archive");
+  }
+  return (node: node, archiveSubPath: archiveSubPath, sel: sel);
 }
 
 /// Renders an archive member's text (omp's immutable display mode): archive
@@ -1285,97 +1547,150 @@ Future<ToolExecutionResult?> _tryReadSqlite(
     final info = await env.fileInfo(candidate.sqlitePath);
     if (info.isErr) continue;
     if (info.valueOrNull!.kind != FileKind.file) continue;
-
-    final selector = parseSqliteSelector(
-      candidate.subPath,
-      candidate.queryString,
-    );
-    if (engine == null) {
-      return ToolExecutionResult.text(
-        '[SQLite database reads are not supported in this environment '
-        '(no SQLite engine available); ${candidate.sqlitePath} was not '
-        'opened.]',
-      );
-    }
-
-    final absolute =
-        (await env.absolutePath(candidate.sqlitePath)).valueOrNull ??
-        candidate.sqlitePath;
-    SqliteDatabase? db;
-    try {
-      db = engine.openReadOnly(absolute);
-      switch (selector) {
-        case SqliteListSelector():
-          final tables = listSqliteTables(
-            db,
-          ).take(maxSqliteTableListEntries).toList();
-          return ToolExecutionResult.text(renderSqliteTableList(tables));
-        case SqliteSchemaSelector(:final table, :final sampleLimit):
-          return _readSqliteSchema(db, table, sampleLimit);
-        case SqliteRowSelector(:final table, :final key):
-          final lookup = resolveSqliteRowLookup(db, table);
-          final row = getSqliteRow(db, table, lookup, key);
-          if (row == null) {
-            return ToolExecutionResult.text(
-              "No row found in table '$table' for key '$key'.",
-            );
-          }
-          return ToolExecutionResult.text(renderSqliteRow(row));
-        case SqliteQuerySelector(
-          :final table,
-          :final limit,
-          :final offset,
-          :final order,
-          :final where,
-        ):
-          final page = querySqliteRows(
-            db,
-            table,
-            limit: limit,
-            offset: offset,
-            order: order,
-            where: where,
-          );
-          return ToolExecutionResult.text(
-            renderSqliteTable(
-              page.columns,
-              page.rows,
-              totalCount: page.totalCount,
-              offset: offset,
-              limit: limit,
-              table: table,
-            ),
-          );
-        case SqliteRawSelector(:final sql):
-          final result = executeSqliteReadQuery(db, sql);
-          var output = renderSqliteTable(
-            result.columns,
-            result.rows,
-            totalCount: result.rows.length,
-            offset: 0,
-            limit: result.rows.isEmpty
-                ? defaultToolMaxLines
-                : result.rows.length,
-            table: 'query',
-          );
-          if (result.truncated) {
-            output +=
-                '\n[Output capped at $maxSqliteRawQueryRows rows; add a '
-                'LIMIT/OFFSET clause to the query to page through more]';
-          }
-          return ToolExecutionResult.text(output);
-      }
-    } on StateError {
-      rethrow;
-    } on Object catch (error) {
-      // Engine/backend failures (e.g. "file is not a database") surface as
-      // the tool's error channel, mirroring omp's ToolError wrap.
-      throw StateError('$error');
-    } finally {
-      db?.close();
-    }
+    return _readSqliteTarget(env, candidate, engine);
   }
   return null;
+}
+
+/// Opens the resolved SQLite [candidate] read-only and renders its selected
+/// view (omp's `#readSqlite`). Without a [SqliteEngine] (web hosts have no
+/// FFI) yields a clean "not supported" note instead of opening the file.
+Future<ToolExecutionResult> _readSqliteTarget(
+  ExecutionEnv env,
+  SqlitePathCandidate candidate,
+  SqliteEngine? engine,
+) async {
+  final selector = parseSqliteSelector(
+    candidate.subPath,
+    candidate.queryString,
+  );
+  if (engine == null) {
+    return ToolExecutionResult.text(
+      '[SQLite database reads are not supported in this environment '
+      '(no SQLite engine available); ${candidate.sqlitePath} was not '
+      'opened.]',
+    );
+  }
+
+  final absolute =
+      (await env.absolutePath(candidate.sqlitePath)).valueOrNull ??
+      candidate.sqlitePath;
+  SqliteDatabase? db;
+  try {
+    db = engine.openReadOnly(absolute);
+    return _renderSqliteSelector(db, selector);
+  } on StateError {
+    rethrow;
+  } on Object catch (error) {
+    // Engine/backend failures (e.g. "file is not a database") surface as
+    // the tool's error channel, mirroring omp's ToolError wrap.
+    throw StateError('$error');
+  } finally {
+    db?.close();
+  }
+}
+
+/// Renders one parsed SQLite selector against the open database (omp's
+/// selector views: table list, schema+sample, single row, paged query, raw
+/// query).
+ToolExecutionResult _renderSqliteSelector(
+  SqliteDatabase db,
+  SqliteSelector selector,
+) {
+  switch (selector) {
+    case SqliteListSelector():
+      final tables = listSqliteTables(
+        db,
+      ).take(maxSqliteTableListEntries).toList();
+      return ToolExecutionResult.text(renderSqliteTableList(tables));
+    case SqliteSchemaSelector(:final table, :final sampleLimit):
+      return _readSqliteSchema(db, table, sampleLimit);
+    case SqliteRowSelector(:final table, :final key):
+      return _readSqliteRow(db, table, key);
+    case SqliteQuerySelector(
+      :final table,
+      :final limit,
+      :final offset,
+      :final order,
+      :final where,
+    ):
+      return _readSqliteTablePage(
+        db,
+        table,
+        limit: limit,
+        offset: offset,
+        order: order,
+        where: where,
+      );
+    case SqliteRawSelector(:final sql):
+      return _readSqliteRawQuery(db, sql);
+  }
+}
+
+/// Renders a single row looked up by key (omp's row view), or the "no row"
+/// note when the key matches nothing.
+ToolExecutionResult _readSqliteRow(
+  SqliteDatabase db,
+  String table,
+  String key,
+) {
+  final lookup = resolveSqliteRowLookup(db, table);
+  final row = getSqliteRow(db, table, lookup, key);
+  if (row == null) {
+    return ToolExecutionResult.text(
+      "No row found in table '$table' for key '$key'.",
+    );
+  }
+  return ToolExecutionResult.text(renderSqliteRow(row));
+}
+
+/// Renders one page of a table query (omp's paged-query view).
+ToolExecutionResult _readSqliteTablePage(
+  SqliteDatabase db,
+  String table, {
+  required int limit,
+  required int offset,
+  required String? order,
+  required String? where,
+}) {
+  final page = querySqliteRows(
+    db,
+    table,
+    limit: limit,
+    offset: offset,
+    order: order,
+    where: where,
+  );
+  return ToolExecutionResult.text(
+    renderSqliteTable(
+      page.columns,
+      page.rows,
+      totalCount: page.totalCount,
+      offset: offset,
+      limit: limit,
+      table: table,
+    ),
+  );
+}
+
+/// Renders a raw `q=SELECT …` query result (omp's raw-query view), with the
+/// row-cap notice when the engine truncated the result.
+ToolExecutionResult _readSqliteRawQuery(SqliteDatabase db, String sql) {
+  final result = executeSqliteReadQuery(db, sql);
+  var output = renderSqliteTable(
+    result.columns,
+    result.rows,
+    totalCount: result.rows.length,
+    offset: 0,
+    limit: result.rows.isEmpty ? defaultToolMaxLines : result.rows.length,
+    table: 'query',
+  );
+  if (result.truncated) {
+    output +=
+        '\n[Output capped at $maxSqliteRawQueryRows rows; add a '
+        'LIMIT/OFFSET clause to the query to page through more]';
+  }
+  return ToolExecutionResult.text(output);
 }
 
 /// Renders a table schema plus the first sample page (omp's schema view),
@@ -1655,58 +1970,96 @@ AgentTool listDirTool(ExecutionEnv env) {
       final path = (arguments['path'] as String?) ?? '.';
       final limit =
           (arguments['limit'] as num?)?.toInt() ?? defaultLsEntryLimit;
-
-      // POSIX ls accepts a file path and prints the file name. Check the
-      // target kind first so we don't fail with notDirectory for a file.
-      final info = await env.fileInfo(path);
-      if (info.isErr) {
-        // Fall back to listing if we can't stat (e.g. path with a trailing
-        // slash or a backend where fileInfo is unsupported).
-        if (info.errorOrNull!.code != FileErrorCode.notSupported) {
-          throw StateError('${info.errorOrNull}');
-        }
-      } else if (info.valueOrNull!.kind == FileKind.file) {
-        return ToolExecutionResult.text(info.valueOrNull!.name);
-      }
-
-      final listed = await env.listDir(path);
-      if (listed.isErr) throw StateError('${listed.errorOrNull}');
-      cancelToken?.throwIfCancelled();
-
-      final entries = listed.valueOrNull!.toList()
-        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-
-      final results = <String>[];
-      var entryLimitReached = false;
-      for (final entry in entries) {
-        if (results.length >= limit) {
-          entryLimitReached = true;
-          break;
-        }
-        final suffix = entry.kind == FileKind.directory ? '/' : '';
-        results.add('${entry.name}$suffix');
-      }
-
-      if (results.isEmpty && !entryLimitReached) {
-        return ToolExecutionResult.text('(empty directory)');
-      }
-
-      // Byte truncation only: the entry count is already capped above.
-      final truncation = _truncateHead(results.join('\n'), maxLines: 1 << 62);
-      var output = truncation.content;
-      final notices = <String>[];
-      if (entryLimitReached) {
-        notices.add(
-          '$limit entries limit reached. Use limit=${limit * 2} for more',
-        );
-      }
-      if (truncation.truncated) {
-        notices.add('${formatToolSize(defaultToolMaxBytes)} limit reached');
-      }
-      if (notices.isNotEmpty) output += '\n\n[${notices.join('. ')}]';
-      return ToolExecutionResult.text(output);
+      return _listDirectory(env, path, limit, cancelToken);
     },
   );
+}
+
+/// Runs one `ls` call: resolves a plain-file target to its name (POSIX ls
+/// prints the file name), otherwise lists the directory sorted and renders
+/// the capped entry names with the limit notices.
+Future<ToolExecutionResult> _listDirectory(
+  ExecutionEnv env,
+  String path,
+  int limit,
+  CancelToken? cancelToken,
+) async {
+  final fileName = await _fileListingName(env, path);
+  if (fileName != null) return ToolExecutionResult.text(fileName);
+
+  final listed = await env.listDir(path);
+  if (listed.isErr) throw StateError('${listed.errorOrNull}');
+  cancelToken?.throwIfCancelled();
+
+  final entries = listed.valueOrNull!.toList()
+    ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+  final (:results, :entryLimitReached) = _cappedEntryNames(entries, limit);
+  if (results.isEmpty && !entryLimitReached) {
+    return ToolExecutionResult.text('(empty directory)');
+  }
+  return _listingOutput(results, limit, entryLimitReached);
+}
+
+/// Returns the entry name when [path] resolves to a plain file (POSIX ls
+/// accepts a file path and prints the file name), or null to fall through to
+/// a directory listing. Checking the target kind first keeps a file path
+/// from failing with notDirectory; an unsupported stat falls back to
+/// listing (e.g. path with a trailing slash or a backend where fileInfo is
+/// unsupported).
+Future<String?> _fileListingName(ExecutionEnv env, String path) async {
+  final info = await env.fileInfo(path);
+  if (info.isErr) {
+    if (info.errorOrNull!.code != FileErrorCode.notSupported) {
+      throw StateError('${info.errorOrNull}');
+    }
+    return null;
+  }
+  if (info.valueOrNull!.kind == FileKind.file) {
+    return info.valueOrNull!.name;
+  }
+  return null;
+}
+
+/// Renders up to [limit] entry names (directories suffixed with `/`),
+/// reporting when the cap stopped the walk.
+({List<String> results, bool entryLimitReached}) _cappedEntryNames(
+  List<FileInfo> entries,
+  int limit,
+) {
+  final results = <String>[];
+  var entryLimitReached = false;
+  for (final entry in entries) {
+    if (results.length >= limit) {
+      entryLimitReached = true;
+      break;
+    }
+    final suffix = entry.kind == FileKind.directory ? '/' : '';
+    results.add('${entry.name}$suffix');
+  }
+  return (results: results, entryLimitReached: entryLimitReached);
+}
+
+/// Renders the listing output: byte truncation only (the entry count is
+/// already capped by [_cappedEntryNames]) plus the limit notices.
+ToolExecutionResult _listingOutput(
+  List<String> results,
+  int limit,
+  bool entryLimitReached,
+) {
+  final truncation = _truncateHead(results.join('\n'), maxLines: 1 << 62);
+  var output = truncation.content;
+  final notices = <String>[];
+  if (entryLimitReached) {
+    notices.add(
+      '$limit entries limit reached. Use limit=${limit * 2} for more',
+    );
+  }
+  if (truncation.truncated) {
+    notices.add('${formatToolSize(defaultToolMaxBytes)} limit reached');
+  }
+  if (notices.isNotEmpty) output += '\n\n[${notices.join('. ')}]';
+  return ToolExecutionResult.text(output);
 }
 
 // ---------------------------------------------------------------------------

@@ -48,32 +48,30 @@ final class Install {
 }
 
 /// Magic bytes of native executables: Mach-O (32/64-bit + fat), ELF, PE.
+const _nativeMagics = [
+  [0xFE, 0xED, 0xFA, 0xCE], // Mach-O 32-bit
+  [0xFE, 0xED, 0xFA, 0xCF], // Mach-O 64-bit
+  [0xCE, 0xFA, 0xED, 0xFE], // Mach-O 32-bit (byte-swapped)
+  [0xCF, 0xFA, 0xED, 0xFE], // Mach-O 64-bit (byte-swapped)
+  [0xCA, 0xFE, 0xBA, 0xBE], // Mach-O fat
+  [0x7F, 0x45, 0x4C, 0x46], // ELF
+  [0x4D, 0x5A], // PE (MZ)
+];
+
+/// Whether [bytes] starts with [magic].
+bool _matchesMagic(List<int> bytes, List<int> magic) {
+  if (bytes.length < magic.length) return false;
+  for (var i = 0; i < magic.length; i++) {
+    if (bytes[i] != magic[i]) return false;
+  }
+  return true;
+}
+
 bool _isNativeExecutable(String path) {
   final file = File(path);
   if (!file.existsSync()) return false;
   final bytes = file.openSync().readSync(4);
-  const machO = [
-    [0xFE, 0xED, 0xFA, 0xCE],
-    [0xFE, 0xED, 0xFA, 0xCF],
-    [0xCE, 0xFA, 0xED, 0xFE],
-    [0xCF, 0xFA, 0xED, 0xFE],
-    [0xCA, 0xFE, 0xBA, 0xBE],
-  ];
-  for (final magic in machO) {
-    if (bytes[0] == magic[0] &&
-        bytes[1] == magic[1] &&
-        bytes[2] == magic[2] &&
-        bytes[3] == magic[3]) {
-      return true;
-    }
-  }
-  if (bytes[0] == 0x7F &&
-      bytes[1] == 0x45 &&
-      bytes[2] == 0x4C &&
-      bytes[3] == 0x46) {
-    return true; // ELF
-  }
-  return bytes[0] == 0x4D && bytes[1] == 0x5A; // PE (MZ)
+  return _nativeMagics.any((magic) => _matchesMagic(bytes, magic));
 }
 
 /// Classifies the install from the two platform paths (injectable for
@@ -173,85 +171,120 @@ Future<int> runSelfUpdate({
     }
 
     if (install.kind == InstallKind.pubGlobal) {
-      _say('updating via dart pub global activate…');
-      // A stale or half-written snapshot: pub believes a NEWER spec than the
-      // running binary, so a plain activate no-ops (or chokes decoding the
-      // old snapshot). Force a clean re-activation then.
-      final listed = await runProcess('dart', ['pub', 'global', 'list']);
-      final activeVersion = RegExp(
-        r'flutter_agent_harness\s+(\d+\.\d+\.\d+)',
-      ).firstMatch('${listed.stdout}${listed.stderr}')?.group(1);
-      if (activeVersion != null &&
-          _compareVersions(activeVersion, currentVersion) > 0) {
-        _say(
-          'rebuilding the activated snapshot '
-          '(spec $activeVersion, running $currentVersion)…',
-        );
-        final deactivate = await runProcess('dart', [
-          'pub',
-          'global',
-          'deactivate',
-          'flutter_agent_harness',
-        ]);
-        stdout.write(deactivate.stdout);
-        stderr.write(deactivate.stderr);
-      }
-      final result = await runProcess('dart', [
-        'pub',
-        'global',
-        'activate',
-        'flutter_agent_harness',
-      ]);
-      stdout.write(result.stdout);
-      stderr.write(result.stderr);
-      if (result.exitCode == 0 &&
-          _compareVersions(latest, activeVersion ?? currentVersion) > 0) {
-        _say(
-          'note: pub.dev lags behind GitHub ($latest available as a binary) — '
-          'curl -fsSL https://fa1.dev/install.sh | sh',
-        );
-      }
-      return result.exitCode;
+      return _pubGlobalUpdate(
+        currentVersion: currentVersion,
+        latest: latest,
+        runProcess: runProcess,
+      );
     }
 
-    final asset = _assetName();
-    if (asset == null) {
-      _warn('no prebuilt binary for this platform — install via Dart instead');
-      return 1;
-    }
-    final url = 'https://github.com/$_repo/releases/download/$tag/$asset';
-    final target = install.executable;
-    final staging = '$target.new';
-    _say('downloading $asset…');
-    final request = http.Request('GET', Uri.parse(url));
-    final streamed = await client.send(request);
-    if (streamed.statusCode != 200) {
-      _warn('download failed (HTTP ${streamed.statusCode}): $url');
-      return 1;
-    }
-    final sink = File(staging).openWrite();
-    await streamed.stream.pipe(sink);
-    await sink.close();
-
-    if (Platform.isWindows) {
-      // A running .exe cannot be overwritten, but it CAN be renamed aside.
-      final aside = '$target.old';
-      try {
-        File(aside).deleteSync();
-      } on PathNotFoundException {
-        // Nothing to clean from a previous update.
-      }
-      File(target).renameSync(aside);
-      File(staging).renameSync(target);
-    } else {
-      await File(staging).rename(target);
-      await runProcess('chmod', ['+x', target]);
-    }
-    _say('updated to $latest — restart fa to use it.');
-    return 0;
+    return _binaryUpdate(client, install, tag, latest, runProcess);
   } finally {
     client.close();
   }
+}
+
+/// Pub-global update path: re-activate the package, forcing a clean
+/// re-activation first when pub believes a NEWER spec than the running
+/// binary.
+Future<int> _pubGlobalUpdate({
+  required String currentVersion,
+  required String latest,
+  required Future<ProcessResult> Function(String, List<String>) runProcess,
+}) async {
+  _say('updating via dart pub global activate…');
+  // A stale or half-written snapshot: pub believes a NEWER spec than the
+  // running binary, so a plain activate no-ops (or chokes decoding the
+  // old snapshot). Force a clean re-activation then.
+  final listed = await runProcess('dart', ['pub', 'global', 'list']);
+  final activeVersion = RegExp(
+    r'flutter_agent_harness\s+(\d+\.\d+\.\d+)',
+  ).firstMatch('${listed.stdout}${listed.stderr}')?.group(1);
+  if (activeVersion != null &&
+      _compareVersions(activeVersion, currentVersion) > 0) {
+    _say(
+      'rebuilding the activated snapshot '
+      '(spec $activeVersion, running $currentVersion)…',
+    );
+    final deactivate = await runProcess('dart', [
+      'pub',
+      'global',
+      'deactivate',
+      'flutter_agent_harness',
+    ]);
+    stdout.write(deactivate.stdout);
+    stderr.write(deactivate.stderr);
+  }
+  final result = await runProcess('dart', [
+    'pub',
+    'global',
+    'activate',
+    'flutter_agent_harness',
+  ]);
+  stdout.write(result.stdout);
+  stderr.write(result.stderr);
+  if (result.exitCode == 0 &&
+      _compareVersions(latest, activeVersion ?? currentVersion) > 0) {
+    _say(
+      'note: pub.dev lags behind GitHub ($latest available as a binary) — '
+      'curl -fsSL https://fa1.dev/install.sh | sh',
+    );
+  }
+  return result.exitCode;
+}
+
+/// Binary update path: download the release asset for this platform and
+/// swap it in (atomic rename on Unix; rename-aside of the locked exe on
+/// Windows).
+Future<int> _binaryUpdate(
+  http.Client client,
+  Install install,
+  String tag,
+  String latest,
+  Future<ProcessResult> Function(String, List<String>) runProcess,
+) async {
+  final asset = _assetName();
+  if (asset == null) {
+    _warn('no prebuilt binary for this platform — install via Dart instead');
+    return 1;
+  }
+  final url = 'https://github.com/$_repo/releases/download/$tag/$asset';
+  final target = install.executable;
+  final staging = '$target.new';
+  _say('downloading $asset…');
+  final request = http.Request('GET', Uri.parse(url));
+  final streamed = await client.send(request);
+  if (streamed.statusCode != 200) {
+    _warn('download failed (HTTP ${streamed.statusCode}): $url');
+    return 1;
+  }
+  final sink = File(staging).openWrite();
+  await streamed.stream.pipe(sink);
+  await sink.close();
+
+  if (Platform.isWindows) {
+    // A running .exe cannot be overwritten, but it CAN be renamed aside.
+    final aside = '$target.old';
+    try {
+      File(aside).deleteSync();
+    } on PathNotFoundException {
+      // Nothing to clean from a previous update.
+    }
+    File(target).renameSync(aside);
+    File(staging).renameSync(target);
+  } else {
+    await File(staging).rename(target);
+    await runProcess('chmod', ['+x', target]);
+  }
+  _say('updated to $latest — restart fa to use it.');
+  return 0;
+}
+
+/// Whether a terminal answer is an affirmative `y`/`yes` (any casing,
+/// surrounding whitespace ignored); null/anything else is a NO.
+bool isYesAnswer(String? answer) {
+  final normalized = answer?.trim().toLowerCase();
+  return normalized == 'y' || normalized == 'yes';
 }
 
 /// Reads a y/N answer from the terminal; non-interactive input defaults to
@@ -262,8 +295,7 @@ Future<bool> _confirm(String question) async {
     return false;
   }
   stdout.write('$question [y/N] ');
-  final answer = stdin.readLineSync(encoding: utf8)?.trim().toLowerCase();
-  return answer == 'y' || answer == 'yes';
+  return isYesAnswer(stdin.readLineSync(encoding: utf8));
 }
 
 /// `fa uninstall`: confirmation, PATH cleanup, binary removal, and an
@@ -289,32 +321,60 @@ Future<int> runSelfUninstall({
   }
 
   if (install.kind == InstallKind.pubGlobal) {
-    _say('deactivating via dart pub global…');
-    final result = await runProcess('dart', [
-      'pub',
-      'global',
-      'deactivate',
-      'flutter_agent_harness',
-    ]);
-    stdout.write(result.stdout);
-    stderr.write(result.stderr);
+    await _pubGlobalDeactivate(runProcess);
   } else {
-    final exe = File(install.executable);
-    // The release layout on Windows is %LOCALAPPDATA%\Fa\bin\fa.exe — drop
-    // the whole Fa directory; on Unix just the binary file is ours.
-    final windowsRoot = Platform.isWindows
-        ? File(install.executable).parent.parent
-        : null;
-    if (Platform.isWindows) {
-      _removeFromUserPath(File(install.executable).parent.path);
-    }
-    if (exe.existsSync()) exe.deleteSync();
-    if (windowsRoot != null && windowsRoot.existsSync()) {
-      windowsRoot.deleteSync(recursive: true);
-    }
-    _say('removed ${install.executable}');
+    _removeBinaryInstall(install);
   }
 
+  await _maybeRemoveDataDir(confirm, environment);
+  _say('fa uninstalled.');
+  return 0;
+}
+
+/// Pub-global uninstall path: deactivate the activated package.
+Future<void> _pubGlobalDeactivate(
+  Future<ProcessResult> Function(String, List<String>) runProcess,
+) async {
+  _say('deactivating via dart pub global…');
+  final result = await runProcess('dart', [
+    'pub',
+    'global',
+    'deactivate',
+    'flutter_agent_harness',
+  ]);
+  stdout.write(result.stdout);
+  stderr.write(result.stderr);
+}
+
+/// Binary uninstall path: the Windows user-PATH entry, the executable,
+/// and — on Windows — the whole `%LOCALAPPDATA%\Fa` directory.
+void _removeBinaryInstall(Install install) {
+  final exe = File(install.executable);
+  final windowsRoot = _windowsInstallRoot(install);
+  if (Platform.isWindows) {
+    _removeFromUserPath(File(install.executable).parent.path);
+  }
+  if (exe.existsSync()) exe.deleteSync();
+  if (windowsRoot != null && windowsRoot.existsSync()) {
+    windowsRoot.deleteSync(recursive: true);
+  }
+  _say('removed ${install.executable}');
+}
+
+/// The install root to remove on Windows: the release layout is
+/// `%LOCALAPPDATA%\Fa\bin\fa.exe`, so the whole Fa directory (the
+/// executable's grandparent) is ours; null elsewhere, where just the
+/// binary file is.
+Directory? _windowsInstallRoot(Install install) {
+  return Platform.isWindows ? File(install.executable).parent.parent : null;
+}
+
+/// Offers to delete the `~/.fah` data directory (a second confirmation);
+/// kept silently when declined or absent.
+Future<void> _maybeRemoveDataDir(
+  Future<bool> Function(String) confirm,
+  Map<String, String>? environment,
+) async {
   final env = environment ?? Platform.environment;
   final home = env['HOME'] ?? env['USERPROFILE'];
   if (home != null && home.isNotEmpty) {
@@ -327,8 +387,6 @@ Future<int> runSelfUninstall({
       _say('kept ${dataDir.path} (sessions and config preserved).');
     }
   }
-  _say('fa uninstalled.');
-  return 0;
 }
 
 /// Removes [binDir] from the Windows user PATH (registry), mirroring how

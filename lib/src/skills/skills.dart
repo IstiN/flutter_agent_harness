@@ -57,6 +57,21 @@ Future<Skill?> _loadSkillFile(
 ) async {
   final text = (await env.readTextFile(path)).valueOrNull;
   if (text == null) return null;
+  final (frontmatter, body) = _parseFrontmatter(text);
+  final name = (frontmatter['name'] ?? fallbackName).trim();
+  if (name.isEmpty) return null;
+  return Skill(
+    name: name,
+    description: _skillDescription(frontmatter, body),
+    filePath: path,
+    scope: scope,
+  );
+}
+
+/// Parses the `---`-fenced YAML frontmatter block of a skill file, returning
+/// the frontmatter map and the remaining body. A file without a frontmatter
+/// block yields an empty map and the whole text as body.
+(Map<String, String> frontmatter, String body) _parseFrontmatter(String text) {
   final frontmatter = <String, String>{};
   var body = text;
   if (text.startsWith('---')) {
@@ -77,8 +92,13 @@ Future<Skill?> _loadSkillFile(
       body = text.substring(end + 4).trimLeft();
     }
   }
-  final name = (frontmatter['name'] ?? fallbackName).trim();
-  if (name.isEmpty) return null;
+  return (frontmatter, body);
+}
+
+/// Derives the one-line description (kimi's chain): the `description`
+/// frontmatter field, else the first non-empty body line (truncated to 240
+/// chars), else a placeholder.
+String _skillDescription(Map<String, String> frontmatter, String body) {
   var description = (frontmatter['description'] ?? '').trim();
   if (description.isEmpty) {
     description = body
@@ -90,12 +110,7 @@ Future<Skill?> _loadSkillFile(
     }
   }
   if (description.isEmpty) description = 'No description provided.';
-  return Skill(
-    name: name,
-    description: description,
-    filePath: path,
-    scope: scope,
-  );
+  return description;
 }
 
 /// Scans one root directory for `<name>/SKILL.md` (canonical) and `<name>.md`
@@ -107,10 +122,22 @@ Future<List<Skill>> _scanRoot(
 ) async {
   final entries = (await env.listDir(root)).valueOrNull;
   if (entries == null) return const [];
-  final skills = <Skill>[];
   final seen = <String>{};
+  return [
+    ...await _scanSkillDirs(env, root, scope, entries, seen),
+    ...await _scanFlatFiles(env, root, scope, entries, seen),
+  ];
+}
 
-  // Pass 1: <name>/SKILL.md subdirectories (canonical).
+/// Pass 1 of [_scanRoot]: `<name>/SKILL.md` subdirectories (canonical).
+Future<List<Skill>> _scanSkillDirs(
+  ExecutionEnv env,
+  String root,
+  SkillScope scope,
+  List<FileInfo> entries,
+  Set<String> seen,
+) async {
+  final skills = <Skill>[];
   for (final entry in entries) {
     if (entry.kind != FileKind.directory || entry.name.startsWith('.')) {
       continue;
@@ -122,15 +149,29 @@ Future<List<Skill>> _scanRoot(
       skills.add(skill);
     }
   }
+  return skills;
+}
 
-  // Pass 2: flat <name>.md files (lose on a name clash).
+/// Whether [entry] is a flat `<name>.md` skill file (a bare top-level
+/// `SKILL.md` is ignored).
+bool _isFlatSkillFile(FileInfo entry) {
+  return entry.kind != FileKind.directory &&
+      !entry.name.startsWith('.') &&
+      entry.name.endsWith('.md') &&
+      entry.name != 'SKILL.md';
+}
+
+/// Pass 2 of [_scanRoot]: flat `<name>.md` files (lose on a name clash).
+Future<List<Skill>> _scanFlatFiles(
+  ExecutionEnv env,
+  String root,
+  SkillScope scope,
+  List<FileInfo> entries,
+  Set<String> seen,
+) async {
+  final skills = <Skill>[];
   for (final entry in entries) {
-    if (entry.kind == FileKind.directory ||
-        entry.name.startsWith('.') ||
-        !entry.name.endsWith('.md') ||
-        entry.name == 'SKILL.md') {
-      continue;
-    }
+    if (!_isFlatSkillFile(entry)) continue;
     final stem = entry.name.substring(0, entry.name.length - 3);
     final path = '$root/${entry.name}';
     final skill = await _loadSkillFile(env, path, stem, scope);

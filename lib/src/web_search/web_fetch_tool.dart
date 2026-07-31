@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../cancel_token.dart';
 import 'fetch_types.dart';
 import 'html_markdown.dart';
 import 'html_text.dart';
@@ -43,45 +44,58 @@ AgentTool webFetchTool({required WebSearchConfig config}) {
       },
       'required': ['url'],
     },
-    execute: (arguments, cancelToken, onUpdate) async {
-      cancelToken?.throwIfCancelled();
-      final url = (arguments['url'] as String).trim();
-      final uri = Uri.tryParse(url);
-      if (uri == null ||
-          (uri.scheme != 'http' && uri.scheme != 'https') ||
-          uri.host.isEmpty) {
-        throw StateError(
-          'Invalid URL: $url (expected an absolute http(s) URL)',
-        );
-      }
-
-      final client = config.httpClient ?? http.Client();
-      try {
-        final context = WebFetchContext(
-          client: client,
-          timeout: config.timeout,
-          maxBytes: config.maxFetchBytes,
-        );
-
-        for (final handler in config.effectiveSiteHandlers) {
-          cancelToken?.throwIfCancelled();
-          final result = await handler.tryFetch(uri, context);
-          if (result != null) {
-            return ToolExecutionResult.text(
-              '${_cap(result.markdown, config.maxFetchChars)}\n\n'
-              '[Fetched $url via ${result.method}]',
-            );
-          }
-        }
-
-        final page = await _fetchChecked(context, uri);
-        cancelToken?.throwIfCancelled();
-        return ToolExecutionResult.text(_renderPage(page, config));
-      } finally {
-        if (config.httpClient == null) client.close();
-      }
-    },
+    execute: (arguments, cancelToken, onUpdate) =>
+        _executeWebFetch(config, arguments, cancelToken),
   );
+}
+
+/// Runs one `web_fetch` call: site handlers first, then the generic
+/// HTML→markdown converter.
+Future<ToolExecutionResult> _executeWebFetch(
+  WebSearchConfig config,
+  Map<String, dynamic> arguments,
+  CancelToken? cancelToken,
+) async {
+  cancelToken?.throwIfCancelled();
+  final url = (arguments['url'] as String).trim();
+  final uri = _parseFetchUri(url);
+
+  final client = config.httpClient ?? http.Client();
+  try {
+    final context = WebFetchContext(
+      client: client,
+      timeout: config.timeout,
+      maxBytes: config.maxFetchBytes,
+    );
+
+    for (final handler in config.effectiveSiteHandlers) {
+      cancelToken?.throwIfCancelled();
+      final result = await handler.tryFetch(uri, context);
+      if (result != null) {
+        return ToolExecutionResult.text(
+          '${_cap(result.markdown, config.maxFetchChars)}\n\n'
+          '[Fetched $url via ${result.method}]',
+        );
+      }
+    }
+
+    final page = await _fetchChecked(context, uri);
+    cancelToken?.throwIfCancelled();
+    return ToolExecutionResult.text(_renderPage(page, config));
+  } finally {
+    if (config.httpClient == null) client.close();
+  }
+}
+
+/// Parses [url] as an absolute http(s) URL, throwing on anything else.
+Uri _parseFetchUri(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null ||
+      (uri.scheme != 'http' && uri.scheme != 'https') ||
+      uri.host.isEmpty) {
+    throw StateError('Invalid URL: $url (expected an absolute http(s) URL)');
+  }
+  return uri;
 }
 
 /// Fetches [uri], converting transport and HTTP failures into tool errors.

@@ -205,19 +205,14 @@ Iterable<Object> scanHtml(String html) sync* {
     }
     if (lt > i) yield HtmlText(html.substring(i, lt), i);
     // Not a tag start (a literal '<' in text): emit it as text and move on.
-    if (lt + 1 >= length || !_isTagStart(html.codeUnitAt(lt + 1))) {
+    if (!_isTagStartAt(html, lt)) {
       yield HtmlText('<', lt);
       i = lt + 1;
       continue;
     }
-    if (html.startsWith('<!--', lt)) {
-      final end = html.indexOf('-->', lt + 4);
-      i = end == -1 ? length : end + 3;
-      continue;
-    }
-    if (html.startsWith('<!', lt) || html.startsWith('<?', lt)) {
-      final end = html.indexOf('>', lt + 2);
-      i = end == -1 ? length : end + 1;
+    final declarationEnd = _skipMarkupDeclaration(html, lt);
+    if (declarationEnd != null) {
+      i = declarationEnd;
       continue;
     }
     final gt = _findTagEnd(html, lt + 1);
@@ -226,15 +221,39 @@ Iterable<Object> scanHtml(String html) sync* {
       yield HtmlText(html.substring(lt), lt);
       return;
     }
-    final tag = _parseTag(html.substring(lt + 1, gt), gt + 1);
-    if (tag != null) {
-      // Unknown names without a dash (`<String>` in code) are literal text.
-      yield isKnownHtmlTag(tag.name)
-          ? tag
-          : HtmlText(html.substring(lt, gt + 1), lt);
-    }
+    yield* _tagTokens(html, lt, gt);
     i = gt + 1;
   }
+}
+
+/// Whether the `<` at [lt] opens markup (vs. a literal '<' in text).
+bool _isTagStartAt(String html, int lt) =>
+    lt + 1 < html.length && _isTagStart(html.codeUnitAt(lt + 1));
+
+/// Returns the index just past the comment, doctype, or processing
+/// instruction starting at [lt] (running to EOF when unterminated), or null
+/// when [lt] does not start one.
+int? _skipMarkupDeclaration(String html, int lt) {
+  if (html.startsWith('<!--', lt)) {
+    final end = html.indexOf('-->', lt + 4);
+    return end == -1 ? html.length : end + 3;
+  }
+  if (html.startsWith('<!', lt) || html.startsWith('<?', lt)) {
+    final end = html.indexOf('>', lt + 2);
+    return end == -1 ? html.length : end + 1;
+  }
+  return null;
+}
+
+/// Parses the tag spanning `html[lt..gt]` into its token (nothing when the
+/// content has no tag name). Unknown names without a dash (`<String>` in
+/// code) are literal text.
+Iterable<Object> _tagTokens(String html, int lt, int gt) sync* {
+  final tag = _parseTag(html.substring(lt + 1, gt), gt + 1);
+  if (tag == null) return;
+  yield isKnownHtmlTag(tag.name)
+      ? tag
+      : HtmlText(html.substring(lt, gt + 1), lt);
 }
 
 bool _isTagStart(int codeUnit) {

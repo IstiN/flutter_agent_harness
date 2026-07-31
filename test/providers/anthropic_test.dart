@@ -975,6 +975,67 @@ void main() {
       },
     );
 
+    test(
+      'redacted and unsigned thinking blocks convert in the payload',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([messageStart(), messageStop]))),
+            200,
+          );
+        });
+
+        final timestamp = DateTime.utc(2026);
+        final context = Context(
+          messages: [
+            AssistantMessage(
+              content: const [
+                ThinkingContent(
+                  thinking: 'hidden',
+                  thinkingSignature: 'encrypted-payload',
+                  redacted: true,
+                ),
+                // Unsigned thinking (e.g. from an aborted stream) degrades
+                // to plain text.
+                ThinkingContent(thinking: 'no signature here'),
+                // Empty unsigned thinking is dropped entirely.
+                ThinkingContent(thinking: '   '),
+                TextContent(text: 'answer'),
+              ],
+              api: 'anthropic-messages',
+              provider: 'anthropic',
+              model: 'claude-sonnet-4-5',
+              usage: Usage.zero,
+              stopReason: StopReason.stop,
+              timestamp: timestamp,
+            ),
+            UserMessage.text('next', timestamp: timestamp),
+          ],
+        );
+
+        final stream = streamAnthropic(
+          reasoningModel,
+          context,
+          const AnthropicOptions(apiKey: 'test-key'),
+          client,
+        );
+        await stream.result;
+
+        final messages = capturedBody!['messages'] as List;
+        expect(messages[0], {
+          'role': 'assistant',
+          'content': [
+            {'type': 'redacted_thinking', 'data': 'encrypted-payload'},
+            {'type': 'text', 'text': 'no signature here'},
+            {'type': 'text', 'text': 'answer'},
+          ],
+        });
+      },
+    );
+
     test('consecutive tool results group into one user message', () async {
       Map<String, dynamic>? capturedBody;
       final client = http_testing.MockClient.streaming((request, body) async {

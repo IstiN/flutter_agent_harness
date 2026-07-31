@@ -501,10 +501,21 @@ final class FaTuiModel extends TeaModel {
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
     if (msg is _QuitRequestedMsg) return (this, () => quit());
+    return _handleTerminalMsg(msg);
+  }
+
+  /// Terminal events: window resizes, mouse wheel scrolling, pastes, and
+  /// keys.
+  (Model, Cmd?) _handleTerminalMsg(Msg msg) {
     if (msg is WindowSizeMsg) return _handleWindowSize(msg);
     if (msg is MouseWheelMsg) return _handleMouseWheel(msg);
     if (msg is PasteMsg) return _handlePaste(msg);
+    return _handleKeyMsg(msg);
+  }
 
+  /// Key events: multi-character runes split into individual key events
+  /// first, then every key goes through the mode-aware key clusters.
+  (Model, Cmd?) _handleKeyMsg(Msg msg) {
     // dart_tui's input decoder groups up to 4 ASCII bytes into a single rune,
     // and the cursor would advance by 1 instead of the inserted text length.
     // Split multi-character runes into individual key events so pasting plain
@@ -523,9 +534,12 @@ final class FaTuiModel extends TeaModel {
     // Only refresh while the model picker is actually open — the message
     // also arrives when the slash menu (or no menu) is up and must not
     // clobber its items.
-    if (!menuOpen || !menuModelMode) return (this, null);
-    return _refreshedModelMenu();
+    if (_modelPickerOpen) return _refreshedModelMenu();
+    return (this, null);
   }
+
+  /// Whether the open menu is the model picker (not the slash menu).
+  bool get _modelPickerOpen => menuOpen && menuModelMode;
 
   /// Rebuilds the open model picker's items, keeping the selection in
   /// bounds.
@@ -642,6 +656,14 @@ final class FaTuiModel extends TeaModel {
   /// Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
   /// typing keeps editing the input so `/models` can be typed in full.
   (Model, Cmd?) _handleSlashMenuKey(KeyMsg msg) {
+    return _handleSlashMenuNavKey(msg) ??
+        _handleSlashMenuAcceptKey(msg) ??
+        _handleSlashMenuEditKey(msg);
+  }
+
+  /// Slash-menu navigation keys (esc/up/down); null when the key belongs to
+  /// the accept or edit clusters.
+  (Model, Cmd?)? _handleSlashMenuNavKey(KeyMsg msg) {
     switch (msg.key) {
       case 'esc':
         return (copyWith(menuOpen: false), null);
@@ -659,9 +681,26 @@ final class FaTuiModel extends TeaModel {
           ),
           null,
         );
+      default:
+        return null;
+    }
+  }
+
+  /// Slash-menu accept keys (enter/tab); null for every other key.
+  (Model, Cmd?)? _handleSlashMenuAcceptKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'enter':
       case 'tab':
         return _acceptSlashMenuItem();
+      default:
+        return null;
+    }
+  }
+
+  /// Slash-menu edit keys: backspace and typed characters keep editing the
+  /// input so `/models` can be typed in full.
+  (Model, Cmd?) _handleSlashMenuEditKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'backspace':
         if (cursor > 0 && inputText.isNotEmpty) {
           final nextText =
@@ -733,6 +772,12 @@ final class FaTuiModel extends TeaModel {
   /// Normal-mode control keys (submit/steer/newline/interrupt/abort); null
   /// when the key belongs to another cluster.
   (Model, Cmd?)? _handleControlKey(KeyMsg msg) {
+    return _handleSubmitKeys(msg) ?? _handleInterruptKeys(msg);
+  }
+
+  /// Normal-mode submit keys (enter/ctrl+s) and the newline-insertion
+  /// fallbacks (ctrl+o/ctrl+j); null when the key belongs to another cluster.
+  (Model, Cmd?)? _handleSubmitKeys(KeyMsg msg) {
     switch (msg.key) {
       case 'enter':
         return _handleEnterKey();
@@ -751,6 +796,15 @@ final class FaTuiModel extends TeaModel {
         // Fallback newline insertion (modifyOtherKeys Shift+Enter is mapped
         // to Ctrl+O by the input preprocessor on supporting terminals).
         return _insertNewlineAtCursor();
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode interrupt keys (ctrl+c quits, esc aborts the run); null
+  /// when the key belongs to another cluster.
+  (Model, Cmd?)? _handleInterruptKeys(KeyMsg msg) {
+    switch (msg.key) {
       case 'ctrl+c':
         callbacks.onInterrupt?.call();
         return (this, () => quit());
@@ -791,6 +845,12 @@ final class FaTuiModel extends TeaModel {
   /// Normal-mode history scroll keys; null when the key belongs to another
   /// cluster.
   (Model, Cmd?)? _handleScrollKey(KeyMsg msg) {
+    return _handleArrowScrollKey(msg) ?? _handlePageScrollKey(msg);
+  }
+
+  /// Normal-mode arrow scroll keys (↑/↓); null when the key belongs to
+  /// another cluster.
+  (Model, Cmd?)? _handleArrowScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'up':
         if (inputText.isEmpty) {
@@ -815,6 +875,15 @@ final class FaTuiModel extends TeaModel {
           return (_scrolledTo(scrollOffset + 1), null);
         }
         return (this, null);
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode page scroll keys (pgup/pgdown); null when the key belongs
+  /// to another cluster.
+  (Model, Cmd?)? _handlePageScrollKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'pgup':
         return (_scrolledTo(scrollOffset - _viewportHeight), null);
       case 'pgdown':
@@ -827,6 +896,14 @@ final class FaTuiModel extends TeaModel {
   /// Normal-mode cursor motion keys; null when the key belongs to another
   /// cluster.
   (Model, Cmd?)? _handleCursorNavKey(KeyMsg msg) {
+    return _handleLeftRightKey(msg) ??
+        _handleWordNavKey(msg) ??
+        _handleHomeEndKey(msg);
+  }
+
+  /// Normal-mode left/right arrow keys; null when the key belongs to
+  /// another cluster.
+  (Model, Cmd?)? _handleLeftRightKey(KeyMsg msg) {
     switch (msg.key) {
       case 'left':
         return (copyWith(cursor: cursor > 0 ? cursor - 1 : 0), null);
@@ -835,11 +912,28 @@ final class FaTuiModel extends TeaModel {
           copyWith(cursor: cursor < inputText.length ? cursor + 1 : cursor),
           null,
         );
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode word-motion keys; null when the key belongs to another
+  /// cluster. Word motion like pi's editor: alt+left/right jump by words.
+  (Model, Cmd?)? _handleWordNavKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'alt+left':
-        // Word motion like pi's editor: alt+left/right jump by words.
         return (copyWith(cursor: _wordStartBefore(inputText, cursor)), null);
       case 'alt+right':
         return (copyWith(cursor: _wordEndAfter(inputText, cursor)), null);
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode home/end keys; null when the key belongs to another
+  /// cluster.
+  (Model, Cmd?)? _handleHomeEndKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'home':
         return (copyWith(cursor: 0), null);
       case 'end':
@@ -852,6 +946,14 @@ final class FaTuiModel extends TeaModel {
   /// Normal-mode text-editing keys (deletion and character insert); catches
   /// every key the other clusters did not claim.
   (Model, Cmd?) _handleEditKey(KeyMsg msg) {
+    return _handleBackspaceKey(msg) ??
+        _handleKillKey(msg) ??
+        _handleDeleteKey(msg) ??
+        _handleCharInsertKey(msg);
+  }
+
+  /// Normal-mode backspace; null when the key belongs to another cluster.
+  (Model, Cmd?)? _handleBackspaceKey(KeyMsg msg) {
     switch (msg.key) {
       case 'backspace':
         if (cursor == 0 || inputText.isEmpty) return (this, null);
@@ -864,6 +966,15 @@ final class FaTuiModel extends TeaModel {
           ),
           null,
         );
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode kill keys (ctrl+u kills back to the line start, ctrl+w the
+  /// word before the cursor); null when the key belongs to another cluster.
+  (Model, Cmd?)? _handleKillKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'ctrl+u':
         // Kill from the cursor back to the start of the line (readline's
         // unix-line-discard — also what most terminals send for Cmd+Backspace).
@@ -876,28 +987,39 @@ final class FaTuiModel extends TeaModel {
         );
       case 'ctrl+w':
         return _killWordBeforeCursor();
+      default:
+        return null;
+    }
+  }
+
+  /// Normal-mode forward delete; null when the key belongs to another
+  /// cluster.
+  (Model, Cmd?)? _handleDeleteKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'delete':
         if (cursor >= inputText.length) return (this, null);
         final nextText =
             inputText.substring(0, cursor) + inputText.substring(cursor + 1);
         return (_updateMenuForInput(copyWith(inputText: nextText)), null);
       default:
-        final text = msg.keyEvent.text;
-        if (text.isNotEmpty && text.length == 1) {
-          final nextText =
-              inputText.substring(0, cursor) +
-              text +
-              inputText.substring(cursor);
-          final nextCursor = cursor + 1;
-          return (
-            _updateMenuForInput(
-              copyWith(inputText: nextText, cursor: nextCursor),
-            ),
-            null,
-          );
-        }
-        return (this, null);
+        return null;
     }
+  }
+
+  /// Normal-mode character insert: the editing cluster's catch-all for
+  /// single-character keys.
+  (Model, Cmd?) _handleCharInsertKey(KeyMsg msg) {
+    final text = msg.keyEvent.text;
+    if (text.isNotEmpty && text.length == 1) {
+      final nextText =
+          inputText.substring(0, cursor) + text + inputText.substring(cursor);
+      final nextCursor = cursor + 1;
+      return (
+        _updateMenuForInput(copyWith(inputText: nextText, cursor: nextCursor)),
+        null,
+      );
+    }
+    return (this, null);
   }
 
   /// Ctrl+W: kill the word before the cursor (readline's unix-word-rubout):
@@ -932,6 +1054,15 @@ final class FaTuiModel extends TeaModel {
   /// Picker navigation keys (esc/arrows/pgup/pgdown); null when the key
   /// belongs to the select/filter cluster.
   (Model, Cmd?)? _handlePickerNavKey(KeyMsg msg) {
+    return _handlePickerEscKey(msg) ??
+        _handlePickerArrowKey(msg) ??
+        _handlePickerPageKey(msg);
+  }
+
+  /// Picker esc: closes the picker; generic pickers also report the
+  /// cancellation to the host (wizard flows wait on the answer). Null when
+  /// the key belongs to another cluster.
+  (Model, Cmd?)? _handlePickerEscKey(KeyMsg msg) {
     final isModelsPicker = pickerId == 'models';
     switch (msg.key) {
       case 'esc':
@@ -939,6 +1070,14 @@ final class FaTuiModel extends TeaModel {
           callbacks.onPickerCancelled?.call(pickerId);
         }
         return (copyWith(menuOpen: false, modelFilter: ''), null);
+      default:
+        return null;
+    }
+  }
+
+  /// Picker arrow keys (↑/↓); null when the key belongs to another cluster.
+  (Model, Cmd?)? _handlePickerArrowKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'up':
         return (
           copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
@@ -953,6 +1092,15 @@ final class FaTuiModel extends TeaModel {
           ),
           null,
         );
+      default:
+        return null;
+    }
+  }
+
+  /// Picker page keys (pgup/pgdown jump to the first/last item); null when
+  /// the key belongs to another cluster.
+  (Model, Cmd?)? _handlePickerPageKey(KeyMsg msg) {
+    switch (msg.key) {
       case 'pgup':
         return (copyWith(menuSelected: 0), null);
       case 'pgdown':
@@ -967,6 +1115,15 @@ final class FaTuiModel extends TeaModel {
 
   /// Picker select/filter keys (backspace/enter/tab/type-to-filter).
   (Model, Cmd?) _handlePickerSelectKey(KeyMsg msg) {
+    return _handlePickerBackspaceKey(msg) ??
+        _handlePickerAcceptKey(msg) ??
+        _pickerTypeFilter(msg);
+  }
+
+  /// Picker backspace: the models picker trims the filter and rebuilds the
+  /// item list; every other picker ignores it. Null when the key belongs to
+  /// another cluster.
+  (Model, Cmd?)? _handlePickerBackspaceKey(KeyMsg msg) {
     final isModelsPicker = pickerId == 'models';
     switch (msg.key) {
       case 'backspace':
@@ -982,6 +1139,18 @@ final class FaTuiModel extends TeaModel {
           );
         }
         return (this, null);
+      default:
+        return null;
+    }
+  }
+
+  /// Picker accept (enter/tab): closes the picker and resolves the
+  /// selection through the host (the model pick for the models picker,
+  /// [FaTuiCallbacks.onPickerSelected] for generic pickers). Null when the
+  /// key belongs to another cluster.
+  (Model, Cmd?)? _handlePickerAcceptKey(KeyMsg msg) {
+    final isModelsPicker = pickerId == 'models';
+    switch (msg.key) {
       case 'enter':
       case 'tab':
         if (menuItems.isEmpty) return (this, null);
@@ -999,7 +1168,7 @@ final class FaTuiModel extends TeaModel {
           },
         );
       default:
-        return _pickerTypeFilter(msg);
+        return null;
     }
   }
 
@@ -1307,21 +1476,31 @@ final class FaTuiModel extends TeaModel {
 
   /// The slash/model/picker menu block above the input zone.
   void _writeMenu(StringBuffer b) {
-    if (menuOpen && menuItems.isNotEmpty) {
-      final title = menuModelMode
-          ? pickerId == 'models'
-                ? '[Select model'
-                      '${modelFilter.isNotEmpty ? ': $modelFilter' : ''}]'
-                : '[$pickerTitle]'
-          : '[Commands]';
-      b.writeln(_accent2(title));
-      final (start, end) = _menuWindow();
-      if (start > 0) b.writeln(_dim('  ↑ more'));
-      for (var i = start; i < end; i++) {
-        b.writeln(_menuItemRow(menuItems[i], i == menuSelected));
-      }
-      if (end < menuItems.length) b.writeln(_dim('  ↓ more'));
+    if (!menuOpen || menuItems.isEmpty) return;
+    b.writeln(_accent2(_menuTitle()));
+    _writeMenuItems(b);
+  }
+
+  /// The menu header row: the models picker echoes its filter, generic
+  /// pickers show the host title, the slash menu is plain '[Commands]'.
+  String _menuTitle() {
+    return menuModelMode
+        ? pickerId == 'models'
+              ? '[Select model'
+                    '${modelFilter.isNotEmpty ? ': $modelFilter' : ''}]'
+              : '[$pickerTitle]'
+        : '[Commands]';
+  }
+
+  /// The visible window of menu items, with the scroll-more hint rows when
+  /// the list overflows above or below.
+  void _writeMenuItems(StringBuffer b) {
+    final (start, end) = _menuWindow();
+    if (start > 0) b.writeln(_dim('  ↑ more'));
+    for (var i = start; i < end; i++) {
+      b.writeln(_menuItemRow(menuItems[i], i == menuSelected));
     }
+    if (end < menuItems.length) b.writeln(_dim('  ↓ more'));
   }
 
   /// One menu row (label + dim description, truncated to the width).
@@ -1373,8 +1552,30 @@ final class FaTuiModel extends TeaModel {
         ? beforeCursor.length
         : beforeCursor.length - lastNl - 1;
 
-    final inputLines = inputText.split('\n');
+    final (visibleLines, cursorScreenCol) = _visibleInputLines(
+      inputText.split('\n'),
+      cursorInputLine,
+      cursorColInInput,
+    );
+    for (var i = 0; i < visibleLines.length; i++) {
+      if (i > 0) b.writeln();
+      b.write(visibleLines[i]);
+    }
+    b.writeln();
+    return (cursorInputLine, cursorScreenCol);
+  }
+
+  /// The input lines clipped to the terminal width, keeping a cursor-
+  /// centered horizontal window on the cursor's line (other lines clip at
+  /// the left edge); returns the display lines and the cursor's screen
+  /// column inside the window.
+  (List<String>, int) _visibleInputLines(
+    List<String> inputLines,
+    int cursorInputLine,
+    int cursorColInInput,
+  ) {
     var cursorScreenCol = cursorColInInput;
+    final visible = <String>[];
     for (var i = 0; i < inputLines.length; i++) {
       final avail = termWidth;
       var line = inputLines[i];
@@ -1390,11 +1591,9 @@ final class FaTuiModel extends TeaModel {
           line = line.substring(0, avail);
         }
       }
-      if (i > 0) b.writeln();
-      b.write(line);
+      visible.add(line);
     }
-    b.writeln();
-    return (cursorInputLine, cursorScreenCol);
+    return (visible, cursorScreenCol);
   }
 
   static List<String> _appendOutput(

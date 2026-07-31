@@ -287,38 +287,51 @@ final class PathRoleOverride {
 /// Parses a `roles:` map (role name → chain). Shared by the top-level
 /// section and [PathRoleOverride]; [source] labels errors.
 Map<String, List<ModelRef>> parseRoleChains(Object? node, {String? source}) {
-  String where(String role) =>
-      source == null ? 'role "$role"' : '$source role "$role"';
   if (node is! YamlMap) {
     throw ConfigException(
       '${source ?? 'roles'} must be a map of role name to model chain',
     );
   }
-  final roles = <String, List<ModelRef>>{};
-  for (final entry in node.entries) {
-    final role = entry.key;
-    if (role is! String || !modelRoleIds.contains(role)) {
-      throw ConfigException(
-        'unknown model role "$role"${source == null ? '' : ' in $source'}'
-        ' — supported roles: ${modelRoleIds.join(', ')}',
-      );
-    }
-    final chainNode = entry.value;
-    if (chainNode is! YamlList || chainNode.isEmpty) {
-      throw ConfigException(
-        '${where(role)} must be a non-empty list of model references',
-      );
-    }
-    roles[role] = [
-      for (final chainEntry in chainNode)
-        ModelRef.fromYaml(chainEntry, role: role),
-    ];
-  }
+  final roles = <String, List<ModelRef>>{
+    for (final entry in node.entries)
+      _parseRoleName(entry.key, source): _parseRoleChain(
+        entry.key as String,
+        entry.value,
+        source,
+      ),
+  };
   if (roles.isEmpty) {
     throw ConfigException('${source ?? 'roles'} declares no roles');
   }
   return roles;
 }
+
+/// Validates one role key of a `roles:` map; [source] labels errors.
+String _parseRoleName(Object? role, String? source) {
+  if (role is! String || !modelRoleIds.contains(role)) {
+    throw ConfigException(
+      'unknown model role "$role"${source == null ? '' : ' in $source'}'
+      ' — supported roles: ${modelRoleIds.join(', ')}',
+    );
+  }
+  return role;
+}
+
+/// Parses one role's chain (a non-empty list of model references).
+List<ModelRef> _parseRoleChain(String role, Object? chainNode, String? source) {
+  if (chainNode is! YamlList || chainNode.isEmpty) {
+    throw ConfigException(
+      '${_roleWhere(role, source)} must be a non-empty list of model references',
+    );
+  }
+  return [
+    for (final chainEntry in chainNode)
+      ModelRef.fromYaml(chainEntry, role: role),
+  ];
+}
+
+String _roleWhere(String role, String? source) =>
+    source == null ? 'role "$role"' : '$source role "$role"';
 
 String _chainsToYaml(Map<String, List<ModelRef>> roles, {int indent = 0}) {
   final pad = ' ' * indent;
@@ -352,18 +365,9 @@ String _chainsToYaml(Map<String, List<ModelRef>> roles, {int indent = 0}) {
 /// Matching is lexical (no filesystem access); redundant trailing slashes
 /// are stripped. The cwd should be absolute.
 bool pathPatternMatches(String pattern, String cwd, {String? homeDir}) {
-  var pat = pattern.trim();
-  if (pat.startsWith('~')) {
-    if (homeDir == null) return false;
-    pat = pat.length == 1 ? homeDir : '$homeDir${pat.substring(1)}';
-  }
-  while (pat.length > 1 && pat.endsWith('/')) {
-    pat = pat.substring(0, pat.length - 1);
-  }
-  var dir = cwd.trim();
-  while (dir.length > 1 && dir.endsWith('/')) {
-    dir = dir.substring(0, dir.length - 1);
-  }
+  final pat = _normalizePattern(pattern, homeDir);
+  if (pat == null) return false;
+  final dir = _stripTrailingSlashes(cwd.trim());
   if (pat.isEmpty || dir.isEmpty) return false;
 
   if (pat.contains('*')) {
@@ -371,6 +375,29 @@ bool pathPatternMatches(String pattern, String cwd, {String? homeDir}) {
   }
 
   return dir == pat || dir.startsWith('$pat/');
+}
+
+/// Trims [pattern] and expands a `~` prefix against [homeDir] (pass it
+/// explicitly; this library is pure Dart and never reads the environment
+/// itself). Returns `null` when the pattern needs a home directory that was
+/// not provided.
+String? _normalizePattern(String pattern, String? homeDir) {
+  var pat = pattern.trim();
+  if (pat.startsWith('~')) {
+    if (homeDir == null) return null;
+    pat = pat.length == 1 ? homeDir : '$homeDir${pat.substring(1)}';
+  }
+  return _stripTrailingSlashes(pat);
+}
+
+/// Strips redundant trailing slashes (matching is lexical; no filesystem
+/// access). A lone `/` root is kept.
+String _stripTrailingSlashes(String path) {
+  var result = path;
+  while (result.length > 1 && result.endsWith('/')) {
+    result = result.substring(0, result.length - 1);
+  }
+  return result;
 }
 
 /// Whether the glob [pattern] (`*` matches any run of non-`/` characters,

@@ -305,6 +305,18 @@ final class _AnthropicStreamSession {
     );
   }
 
+  /// Per-type handlers, keyed by the SSE event `type`. `message_stop` is
+  /// absent on purpose: it carries no payload; it only terminates the
+  /// stream.
+  late final Map<String, void Function(Map<String, dynamic> event)>
+  _eventHandlers = {
+    'message_start': _handleMessageStart,
+    'content_block_start': _handleContentBlockStart,
+    'content_block_delta': _handleContentBlockDelta,
+    'content_block_stop': _handleContentBlockStop,
+    'message_delta': _handleMessageDelta,
+  };
+
   /// Parses one raw SSE event and dispatches it to the per-type handler.
   void _handleSseEvent(ServerSentEvent sse) {
     if (sse.event == 'error') {
@@ -313,40 +325,31 @@ final class _AnthropicStreamSession {
     if (!_anthropicMessageEvents.contains(sse.event)) {
       return;
     }
+    final event = _parseSseEvent(sse);
+    _eventHandlers[event['type']]?.call(event);
+  }
 
-    final Map<String, dynamic> event;
+  /// Decodes the SSE `data` JSON into the event map, recording
+  /// message_start/message_stop sightings along the way.
+  Map<String, dynamic> _parseSseEvent(ServerSentEvent sse) {
     try {
       final parsed = parseJsonWithRepair(sse.data);
       if (parsed is! Map<String, dynamic>) {
         throw const FormatException('SSE data is not a JSON object');
       }
-      event = parsed;
-      final type = event['type'];
+      final type = parsed['type'];
       if (type == 'message_start') {
         sawMessageStart = true;
       } else if (type == 'message_stop') {
         sawMessageStop = true;
       }
+      return parsed;
     } catch (error) {
       throw StateError(
         'Could not parse Anthropic SSE event ${sse.event}: $error; '
         'data=${sse.data}; raw=${sse.raw.join(r'\n')}',
       );
     }
-
-    final type = event['type'];
-    if (type == 'message_start') {
-      _handleMessageStart(event);
-    } else if (type == 'content_block_start') {
-      _handleContentBlockStart(event);
-    } else if (type == 'content_block_delta') {
-      _handleContentBlockDelta(event);
-    } else if (type == 'content_block_stop') {
-      _handleContentBlockStop(event);
-    } else if (type == 'message_delta') {
-      _handleMessageDelta(event);
-    }
-    // message_stop carries no payload; it only terminates the stream.
   }
 
   void _handleMessageStart(Map<String, dynamic> event) {
@@ -425,46 +428,80 @@ final class _AnthropicStreamSession {
     final delta = event['delta'];
     final block = index != null ? blocksByEventIndex[index] : null;
     if (block != null && delta is Map<String, dynamic>) {
-      final deltaType = delta['type'];
-      if (deltaType == 'text_delta' && block is TextStreamingBlock) {
-        final text = delta['text'] as String? ?? '';
-        block.text.write(text);
-        eventStream.push(
-          TextDeltaEvent(
-            contentIndex: blocks.indexOf(block),
-            delta: text,
-            partial: state.snapshot(),
-          ),
-        );
-      } else if (deltaType == 'thinking_delta' &&
-          block is ThinkingStreamingBlock) {
-        final thinking = delta['thinking'] as String? ?? '';
-        block.thinking.write(thinking);
-        eventStream.push(
-          ThinkingDeltaEvent(
-            contentIndex: blocks.indexOf(block),
-            delta: thinking,
-            partial: state.snapshot(),
-          ),
-        );
-      } else if (deltaType == 'input_json_delta' &&
-          block is ToolCallStreamingBlock) {
-        final partialJson = delta['partial_json'] as String? ?? '';
-        block.partialArgs.write(partialJson);
-        eventStream.push(
-          ToolCallDeltaEvent(
-            contentIndex: blocks.indexOf(block),
-            delta: partialJson,
-            partial: state.snapshot(),
-          ),
-        );
-      } else if (deltaType == 'signature_delta' &&
-          block is ThinkingStreamingBlock) {
-        // Signatures accumulate silently; pi pushes no event here.
-        block.signature =
-            (block.signature ?? '') + (delta['signature'] as String? ?? '');
-      }
+      _dispatchContentBlockDelta(block, delta);
     }
+  }
+
+  /// Routes a `content_block_delta` to the per-delta-type handler; a delta
+  /// whose type does not match the block it lands on is ignored, per pi.
+  void _dispatchContentBlockDelta(
+    StreamingBlock block,
+    Map<String, dynamic> delta,
+  ) {
+    switch (delta['type']) {
+      case 'text_delta':
+        _handleTextDelta(block, delta);
+      case 'thinking_delta':
+        _handleThinkingDelta(block, delta);
+      case 'input_json_delta':
+        _handleInputJsonDelta(block, delta);
+      case 'signature_delta':
+        _handleSignatureDelta(block, delta);
+    }
+  }
+
+  void _handleTextDelta(StreamingBlock block, Map<String, dynamic> delta) {
+    if (block is! TextStreamingBlock) {
+      return;
+    }
+    final text = delta['text'] as String? ?? '';
+    block.text.write(text);
+    eventStream.push(
+      TextDeltaEvent(
+        contentIndex: blocks.indexOf(block),
+        delta: text,
+        partial: state.snapshot(),
+      ),
+    );
+  }
+
+  void _handleThinkingDelta(StreamingBlock block, Map<String, dynamic> delta) {
+    if (block is! ThinkingStreamingBlock) {
+      return;
+    }
+    final thinking = delta['thinking'] as String? ?? '';
+    block.thinking.write(thinking);
+    eventStream.push(
+      ThinkingDeltaEvent(
+        contentIndex: blocks.indexOf(block),
+        delta: thinking,
+        partial: state.snapshot(),
+      ),
+    );
+  }
+
+  void _handleInputJsonDelta(StreamingBlock block, Map<String, dynamic> delta) {
+    if (block is! ToolCallStreamingBlock) {
+      return;
+    }
+    final partialJson = delta['partial_json'] as String? ?? '';
+    block.partialArgs.write(partialJson);
+    eventStream.push(
+      ToolCallDeltaEvent(
+        contentIndex: blocks.indexOf(block),
+        delta: partialJson,
+        partial: state.snapshot(),
+      ),
+    );
+  }
+
+  void _handleSignatureDelta(StreamingBlock block, Map<String, dynamic> delta) {
+    if (block is! ThinkingStreamingBlock) {
+      return;
+    }
+    // Signatures accumulate silently; pi pushes no event here.
+    block.signature =
+        (block.signature ?? '') + (delta['signature'] as String? ?? '');
   }
 
   void _handleContentBlockStop(Map<String, dynamic> event) {
@@ -637,6 +674,20 @@ Map<String, dynamic> _buildParams(
     'stream': true,
   };
 
+  _addSystemParam(params, context, cacheControl);
+  _addTemperatureParam(params, options, compat);
+  _addToolsParam(params, context, compat, cacheControl);
+  _addThinkingParam(params, model, options);
+  _addToolChoiceParam(params, options);
+
+  return params;
+}
+
+void _addSystemParam(
+  Map<String, dynamic> params,
+  Context context,
+  Map<String, dynamic>? cacheControl,
+) {
   if (context.systemPrompt != null) {
     params['system'] = [
       {
@@ -646,14 +697,27 @@ Map<String, dynamic> _buildParams(
       },
     ];
   }
+}
 
+void _addTemperatureParam(
+  Map<String, dynamic> params,
+  AnthropicOptions? options,
+  _ResolvedCompat compat,
+) {
   // Temperature is incompatible with extended thinking.
   if (options?.temperature != null &&
       options?.thinkingEnabled != true &&
       compat.supportsTemperature) {
     params['temperature'] = options!.temperature;
   }
+}
 
+void _addToolsParam(
+  Map<String, dynamic> params,
+  Context context,
+  _ResolvedCompat compat,
+  Map<String, dynamic>? cacheControl,
+) {
   if (context.tools != null && context.tools!.isNotEmpty) {
     params['tools'] = _convertTools(
       context.tools!,
@@ -661,10 +725,16 @@ Map<String, dynamic> _buildParams(
       cacheControl: compat.supportsCacheControlOnTools ? cacheControl : null,
     );
   }
+}
 
-  // Configure thinking mode: budget-based enabled, explicitly disabled, or
-  // provider default (omitted). pi's adaptive-thinking branch
-  // (forceAdaptiveThinking, output_config effort) is not ported yet.
+/// Configures thinking mode: budget-based enabled, explicitly disabled, or
+/// provider default (omitted). pi's adaptive-thinking branch
+/// (forceAdaptiveThinking, output_config effort) is not ported yet.
+void _addThinkingParam(
+  Map<String, dynamic> params,
+  Model model,
+  AnthropicOptions? options,
+) {
   if (model.reasoning && options?.thinkingEnabled != null) {
     if (options!.thinkingEnabled!) {
       params['thinking'] = {
@@ -676,15 +746,18 @@ Map<String, dynamic> _buildParams(
       params['thinking'] = {'type': 'disabled'};
     }
   }
+}
 
+void _addToolChoiceParam(
+  Map<String, dynamic> params,
+  AnthropicOptions? options,
+) {
   if (options?.toolChoice != null) {
     final toolChoice = options!.toolChoice!;
     params['tool_choice'] = toolChoice is String
         ? {'type': toolChoice}
         : toolChoice;
   }
-
-  return params;
 }
 
 /// Normalize tool call IDs to match Anthropic's required pattern and length.
@@ -745,27 +818,12 @@ List<Map<String, dynamic>> _convertMessages(
   final params = <Map<String, dynamic>>[];
 
   for (var i = 0; i < messages.length; i++) {
-    final message = messages[i];
-
-    if (message is UserMessage) {
-      final converted = _convertUserMessage(message);
-      if (converted != null) {
-        params.add(converted);
-      }
-    } else if (message is AssistantMessage) {
-      final converted = _convertAssistantMessage(
-        message,
-        allowEmptySignature: allowEmptySignature,
-      );
-      if (converted != null) {
-        params.add(converted);
-      }
-    } else if (message is ToolResultMessage) {
-      final group = _convertToolResultGroup(messages, i);
-      params.add(group.message);
-      // Skip the messages we've already processed.
-      i = group.lastIndex;
-    }
+    i = _convertMessageAt(
+      messages,
+      i,
+      params,
+      allowEmptySignature: allowEmptySignature,
+    );
   }
 
   // Add cache_control to the last user message to cache conversation history.
@@ -774,6 +832,40 @@ List<Map<String, dynamic>> _convertMessages(
   }
 
   return params;
+}
+
+/// Converts the message at [index], appending the result to [params], and
+/// returns the index of the last consumed message (a run of tool results is
+/// grouped, consuming several).
+int _convertMessageAt(
+  List<Message> messages,
+  int index,
+  List<Map<String, dynamic>> params, {
+  required bool allowEmptySignature,
+}) {
+  final message = messages[index];
+
+  if (message is UserMessage) {
+    final converted = _convertUserMessage(message);
+    if (converted != null) {
+      params.add(converted);
+    }
+  } else if (message is AssistantMessage) {
+    final converted = _convertAssistantMessage(
+      message,
+      allowEmptySignature: allowEmptySignature,
+    );
+    if (converted != null) {
+      params.add(converted);
+    }
+  } else if (message is ToolResultMessage) {
+    final group = _convertToolResultGroup(messages, index);
+    params.add(group.message);
+    // Skip the messages we've already processed.
+    return group.lastIndex;
+  }
+
+  return index;
 }
 
 /// Converts a [UserMessage] to Anthropic format, or returns `null` when the
@@ -836,36 +928,46 @@ Map<String, dynamic>? _convertAssistantMessage(
   final blocks = <Map<String, dynamic>>[];
 
   for (final block in message.content) {
-    switch (block) {
-      case TextContent():
-        if (block.text.trim().isEmpty) {
-          continue;
-        }
-        blocks.add({'type': 'text', 'text': block.text});
-      case ThinkingContent():
-        final converted = _convertThinkingBlock(
-          block,
-          allowEmptySignature: allowEmptySignature,
-        );
-        if (converted != null) {
-          blocks.add(converted);
-        }
-      case ToolCall():
-        blocks.add({
-          'type': 'tool_use',
-          'id': _normalizeToolCallId(block.id),
-          'name': block.name,
-          'input': block.arguments,
-        });
-      case ImageContent():
-        // Not valid in assistant messages; skip defensively.
-        break;
-    }
+    _addAssistantBlock(blocks, block, allowEmptySignature: allowEmptySignature);
   }
   if (blocks.isEmpty) {
     return null;
   }
   return {'role': 'assistant', 'content': blocks};
+}
+
+/// Converts one assistant content block, appending it to [blocks] unless it
+/// is empty or invalid in assistant messages (skipped defensively).
+void _addAssistantBlock(
+  List<Map<String, dynamic>> blocks,
+  ContentBlock block, {
+  required bool allowEmptySignature,
+}) {
+  switch (block) {
+    case TextContent():
+      if (block.text.trim().isEmpty) {
+        return;
+      }
+      blocks.add({'type': 'text', 'text': block.text});
+    case ThinkingContent():
+      final converted = _convertThinkingBlock(
+        block,
+        allowEmptySignature: allowEmptySignature,
+      );
+      if (converted != null) {
+        blocks.add(converted);
+      }
+    case ToolCall():
+      blocks.add({
+        'type': 'tool_use',
+        'id': _normalizeToolCallId(block.id),
+        'name': block.name,
+        'input': block.arguments,
+      });
+    case ImageContent():
+      // Not valid in assistant messages; skip defensively.
+      break;
+  }
 }
 
 /// Converts one [ThinkingContent] block, or returns `null` when it carries
@@ -928,21 +1030,31 @@ void _applyCacheControlToLastUserMessage(
   Map<String, dynamic> lastMessage,
   Map<String, dynamic> cacheControl,
 ) {
-  if (lastMessage['role'] == 'user') {
-    final content = lastMessage['content'];
-    if (content is List && content.isNotEmpty) {
-      final lastBlock = content.last;
-      if (lastBlock is Map &&
-          (lastBlock['type'] == 'text' ||
-              lastBlock['type'] == 'image' ||
-              lastBlock['type'] == 'tool_result')) {
-        lastBlock['cache_control'] = cacheControl;
-      }
-    } else if (content is String) {
-      lastMessage['content'] = [
-        {'type': 'text', 'text': content, 'cache_control': cacheControl},
-      ];
-    }
+  if (lastMessage['role'] != 'user') {
+    return;
+  }
+  final content = lastMessage['content'];
+  if (content is List && content.isNotEmpty) {
+    _applyCacheControlToBlockList(content, cacheControl);
+  } else if (content is String) {
+    lastMessage['content'] = [
+      {'type': 'text', 'text': content, 'cache_control': cacheControl},
+    ];
+  }
+}
+
+/// Sets the cache breakpoint on the last block of a user content list when
+/// it is a text/image/tool_result block.
+void _applyCacheControlToBlockList(
+  List<dynamic> content,
+  Map<String, dynamic> cacheControl,
+) {
+  final lastBlock = content.last;
+  if (lastBlock is Map &&
+      (lastBlock['type'] == 'text' ||
+          lastBlock['type'] == 'image' ||
+          lastBlock['type'] == 'tool_result')) {
+    lastBlock['cache_control'] = cacheControl;
   }
 }
 

@@ -191,45 +191,69 @@ final class HashlinePatcher {
 
     // Prepare every section first so any failure (stale hash, missing
     // file, parse error, in-memory no-op) surfaces before any write.
+    final prepared = await _prepareAll(patch.sections);
+    _assertUniqueCanonicalPaths(prepared);
+    _assertNoneNoop(prepared);
+    return HashlinePatcherApplyResult(sections: await _commitAll(prepared));
+  }
+
+  Future<List<HashlinePreparedSection>> _prepareAll(
+    List<HashlinePatchSection> sections,
+  ) async {
     final prepared = <HashlinePreparedSection>[];
-    for (final section in patch.sections) {
+    for (final section in sections) {
       prepared.add(await prepare(section));
     }
-    _assertUniqueCanonicalPaths(prepared);
+    return prepared;
+  }
+
+  void _assertNoneNoop(List<HashlinePreparedSection> prepared) {
     for (final entry in prepared) {
       if (entry.isNoop) {
         throw StateError(noChangeDiagnostic(entry.section.path));
       }
     }
+  }
 
+  Future<List<HashlineSectionResult>> _commitAll(
+    List<HashlinePreparedSection> prepared,
+  ) async {
     final results = <HashlineSectionResult>[];
     for (var index = 0; index < prepared.length; index++) {
       try {
         results.add(await commit(prepared[index]));
       } on Object catch (error) {
-        // A mid-batch write failure leaves earlier sections on disk with no
-        // rollback; report exactly which sections landed so the caller can
-        // re-issue only the missing ones instead of double-applying.
-        final written = [
-          for (var i = 0; i < index; i++) prepared[i].section.path,
-        ];
-        final notWritten = [
-          for (var i = index + 1; i < prepared.length; i++)
-            prepared[i].section.path,
-        ];
-        final buffer = StringBuffer(
-          'Failed to write ${prepared[index].section.path}: $error',
-        );
-        if (written.isNotEmpty) {
-          buffer.write(' Sections already written: ${written.join(', ')}.');
-        }
-        if (notWritten.isNotEmpty) {
-          buffer.write(' Sections not written: ${notWritten.join(', ')}.');
-        }
-        throw StateError(buffer.toString());
+        throw _batchWriteFailure(prepared, index, error);
       }
     }
-    return HashlinePatcherApplyResult(sections: results);
+    return results;
+  }
+
+  /// A mid-batch write failure leaves earlier sections on disk with no
+  /// rollback; report exactly which sections landed so the caller can
+  /// re-issue only the missing ones instead of double-applying.
+  StateError _batchWriteFailure(
+    List<HashlinePreparedSection> prepared,
+    int failedIndex,
+    Object error,
+  ) {
+    final written = [
+      for (var i = 0; i < failedIndex; i++) prepared[i].section.path,
+    ];
+    final notWritten = [
+      for (var i = failedIndex + 1; i < prepared.length; i++)
+        prepared[i].section.path,
+    ];
+    final buffer = StringBuffer(
+      'Failed to write ${prepared[failedIndex].section.path}: $error',
+    );
+    if (written.isNotEmpty) {
+      buffer.write(' Sections already written: ${written.join(', ')}.');
+    }
+    if (notWritten.isNotEmpty) {
+      buffer.write(' Sections not written: ${notWritten.join(', ')}.');
+    }
+    return StateError(buffer.toString());
   }
 
   void _assertUniqueCanonicalPaths(List<HashlinePreparedSection> prepared) {
@@ -501,7 +525,26 @@ final class HashlinePatcher {
         if (!seen.contains(line)) line,
     ];
     if (unseen.isEmpty) return;
-    final sourceLines = matchedSnapshot!.text.split('\n');
+    final reveal = _revealUnseenLines(matchedSnapshot!.text, unseen);
+    // Only merge when the reveal covered every unseen anchor line in full
+    // width. A prefix-truncated reveal would let the model split a blind
+    // edit into <=cap-line retries and land it without ever running the
+    // required range re-read.
+    if (!reveal.truncated) {
+      for (final line in reveal.lines) {
+        seen.add(line.line);
+      }
+    }
+    throw StateError(
+      unseenLinesMessage(section.path, unseen, expected, reveal),
+    );
+  }
+
+  /// Inlines the actual file content at the unseen anchor lines (capped at
+  /// [seenLineRevealCap] lines, [seenLineRevealMaxColumns] columns each) so
+  /// the model can verify what it was about to touch.
+  UnseenLinesReveal _revealUnseenLines(String text, List<int> unseen) {
+    final sourceLines = text.split('\n');
     final revealed = <RevealedLine>[];
     final revealCount = unseen.length < seenLineRevealCap
         ? unseen.length
@@ -523,21 +566,9 @@ final class HashlinePatcher {
         revealed.add((line: line, text: source));
       }
     }
-    final truncated = unseen.length > revealed.length || columnTruncated;
-    // Only merge when the reveal covered every unseen anchor line in full
-    // width. A prefix-truncated reveal would let the model split a blind
-    // edit into <=cap-line retries and land it without ever running the
-    // required range re-read.
-    if (!truncated) {
-      for (final line in revealed) {
-        seen.add(line.line);
-      }
-    }
-    throw StateError(
-      unseenLinesMessage(section.path, unseen, expected, (
-        lines: revealed,
-        truncated: truncated,
-      )),
+    return (
+      lines: revealed,
+      truncated: unseen.length > revealed.length || columnTruncated,
     );
   }
 }

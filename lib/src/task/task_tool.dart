@@ -314,33 +314,53 @@ List<TaskItem> _parseItems(
   final seenNames = <String>{};
   for (var i = 0; i < rawTasks.length; i++) {
     final raw = (rawTasks[i] as Map).cast<String, dynamic>();
-    final taskText = (raw['task'] as String?)?.trim() ?? '';
-    if (taskText.isEmpty) {
-      throw ArgumentError('tasks[$i].task must not be empty.');
-    }
-    final name = (raw['name'] as String?)?.trim();
-    if (name != null && name.isNotEmpty && !seenNames.add(name.toLowerCase())) {
-      throw ArgumentError(
-        'duplicate task name "$name" (names are case-insensitive within a call).',
-      );
-    }
-    final agent = (raw['agent'] as String?)?.trim();
-    if (agent != null && agent.isNotEmpty && registry.resolve(agent) == null) {
-      throw ArgumentError(
-        'Unknown agent type "$agent" — available: '
-        '${registry.agents.map((a) => a.name).join(', ')}',
-      );
-    }
-    items.add(
-      TaskItem(
-        task: taskText,
-        name: name,
-        agent: agent,
-        outputSchema: raw['outputSchema'],
-      ),
-    );
+    items.add(_parseItem(raw, i, registry, seenNames));
   }
   return items;
+}
+
+/// Validates one raw `tasks[]` entry into a [TaskItem].
+TaskItem _parseItem(
+  Map<String, dynamic> raw,
+  int index,
+  TaskAgentRegistry registry,
+  Set<String> seenNames,
+) {
+  final taskText = (raw['task'] as String?)?.trim() ?? '';
+  if (taskText.isEmpty) {
+    throw ArgumentError('tasks[$index].task must not be empty.');
+  }
+  final name = (raw['name'] as String?)?.trim();
+  _checkDuplicateName(name, seenNames);
+  final agent = (raw['agent'] as String?)?.trim();
+  _checkAgentKnown(agent, registry);
+  return TaskItem(
+    task: taskText,
+    name: name,
+    agent: agent,
+    outputSchema: raw['outputSchema'],
+  );
+}
+
+/// Rejects a non-empty [name] already used in this call (names are
+/// case-insensitive within a call).
+void _checkDuplicateName(String? name, Set<String> seenNames) {
+  if (name != null && name.isNotEmpty && !seenNames.add(name.toLowerCase())) {
+    throw ArgumentError(
+      'duplicate task name "$name" (names are case-insensitive within a call).',
+    );
+  }
+}
+
+/// Rejects a non-empty [agent] naming an unknown agent type, listing the
+/// available ones.
+void _checkAgentKnown(String? agent, TaskAgentRegistry registry) {
+  if (agent != null && agent.isNotEmpty && registry.resolve(agent) == null) {
+    throw ArgumentError(
+      'Unknown agent type "$agent" — available: '
+      '${registry.agents.map((a) => a.name).join(', ')}',
+    );
+  }
 }
 
 /// Blocking execution: fan out under the session semaphore, stream progress
@@ -483,36 +503,50 @@ String _renderResults(List<TaskSingleResult> results, Duration total) {
     '${seconds}s${failed == 0 ? '' : ' — $failed failed'}.',
   );
   for (final result in results) {
-    final label = switch (result.status) {
-      TaskSpawnStatus.completed => 'ok',
-      TaskSpawnStatus.failed => 'failed',
-      TaskSpawnStatus.aborted => 'aborted',
-    };
-    buffer.write('\n\n## ${result.id} (${result.agent}) — $label');
-    final structured = result.structuredOutput;
-    if (structured != null) {
-      buffer.write(
-        ' [schema: ${switch (structured.status) {
-          StructuredValidationStatus.valid => 'valid',
-          StructuredValidationStatus.invalid => 'invalid',
-          StructuredValidationStatus.unavailable => 'unvalidated',
-        }}]',
-      );
-    }
-    final error = result.error;
-    if (error != null) {
-      buffer.write('\nerror: $error');
-    }
-    if (result.output.isNotEmpty) {
-      final preview = result.output.length > taskOutputPreviewChars
-          ? '${result.output.substring(0, taskOutputPreviewChars)}\n…'
-          : result.output;
-      buffer.write('\n$preview');
-    }
-    buffer.write(
-      '\n[${result.truncated ? 'Truncated output' : 'Full output'}: '
-      'agent://${result.id}]',
-    );
+    _renderResult(buffer, result);
   }
   return buffer.toString();
+}
+
+/// Renders one per-item block of the settled batch response: header with
+/// status (and schema verdict when validated), the error line, the capped
+/// output preview, and the `agent://` pointer.
+void _renderResult(StringBuffer buffer, TaskSingleResult result) {
+  buffer.write(
+    '\n\n## ${result.id} (${result.agent}) — ${_spawnStatusLabel(result.status)}',
+  );
+  final structured = result.structuredOutput;
+  if (structured != null) {
+    buffer.write(' [schema: ${_schemaStatusLabel(structured.status)}]');
+  }
+  final error = result.error;
+  if (error != null) {
+    buffer.write('\nerror: $error');
+  }
+  if (result.output.isNotEmpty) {
+    final preview = result.output.length > taskOutputPreviewChars
+        ? '${result.output.substring(0, taskOutputPreviewChars)}\n…'
+        : result.output;
+    buffer.write('\n$preview');
+  }
+  buffer.write(
+    '\n[${result.truncated ? 'Truncated output' : 'Full output'}: '
+    'agent://${result.id}]',
+  );
+}
+
+String _spawnStatusLabel(TaskSpawnStatus status) {
+  return switch (status) {
+    TaskSpawnStatus.completed => 'ok',
+    TaskSpawnStatus.failed => 'failed',
+    TaskSpawnStatus.aborted => 'aborted',
+  };
+}
+
+String _schemaStatusLabel(StructuredValidationStatus status) {
+  return switch (status) {
+    StructuredValidationStatus.valid => 'valid',
+    StructuredValidationStatus.invalid => 'invalid',
+    StructuredValidationStatus.unavailable => 'unvalidated',
+  };
 }

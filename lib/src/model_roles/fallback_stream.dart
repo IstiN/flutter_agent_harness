@@ -209,6 +209,74 @@ final class _DriveState {
   ApiKeyCredential? credential;
 }
 
+/// Buffers one attempt's events until the first observable output commits
+/// the attempt (omp's observable-output guard): a rate-limited attempt that
+/// fails before any content leaves no trace in the caller's transcript.
+final class _AttemptBuffer {
+  final _buffer = <AssistantMessageEvent>[];
+  var _committed = false;
+
+  /// Feeds one event; returns the terminal outcome, or null to keep
+  /// streaming.
+  _AttemptOutcome? accept(
+    AssistantMessageEventStream out,
+    AssistantMessageEvent event,
+  ) {
+    if (_committed) {
+      return _forwardCommitted(out, event);
+    }
+    switch (event) {
+      case DoneEvent():
+        _buffer.forEach(out.push);
+        out.push(event);
+        return const _Forwarded();
+      case ErrorEvent():
+        return _forwardOrRateLimit(out, event);
+      case StartEvent():
+        _buffer.add(event);
+        return null;
+      default:
+        // Any content event commits the attempt (omp's observable-output
+        // guard): from here events stream live and a later failure stands.
+        _committed = true;
+        _buffer.forEach(out.push);
+        out.push(event);
+        return null;
+    }
+  }
+
+  /// Post-commit events stream live; a terminal event ends the attempt.
+  _AttemptOutcome? _forwardCommitted(
+    AssistantMessageEventStream out,
+    AssistantMessageEvent event,
+  ) {
+    out.push(event);
+    if (event is DoneEvent || event is ErrorEvent) {
+      return const _Forwarded();
+    }
+    return null;
+  }
+
+  /// A pre-commit error: a retryable rate-limit is held back (the buffer is
+  /// discarded and the chain retries); anything else is forwarded verbatim.
+  _AttemptOutcome _forwardOrRateLimit(
+    AssistantMessageEventStream out,
+    ErrorEvent event,
+  ) {
+    if (event.reason == StopReason.error &&
+        isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
+      // Not forwarded: the buffer is discarded and the chain retries.
+      return _RateLimited(event.retryAfter, event.error);
+    }
+    _buffer.forEach(out.push);
+    out.push(event);
+    return const _Forwarded();
+  }
+
+  /// Flushes the buffered events (stream closed without a terminal event).
+  void flushTo(AssistantMessageEventStream out) => _buffer.forEach(out.push);
+}
+
 /// A [StreamFunction] over an ordered [ChainEntry] list with omp's
 /// rate-limit policy: rotate keys for free, retry the entry with capped
 /// exponential backoff, then fail over to the next entry — every step
@@ -324,35 +392,55 @@ final class FallbackStreamFunction {
       // Credential selection: affinity key unless benched (omp's
       // skip-blocked-sibling rule).
       state.credential ??= entry.keyRing.availableCredential;
-      if (state.credential == null) {
+      final credential = state.credential;
+      if (credential == null) {
         if (!await _onNoCredential(out, state, entry, cancelToken)) return;
         continue;
       }
 
-      final attemptCredential = state.credential;
-      if (attemptCredential == null) continue;
-      final outcome = await _runAttempt(
+      if (!await _runAndDispatch(
         out,
+        state,
         entry,
-        attemptCredential,
+        credential,
         context,
         cancelToken,
-      );
-      switch (outcome) {
-        case _Forwarded():
-          return;
-        case _RateLimited():
-          if (!await _onRateLimited(
-            out,
-            state,
-            entry,
-            attemptCredential,
-            outcome,
-            cancelToken,
-          )) {
-            return;
-          }
+      )) {
+        return;
       }
+    }
+  }
+
+  /// Runs one attempt on [entry] and dispatches its outcome: forwarded
+  /// events end the run (returns false); a retryable rate-limit runs omp's
+  /// rotate/retry/fail-over policy and reports whether the loop continues.
+  Future<bool> _runAndDispatch(
+    AssistantMessageEventStream out,
+    _DriveState state,
+    ChainEntry entry,
+    ApiKeyCredential credential,
+    Context context,
+    CancelToken? cancelToken,
+  ) async {
+    final outcome = await _runAttempt(
+      out,
+      entry,
+      credential,
+      context,
+      cancelToken,
+    );
+    switch (outcome) {
+      case _Forwarded():
+        return false;
+      case _RateLimited():
+        return _onRateLimited(
+          out,
+          state,
+          entry,
+          credential,
+          outcome,
+          cancelToken,
+        );
     }
   }
 
@@ -566,44 +654,15 @@ final class FallbackStreamFunction {
       context,
       cancelToken: cancelToken,
     );
-    final buffer = <AssistantMessageEvent>[];
-    var committed = false;
+    final attempt = _AttemptBuffer();
 
     await for (final event in stream) {
-      if (committed) {
-        out.push(event);
-        if (event is DoneEvent || event is ErrorEvent) {
-          return const _Forwarded();
-        }
-        continue;
-      }
-      switch (event) {
-        case DoneEvent():
-          buffer.forEach(out.push);
-          out.push(event);
-          return const _Forwarded();
-        case ErrorEvent():
-          if (event.reason == StopReason.error &&
-              isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
-            // Not forwarded: the buffer is discarded and the chain retries.
-            return _RateLimited(event.retryAfter, event.error);
-          }
-          buffer.forEach(out.push);
-          out.push(event);
-          return const _Forwarded();
-        case StartEvent():
-          buffer.add(event);
-        default:
-          // Any content event commits the attempt (omp's observable-output
-          // guard): from here events stream live and a later failure stands.
-          committed = true;
-          buffer.forEach(out.push);
-          out.push(event);
-      }
+      final outcome = attempt.accept(out, event);
+      if (outcome != null) return outcome;
     }
     // Provider bug (stream closed without a terminal event): flush what we
     // have; the agent loop synthesizes the terminal error.
-    buffer.forEach(out.push);
+    attempt.flushTo(out);
     return const _Forwarded();
   }
 

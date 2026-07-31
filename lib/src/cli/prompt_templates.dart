@@ -54,26 +54,42 @@ List<String> parseCommandArgs(String input) {
   String? inQuote;
 
   for (var i = 0; i < input.length; i++) {
-    final char = input[i];
-    if (inQuote != null) {
-      if (char == inQuote) {
-        inQuote = null;
-      } else {
-        current += char;
-      }
-    } else if (char == '"' || char == "'") {
-      inQuote = char;
-    } else if (RegExp(r'\s').hasMatch(char)) {
-      if (current.isNotEmpty) {
-        args.add(current);
-        current = '';
-      }
-    } else {
-      current += char;
-    }
+    final (nextCurrent, nextQuote) = _consumeArgChar(
+      input[i],
+      current,
+      inQuote,
+      args,
+    );
+    current = nextCurrent;
+    inQuote = nextQuote;
   }
   if (current.isNotEmpty) args.add(current);
   return args;
+}
+
+/// Consumes one character of bash-style quoted argument text, returning the
+/// updated (current token, active quote) state; completed tokens are
+/// appended to [args].
+(String, String?) _consumeArgChar(
+  String char,
+  String current,
+  String? inQuote,
+  List<String> args,
+) {
+  if (inQuote != null) {
+    return char == inQuote ? (current, null) : (current + char, inQuote);
+  }
+  if (char == '"' || char == "'") {
+    return (current, char);
+  }
+  if (RegExp(r'\s').hasMatch(char)) {
+    if (current.isNotEmpty) {
+      args.add(current);
+      current = '';
+    }
+    return (current, inQuote);
+  }
+  return (current + char, inQuote);
 }
 
 /// Substitutes positional arguments into a template body.
@@ -90,35 +106,53 @@ String substituteArgs(String content, List<String> args) {
     RegExp(
       r'\$\{(\d+):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)',
     ),
-    (match) {
-      final defaultNum = match.group(1);
-      final defaultValue = match.group(2);
-      final sliceStart = match.group(3);
-      final sliceLength = match.group(4);
-      final simple = match.group(5);
-
-      if (defaultNum != null) {
-        final index = int.parse(defaultNum) - 1;
-        final value = index >= 0 && index < args.length ? args[index] : null;
-        return (value?.isNotEmpty ?? false) ? value! : (defaultValue ?? '');
-      }
-
-      if (sliceStart != null) {
-        var start = int.parse(sliceStart) - 1;
-        if (start < 0) start = 0;
-        if (sliceLength != null) {
-          final length = int.parse(sliceLength);
-          return args.slice(start, start + length).join(' ');
-        }
-        return args.sublist(start).join(' ');
-      }
-
-      if (simple == 'ARGUMENTS' || simple == '@') return allArgs;
-
-      final index = int.parse(simple!) - 1;
-      return index >= 0 && index < args.length ? args[index] : '';
-    },
+    (match) => _substituteMatch(match, args, allArgs),
   );
+}
+
+/// Expands one placeholder match against [args] ([allArgs] is the joined
+/// `$@`/`$ARGUMENTS` form).
+String _substituteMatch(Match match, List<String> args, String allArgs) {
+  final defaultNum = match.group(1);
+  final defaultValue = match.group(2);
+  final sliceStart = match.group(3);
+  final sliceLength = match.group(4);
+  final simple = match.group(5);
+
+  if (defaultNum != null) {
+    return _defaultedArg(defaultNum, defaultValue, args);
+  }
+
+  if (sliceStart != null) {
+    return _slicedArgs(sliceStart, sliceLength, args);
+  }
+
+  if (simple == 'ARGUMENTS' || simple == '@') return allArgs;
+
+  final index = int.parse(simple!) - 1;
+  return index >= 0 && index < args.length ? args[index] : '';
+}
+
+/// `${N:-default}`: arg N, or the default when missing/empty.
+String _defaultedArg(
+  String defaultNum,
+  String? defaultValue,
+  List<String> args,
+) {
+  final index = int.parse(defaultNum) - 1;
+  final value = index >= 0 && index < args.length ? args[index] : null;
+  return (value?.isNotEmpty ?? false) ? value! : (defaultValue ?? '');
+}
+
+/// `${@:N}` (args from N onwards) / `${@:N:L}` (L args starting at N).
+String _slicedArgs(String sliceStart, String? sliceLength, List<String> args) {
+  var start = int.parse(sliceStart) - 1;
+  if (start < 0) start = 0;
+  if (sliceLength != null) {
+    final length = int.parse(sliceLength);
+    return args.slice(start, start + length).join(' ');
+  }
+  return args.sublist(start).join(' ');
 }
 
 /// Splits markdown content into YAML frontmatter and body.

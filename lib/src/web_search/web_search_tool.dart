@@ -219,21 +219,45 @@ Future<ToolExecutionResult> _executeChain(
 
   for (final provider in chain) {
     cancelToken?.throwIfCancelled();
-    try {
-      final response = await provider.search(request);
-      if (response.hasRenderableContent) {
-        return ToolExecutionResult.text(formatWebSearchResults(response));
-      }
-      // A successful but empty response is held as the "no results" answer
-      // while the chain keeps looking (omp treats it as a 204 fall-through).
-      sawEmptyResponse = true;
-    } on WebSearchException catch (error) {
+    final (response, error) = await _tryProvider(provider, request);
+    if (error != null) {
       errors.add(error);
-    } on Object catch (error) {
-      errors.add(WebSearchException(provider.id, '$error'));
+      continue;
     }
+    if (response!.hasRenderableContent) {
+      return ToolExecutionResult.text(formatWebSearchResults(response));
+    }
+    // A successful but empty response is held as the "no results" answer
+    // while the chain keeps looking (omp treats it as a 204 fall-through).
+    sawEmptyResponse = true;
   }
 
+  return _chainFailure(sawEmptyResponse, errors, displayQuery);
+}
+
+/// Runs one provider, converting every failure into a [WebSearchException]
+/// so the chain can fall through to the next candidate.
+Future<(WebSearchResponse?, WebSearchException?)> _tryProvider(
+  WebSearchProvider provider,
+  WebSearchRequest request,
+) async {
+  try {
+    return (await provider.search(request), null);
+  } on WebSearchException catch (error) {
+    return (null, error);
+  } on Object catch (error) {
+    return (null, WebSearchException(provider.id, '$error'));
+  }
+}
+
+/// Builds the terminal outcome once the chain is exhausted: the held
+/// "no results" answer when any provider returned an empty response, else
+/// throws with the per-provider error summary.
+ToolExecutionResult _chainFailure(
+  bool sawEmptyResponse,
+  List<WebSearchException> errors,
+  String displayQuery,
+) {
   if (sawEmptyResponse) {
     var text = 'No results found for: $displayQuery';
     if (errors.isNotEmpty) {

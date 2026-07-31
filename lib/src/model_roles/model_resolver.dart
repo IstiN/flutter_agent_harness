@@ -237,24 +237,40 @@ final class ModelRolesResolver {
     for (final role in modelRoleIds) {
       final chain = config.chainFor(role, cwd: cwd, homeDir: homeDir);
       if (chain == null) continue;
-      final wrapper = _wrappers[role];
-      final inherited =
-          role != defaultModelRole && !config.roles.containsKey(role);
-      buffer.write('$role${inherited ? ' (inherits default)' : ''}:');
-      for (var i = 0; i < chain.length; i++) {
-        final active = wrapper != null && wrapper.activeIndex == i;
-        final cooldown = wrapper?.cooldownRemaining(i);
-        buffer.write(
-          '\n  ${active ? '*' : ' '} ${chain[i].label}'
-          '${cooldown == null ? '' : ' (cooldown ${cooldown.inSeconds}s)'}',
-        );
-      }
-      final skipped = skippedEntries[role];
-      if (skipped != null && skipped.isNotEmpty) {
-        buffer.write('\n  skipped: ${skipped.join('; ')}');
-      }
-      buffer.write('\n');
+      _describeRole(buffer, role, chain);
     }
     return buffer.toString().trimRight();
+  }
+
+  /// Renders one role block: the header line (with the inherit-default
+  /// annotation), its chain entries, and its skipped entries.
+  void _describeRole(StringBuffer buffer, String role, List<ModelRef> chain) {
+    final wrapper = _wrappers[role];
+    final inherited =
+        role != defaultModelRole && !config.roles.containsKey(role);
+    buffer.write('$role${inherited ? ' (inherits default)' : ''}:');
+    _describeChainEntries(buffer, chain, wrapper);
+    final skipped = skippedEntries[role];
+    if (skipped != null && skipped.isNotEmpty) {
+      buffer.write('\n  skipped: ${skipped.join('; ')}');
+    }
+    buffer.write('\n');
+  }
+
+  /// Renders [chain]'s entries, marking the wrapper's active entry (`*`)
+  /// and annotating cooling-down entries.
+  void _describeChainEntries(
+    StringBuffer buffer,
+    List<ModelRef> chain,
+    FallbackStreamFunction? wrapper,
+  ) {
+    for (var i = 0; i < chain.length; i++) {
+      final active = wrapper != null && wrapper.activeIndex == i;
+      final cooldown = wrapper?.cooldownRemaining(i);
+      buffer.write(
+        '\n  ${active ? '*' : ' '} ${chain[i].label}'
+        '${cooldown == null ? '' : ' (cooldown ${cooldown.inSeconds}s)'}',
+      );
+    }
   }
 }

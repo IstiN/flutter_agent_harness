@@ -88,17 +88,8 @@ AgentTool requestSecretTool({RequestSecretCallback? callback}) {
     },
     execute: (arguments, cancelToken, onUpdate) async {
       cancelToken?.throwIfCancelled();
-      final name = arguments['name'];
-      if (name is! String || !_namePattern.hasMatch(name)) {
-        throw StateError(
-          'name must be an UPPER_SNAKE env var name matching '
-          '^[A-Z][A-Z0-9_]*\$',
-        );
-      }
-      final reason = arguments['reason'];
-      if (reason is! String || reason.trim().isEmpty) {
-        throw StateError('reason must be a non-empty string');
-      }
+      final name = _validateSecretName(arguments['name']);
+      final reason = _validateSecretReason(arguments['reason']);
       final request = callback;
       if (request == null) {
         throw StateError(
@@ -123,6 +114,26 @@ AgentTool requestSecretTool({RequestSecretCallback? callback}) {
       );
     },
   );
+}
+
+/// Validates the `name` argument: an UPPER_SNAKE env var name (the host UI
+/// validates the same pattern).
+String _validateSecretName(Object? name) {
+  if (name is! String || !_namePattern.hasMatch(name)) {
+    throw StateError(
+      'name must be an UPPER_SNAKE env var name matching '
+      '^[A-Z][A-Z0-9_]*\$',
+    );
+  }
+  return name;
+}
+
+/// Validates the `reason` argument: a non-empty string shown to the user.
+String _validateSecretReason(Object? reason) {
+  if (reason is! String || reason.trim().isEmpty) {
+    throw StateError('reason must be a non-empty string');
+  }
+  return reason;
 }
 
 /// Awaits the host's answer, unblocking promptly with [CancelledException]

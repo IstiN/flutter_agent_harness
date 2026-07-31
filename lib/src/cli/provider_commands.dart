@@ -113,6 +113,17 @@ extension on AgentCli {
     if (_useTui && controller != null) {
       return _pickOptionTui(controller, title, options, initialKey: initialKey);
     }
+    _printFlowOptions(title, options, initialKey);
+    return _promptOptionNumber(options);
+  }
+
+  /// The line-mode option list of [_pickOption]: the numbered options with
+  /// descriptions and a `(current)` marker on [initialKey].
+  void _printFlowOptions(
+    String title,
+    List<FlowOption> options,
+    String? initialKey,
+  ) {
     io.writeln(title);
     for (var i = 0; i < options.length; i++) {
       final (key, label, description) = options[i];
@@ -120,6 +131,11 @@ extension on AgentCli {
       final current = key == initialKey ? ' (current)' : '';
       io.writeln('  ${i + 1}) $label$desc$current');
     }
+  }
+
+  /// The line-mode answer loop of [_pickOption]: re-prompts until a valid
+  /// 1-based number arrives; null on cancel.
+  Future<String?> _promptOptionNumber(List<FlowOption> options) async {
     for (;;) {
       final answer = await _promptLine('type a number: ');
       if (answer == null) return null;
@@ -143,15 +159,22 @@ extension on AgentCli {
     List<FlowOption> options, {
     String? initialKey,
   }) {
-    final stray = _wizardPickerAnswer;
-    if (stray != null && !stray.isCompleted) stray.complete(null);
-    final pending = Completer<String?>();
-    _wizardPickerAnswer = pending;
+    final pending = _replaceWizardPickerAnswer();
     controller.openPicker('wizard:$title', title, [
       for (final (key, label, description) in options)
         MenuItem(key: key, label: label, description: description),
     ], initialKey: initialKey);
     return pending.future;
+  }
+
+  /// Installs a fresh wizard-picker answer completer; a stray pending one is
+  /// completed defensively as cancelled.
+  Completer<String?> _replaceWizardPickerAnswer() {
+    final stray = _wizardPickerAnswer;
+    if (stray?.isCompleted == false) stray!.complete(null);
+    final pending = Completer<String?>();
+    _wizardPickerAnswer = pending;
+    return pending;
   }
 
   /// The flow's `/models` fetch with the same key resolution the provider
@@ -216,12 +239,8 @@ extension on AgentCli {
 
   /// The key-name/persistence step of [_applyCustomProviderSetup]: returns
   /// the secure-store key name the entry should carry, or null when no key
-  /// persists (keyless, session-only, or a failed/unavailable store). A
-  /// same-name edit keeps the entry's existing store name (stable key
-  /// slot); a new entry (or a rename) gets a NAME-scoped one, so several
-  /// accounts on the same endpoint keep separate keys instead of
-  /// overwriting one host-scoped entry. Without a fresh token the edit
-  /// keeps the entry's existing key name.
+  /// persists (keyless, session-only, or a failed/unavailable store).
+  /// Without a fresh token the edit keeps the entry's existing key name.
   Future<String?> _persistSetupKey(
     CustomProviderSetup setup,
     String? editName,
@@ -231,14 +250,7 @@ extension on AgentCli {
     if (token == null) {
       return editName != null ? registry?.find(editName)?.keyName : null;
     }
-    final existing = editName != null ? registry?.find(editName) : null;
-    final keyName =
-        existing != null && existing.keyName != null && setup.name == editName
-        ? existing.keyName!
-        : CustomProviderRegistry.keyNameFor(
-            setup.baseUrl,
-            providerName: setup.name,
-          );
+    final keyName = _setupKeyName(setup, editName);
     final keys = config.secureKeys;
     if (keys != null && keys.available) {
       await keys.save(keyName, token);
@@ -254,6 +266,30 @@ extension on AgentCli {
       'with the provider',
     );
     return null;
+  }
+
+  /// The secure-store key name a setup entry should carry: a same-name edit
+  /// keeps the entry's existing store name (stable key slot); a new entry
+  /// (or a rename) gets a NAME-scoped one, so several accounts on the same
+  /// endpoint keep separate keys instead of overwriting one host-scoped
+  /// entry.
+  String _setupKeyName(CustomProviderSetup setup, String? editName) {
+    final keyName = _reusedSetupEntry(setup, editName)?.keyName;
+    return keyName ??
+        CustomProviderRegistry.keyNameFor(
+          setup.baseUrl,
+          providerName: setup.name,
+        );
+  }
+
+  /// The saved entry whose store key a setup edit reuses: only a same-name
+  /// edit of an existing entry (a rename is a new key slot).
+  CustomProviderEntry? _reusedSetupEntry(
+    CustomProviderSetup setup,
+    String? editName,
+  ) {
+    if (editName == null || setup.name != editName) return null;
+    return config.customProviders?.find(editName);
   }
 
   /// Switches to a saved registry entry (picker or typed `/provider <name>`):
@@ -301,18 +337,18 @@ extension on AgentCli {
   Iterable<MenuItem> _savedProviderItems() {
     final registry = config.customProviders;
     if (registry == null) return const [];
-    final activeName = _activeCustomName;
-    return [
-      for (final entry in registry.entries)
-        MenuItem(
-          key: 'saved:${entry.name}',
-          label: entry.name,
-          description:
-              '${entry.baseUrl} · ${entry.modelId}'
-              '${entry.name == activeName ? ' (current)' : ''}',
-        ),
-    ];
+    return [for (final entry in registry.entries) _savedProviderItem(entry)];
   }
+
+  /// One picker entry for a saved custom provider, marked `(current)` when
+  /// it is the active one.
+  MenuItem _savedProviderItem(CustomProviderEntry entry) => MenuItem(
+    key: 'saved:${entry.name}',
+    label: entry.name,
+    description:
+        '${entry.baseUrl} · ${entry.modelId}'
+        '${entry.name == _activeCustomName ? ' (current)' : ''}',
+  );
 
   /// The picker's catalog presets; the active provider is marked
   /// `(current)` unless a saved custom provider is active instead.
@@ -321,15 +357,22 @@ extension on AgentCli {
     final activeName = _activeCustomName;
     return [
       for (final spec in providerCatalog.values)
-        MenuItem(
-          key: spec.name,
-          label: spec.name,
-          description:
-              '${spec.defaultBaseUrl}'
-              '${spec.name == current && activeName == null ? ' (current)' : ''}',
+        _catalogProviderItem(
+          spec,
+          isCurrent: activeName == null && spec.name == current,
         ),
     ];
   }
+
+  /// One picker entry for a catalog preset.
+  MenuItem _catalogProviderItem(ProviderSpec spec, {required bool isCurrent}) =>
+      MenuItem(
+        key: spec.name,
+        label: spec.name,
+        description:
+            '${spec.defaultBaseUrl}'
+            '${isCurrent ? ' (current)' : ''}',
+      );
 
   /// `/provider [name] [baseUrl] [token] | custom` — shows the active
   /// provider, endpoint, and key status plus the supported catalog; switches
@@ -348,14 +391,7 @@ extension on AgentCli {
       _printProviderStatus();
       return;
     }
-    if (args.first == 'custom') {
-      if (args.length > 1) {
-        io.writeln('usage: /provider custom');
-        return;
-      }
-      _startProviderFlow();
-      return;
-    }
+    if (_startCustomProviderArg(args)) return;
     if (args.length > 3) {
       io.writeln('usage: /provider <name> [baseUrl] [token]');
       return;
@@ -369,6 +405,26 @@ extension on AgentCli {
       await _switchToSavedProvider(saved);
       return;
     }
+    await _switchToCatalogProvider(args);
+  }
+
+  /// The `/provider custom` branch of [_handleProviderCommand]: starts the
+  /// guided setup. Returns true when the command targeted the custom flow
+  /// (handled — setup started or the usage error printed).
+  bool _startCustomProviderArg(List<String> args) {
+    if (args.first != 'custom') return false;
+    if (args.length > 1) {
+      io.writeln('usage: /provider custom');
+      return true;
+    }
+    _startProviderFlow();
+    return true;
+  }
+
+  /// The catalog-switch branch of [_handleProviderCommand]: resolves the
+  /// provider name against the catalog and switches with the optional
+  /// endpoint/token args.
+  Future<void> _switchToCatalogProvider(List<String> args) async {
     final spec = catalogProvider(args[0]);
     if (spec == null) {
       io.writeln(
@@ -513,33 +569,38 @@ extension on AgentCli {
         .split(RegExp(r'\s+'))
         .where((part) => part.isNotEmpty)
         .toList();
-    final keys = config.secureKeys;
     if (args.isEmpty) {
       _printKeyStatus();
       return;
     }
-    final storeAvailable = keys != null && keys.available;
     switch (args.first) {
       case 'set':
         await _handleKeySet(args);
       case 'delete':
-        if (args.length != 2) {
-          io.writeln('usage: /key delete <NAME>');
-          return;
-        }
-        if (!_keyNamePattern.hasMatch(args[1])) {
-          io.writeln('invalid key name: ${args[1]} (use [A-Za-z0-9_]+)');
-          return;
-        }
-        if (!storeAvailable) {
-          io.writeln('secure storage unavailable on this host');
-          return;
-        }
-        await keys.delete(args[1]);
-        io.writeln('removed ${args[1]} from ${keys.label}');
+        await _handleKeyDelete(args);
       default:
         io.writeln('usage: /key [set <NAME> <value> | delete <NAME>]');
     }
+  }
+
+  /// `/key delete <NAME>`: validates the name and removes it from the
+  /// secure store.
+  Future<void> _handleKeyDelete(List<String> args) async {
+    final keys = config.secureKeys;
+    if (args.length != 2) {
+      io.writeln('usage: /key delete <NAME>');
+      return;
+    }
+    if (!_keyNamePattern.hasMatch(args[1])) {
+      io.writeln('invalid key name: ${args[1]} (use [A-Za-z0-9_]+)');
+      return;
+    }
+    if (keys == null || !keys.available) {
+      io.writeln('secure storage unavailable on this host');
+      return;
+    }
+    await keys.delete(args[1]);
+    io.writeln('removed ${args[1]} from ${keys.label}');
   }
 
   /// `/key set <NAME> <value>`: validates the name, writes the value to
@@ -576,13 +637,20 @@ extension on AgentCli {
     // When the stored key serves the active provider, pick it up
     // immediately. Roles mode resolves keys from the resolver's startup
     // snapshot, so there it takes effect on the next start.
+    _applySavedKeyToActiveProvider(args[1], args[2]);
+  }
+
+  /// The tail of [_handleKeySet]: picks the freshly saved key up
+  /// immediately when it serves the active provider (roles mode applies it
+  /// on the next start).
+  void _applySavedKeyToActiveProvider(String name, String value) {
     final spec = catalogProvider(_providerKind);
     if (config.modelRolesResolver != null) {
       io.writeln('  takes effect on the next start (roles mode)');
-    } else if (spec != null && spec.apiKeyEnvNames.contains(args[1])) {
-      _apiKey = args[2];
+    } else if (spec != null && spec.apiKeyEnvNames.contains(name)) {
+      _apiKey = value;
       _explicitToken = false;
-      _streamFunction = providerStreamFunction(spec.kind, args[2]);
+      _streamFunction = providerStreamFunction(spec.kind, value);
       _agent.streamFunction = _streamFunction;
       io.writeln('  active provider key updated');
     }
@@ -628,16 +696,7 @@ extension on AgentCli {
     io.writeln('  endpoint: ${model.baseUrl}');
     final keyStatus = _keyStatusLine(model);
     if (keyStatus != null) io.writeln('  $keyStatus');
-    final registry = config.customProviders;
-    if (registry != null && registry.entries.isNotEmpty) {
-      io.writeln('saved providers:');
-      for (final entry in registry.entries) {
-        final current = entry.name == _activeCustomName ? ' (current)' : '';
-        io.writeln(
-          '  ${entry.name} — ${entry.baseUrl} · ${entry.modelId}$current',
-        );
-      }
-    }
+    _printSavedProviders();
     io.writeln('supported providers:');
     for (final spec in providerCatalog.values) {
       io.writeln('  ${spec.name} — ${spec.defaultBaseUrl}');
@@ -646,6 +705,20 @@ extension on AgentCli {
       'use /provider <name> [baseUrl] [token] to switch, '
       'or /provider custom for a guided setup',
     );
+  }
+
+  /// The saved-custom-provider section of [_printProviderStatus], each
+  /// entry marked `(current)` when active. Nothing prints without entries.
+  void _printSavedProviders() {
+    final registry = config.customProviders;
+    if (registry == null || registry.entries.isEmpty) return;
+    io.writeln('saved providers:');
+    for (final entry in registry.entries) {
+      final current = entry.name == _activeCustomName ? ' (current)' : '';
+      io.writeln(
+        '  ${entry.name} — ${entry.baseUrl} · ${entry.modelId}$current',
+      );
+    }
   }
 
   /// Resolves the API key for [spec] at [baseUrl], in order:
@@ -673,21 +746,40 @@ extension on AgentCli {
   /// Key resolution for the spec's DEFAULT hosted endpoint: env value →
   /// host-scoped store key → legacy env-name store key (documented order).
   String? _defaultEndpointKey(ProviderSpec spec, String baseUrl) {
+    final env = _envKeyEntry(spec);
+    if (env != null) return env.$2;
+    final keys = config.secureKeys;
+    if (keys == null) return null;
+    return _storedDefaultEndpointKey(spec, baseUrl, keys);
+  }
+
+  /// The first catalog env name holding a genuine environment value (one
+  /// that differs from the store's entry, so it came from the actual
+  /// environment) as a (name, value) pair, or null.
+  (String, String)? _envKeyEntry(ProviderSpec spec) {
     final read = config.envVarValue;
     final keys = config.secureKeys;
     for (final name in spec.apiKeyEnvNames) {
       final value = read?.call(name);
       if (value != null && value.isNotEmpty && value != keys?.read(name)) {
-        return value;
+        return (name, value);
       }
     }
-    if (keys != null) {
-      final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
-      if (scoped != null && scoped.isNotEmpty) return scoped;
-      for (final name in spec.apiKeyEnvNames) {
-        final value = keys.read(name);
-        if (value != null && value.isNotEmpty) return value;
-      }
+    return null;
+  }
+
+  /// The stored key for the spec's default endpoint: the endpoint-scoped
+  /// entry (`FA_KEY_<HOST>`), then the legacy env-name entries.
+  String? _storedDefaultEndpointKey(
+    ProviderSpec spec,
+    String baseUrl,
+    SecureKeyCache keys,
+  ) {
+    final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
+    if (scoped != null && scoped.isNotEmpty) return scoped;
+    for (final name in spec.apiKeyEnvNames) {
+      final value = keys.read(name);
+      if (value != null && value.isNotEmpty) return value;
     }
     return null;
   }
@@ -699,16 +791,20 @@ extension on AgentCli {
   /// OpenRouter key silently serving api.aiin.by).
   String? _customEndpointKey(String baseUrl) {
     final keys = config.secureKeys;
-    if (keys != null) {
-      final entryKey = _activeCustomKeyName();
-      if (entryKey != null) {
-        final entryValue = keys.read(entryKey);
-        if (entryValue != null && entryValue.isNotEmpty) return entryValue;
-      }
-      final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
-      if (scoped != null && scoped.isNotEmpty) return scoped;
+    if (keys == null) return null;
+    final entryKey = _activeCustomKeyName();
+    if (entryKey != null) {
+      final entryValue = _nonEmptyStoredKey(keys, entryKey);
+      if (entryValue != null) return entryValue;
     }
-    return null;
+    return _nonEmptyStoredKey(keys, CustomProviderRegistry.keyNameFor(baseUrl));
+  }
+
+  /// The stored value for [name] when it is set and non-empty, else null.
+  String? _nonEmptyStoredKey(SecureKeyCache keys, String name) {
+    final value = keys.read(name);
+    if (value == null || value.isEmpty) return null;
+    return value;
   }
 
   /// The `/provider` confirmation's key line: the source of the resolved
@@ -722,30 +818,47 @@ extension on AgentCli {
     required bool explicit,
   }) {
     if (explicit) return 'key: provided';
-    final read = config.envVarValue;
-    final keys = config.secureKeys;
     if (baseUrl == spec.defaultBaseUrl) {
-      for (final name in spec.apiKeyEnvNames) {
-        final value = read?.call(name);
-        if (value != null && value.isNotEmpty && value != keys?.read(name)) {
-          return 'key: $name';
-        }
-      }
-      if (keys != null) {
-        final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
-        if (keys.read(scopedName) != null) {
-          return 'key: $scopedName (${keys.label ?? 'secure store'})';
-        }
-        for (final name in spec.apiKeyEnvNames) {
-          if (keys.read(name) != null) {
-            return 'key: $name (${keys.label ?? 'secure store'})';
-          }
-        }
-      }
-      return 'key: no key found (want ${spec.apiKeyEnvNames.first})';
+      return _defaultEndpointKeyLine(spec, baseUrl);
     }
-    // A custom endpoint never shows the spec's env names as its key (see
-    // _providerKeyFor) — only the endpoint-scoped store keys count.
+    return _customEndpointKeyLine(baseUrl);
+  }
+
+  /// The default-endpoint branch of [_providerKeyLine]: env var name →
+  /// endpoint-scoped store entry → legacy env-name store entry, else a
+  /// warning that the hosted endpoint has no key.
+  String _defaultEndpointKeyLine(ProviderSpec spec, String baseUrl) {
+    final keys = config.secureKeys;
+    final env = _envKeyEntry(spec);
+    if (env != null) return 'key: ${env.$1}';
+    if (keys != null) {
+      final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
+      if (keys.read(scopedName) != null) {
+        return 'key: $scopedName (${keys.label ?? 'secure store'})';
+      }
+      final legacyName = _legacyStoredKeyName(spec, keys);
+      if (legacyName != null) {
+        return 'key: $legacyName (${keys.label ?? 'secure store'})';
+      }
+    }
+    return 'key: no key found (want ${spec.apiKeyEnvNames.first})';
+  }
+
+  /// The first catalog env name present in the secure store (a legacy
+  /// env-name entry), or null.
+  String? _legacyStoredKeyName(ProviderSpec spec, SecureKeyCache keys) {
+    for (final name in spec.apiKeyEnvNames) {
+      if (keys.read(name) != null) return name;
+    }
+    return null;
+  }
+
+  /// The custom-endpoint branch of [_providerKeyLine]: a custom endpoint
+  /// never shows the spec's env names as its key (see [_providerKeyFor]) —
+  /// only the endpoint-scoped store keys count; a keyless note otherwise
+  /// (local servers may legitimately run without a key).
+  String _customEndpointKeyLine(String baseUrl) {
+    final keys = config.secureKeys;
     if (keys != null) {
       final entryKey = _activeCustomKeyName();
       if (entryKey != null && keys.read(entryKey) != null) {
@@ -773,7 +886,12 @@ extension on AgentCli {
     if (_modelCacheNeedsRefresh) {
       unawaited(_refreshModelCache());
     }
-    final models = _modelCandidates(filter);
+    return _modelMenuItems(_modelCandidates(filter));
+  }
+
+  /// The picker items of [_buildModelMenu]: a loading placeholder while the
+  /// candidate list is empty, else the numbered model entries.
+  List<MenuItem> _modelMenuItems(List<String> models) {
     if (models.isEmpty) {
       return const [MenuItem(key: '', label: 'loading models...')];
     }
@@ -805,26 +923,36 @@ extension on AgentCli {
           _modelCache = ids;
           _tuiController?.sendModelsRefresh();
           if (config.modelRolesResolver == null) {
-            final detected = _modelContextWindows[model.id];
-            if (detected != null && detected != model.contextWindow) {
-              _replaceModelLimits(contextWindow: detected);
-              io.writeln(
-                _style.dim('model context window: $detected (from endpoint)'),
-              );
-            }
-            final detectedCap = _modelMaxTokens[model.id];
-            if (detectedCap != null && detectedCap != model.maxTokens) {
-              _replaceModelLimits(maxTokens: detectedCap);
-              io.writeln(
-                _style.dim('model max tokens: $detectedCap (from endpoint)'),
-              );
-            }
+            _applyDetectedContextWindow(model);
+            _applyDetectedMaxTokens(model);
           }
         }
       }
     } finally {
       _modelCacheFuture = null;
       completer.complete();
+    }
+  }
+
+  /// Applies the endpoint-reported context window for [model] when it
+  /// differs from the carried one (called from [_refreshModelCache], which
+  /// skips both detections in roles mode — the chain's configured limits
+  /// win there).
+  void _applyDetectedContextWindow(Model model) {
+    final detected = _modelContextWindows[model.id];
+    if (detected != null && detected != model.contextWindow) {
+      _replaceModelLimits(contextWindow: detected);
+      io.writeln(_style.dim('model context window: $detected (from endpoint)'));
+    }
+  }
+
+  /// Applies the endpoint-reported max-tokens cap for [model] when it
+  /// differs from the carried one (see [_applyDetectedContextWindow]).
+  void _applyDetectedMaxTokens(Model model) {
+    final detectedCap = _modelMaxTokens[model.id];
+    if (detectedCap != null && detectedCap != model.maxTokens) {
+      _replaceModelLimits(maxTokens: detectedCap);
+      io.writeln(_style.dim('model max tokens: $detectedCap (from endpoint)'));
     }
   }
 
@@ -1035,16 +1163,7 @@ extension on AgentCli {
       await _switchModel('');
       return;
     }
-    final number = int.tryParse(trimmed);
-    final lastList = _lastModelList ?? _listModelsForMenu();
-    if (number != null) {
-      if (number < 1 || number > lastList.length) {
-        io.writeln('invalid selection: $number (1-${lastList.length})');
-        return;
-      }
-      await _switchModel(lastList[number - 1]);
-      return;
-    }
+    if (await _switchModelByNumber(trimmed)) return;
     // A custom model definition from the models: config section resolves
     // before plain model ids (its provider/endpoint/token limits come from
     // the definition, not the current connection).
@@ -1054,6 +1173,21 @@ extension on AgentCli {
       return;
     }
     await _switchModel(trimmed);
+  }
+
+  /// The `/model N` branch of [_handleModelCommand]: resolves a 1-based
+  /// number against the last listed models. Returns true when [trimmed] was
+  /// a number (handled — valid pick or invalid-selection message).
+  Future<bool> _switchModelByNumber(String trimmed) async {
+    final number = int.tryParse(trimmed);
+    if (number == null) return false;
+    final lastList = _lastModelList ?? _listModelsForMenu();
+    if (number < 1 || number > lastList.length) {
+      io.writeln('invalid selection: $number (1-${lastList.length})');
+      return true;
+    }
+    await _switchModel(lastList[number - 1]);
+    return true;
   }
 
   /// `/model <name>` where [name] is a custom model definition from the
@@ -1189,28 +1323,45 @@ extension on AgentCli {
   /// active model's token limits for this session (persist per chain via
   /// roles yaml `contextWindow:`/`maxTokens:`).
   void _handleModelEdit(String rest) {
-    final current = _agent.state.model;
     final args = rest
         .trim()
         .split(RegExp(r'\s+'))
         .where((part) => part.isNotEmpty)
         .toList();
     if (args.isEmpty) {
-      io.writeln(
-        'model ${current.id}: contextWindow ${current.contextWindow} · '
-        'maxTokens ${current.maxTokens}',
-      );
-      io.writeln(
-        _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
-      );
+      _printModelLimits();
       return;
     }
+    _applyModelEditArg(args);
+  }
+
+  /// Bare `/model-edit`: the active model's token limits and the setter
+  /// usage hint.
+  void _printModelLimits() {
+    final current = _agent.state.model;
+    io.writeln(
+      'model ${current.id}: contextWindow ${current.contextWindow} · '
+      'maxTokens ${current.maxTokens}',
+    );
+    io.writeln(
+      _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
+    );
+  }
+
+  /// `/model-edit <contextWindow|maxTokens> <n>`: validates the value and
+  /// applies the override.
+  void _applyModelEditArg(List<String> args) {
     final value = args.length == 2 ? int.tryParse(args[1]) : null;
     if (args.length != 2 || value == null || value <= 0) {
       io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
       return;
     }
-    switch (args[0]) {
+    _applyModelLimitEdit(args[0], value);
+  }
+
+  /// Applies a validated `/model-edit` limit override by field name.
+  void _applyModelLimitEdit(String field, int value) {
+    switch (field) {
       case 'contextWindow':
         _replaceModelLimits(contextWindow: value);
         io.writeln('model context window set to $value');

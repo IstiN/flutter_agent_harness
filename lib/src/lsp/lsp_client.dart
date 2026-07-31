@@ -384,16 +384,7 @@ final class LspClient {
   void _handleServerRequest(Object id, String method, Object? params) {
     switch (method) {
       case 'workspace/configuration':
-        final items = params is Map<String, dynamic> ? params['items'] : null;
-        final result = [
-          if (items is List)
-            for (final item in items)
-              if (item is Map<String, dynamic> && item['section'] is String)
-                config.settings[item['section']]
-              else
-                null,
-        ];
-        _respond(id, result: result);
+        _respond(id, result: _configurationResult(params));
       case 'workspace/workspaceFolders':
         _respond(id, result: [_workspaceFolder()]);
       case 'window/workDoneProgress/create' ||
@@ -423,6 +414,20 @@ final class LspClient {
           error: {'code': -32601, 'message': 'Method not found: $method'},
         );
     }
+  }
+
+  /// Answers a `workspace/configuration` pull: one settings entry per
+  /// requested section (null for unknown sections, per spec).
+  Object? _configurationResult(Object? params) {
+    final items = params is Map<String, dynamic> ? params['items'] : null;
+    return [
+      if (items is List)
+        for (final item in items)
+          if (item is Map<String, dynamic> && item['section'] is String)
+            config.settings[item['section']]
+          else
+            null,
+    ];
   }
 
   // -------------------------------------------------------------------------

@@ -80,42 +80,61 @@ final class TtsrScope {
     if (tokens == null || tokens.every((token) => token.trim().isEmpty)) {
       return defaultScope;
     }
-    var allowText = false;
-    var allowThinking = false;
-    var allowAnyTool = false;
-    final toolNames = <String>{};
+    final flags = _ScopeFlags();
     for (final raw in tokens) {
-      final token = raw.trim();
-      if (token.isEmpty) continue;
-      final normalized = token.toLowerCase();
-      switch (normalized) {
-        case 'text':
-          allowText = true;
-        case 'thinking':
-          allowThinking = true;
-        case 'tool' || 'toolcall':
-          allowAnyTool = true;
-        default:
-          // `tool:<name>` or a bare `<name>` (omp's tool-scope token,
-          // path-glob suffix `(glob)` deliberately unsupported).
-          final name = normalized.startsWith('tool:')
-              ? normalized.substring('tool:'.length).trim()
-              : normalized;
-          if (RegExp(r'^[a-z0-9_-]+$').hasMatch(name)) {
-            toolNames.add(name);
-          } else {
-            warnings.add(
-              'TTSR rule "$ruleName": invalid scope token "$raw", skipped',
-            );
-          }
-      }
+      _applyScopeToken(flags, raw, ruleName: ruleName, warnings: warnings);
     }
     return TtsrScope(
-      allowText: allowText,
-      allowThinking: allowThinking,
-      allowAnyTool: allowAnyTool,
-      toolNames: toolNames,
+      allowText: flags.allowText,
+      allowThinking: flags.allowThinking,
+      allowAnyTool: flags.allowAnyTool,
+      toolNames: flags.toolNames,
     );
+  }
+
+  static void _applyScopeToken(
+    _ScopeFlags flags,
+    String raw, {
+    required String ruleName,
+    required List<String> warnings,
+  }) {
+    final token = raw.trim();
+    if (token.isEmpty) return;
+    final normalized = token.toLowerCase();
+    if (normalized == 'text') {
+      flags.allowText = true;
+      return;
+    }
+    if (normalized == 'thinking') {
+      flags.allowThinking = true;
+      return;
+    }
+    if (normalized == 'tool' || normalized == 'toolcall') {
+      flags.allowAnyTool = true;
+      return;
+    }
+    _addToolName(flags, raw, normalized, ruleName, warnings);
+  }
+
+  static void _addToolName(
+    _ScopeFlags flags,
+    String raw,
+    String normalized,
+    String ruleName,
+    List<String> warnings,
+  ) {
+    // `tool:<name>` or a bare `<name>` (omp's tool-scope token,
+    // path-glob suffix `(glob)` deliberately unsupported).
+    final name = normalized.startsWith('tool:')
+        ? normalized.substring('tool:'.length).trim()
+        : normalized;
+    if (RegExp(r'^[a-z0-9_-]+$').hasMatch(name)) {
+      flags.toolNames.add(name);
+    } else {
+      warnings.add(
+        'TTSR rule "$ruleName": invalid scope token "$raw", skipped',
+      );
+    }
   }
 
   /// Whether any stream can match (omp's `hasReachableScope`).
@@ -170,4 +189,20 @@ final class TtsrRule {
 
   /// The streams this rule monitors.
   final TtsrScope scope;
+}
+
+/// Mutable accumulator for [TtsrScope.parse]: the token-folded flags become
+/// the immutable scope's fields.
+final class _ScopeFlags {
+  /// Whether plain text deltas match.
+  bool allowText = false;
+
+  /// Whether thinking deltas match.
+  bool allowThinking = false;
+
+  /// Whether any tool call matches.
+  bool allowAnyTool = false;
+
+  /// The explicitly named tools that match.
+  final Set<String> toolNames = <String>{};
 }

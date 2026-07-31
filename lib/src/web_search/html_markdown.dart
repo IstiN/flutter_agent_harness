@@ -338,14 +338,7 @@ final class _Converter {
   /// Resolves [href] against the page URL. Returns null for links that carry
   /// no useful target for the model (anchors, javascript:, mailto:, …).
   String? _resolveLink(String href) {
-    if (href.isEmpty || href.startsWith('#')) return null;
-    final lower = href.toLowerCase();
-    if (lower.startsWith('javascript:') ||
-        lower.startsWith('mailto:') ||
-        lower.startsWith('tel:') ||
-        lower.startsWith('data:')) {
-      return null;
-    }
+    if (_isUselessLink(href)) return null;
     final base = baseUrl;
     if (base == null) return href;
     try {
@@ -353,6 +346,18 @@ final class _Converter {
     } on Object {
       return href;
     }
+  }
+
+  /// Whether [href] carries no useful target for the model: empty, a
+  /// same-page anchor, or a non-navigational scheme (javascript:, mailto:,
+  /// tel:, data:).
+  static bool _isUselessLink(String href) {
+    if (href.isEmpty || href.startsWith('#')) return true;
+    final lower = href.toLowerCase();
+    return lower.startsWith('javascript:') ||
+        lower.startsWith('mailto:') ||
+        lower.startsWith('tel:') ||
+        lower.startsWith('data:');
   }
 
   void _writeImage(HtmlTag tag) {

@@ -40,15 +40,30 @@ List<LspTextEdit> sortAndValidateTextEdits(List<LspTextEdit> edits) {
   final indexed = <(LspTextEdit, int)>[
     for (var i = 0; i < edits.length; i++) (edits[i], i),
   ];
-  indexed.sort((a, b) {
-    final startA = a.$1.range.start;
-    final startB = b.$1.range.start;
-    if (startA.line != startB.line) return startB.line - startA.line;
-    if (startA.character != startB.character) {
-      return startB.character - startA.character;
-    }
-    return b.$2 - a.$2;
-  });
+  indexed.sort(_compareBottomToTop);
+  final unique = _collapseDuplicates(indexed);
+  _rejectOverlaps(unique);
+  return unique;
+}
+
+/// Bottom-to-top order for in-place application.
+///
+/// Equal start positions tiebreak by original array index descending so
+/// that, applied bottom-up, inserts at the same position land in array
+/// order (per the LSP spec the array order defines the result order).
+int _compareBottomToTop((LspTextEdit, int) a, (LspTextEdit, int) b) {
+  final startA = a.$1.range.start;
+  final startB = b.$1.range.start;
+  if (startA.line != startB.line) return startB.line - startA.line;
+  if (startA.character != startB.character) {
+    return startB.character - startA.character;
+  }
+  return b.$2 - a.$2;
+}
+
+/// Collapses byte-identical non-empty range edits (idempotent, so duplicate
+/// server output is dropped before overlap validation).
+List<LspTextEdit> _collapseDuplicates(List<(LspTextEdit, int)> indexed) {
   final unique = <LspTextEdit>[];
   for (final (edit, _) in indexed) {
     final prev = unique.isEmpty ? null : unique.last;
@@ -60,9 +75,13 @@ List<LspTextEdit> sortAndValidateTextEdits(List<LspTextEdit> edits) {
     }
     unique.add(edit);
   }
+  return unique;
+}
 
-  // In reverse-sorted order, each edit's start must be >= the next edit's
-  // end, or the edits would clobber each other once applied bottom-up.
+/// Throws [StateError] on overlap: in reverse-sorted order, each edit's
+/// start must be >= the next edit's end, or the edits would clobber each
+/// other once applied bottom-up.
+void _rejectOverlaps(List<LspTextEdit> unique) {
   for (var i = 0; i < unique.length - 1; i++) {
     final later = unique[i].range;
     final earlier = unique[i + 1].range;
@@ -73,7 +92,6 @@ List<LspTextEdit> sortAndValidateTextEdits(List<LspTextEdit> edits) {
       );
     }
   }
-  return unique;
 }
 
 /// Applies [edits] to [content] in-memory, bottom-to-top (omp's
@@ -141,19 +159,7 @@ Future<List<LspAppliedChange>> applyWorkspaceEdit(
   LspWorkspaceEdit edit, {
   Map<String, int> openFileVersions = const {},
 }) async {
-  // Version guard (up front, before any read or write).
-  for (final entry in edit.documentVersions.entries) {
-    final serverVersion = entry.value;
-    if (serverVersion == null) continue;
-    final tracked = openFileVersions[entry.key];
-    if (tracked != null && tracked != serverVersion) {
-      throw StateError(
-        'stale LSP edit for ${formatPathRelativeToCwd(uriToFile(entry.key), env.cwd)}: '
-        'server computed it at document version $serverVersion but the '
-        'document is now at version $tracked; re-run the request',
-      );
-    }
-  }
+  _guardVersions(env, edit, openFileVersions);
 
   // Phase 1: validate and compute new contents without writing anything.
   final planned = <String, String>{};
@@ -182,4 +188,28 @@ Future<List<LspAppliedChange>> applyWorkspaceEdit(
     );
   }
   return applied;
+}
+
+/// Version guard (up front, before any read or write): when the server's
+/// `documentChanges` advertised a non-null `textDocument.version` for a URI
+/// and [openFileVersions] tracks that URI at a different version, the edit
+/// is stale (the document moved since the server computed it) and
+/// application is rejected.
+void _guardVersions(
+  ExecutionEnv env,
+  LspWorkspaceEdit edit,
+  Map<String, int> openFileVersions,
+) {
+  for (final entry in edit.documentVersions.entries) {
+    final serverVersion = entry.value;
+    if (serverVersion == null) continue;
+    final tracked = openFileVersions[entry.key];
+    if (tracked != null && tracked != serverVersion) {
+      throw StateError(
+        'stale LSP edit for ${formatPathRelativeToCwd(uriToFile(entry.key), env.cwd)}: '
+        'server computed it at document version $serverVersion but the '
+        'document is now at version $tracked; re-run the request',
+      );
+    }
+  }
 }

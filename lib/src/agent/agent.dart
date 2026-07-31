@@ -468,6 +468,19 @@ class Agent {
   /// is considered idle later, after all awaited listeners for `agent_end`
   /// finish and [_finishRun] clears runtime-owned state (pi semantics).
   Future<void> _processEvent(AgentEvent event) async {
+    _reduceState(event);
+
+    final token = _activeRun?.source.token;
+    if (token == null) {
+      throw StateError('Agent listener invoked outside active run');
+    }
+    for (final listener in List.of(_listeners)) {
+      await listener(event, token);
+    }
+  }
+
+  /// Folds the message-lifecycle and turn events into [_state].
+  void _reduceState(AgentEvent event) {
     switch (event) {
       case MessageStartEvent(:final message):
         _state._streamingMessage = message;
@@ -476,26 +489,31 @@ class Agent {
       case MessageEndEvent(:final message):
         _state._streamingMessage = null;
         _state._messages.add(message);
+      case TurnEndEvent(:final message):
+        _recordTurnError(message);
+      case AgentEndEvent():
+        _state._streamingMessage = null;
+      default:
+        _reduceToolCallState(event);
+    }
+  }
+
+  /// Tracks pending tool calls from the tool-execution lifecycle events.
+  void _reduceToolCallState(AgentEvent event) {
+    switch (event) {
       case ToolExecutionStartEvent(:final toolCallId):
         _state._pendingToolCalls.add(toolCallId);
       case ToolExecutionEndEvent(:final toolCallId):
         _state._pendingToolCalls.remove(toolCallId);
-      case TurnEndEvent(:final message):
-        if (message case AssistantMessage(:final errorMessage?)) {
-          _state._errorMessage = errorMessage;
-        }
-      case AgentEndEvent():
-        _state._streamingMessage = null;
       default:
         break;
     }
+  }
 
-    final token = _activeRun?.source.token;
-    if (token == null) {
-      throw StateError('Agent listener invoked outside active run');
-    }
-    for (final listener in List.of(_listeners)) {
-      await listener(event, token);
+  /// Remembers the turn's error message when the turn ended in failure.
+  void _recordTurnError(AssistantMessage message) {
+    if (message case AssistantMessage(:final errorMessage?)) {
+      _state._errorMessage = errorMessage;
     }
   }
 }

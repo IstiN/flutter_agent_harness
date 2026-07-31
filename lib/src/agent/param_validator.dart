@@ -140,18 +140,15 @@ void _validateDeclaredProperty(
 
   final hasValue = arguments.containsKey(name) && arguments[name] != null;
   if (!hasValue) {
-    final hasNullType = _schemaTypes(schemaMap).contains('null');
-    if (arguments.containsKey(name) && hasNullType) {
-      validated[name] = null;
-      return;
-    }
-    if (schemaMap.containsKey('default')) {
-      validated[name] = schemaMap['default'];
-      return;
-    }
-    if (requiredNames.contains(name)) {
-      errors.add('$propertyPath: missing required parameter');
-    }
+    _validateMissingValue(
+      name,
+      schemaMap,
+      arguments,
+      requiredNames,
+      propertyPath,
+      validated,
+      errors,
+    );
     return;
   }
 
@@ -163,6 +160,32 @@ void _validateDeclaredProperty(
   );
   if (value case _Valid(:final coerced)) {
     validated[name] = coerced;
+  }
+}
+
+/// Handles a declared property that is absent or explicitly `null`: explicit
+/// `null` against a nullable schema, `default` injection, or the required
+/// violation.
+void _validateMissingValue(
+  String name,
+  Map<String, dynamic> schemaMap,
+  Map<String, dynamic> arguments,
+  Set<String> requiredNames,
+  String propertyPath,
+  Map<String, dynamic> validated,
+  List<String> errors,
+) {
+  final hasNullType = _schemaTypes(schemaMap).contains('null');
+  if (arguments.containsKey(name) && hasNullType) {
+    validated[name] = null;
+    return;
+  }
+  if (schemaMap.containsKey('default')) {
+    validated[name] = schemaMap['default'];
+    return;
+  }
+  if (requiredNames.contains(name)) {
+    errors.add('$propertyPath: missing required parameter');
   }
 }
 
@@ -226,45 +249,83 @@ _ValueOutcome _validateValue(
 ) {
   final types = _schemaTypes(schema);
 
-  Object? coerced = value;
-  if (types.isNotEmpty && !types.any((type) => _matchesType(value, type))) {
-    for (final type in types) {
-      final candidate = _coercePrimitive(value, type);
-      if (candidate case _Valid(coerced: final coercedValue)) {
-        if (_matchesType(coercedValue, type)) {
-          value = coercedValue;
-          coerced = coercedValue;
-          break;
-        }
-      }
-    }
-    if (!types.any((type) => _matchesType(value, type))) {
-      errors.add(
-        '$path: expected ${_typeLabel(types)}, got ${_describe(value)}',
-      );
-      return const _Invalid();
-    }
-  }
+  final typed = _coerceToDeclaredTypes(value, types, path, errors);
+  if (typed == null) return const _Invalid();
+  var (currentValue, coerced) = typed;
 
   // Normalize integral doubles for `integer` schemas (JSON decodes `42.0`
   // as a double; tools expect an int).
   if (coerced is double && types.contains('integer')) {
     final asInt = coerced.toInt();
-    value = asInt;
+    currentValue = asInt;
     coerced = asInt;
   }
 
+  coerced = _validateNested(currentValue, coerced, schema, path, errors);
+
+  return _checkEnum(coerced, schema, path, errors);
+}
+
+/// Coerces [value] to one of the declared [types] when none match directly.
+/// Returns the (possibly coerced) value pair, or `null` after recording the
+/// type violation in [errors] when no coercion succeeds.
+(Object?, Object?)? _coerceToDeclaredTypes(
+  Object? value,
+  List<String> types,
+  String path,
+  List<String> errors,
+) {
+  if (types.isEmpty || types.any((type) => _matchesType(value, type))) {
+    return (value, value);
+  }
+  Object? coerced = value;
+  for (final type in types) {
+    final candidate = _coercePrimitive(value, type);
+    if (candidate case _Valid(coerced: final coercedValue)) {
+      if (_matchesType(coercedValue, type)) {
+        value = coercedValue;
+        coerced = coercedValue;
+        break;
+      }
+    }
+  }
+  if (!types.any((type) => _matchesType(value, type))) {
+    errors.add('$path: expected ${_typeLabel(types)}, got ${_describe(value)}');
+    return null;
+  }
+  return (value, coerced);
+}
+
+/// Recurses into `object`/`array` values, returning the validated structure;
+/// scalar values keep [coerced] unchanged.
+Object? _validateNested(
+  Object? value,
+  Object? coerced,
+  Map<String, dynamic> schema,
+  String path,
+  List<String> errors,
+) {
   if (_matchesType(value, 'object')) {
-    coerced = _validateObject(
+    return _validateObject(
       (value! as Map).cast<String, dynamic>(),
       schema,
       path,
       errors,
     );
   } else if (_matchesType(value, 'array')) {
-    coerced = _validateArray(value! as List, schema, path, errors);
+    return _validateArray(value! as List, schema, path, errors);
   }
+  return coerced;
+}
 
+/// Enforces the schema's `enum` (checked *after* coercion, so `"1"` matches
+/// `[1, 2]`).
+_ValueOutcome _checkEnum(
+  Object? coerced,
+  Map<String, dynamic> schema,
+  String path,
+  List<String> errors,
+) {
   final enumValues = schema['enum'];
   if (enumValues is List && enumValues.isNotEmpty) {
     if (!enumValues.any((allowed) => _enumEquals(allowed, coerced))) {
@@ -275,7 +336,6 @@ _ValueOutcome _validateValue(
       return const _Invalid();
     }
   }
-
   return _Valid(coerced);
 }
 
@@ -356,7 +416,12 @@ _ValueOutcome _coerceToInteger(Object? value) {
     return const _Invalid();
   }
   if (value is bool) return _Valid(value ? 1 : 0);
-  if (value is String && value.trim().isNotEmpty) {
+  if (value is String) return _coerceStringToInteger(value);
+  return const _Invalid();
+}
+
+_ValueOutcome _coerceStringToInteger(String value) {
+  if (value.trim().isNotEmpty) {
     final parsed = num.tryParse(value);
     if (parsed != null && parsed == parsed.roundToDouble()) {
       return _Valid(parsed.toInt());

@@ -197,6 +197,7 @@ class AgentService extends ChangeNotifier {
     ExecutionEnv? env,
     SessionKeysStore? sessionKeys,
     ProviderRegistry? providerRegistry,
+    @visibleForTesting StreamFunction? streamFunction,
   }) async {
     final resolvedEnv = env ?? await createPlatformEnv();
     final secretsStore = createSecretsStore();
@@ -239,6 +240,7 @@ class AgentService extends ChangeNotifier {
       sessionKeys: sessionKeys,
       config: config,
       redactor: redactor,
+      streamFunction: streamFunction,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
       initialApprovalMode: savedApprovalMode,
       approvalModeStore: approvalModeStore,
@@ -1303,19 +1305,6 @@ class AgentService extends ChangeNotifier {
           // it from the banner now that it is in the live transcript.
           final text = _userMessageText(message);
           if (text != null) pendingSteerTexts.remove(text);
-          notifyListeners();
-        } else if (message is ToolResultMessage) {
-          final text = message.content
-              .whereType<TextContent>()
-              .map((b) => b.text)
-              .join('\n');
-          messages.add(
-            FahChatMessage(
-              role: 'tool',
-              content: text,
-              toolName: message.toolName,
-            ),
-          );
           notifyListeners();
         } else if (message is AssistantMessage) {
           _finalizeAssistant(message);

@@ -96,18 +96,22 @@ Future<String> _transcribe(
       '${response.body.trim()}',
     );
   }
+  return _transcriptFromBody(response.body);
+}
 
-  // `response_format=json` answers `{"text": "..."}`; whisper.cpp variants may
-  // answer with the bare transcript, so fall back to the raw body.
+/// Extracts the transcript from a 200 response body. `response_format=json`
+/// answers `{"text": "..."}`; whisper.cpp variants may answer with the bare
+/// transcript, so fall back to the raw body.
+String _transcriptFromBody(String body) {
   try {
-    final decoded = jsonDecode(response.body);
+    final decoded = jsonDecode(body);
     if (decoded is Map<String, dynamic> && decoded['text'] is String) {
       return (decoded['text'] as String).trim();
     }
   } on FormatException {
     // Not JSON: fall through to the raw body.
   }
-  return response.body.trim();
+  return body.trim();
 }
 
 /// Creates the `transcribe_audio` tool.

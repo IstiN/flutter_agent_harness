@@ -194,28 +194,35 @@ final class JsonlSessionRepo implements SessionRepo {
         : await _listSessionDirs();
     final sessions = <SessionMetadata>[];
     for (final dir in dirs) {
-      final exists = _fsOrThrow(
-        await _fs.exists(dir),
-        'Failed to check session directory $dir',
-      );
-      if (!exists) continue;
-      final files = _fsOrThrow(
-        await _fs.listDir(dir),
-        'Failed to list sessions in $dir',
-      );
-      for (final file in files) {
-        if (file.kind == FileKind.directory || !file.name.endsWith('.jsonl')) {
-          continue;
-        }
-        try {
-          sessions.add(await loadJsonlSessionMetadata(_fs, file.path));
-        } on SessionException catch (error) {
-          if (error.code != SessionErrorCode.invalidSession) rethrow;
-        }
-      }
+      await _collectDirSessions(dir, sessions);
     }
     sessions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return sessions;
+  }
+
+  Future<void> _collectDirSessions(
+    String dir,
+    List<SessionMetadata> sessions,
+  ) async {
+    final exists = _fsOrThrow(
+      await _fs.exists(dir),
+      'Failed to check session directory $dir',
+    );
+    if (!exists) return;
+    final files = _fsOrThrow(
+      await _fs.listDir(dir),
+      'Failed to list sessions in $dir',
+    );
+    for (final file in files) {
+      if (file.kind == FileKind.directory || !file.name.endsWith('.jsonl')) {
+        continue;
+      }
+      try {
+        sessions.add(await loadJsonlSessionMetadata(_fs, file.path));
+      } on SessionException catch (error) {
+        if (error.code != SessionErrorCode.invalidSession) rethrow;
+      }
+    }
   }
 
   @override

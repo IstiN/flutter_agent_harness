@@ -61,7 +61,10 @@ import '../web_search/web_search.dart';
 // of the root library get a no-op stub with the same host-facing API.
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
 import 'prompt_templates.dart';
+import 'ask_menu.dart';
 import 'slash_menu.dart';
+import 'task_list.dart';
+import 'text_format.dart';
 import 'tui_helpers.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
@@ -781,6 +784,36 @@ class AgentCli {
 
   /// Runs the REPL until `/exit` or the input stream closes.
   Future<void> run() async {
+    await _loadAgentContext();
+    _session = await _initializeSession();
+    final interruptSub = io.interrupts.listen((_) {
+      if (isBusy) _agent.abort();
+    });
+    final taskSub = _taskConfig.jobManager.completions.listen(
+      _onTaskJobCompleted,
+    );
+    try {
+      if (_useTui) {
+        // The TUI prints the banner itself into its output history (buffered
+        // by the controller until the program's event loop is listening).
+        await _runTuiRepl();
+      } else {
+        await _runLineRepl();
+      }
+    } finally {
+      // Input ended (EOF) or the REPL is shutting down: never leave a tool
+      // call waiting on an answer that cannot arrive.
+      _cancelPendingAnswers();
+      await interruptSub.cancel();
+      await taskSub.cancel();
+      await _settled;
+    }
+    await printSessionResumeHint();
+  }
+
+  /// Loads prompt templates, skills, and project context files, then applies
+  /// the prompt composition.
+  Future<void> _loadAgentContext() async {
     _templates = await loadPromptTemplates(
       config.env,
       config.promptTemplateDirs,
@@ -801,52 +834,40 @@ class AgentCli {
           : '${config.homeDir}/.fah/AGENTS.md',
     );
     _applyPromptComposition();
-    _session = await _initializeSession();
-    final interruptSub = io.interrupts.listen((_) {
-      if (isBusy) _agent.abort();
-    });
-    final taskSub = _taskConfig.jobManager.completions.listen(
-      _onTaskJobCompleted,
-    );
-    try {
-      if (_useTui) {
-        // The TUI prints the banner itself into its output history (buffered
-        // by the controller until the program's event loop is listening).
-        await _runTuiRepl();
-      } else {
-        await _printBanner();
-        final resumedLabel = await _resumedSessionLabel();
-        if (resumedLabel != null) {
-          _replayRestoredHistory(_agent.state.messages, resumedLabel);
-        }
-        _writeIdlePrompt();
-        final lineIterator = StreamIterator<String>(io.lines);
-        while (await lineIterator.moveNext()) {
-          var line = lineIterator.current;
-          if (line.trim() == '/') {
-            final choice = await _showLineModeMenu(lineIterator);
-            if (choice != null) line = choice;
-          }
-          await _handleLine(line);
-          if (_exited) break;
-          // No idle prompt while a guided flow owns input: its questions
-          // would interleave with the status bar, and each answered prompt
-          // would print a redundant one.
-          if (!isBusy && !_providerFlowActive) _writeIdlePrompt();
-        }
-      }
-    } finally {
-      // Input ended (EOF) or the REPL is shutting down: never leave a tool
-      // call waiting on an answer that cannot arrive.
-      _pendingApprovalAnswer?.complete('n');
-      _pendingApprovalAnswer = null;
-      _pendingAskAnswer?.complete(null);
-      _pendingAskAnswer = null;
-      await interruptSub.cancel();
-      await taskSub.cancel();
-      await _settled;
+  }
+
+  /// Answers any pending approval/ask prompt defensively so a tool call
+  /// never waits on an answer that cannot arrive.
+  void _cancelPendingAnswers() {
+    _pendingApprovalAnswer?.complete('n');
+    _pendingApprovalAnswer = null;
+    _pendingAskAnswer?.complete(null);
+    _pendingAskAnswer = null;
+  }
+
+  /// The line-mode REPL: banner, restored-session replay, then the
+  /// read-dispatch loop.
+  Future<void> _runLineRepl() async {
+    await _printBanner();
+    final resumedLabel = await _resumedSessionLabel();
+    if (resumedLabel != null) {
+      _replayRestoredHistory(_agent.state.messages, resumedLabel);
     }
-    await printSessionResumeHint();
+    _writeIdlePrompt();
+    final lineIterator = StreamIterator<String>(io.lines);
+    while (await lineIterator.moveNext()) {
+      var line = lineIterator.current;
+      if (line.trim() == '/') {
+        final choice = await _showLineModeMenu(lineIterator);
+        if (choice != null) line = choice;
+      }
+      await _handleLine(line);
+      if (_exited) break;
+      // No idle prompt while a guided flow owns input: its questions
+      // would interleave with the status bar, and each answered prompt
+      // would print a redundant one.
+      if (!isBusy && !_providerFlowActive) _writeIdlePrompt();
+    }
   }
 
   /// After an interactive run ends, prints the command that picks this
@@ -865,8 +886,7 @@ class AgentCli {
   Future<void> _runTuiRepl() async {
     final controller = _createTuiController();
     _tuiController = controller;
-    final tuiIo = io;
-    if (tuiIo is _TuiCliIO) tuiIo._tui = controller;
+    _setTuiIo(controller);
 
     // The banner is part of the TUI output history so it stays visible above
     // the input line inside the alternate screen.
@@ -878,8 +898,15 @@ class AgentCli {
     unawaited(_refreshModelCache());
 
     await controller.run();
-    if (tuiIo is _TuiCliIO) tuiIo._tui = null;
+    _setTuiIo(null);
     _tuiController = null;
+  }
+
+  /// Routes [io]'s output through the TUI controller while it runs (null
+  /// detaches after the run).
+  void _setTuiIo(FaTuiController? controller) {
+    final tuiIo = io;
+    if (tuiIo is _TuiCliIO) tuiIo._tui = controller;
   }
 
   /// Wires the TUI controller's callbacks to the line handler, pickers, and
@@ -909,15 +936,18 @@ class AgentCli {
         }.contains(key),
         onPickerSelected: _tuiPickerSelected,
         onPickerCancelled: _tuiPickerCancelled,
-        onSteer: (messages) async {
-          for (final message in messages) {
-            _agent.steer(UserMessage.text(message));
-          }
-        },
+        onSteer: _steerTuiMessages,
       ),
       isExited: () => _exited,
     );
     return controller;
+  }
+
+  /// Steers every queued TUI message into the running agent.
+  Future<void> _steerTuiMessages(List<String> messages) async {
+    for (final message in messages) {
+      _agent.steer(UserMessage.text(message));
+    }
   }
 
   /// Replays the transcript when the TUI opens on a restored session.
@@ -963,24 +993,19 @@ class AgentCli {
   /// discards the queue instead of starting new work.
   Future<void> _drainTuiQueue(FaTuiController controller) => drainQueueRounds(
     drain: controller.drainQueue,
-    runRound: _drainTuiRound,
+    runRound: (queued) => runQueuedTurns(
+      queued: queued,
+      handle: _handleLine,
+      settled: () => _settled,
+      abortRequested: () => _abortRequested,
+    ),
     abortRequested: () => _abortRequested,
     onDropped: () => io.writeln('queued message(s) dropped'),
   );
 
-  /// One drain round: every queued message as its own turn, stopping early
-  /// when an Esc abort discards the rest of the queue.
-  Future<void> _drainTuiRound(List<String> queued) async {
-    for (final msg in queued) {
-      await _handleLine(msg);
-      await _settled;
-      if (_abortRequested) break;
-    }
-  }
-
   List<MenuItem> _buildSlashMenu(String prefix) => buildSlashMenuItems(
     prefix,
-    slashCommands: _slashCommands,
+    slashCommands: builtinSlashCommands,
     pluginSlashCommands: _pluginSlashCommands,
     templates: _templates,
   );
@@ -1006,14 +1031,25 @@ class AgentCli {
   /// = dismissed with Esc); returns whether a wizard was waiting.
   bool _completeWizardPicker(String pickerId, String? key) {
     final wizard = _wizardPickerAnswer;
-    if (wizard == null || !pickerId.startsWith('wizard:')) return false;
-    _finishWizardPicker(wizard, key);
+    if (wizard == null) return false;
+    return _finishWizardPicker(pickerId, key, wizard);
+  }
+
+  /// Resolves a waiting wizard picker and clears the pending answer;
+  /// returns whether [pickerId] is a wizard picker.
+  bool _finishWizardPicker(
+    String pickerId,
+    String? key,
+    Completer<String?> wizard,
+  ) {
+    if (!pickerId.startsWith('wizard:')) return false;
+    _resolveWizard(wizard, key);
     return true;
   }
 
-  /// Resolves [wizard] (defensively no-op when already completed) and clears
-  /// the pending answer.
-  void _finishWizardPicker(Completer<String?> wizard, String? key) {
+  /// Completes [wizard] (defensively no-op when already completed) and
+  /// clears the pending answer.
+  void _resolveWizard(Completer<String?> wizard, String? key) {
     if (!wizard.isCompleted) wizard.complete(key);
     _wizardPickerAnswer = null;
   }
@@ -1036,6 +1072,12 @@ class AgentCli {
       _startProviderFlow();
       return;
     }
+    await _tuiPickCatalogOrSaved(key);
+  }
+
+  /// A non-`custom` provider-picker selection: a saved entry or a catalog
+  /// provider name.
+  Future<void> _tuiPickCatalogOrSaved(String key) async {
     if (key.startsWith('saved:')) {
       await _tuiPickSavedProvider(key.substring('saved:'.length));
       return;
@@ -1081,21 +1123,27 @@ class AgentCli {
     final current = await _session?.getMetadata();
     final items = <MenuItem>[];
     for (var i = 0; i < sessions.length; i++) {
-      final metadata = sessions[i];
-      final session = await _repo.open(metadata);
-      final name = await session.getSessionName();
-      final label = name ?? metadata.id;
-      final marker = current?.path == metadata.path ? ' (current)' : '';
-      items.add(
-        MenuItem(
-          key: '$i',
-          label: '${i + 1}) $label',
-          description:
-              '${metadata.createdAt.toLocal().toIso8601String()}$marker',
-        ),
-      );
+      items.add(await _sessionPickerItem(i, sessions[i], current));
     }
     return items;
+  }
+
+  /// One numbered sessions-picker row, marked when it is the active
+  /// session.
+  Future<MenuItem> _sessionPickerItem(
+    int i,
+    SessionMetadata metadata,
+    SessionMetadata? current,
+  ) async {
+    final session = await _repo.open(metadata);
+    final name = await session.getSessionName();
+    final label = name ?? metadata.id;
+    final marker = current?.path == metadata.path ? ' (current)' : '';
+    return MenuItem(
+      key: '$i',
+      label: '${i + 1}) $label',
+      description: '${metadata.createdAt.toLocal().toIso8601String()}$marker',
+    );
   }
 
   void _openModePicker() {
@@ -1212,82 +1260,22 @@ class AgentCli {
   }
 
   /// Replays a restored session's transcript into the output so a resume
-  /// doesn't look empty: compact per-message rows (user/assistant/tool
-  /// calls, each capped to a couple of rows) filling a row budget from the
-  /// END — a typical session replays in full, only marathon ones truncate
-  /// (the header says so). Consecutive tool-call-only assistant messages
-  /// collapse into a single `[name] [name]` row: they dominated the tail
-  /// with zero recap value.
+  /// doesn't look empty: compact per-message rows filling a row budget from
+  /// the END (see [buildReplayEntries] — a typical session replays in full,
+  /// only marathon ones truncate, and the header says so).
   void _replayRestoredHistory(List<Message> messages, String label) {
     if (messages.isEmpty) return;
     // Below the TUI history cap (200 lines) so the replay never trims its
     // own head in TUI mode.
-    const rowBudget = 190;
-    const maxRowsPerMessage = 2;
-    const maxCollapsedCalls = 12;
-    final entries = <List<String>>[];
-    final pendingCalls = <String>[];
-    var pendingFirstIndex = messages.length;
-    var rows = 0;
-    var firstIndex = messages.length;
-
-    List<String>? flushPendingCalls() {
-      if (pendingCalls.isEmpty) return null;
-      final names = pendingCalls.length > maxCollapsedCalls
-          ? [...pendingCalls.sublist(0, maxCollapsedCalls), '…']
-          : List.of(pendingCalls);
-      pendingCalls.clear();
-      firstIndex = pendingFirstIndex;
-      final joined = names.join(' ');
-      // TUI: a dim indicator row like the live tool indicators; line mode:
-      // the compact fa:-prefixed row.
-      return [_useTui ? _style.dim(joined) : 'fa:  $joined'];
-    }
-
-    for (var i = messages.length - 1; i >= 0; i--) {
-      final message = messages[i];
-      if (message is ToolResultMessage) {
-        // Tool results never render in the replay, and they must NOT break
-        // a collapsing run of tool-call-only assistant messages (a run is
-        // assistant(calls), result, assistant(calls), result, ...).
-        firstIndex = i;
-        continue;
-      }
-      if (_isToolCallOnlyAssistant(message)) {
-        final content = (message as AssistantMessage).content;
-        pendingCalls.insertAll(0, [
-          for (final c in content.whereType<ToolCall>()) '[${c.name}]',
-        ]);
-        pendingFirstIndex = i;
-        continue;
-      }
-      final entry = _useTui
-          ? _replayLinesTui(message)
-          : _replayLines(message, maxRowsPerMessage);
-      if (entry.isNotEmpty &&
-          entries.isNotEmpty &&
-          rows + entry.length > rowBudget) {
-        break;
-      }
-      final flushed = flushPendingCalls();
-      if (flushed != null) {
-        entries.insert(0, flushed);
-        rows += flushed.length;
-      }
-      if (entry.isEmpty) continue;
-      entries.insert(0, entry);
-      rows += entry.length;
-      firstIndex = i;
-    }
-    final flushed = flushPendingCalls();
-    if (flushed != null) {
-      entries.insert(0, flushed);
-      rows += flushed.length;
-    }
-
-    final skipped = firstIndex;
-    final count = skipped > 0
-        ? 'last ${messages.length - skipped} of ${messages.length}'
+    final width = io.columns > 0 ? io.columns : 80;
+    final (entries, firstIndex) = buildReplayEntries(
+      messages,
+      tui: _useTui,
+      width: width,
+      dim: _style.dim,
+    );
+    final count = firstIndex > 0
+        ? 'last ${messages.length - firstIndex} of ${messages.length}'
         : '${messages.length}';
     io.writeln(_style.dim('─── restored session: $label ($count messages)'));
     for (final entry in entries) {
@@ -1297,30 +1285,6 @@ class AgentCli {
     }
     io.writeln(_style.dim('─' * 20));
   }
-
-  /// Whether a message is an assistant turn carrying ONLY tool calls (no
-  /// text) — the replay collapses runs of these into one row.
-  bool _isToolCallOnlyAssistant(Message message) {
-    if (message is! AssistantMessage) return false;
-    final hasText = message.content.whereType<TextContent>().any(
-      (b) => b.text.trim().isNotEmpty,
-    );
-    if (hasText) return false;
-    return message.content.whereType<ToolCall>().isNotEmpty;
-  }
-
-  /// TUI-mode replay entry in the ACTIVE session's format — see
-  /// [replayLinesTui]; the width follows the terminal and dimming the CLI
-  /// style.
-  List<String> _replayLinesTui(Message message) => replayLinesTui(
-    message,
-    width: io.columns > 0 ? io.columns : 80,
-    dim: _style.dim,
-  );
-
-  /// One compact replay entry (≤ [maxRows] rows) — see [replayLines].
-  List<String> _replayLines(Message message, int maxRows) =>
-      replayLines(message, maxRows: maxRows);
 
   /// `/resume`: switches to the most recently created session for the
   /// current directory (the repo lists sessions newest-first).
@@ -1511,11 +1475,13 @@ class AgentCli {
   /// Key status when an explicit token or saved-entry key is in play.
   String _explicitTokenKeyStatus(Model model) {
     final entryKey = _activeCustomKeyName();
-    if (entryKey != null && config.secureKeys?.read(entryKey) != null) {
-      return 'key: $entryKey';
-    }
+    if (_hasStoredKey(entryKey)) return 'key: $entryKey';
     return _scopedTokenKeyStatus(model);
   }
+
+  /// Whether [name] names a key present in the secure store.
+  bool _hasStoredKey(String? name) =>
+      name != null && config.secureKeys?.read(name) != null;
 
   /// Key status fallback for an explicit token: the host-scoped store slot,
   /// or the anonymous "provided" marker.
@@ -1536,24 +1502,43 @@ class AgentCli {
     List<String> names,
   ) {
     final keys = config.secureKeys;
-    for (final name in names) {
-      final value = config.envVarValue?.call(name);
-      if (value != null && value.isNotEmpty && value != keys?.read(name)) {
-        return 'key: $name';
-      }
-    }
+    final envKey = _envKeyStatus(names);
+    if (envKey != null) return envKey;
     final entryKey = _activeCustomKeyName();
     if (entryKey != null && keys?.read(entryKey) != null) {
       return 'key: $entryKey';
     }
     final scopedName = CustomProviderRegistry.keyNameFor(model.baseUrl);
     if (keys?.read(scopedName) != null) return 'key: $scopedName';
+    return _fallbackKeyStatus(model, spec, names);
+  }
+
+  /// Key status fallback: any legacy env-name entry, else the "no key set"
+  /// guidance (null for non-default endpoints without a key).
+  String? _fallbackKeyStatus(
+    Model model,
+    ProviderSpec? spec,
+    List<String> names,
+  ) {
     final set = names
         .where((name) => config.envVarIsSet?.call(name) ?? false)
         .firstOrNull;
     if (set != null) return 'key: $set';
     if (spec != null && model.baseUrl != spec.defaultBaseUrl) return null;
     return 'key: no key set (want ${names.first})';
+  }
+
+  /// The first env-name holding a genuine environment value (differs from
+  /// the store's entry), as a `key: <name>` status, or null.
+  String? _envKeyStatus(List<String> names) {
+    final keys = config.secureKeys;
+    for (final name in names) {
+      final value = config.envVarValue?.call(name);
+      if (value != null && value.isNotEmpty && value != keys?.read(name)) {
+        return 'key: $name';
+      }
+    }
+    return null;
   }
 
   /// The active saved custom provider's secure-store key name, or null when
@@ -1615,45 +1600,41 @@ class AgentCli {
     if (names == null || names.isEmpty) {
       return ' — check the credentials for $baseUrl';
     }
-    final keys = config.secureKeys;
     final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
     // A genuine environment key in play: warn when it shadows a different
     // same-name store entry, else name it as the source.
-    final envActive = names.where((name) {
-      final value = config.envVarValue?.call(name);
-      return value != null && value.isNotEmpty && value != keys?.read(name);
-    }).firstOrNull;
-    if (envActive != null) {
-      final storedTwin = keys?.read(envActive);
-      if (storedTwin != null && storedTwin.isNotEmpty) {
-        final label = keys?.label ?? 'secure store';
-        return ' — the environment variable $envActive shadows a DIFFERENT '
-            'key in the $label; the env value is the one sent — fix or '
-            'unset it, or /key delete $envActive';
-      }
-      return ' — the key came from the environment ($envActive); verify it '
-          'is valid for $baseUrl or replace it with '
-          '/key set $envActive <value>';
-    }
+    final envHint = _envActiveHint(names, baseUrl);
+    if (envHint != null) return envHint;
     // Endpoint-scoped store key (what /provider and the wizard write): the
     // active custom entry's name-scoped slot first, then the host-scoped
     // one.
     final entryKey = _activeCustomKeyName();
     final scoped = entryKey ?? scopedName;
-    if (keys?.read(scoped) != null) {
-      final label = keys?.label ?? 'secure store';
-      return ' — the key came from the $label ($scoped); verify it is '
-          'valid for $baseUrl or replace it with /key set $scoped <value>';
-    }
+    final storedHint = _storedKeyHint(scoped, baseUrl);
+    if (storedHint != null) return storedHint;
     // Legacy env-name store key (older versions wrote these).
     final legacy = names
         .where((name) => (config.envVarValue?.call(name) ?? '').isNotEmpty)
         .firstOrNull;
-    if (legacy != null) {
-      final label = keys?.label ?? 'secure store';
-      return ' — the key came from the $label ($legacy); verify it is valid '
-          'for $baseUrl or replace it with /key set $legacy <value>';
-    }
+    if (legacy != null) return _storeHintMessage(legacy, baseUrl);
+    return _noKeyHint(entryKey, baseUrl, spec, scopedName, names);
+  }
+
+  /// The hint naming a secure-store key as the source.
+  String _storeHintMessage(String name, String baseUrl) {
+    final label = config.secureKeys?.label ?? 'secure store';
+    return ' — the key came from the $label ($name); verify it is valid '
+        'for $baseUrl or replace it with /key set $name <value>';
+  }
+
+  /// The fallback hint when no key resolved (or the token was rejected).
+  String _noKeyHint(
+    String? entryKey,
+    String baseUrl,
+    ProviderSpec? spec,
+    String scopedName,
+    List<String> names,
+  ) {
     final suggested =
         entryKey ??
         (baseUrl != spec?.defaultBaseUrl ? scopedName : names.first);
@@ -1663,29 +1644,49 @@ class AgentCli {
         : ' — no key set; store one with /key set $suggested <value>';
   }
 
+  /// The hint for a genuine environment key, or null when none is in play.
+  String? _envActiveHint(List<String> names, String baseUrl) {
+    final envActive = _activeEnvKeyName(names);
+    if (envActive == null) return null;
+    return _envKeyHint(envActive, baseUrl);
+  }
+
+  /// The first env-name holding a genuine environment key (differs from the
+  /// same-name store entry), or null.
+  String? _activeEnvKeyName(List<String> names) {
+    final keys = config.secureKeys;
+    return names.where((name) {
+      final value = config.envVarValue?.call(name);
+      return value != null && value.isNotEmpty && value != keys?.read(name);
+    }).firstOrNull;
+  }
+
+  /// The hint for a genuine environment key: the shadowing warning when a
+  /// DIFFERENT same-name store entry exists, else the source note.
+  String _envKeyHint(String envActive, String baseUrl) {
+    final keys = config.secureKeys;
+    final storedTwin = keys?.read(envActive);
+    if (storedTwin != null && storedTwin.isNotEmpty) {
+      final label = keys?.label ?? 'secure store';
+      return ' — the environment variable $envActive shadows a DIFFERENT '
+          'key in the $label; the env value is the one sent — fix or '
+          'unset it, or /key delete $envActive';
+    }
+    return ' — the key came from the environment ($envActive); verify it '
+        'is valid for $baseUrl or replace it with '
+        '/key set $envActive <value>';
+  }
+
+  /// The hint for a key read from the secure store, or null when the slot is
+  /// empty.
+  String? _storedKeyHint(String name, String baseUrl) {
+    if (config.secureKeys?.read(name) == null) return null;
+    return _storeHintMessage(name, baseUrl);
+  }
+
   Future<void> _handleLine(String line) async {
     final trimmed = line.trim();
-    // An ask question waiting for input owns the next line — including
-    // empty ones (empty input switches the menu to free-text entry).
-    final pendingAsk = _pendingAskAnswer;
-    if (pendingAsk != null && !pendingAsk.isCompleted) {
-      pendingAsk.complete(trimmed);
-      return;
-    }
-    // A guided flow (custom provider setup) owns input while active: lines
-    // complete its pending prompt — including empty ones (the key step's
-    // "none" affordance) — or buffer for the next prompt, because piped
-    // input outruns the flow's async gaps (a buffered answer must never
-    // leak into a run).
-    if (_providerFlowActive) {
-      final pendingPrompt = _pendingPromptAnswer;
-      if (pendingPrompt != null && !pendingPrompt.isCompleted) {
-        pendingPrompt.complete(trimmed);
-      } else {
-        _promptLineBuffer.add(trimmed);
-      }
-      return;
-    }
+    if (_routePendingInput(trimmed)) return;
     if (trimmed.isEmpty) return;
     // A tool call waiting on an approval decision owns the next input line;
     // it must not be steered into the agent as a user message.
@@ -1700,24 +1701,53 @@ class AgentCli {
       return;
     }
     await _settled;
+    await _dispatchInput(line, trimmed);
+  }
+
+  /// Routes input owned by a pending prompt (ask question, guided provider
+  /// flow — including empty lines, which buffer or complete the pending
+  /// answer). Returns whether the line was consumed.
+  bool _routePendingInput(String trimmed) {
+    final pendingAsk = _pendingAskAnswer;
+    if (pendingAsk != null && !pendingAsk.isCompleted) {
+      pendingAsk.complete(trimmed);
+      return true;
+    }
+    if (_providerFlowActive) {
+      final pendingPrompt = _pendingPromptAnswer;
+      if (pendingPrompt != null && !pendingPrompt.isCompleted) {
+        pendingPrompt.complete(trimmed);
+      } else {
+        _promptLineBuffer.add(trimmed);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /// Settled, non-empty input: a shell command, a skill invocation, a slash
+  /// command, or a prompt for the agent.
+  Future<void> _dispatchInput(String line, String trimmed) async {
     if (trimmed.startsWith('!')) {
       await _runShellCommand(trimmed.substring(1));
-    } else if (trimmed.startsWith('/skill:')) {
-      await _runSkillCommand(trimmed.substring('/skill:'.length));
-    } else if (trimmed.startsWith('/')) {
-      await _handleCommand(trimmed);
-    } else {
-      _startRun(line);
+      return;
     }
+    if (trimmed.startsWith('/skill:')) {
+      await _runSkillCommand(trimmed.substring('/skill:'.length));
+      return;
+    }
+    if (trimmed.startsWith('/')) {
+      await _handleCommand(trimmed);
+      return;
+    }
+    _startRun(line);
   }
 
   /// `/skill:<name> [args]` — explicit skill invocation (kimi's slash
   /// runner): the skill body is injected as the user message, with the args
   /// appended as the actual request.
   Future<void> _runSkillCommand(String rest) async {
-    final splitAt = rest.indexOf(RegExp(r'\s'));
-    final name = (splitAt < 0 ? rest : rest.substring(0, splitAt)).trim();
-    final args = splitAt < 0 ? '' : rest.substring(splitAt).trim();
+    final (name, args) = _parseSkillInvocation(rest);
     final skill = _skills
         .where((s) => s.name.toLowerCase() == name.toLowerCase())
         .firstOrNull;
@@ -1740,6 +1770,14 @@ class AgentCli {
     } else {
       _startRun(message);
     }
+  }
+
+  /// Splits `/skill:<name> [args]` into the skill name and its args.
+  (String, String) _parseSkillInvocation(String rest) {
+    final splitAt = rest.indexOf(RegExp(r'\s'));
+    final name = (splitAt < 0 ? rest : rest.substring(0, splitAt)).trim();
+    final args = splitAt < 0 ? '' : rest.substring(splitAt).trim();
+    return (name, args);
   }
 
   /// Reads a skill file and strips its YAML frontmatter.
@@ -1894,9 +1932,15 @@ class AgentCli {
     await _handleUnknownCommand(trimmed, command, rest);
   }
 
-  /// Info/session-lifecycle commands without a TUI picker variant. Returns
-  /// whether [command] was handled.
+  /// Info commands without a TUI picker variant. Returns whether [command]
+  /// was handled.
   Future<bool> _handleInfoCommand(String command, String rest) async {
+    if (_handleInfoCommandBasic(command, rest)) return true;
+    return _handleInfoCommandSession(command, rest);
+  }
+
+  /// `/exit`, `/help`, `/stats`, `/tasks`, `/skills`.
+  bool _handleInfoCommandBasic(String command, String rest) {
     switch (command) {
       case '/exit':
         io.writeln('bye');
@@ -1909,6 +1953,15 @@ class AgentCli {
         _listTaskJobs(rest);
       case '/skills':
         _listSkills();
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  /// `/allow`, `/reset`, `/compact`.
+  Future<bool> _handleInfoCommandSession(String command, String rest) async {
+    switch (command) {
       case '/allow':
         _handleAllow(rest);
       case '/reset':
@@ -1936,11 +1989,7 @@ class AgentCli {
       case '/model-edit':
         _handleModelEdit(rest);
       case '/provider':
-        if (rest.isEmpty && _useTui && _tuiController != null) {
-          _openProviderPicker();
-        } else {
-          await _handleProviderCommand(rest);
-        }
+        await _providerSlash(rest);
       case '/provider-edit':
         _startProviderEditFlow();
       case '/key':
@@ -1951,6 +2000,16 @@ class AgentCli {
     return true;
   }
 
+  /// `/provider`: a bare command opens the TUI picker; anything else goes to
+  /// the provider command handler.
+  Future<void> _providerSlash(String rest) async {
+    if (rest.isEmpty && _useTui && _tuiController != null) {
+      _openProviderPicker();
+    } else {
+      await _handleProviderCommand(rest);
+    }
+  }
+
   /// Session switching/naming commands. Returns whether [command] was
   /// handled.
   Future<bool> _handleSessionSwitchCommand(String command, String rest) async {
@@ -1958,25 +2017,13 @@ class AgentCli {
       case '/sessions':
         // In the TUI a bare /sessions opens the picker (same as /models);
         // with an argument or in line mode it prints the list.
-        if (rest.isEmpty && _useTui && _tuiController != null) {
-          await _openSessionsPicker();
-        } else {
-          await _listSessions();
-        }
+        await _sessionsSlash(rest);
       case '/session':
         await _handleSessionCommand(rest);
       case '/session-new':
-        if (rest.trim().isEmpty) {
-          io.writeln('usage: /session-new <name>');
-        } else {
-          await _createNamedSession(rest.trim());
-        }
+        await _namedSessionSlash(rest, 'session-new', _createNamedSession);
       case '/rename-session':
-        if (rest.trim().isEmpty) {
-          io.writeln('usage: /rename-session <name>');
-        } else {
-          await _renameSession(rest.trim());
-        }
+        await _namedSessionSlash(rest, 'rename-session', _renameSession);
       case '/resume':
         await _resumeLastSession();
       default:
@@ -1985,27 +2032,62 @@ class AgentCli {
     return true;
   }
 
+  /// `/sessions`: a bare command opens the TUI picker; anything else prints
+  /// the session list.
+  Future<void> _sessionsSlash(String rest) async {
+    if (rest.isEmpty && _useTui && _tuiController != null) {
+      await _openSessionsPicker();
+    } else {
+      await _listSessions();
+    }
+  }
+
+  /// A `/session-new`-style command requiring a name argument.
+  Future<void> _namedSessionSlash(
+    String rest,
+    String command,
+    Future<void> Function(String) action,
+  ) async {
+    if (rest.trim().isEmpty) {
+      io.writeln('usage: /$command <name>');
+    } else {
+      await action(rest.trim());
+    }
+  }
+
   /// Mode and approval commands. Returns whether [command] was handled.
   Future<bool> _handleModeCommand(String command, String rest) async {
     switch (command) {
       case '/mode':
-        if (rest.isEmpty && _useTui && _tuiController != null) {
-          _openModePicker();
-        } else {
-          await _handleMode(rest);
-        }
+        await _modeSlash(rest);
       case '/approval':
-        if (rest.isEmpty && _useTui && _tuiController != null) {
-          _openApprovalPicker();
-        } else {
-          _handleApprovalMode(rest);
-        }
+        _approvalSlash(rest);
       case '/code' || '/architect' || '/review':
         await _switchMode(command.substring(1));
       default:
         return false;
     }
     return true;
+  }
+
+  /// `/mode`: a bare command opens the TUI picker; anything else goes to the
+  /// mode handler.
+  Future<void> _modeSlash(String rest) async {
+    if (rest.isEmpty && _useTui && _tuiController != null) {
+      _openModePicker();
+    } else {
+      await _handleMode(rest);
+    }
+  }
+
+  /// `/approval`: a bare command opens the TUI picker; anything else sets
+  /// the approval mode.
+  void _approvalSlash(String rest) {
+    if (rest.isEmpty && _useTui && _tuiController != null) {
+      _openApprovalPicker();
+    } else {
+      _handleApprovalMode(rest);
+    }
   }
 
   /// Anything that is not a builtin command: a plugin slash command, a
@@ -2027,7 +2109,7 @@ class AgentCli {
     }
     // Unknown slash command: treat it as a filter for the command menu.
     if (trimmed.startsWith('/') && trimmed.length > 1) {
-      _printSlashMenu(trimmed);
+      _printHelp(filter: trimmed.substring(1));
       return;
     }
     io.writeln('unknown command: $command (try /help)');
@@ -2071,7 +2153,7 @@ class AgentCli {
     io.writeln('[approval] ${request.reason}');
     io.writeln(
       '[approval] tool: ${request.toolName} (${request.tier.name} tier) — '
-      '${_formatArgs(request.arguments)}',
+      '${formatArgs(request.arguments)}',
     );
     io.writeln(
       '[approval] allow? [y]es once / [n]o / [a]lways for '
@@ -2169,19 +2251,11 @@ class AgentCli {
     return _askSelectOption(question);
   }
 
-  /// The question header and numbered option list (recommended flagged).
+  /// The question header and numbered option list (recommended flagged) —
+  /// the lines come from [askQuestionLines].
   void _printAskQuestion(AskQuestion question, int index, int total) {
-    final progress = total > 1 ? ' (${index + 1}/$total)' : '';
-    io.writeln('[ask] ${question.question}$progress');
-    for (var i = 0; i < question.options.length; i++) {
-      final option = question.options[i];
-      final description = option.description?.trim();
-      final suffix = question.recommended == i ? ' (Recommended)' : '';
-      io.writeln(
-        '[ask]   ${i + 1}) ${option.label}'
-        '${description == null || description.isEmpty ? '' : ' — $description'}'
-        '$suffix',
-      );
+    for (final line in askQuestionLines(question, index, total)) {
+      io.writeln(line);
     }
   }
 
@@ -2195,13 +2269,29 @@ class AgentCli {
       if (question.multiSelect && line.toLowerCase() == 'm') {
         return _askMultiSelect(question);
       }
-      final number = int.tryParse(line);
-      if (number == null) return AskAnswer.text(line);
-      if (number >= 1 && number <= question.options.length) {
-        return AskAnswer.selection([question.options[number - 1].label]);
-      }
-      io.writeln('[ask] no option $number — try again');
+      final parsed = _parseOptionAnswer(question, line);
+      if (parsed.answer != null) return parsed.answer;
+      io.writeln('[ask] no option ${parsed.number} — try again');
     }
+  }
+
+  /// Parses one select-loop line: a valid number becomes a selection, a
+  /// non-number becomes free text, and an out-of-range number comes back as
+  /// ([AskAnswer?].answer = null, number) so the loop can complain and
+  /// retry.
+  ({AskAnswer? answer, int? number}) _parseOptionAnswer(
+    AskQuestion question,
+    String line,
+  ) {
+    final number = int.tryParse(line);
+    if (number == null) return (answer: AskAnswer.text(line), number: null);
+    if (number >= 1 && number <= question.options.length) {
+      return (
+        answer: AskAnswer.selection([question.options[number - 1].label]),
+        number: number,
+      );
+    }
+    return (answer: null, number: number);
   }
 
   /// The multi-select toggle loop: numbers toggle options, `d` (or empty
@@ -2210,37 +2300,50 @@ class AgentCli {
   Future<AskAnswer?> _askMultiSelect(AskQuestion question) async {
     final selected = <int>{};
     while (true) {
-      final picked = selected.isEmpty
-          ? '-'
-          : (selected.toList()..sort()).map((i) => '${i + 1}').join(', ');
       io.writeln(
         '[ask] multi-select: numbers toggle, d = done, ! = cancel '
-        '(selected: $picked)',
+        '(selected: ${pickedLabel(selected)})',
       );
       final line = await _nextAskLine();
       if (line == null || line == '!') return null;
       if (line.isEmpty || line.toLowerCase() == 'd') {
-        if (selected.isNotEmpty) {
-          return AskAnswer.selection([
-            for (final i in selected.toList()..sort())
-              question.options[i].label,
-          ]);
-        }
-        return _readFreeTextAnswer();
+        return _finishMultiSelect(question, selected);
       }
-      var invalid = false;
-      for (final part in line.split(RegExp(r'[\s,]+'))) {
-        final number = int.tryParse(part);
-        if (number == null || number < 1 || number > question.options.length) {
-          invalid = true;
-          break;
-        }
-        if (!selected.remove(number - 1)) selected.add(number - 1);
-      }
-      if (invalid) {
+      if (_toggleMultiSelectParts(question, selected, line)) {
         io.writeln('[ask] invalid selection "$line" — try again');
       }
     }
+  }
+
+  /// Done with multi-select: the toggled options as a selection, or
+  /// free-text entry when nothing is selected.
+  Future<AskAnswer?> _finishMultiSelect(
+    AskQuestion question,
+    Set<int> selected,
+  ) async {
+    if (selected.isNotEmpty) {
+      return AskAnswer.selection([
+        for (final i in selected.toList()..sort()) question.options[i].label,
+      ]);
+    }
+    return _readFreeTextAnswer();
+  }
+
+  /// Toggles every number in [line] (space/comma separated). Returns whether
+  /// any part was invalid.
+  bool _toggleMultiSelectParts(
+    AskQuestion question,
+    Set<int> selected,
+    String line,
+  ) {
+    for (final part in line.split(RegExp(r'[\s,]+'))) {
+      final number = int.tryParse(part);
+      if (number == null || number < 1 || number > question.options.length) {
+        return true;
+      }
+      if (!selected.remove(number - 1)) selected.add(number - 1);
+    }
+    return false;
   }
 
   /// Free-text entry for the ask menu; an empty line cancels the whole ask.
@@ -2390,51 +2493,26 @@ class AgentCli {
     }
   }
 
-  static const _slashCommands = <String, String>{
-    '/exit': 'quit',
-    '/reset': 'start a new session',
-    '/compact': 'summarize history to free context',
-    '/stats': 'show token and cost totals',
-    '/tasks': '[cancel <id>] — list background agents',
-    '/skills': 'list discovered skills (invoke with /skill:<name>)',
-    '/model': '<provider/model> — select model (opens selector)',
-    '/models':
-        '[filter] | config | set <slot> <model> [baseUrl] | remove <slot>',
-    '/model-edit':
-        '[contextWindow|maxTokens <n>] — show or override token limits',
-    '/provider': '[name] [baseUrl] [token] | custom — switch provider/endpoint',
-    '/provider-edit': 'edit the active provider via the guided setup',
-    '/mode': '[name] — show or switch the active mode',
-    '/session': '[name] — show current or switch/create a named session',
-    '/session-new': '<name> — create a new named session',
-    '/sessions': 'list named sessions for the current directory',
-    '/resume': 'switch to the most recent session',
-    '/rename-session': '<name> — rename the current session',
-    '/approval': '[mode] — show or set tool approval',
-    '/allow': '[tool] — always-allow a tool (or list them)',
-    '/code': 'switch to coding mode',
-    '/architect': 'switch to architect mode',
-    '/review': 'switch to review mode',
-    '/help': 'this help',
-    '!': '<command> — run a shell command directly',
-  };
-
   /// Prompt-based slash menu for terminals that cannot enter raw/ANSI mode.
   /// Shows a numbered list of commands and reads the user's choice from the
   /// same [lineIterator] that drives the REPL loop.
   Future<String?> _showLineModeMenu(StreamIterator<String> lineIterator) async {
-    final commands = _slashCommands.entries.toList();
-    io.writeln('');
-    io.writeln(_style.bold('[Commands]'));
-    for (var i = 0; i < commands.length; i++) {
-      final entry = commands[i];
-      io.writeln('  ${i + 1}) ${_style.cyan(entry.key)} ${entry.value}');
+    for (final line in lineModeMenuLines(_style)) {
+      io.writeln(line);
     }
-    io.writeln('');
     io.write('Pick a command (number or name), or press Enter to cancel: ');
     if (!await lineIterator.moveNext()) return null;
     final trimmed = lineIterator.current.trim();
     if (trimmed.isEmpty) return null;
+    final choice = _resolveMenuChoice(trimmed);
+    if (choice == null) io.writeln('unknown choice: $trimmed');
+    return choice;
+  }
+
+  /// Resolves a line-mode menu answer: a 1-based number, or a command name
+  /// with or without the leading slash. Null when neither matches.
+  String? _resolveMenuChoice(String trimmed) {
+    final commands = builtinSlashCommands.entries.toList();
     // Numeric choice.
     final index = int.tryParse(trimmed);
     if (index != null && index >= 1 && index <= commands.length) {
@@ -2442,72 +2520,20 @@ class AgentCli {
     }
     // Name choice; accept with or without leading slash.
     final name = trimmed.startsWith('/') ? trimmed : '/$trimmed';
-    if (_slashCommands.containsKey(name)) return name;
-    io.writeln('unknown choice: $trimmed');
+    if (builtinSlashCommands.containsKey(name)) return name;
     return null;
   }
 
+  /// The numbered command list of the line-mode menu.
   void _printHelp({String filter = ''}) {
-    final lower = filter.toLowerCase();
-    final entries = _slashCommands.entries
-        .where(
-          (e) =>
-              e.key.toLowerCase().contains(lower) ||
-              e.value.toLowerCase().contains(lower),
-        )
-        .toList();
-    if (entries.isEmpty) {
-      if (filter.isNotEmpty) {
-        io.writeln('unknown command: /$filter (try /help)');
-      } else {
-        io.writeln('no commands match "$filter"');
-      }
-      return;
+    for (final line in helpLines(
+      filter: filter,
+      pluginSlashCommands: _pluginSlashCommands,
+      templates: _templates,
+      style: _style,
+    )) {
+      io.writeln(line);
     }
-    io.writeln(
-      _style.bold(
-        filter.isEmpty ? '[Commands]' : '[Commands matching "$filter"]',
-      ),
-    );
-    for (final entry in entries) {
-      final name = entry.key.padRight(18);
-      io.writeln('  ${_style.cyan(name)} ${entry.value}');
-    }
-    // Plugin commands, prompt templates, and the steer hint are part of the
-    // full listing only, never of a filtered one.
-    if (filter.isNotEmpty) return;
-    _printHelpExtras();
-  }
-
-  /// The full-listing appendix: plugin commands, prompt templates, and the
-  /// steer hint.
-  void _printHelpExtras() {
-    if (_pluginSlashCommands.isNotEmpty) {
-      io.writeln('');
-      io.writeln(_style.bold('[Plugin commands]'));
-      for (final entry in _pluginSlashCommands.entries) {
-        io.writeln('  ${_style.cyan(entry.key)}');
-      }
-    }
-    if (_templates.isNotEmpty) {
-      io.writeln('');
-      io.writeln(_style.bold('[Prompt templates]'));
-      for (final t in _templates) {
-        final hint = t.argumentHint ?? '';
-        io.writeln('  ${_style.cyan('/${t.name}')} $hint');
-      }
-    }
-    io.writeln('');
-    io.writeln(
-      _style.dim(
-        'While a run streams, type to steer the agent; Ctrl-C aborts.',
-      ),
-    );
-  }
-
-  void _printSlashMenu(String prefix) {
-    final filter = prefix.substring(1);
-    _printHelp(filter: filter);
   }
 
   void _printStats() {
@@ -2596,17 +2622,7 @@ class AgentCli {
         .toList();
     final verb = parts.isEmpty ? '' : parts.first;
     if (verb == 'cancel') {
-      if (parts.length < 2) {
-        io.writeln('usage: /tasks cancel <id>');
-        return;
-      }
-      final job = _taskConfig.jobManager.job(parts[1]);
-      if (job == null) {
-        io.writeln('unknown task job: ${parts[1]}');
-        return;
-      }
-      job.cancel();
-      io.writeln('cancelled ${job.id}');
+      _cancelTaskJob(parts);
       return;
     }
     final jobs = _taskConfig.jobManager.jobs;
@@ -2614,40 +2630,39 @@ class AgentCli {
       io.writeln('no background agents this session');
       return;
     }
-    io.writeln('background agents:');
-    for (final job in jobs) {
-      final marker = switch (job.status) {
-        TaskJobStatus.queued => '○',
-        TaskJobStatus.running => '⠿',
-        TaskJobStatus.completed => '✓',
-        TaskJobStatus.failed || TaskJobStatus.aborted => '✗',
-      };
-      final duration = job.result?.duration;
-      final elapsed = duration == null
-          ? ''
-          : ' ${(duration.inMilliseconds / 1000).toStringAsFixed(1)}s';
-      var task = job.task.replaceAll('\n', ' ');
-      if (task.length > 60) task = '${task.substring(0, 60)}…';
-      io.writeln(
-        '  $marker ${job.id} (${job.agent}) ${job.status.name}$elapsed — '
-        '$task  ${_style.dim('agent://${job.id}')}',
-      );
+    for (final line in taskJobLines(jobs, dim: _style.dim)) {
+      io.writeln(line);
     }
+  }
+
+  /// `/tasks cancel <id>`: aborts the job's child run.
+  void _cancelTaskJob(List<String> parts) {
+    if (parts.length < 2) {
+      io.writeln('usage: /tasks cancel <id>');
+      return;
+    }
+    _cancelTaskJobById(parts[1]);
+  }
+
+  /// Cancels the job named [id], or reports it as unknown.
+  void _cancelTaskJobById(String id) {
+    final job = _taskConfig.jobManager.job(id);
+    if (job == null) {
+      io.writeln('unknown task job: $id');
+      return;
+    }
+    job.cancel();
+    io.writeln('cancelled ${job.id}');
   }
 
   void _onAgentEvent(AgentEvent event, CancelToken cancelToken) {
     switch (event) {
-      case MessageStartEvent(:final message):
-        if (message is AssistantMessage) _assistantPrefixPrinted = false;
+      case MessageStartEvent(:final message) || MessageEndEvent(:final message):
+        _onMessageLifecycle(message, start: event is MessageStartEvent);
       case MessageUpdateEvent(:final assistantMessageEvent):
         _onMessageUpdate(assistantMessageEvent);
-      case MessageEndEvent(:final message):
-        if (message is AssistantMessage) _onAssistantMessageEnd(message);
       case ToolExecutionStartEvent(:final toolName, :final args):
-        io.writeln(
-          '${_style.bold(_style.indigo('[$toolName]'))} '
-          '${_style.dim(_formatArgs(args))}',
-        );
+        _onToolExecutionStart(toolName, args);
       case ToolExecutionEndEvent(
         :final toolName,
         :final result,
@@ -2658,6 +2673,26 @@ class AgentCli {
         _usage.add(message.usage);
       default:
     }
+  }
+
+  /// Message lifecycle for assistant turns: a start re-arms the
+  /// once-per-message prefix; an end flushes the stream and reports the
+  /// stop reason.
+  void _onMessageLifecycle(Message message, {required bool start}) {
+    if (message is! AssistantMessage) return;
+    if (start) {
+      _assistantPrefixPrinted = false;
+      return;
+    }
+    _onAssistantMessageEnd(message);
+  }
+
+  /// Tool call header line: the bold indigo name plus dimmed args.
+  void _onToolExecutionStart(String toolName, Map<String, dynamic> args) {
+    io.writeln(
+      '${_style.bold(_style.indigo('[$toolName]'))} '
+      '${_style.dim(formatArgs(args))}',
+    );
   }
 
   /// Streaming deltas: answer text (with the once-per-message prefix) and —
@@ -2759,23 +2794,5 @@ class AgentCli {
     if (!_useTui || _assistantPrefixPrinted) return;
     io.write('${_style.bold(_style.teal('>_'))}${_style.bold('Fa')} ');
     _assistantPrefixPrinted = true;
-  }
-
-  String _formatArgs(Map<String, dynamic> args) {
-    var formatted = args.entries
-        .map((entry) => '${entry.key}=${_safeJsonEncode(entry.value)}')
-        .join(', ');
-    if (formatted.length > 100) {
-      formatted = '${formatted.substring(0, 100)}...';
-    }
-    return formatted;
-  }
-
-  String _safeJsonEncode(Object? value) {
-    try {
-      return jsonEncode(value);
-    } catch (_) {
-      return '[unserializable]';
-    }
   }
 }

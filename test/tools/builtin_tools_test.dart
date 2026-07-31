@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/tools/builtin_tools.dart' as bt;
 import 'package:image/image.dart';
 import 'package:test/test.dart';
 
@@ -1250,6 +1251,21 @@ void main() {
       );
       expect(result.content.whereType<ImageContent>(), isEmpty);
       expect(_text(result), isEmpty);
+    });
+  });
+
+  group('inline image shrink helpers', () {
+    test('nextShrinkStep shrinks by 0.75 with a floor of 1', () {
+      expect(bt.nextShrinkStep(100, 80), (75, 60));
+      expect(bt.nextShrinkStep(1, 80), (1, 60));
+      expect(bt.nextShrinkStep(2, 2), (1, 1));
+    });
+
+    test('shrinkStepStalls at 1x1 or when the step stops making progress', () {
+      expect(bt.shrinkStepStalls(1, 1, 1, 1), isTrue);
+      expect(bt.shrinkStepStalls(2, 2, 1, 1), isFalse);
+      expect(bt.shrinkStepStalls(1, 5, 1, 3), isFalse);
+      expect(bt.shrinkStepStalls(100, 100, 75, 75), isFalse);
     });
   });
 }

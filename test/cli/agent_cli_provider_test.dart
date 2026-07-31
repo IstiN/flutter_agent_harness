@@ -68,6 +68,46 @@ void main() {
     expect(output, contains('use /provider <name> [baseUrl] [token]'));
   });
 
+  test('/provider lists saved providers and marks the active one', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final registry = CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'my-ollama',
+        apiType: 'openai',
+        baseUrl: 'http://localhost:11434/v1',
+        modelId: 'm2',
+      ),
+      CustomProviderEntry(
+        name: 'other',
+        apiType: 'openai',
+        baseUrl: 'http://localhost:9999/v1',
+        modelId: 'm1',
+      ),
+    ]);
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      customProviders: registry,
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider my-ollama');
+    await waitForIt(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/provider');
+    await waitForIt(() => io.out.toString().contains('saved providers:'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(
+      output,
+      contains('  my-ollama — http://localhost:11434/v1 · m2 (current)'),
+    );
+    expect(output, contains('  other — http://localhost:9999/v1 · m1'));
+  });
+
   test('/provider <name> switches provider, endpoint, and env key', () async {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final changes = <(String, String)>[];

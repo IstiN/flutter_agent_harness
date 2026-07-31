@@ -77,6 +77,55 @@ Model _visionModel(InspectImageConfig config) {
   );
 }
 
+/// Streams the vision request for [config]'s provider kind. Only
+/// `openai-completions` is supported today.
+AssistantMessageEventStream _streamVisionResponse(
+  InspectImageConfig config,
+  Model model,
+  Context context,
+) {
+  switch (config.providerKind) {
+    case 'openai-completions':
+      return streamOpenAICompletions(
+        model,
+        context,
+        OpenAICompletionsOptions(
+          apiKey: config.apiKey,
+          maxTokens: config.maxTokens,
+        ),
+        config.httpClient,
+      );
+    default:
+      throw StateError(
+        'Unsupported inspect_image provider kind: ${config.providerKind}',
+      );
+  }
+}
+
+/// Collects the final assistant text out of a vision event stream; throws on
+/// a stream error.
+Future<String> _collectVisionText(AssistantMessageEventStream stream) async {
+  String? text;
+  String? error;
+  await for (final event in stream) {
+    if (event is TextDeltaEvent || event is DoneEvent) {
+      final message = event.partial;
+      final currentText = message.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      if (currentText.isNotEmpty) text = currentText;
+    } else if (event is ErrorEvent) {
+      error = event.error.errorMessage ?? 'unknown error';
+    }
+  }
+
+  if (error != null) {
+    throw StateError('Vision model error: $error');
+  }
+  return text?.trim() ?? '';
+}
+
 /// Streams a vision request and returns the final assistant text.
 Future<String> _inspectWithVisionModel(
   InspectImageConfig config,
@@ -101,43 +150,8 @@ Future<String> _inspectWithVisionModel(
     ],
   );
 
-  final AssistantMessageEventStream stream;
-  switch (config.providerKind) {
-    case 'openai-completions':
-      stream = streamOpenAICompletions(
-        model,
-        context,
-        OpenAICompletionsOptions(
-          apiKey: config.apiKey,
-          maxTokens: config.maxTokens,
-        ),
-        config.httpClient,
-      );
-    default:
-      throw StateError(
-        'Unsupported inspect_image provider kind: ${config.providerKind}',
-      );
-  }
-
-  String? text;
-  String? error;
-  await for (final event in stream) {
-    if (event is TextDeltaEvent || event is DoneEvent) {
-      final message = event.partial;
-      final currentText = message.content
-          .whereType<TextContent>()
-          .map((b) => b.text)
-          .join();
-      if (currentText.isNotEmpty) text = currentText;
-    } else if (event is ErrorEvent) {
-      error = event.error.errorMessage ?? 'unknown error';
-    }
-  }
-
-  if (error != null) {
-    throw StateError('Vision model error: $error');
-  }
-  return text?.trim() ?? '';
+  final stream = _streamVisionResponse(config, model, context);
+  return _collectVisionText(stream);
 }
 
 /// Creates the `inspect_image` tool.
@@ -199,15 +213,29 @@ AgentTool inspectImageTool(ExecutionEnv env, InspectImageConfig config) {
   );
 }
 
+/// Magic-byte signatures of the image formats the tool claims to support,
+/// checked in order.
+const _imageMagicSignatures = [
+  ('image/png', <int>[0x89, 0x50]),
+  ('image/jpeg', <int>[0xFF, 0xD8]),
+  ('image/gif', <int>[0x47, 0x49, 0x46]),
+  ('image/webp', <int>[0x52, 0x49]), // RIFF
+  ('image/bmp', <int>[0x42, 0x4D]),
+];
+
+/// Whether [bytes] starts with the [magic] signature.
+bool _matchesMagicBytes(Uint8List bytes, List<int> magic) {
+  for (var i = 0; i < magic.length; i++) {
+    if (bytes[i] != magic[i]) return false;
+  }
+  return true;
+}
+
 /// Minimal MIME detection for the image formats the tool claims to support.
 String? _detectImageMimeType(Uint8List bytes) {
   if (bytes.length < 8) return null;
-  if (bytes[0] == 0x89 && bytes[1] == 0x50) return 'image/png';
-  if (bytes[0] == 0xFF && bytes[1] == 0xD8) return 'image/jpeg';
-  if (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46) {
-    return 'image/gif';
+  for (final (mimeType, magic) in _imageMagicSignatures) {
+    if (_matchesMagicBytes(bytes, magic)) return mimeType;
   }
-  if (bytes[0] == 0x52 && bytes[1] == 0x49) return 'image/webp'; // RIFF
-  if (bytes[0] == 0x42 && bytes[1] == 0x4D) return 'image/bmp';
   return null;
 }

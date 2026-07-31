@@ -148,7 +148,17 @@ final class TtsrManager {
   bool addRule(TtsrRule rule) {
     if (!_settings.enabled || !rule.enabled) return false;
     if (_rules.containsKey(rule.name)) return false;
+    final conditions = _compileConditions(rule);
+    if (conditions == null) return false;
+    if (!_checkScopeReachable(rule)) return false;
+    _register(rule, conditions);
+    return true;
+  }
 
+  /// Compiles [rule]'s patterns into conditions, collecting a warning per
+  /// invalid regex (omp: logs and skips). Returns null when no condition
+  /// compiles, in which case the rule is skipped.
+  List<RegExp>? _compileConditions(TtsrRule rule) {
     final conditions = <RegExp>[];
     for (final pattern in rule.patterns) {
       try {
@@ -164,18 +174,23 @@ final class TtsrManager {
       warnings.add(
         'TTSR rule "${rule.name}": no compilable condition, rule skipped',
       );
-      return false;
+      return null;
     }
-    if (!rule.scope.isReachable) {
-      warnings.add(
-        'TTSR rule "${rule.name}": scope excludes all streams, rule skipped',
-      );
-      return false;
-    }
+    return conditions;
+  }
+
+  bool _checkScopeReachable(TtsrRule rule) {
+    if (rule.scope.isReachable) return true;
+    warnings.add(
+      'TTSR rule "${rule.name}": scope excludes all streams, rule skipped',
+    );
+    return false;
+  }
+
+  void _register(TtsrRule rule, List<RegExp> conditions) {
     _rules[rule.name] = _TtsrEntry(rule, conditions);
     if (rule.scope.allowText) _canMatchText = true;
     if (rule.scope.allowThinking) _canMatchThinking = true;
-    return true;
   }
 
   /// Whether [ruleName] may trigger under the repeat policy

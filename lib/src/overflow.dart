@@ -148,36 +148,45 @@ final _nonOverflowPatterns = [
 /// silently in ways that cannot be detected here.
 bool isContextOverflow(AssistantMessage message, {int? contextWindow}) {
   // Case 1: error message patterns.
-  final errorMessage = message.errorMessage;
-  if (message.stopReason == StopReason.error && errorMessage != null) {
-    final isNonOverflow = _nonOverflowPatterns.any(
-      (pattern) => pattern.hasMatch(errorMessage),
-    );
-    if (!isNonOverflow &&
-        _overflowPatterns.any((pattern) => pattern.hasMatch(errorMessage))) {
-      return true;
-    }
-  }
-
+  if (_isErrorOverflow(message)) return true;
+  if (contextWindow == null) return false;
   // Case 2: silent overflow (z.ai style) — successful but usage exceeds
   // the context window.
-  if (contextWindow != null && message.stopReason == StopReason.stop) {
-    final inputTokens = message.usage.input + message.usage.cacheRead;
-    if (inputTokens > contextWindow) {
-      return true;
-    }
-  }
-
+  if (_isSilentOverflow(message, contextWindow)) return true;
   // Case 3: length-stop overflow (Xiaomi MiMo style) — the server truncates
   // oversized input to fit the context window, leaving no room for output.
-  if (contextWindow != null &&
-      message.stopReason == StopReason.length &&
-      message.usage.output == 0) {
-    final inputTokens = message.usage.input + message.usage.cacheRead;
-    if (inputTokens >= contextWindow * 0.99) {
-      return true;
-    }
-  }
+  return _isLengthStopOverflow(message, contextWindow);
+}
 
-  return false;
+/// Case 1: the message failed with an error matching a known overflow
+/// pattern (and no known non-overflow pattern).
+bool _isErrorOverflow(AssistantMessage message) {
+  final errorMessage = message.errorMessage;
+  if (message.stopReason != StopReason.error || errorMessage == null) {
+    return false;
+  }
+  final isNonOverflow = _nonOverflowPatterns.any(
+    (pattern) => pattern.hasMatch(errorMessage),
+  );
+  return !isNonOverflow &&
+      _overflowPatterns.any((pattern) => pattern.hasMatch(errorMessage));
+}
+
+/// Case 2 (z.ai style): the request succeeded but the reported input usage
+/// exceeds [contextWindow].
+bool _isSilentOverflow(AssistantMessage message, int contextWindow) {
+  if (message.stopReason != StopReason.stop) return false;
+  final inputTokens = message.usage.input + message.usage.cacheRead;
+  return inputTokens > contextWindow;
+}
+
+/// Case 3 (Xiaomi MiMo style): the server truncated oversized input to fit
+/// the window, returning length-stop with zero output and input filling the
+/// window (>= 99%).
+bool _isLengthStopOverflow(AssistantMessage message, int contextWindow) {
+  if (message.stopReason != StopReason.length || message.usage.output != 0) {
+    return false;
+  }
+  final inputTokens = message.usage.input + message.usage.cacheRead;
+  return inputTokens >= contextWindow * 0.99;
 }
