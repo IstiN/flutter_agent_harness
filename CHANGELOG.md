@@ -757,4 +757,8 @@
 
 - feat: CRAP green zone (max ≤ 8), app integration tests, tool-dup fix
 
+## 0.1.110
+
+- fix(example): visible run errors, mini last-message strip, iOS-grade drag&drop, weather timeouts
+
 ## Unreleased
