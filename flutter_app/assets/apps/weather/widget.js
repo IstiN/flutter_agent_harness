@@ -7,6 +7,22 @@
   var _inputCity = city;
   var _lastData = null; // last successful payload, kept for theme re-renders
 
+  // The host fetch has no timeout of its own — a hanging request must not
+  // spin the loader forever.
+  function withTimeout(promise, ms, message) {
+    return new Promise(function(resolve, reject) {
+      var done = false;
+      setTimeout(function() {
+        if (!done) { done = true; reject(new Error(message)); }
+      }, ms);
+      promise.then(function(v) {
+        if (!done) { done = true; resolve(v); }
+      }, function(e) {
+        if (!done) { done = true; reject(e); }
+      });
+    });
+  }
+
   function iconForDesc(desc) {
     var d = desc.toLowerCase();
     if (d.indexOf('sun') >= 0 || d.indexOf('clear') >= 0) return '☀️';
@@ -92,7 +108,7 @@
     jsr.render({type:'center',child:{type:'circularProgressIndicator',size:24}});
     try {
       var url = 'https://wttr.in/' + encodeURIComponent(city) + '?format=j1';
-      var data = await jsr.fetchJson(url);
+      var data = await withTimeout(jsr.fetchJson(url), 10000, 'Request timed out');
       var cur = data.current_condition[0];
       var area = data.nearest_area[0];
 

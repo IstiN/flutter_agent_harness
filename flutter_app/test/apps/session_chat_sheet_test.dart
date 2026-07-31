@@ -9,12 +9,14 @@ import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
@@ -102,6 +104,7 @@ class _Harness {
 Future<_Harness> _pumpSheet(
   WidgetTester tester, {
   Map<String, List<FahChatMessage>>? messages,
+  SessionNamesStore? namesStore,
 }) async {
   final env = MemoryExecutionEnv();
   final services = {'sess-a': _fakeService(env), 'sess-b': _fakeService(env)};
@@ -114,7 +117,9 @@ Future<_Harness> _pumpSheet(
       theme: buildFahTheme(),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(body: SessionChatSheet(manager: manager)),
+      home: Scaffold(
+        body: SessionChatSheet(manager: manager, sessionNamesStore: namesStore),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -138,6 +143,12 @@ Future<void> _collapseToIcon(WidgetTester tester) async {
 }
 
 void main() {
+  // Date-derived session titles format through intl — its date symbols are
+  // not compiled in (main.dart loads them for the app locales).
+  setUpAll(() async {
+    await initializeDateFormatting('en');
+  });
+
   group('SessionChatSheet', () {
     testWidgets('starts as the mini bar by default; tap expands the sheet', (
       tester,
@@ -341,6 +352,101 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(_pagerKey), findsNothing);
       expect(find.byKey(_faButtonKey), findsOneWidget);
+    });
+
+    testWidgets('menu: Rename session saves a custom title into the header', (
+      tester,
+    ) async {
+      final namesStore = SessionNamesStore.inMemory();
+      await _pumpSheet(tester, namesStore: namesStore);
+      await _expand(tester);
+      expect(find.text('session sess-b'), findsOneWidget);
+
+      await tester.tap(find.byKey(_menuKey));
+      await tester.pumpAndSettle();
+      expect(find.text('Rename session'), findsOneWidget);
+      await tester.tap(find.text('Rename session'));
+      await tester.pumpAndSettle();
+
+      // The shared rename dialog (same as the sidebar's): empty prefilled
+      // field with the derived name as the hint.
+      final dialogField = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      );
+      expect(find.text('Rename session'), findsOneWidget);
+      expect(tester.widget<TextField>(dialogField).controller!.text, '');
+      await tester.enterText(dialogField, 'Dice rolling');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      // The header updates live through the store.
+      expect(namesStore.titleFor('sess-b'), 'Dice rolling');
+      expect(find.text('Dice rolling'), findsOneWidget);
+      expect(find.text('session sess-b'), findsNothing);
+    });
+
+    testWidgets('menu: Rename Clear restores the derived name', (tester) async {
+      final namesStore = SessionNamesStore.inMemory({'sess-b': 'Dice rolling'});
+      await _pumpSheet(tester, namesStore: namesStore);
+      await _expand(tester);
+      expect(find.text('Dice rolling'), findsOneWidget);
+
+      await tester.tap(find.byKey(_menuKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rename session'));
+      await tester.pumpAndSettle();
+      // Reopening prefills the custom title.
+      final dialogField = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      );
+      expect(
+        tester.widget<TextField>(dialogField).controller!.text,
+        'Dice rolling',
+      );
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+
+      expect(namesStore.titleFor('sess-b'), isNull);
+      expect(find.text('session sess-b'), findsOneWidget);
+    });
+
+    testWidgets('the header derives a date-based title from the session '
+        'creation time when it is reachable', (tester) async {
+      // A session persisted on disk carries its creation time in the file
+      // header (runAsync: session setup needs the real event loop).
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env);
+      addTearDown(service.dispose);
+      late final String sessionId;
+      await tester.runAsync(() async {
+        await service.initialize();
+        sessionId = service.currentSessionId!;
+      });
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession(sessionId, service);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _expand(tester);
+
+      // "Jul 31 12:30" — intl month-day + 24h time, no `session <id8>`
+      // anywhere.
+      final dateTitle = RegExp(r'^\w{3}\.? \d{1,2},? \d{2}:\d{2}$');
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is Text && w.data != null && dateTitle.hasMatch(w.data!),
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('session '), findsNothing);
     });
 
     testWidgets('pull-down collapses: sheet → mini bar → round icon', (

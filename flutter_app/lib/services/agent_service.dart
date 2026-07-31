@@ -1451,8 +1451,23 @@ class AgentService extends ChangeNotifier {
           : thinkingTarget.content;
     }
     _currentThinkingMessage = null;
-    if (message.stopReason case StopReason.error || StopReason.aborted) {
-      error = message.errorMessage ?? 'Run failed (${message.stopReason.name})';
+    if (message.stopReason == StopReason.error) {
+      // A failed run must be VISIBLE: an error tile in the transcript
+      // (the shared renderer styles it), not just the banner field —
+      // otherwise a dead key silently looks like "no answer".
+      final text =
+          message.errorMessage ?? 'Run failed (${StopReason.error.name})';
+      error = text;
+      messages.add(
+        FahChatMessage(
+          role: 'tool',
+          content: text,
+          toolName: 'error',
+          isError: true,
+        ),
+      );
+    } else if (message.stopReason == StopReason.aborted) {
+      error = message.errorMessage ?? 'Run aborted';
     }
     notifyListeners();
   }

@@ -6,6 +6,33 @@ import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:intl/intl.dart';
+
+import 'package:fa/l10n/l10n_ext.dart';
+
+/// The fallback session title shown when the user gave no custom name: a
+/// localized date+time derived from the session's creation time ("31 Jul
+/// 12:30" en / "31 июля 12:30" ru — month names come from intl, never
+/// hand-translated), or the legacy `session <id8>` when the creation time
+/// is not reachable (live sessions never persisted yet, tests).
+String derivedSessionTitle(
+  BuildContext context, {
+  required String id,
+  DateTime? createdAt,
+}) {
+  final id8 = id.length > 8 ? id.substring(0, 8) : id;
+  final created = createdAt;
+  if (created == null) return context.l10n.sidebarSessionTitle(id8);
+  try {
+    return DateFormat.MMMd(
+      context.l10n.localeName,
+    ).add_Hm().format(created.toLocal());
+  } on Object {
+    // Locale date symbols not initialized — degrade to the id8 name, never
+    // crash the row.
+    return context.l10n.sidebarSessionTitle(id8);
+  }
+}
 
 /// User-given titles for chat sessions, persisted as JSON at
 /// `session_names.json` in the root of the sandbox filesystem
@@ -15,8 +42,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 ///
 /// The session repository (`JsonlSessionRepo`) has no header-update API, so
 /// renames live in this app-side overlay keyed by session id; sessions
-/// without an entry keep their derived `session <id8>` name. Renaming with
-/// an empty title clears the entry.
+/// without an entry keep their derived name (see [derivedSessionTitle]).
+/// Renaming with an empty title clears the entry.
 ///
 /// Written on every [rename]; read once at load. A missing, unreadable, or
 /// corrupt file yields an empty store (never crashes boot).

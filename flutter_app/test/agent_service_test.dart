@@ -438,6 +438,31 @@ void main() {
       expect(service.error, contains('provider exploded'));
     });
 
+    test(
+      'a failed turn ALSO lands as an error tile in the transcript',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_errorStream('provider exploded')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('boom');
+        await service.waitForIdle();
+
+        // Not just the banner field: an isError tool message the shared
+        // renderer styles as an error tile (in the sheet too, which has no
+        // banner — a dead key must never look like "no answer").
+        final errors = service.messages.where((m) => m.isError).toList();
+        expect(errors, hasLength(1));
+        expect(errors.single.role, 'tool');
+        expect(errors.single.toolName, 'error');
+        expect(errors.single.content, contains('provider exploded'));
+      },
+    );
+
     test('tool calls and results are surfaced as distinct messages', () async {
       final env = MemoryExecutionEnv();
       final echoTool = AgentTool(

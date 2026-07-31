@@ -31,6 +31,7 @@ import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:fa/sandbox/wasm_setup_stub.dart'
     if (dart.library.io) 'package:fa/sandbox/wasm_setup_io.dart';
@@ -97,6 +98,11 @@ Future<void> main() async {
   }
   AppAnalytics.installFirebase(analytics);
   AppAnalytics.instance.appStart(analyticsAvailable: analytics != null);
+  // intl date symbols for the app locales — DateFormat (derived session
+  // titles) only ships en_US data compiled in; the rest must be loaded.
+  for (final locale in AppLocalizations.supportedLocales) {
+    await initializeDateFormatting(locale.languageCode);
+  }
   debugPrint('[fah] starting runApp');
   runApp(
     MyApp(

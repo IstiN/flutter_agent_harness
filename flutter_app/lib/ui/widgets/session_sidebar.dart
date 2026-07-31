@@ -18,6 +18,7 @@ import 'package:fa/ui/widgets/model_mark.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
 /// Width of the left sidebar (model picker + sessions) — side panel on wide
@@ -73,6 +74,10 @@ class SessionSidebarState extends State<SessionSidebar> {
 
   /// Sessions persisted on disk but not open in the manager yet.
   List<SessionMetadata> _persisted = const [];
+
+  /// Session id → creation time from the last listing, driving the
+  /// date-based derived titles (see [derivedSessionTitle]).
+  Map<String, DateTime> _createdAtById = const {};
 
   /// JS apps discovered in the env's `apps/` folder (`null` = not loaded).
   List<JsAppInfo>? _apps;
@@ -140,6 +145,7 @@ class SessionSidebarState extends State<SessionSidebar> {
           for (final m in persisted)
             if (!liveIds.contains(m.id)) m,
         ];
+        _createdAtById = {for (final m in persisted) m.id: m.createdAt};
         _loadError = null;
       });
     } on Object catch (e) {
@@ -310,30 +316,25 @@ class SessionSidebarState extends State<SessionSidebar> {
   }
 
   /// The displayed title for a session: the user-given one when set, else
-  /// the derived `session <id8>` name.
+  /// the derived date-based (or `session <id8>`) name.
   String _sessionTitle(String sessionId) =>
       _namesStore?.titleFor(sessionId) ??
-      context.l10n.sidebarSessionTitle(sessionId.substring(0, 8));
+      derivedSessionTitle(
+        context,
+        id: sessionId,
+        createdAt: _createdAtById[sessionId],
+      );
 
   /// Opens the rename dialog for a session row (Save / Clear / Cancel).
   Future<void> _renameSession(String sessionId) async {
     final store = _namesStore;
     if (store == null) return;
-    final action = await showDialog<String>(
-      context: context,
-      builder: (_) => _RenameSessionDialog(
-        initialTitle: store.titleFor(sessionId) ?? '',
-        derivedName: context.l10n.sidebarSessionTitle(
-          sessionId.substring(0, 8),
-        ),
-      ),
+    await showRenameSessionDialog(
+      context,
+      store: store,
+      sessionId: sessionId,
+      createdAt: _createdAtById[sessionId],
     );
-    if (action == null || !mounted) return;
-    if (action == _RenameSessionDialog.clearAction) {
-      await store.rename(sessionId);
-    } else {
-      await store.rename(sessionId, action);
-    }
   }
 
   /// The per-row trailing actions: rename (once the titles store is
@@ -688,74 +689,4 @@ class SessionSidebarState extends State<SessionSidebar> {
       onTap: () => _open(session),
     );
   }
-}
-
-/// The rename dialog opened from a session row: a prefilled name field with
-/// Save / Clear / Cancel. Pops with the entered title, [clearAction] for
-/// Clear, or `null` when cancelled. An empty Save also clears (handled by
-/// [SessionNamesStore.rename]).
-class _RenameSessionDialog extends StatefulWidget {
-  const _RenameSessionDialog({
-    required this.initialTitle,
-    required this.derivedName,
-  });
-
-  /// Sentinel pop result for the Clear action.
-  static const clearAction = '\u{0}clear';
-
-  /// The current custom title (empty when the row shows the derived name).
-  final String initialTitle;
-
-  /// The fallback name shown as the field hint (`session <id8>`).
-  final String derivedName;
-
-  @override
-  State<_RenameSessionDialog> createState() => _RenameSessionDialogState();
-}
-
-class _RenameSessionDialogState extends State<_RenameSessionDialog> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.initialTitle,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(context.l10n.sidebarRenameDialogTitle),
-      content: TextField(
-        controller: _controller,
-        decoration: InputDecoration(
-          labelText: context.l10n.sidebarRenameNameLabel,
-          hintText: widget.derivedName,
-          helperText: context.l10n.sidebarRenameHint,
-        ),
-        autocorrect: false,
-        autofocus: true,
-        onSubmitted: _save,
-      ),
-      actions: [
-        TextButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_RenameSessionDialog.clearAction),
-          child: Text(context.l10n.sidebarRenameClear),
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.l10n.sidebarCancel),
-        ),
-        FilledButton(
-          onPressed: () => _save(_controller.text),
-          child: Text(context.l10n.settingsSaveButton),
-        ),
-      ],
-    );
-  }
-
-  void _save(String value) => Navigator.of(context).pop(value.trim());
 }

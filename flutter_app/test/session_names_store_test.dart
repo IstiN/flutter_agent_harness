@@ -2,9 +2,13 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -77,6 +81,75 @@ void main() {
       final again = await SessionNamesStore.load(env);
       expect(again.titleFor('session-one'), isNull);
       expect(again.titleFor('session-two'), 'Second chat');
+    });
+  });
+
+  group('derivedSessionTitle', () {
+    setUpAll(() async {
+      // Date symbols are not compiled into intl — load them like main.dart
+      // does for the supported locales.
+      await initializeDateFormatting('en');
+      await initializeDateFormatting('ru');
+    });
+
+    /// Pumps a bare probe widget at [locale] and returns the derived title.
+    Future<String> probe(
+      WidgetTester tester, {
+      Locale locale = const Locale('en'),
+      String id = 'abcdef123456',
+      DateTime? createdAt,
+    }) async {
+      String? title;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: locale,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) {
+              title = derivedSessionTitle(
+                context,
+                id: id,
+                createdAt: createdAt,
+              );
+              return const SizedBox();
+            },
+          ),
+        ),
+      );
+      return title!;
+    }
+
+    testWidgets('no creation time falls back to `session <id8>`', (
+      tester,
+    ) async {
+      expect(await probe(tester), 'session abcdef12');
+      expect(await probe(tester, id: 'short'), 'session short');
+    });
+
+    testWidgets('creation time formats as a localized date+time', (
+      tester,
+    ) async {
+      final created = DateTime(2026, 7, 31, 12, 30);
+      final title = await probe(tester, createdAt: created);
+      expect(title, DateFormat.MMMd('en').add_Hm().format(created));
+      // NOT the id8 fallback.
+      expect(title, isNot(contains('abcdef12')));
+      expect(title, contains('12:30'));
+    });
+
+    testWidgets('Russian month names come from intl', (tester) async {
+      final created = DateTime(2026, 7, 31, 12, 30);
+      final title = await probe(
+        tester,
+        locale: const Locale('ru'),
+        createdAt: created,
+      );
+      expect(title, DateFormat.MMMd('ru').add_Hm().format(created));
+      expect(title, contains('31'));
+      expect(title, contains('12:30'));
+      // NOT the id8 fallback.
+      expect(title, isNot(contains('abcdef12')));
     });
   });
 }

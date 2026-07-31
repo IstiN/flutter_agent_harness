@@ -8,6 +8,8 @@ import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
@@ -54,6 +56,12 @@ AgentService _fakeService(ExecutionEnv env) {
 }
 
 void main() {
+  // The derived tile title formats through intl — date symbols are not
+  // compiled in (main.dart loads them for the app locales).
+  setUpAll(() async {
+    await initializeDateFormatting('en');
+  });
+
   testWidgets('persisted sessions from previous runs are listed and openable', (
     tester,
   ) async {
@@ -78,9 +86,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The disk session shows up under "On this device".
+    // The disk session shows up under "On this device" with its derived
+    // date-based title (createdAt comes from the session file header).
     expect(find.text('On this device'), findsOneWidget);
-    final tile = find.text('session ${oldMetadata.id.substring(0, 8)}');
+    final tile = find.text(
+      DateFormat.MMMd('en').add_Hm().format(oldMetadata.createdAt.toLocal()),
+    );
     expect(tile, findsOneWidget);
 
     // Tapping opens it in the manager.

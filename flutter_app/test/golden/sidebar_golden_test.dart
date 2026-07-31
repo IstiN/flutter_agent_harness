@@ -23,6 +23,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'golden_test_helper.dart';
 
@@ -99,19 +100,38 @@ void _mockBundledAppAssets() {
       });
 }
 
+/// Rewrites the session file header timestamp to a FIXED local time so the
+/// date-derived tile title is deterministic in snapshots (goldens must not
+/// depend on the run date — same trick as `_ageSession` in
+/// `session_reuse_test.dart`).
+Future<void> _pinSessionCreatedAt(
+  ExecutionEnv env,
+  SessionMetadata metadata,
+) async {
+  final content = (await env.readTextFile(metadata.path)).getOrThrow();
+  final lines = content.split('\n');
+  final header = jsonDecode(lines.first) as Map<String, dynamic>;
+  header['timestamp'] = DateTime(2026, 7, 14, 10, 24).toIso8601String();
+  lines[0] = jsonEncode(header);
+  (await env.writeFile(metadata.path, lines.join('\n'))).getOrThrow();
+}
+
 /// A manager with two live sessions (fixed ids — the tiles render the first
 /// 8 chars) and one persisted session on disk from a "previous run". The
 /// active session carries a fixed conversation so the chat panel next to
 /// the sidebar looks real.
 Future<FlutterSessionManager> _populatedManager(ExecutionEnv env) async {
   final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-  await repo.create(
+  final restored = await repo.create(
     JsonlSessionCreateOptions(
       id: 'c0ffee01-restored-chat',
       cwd: 'openai-completions',
       metadata: const {'agent': 'fa', 'model': 'old-model'},
     ),
   );
+  // The persisted tile derives its title from the file-header creation time
+  // — pin it so the snapshot never depends on the run date ("14 Jul 10:24").
+  await _pinSessionCreatedAt(env, await restored.getMetadata());
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   manager.addSession('aaa00001-first-chat', _fakeService(env));
   manager.addSession('bbb00002-second-chat', _fakeService(env));
@@ -184,17 +204,24 @@ Future<void> _settleSidebar(WidgetTester tester) async {
     await tester.pump();
   }
   await tester.pumpAndSettle();
-  // Sanity: every section rendered before the snapshot.
+  // Sanity: every section rendered before the snapshot. The persisted
+  // session shows its date-derived title (createdAt pinned by
+  // `_pinSessionCreatedAt`), so assert its locale-independent model
+  // subtitle instead of the title.
   expect(find.text('test-model'), findsWidgets);
   expect(find.textContaining('aaa00001'), findsOneWidget);
   expect(find.textContaining('bbb00002'), findsOneWidget);
-  expect(find.textContaining('c0ffee01'), findsOneWidget);
+  expect(find.text('old-model'), findsOneWidget);
   expect(find.text('Calculator'), findsOneWidget);
 }
 
 void main() {
   setUpAll(() async {
     await ensureGoldenFonts();
+    // intl date symbols for the date-derived persisted-session titles
+    // (main.dart loads them for the app locales).
+    await initializeDateFormatting('en');
+    await initializeDateFormatting('ru');
     // MaterialIcons ships in the test asset bundle (FontManifest) but
     // flutter_test never registers it with the engine — without this every
     // icon renders as a hollow square.

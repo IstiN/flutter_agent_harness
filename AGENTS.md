@@ -179,8 +179,9 @@ factual: paths, commands, invariants — no essays.
   sheet over the launcher (FaChatOverlay pattern/constants): collapsed =
   floating Fa button bottom-right (the `FaWorkBar` takes its place while
   streaming); expanded = 92% sheet with drag-handle header (session title
-  via `SessionNamesStore`, 3-dots menu: New session / Open full chat /
-  Collapse), a horizontal PageView over `manager.sessions` wired to
+  via `SessionNamesStore`, 3-dots menu: New session / Rename session /
+  Open full chat / Collapse — Rename opens the same shared rename dialog
+  as the sidebar), a horizontal PageView over `manager.sessions` wired to
   `manager.switchTo`, `FaWorkBar(embedded:)`, and the shared
   `ChatMessageTile` transcript + `ChatComposer`. Pull-down (48px / 300px/s)
   collapses.
@@ -324,8 +325,16 @@ factual: paths, commands, invariants — no essays.
 - `flutter_app/lib/services/session_names_store.dart` — user-given session
   titles (`session_names.json` envelope in `ExecutionEnv.cwd`, keyed by
   session id; the session repo has no header-update API, so renames are an
-  app-side overlay). The sidebar's per-row edit affordance opens the
-  rename dialog (Save/Clear; empty clears → derived `session <id8>` name).
+  app-side overlay) plus `derivedSessionTitle(context, id:, createdAt:)` —
+  the fallback title both the sidebar and the chat sheet use: a localized
+  intl `DateFormat.MMMd(locale).add_Hm()` date+time from the session's
+  creation time ("Jul 31 12:30" en / "31 июл. 12:30" ru; `main.dart` calls
+  `initializeDateFormatting` for the app locales), `session <id8>` when the
+  creation time is unreachable. The rename dialog is shared
+  (`flutter_app/lib/ui/widgets/rename_session_dialog.dart`,
+  `showRenameSessionDialog`): the sidebar's per-row edit affordance and the
+  chat sheet's menu both open it (Save/Clear; empty clears → the derived
+  name).
 - `flutter_app/lib/services/approval_mode_store.dart` — the tool-approval
   mode persisted as `approval_mode.json`; `AgentService.create` seeds
   `approval` from it, `setApprovalMode` writes through (fire-and-forget),

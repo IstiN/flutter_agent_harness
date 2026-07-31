@@ -23,6 +23,7 @@ import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/media_player.dart';
+import 'package:fa/ui/widgets/rename_session_dialog.dart';
 
 /// The session chat bottom sheet floating over the apps launcher (narrow
 /// home). One continuous component driven by a single animation value:
@@ -33,10 +34,10 @@ import 'package:fa/ui/widgets/media_player.dart';
 ///   to grow.
 /// - **Expanded**: the same panel grown to 92% — drag-handle header with
 ///   the session title (via [SessionNamesStore]) and a 3-dots menu (New
-///   session / Open full chat / Collapse), a horizontal [PageView] paging
-///   live AND persisted sessions (page change → `manager.switchTo`, or
-///   opens a persisted one lazily), the embedded [FaWorkBar] status row,
-///   and the shared [ChatComposer].
+///   session / Rename session / Open full chat / Collapse), a horizontal
+///   [PageView] paging live AND persisted sessions (page change →
+///   `manager.switchTo`, or opens a persisted one lazily), the embedded
+///   [FaWorkBar] status row, and the shared [ChatComposer].
 ///
 /// The transition is physics-y: the mini bar and the full sheet are two
 /// layers — the sheet slides up from below while the mini bar fades — so
@@ -119,6 +120,10 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   /// Persisted (on-disk, not live) sessions merged into the pager after the
   /// live ones — the sidebar's merge, so swiping reaches every session.
   List<SessionMetadata> _persisted = const [];
+
+  /// Session id → creation time from the last listing, driving the
+  /// date-based derived titles (see [derivedSessionTitle]).
+  Map<String, DateTime> _createdAtById = const {};
   var _openingPersisted = false;
 
   /// One-shot guard for the stream-start auto-grow to the mini state.
@@ -189,7 +194,12 @@ class _SessionChatSheetState extends State<SessionChatSheet>
         for (final metadata in all)
           if (!liveIds.contains(metadata.id)) metadata,
       ];
-      if (mounted) setState(() => _persisted = persisted);
+      if (mounted) {
+        setState(() {
+          _persisted = persisted;
+          _createdAtById = {for (final m in all) m.id: m.createdAt};
+        });
+      }
     } on Object {
       // A broken sessions dir must not break the sheet.
     }
@@ -581,6 +591,11 @@ class _SessionChatSheetState extends State<SessionChatSheet>
             onCollapse: _collapse,
             embedded: true,
           ),
+        // Idle mini bar: a one-line tail of the last assistant message so
+        // the user sees the LLM actually answered (and what) without
+        // opening the sheet — streaming swaps it for the status row above.
+        if (!service.isStreaming && sheetT == 0)
+          _lastMessageStrip(colors, service),
         ChatComposer(
           service: service,
           uploadPicker: widget.uploadPicker,
@@ -641,6 +656,58 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
+  /// One plain-text line for the mini strip: newlines collapsed, markdown
+  /// emphasis/backtick markers removed (raw `**bold**` reads as noise in a
+  /// one-line preview).
+  static String _stripLine(String content) => content
+      .trim()
+      .replaceAll('\n', ' ')
+      .replaceAll('**', '')
+      .replaceAll('`', '');
+
+  /// The idle mini bar's one-line tail of the last assistant message
+  /// (empty when there is nothing to show).
+  Widget _lastMessageStrip(FahColors colors, AgentService service) {
+    String? text;
+    var isError = false;
+    for (final message in service.messages.reversed) {
+      if (message.role == 'assistant' && message.content.trim().isNotEmpty) {
+        text = _stripLine(message.content);
+        break;
+      }
+      if (message.role == 'tool' && message.isError) {
+        text = _stripLine(message.content);
+        isError = true;
+        break;
+      }
+    }
+    if (text == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 2),
+      child: Row(
+        children: [
+          Icon(
+            isError ? Icons.error_outline : Icons.auto_awesome,
+            size: 13,
+            color: isError ? colors.error : colors.dim,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontSize: 12,
+                color: isError ? colors.error : colors.dim,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// The session pager (live + persisted sessions) — the expanded zone.
   Widget _buildPager() {
     return PageView.builder(
@@ -665,12 +732,28 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
+  /// Opens the shared rename dialog for the active session (Save / Clear /
+  /// Cancel), writing through the names store so the header updates live.
+  Future<void> _renameActive() async {
+    final store = _namesStore;
+    final activeId = widget.manager.activeId;
+    if (store == null || activeId == null) return;
+    await showRenameSessionDialog(
+      context,
+      store: store,
+      sessionId: activeId,
+      createdAt: _createdAtById[activeId],
+    );
+  }
+
   Widget _buildHeader(FahColors colors, AgentService service) {
     final activeId = widget.manager.activeId ?? '';
     final title =
         _namesStore?.titleFor(activeId) ??
-        context.l10n.sidebarSessionTitle(
-          activeId.length > 8 ? activeId.substring(0, 8) : activeId,
+        derivedSessionTitle(
+          context,
+          id: activeId,
+          createdAt: _createdAtById[activeId],
         );
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
@@ -699,6 +782,13 @@ class _SessionChatSheetState extends State<SessionChatSheet>
                     value: 'new',
                     child: Text(context.l10n.sidebarNewSessionTooltip),
                   ),
+                  // Same pattern as the sidebar: the rename affordance
+                  // appears once the titles store is available.
+                  if (_namesStore != null)
+                    PopupMenuItem(
+                      value: 'rename',
+                      child: Text(context.l10n.sidebarRenameSessionTooltip),
+                    ),
                   PopupMenuItem(
                     value: 'full',
                     child: Text(context.l10n.appsOpenFullChatTooltip),
@@ -712,6 +802,8 @@ class _SessionChatSheetState extends State<SessionChatSheet>
                   switch (value) {
                     case 'new':
                       unawaited(_newSession());
+                    case 'rename':
+                      unawaited(_renameActive());
                     case 'full':
                       unawaited(_openFullChat());
                     case 'collapse':
@@ -753,9 +845,7 @@ class _PersistedPage extends StatelessWidget {
     final id = metadata.id;
     final title =
         namesStore?.titleFor(id) ??
-        context.l10n.sidebarSessionTitle(
-          id.length > 8 ? id.substring(0, 8) : id,
-        );
+        derivedSessionTitle(context, id: id, createdAt: metadata.createdAt);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,

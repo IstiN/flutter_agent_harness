@@ -30,6 +30,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 // Platform-interface fakes for path_provider (transitive deps — kept out of
 // pubspec on purpose; the app never imports them directly).
 // ignore: depend_on_referenced_packages
@@ -131,6 +132,21 @@ Future<void> _settleSidebar(WidgetTester tester) async {
   expect(find.text('Calculator'), findsOneWidget);
 }
 
+/// Rewrites the session file header timestamp to a FIXED local time so the
+/// date-derived persisted-tile title is deterministic in snapshots (same
+/// trick as `_ageSession` in `session_reuse_test.dart`).
+Future<void> _pinSessionCreatedAt(
+  ExecutionEnv env,
+  SessionMetadata metadata,
+) async {
+  final content = (await env.readTextFile(metadata.path)).getOrThrow();
+  final lines = content.split('\n');
+  final header = jsonDecode(lines.first) as Map<String, dynamic>;
+  header['timestamp'] = DateTime(2026, 7, 14, 10, 24).toIso8601String();
+  lines[0] = jsonEncode(header);
+  (await env.writeFile(metadata.path, lines.join('\n'))).getOrThrow();
+}
+
 /// A 64×64 teal→indigo gradient swatch PNG (618 bytes), generated once
 /// offline and embedded so the image-attachment snapshot never touches
 /// network or assets.
@@ -189,6 +205,9 @@ Future<void> _pumpChatScreen(
 void main() {
   setUpAll(() async {
     await ensureGoldenFonts();
+    // intl date symbols for the date-derived persisted-session tile title
+    // in the hero shot (main.dart loads them for the app locales).
+    await initializeDateFormatting('en');
     // Icon fonts are not registered from the test asset bundle — without
     // this every Icon renders as a placeholder square.
     final icons = FontLoader('MaterialIcons')
@@ -254,13 +273,16 @@ void main() {
       // One persisted session from a "previous run" so the sidebar shows its
       // on-disk section next to the two live ones.
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      await repo.create(
+      final weekend = await repo.create(
         JsonlSessionCreateOptions(
           id: 'c0ffee01-weekend-plan',
           cwd: 'openai-completions',
           metadata: const {'agent': 'fa', 'model': 'old-model'},
         ),
       );
+      // Its tile derives the title from the file-header creation time — pin
+      // it so the snapshot never depends on the run date ("14 Jul 10:24").
+      await _pinSessionCreatedAt(env, await weekend.getMetadata());
 
       final service = _fakeService(env);
       service.messages

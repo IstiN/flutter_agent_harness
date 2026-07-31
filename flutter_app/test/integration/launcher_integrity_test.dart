@@ -167,7 +167,8 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 700));
       await gesture.moveTo(target);
-      await tester.pump();
+      // Hold past the 450 ms folder-intent dwell before releasing.
+      await tester.pump(const Duration(milliseconds: 500));
       await gesture.up();
       await tester.pumpAndSettle();
     }

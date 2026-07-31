@@ -222,7 +222,8 @@ Future<void> _dragTile(
   final gesture = await tester.startGesture(tester.getCenter(_cell(fromKey)));
   await tester.pump(const Duration(milliseconds: 700));
   await gesture.moveTo(target);
-  await tester.pump();
+  // Hold past the 450 ms folder-intent dwell before releasing.
+  await tester.pump(const Duration(milliseconds: 500));
   await gesture.up();
   await tester.pumpAndSettle();
 }
@@ -573,6 +574,30 @@ void main() {
       ]);
     });
 
+    testWidgets('dragging onto the first tile left edge moves to index 0', (
+      tester,
+    ) async {
+      final harness = await _pumpLauncher(tester);
+      final alphaRect = tester.getRect(_cell('app:alpha'));
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:gamma')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      // The left sliver of the FIRST tile: folder intent does not arm here
+      // (center dwell band only), so the insert preview applies.
+      await gesture.moveTo(Offset(alphaRect.left + 4, alphaRect.center.dy));
+      await tester.pump(const Duration(milliseconds: 300));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(harness.layout.topLevelKeys, [
+        'app:gamma',
+        'app:alpha',
+        'app:beta',
+        LauncherLayoutStore.settingsKey,
+        LauncherLayoutStore.filesKey,
+      ]);
+    });
+
     testWidgets('center-band hover arms folder intent without reflow', (
       tester,
     ) async {
@@ -585,7 +610,10 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 700));
       await gesture.moveTo(betaBefore.center);
-      await tester.pump(const Duration(milliseconds: 300));
+      // Folder intent arms only after a 450 ms dwell — before it, nothing.
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(harness.layout.topLevelKeys.first, 'app:alpha');
+      await tester.pump(const Duration(milliseconds: 400));
       expect(tester.getRect(_cell('app:gamma')), gammaRect); // … no reflow
       // … and the drop groups both into a folder.
       await gesture.up();

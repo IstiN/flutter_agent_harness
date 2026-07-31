@@ -57,16 +57,27 @@
     });
   }
 
+  function showOffline() {
+    if (last) return; // keep the last good payload instead
+    last = { icon: '⚠️', areaName: city, tempC: null, desc: 'Offline' };
+    render();
+  }
+
   function load() {
     var url = 'https://wttr.in/' + encodeURIComponent(city) + '?format=j1';
+    var done = false;
+    // The host fetch has no timeout of its own — a silently hanging
+    // request must not strand the tile on 'Loading…' forever.
+    setTimeout(function() {
+      if (!done) { done = true; showOffline(); }
+    }, 8000);
     jsr.fetchJson(url).then(function(data) {
+      if (done) return;
+      done = true;
       if (!data || data.__error) {
         // Never strand the tile on 'Loading…' forever: with no cached
         // payload show an honest offline state (kept on the next refresh).
-        if (!last) {
-          last = { icon: '⚠️', areaName: city, tempC: null, desc: 'Offline' };
-          render();
-        }
+        showOffline();
         return; // keep the last good payload
       }
       var cur = data.current_condition[0];

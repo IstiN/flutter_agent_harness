@@ -159,6 +159,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     _detachFsRevision();
     _layout?.removeListener(_onLayoutChanged);
     _layoutReloadDebounce?.cancel();
+    _cancelFolderDwell();
     super.dispose();
   }
 
@@ -238,35 +239,26 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   // --- drag & drop ---------------------------------------------------------
 
   /// Continuous hover while dragging over [targetKey]'s slot: the CENTER
-  /// band of an app tile (or any position on a folder tile) means FOLDER
-  /// intent — the target highlights and the grid does NOT reflow; the edge
-  /// halves set a live insertion preview so the other tiles animate aside
-  /// (the persisted order only changes on drop, see [_onDrop]).
+  /// band of an app tile arms FOLDER intent only after a short dwell (iOS
+  /// semantics — a fast pass or an edge hover means REORDER; positional
+  /// alone must never steal the insert intent, big tiles cannot hit the
+  /// outer sliver reliably). Any position on a folder tile arms
+  /// immediately. The edge halves set a live insertion preview so the
+  /// other tiles animate aside (the persisted order only changes on drop,
+  /// see [_onDrop]).
   void _onDragHover(String targetKey, DragTargetDetails<String> details) {
     final draggedKey = details.data;
     if (draggedKey == targetKey) return;
     final layout = _layout;
     if (layout == null) return;
-    // details.offset is the drag feedback's top-left corner; the fixed
-    // drag anchor recovers the pointer position.
+    // details.offset is the drag feedback's top-left corner; the grab
+    // offset captured at drag start recovers the pointer position.
     final fx = _fractionOnTile(targetKey, details.offset + _grabOffset);
     final bothApps =
         draggedKey.startsWith('app:') && targetKey.startsWith('app:');
-    // Folder intent with HYSTERESIS: it arms inside the 40% center band
-    // but holds until the pointer leaves the 60% band — the highlight no
-    // longer flickers when the finger micro-jitters at the boundary.
     final center = (fx - 0.5).abs();
-    final bool folderTarget;
     if (LauncherLayoutStore.isFolderKey(targetKey)) {
-      folderTarget = true;
-    } else if (bothApps) {
-      folderTarget = _folderHoverKey == targetKey
-          ? center <= 0.3
-          : center <= 0.2;
-    } else {
-      folderTarget = false;
-    }
-    if (folderTarget) {
+      // Dropping ON a folder is unambiguous — immediate intent.
       if (_folderHoverKey != targetKey || _previewOrder != null) {
         setState(() {
           _folderHoverKey = targetKey;
@@ -275,6 +267,30 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       }
       return;
     }
+    if (bothApps) {
+      if (_folderHoverKey == targetKey) {
+        // Armed: hold until the pointer leaves the wider band (no flicker
+        // at the boundary).
+        if (center <= 0.3) return;
+        setState(() => _folderHoverKey = null);
+      } else if (center <= 0.2) {
+        // Center band: arm folder intent only after a dwell — see dartdoc.
+        if (_folderDwellKey != targetKey) {
+          _cancelFolderDwell();
+          _folderDwellKey = targetKey;
+          _folderDwell = Timer(const Duration(milliseconds: 450), () {
+            if (mounted && _folderDwellKey == targetKey) {
+              setState(() {
+                _folderHoverKey = targetKey;
+                _previewOrder = null;
+              });
+            }
+          });
+        }
+        return;
+      }
+    }
+    _cancelFolderDwell();
     // Reorder dead zone: once a preview exists, the before/after decision
     // only flips outside fx 0.35..0.65 — dragging a big tile across a slot
     // boundary no longer oscillates the whole grid.
@@ -284,6 +300,26 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       }
       return;
     }
+    _previewInsert(draggedKey, targetKey, fx);
+  }
+
+  /// Folder-intent dwell timer (see [_onDragHover]).
+  Timer? _folderDwell;
+  String? _folderDwellKey;
+
+  void _cancelFolderDwell() {
+    _folderDwell?.cancel();
+    _folderDwell = null;
+    _folderDwellKey = null;
+  }
+
+  /// Applies one live reorder-preview step: [draggedKey] inserted
+  /// before/after [targetKey] at horizontal fraction [fx] (the same math
+  /// the drop persists). Shared by the per-tile hover and the grid
+  /// background drop surface.
+  void _previewInsert(String draggedKey, String targetKey, double fx) {
+    final layout = _layout;
+    if (layout == null) return;
     final order = _previewOrder ?? layout.topLevelKeys;
     final insertion = launcherInsertionIndex(
       order: order,
@@ -301,6 +337,61 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     } else if (_folderHoverKey != null) {
       setState(() => _folderHoverKey = null);
     }
+  }
+
+  /// The grid stack's render box — converts global drag coordinates to
+  /// grid-local for the background drop surface.
+  RenderBox? _gridBox;
+
+  /// The last resolved background hover target (key, fx) — the background
+  /// drop accepts onto it.
+  (String, double)? _backgroundTarget;
+
+  /// Continuous hover over the grid BACKGROUND (gaps, row ends, above the
+  /// first row): resolves the pointer to the nearest tile + before/after
+  /// and drives the same live preview — iOS lets you drop a tile into the
+  /// very first slot, and so do we.
+  void _onGridBackgroundHover(
+    DragTargetDetails<String> details,
+    List<String> keys,
+    List<TileRect> rects,
+  ) {
+    final layout = _layout;
+    final box = _gridBox;
+    if (layout == null || box == null || keys.isEmpty) return;
+    final pointer = box.globalToLocal(details.offset + _grabOffset);
+    final (targetKey, fx) = _gridHoverTarget(pointer, keys, rects);
+    _backgroundTarget = (targetKey, fx);
+    _previewInsert(details.data, targetKey, fx);
+  }
+
+  /// Maps a grid-local pointer to (targetKey, fx): above the first row →
+  /// before the first tile; inside a row → the tile whose center is right
+  /// of the pointer (or after the row's last); below → after the last.
+  /// Rows are grouped by y because first-fit packing backfills holes (y is
+  /// NOT monotonic in index).
+  (String, double) _gridHoverTarget(
+    Offset pointer,
+    List<String> keys,
+    List<TileRect> rects,
+  ) {
+    final rowTops = <double>{for (final r in rects) r.y}.toList()..sort();
+    if (pointer.dy < rowTops.first) return (keys.first, 0);
+    for (final top in rowTops) {
+      final indices = [
+        for (var i = 0; i < rects.length; i++)
+          if (rects[i].y == top) i,
+      ]..sort((a, b) => rects[a].x.compareTo(rects[b].x));
+      final rowBottom = indices
+          .map((i) => rects[i].y + rects[i].h)
+          .reduce((a, b) => a > b ? a : b);
+      if (pointer.dy > rowBottom) continue;
+      for (final i in indices) {
+        if (pointer.dx < rects[i].x + rects[i].w / 2) return (keys[i], 0);
+      }
+      return (keys[indices.last], 1);
+    }
+    return (keys.last, 1);
   }
 
   /// One drop onto the slot of [targetKey]: folder-add on folder tiles,
@@ -387,6 +478,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   void _clearDragPreview() {
+    _cancelFolderDwell();
     if (_previewOrder == null && _folderHoverKey == null) return;
     setState(() {
       _previewOrder = null;
@@ -664,6 +756,41 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
+                        // Background drop surface BEHIND the tiles: covers
+                        // the gaps, row ends, and the space above the first
+                        // row, so any landing spot resolves to a live
+                        // insertion (the tiles' own targets win on top).
+                        Positioned.fill(
+                          child: LayoutBuilder(
+                            builder: (context, _) {
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                final box = context.findRenderObject();
+                                if (box is RenderBox && mounted) {
+                                  _gridBox = box;
+                                }
+                              });
+                              return DragTarget<String>(
+                                onMove: (details) => _onGridBackgroundHover(
+                                  details,
+                                  keys,
+                                  rects,
+                                ),
+                                onAcceptWithDetails: (details) {
+                                  final target = _backgroundTarget;
+                                  if (target != null) {
+                                    _onDrop(
+                                      details.data,
+                                      target.$1,
+                                      details.offset,
+                                    );
+                                  }
+                                },
+                                builder: (context, _, _) =>
+                                    const SizedBox.expand(),
+                              );
+                            },
+                          ),
+                        ),
                         for (var i = 0; i < keys.length; i++)
                           AnimatedPositioned(
                             key: ValueKey('tilePos:${keys[i]}'),

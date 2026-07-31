@@ -182,6 +182,9 @@ class JsAppEngine {
     if (old != null) await old.dispose();
     backHandlerRegistered.value = false;
 
+    // Log WHICH app boots — engine-start lines in the debug log used to
+    // be indistinguishable between apps (and tiles vs full apps).
+    AppLog.i('apps', 'engine start: ${app.id}/$entryFile');
     final js = (await env.readTextFile('${app.dir}/$entryFile')).getOrThrow();
     final storage = await _readStorage();
     final config = JsRuntimeConfig(
