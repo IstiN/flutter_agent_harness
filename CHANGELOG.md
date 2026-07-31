@@ -753,4 +753,8 @@
 
 - fix(example): TestFlight JSC crash, ownership-aware demo sync, CRAP yellow zone
 
+## 0.1.109
+
+- feat: CRAP green zone (max ≤ 8), app integration tests, tool-dup fix
+
 ## Unreleased
