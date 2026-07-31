@@ -761,4 +761,8 @@
 
 - fix(example): visible run errors, mini last-message strip, iOS-grade drag&drop, weather timeouts
 
+## 0.1.111
+
+- fix(example): TestFlight SIGSEGV root cause — serialized engine lifecycle
+
 ## Unreleased
