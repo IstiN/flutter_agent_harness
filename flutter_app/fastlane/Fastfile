@@ -168,7 +168,11 @@ platform :ios do
       team_id: team_id,
       bundle_identifier: bundle_id,
       profile_name: profile_name,
-      code_sign_identity: signing_identity
+      code_sign_identity: signing_identity,
+      # ONLY the app target: without this filter the action rewrites EVERY
+      # target's PRODUCT_BUNDLE_IDENTIFIER (incl. the FaLiveActivity
+      # extension), producing a CFBundleIdentifier collision at upload.
+      targets: ["Runner"]
     )
 
     sh("flutter", "clean")
@@ -194,12 +198,14 @@ platform :ios do
       skip_build_archive: false,
       clean: true,
       sdk: "iphoneos",
+      # The FaLiveActivity extension signs AUTOMATICALLY (no manually managed
+      # profile in the portal): let xcodebuild talk to the Developer portal
+      # during BOTH the archive and the export so it fetches/creates the
+      # extension's profiles itself on the signed-in runner.
+      xcargs: "-allowProvisioningUpdates",
       export_options: {
         method: "app-store",
-        provisioningProfiles: {
-          bundle_id => profile_name
-        },
-        signingStyle: "manual",
+        signingStyle: "automatic",
         teamID: team_id,
         manageAppVersionAndBuildNumber: false,
         uploadBitcode: false,

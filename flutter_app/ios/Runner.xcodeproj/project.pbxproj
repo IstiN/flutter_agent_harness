@@ -1405,8 +1405,7 @@
 			baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "Apple Development: Uladzimir Klyshevich (5LDXYCWY26)";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = YP9HC3USZ3;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
@@ -1435,8 +1434,7 @@
 			baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "iPhone Distribution: Uladzimir Klyshevich (YP9HC3USZ3)";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = YP9HC3USZ3;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
@@ -1463,8 +1461,7 @@
 			baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "iPhone Distribution: Uladzimir Klyshevich (YP9HC3USZ3)";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = YP9HC3USZ3;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
