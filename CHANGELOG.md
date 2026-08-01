@@ -782,4 +782,8 @@
 
 - fix(example): close action for full-chrome JS apps (map was unclosable), store copyright name
 
+## 0.1.117
+
+- feat(example): launcher home on all layouts (legacy session sidebar removed), App Store shots v2 ('your own apps, built by chat'), golden orphan gate
+
 ## Unreleased
