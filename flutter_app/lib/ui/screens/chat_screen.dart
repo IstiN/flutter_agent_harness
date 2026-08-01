@@ -36,14 +36,13 @@ import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
-import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/services/upload.dart';
 
-/// Minimum body width (logical px) at which the side panels (sessions/model
-/// on the left, files on the right) become persistent, collapsible panels
-/// instead of drawers — and below which the apps launcher (see
-/// `AppLauncherScreen`) replaces this screen as the app home.
+/// Minimum body width (logical px) at which the files panel becomes a
+/// persistent, collapsible panel instead of an end drawer. Sessions have no
+/// left panel anywhere (legacy): they are managed by the launcher's session
+/// chat sheet pager and menus.
 const double kWideLayoutBreakpoint = 900;
 
 /// A chat UI backed by [FlutterSessionManager], built on top of
@@ -88,11 +87,11 @@ class ChatScreen extends StatefulWidget {
   /// hidden); tests inject a fake.
   final UploadPicker? uploadPicker;
 
-  /// The custom-provider registry shared with the settings dialog/sidebar;
+  /// The custom-provider registry shared with the settings dialog;
   /// `null` falls back to an in-memory one inside the form (tests).
   final ProviderRegistry? registry;
 
-  /// The last-connection store handed to the settings dialog/sidebar: their
+  /// The last-connection store handed to the settings dialog: its
   /// applies update it (see [LastConnectionStore]); `null` skips prefill and
   /// persistence (tests).
   final LastConnectionStore? lastConnectionStore;
@@ -177,22 +176,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   bool _isStreaming = false;
   String? _error;
 
-  /// Whether the left session/model sidebar is expanded (wide layouts only).
-  bool _leftPanelOpen = true;
-
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
-
-  /// Opens the session/model sidebar: toggles the side panel on wide
-  /// layouts, opens the drawer on narrow ones. [context] must be below the
-  /// [Scaffold].
-  void _openSidebar(BuildContext context) {
-    if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
-      setState(() => _leftPanelOpen = !_leftPanelOpen);
-    } else {
-      Scaffold.of(context).openDrawer();
-    }
-  }
 
   /// Opens the file browser: toggles the right side panel on wide layouts,
   /// opens the end drawer on narrow ones. [context] must be below the
@@ -284,8 +269,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  /// Opens a JS app for the user (the agent's `open_app` tool): the exact
-  /// navigation the sidebar's Apps section performs, pushed on this screen's
+  /// Opens a JS app for the user (the agent's `open_app` tool): the same
+  /// navigation the launcher's app tiles perform, pushed on this screen's
   /// Navigator — the visible transition is the confirmation affordance.
   ///
   /// Fire-and-forget: [pushJsApp] awaits the pushed route, which completes
@@ -713,13 +698,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
     return Scaffold(
       appBar: AppBar(
-        leading: Builder(
-          builder: (context) => IconButton(
-            icon: const Icon(Icons.menu),
-            tooltip: context.l10n.chatSessionsTooltip,
-            onPressed: () => _openSidebar(context),
-          ),
-        ),
         title: Text(context.l10n.appTitle),
         actions: [
           if (_isStreaming)
@@ -747,21 +725,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ],
       ),
-      drawer: isWide
-          ? null
-          : Drawer(
-              width: kSessionSidebarWidth,
-              child: SafeArea(
-                child: Builder(
-                  builder: (drawerContext) => SessionSidebar(
-                    manager: widget.manager,
-                    registry: widget.registry,
-                    lastConnectionStore: widget.lastConnectionStore,
-                    onAction: () => Scaffold.of(drawerContext).closeDrawer(),
-                  ),
-                ),
-              ),
-            ),
       endDrawer: isWide
           ? null
           : Drawer(
@@ -779,17 +742,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (isWide && _leftPanelOpen) ...[
-            SizedBox(
-              width: kSessionSidebarWidth,
-              child: SessionSidebar(
-                manager: widget.manager,
-                registry: widget.registry,
-                lastConnectionStore: widget.lastConnectionStore,
-              ),
-            ),
-            const VerticalDivider(width: 1),
-          ],
           Expanded(child: _buildChatBody(context)),
           if (isWide && _filesPanelOpen) ...[
             const VerticalDivider(width: 1),

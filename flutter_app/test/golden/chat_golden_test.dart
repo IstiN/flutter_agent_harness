@@ -7,12 +7,9 @@
 /// the snapshots; the fakes below are copied verbatim from
 /// `chat_screen_test.dart`.
 ///
-/// The hero conversation shot keeps the session sidebar OPEN: its apps
-/// section seeds the bundled demo apps through `rootBundle`, which is
-/// unreliable in widget tests without the `_mockBundledAppAssets` +
-/// `_settleSidebar` dance (borrowed from `sidebar_golden_test.dart`). The
-/// smaller states collapse the sidebar so they stay focused on the chat
-/// surface itself.
+/// The hero conversation shot is the full chat surface: transcript, tool
+/// call, code block and a collapsed thinking section. There is no left
+/// sessions panel anymore (legacy) — sessions live in the launcher sheet.
 library;
 
 import 'dart:convert';
@@ -30,7 +27,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:intl/date_symbol_data_local.dart';
 // Platform-interface fakes for path_provider (transitive deps — kept out of
 // pubspec on purpose; the app never imports them directly).
 // ignore: depend_on_referenced_packages
@@ -85,68 +81,6 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
-/// Serves `rootBundle` from the asset tree `flutter test` builds into
-/// `build/unit_test_assets/` (same helper as `sidebar_golden_test.dart`).
-///
-/// The sidebar's `_loadApps` seeds the bundled demo apps through
-/// `AppsStore` → `rootBundle.loadString` (not injectable — see
-/// `SessionSidebar._loadApps`). Two framework quirks make this unreliable
-/// without help:
-///  1. the real `flutter/assets` channel answers only in the FIRST test of
-///     a process (later sends hang forever), so every test registers this
-///     mock handler — the framework resets handlers per test;
-///  2. `rootBundle` is a process-global `CachingAssetBundle`: a test that
-///     ends with asset loads in flight leaves PENDING cached futures whose
-///     continuations belonged to the dead test zone — every later
-///     `loadString` of those keys hangs on the poisoned cache entry.
-///     `rootBundle.clear()` drops them so each test re-reads via the mock.
-void _mockBundledAppAssets() {
-  rootBundle.clear();
-  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-      .setMockMessageHandler('flutter/assets', (message) async {
-        if (message == null) return null;
-        final key = utf8.decode(message.buffer.asUint8List());
-        final file = File('build/unit_test_assets/$key');
-        if (!file.existsSync()) return null;
-        return ByteData.sublistView(await file.readAsBytes());
-      });
-}
-
-/// Waits until the sidebar's apps section finished seeding + loading.
-///
-/// `_loadApps` (unawaited from `initState`) is real async I/O that
-/// `pumpAndSettle` does NOT wait for (no frame is scheduled between the last
-/// write and the final `setState`), so it would race the snapshot.
-/// Alternating `runAsync` delays (the real event loop drives the seeding)
-/// with `pump` (rebuilds with whatever state landed) converges
-/// deterministically.
-Future<void> _settleSidebar(WidgetTester tester) async {
-  for (var i = 0; i < 200 && find.text('Calculator').evaluate().isEmpty; i++) {
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 10)),
-    );
-    await tester.pump();
-  }
-  await tester.pumpAndSettle();
-  // Sanity: the seeded apps rendered before the snapshot.
-  expect(find.text('Calculator'), findsOneWidget);
-}
-
-/// Rewrites the session file header timestamp to a FIXED local time so the
-/// date-derived persisted-tile title is deterministic in snapshots (same
-/// trick as `_ageSession` in `session_reuse_test.dart`).
-Future<void> _pinSessionCreatedAt(
-  ExecutionEnv env,
-  SessionMetadata metadata,
-) async {
-  final content = (await env.readTextFile(metadata.path)).getOrThrow();
-  final lines = content.split('\n');
-  final header = jsonDecode(lines.first) as Map<String, dynamic>;
-  header['timestamp'] = DateTime(2026, 7, 14, 10, 24).toIso8601String();
-  lines[0] = jsonEncode(header);
-  (await env.writeFile(metadata.path, lines.join('\n'))).getOrThrow();
-}
-
 /// A 64×64 teal→indigo gradient swatch PNG (618 bytes), generated once
 /// offline and embedded so the image-attachment snapshot never touches
 /// network or assets.
@@ -181,8 +115,8 @@ class _FakePathProviderPlatform extends PathProviderPlatform
 }
 
 /// Pumps the full [ChatScreen] as the app home (it is a Scaffold itself) at
-/// [size], then collapses the left sidebar so the snapshot focuses on the
-/// chat surface (the sidebar has its own golden file).
+/// [size] — no left sessions panel exists anymore (legacy); the snapshot is
+/// the chat surface itself.
 Future<void> _pumpChatScreen(
   WidgetTester tester,
   AgentService service, {
@@ -198,16 +132,11 @@ Future<void> _pumpChatScreen(
     size: size,
     wrap: (child) => child,
   );
-  await tester.tap(find.byTooltip('Sessions & model'));
-  await tester.pumpAndSettle();
 }
 
 void main() {
   setUpAll(() async {
     await ensureGoldenFonts();
-    // intl date symbols for the date-derived persisted-session tile title
-    // in the hero shot (main.dart loads them for the app locales).
-    await initializeDateFormatting('en');
     // Icon fonts are not registered from the test asset bundle — without
     // this every Icon renders as a placeholder square.
     final icons = FontLoader('MaterialIcons')
@@ -261,29 +190,12 @@ void main() {
         theme: buildFahThemeLight(),
         wrap: (child) => child,
       );
-      await tester.tap(find.byTooltip('Sessions & model'));
-      await tester.pumpAndSettle();
       await expectGolden(tester, 'chat_conversation_light');
     });
 
     testWidgets('hero: conversation with sidebar, tool call, code block, '
         'collapsed thinking', (tester) async {
-      _mockBundledAppAssets();
       final env = MemoryExecutionEnv();
-      // One persisted session from a "previous run" so the sidebar shows its
-      // on-disk section next to the two live ones.
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      final weekend = await repo.create(
-        JsonlSessionCreateOptions(
-          id: 'c0ffee01-weekend-plan',
-          cwd: 'openai-completions',
-          metadata: const {'agent': 'fa', 'model': 'old-model'},
-        ),
-      );
-      // Its tile derives the title from the file-header creation time — pin
-      // it so the snapshot never depends on the run date ("14 Jul 10:24").
-      await _pinSessionCreatedAt(env, await weekend.getMetadata());
-
       final service = _fakeService(env);
       service.messages
         ..add(
@@ -361,8 +273,6 @@ void main() {
         size: goldenSizeDesktop,
         wrap: (child) => child,
       );
-      await _settleSidebar(tester);
-      expect(find.textContaining('f3a9c1d4'), findsOneWidget);
 
       await expectGolden(tester, 'chat_conversation');
     });
@@ -416,8 +326,6 @@ void main() {
         // file decode is another real-async hop before it can paint.
         await Future<void>.delayed(const Duration(milliseconds: 300));
         await tester.pump();
-        await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Sessions & model'));
         await tester.pumpAndSettle();
       });
       await expectGolden(tester, 'chat_image');
@@ -477,8 +385,6 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 300));
           await tester.pump();
         }
-        await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Sessions & model'));
         await tester.pumpAndSettle();
       });
       await expectGolden(tester, 'chat_generated_image');
@@ -548,8 +454,6 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 300));
           await tester.pump();
         }
-        await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Sessions & model'));
         await tester.pumpAndSettle();
       });
       expect(find.byType(SandboxAudioPlayer), findsOneWidget);

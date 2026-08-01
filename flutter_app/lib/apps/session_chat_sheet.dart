@@ -68,7 +68,7 @@ class SessionChatSheet extends StatefulWidget {
   final LastConnectionStore? lastConnectionStore;
 
   /// The user-given session titles shown in the header; `null` loads the
-  /// store from the env (like the session sidebar).
+  /// store from the env.
   final SessionNamesStore? sessionNamesStore;
 
   /// Forwarded to the composer (and the full chat screen).
@@ -118,7 +118,7 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   SessionNamesStore? _namesStore;
 
   /// Persisted (on-disk, not live) sessions merged into the pager after the
-  /// live ones — the sidebar's merge, so swiping reaches every session.
+  /// live ones, so swiping reaches every session.
   List<SessionMetadata> _persisted = const [];
 
   /// Session id → creation time from the last listing, driving the
@@ -183,7 +183,7 @@ class _SessionChatSheetState extends State<SessionChatSheet>
   }
 
   /// The disk-persisted sessions minus the live ones, oldest-positioned
-  /// after the live pages (the session sidebar's merge).
+  /// after the live pages.
   Future<void> _reloadPersisted() async {
     final service = _activeService;
     if (service == null) return;
@@ -787,7 +787,7 @@ class _SessionChatSheetState extends State<SessionChatSheet>
                     value: 'new',
                     child: Text(context.l10n.sidebarNewSessionTooltip),
                   ),
-                  // Same pattern as the sidebar: the rename affordance
+                  // The rename affordance
                   // appears once the titles store is available.
                   if (_namesStore != null)
                     PopupMenuItem(

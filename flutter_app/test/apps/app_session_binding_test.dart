@@ -3,9 +3,9 @@
 // in the LICENSE file.
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -63,19 +63,12 @@ void main() {
     final original = _fakeService(env);
     manager.addSession('original-session', original);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: SessionSidebar(manager: manager)),
-      ),
-    );
+    await tester.pumpWidget(const MaterialApp(home: Scaffold()));
     await tester.pumpAndSettle();
 
-    final state = tester.state<SessionSidebarState>(
-      find.byType(SessionSidebar),
-    );
     const message = FaAppMessage(text: 'make it purple', appId: 'notes');
 
-    await state.sendAppMessageToAgent(message);
+    await forwardAppMessageToAgent(manager, message);
     await tester.runAsync(() async {
       await Future<void>.delayed(const Duration(milliseconds: 500));
     });
@@ -90,7 +83,7 @@ void main() {
 
     // Second message goes to the SAME bound session, not a new one.
     final sessionCount = manager.sessions.length;
-    await state.sendAppMessageToAgent(message);
+    await forwardAppMessageToAgent(manager, message);
     await tester.runAsync(() async {
       await Future<void>.delayed(const Duration(milliseconds: 500));
     });

@@ -155,9 +155,10 @@ factual: paths, commands, invariants — no essays.
   styled `[ tool ]` tiles with the private collapsible output block,
   `$`-prompt system lines, and inline generated-image/audio/video under
   tool tiles. Never fork message rendering — extend this widget.
-- `flutter_app/lib/ui/screens/app_launcher_screen.dart` — the narrow-layout
-  home (< `kWideLayoutBreakpoint` in chat_screen.dart; `faHomeScreen` in
-  main.dart picks it over `ChatScreen` in `_boot()` + `SetupScreen._connect`).
+- `flutter_app/lib/ui/screens/app_launcher_screen.dart` — THE app home on
+  every layout (`faHomeScreen` in main.dart always returns it; the classic
+  sidebar chat home is legacy and `session_sidebar.dart` no longer exists —
+  sessions are managed by the chat sheet's pager/menus).
   iOS-home-screen grid of the JS apps (fsRevision-refreshed like
   `AppsGridView`) plus Settings/Files system tiles, laid out on the
   icon-unit geometry (`LauncherGridSpec` in
@@ -180,8 +181,8 @@ factual: paths, commands, invariants — no essays.
   floating Fa button bottom-right (the `FaWorkBar` takes its place while
   streaming); expanded = 92% sheet with drag-handle header (session title
   via `SessionNamesStore`, 3-dots menu: New session / Rename session /
-  Open full chat / Collapse — Rename opens the same shared rename dialog
-  as the sidebar), a horizontal PageView over `manager.sessions` wired to
+  Open full chat / Collapse — Rename opens the shared rename dialog
+  `showRenameSessionDialog`), a horizontal PageView over `manager.sessions` wired to
   `manager.switchTo`, `FaWorkBar(embedded:)`, and the shared
   `ChatMessageTile` transcript + `ChatComposer`. Pull-down (48px / 300px/s)
   collapses.
@@ -341,15 +342,14 @@ factual: paths, commands, invariants — no essays.
   titles (`session_names.json` envelope in `ExecutionEnv.cwd`, keyed by
   session id; the session repo has no header-update API, so renames are an
   app-side overlay) plus `derivedSessionTitle(context, id:, createdAt:)` —
-  the fallback title both the sidebar and the chat sheet use: a localized
+  the fallback title the chat sheet uses: a localized
   intl `DateFormat.MMMd(locale).add_Hm()` date+time from the session's
   creation time ("Jul 31 12:30" en / "31 июл. 12:30" ru; `main.dart` calls
   `initializeDateFormatting` for the app locales), `session <id8>` when the
-  creation time is unreachable. The rename dialog is shared
+  creation time is unreachable. The rename dialog
   (`flutter_app/lib/ui/widgets/rename_session_dialog.dart`,
-  `showRenameSessionDialog`): the sidebar's per-row edit affordance and the
-  chat sheet's menu both open it (Save/Clear; empty clears → the derived
-  name).
+  `showRenameSessionDialog`) is opened from the chat sheet's menu
+  (Save/Clear; empty clears → the derived name).
 - `flutter_app/lib/services/approval_mode_store.dart` — the tool-approval
   mode persisted as `approval_mode.json`; `AgentService.create` seeds
   `approval` from it, `setApprovalMode` writes through (fire-and-forget),
@@ -410,7 +410,9 @@ tests are done right:
 5. **Eyes on pixels.** After `--update-goldens`, OPEN every changed PNG
    (no tofu, no overflow, legible buttons/icons) before committing.
 6. **Green gate.** `flutter test test/golden` passes; pre-commit runs it +
-   `scripts/check_goldens.py`.
+   `scripts/check_goldens.py` (which also hard-fails on ORPHAN snapshots —
+   committed PNGs no test references; delete stale files, never let them
+   rot in git history).
 
 ## Prompts live outside Dart code
 

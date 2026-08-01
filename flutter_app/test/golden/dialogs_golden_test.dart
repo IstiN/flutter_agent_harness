@@ -10,6 +10,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/ui/widgets/ask_ui.dart';
+import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -140,9 +141,9 @@ const _multiQuestion = AskQuestion(
   multiSelect: true,
 );
 
-/// A static, deterministic chat frame the modals overlay: an app bar, a
-/// session sidebar, and a short transcript whose narrative leads into the
-/// approval prompt. Nothing here animates or reads the clock.
+/// A static, deterministic chat frame the modals overlay: an app bar and a
+/// short transcript whose narrative leads into the approval prompt. Nothing
+/// here animates or reads the clock.
 class _ChatHost extends StatefulWidget {
   const _ChatHost({required this.open});
 
@@ -180,25 +181,6 @@ class _ChatHostState extends State<_ChatHost> {
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            width: 240,
-            child: ListView(
-              padding: const EdgeInsets.all(8),
-              children: [
-                Text('Sessions', style: theme.textTheme.titleSmall),
-                const SizedBox(height: 8),
-                const ListTile(title: Text('Fix auth flow'), dense: true),
-                const ListTile(
-                  title: Text('Clean build artifacts'),
-                  dense: true,
-                  selected: true,
-                ),
-                const ListTile(title: Text('Add golden tests'), dense: true),
-                const ListTile(title: Text('Bump deps'), dense: true),
-              ],
-            ),
-          ),
-          const VerticalDivider(width: 1),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.all(24),
@@ -379,6 +361,39 @@ void main() {
         locale: const Locale('ru'),
       );
       await expectGolden(tester, 'dialogs_secret_request_ru');
+    });
+
+    testWidgets('rename session dialog: prefilled custom title', (
+      tester,
+    ) async {
+      await _pumpOpened(
+        tester,
+        (context) => showDialog<void>(
+          context: context,
+          builder: (_) => const RenameSessionDialog(
+            initialTitle: "Makar's week",
+            derivedName: 'Aug 1 21:30',
+          ),
+        ),
+      );
+      await expectGolden(tester, 'dialogs_rename_session');
+    });
+
+    testWidgets('rename session dialog: russian, derived-name hint', (
+      tester,
+    ) async {
+      await _pumpOpened(
+        tester,
+        (context) => showDialog<void>(
+          context: context,
+          builder: (_) => const RenameSessionDialog(
+            initialTitle: '',
+            derivedName: '1 авг. 21:30',
+          ),
+        ),
+        locale: const Locale('ru'),
+      );
+      await expectGolden(tester, 'dialogs_rename_session_ru');
     });
   });
 }

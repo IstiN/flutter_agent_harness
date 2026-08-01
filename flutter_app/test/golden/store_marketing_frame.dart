@@ -16,50 +16,51 @@ import 'package:flutter/material.dart';
 /// Localized marketing copy per store screenshot: screen name → language →
 /// (headline, subtitle). English is the fallback for missing languages.
 ///
-/// The five frames tell one story ("Makar's week"): a parent asks Fa to
-/// plan their kid's week, Fa books recurring calendar events and draws a
-/// birthday card, the events show up in the calendar app, a follow-up edit
-/// happens without leaving the map app, and the settings frame closes with
-/// the provider story.
+/// The five frames tell one story ("your own apps, built by chat"): the
+/// user asks Fa to build a personal weather app with a dashboard widget,
+/// the app appears on the home-screen dashboard as a live widget tile, a
+/// follow-up tweak happens without leaving the app, a media frame shows
+/// the generation tools, and the settings frame closes with the provider
+/// story.
 const kStoreCopy = <String, Map<String, (String, String)>>{
   'store_chat': {
     'en': (
-      'Ask in plain words',
-      'Fa plans and schedules — events, artwork and a voice summary',
+      'Your own apps, built by chat',
+      'The first mobile agent harness — describe an app and Fa builds it',
     ),
     'ru': (
-      'Просите по-человечески',
-      'Fa планирует и записывает: события, открытка и голосовая сводка',
-    ),
-  },
-  'store_calendar': {
-    'en': (
-      'Recurring events and alarms',
-      'Speech therapy Mon & Thu, swimming on Saturday — right in your calendar',
-    ),
-    'ru': (
-      'Повторяющиеся события и напоминания',
-      'Логопед по пн и чт, плавание по субботам — прямо в вашем календаре',
+      'Свои приложения — прямо из чата',
+      'Первый мобильный ИИ-агент: опишите приложение, и Fa его соберёт',
     ),
   },
   'store_apps': {
     'en': (
-      'Mini-apps for everything',
-      'Contacts, calendar, home and more — next to every conversation',
+      'A dashboard that is truly yours',
+      'Live widgets from the apps Fa built for you, right on the home screen',
     ),
     'ru': (
-      'Мини-приложения для всего',
-      'Контакты, календарь, умный дом — рядом с каждым диалогом',
+      'Дашборд, который действительно ваш',
+      'Живые виджеты ваших приложений — на домашнем экране',
     ),
   },
   'store_inapp': {
     'en': (
       'Fa lives inside every app',
-      '“Move swimming to 11:30” — chat and edit without leaving the app',
+      '“Add a weekly forecast” — chat and tweaks without leaving the app',
     ),
     'ru': (
       'Fa живёт в каждом приложении',
-      '«Перенеси плавание на 11:30» — чат и правки, не выходя из приложения',
+      '«Добавь прогноз на неделю» — правки, не выходя из приложения',
+    ),
+  },
+  'store_media': {
+    'en': (
+      'It draws, speaks and plays',
+      'Wallpapers, voice summaries and clips — generated inline in the chat',
+    ),
+    'ru': (
+      'Рисует, говорит и показывает',
+      'Обои, голосовые сводки и ролики — прямо в диалоге',
     ),
   },
   'store_providers': {

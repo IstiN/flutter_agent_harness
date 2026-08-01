@@ -8,7 +8,6 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/provider_registry.dart';
-import 'package:fa/ui/widgets/session_sidebar.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -69,11 +68,6 @@ void _useWideSurface(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-Finder _sidebarListTiles() => find.descendant(
-  of: find.byType(SessionSidebar),
-  matching: find.byType(ListTile),
-);
-
 StreamFunction _hungResponse() {
   return (model, context, {cancelToken}) => AssistantMessageEventStream();
 }
@@ -92,8 +86,9 @@ void main() {
   });
 
   group('ChatScreen side panels', () {
-    testWidgets('wide: left sidebar and right files panel toggle '
-        'independently', (tester) async {
+    testWidgets('wide: the files panel toggles; no sessions sidebar anywhere', (
+      tester,
+    ) async {
       _useWideSurface(tester);
       final env = MemoryExecutionEnv();
       await tester.pumpWidget(
@@ -101,34 +96,22 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // The session sidebar is open by default, docked on the left edge;
-      // the files panel starts closed.
-      expect(find.byType(SessionSidebar), findsOneWidget);
-      expect(tester.getTopLeft(find.byType(SessionSidebar)).dx, 0);
+      // The legacy left sessions sidebar is gone for good (sessions are
+      // managed by the launcher's chat sheet); the files panel starts closed.
       expect(find.byType(FileBrowser), findsNothing);
 
-      // Opening the files panel keeps the sidebar open.
       await tester.tap(find.byTooltip('Files'));
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsOneWidget);
-      expect(find.byType(SessionSidebar), findsOneWidget);
       expect(tester.getTopLeft(find.byType(FileBrowser)).dx, greaterThan(1000));
 
-      // Closing the sidebar keeps the files panel open.
-      await tester.tap(find.byTooltip('Sessions & model'));
+      await tester.tap(find.byTooltip('Files'));
       await tester.pumpAndSettle();
-      expect(find.byType(SessionSidebar), findsNothing);
-      expect(find.byType(FileBrowser), findsOneWidget);
-
-      // And back: the files panel survives the sidebar round-trip.
-      await tester.tap(find.byTooltip('Sessions & model'));
-      await tester.pumpAndSettle();
-      expect(find.byType(SessionSidebar), findsOneWidget);
-      expect(find.byType(FileBrowser), findsOneWidget);
+      expect(find.byType(FileBrowser), findsNothing);
     });
 
-    testWidgets('wide: model card opens settings mid-chat; applying switches '
-        'the backend and keeps the transcript', (tester) async {
+    testWidgets('wide: settings gear opens settings mid-chat; applying '
+        'switches the backend and keeps the transcript', (tester) async {
       _useWideSurface(tester);
       final env = MemoryExecutionEnv();
       final service = _fakeService(env);
@@ -158,13 +141,8 @@ void main() {
       // The model card shows the current backend.
       expect(find.text('test-model'), findsWidgets);
 
-      // Tapping it opens the connection settings mid-chat.
-      await tester.tap(
-        find.descendant(
-          of: find.byType(SessionSidebar),
-          matching: find.byType(Card),
-        ),
-      );
+      // The gear opens the connection settings mid-chat.
+      await tester.tap(find.byTooltip('Settings'));
       await tester.pumpAndSettle();
       expect(find.text('Settings'), findsOneWidget);
 
@@ -191,121 +169,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(service.messages, hasLength(2));
       expect(service.messages[0].content, 'hello');
-    });
-
-    testWidgets('wide: sessions list renders; new session clears the chat; '
-        'tapping a session loads it back', (tester) async {
-      _useWideSurface(tester);
-      final env = MemoryExecutionEnv();
-      final service = _fakeService(env);
-      await service.initialize();
-      // The agent loop consumes its event stream on the real event loop,
-      // which the widget test's fake zone only drives inside runAsync.
-      await tester.runAsync(() async {
-        await service.sendText('first question');
-        await service.waitForIdle();
-      });
-
-      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('fake-session', service);
-      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
-      await tester.pumpAndSettle();
-      expect(_sidebarListTiles(), findsOneWidget);
-      expect(service.messages, hasLength(2));
-
-      // "New session" creates a fresh session and makes it active; the old
-      // one stays in the manager (that's the multi-session point).
-      await tester.tap(
-        find.descendant(
-          of: find.byType(SessionSidebar),
-          matching: find.byTooltip('New session'),
-        ),
-      );
-      await tester.pumpAndSettle();
-      // Debug: check what sessions exist after "New session".
-      // ignore: avoid_print
-      print('Sessions after new session: ${manager.sessions.map((s) => s.id)}');
-      // ignore: avoid_print
-      print('Active id: ${manager.activeId}');
-      expect(manager.active!.service.messages, isEmpty);
-      expect(manager.sessions, hasLength(2));
-
-      // Tapping the previous session (list is newest-first) switches back.
-      await tester.tap(_sidebarListTiles().at(0));
-      await tester.pumpAndSettle();
-      expect(manager.activeId, 'fake-session');
-      expect(manager.active!.service.messages, hasLength(2));
-      expect(manager.active!.service.messages[0].role, 'user');
-      expect(manager.active!.service.messages[0].content, 'first question');
-      expect(manager.active!.service.messages[1].role, 'assistant');
-      expect(manager.active!.service.messages[1].content, 'ok');
-    });
-
-    testWidgets('wide: deleting a session from the sidebar asks for '
-        'confirmation; deleting the active one resets the chat', (
-      tester,
-    ) async {
-      _useWideSurface(tester);
-      final env = MemoryExecutionEnv();
-      final service = _fakeService(env);
-      await service.initialize();
-      // The agent loop consumes its event stream on the real event loop,
-      // which the widget test's fake zone only drives inside runAsync.
-      await tester.runAsync(() async {
-        await service.sendText('first question');
-        await service.waitForIdle();
-      });
-      final active = (await service.listSessions()).single;
-
-      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('fake-session', service);
-      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
-      await tester.pumpAndSettle();
-      expect(_sidebarListTiles(), findsOneWidget);
-      expect(service.messages, hasLength(2));
-
-      // The row's delete affordance asks first; cancelling keeps the row.
-      await tester.tap(find.byTooltip('Delete session'));
-      await tester.pumpAndSettle();
-      expect(find.text('Delete session?'), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
-      expect(_sidebarListTiles(), findsOneWidget);
-      expect((await service.listSessions()), hasLength(1));
-
-      // Confirming deletes the ACTIVE session: the manager switches to the
-      // most recent remaining session, or creates a fresh one if none remain.
-      await tester.tap(find.byTooltip('Delete session'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete'));
-      await tester.pumpAndSettle();
-
-      expect(manager.active?.service.messages ?? [], isEmpty);
-      expect(manager.activeId, isNot(active.id));
-      final sessions = await service.listSessions();
-      expect(sessions, hasLength(1));
-      expect(manager.activeId, isNotNull);
-      expect(_sidebarListTiles(), findsOneWidget);
-    });
-
-    testWidgets('narrow: menu icon opens the sessions drawer', (tester) async {
-      tester.view.devicePixelRatio = 1.0;
-      tester.view.physicalSize = const Size(500, 900);
-      addTearDown(tester.view.reset);
-
-      final env = MemoryExecutionEnv();
-      await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byType(SessionSidebar), findsNothing);
-
-      await tester.tap(find.byTooltip('Sessions & model'));
-      await tester.pumpAndSettle();
-      expect(find.byType(Drawer), findsOneWidget);
-      expect(find.byType(SessionSidebar), findsOneWidget);
-      // The files end drawer stays closed.
-      expect(find.byType(FileBrowser), findsNothing);
     });
 
     testWidgets(

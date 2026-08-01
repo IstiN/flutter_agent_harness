@@ -8,7 +8,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/sandbox/env_factory.dart';
@@ -24,7 +24,6 @@ import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
-import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
@@ -273,22 +272,16 @@ AgentConfig? restorableBootConfig({
 }
 
 /// The app home after a successful connect: the apps launcher (iOS-style
-/// grid + folders) on narrow phone layouts, the classic chat screen on wide
-/// ones (see [kWideLayoutBreakpoint]).
+/// grid + folders + live widget tiles) with the session chat sheet on EVERY
+/// layout. The classic sidebar chat is legacy — sessions are managed by the
+/// sheet's pager and menus, never by a left panel.
 Widget faHomeScreen({
   required BuildContext context,
   required FlutterSessionManager manager,
   ProviderRegistry? registry,
   LastConnectionStore? lastConnectionStore,
 }) {
-  if (MediaQuery.sizeOf(context).width < kWideLayoutBreakpoint) {
-    return AppLauncherScreen(
-      manager: manager,
-      registry: registry,
-      lastConnectionStore: lastConnectionStore,
-    );
-  }
-  return ChatScreen(
+  return AppLauncherScreen(
     manager: manager,
     registry: registry,
     lastConnectionStore: lastConnectionStore,
