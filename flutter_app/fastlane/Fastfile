@@ -160,6 +160,7 @@ platform :ios do
     team_id = ENV["IOS_TEAM_ID"] || "YP9HC3USZ3"
     bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"
     profile_name = ENV["IOS_PROVISIONING_PROFILE_NAME"] || "Fa Profile"
+    live_activity_profile_name = ENV["IOS_LIVE_ACTIVITY_PROFILE_NAME"] || "FaLiveActivity Profile"
     signing_identity = ENV["IOS_SIGNING_IDENTITY"] || "iPhone Distribution"
 
     update_code_signing_settings(
@@ -173,6 +174,20 @@ platform :ios do
       # target's PRODUCT_BUNDLE_IDENTIFIER (incl. the FaLiveActivity
       # extension), producing a CFBundleIdentifier collision at upload.
       targets: ["Runner"]
+    )
+
+    # The FaLiveActivity extension signs MANUALLY as well: the runner's Xcode
+    # has no Apple account, so automatic signing / -allowProvisioningUpdates
+    # cannot create its profile — it is installed from a secret by the
+    # workflow and only gets pointed at here.
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: "ios/Runner.xcodeproj",
+      team_id: team_id,
+      bundle_identifier: "#{bundle_id}.FaLiveActivity",
+      profile_name: live_activity_profile_name,
+      code_sign_identity: signing_identity,
+      targets: ["FaLiveActivity"]
     )
 
     sh("flutter", "clean")
@@ -198,14 +213,13 @@ platform :ios do
       skip_build_archive: false,
       clean: true,
       sdk: "iphoneos",
-      # The FaLiveActivity extension signs AUTOMATICALLY (no manually managed
-      # profile in the portal): let xcodebuild talk to the Developer portal
-      # during BOTH the archive and the export so it fetches/creates the
-      # extension's profiles itself on the signed-in runner.
-      xcargs: "-allowProvisioningUpdates",
       export_options: {
         method: "app-store",
-        signingStyle: "automatic",
+        provisioningProfiles: {
+          bundle_id => profile_name,
+          "#{bundle_id}.FaLiveActivity" => live_activity_profile_name
+        },
+        signingStyle: "manual",
         teamID: team_id,
         manageAppVersionAndBuildNumber: false,
         uploadBitcode: false,
