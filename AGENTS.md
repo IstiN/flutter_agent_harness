@@ -451,8 +451,10 @@ tests are done right:
 
 ## Quality gates (pre-commit hook: `scripts/pre-commit`)
 
-- `dart analyze` + `dart format --set-exit-if-changed .` clean; example app
-  also `flutter analyze --no-fatal-infos --no-fatal-warnings`.
+- `dart analyze` + `dart format --set-exit-if-changed lib test bin example
+  scripts flutter_app packages` clean (explicit dirs — `yoclip/` is a
+  standalone video workspace with its own toolchain); example app also
+  `flutter analyze --no-fatal-infos --no-fatal-warnings`.
 - `dart test` green (integration-tagged excluded — they run in CI).
 - `cd flutter_app && flutter test` green (includes golden suite) +
   `scripts/check_goldens.py --quick`.

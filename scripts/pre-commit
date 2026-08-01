@@ -62,7 +62,9 @@ echo "🔍 Running dart analyze..."
 dart analyze
 
 echo "🔍 Checking dart format..."
-dart format --output=none --set-exit-if-changed .
+# Explicit package dirs: the repo also hosts standalone workspaces with their
+# own toolchains (yoclip/ video production) that must not gate harness commits.
+dart format --output=none --set-exit-if-changed lib test bin example scripts flutter_app packages
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. TESTS WITH COVERAGE

@@ -97,14 +97,18 @@ StreamFunction _singleTextResponse(String text) {
   };
 }
 
-AgentService _fakeService(ExecutionEnv env) {
+AgentService _fakeService(
+  ExecutionEnv env, {
+  String modelId = 'test-model',
+  String baseUrl = 'https://example.com',
+}) {
   return AgentService(
     agent: Agent(
       model: Model(
-        id: 'test-model',
+        id: modelId,
         api: 'test-api',
         provider: 'test',
-        baseUrl: 'https://example.com',
+        baseUrl: baseUrl,
         contextWindow: 100000,
         maxTokens: 4096,
       ),
@@ -116,8 +120,8 @@ AgentService _fakeService(ExecutionEnv env) {
     sessionsRoot: '/sessions',
     config: AgentConfig(
       providerKind: 'test',
-      modelId: 'test-model',
-      baseUrl: 'https://example.com',
+      modelId: modelId,
+      baseUrl: baseUrl,
       apiKey: '',
     ),
   );
@@ -1101,8 +1105,10 @@ Widget _settingsFrame(BuildContext context, Widget child) {
 }
 
 /// store_providers: the providers-first settings list — the OpenRouter
-/// preset marked current, one saved custom provider, the add row, and the
-/// default chat model row.
+/// preset marked current, two saved custom providers (a hosted frontier
+/// endpoint and a local Ollama), the add row, and the default chat model
+/// row. Names stay REALISTIC (this frame ships to the App Store and the
+/// promo video crops it).
 Future<void> _providersShot(
   WidgetTester tester,
   _Device device,
@@ -1110,11 +1116,20 @@ Future<void> _providersShot(
 ) async {
   final registry = ProviderRegistry.inMemory();
   await registry.add(
-    name: 'Acme',
-    baseUrl: 'https://acme.example/v1',
-    modelId: 'acme-1',
+    name: 'Kimi',
+    baseUrl: 'https://api.kimi.com/coding/v1',
+    modelId: 'kimi-for-coding',
   );
-  final service = _fakeService(MemoryExecutionEnv());
+  await registry.add(
+    name: 'Ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    modelId: 'qwen3:32b',
+  );
+  final service = _fakeService(
+    MemoryExecutionEnv(),
+    modelId: 'kimi-for-coding',
+    baseUrl: 'https://api.kimi.com/coding/v1',
+  );
   await _pumpStore(
     tester,
     Builder(
