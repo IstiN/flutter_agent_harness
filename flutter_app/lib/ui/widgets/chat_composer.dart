@@ -282,6 +282,12 @@ class _ChatComposerState extends State<ChatComposer>
     );
 
     try {
+      // Capture the pre-send streaming state: sendText STARTS a run when
+      // idle, which flips the flag synchronously — aborting on the flipped
+      // flag would kill the run we just started (that's the "empty session
+      // after every send" bug). The interrupt is only for a run that was
+      // ALREADY in flight when the user hit send.
+      final wasStreaming = _isStreaming;
       if (pending.isEmpty) {
         await widget.service.sendText(trimmed);
       } else {
@@ -304,7 +310,7 @@ class _ChatComposerState extends State<ChatComposer>
       // the current turn — the queued message gets its own run right after
       // the lifecycle ends (AgentEndEvent → continueRun), instead of
       // waiting out a long turn.
-      if (_isStreaming) widget.service.abort();
+      if (wasStreaming) widget.service.abort();
     } on Object catch (e) {
       // The send itself failed before the run started: hand the chips and
       // the typed text back so nothing the user composed is lost.

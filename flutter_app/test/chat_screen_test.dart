@@ -138,16 +138,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // The model card shows the current backend.
-      expect(find.text('test-model'), findsWidgets);
-
       // The gear opens the connection settings mid-chat.
-      await tester.tap(find.byTooltip('Settings'));
+      await tester.tap(find.byTooltip('Connection settings'));
       await tester.pumpAndSettle();
       expect(find.text('Settings'), findsOneWidget);
 
-      // The default-chat-model flow: pick the provider, enter a model,
-      // apply (keyless custom endpoint — no key needed).
+      // The default-chat-model flow (the current backend shows in the
+      // settings list): pick the provider, enter a model, apply (keyless
+      // custom endpoint — no key needed).
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Acme'));
