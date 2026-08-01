@@ -765,4 +765,8 @@
 
 - fix(example): TestFlight SIGSEGV root cause — serialized engine lifecycle
 
+## 0.1.112
+
+- feat(example): iOS background execution + Live Activity, key resolution fix, crash-churn guard, mini drag pill
+
 ## Unreleased
