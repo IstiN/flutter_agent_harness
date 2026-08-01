@@ -914,6 +914,9 @@ class _SessionTranscriptState extends State<_SessionTranscript>
   void initState() {
     super.initState();
     widget.service.addListener(_scrollToEnd);
+    // First build (e.g. the sheet just expanded): land on the LATEST
+    // message, not the top of the transcript.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
   }
 
   @override

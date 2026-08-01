@@ -97,6 +97,8 @@ class _ChatComposerState extends State<ChatComposer>
     );
     _isStreaming = widget.service.isStreaming;
     widget.service.addListener(_onServiceChanged);
+    // The send/stop button's look depends on the field being non-empty.
+    _textController.addListener(_onTextChanged);
   }
 
   @override
@@ -112,6 +114,7 @@ class _ChatComposerState extends State<ChatComposer>
   @override
   void dispose() {
     widget.service.removeListener(_onServiceChanged);
+    _textController.removeListener(_onTextChanged);
     _micPulse.dispose();
     if (_micRecording) {
       // Best effort: never leave the native recorder running.
@@ -126,6 +129,10 @@ class _ChatComposerState extends State<ChatComposer>
   void _onServiceChanged() {
     if (!mounted) return;
     setState(() => _isStreaming = widget.service.isStreaming);
+  }
+
+  void _onTextChanged() {
+    if (mounted) setState(() {});
   }
 
   /// The transcriber for voice input: the injected one, or one resolved
@@ -277,23 +284,27 @@ class _ChatComposerState extends State<ChatComposer>
     try {
       if (pending.isEmpty) {
         await widget.service.sendText(trimmed);
-        return;
+      } else {
+        // Attachments were staged into <cwd>/uploads/ at pick time; the
+        // outgoing message references the sandbox paths so the agent reads
+        // the files with its tools (see AgentService.sendAttachments).
+        await widget.service.sendAttachments(
+          attachments: [
+            for (final attachment in pending)
+              (
+                path: attachment.path,
+                bytes: attachment.bytes,
+                mimeType: attachment.mimeType,
+              ),
+          ],
+          text: trimmed,
+        );
       }
-
-      // Attachments were staged into <cwd>/uploads/ at pick time; the
-      // outgoing message references the sandbox paths so the agent reads the
-      // files with its tools (see AgentService.sendAttachments).
-      await widget.service.sendAttachments(
-        attachments: [
-          for (final attachment in pending)
-            (
-              path: attachment.path,
-              bytes: attachment.bytes,
-              mimeType: attachment.mimeType,
-            ),
-        ],
-        text: trimmed,
-      );
+      // Steer-interrupt (pi semantics): a message sent mid-run interrupts
+      // the current turn — the queued message gets its own run right after
+      // the lifecycle ends (AgentEndEvent → continueRun), instead of
+      // waiting out a long turn.
+      if (_isStreaming) widget.service.abort();
     } on Object catch (e) {
       // The send itself failed before the run started: hand the chips and
       // the typed text back so nothing the user composed is lost.
@@ -562,18 +573,29 @@ class _ChatComposerState extends State<ChatComposer>
                       gradient: palette.brandGradient,
                       shape: BoxShape.circle,
                     ),
-                    child: IconButton(
-                      icon: Icon(
-                        _isStreaming ? Icons.stop : Icons.send,
-                        size: 20,
-                      ),
-                      color: palette.onAccent,
-                      tooltip: _isStreaming
-                          ? context.l10n.chatAbortTooltip
-                          : context.l10n.chatSendTooltip,
-                      onPressed: _isStreaming
-                          ? widget.service.abort
-                          : () => _send(_textController.text),
+                    child: Builder(
+                      builder: (context) {
+                        // Stop only while streaming AND nothing typed; with
+                        // text in the field the button is a steer-send
+                        // (interrupt the turn and run the message).
+                        final showStop =
+                            _isStreaming && _textController.text.trim().isEmpty;
+                        return IconButton(
+                          icon: Icon(
+                            showStop ? Icons.stop : Icons.send,
+                            size: 20,
+                          ),
+                          color: palette.onAccent,
+                          tooltip: showStop
+                              ? context.l10n.chatAbortTooltip
+                              : (_isStreaming
+                                    ? context.l10n.chatSteerTooltip
+                                    : context.l10n.chatSendTooltip),
+                          onPressed: showStop
+                              ? widget.service.abort
+                              : () => _send(_textController.text),
+                        );
+                      },
                     ),
                   ),
                 ],

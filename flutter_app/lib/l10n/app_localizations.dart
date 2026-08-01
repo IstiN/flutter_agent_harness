@@ -2209,6 +2209,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Show welcome tour'**
   String get settingsShowOnboarding;
+
+  /// No description provided for @chatSteerTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Send now (interrupt)'**
+  String get chatSteerTooltip;
 }
 
 class _AppLocalizationsDelegate

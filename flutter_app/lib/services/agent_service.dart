@@ -1457,16 +1457,6 @@ class AgentService extends ChangeNotifier {
         _idleWatchdog?.cancel();
         isStreaming = false;
         _currentAssistantMessage = null;
-        // Queued steering must survive the run's end (most visibly an
-        // abort): pi drains the steering queue into the transcript instead
-        // of dropping it, so a stopped run never eats the user's message.
-        final drainedSteering = _agent.drainSteeringQueue();
-        if (drainedSteering.isNotEmpty) {
-          for (final message in drainedSteering) {
-            messages.add(_toChatMessage(message));
-          }
-          pendingSteerTexts.clear();
-        }
         notifyListeners();
         // Session persistence is best effort: a failed append must not
         // propagate back into the agent's event plumbing (a throwing
@@ -1479,8 +1469,9 @@ class AgentService extends ChangeNotifier {
           // missed appends (see _persistedCount).
         }
         await _maybeAutoCompact();
-        // If steering/follow-up messages arrived after the loop's last poll,
-        // kick off another run once the current lifecycle has fully finished.
+        // Steering/follow-up messages queued during the run get their own
+        // run once this lifecycle fully finished — also after a manual
+        // stop, so a queued message never silently dies in the transcript.
         if (_agent.hasQueuedMessages()) {
           Future(() => _runWithTimeout(() => _agent.continueRun()));
         }

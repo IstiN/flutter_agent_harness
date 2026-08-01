@@ -52,7 +52,15 @@ StreamFunction _hungResponse() {
     );
     stream.push(StartEvent(partial: partial));
     cancelToken?.onCancel.then((_) {
-      stream.push(ErrorEvent(reason: StopReason.aborted, error: partial));
+      stream.push(
+        ErrorEvent(
+          reason: StopReason.aborted,
+          error: partial.copyWith(
+            stopReason: StopReason.aborted,
+            errorMessage: 'Operation aborted',
+          ),
+        ),
+      );
       stream.end();
     });
     return stream; // stays open until aborted

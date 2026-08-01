@@ -1228,4 +1228,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsShowOnboarding => 'Показать приветствие';
+
+  @override
+  String get chatSteerTooltip => 'Отправить сейчас (прервать)';
 }

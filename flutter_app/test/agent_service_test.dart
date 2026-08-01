@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:fa/services/agent_service.dart';
@@ -22,6 +24,37 @@ StreamFunction _singleTextResponse(String text) {
     stream.end();
     return stream;
   };
+}
+
+StreamFunction _hungResponse() {
+  fn(Model model, dynamic context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final partial = AssistantMessage(
+      content: const [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime(2026),
+    );
+    stream.push(StartEvent(partial: partial));
+    cancelToken?.onCancel.then((_) {
+      stream.push(
+        ErrorEvent(
+          reason: StopReason.aborted,
+          error: partial.copyWith(
+            stopReason: StopReason.aborted,
+            errorMessage: 'Operation aborted',
+          ),
+        ),
+      );
+      stream.end();
+    });
+    return stream; // stays open until aborted
+  }
+
+  return fn;
 }
 
 StreamFunction _streamingTextResponse(String text) {
@@ -473,6 +506,63 @@ void main() {
       expect(calls, contains('end'));
       expect(calls.indexOf('end'), greaterThan(calls.indexOf('begin')));
     });
+
+    test(
+      'a queued steer RUNS after abort (never dies in the transcript)',
+      () async {
+        final env = MemoryExecutionEnv();
+        var call = 0;
+        streams(Model model, dynamic context, {cancelToken}) {
+          call++;
+          if (call == 1) {
+            return _hungResponse()(model, context, cancelToken: cancelToken);
+          }
+          return _singleTextResponse('follow-up answer')(
+            model,
+            context,
+            cancelToken: cancelToken,
+          );
+        }
+
+        final service = AgentService(
+          agent: _createAgent(streams),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        unawaited(service.sendText('first'));
+        // Wait for the run to actually reach the model, then queue the steer
+        // (waiting on isStreaming alone races the abort against the first
+        // model call).
+        for (var i = 0; i < 50 && call == 0; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(call, 1);
+        expect(service.isStreaming, isTrue);
+        await service.sendText('follow-up');
+
+        service.abort();
+        // AgentEnd schedules the queued follow-up as its own run; pump until
+        // it reached the model and settled.
+        for (var i = 0; i < 100 && (call < 2 || service.isStreaming); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        await service.waitForIdle();
+
+        // The queued message got its OWN run — it never just died in the
+        // transcript after the manual stop.
+        expect(call, 2);
+        expect(
+          service.messages.any(
+            (m) => m.role == 'user' && m.content == 'follow-up',
+          ),
+          isTrue,
+        );
+        expect(service.messages.last.content, 'follow-up answer');
+        expect(service.messages.where((m) => m.isError), isEmpty);
+      },
+    );
 
     test(
       'a failed turn ALSO lands as an error tile in the transcript',

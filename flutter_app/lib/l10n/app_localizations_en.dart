@@ -1219,4 +1219,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsShowOnboarding => 'Show welcome tour';
+
+  @override
+  String get chatSteerTooltip => 'Send now (interrupt)';
 }
