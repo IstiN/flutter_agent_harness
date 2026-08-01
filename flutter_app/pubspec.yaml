@@ -16,6 +16,10 @@ dependencies:
   flutter_agent_harness:
     path: ../
 
+  # The local fa_ui package: the Fa theme + provider/model settings widgets.
+  fa_ui:
+    path: ../packages/fa_ui
+
   # Mobile-friendly filesystem root and image picking.
   path_provider: ^2.1.6
   image_picker: ^1.2.3

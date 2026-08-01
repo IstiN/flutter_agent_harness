@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
+import 'package:fa_ui/fa_ui.dart' show FaChatConnection;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/apps/js_app_engine.dart';
@@ -152,7 +153,7 @@ typedef StagedAttachment = ({String path, Uint8List bytes, String mimeType});
 ///
 /// Persists sessions to [sessionsRoot] via [JsonlSessionRepo] and translates
 /// agent lifecycle events into a list of [FahChatMessage].
-class AgentService extends ChangeNotifier {
+class AgentService extends ChangeNotifier implements FaChatConnection {
   AgentService({
     required this._agent,
     required this.env,

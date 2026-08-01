@@ -36,6 +36,8 @@ import 'package:fa/webllm/webllm_cache_section.dart';
 import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
+export 'package:fa_ui/fa_ui.dart' show ProviderPreset, ModelIdAutocompleteField;
+
 /// Compile-time configuration injected via `--dart-define`. Values fall back
 /// to the `.env` file (local dev) at runtime — see [settingsEnv].
 const settingsDartDefines = <String, String>{
@@ -89,77 +91,6 @@ String settingsEditorKeyNoteFor(AppLocalizations l10n) =>
     KeychainStore.isSupported
     ? l10n.settingsEditorKeyNoteSecure
     : l10n.settingsEditorKeyNote;
-
-/// A bring-your-own-key provider preset. Hosted presets talk to an
-/// OpenAI-compatible chat-completions endpoint; [webllm] runs a small model
-/// on-device in the browser (no key, no endpoint); [gemma] runs Gemma 4
-/// on-device via the `flutter_gemma` plugin on iOS/Android (hidden
-/// elsewhere — see [gemmaProviderSupported]); [transformersJs] runs Gemma 4
-/// ONNX on-device in the browser via `@huggingface/transformers`
-/// (web-only — see [transformersJsProviderSupported]).
-///
-/// Presets are built-in and cannot be deleted; user-added providers
-/// ([CustomProvider], managed by [ProviderRegistry]) appear in the same
-/// picker and can be edited and removed.
-enum ProviderPreset {
-  openrouter(
-    baseUrl: 'https://openrouter.ai/api/v1',
-    defaultModel: 'openai/gpt-4o-mini',
-  ),
-  ollamaCloud(baseUrl: 'https://ollama.com/v1', defaultModel: 'gpt-oss:120b'),
-  custom(baseUrl: null, defaultModel: ''),
-  webllm(baseUrl: null, defaultModel: ''),
-  gemma(baseUrl: null, defaultModel: ''),
-  transformersJs(baseUrl: null, defaultModel: '');
-
-  const ProviderPreset({required this.baseUrl, required this.defaultModel});
-
-  /// Fixed endpoint for hosted presets; `null` for [custom] (user-editable)
-  /// and the on-device presets (no endpoint at all).
-  final String? baseUrl;
-
-  /// Model prefill applied while the user has not typed their own.
-  final String defaultModel;
-
-  /// Whether the base-URL field is editable for this preset.
-  bool get hasEditableBaseUrl => this == ProviderPreset.custom;
-
-  /// Whether this preset is an on-device provider, which replaces the
-  /// key/model/URL fields with a model picker and a download bar.
-  bool get isOnDevice =>
-      this == ProviderPreset.webllm ||
-      this == ProviderPreset.gemma ||
-      this == ProviderPreset.transformersJs;
-
-  /// Short label shown in the provider picker.
-  String labelFor(BuildContext context) => switch (this) {
-    ProviderPreset.openrouter => context.l10n.settingsPresetOpenrouter,
-    ProviderPreset.ollamaCloud => context.l10n.settingsPresetOllama,
-    ProviderPreset.custom => context.l10n.settingsPresetCustom,
-    ProviderPreset.webllm => context.l10n.settingsPresetWebllm,
-    ProviderPreset.gemma => context.l10n.settingsPresetGemma,
-    ProviderPreset.transformersJs => context.l10n.settingsPresetTransformersJs,
-  };
-
-  /// Shown under the form for providers that may reject browser (CORS)
-  /// calls. OpenRouter allows cross-origin browser requests, so it has no
-  /// note; other endpoints are not guaranteed to.
-  String? corsNote(BuildContext context) => switch (this) {
-    ProviderPreset.openrouter => null,
-    ProviderPreset.ollamaCloud => context.l10n.settingsCorsNoteOllama,
-    ProviderPreset.custom => context.l10n.settingsCorsNoteCustom,
-    ProviderPreset.webllm ||
-    ProviderPreset.gemma ||
-    ProviderPreset.transformersJs => null,
-  };
-
-  /// Infers a preset from a configured base URL (for env-prefilled setups).
-  static ProviderPreset fromBaseUrl(String url) {
-    if (url.contains('openrouter.ai')) return ProviderPreset.openrouter;
-    if (url.contains('ollama.com')) return ProviderPreset.ollamaCloud;
-    return ProviderPreset.custom;
-  }
-}
 
 /// The BYOK connection form shared by the first-run [SetupScreen] and the
 /// in-chat [SettingsScreen].
@@ -2429,92 +2360,6 @@ class _VisionBadge extends StatelessWidget {
           color: theme.colorScheme.onTertiaryContainer,
         ),
       ),
-    );
-  }
-}
-
-/// The model-id field with the `/models` quick select shared by the
-/// connection form, the media slot editor, and the default-chat-model
-/// picker: a free-text field whose autocomplete options are the endpoint's
-/// model ids, filtered by the typed text (any custom id stays valid).
-/// While [loading] the field shows the fetching helper and a spinner.
-class ModelIdAutocompleteField extends StatelessWidget {
-  const ModelIdAutocompleteField({
-    super.key,
-    required this.controller,
-    required this.focusNode,
-    required this.models,
-    required this.loading,
-  });
-
-  /// The model id being edited (also receives the picked option).
-  final TextEditingController controller;
-
-  /// The field's focus node (drives the quick-select overlay).
-  final FocusNode focusNode;
-
-  /// The endpoint's `/models` ids feeding the quick select.
-  final List<String> models;
-
-  /// Whether a `/models` fetch is in flight.
-  final bool loading;
-
-  @override
-  Widget build(BuildContext context) {
-    return RawAutocomplete<String>(
-      textEditingController: controller,
-      focusNode: focusNode,
-      optionsBuilder: (value) {
-        final query = value.text.trim().toLowerCase();
-        if (query.isEmpty) return models;
-        return models.where((id) => id.toLowerCase().contains(query));
-      },
-      onSelected: (id) => controller.text = id,
-      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-        return TextField(
-          controller: controller,
-          focusNode: focusNode,
-          decoration: InputDecoration(
-            labelText: context.l10n.settingsModelIdLabel,
-            helperText: loading ? context.l10n.settingsModelsFetching : null,
-            suffixIcon: loading
-                ? const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                : null,
-          ),
-        );
-      },
-      optionsViewBuilder: (context, onSelected, options) {
-        return Align(
-          alignment: Alignment.topLeft,
-          child: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(8),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 240, maxWidth: 440),
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                shrinkWrap: true,
-                itemCount: options.length,
-                itemBuilder: (context, index) {
-                  final option = options.elementAt(index);
-                  return ListTile(
-                    dense: true,
-                    title: Text(option),
-                    onTap: () => onSelected(option),
-                  );
-                },
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }

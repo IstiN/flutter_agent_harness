@@ -1,7 +1,4 @@
-import 'package:fa/services/media_models_store.dart';
-import 'package:fa/services/provider_registry.dart';
-import 'package:fa/ui/screens/media_slot_picker_page.dart';
-import 'package:fa/ui/screens/provider_editor_page.dart';
+import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';

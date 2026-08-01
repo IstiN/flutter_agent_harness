@@ -111,15 +111,36 @@ factual: paths, commands, invariants — no essays.
   `builtinTools(env, webSearch:)`.
 - `lib/src/model_roles/provider_catalog.dart` — provider table; specs
   default `input: ['text','image']` (vision).
+- `packages/fa_ui/` — reusable Flutter package for hosts embedding the Fa
+  agent: the Fa theme (`FahPalette`/`FahLightPalette`/`FahColors.of(context)`,
+  `buildFahTheme()`/`buildFahThemeLight()` + chat themes) with the
+  `FaUiTheme`/`FaUiThemeProvider` customization layer (accent colors, font
+  family, radii), the provider/model settings widgets (`ProvidersSection`,
+  `ProviderEditorPage`, `DefaultChatModelSection` + pickers,
+  `MediaSlotProviderPickerPage`/`MediaSlotModelPage`, `ProviderPreset` +
+  helpers, `ModelIdAutocompleteField`), and the stores (`ProviderRegistry`,
+  `MediaModelsStore`, `SessionKeysStore`, `KeychainStore`,
+  `modelIdSuggestsVision`). Package strings live in `FaUiStrings`
+  (en/ru defaults resolved from the locale, host-overridable via
+  `FaUiStringsScope`) — never the app's gen-l10n. App-level concerns are
+  injected: the active connection is the `FaChatConnection` interface,
+  on-device engine routes are `FaOnDeviceRoute` builders, the apply
+  callback carries `FaChatModelConfig`, and named-key resolution goes
+  through the `FaUiHost.keyResolver` hook. `flutter_app` consumes it via
+  path dep + thin `export` shims at the old paths; the app's
+  `lib/ui/screens/providers_section.dart` additionally keeps a
+  `DefaultChatModelSection` ADAPTER (old constructor) wiring `AgentService`,
+  `LastConnectionStore`, and the on-device engines into the package flow.
 - `flutter_app/` — Flutter chat example. Layout: `lib/main.dart`
   (entrypoint + BootstrapScreen: auto-connects the restored last connection
   when its key resolves, else SetupScreen), `lib/ui/` (`app_theme.dart` —
-  dark + light palettes/themes, `FahColors.of(context)` resolves per
-  brightness; `markdown_style.dart`, `screens/`, `widgets/`),
+  shim re-exporting the fa_ui theme; `markdown_style.dart`, `screens/`,
+  `widgets/`),
   `lib/services/` (agent service, stores, upload, secrets, project mount,
-  vision, `theme_controller.dart` theme-mode persistence + `FahThemeScope`,
-  `session_keys_store.dart` user-saved keys + `SessionKeysScope`,
-  `keychain_store.dart` iOS/macOS Keychain channel), `lib/sandbox/` (env,
+  vision, `theme_controller.dart` theme-mode persistence + `FahThemeScope`;
+  `session_keys_store.dart`/`keychain_store.dart`/`provider_registry.dart`/
+  `media_models_store.dart`/`vision_models.dart` are shim re-exports of the
+  fa_ui stores), `lib/sandbox/` (env,
   shells, wasm, git, fs persistence), feature dirs
   `lib/apps|gemma|webllm|transformers_js|l10n/`. All lib-internal imports
   are absolute `package:fa/...` — no relative imports.
@@ -314,8 +335,9 @@ factual: paths, commands, invariants — no essays.
   in `main.dart` reserves a 28px top strip on macOS so they never overlap
   the app header.
 - `flutter_app/lib/services/theme_controller.dart` — ThemeMode
-  (system/light/dark) persisted as `theme.json`; `app_theme.dart` has
-  `buildFahTheme()` (dark) + `buildFahThemeLight()`, widgets read colors via
+  (system/light/dark) persisted as `theme.json`; the theme itself lives in
+  `packages/fa_ui` (`buildFahTheme()` dark + `buildFahThemeLight()`,
+  re-exported by the `lib/ui/app_theme.dart` shim), widgets read colors via
   `FahColors.of(context)` (never `FahPalette` directly in widgets).
 - `flutter_app/lib/ui/screens/onboarding_screen.dart` — first-launch
   onboarding: 4 pages (welcome + AI disclaimer, permissions explainer, model
@@ -326,7 +348,8 @@ factual: paths, commands, invariants — no essays.
   connection; the seen flag lives in
   `lib/services/onboarding_store.dart` (`onboarding_seen.json`, same
   tiny-store pattern as `theme.json`).
-- `flutter_app/lib/services/session_keys_store.dart` — in-app secrets:
+- `flutter_app/lib/services/session_keys_store.dart` — shim re-exporting
+  the fa_ui store; in-app secrets:
   on iOS/macOS persisted in the platform Keychain via `keychain_store.dart`
   (the `fah/keychain` MethodChannel, service `fa.app`; file-persisted keys
   migrate once), elsewhere `session_keys.json` via the env (set/delete,
@@ -366,8 +389,9 @@ factual: paths, commands, invariants — no essays.
   (never API keys) as `last_connection.json`; at boot `restorableBootConfig`
   (main.dart) rebuilds the AgentConfig (custom-provider key → saved hosted
   key) for the auto-connect, else it pre-selects the settings form.
-- `flutter_app/lib/services/vision_models.dart` — `modelIdSuggestsVision`
-  heuristic fills `Model.input`; `AgentConfig.supportsImages` overrides;
+- `flutter_app/lib/services/vision_models.dart` — shim re-exporting the
+  fa_ui `modelIdSuggestsVision` heuristic, which fills `Model.input`;
+  `AgentConfig.supportsImages` overrides;
   without `image` the `read` tool notes non-vision and adapters drop image
   blocks.
 - `flutter_app/lib/services/media_tools.dart` — `MediaGateway` over the

@@ -7,3 +7,8 @@ analyzer:
     - example/build/**
     - vendor/**
     - example/**/vendor/**
+    # Standalone video-production workspace (own pubspec/analysis_options) —
+    # not part of the harness packages, gated by its own toolchain.
+    - yoclip/**
+    # Reusable Flutter package with its own analysis_options.
+    - packages/**

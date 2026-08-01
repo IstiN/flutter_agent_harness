@@ -28,6 +28,7 @@ import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
+import 'package:fa_ui/fa_ui.dart' show FaUiHost;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -83,6 +84,9 @@ Future<void> main() async {
   final onboardingStore = await OnboardingStore.load(env);
   final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
   final mediaModels = await MediaModelsStore.load(env);
+  // fa_ui's provider UI resolves named keys through the app's chain
+  // (dart-defines → saved keys → .env), exactly like the connection form.
+  FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
   // Analytics is strictly optional. On web with placeholder options
   // (`YOUR_*` — what CI builds) initializeApp above is skipped, and just
   // reading Firebase.apps can throw (no JS SDK loaded — seen on Safari,

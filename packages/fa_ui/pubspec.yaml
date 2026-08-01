@@ -1,0 +1,37 @@
+name: fa_ui
+description: >-
+  Reusable UI for apps embedding the Fa agent: the Fa brand theme (dark +
+  light, customizable via FaUiTheme), and ready-made provider/model settings
+  widgets (provider presets, custom-provider registry, media model slots)
+  with host-overridable strings.
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: ^3.12.2
+  flutter: ">=1.17.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The local flutter_agent_harness package (pure Dart core): ExecutionEnv
+  # for the persisted stores, AgentConfig for the connect flow, and the
+  # shared /models endpoint parser.
+  flutter_agent_harness:
+    path: ../../
+
+  # ChatTheme for the flutter_chat_ui theme builders.
+  flutter_chat_core: ^2.9.0
+
+  # The /models endpoint fetch behind the model quick select.
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_localizations:
+    sdk: flutter
+
+flutter:
