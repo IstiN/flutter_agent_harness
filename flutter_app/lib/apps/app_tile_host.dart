@@ -54,6 +54,12 @@ class AppTileHost extends StatefulWidget {
     this.mapTileProvider,
   });
 
+  /// Integration tests (real-agent E2E) set this to let REAL engines boot
+  /// under the test binding — they clean engines up explicitly instead of
+  /// relying on the test-fallback shortcut. Defaults to false: unit and
+  /// golden tests never boot native engines accidentally.
+  static bool allowEnginesInTests = false;
+
   /// The app whose tile this hosts; [JsAppInfo.tileWidget] must be non-null.
   final JsAppInfo app;
 
@@ -88,7 +94,8 @@ class _AppTileHostState extends State<AppTileHost> {
   /// binding's "Timer still pending" invariant, so under tests the tile
   /// renders the icon fallback UNLESS the test injects an explicit
   /// [AppTileHost.engineFactory] (golden/tile tests do — they still
-  /// exercise the real render path with a fake engine).
+  /// exercise the real render path with a fake engine) or opts into real
+  /// engines via [AppTileHost.allowEnginesInTests] (integration tests).
   ///
   /// Detected by the binding's class name: `flutter test` installs an
   /// (Automated/Live)TestWidgetsFlutterBinding. No `dart:io` (web-safe);
@@ -219,8 +226,11 @@ class _AppTileHostState extends State<AppTileHost> {
     // context address out from under the next engine.
     if (old != null) await old.dispose();
     // No real JS engines under `flutter test` without an explicit factory —
-    // show the icon fallback instead (see [_kFlutterTest]).
-    if (_kFlutterTest && widget.engineFactory == null) {
+    // show the icon fallback instead (see [_kFlutterTest]); integration
+    // tests opt into real engines via [allowEnginesInTests].
+    if (_kFlutterTest &&
+        !AppTileHost.allowEnginesInTests &&
+        widget.engineFactory == null) {
       if (mounted) {
         setState(() => _startError = StateError('flutter test'));
       }

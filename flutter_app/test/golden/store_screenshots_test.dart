@@ -747,6 +747,48 @@ Future<void> _appsShot(
 
 // --- Frame 4: store_inapp — Fa inside the map app ---------------------------
 
+/// The square marketing promo (App Review / social artwork): the same
+/// story sidebar+gallery composition as store_apps at 1024×1024.
+Future<void> _promoShot(WidgetTester tester, Locale locale) async {
+  const device = (name: 'promo', physical: Size(1024, 1024), dpr: 1.0);
+  _mockBundledAppAssets();
+  final env = MemoryExecutionEnv();
+  await _seedSessionNames(env, locale.languageCode);
+  final service = _fakeService(env);
+  service.messages
+    ..add(
+      FahChatMessage(
+        role: 'user',
+        content: locale.languageCode == 'ru'
+            ? 'когда у Макара логопед на этой неделе?'
+            : "when is Makar's speech therapy this week?",
+      ),
+    )
+    ..add(
+      FahChatMessage(
+        role: 'assistant',
+        content: locale.languageCode == 'ru'
+            ? 'Каждый понедельник и четверг в 18:10 — напоминание придёт '
+                  'за 30 минут. В эту неделю: 27 и 30 июля.'
+            : 'Every Monday and Thursday at 18:10 — the alarm fires 30 '
+                  'minutes before. This week: Jul 27 and Jul 30.',
+      ),
+    );
+  final manager = await _storyManager(env, service);
+
+  await _pumpStore(
+    tester,
+    ChatScreen(manager: manager),
+    device: device,
+    locale: locale,
+    screen: 'store_apps',
+  );
+  await _settleSidebarApps(tester);
+  await _expectStore(tester, device, locale, 'store_promo');
+}
+
+// --- Frame 5: store_providers — the provider story ---------------------------
+
 /// The bundled Map demo's inline SVG icon (from
 /// `assets/apps/map/manifest.json`).
 const _mapSvgIcon =
@@ -1066,6 +1108,12 @@ void main() {
         for (final locale in _locales) {
           await _appsShot(tester, device, locale);
         }
+      }
+    });
+
+    testWidgets('store_promo — square marketing artwork', (tester) async {
+      for (final locale in _locales) {
+        await _promoShot(tester, locale);
       }
     });
 
