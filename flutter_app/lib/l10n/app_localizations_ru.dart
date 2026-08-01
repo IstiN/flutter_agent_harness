@@ -184,6 +184,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsPermissionsTooltip => 'Разрешения приложения';
 
   @override
+  String get appsCloseTooltip => 'Закрыть приложение';
+
+  @override
   String get appsRefreshTooltip => 'Обновить';
 
   @override

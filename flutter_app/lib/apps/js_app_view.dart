@@ -604,6 +604,17 @@ class _JsAppViewState extends State<JsAppView> {
               unawaited(_openPermissions());
             case 'reload':
               unawaited(_restart());
+            case 'close':
+              // Mirror the system-back contract: an app that registered
+              // `jsr.onBack` owns the close flow, otherwise pop directly.
+              // Full-chrome apps (maps) have no AppBar back arrow and the
+              // canvas swallows the iOS edge swipe, so this menu item is
+              // their only reliable exit.
+              if (_engine?.backHandlerRegistered.value ?? false) {
+                _forwardBackToApp();
+              } else {
+                _closeFromJs();
+              }
           }
         },
         itemBuilder: (context) => [
@@ -624,6 +635,16 @@ class _JsAppViewState extends State<JsAppView> {
                 const Icon(Icons.refresh, size: 20),
                 const SizedBox(width: 12),
                 Text(context.l10n.appsReloadTooltip),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'close',
+            child: Row(
+              children: [
+                const Icon(Icons.close, size: 20),
+                const SizedBox(width: 12),
+                Text(context.l10n.appsCloseTooltip),
               ],
             ),
           ),

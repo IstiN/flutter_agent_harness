@@ -398,6 +398,12 @@ abstract class AppLocalizations {
   /// **'App permissions'**
   String get appsPermissionsTooltip;
 
+  /// No description provided for @appsCloseTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Close app'**
+  String get appsCloseTooltip;
+
   /// No description provided for @appsRefreshTooltip.
   ///
   /// In en, this message translates to:

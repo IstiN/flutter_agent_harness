@@ -95,6 +95,54 @@ void main() {
     await openChromeMenu(tester);
     expect(find.text('App permissions'), findsOneWidget);
     expect(find.text('Reload app'), findsOneWidget);
+    expect(find.text('Close app'), findsOneWidget);
+  });
+
+  testWidgets('full chrome menu close pops the app route', (tester) async {
+    final env = await brokenAppEnv();
+    final permissions = await AppPermissionsStore.load(env);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => JsAppView(
+                      app: JsAppInfo.fromManifest(
+                        const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
+                        bundled: false,
+                        fallbackId: 'demo',
+                      ),
+                      env: env,
+                      permissionsStore: permissions,
+                    ),
+                  ),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.more_vert), findsOneWidget);
+
+    await openChromeMenu(tester);
+    await tester.tap(find.text('Close app'));
+    await tester.pumpAndSettle();
+
+    // Back on the home page: the full-chrome app is closed (its canvas
+    // swallowed the iOS edge swipe, so the menu close is the only exit).
+    expect(find.text('open'), findsOneWidget);
+    expect(find.byIcon(Icons.more_vert), findsNothing);
   });
 
   testWidgets('full chrome menu opens the permissions dialog', (tester) async {

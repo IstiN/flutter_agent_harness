@@ -182,6 +182,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsPermissionsTooltip => 'App permissions';
 
   @override
+  String get appsCloseTooltip => 'Close app';
+
+  @override
   String get appsRefreshTooltip => 'Refresh';
 
   @override

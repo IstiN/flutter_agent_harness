@@ -50,6 +50,7 @@
   "appsPermissionsDone": "Готово",
   "appsPermissionsTitle": "Разрешения {name}",
   "appsPermissionsTooltip": "Разрешения приложения",
+  "appsCloseTooltip": "Закрыть приложение",
   "appsRefreshTooltip": "Обновить",
   "appsReloadTooltip": "Перезагрузить приложение",
   "appsSendToFa": "Отправить Fa",

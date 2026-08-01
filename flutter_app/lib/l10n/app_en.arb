@@ -53,6 +53,7 @@
   "appsPermissionsDone": "Done",
   "appsPermissionsTitle": "{name} permissions",
   "appsPermissionsTooltip": "App permissions",
+  "appsCloseTooltip": "Close app",
   "appsRefreshTooltip": "Refresh",
   "appsReloadTooltip": "Reload app",
   "appsSendToFa": "Send to Fa",
