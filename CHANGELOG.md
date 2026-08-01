@@ -778,4 +778,8 @@
 - ci(ios): scope codesign rewrite to Runner, auto-sign the FaLiveActivity extension (bundle-id collision 90685)
 - fix(example): steer button interrupts the run, queued steers run after stop, sheet opens at the latest message
 
+## 0.1.116
+
+- fix(example): close action for full-chrome JS apps (map was unclosable), store copyright name
+
 ## Unreleased
