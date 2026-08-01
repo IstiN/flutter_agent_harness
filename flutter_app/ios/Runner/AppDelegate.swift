@@ -1,3 +1,4 @@
+import ActivityKit
 import AVFoundation
 import Contacts
 import EventKit
@@ -18,15 +19,157 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    registerBackgroundChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerCalendarChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerContactsChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerHealthChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerHomeChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerICloudChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerKeychainChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerLiveActivityChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerMicChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerNotifyChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerVideoChannel(messenger: engineBridge.applicationRegistrar.messenger())
+  }
+}
+
+/// The `fah/background` method channel: extended background execution via
+/// `UIApplication.beginBackgroundTask`. `begin {name}` → the task id (or
+/// -1 when the system refuses), `end {id}` releases it. An agent run
+/// starts a task so the OS grants ~30 s of execution after the user
+/// backgrounds the app mid-stream instead of suspending instantly.
+private func registerBackgroundChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/background",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "begin":
+      let name =
+        (call.arguments as? [String: Any])?["name"] as? String ?? "agent-run"
+      var taskId: UIBackgroundTaskIdentifier = .invalid
+      taskId = UIApplication.shared.beginBackgroundTask(withName: name) {
+        // Expiring: the OS revokes the time — end the task cleanly (the
+        // Dart side ends its own on completion; this only covers the OS
+        // force-expiry path).
+        UIApplication.shared.endBackgroundTask(taskId)
+      }
+      if taskId == .invalid {
+        result(-1)
+      } else {
+        result(taskId.rawValue)
+      }
+    case "end":
+      if let id = (call.arguments as? [String: Any])?["id"] as? Int, id >= 0 {
+        UIApplication.shared.endBackgroundTask(
+          UIBackgroundTaskIdentifier(rawValue: id)
+        )
+      }
+      result(nil)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+
+/// The `fah/live_activity` method channel: an iOS Live Activity (Dynamic
+/// Island + lock screen) mirroring the agent run status. `start
+/// {sessionTitle, statusText}` requests an activity, `update {statusText,
+/// isError, isDone}` refreshes ALL live activities of the type, `end` ends
+/// them with immediate dismissal. No-ops below iOS 16.2 (ActivityKit's Live
+/// Activity floor) — the Dart side treats every call as best-effort anyway.
+private func registerLiveActivityChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/live_activity",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    guard #available(iOS 16.2, *) else {
+      // Live Activities do not exist here; answer success so the Dart side
+      // never has to branch on the OS version.
+      result(call.method == "start" ? false : nil)
+      return
+    }
+    switch call.method {
+    case "start":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(liveActivityStart(args: args))
+    case "update":
+      let args = call.arguments as? [String: Any] ?? [:]
+      liveActivityUpdate(args: args, result: result)
+    case "end":
+      liveActivityEnd(result: result)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+/// Requests the agent-run Live Activity; false when the user disabled Live
+/// Activities for the app or the request failed.
+@available(iOS 16.2, *)
+private func liveActivityStart(args: [String: Any]) -> Bool {
+  guard ActivityAuthorizationInfo().areActivitiesEnabled else { return false }
+  // One run at a time reads best in the island: replace any stragglers from
+  // a previous run the Dart side never got to end (e.g. a killed app).
+  let state = FaLiveActivityAttributes.ContentState(
+    statusText: args["statusText"] as? String ?? "working…",
+    isError: false,
+    isDone: false,
+  )
+  for activity in Activity<FaLiveActivityAttributes>.activities {
+    Task { await activity.end(nil, dismissalPolicy: .immediate) }
+  }
+  let attributes = FaLiveActivityAttributes(
+    sessionTitle: args["sessionTitle"] as? String ?? "Fa agent",
+  )
+  do {
+    if #available(iOS 18.0, *) {
+      _ = try Activity.request(
+        attributes: attributes,
+        content: ActivityContent(state: state, staleDate: nil),
+        pushType: nil,
+      )
+    } else {
+      _ = try Activity.request(
+        attributes: attributes,
+        contentState: state,
+        pushType: nil,
+      )
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/// Pushes the new state to every live activity of the type.
+@available(iOS 16.2, *)
+private func liveActivityUpdate(args: [String: Any], result: @escaping FlutterResult) {
+  let state = FaLiveActivityAttributes.ContentState(
+    statusText: args["statusText"] as? String ?? "",
+    isError: args["isError"] as? Bool ?? false,
+    isDone: args["isDone"] as? Bool ?? false,
+  )
+  Task {
+    let content = ActivityContent(state: state, staleDate: nil)
+    for activity in Activity<FaLiveActivityAttributes>.activities {
+      await activity.update(content)
+    }
+    result(nil)
+  }
+}
+
+/// Ends every live activity of the type, dismissing it immediately.
+@available(iOS 16.2, *)
+private func liveActivityEnd(result: @escaping FlutterResult) {
+  Task {
+    for activity in Activity<FaLiveActivityAttributes>.activities {
+      await activity.end(nil, dismissalPolicy: .immediate)
+    }
+    result(nil)
   }
 }
 

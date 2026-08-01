@@ -416,6 +416,7 @@ void main() {
         ),
       );
       manager.addSession('hung', service);
+      addTearDown(service.dispose);
       await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
 
@@ -429,6 +430,8 @@ void main() {
       await tester.tap(find.byIcon(Icons.stop).last);
       await tester.pumpAndSettle();
       expect(service.isStreaming, isFalse);
+      // Let the Live Activity end timer (4 s) fire so nothing is pending.
+      await tester.pump(const Duration(seconds: 5));
     });
   });
 

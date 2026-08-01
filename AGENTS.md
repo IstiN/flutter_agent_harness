@@ -272,6 +272,21 @@ factual: paths, commands, invariants — no essays.
   buffer (2000 lines) + best-effort persistence to `logs/app.log` under
   `ExecutionEnv.cwd` (rewritten with its tail past 1 MB). `main.dart` tees
   `debugPrint` into it; settings has a "Copy debug logs" row.
+- `flutter_app/lib/services/background_execution.dart` — iOS extended
+  background execution (`fah/background` channel →
+  `UIApplication.beginBackgroundTask`, io/stub pair): the
+  `AgentService.isStreaming` setter brackets every run so the OS grants
+  ~30 s of execution when the user backgrounds mid-stream instead of
+  suspending instantly.
+- `flutter_app/lib/services/live_activity.dart` — iOS Live Activity
+  (`fah/live_activity` channel, ActivityKit ≥16.2, io/stub pair): starts
+  on run start, updates with the FaWorkBar-style status text on tool
+  start/end and first deltas, final done/error update then `end` after
+  4 s. The widget extension is `ios/FaLiveActivity/` (bundle id
+  `dev.fa1.app.FaLiveActivity`, compiled into both targets via
+  `FaLiveActivityAttributes.swift`); `Info.plist` has
+  `NSSupportsLiveActivities`. Device/release signing needs an App ID +
+  provisioning profiles for the extension in the portal.
 - `flutter_app/lib/services/calendar_service.dart` — system calendar:
   `CalendarApi` over the `fah/calendar` MethodChannel (EventKit in
   `MainFlutterWindow.swift`/`AppDelegate.swift` — MIRRORED, edit both;

@@ -210,12 +210,31 @@ void main() {
       final harness = await _pumpHost(tester, fsRevision: fsRevision);
       final old = harness.engines.single;
 
+      // Restart requires the APP's files to have changed (the signature
+      // guard against needless engine churn) — write a new tile entry.
+      await harness.env.writeFile('apps/weather/widget_tile.js', '// v2');
       fsRevision.value++;
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pumpAndSettle();
       expect(old.disposeCount, 1);
       expect(harness.engines, hasLength(2));
       expect(harness.engines.last.startCount, 1);
+    });
+
+    testWidgets('an fsRevision bump WITHOUT app changes keeps the engine', (
+      tester,
+    ) async {
+      final fsRevision = ValueNotifier(0);
+      addTearDown(fsRevision.dispose);
+      final harness = await _pumpHost(tester, fsRevision: fsRevision);
+
+      // An unrelated write bumped fsRevision — the tile's app is
+      // untouched, so the engine must NOT restart (the churn guard).
+      fsRevision.value++;
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
+      expect(harness.engines.single.startCount, 1);
+      expect(harness.engines.single.disposeCount, 0);
     });
 
     testWidgets('no refreshSeconds → no periodic timer', (tester) async {
@@ -232,6 +251,8 @@ void main() {
       final harness = await _pumpHost(tester, fsRevision: fsRevision);
       expect(harness.engines, hasLength(1));
 
+      // Restart requires the APP's files to have changed.
+      await harness.env.writeFile('apps/weather/widget_tile.js', '// v2');
       fsRevision.value++;
       // The 600 ms debounce has not elapsed yet — still one engine.
       await tester.pump(const Duration(milliseconds: 300));

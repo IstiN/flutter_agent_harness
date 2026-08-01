@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/apps/js_app_engine.dart';
@@ -11,6 +12,7 @@ import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/approval_mode_store.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/asr_tool.dart';
+import 'package:fa/services/background_execution.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/calendar_tool.dart';
 import 'package:fa/services/contact_service.dart';
@@ -21,6 +23,7 @@ import 'package:fa/services/home_service.dart';
 import 'package:fa/services/home_tool.dart';
 import 'package:fa/services/icloud_sync_service.dart';
 import 'package:fa/services/icloud_sync_tool.dart';
+import 'package:fa/services/live_activity.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
@@ -244,10 +247,15 @@ class AgentService extends ChangeNotifier {
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
       initialApprovalMode: savedApprovalMode,
       approvalModeStore: approvalModeStore,
+      // Live stores FIRST: a key edited in Settings must win over the
+      // boot-time snapshot (the keychain write updates the registry, not
+      // this map — boot map last so edited provider keys apply
+      // immediately). The boot map still covers dotenv entries and
+      // request_secret grants (it is runtime-mutable for those).
       resolveSecretName: (name) async =>
-          secrets[name] ??
+          providerRegistry?.keyValueForName(name) ??
           sessionKeys?.valueOf(name) ??
-          providerRegistry?.keyValueForName(name),
+          secrets[name],
       promptSuffix: promptSuffix,
     );
   }
@@ -793,7 +801,105 @@ class AgentService extends ChangeNotifier {
   /// messages can be cleared right when a continuation turn begins.
   int _turnStartCount = 0;
 
-  bool isStreaming = false;
+  /// True while a run is streaming. Flipping it also manages the iOS
+  /// extended-background-execution task (see [BackgroundExecution]) and the
+  /// Live Activity (see [LiveActivity]): a run asks the OS for extra time
+  /// and shows its status on the Dynamic Island / lock screen when the app
+  /// is backgrounded mid-stream.
+  bool get isStreaming => _isStreaming;
+  set isStreaming(bool value) {
+    if (value == _isStreaming) return;
+    _isStreaming = value;
+    if (value) {
+      // A new run supersedes the previous run's pending Live Activity end.
+      _liveActivityEndTimer?.cancel();
+      _liveActivityEndTimer = null;
+      unawaited(_beginBackgroundTask());
+      unawaited(
+        LiveActivity.start(
+          sessionTitle: 'Fa agent run',
+          statusText: _liveActivityStatusText(),
+        ),
+      );
+    } else {
+      final id = _backgroundTaskId;
+      _backgroundTaskId = null;
+      unawaited(BackgroundExecution.end(id));
+      unawaited(_finishLiveActivity());
+    }
+  }
+
+  bool _isStreaming = false;
+  int? _backgroundTaskId;
+  Timer? _liveActivityEndTimer;
+
+  Future<void> _beginBackgroundTask() async {
+    _backgroundTaskId = await BackgroundExecution.begin('agent-run');
+  }
+
+  /// Shows the final run state on the Live Activity briefly, then ends it.
+  /// The microtask hop (NOT a zero-delay timer — it would linger as a
+  /// pending FakeTimer in tests) lets the error paths assign [error]
+  /// first — they flip [isStreaming] and set the message right after,
+  /// synchronously. The end timer is tracked so [dispose] can cancel it
+  /// (and skipped entirely under widget tests, where a pending 4 s timer
+  /// fails the binding).
+  Future<void> _finishLiveActivity() async {
+    await Future<void>.microtask(() {});
+    final failed = error != null;
+    await LiveActivity.update(
+      statusText: failed ? 'run failed' : 'done',
+      isError: failed,
+      isDone: true,
+    );
+    if (_inWidgetTest) {
+      await LiveActivity.end();
+      return;
+    }
+    _liveActivityEndTimer?.cancel();
+    _liveActivityEndTimer = Timer(const Duration(seconds: 4), () {
+      unawaited(LiveActivity.end());
+    });
+  }
+
+  /// True under `flutter test` (binding class name; web-safe). False when
+  /// no binding exists (plain dart tests — there the real event loop just
+  /// runs the end timer out).
+  static bool get _inWidgetTest {
+    try {
+      return WidgetsBinding.instance.runtimeType.toString().contains(
+        'TestWidgetsFlutterBinding',
+      );
+    } on Object {
+      return false;
+    }
+  }
+
+  /// The Live Activity status line — mirrors the FaWorkBar derivation
+  /// (current tool call, thinking, writing) so both surfaces agree.
+  String _liveActivityStatusText() {
+    for (final message in messages.reversed) {
+      switch (message.role) {
+        case 'system':
+          return message.content.split('\n').first;
+        case 'tool':
+          return '[${message.toolName}] ✓';
+        case 'thinking':
+          return 'thinking…';
+        case 'assistant':
+          return 'writing…';
+      }
+    }
+    return 'working…';
+  }
+
+  /// Pushes the current status line to the Live Activity; cheap no-op when
+  /// no activity is live (and always off iOS).
+  void _pushLiveActivityStatus() {
+    if (!_isStreaming) return;
+    unawaited(LiveActivity.update(statusText: _liveActivityStatusText()));
+  }
+
   String? error;
 
   /// Builtin tools whose completion may mean the sandbox filesystem changed
@@ -1102,6 +1208,7 @@ class AgentService extends ChangeNotifier {
   @override
   void dispose() {
     _idleWatchdog?.cancel();
+    _liveActivityEndTimer?.cancel();
     fsRevision.dispose();
     super.dispose();
   }
@@ -1319,6 +1426,7 @@ class AgentService extends ChangeNotifier {
             content: '[$toolName] ${_shortArgs(args)}',
           ),
         );
+        _pushLiveActivityStatus();
         notifyListeners();
       case ToolExecutionEndEvent(
         :final toolName,
@@ -1343,6 +1451,7 @@ class AgentService extends ChangeNotifier {
             isError: isError,
           ),
         );
+        _pushLiveActivityStatus();
         notifyListeners();
       case AgentEndEvent():
         _idleWatchdog?.cancel();
@@ -1399,6 +1508,8 @@ class AgentService extends ChangeNotifier {
       target = FahChatMessage(role: 'assistant', content: '');
       _currentAssistantMessage = target;
       messages.add(target);
+      // The status line flips to "writing…" — update the Live Activity.
+      _pushLiveActivityStatus();
     }
     target.content += delta;
     notifyListeners();
@@ -1410,6 +1521,8 @@ class AgentService extends ChangeNotifier {
       target = FahChatMessage(role: 'thinking', content: '');
       _currentThinkingMessage = target;
       messages.add(target);
+      // The status line flips to "thinking…" — update the Live Activity.
+      _pushLiveActivityStatus();
     }
     target.content += delta;
     notifyListeners();

@@ -158,8 +158,33 @@ class _AppTileHostState extends State<AppTileHost> {
     // Debounce: agent edits often write manifest + tile entry back to back.
     _reloadDebounce?.cancel();
     _reloadDebounce = Timer(const Duration(milliseconds: 600), () {
-      if (mounted) unawaited(_restart());
+      if (mounted) unawaited(_restartIfAppChanged());
     });
+  }
+
+  /// The content signature of this app's code files (manifest + tile
+  /// entry) at the last engine start — the tile restarts ONLY when its
+  /// own app changed. Without this, EVERY agent `write` anywhere bumped
+  /// fsRevision and restarted every tile engine — dozens of native JS
+  /// context create/release cycles per minute, which is exactly the churn
+  /// that made the native address-reuse crash probable (TestFlight
+  /// SIGSEGV).
+  String _appSignature = '';
+
+  Future<String> _readAppSignature() async {
+    final manifest = (await widget.env.readTextFile(
+      widget.app.manifestPath,
+    )).valueOrNull;
+    final entry = (await widget.env.readTextFile(
+      widget.app.tileWidgetPath,
+    )).valueOrNull;
+    return '${manifest?.length}:${entry?.length}:${manifest?.hashCode}:${entry?.hashCode}';
+  }
+
+  Future<void> _restartIfAppChanged() async {
+    final signature = await _readAppSignature();
+    if (!mounted || signature == _appSignature) return;
+    await _restart();
   }
 
   /// Fires one `tile.refresh` event on [engine], unless it was meanwhile
@@ -234,6 +259,10 @@ class _AppTileHostState extends State<AppTileHost> {
         return;
       }
       setState(() => _engine = engine);
+      // Restart tiles ONLY when their own app changed afterwards (see
+      // [_restartIfAppChanged]) — record the signature the new engine
+      // booted from.
+      _appSignature = await _readAppSignature();
       final refreshSeconds = widget.app.tileWidget?.refreshSeconds;
       if (refreshSeconds != null) {
         _refreshTimer = Timer.periodic(Duration(seconds: refreshSeconds), (_) {

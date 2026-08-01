@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/sandbox/memory_shell.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -436,6 +437,41 @@ void main() {
 
       expect(service.messages.last.content, isNot(emptyResponsePlaceholder));
       expect(service.error, contains('provider exploded'));
+    });
+
+    test('a run brackets itself in an extended background task', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('fah/background'), (
+            call,
+          ) async {
+            calls.add(call.method);
+            return call.method == 'begin' ? 7 : null;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('fah/background'),
+              null,
+            ),
+      );
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('done')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('go');
+      await service.waitForIdle();
+      // Let the unawaited begin/end channel calls land.
+      await Future<void>.delayed(Duration.zero);
+
+      expect(calls, contains('begin'));
+      expect(calls, contains('end'));
+      expect(calls.indexOf('end'), greaterThan(calls.indexOf('begin')));
     });
 
     test(

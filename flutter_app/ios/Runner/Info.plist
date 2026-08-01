@@ -48,6 +48,11 @@
 	<string>Fa saves health data only when you ask it to log something.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Fa uses the microphone only when you use voice input.</string>
+	<!-- fah/live_activity channel: Live Activities (Dynamic Island + lock
+	     screen) for agent-run status. No entitlement needed beyond this
+	     key. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>

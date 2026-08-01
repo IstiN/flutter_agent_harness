@@ -579,9 +579,14 @@ class _SessionChatSheetState extends State<SessionChatSheet>
           Expanded(child: _buildPager()),
           Divider(height: 1, color: colors.border),
         ] else
-          // Keyed drag affordance for tests (the whole bar is draggable;
-          // this just gives finders a stable target in the mini state).
-          const SizedBox(height: 6, key: ValueKey('sessionChatMiniDragZone')),
+          // The mini bar shows just the slim drag pill (no seam/strip) as
+          // the "you can drag this" affordance; drags work anywhere on the
+          // bar. Keyed for tests.
+          Padding(
+            key: const ValueKey('sessionChatMiniDragZone'),
+            padding: const EdgeInsets.only(top: 5, bottom: 2),
+            child: Center(child: _handle(colors)),
+          ),
         // The status row belongs to the mini state; the expanded sheet
         // shows the streaming progress inside the transcript itself.
         if (service.isStreaming && sheetT == 0)

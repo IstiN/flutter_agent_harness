@@ -232,8 +232,30 @@ class _JsAppViewState extends State<JsAppView> {
     // Debounce: agent edits often write manifest + widget.js back to back.
     _reloadDebounce?.cancel();
     _reloadDebounce = Timer(const Duration(milliseconds: 600), () {
-      if (mounted && !_faSheetOpen) unawaited(_restart());
+      if (mounted && !_faSheetOpen) unawaited(_restartIfAppChanged());
     });
+  }
+
+  /// The content signature of this app's code files (manifest + entry) at
+  /// the last engine start — the view restarts ONLY when its own app
+  /// changed, not on every fsRevision bump from unrelated agent writes
+  /// (the native context churn behind the TestFlight SIGSEGV).
+  String _appSignature = '';
+
+  Future<String> _readAppSignature() async {
+    final manifest = (await widget.env.readTextFile(
+      widget.app.manifestPath,
+    )).valueOrNull;
+    final entry = (await widget.env.readTextFile(
+      widget.app.widgetPath,
+    )).valueOrNull;
+    return '${manifest?.length}:${entry?.length}:${manifest?.hashCode}:${entry?.hashCode}';
+  }
+
+  Future<void> _restartIfAppChanged() async {
+    final signature = await _readAppSignature();
+    if (!mounted || signature == _appSignature) return;
+    await _restart();
   }
 
   Future<void> _restart() async {
@@ -273,6 +295,9 @@ class _JsAppViewState extends State<JsAppView> {
         return;
       }
       setState(() => _engine = engine);
+      // Restart ONLY when this app's files change afterwards (see
+      // [_restartIfAppChanged]) — record the signature we booted from.
+      _appSignature = await _readAppSignature();
     } on Object catch (error) {
       if (mounted) setState(() => _startError = error);
     }
