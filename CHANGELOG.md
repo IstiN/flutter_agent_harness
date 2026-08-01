@@ -773,4 +773,9 @@
 
 - test(example): real-agent E2E on the macOS host + store promo artwork
 
+## 0.1.114
+
+- ci(ios): scope codesign rewrite to Runner, auto-sign the FaLiveActivity extension (bundle-id collision 90685)
+- fix(example): steer button interrupts the run, queued steers run after stop, sheet opens at the latest message
+
 ## Unreleased
