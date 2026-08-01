@@ -769,4 +769,8 @@
 
 - feat(example): iOS background execution + Live Activity, key resolution fix, crash-churn guard, mini drag pill
 
+## 0.1.113
+
+- test(example): real-agent E2E on the macOS host + store promo artwork
+
 ## Unreleased
