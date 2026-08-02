@@ -812,4 +812,119 @@ void main() {
       expect(contextMessages.whereType<ToolResultMessage>(), isEmpty);
     });
   });
+
+  group('degenerate empty completions', () {
+    List<AssistantMessageEvent> emptyTurn() => [
+      DoneEvent(reason: StopReason.stop, message: _assistant()),
+    ];
+
+    test(
+      'an empty completion is retried once, the real answer lands',
+      () async {
+        final fake = _FakeStreamFunction([
+          emptyTurn(),
+          _textTurn('real answer'),
+        ]);
+        final stream = agentLoop(
+          prompts: [UserMessage.text('hi')],
+          context: const Context(messages: []),
+          config: const AgentLoopConfig(model: _model),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+        );
+
+        await stream.toList();
+        expect(fake.calls, 2);
+        final messages = await stream.result;
+        expect((messages.last as AssistantMessage).content, [
+          isA<TextContent>().having((c) => c.text, 'text', 'real answer'),
+        ]);
+      },
+    );
+
+    test('retries are bounded by maxEmptyRetries', () async {
+      final fake = _FakeStreamFunction([
+        emptyTurn(),
+        emptyTurn(),
+        _textTurn('never reached'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: const Context(messages: []),
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      await stream.toList();
+      // One retry (the default), then the blank answer is accepted.
+      expect(fake.calls, 2);
+      final messages = await stream.result;
+      expect((messages.last as AssistantMessage).content, isEmpty);
+    });
+
+    test('maxEmptyRetries: 0 keeps the old accept-blank behavior', () async {
+      final fake = _FakeStreamFunction([
+        emptyTurn(),
+        _textTurn('never reached'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: const Context(messages: []),
+        config: const AgentLoopConfig(model: _model, maxEmptyRetries: 0),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      await stream.toList();
+      expect(fake.calls, 1);
+    });
+
+    test('a completion with tool calls continues normally (no empty-retry '
+        '— the next call carries the tool result)', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('c1', 'noop')], reason: StopReason.toolUse),
+        _textTurn('after tools'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: const Context(messages: []),
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+      );
+
+      await stream.toList();
+      expect(fake.calls, 2);
+      // The second call is the post-tool continuation (its context has the
+      // tool result), not an empty-completion retry of the same context.
+      expect(
+        fake.contexts[1].messages.whereType<ToolResultMessage>(),
+        isNotEmpty,
+      );
+    });
+
+    test('whitespace-only text counts as degenerate and is retried', () async {
+      final wsTurn = [
+        DoneEvent(
+          reason: StopReason.stop,
+          message: _assistant(content: [TextContent(text: '   ')]),
+        ),
+      ];
+      final fake = _FakeStreamFunction([wsTurn, _textTurn('real answer')]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: const Context(messages: []),
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      await stream.toList();
+      expect(fake.calls, 2);
+      expect(((await stream.result).last as AssistantMessage).content, [
+        isA<TextContent>().having((c) => c.text, 'text', 'real answer'),
+      ]);
+    });
+  });
 }

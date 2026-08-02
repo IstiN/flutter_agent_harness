@@ -314,6 +314,7 @@ final class AgentLoopConfig {
     this.prepareNextTurn,
     this.getSteeringMessages,
     this.getFollowUpMessages,
+    this.maxEmptyRetries = 1,
   });
 
   /// The model to call each turn.
@@ -341,6 +342,13 @@ final class AgentLoopConfig {
   /// Follow-up messages to process after the run would otherwise stop.
   final QueuedMessagesSource? getFollowUpMessages;
 
+  /// How many times a degenerate EMPTY completion (stopReason `stop`, no
+  /// tool calls, no text — some providers answer like this under load) is
+  /// retried with the same context before the turn accepts it. Default: 1
+  /// (one automatic retry — a blank answer never ends a run on the first
+  /// try).
+  final int maxEmptyRetries;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -352,6 +360,7 @@ final class AgentLoopConfig {
       prepareNextTurn: prepareNextTurn,
       getSteeringMessages: getSteeringMessages,
       getFollowUpMessages: getFollowUpMessages,
+      maxEmptyRetries: maxEmptyRetries,
     );
   }
 }
@@ -690,7 +699,15 @@ Future<List<Message>> _runAgentLoop({
       );
       pendingMessages = const [];
 
-      final message = await _streamAssistantResponse(
+      var message = await _streamAssistantResponse(
+        currentContext,
+        currentConfig,
+        emit,
+        streamFunction,
+        cancelToken,
+      );
+      message = await _retryDegenerateEmpty(
+        message,
         currentContext,
         currentConfig,
         emit,
@@ -860,6 +877,47 @@ Future<({List<ToolResultMessage> results, bool hasMore})> _runToolCallPhase(
 
 Future<List<Message>> _steeringMessages(AgentLoopConfig config) async {
   return await config.getSteeringMessages?.call() ?? const <Message>[];
+}
+
+/// A completion is degenerate-empty when the model stopped normally
+/// (`stop`) but produced no tool calls and no non-whitespace text — a
+/// known provider failure mode under load (the answer is simply blank).
+bool _isDegenerateEmpty(AssistantMessage message) {
+  if (message.stopReason != StopReason.stop) return false;
+  for (final block in message.content) {
+    if (block is ToolCall) return false;
+    if (block is TextContent && block.text.trim().isNotEmpty) return false;
+  }
+  return true;
+}
+
+/// Retries a degenerate-empty completion with the same context (bounded by
+/// `config.maxEmptyRetries`; a blank answer never ends a run on the first
+/// try). The retried messages stay in the transcript (truthful record) and
+/// the eventual real answer follows them.
+Future<AssistantMessage> _retryDegenerateEmpty(
+  AssistantMessage message,
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  StreamFunction streamFunction,
+  CancelToken? cancelToken,
+) async {
+  var retries = 0;
+  var current = message;
+  while (_isDegenerateEmpty(current) &&
+      retries < config.maxEmptyRetries &&
+      !(cancelToken?.isCancelled ?? false)) {
+    retries++;
+    current = await _streamAssistantResponse(
+      context,
+      config,
+      emit,
+      streamFunction,
+      cancelToken,
+    );
+  }
+  return current;
 }
 
 /// Streams one assistant response from the provider, emitting message

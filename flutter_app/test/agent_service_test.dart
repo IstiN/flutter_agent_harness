@@ -729,16 +729,16 @@ void main() {
 
       // Tool-only turns leave only the placeholder bubble (hidden by the chat
       // screen) plus the tool messages — no blank assistant bubble with real
-      // content.
+      // content. A blank answer after the tool turn is retried ONCE by the
+      // loop (degenerate-empty retry), so the transcript carries the tool
+      // call plus BOTH blank attempts, each rendered as the placeholder.
       final assistantMessages = service.messages
           .where((m) => m.role == 'assistant')
           .toList();
-      // One message carries the tool call; the other is the empty-response
-      // placeholder from the final text-less turn.
-      expect(assistantMessages, hasLength(2));
+      expect(assistantMessages, hasLength(3));
       expect(
-        assistantMessages.any((m) => m.content == emptyResponsePlaceholder),
-        isTrue,
+        assistantMessages.where((m) => m.content == emptyResponsePlaceholder),
+        hasLength(2),
       );
       expect(service.messages.where((m) => m.role == 'tool'), isNotEmpty);
     });
