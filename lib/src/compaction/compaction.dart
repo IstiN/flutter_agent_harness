@@ -40,6 +40,7 @@ import '../prompts/prompt_overrides.dart';
 import '../prompts/prompts.g.dart';
 import '../session/session_record.dart';
 import '../session/session_tree.dart';
+import '../session/uuid.dart';
 import '../types.dart';
 import 'token_estimation.dart';
 
@@ -595,6 +596,11 @@ typedef SummarizeFn =
 /// a single user message and joins the response's text blocks. Error and
 /// aborted stop reasons map to failure results (errors-as-events contract);
 /// a throwing [StreamFunction] is defensive-converted into a failure.
+///
+/// Summaries are standalone requests, so every call runs with
+/// `cacheRetention: 'none'` and a fresh routing session id (uuidv7) via
+/// [StreamCacheRouting]: summarization never writes to nor routes through
+/// the session's prompt cache (pi's compaction `callCompleteSimple`).
 SummarizeFn streamFunctionSummarizer(
   StreamFunction streamFunction,
   Model model, {
@@ -602,13 +608,17 @@ SummarizeFn streamFunctionSummarizer(
 }) {
   return (SummarizationRequest request) async {
     try {
-      final stream = streamFunction(
-        model,
-        Context(
-          systemPrompt: prompts.system,
-          messages: [UserMessage.text(request.prompt)],
+      final stream = StreamCacheRouting.runWith(
+        () => streamFunction(
+          model,
+          Context(
+            systemPrompt: prompts.system,
+            messages: [UserMessage.text(request.prompt)],
+          ),
+          cancelToken: request.cancelToken,
         ),
-        cancelToken: request.cancelToken,
+        sessionId: uuidv7(),
+        cacheRetention: 'none',
       );
       final response = await stream.result;
       return switch (response.stopReason) {

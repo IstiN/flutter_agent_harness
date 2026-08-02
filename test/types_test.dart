@@ -126,11 +126,38 @@ void main() {
       expect(message.copyWith(model: 'gpt-x').model, 'gpt-x');
       expect(message.copyWith(responseModel: 'm').responseModel, 'm');
       expect(message.copyWith(responseId: 'r').responseId, 'r');
+      expect(message.rawStopReason, isNull);
+      final withRaw = message.copyWith(rawStopReason: 'end_turn');
+      expect(withRaw.rawStopReason, 'end_turn');
+      expect(message.copyWith().rawStopReason, isNull);
       expect(
         message.copyWith(usage: Usage.zero.copyWith(input: 1)).usage.input,
         1,
       );
       expect(message.errorMessage, isNull);
+    });
+
+    test('JSON round-trip preserves rawStopReason', () {
+      final message = AssistantMessage(
+        content: const [TextContent(text: 'partial')],
+        api: 'openai-completions',
+        provider: 'openai',
+        model: 'gpt-x',
+        usage: Usage.zero,
+        stopReason: StopReason.error,
+        rawStopReason: 'some_new_reason',
+        errorMessage: 'Provider finish_reason: some_new_reason',
+        timestamp: DateTime.utc(2026),
+      );
+      final restored = AssistantMessage.fromJson(message.toJson());
+      expect(restored.stopReason, StopReason.error);
+      expect(restored.rawStopReason, 'some_new_reason');
+      expect(restored.errorMessage, contains('some_new_reason'));
+      // Absent in older payloads: defaults to null.
+      final legacy = AssistantMessage.fromJson(
+        message.toJson()..remove('rawStopReason'),
+      );
+      expect(legacy.rawStopReason, isNull);
     });
   });
 

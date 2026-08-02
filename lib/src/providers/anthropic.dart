@@ -523,6 +523,7 @@ final class _AnthropicStreamSession {
           stopDetails is Map<String, dynamic> ? stopDetails : null,
         );
         state.stopReason = result.reason;
+        state.rawStopReason = rawStopReason;
         state.errorMessage = result.errorMessage;
       }
     }
@@ -1103,7 +1104,12 @@ List<Map<String, dynamic>> _convertTools(
     'stop_sequence' => (reason: StopReason.stop, errorMessage: null),
     // Content flagged by safety filters.
     'sensitive' => (reason: StopReason.error, errorMessage: null),
-    // Handle unknown stop reasons gracefully (API may add new values).
-    _ => throw StateError('Unhandled stop reason: $reason'),
+    // Unknown stop reasons (the API may add new values) are terminal
+    // provider errors, never a silent success; the raw value is preserved
+    // on `AssistantMessage.rawStopReason` by the caller.
+    _ => (
+      reason: StopReason.error,
+      errorMessage: 'Provider stop_reason: $reason',
+    ),
   };
 }

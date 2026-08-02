@@ -70,6 +70,51 @@ typedef StreamFunction =
       CancelToken? cancelToken,
     });
 
+/// Per-call prompt-cache routing overrides, consulted by the provider
+/// stream functions built with `providerStreamFunction`.
+///
+/// The [StreamFunction] contract has no options slot, so per-call routing
+/// (pi's `sessionId`/`cacheRetention` stream options) travels in a zone:
+/// [runWith] installs values for every provider call started inside its
+/// body — including async work such as fallback-chain attempts, which run
+/// in the zone they were created in. Adapters read [current] when a call
+/// starts; a `null` field keeps the call's own defaults.
+///
+/// Used by compaction summarization, which forces `cacheRetention: 'none'`
+/// plus a fresh routing session id so summaries never pollute the session's
+/// prompt-cache accounting (pi's `callCompleteSimple`).
+final class StreamCacheRouting {
+  StreamCacheRouting._();
+
+  static final Object _zoneKey = Object();
+
+  /// The routing values active in the current zone, or `null` when no
+  /// override is in effect (calls then use their built-in defaults).
+  static ({String? sessionId, String? cacheRetention})? get current {
+    final value = Zone.current[_zoneKey];
+    return value is ({String? sessionId, String? cacheRetention})
+        ? value
+        : null;
+  }
+
+  /// Runs [body] with [sessionId]/[cacheRetention] overriding the cache
+  /// routing of provider calls started inside it. An override is explicit:
+  /// code that binds default routing values (the model-roles resolver)
+  /// yields to an active override instead of replacing it.
+  static T runWith<T>(
+    T Function() body, {
+    String? sessionId,
+    String? cacheRetention,
+  }) {
+    return runZoned(
+      body,
+      zoneValues: {
+        _zoneKey: (sessionId: sessionId, cacheRetention: cacheRetention),
+      },
+    );
+  }
+}
+
 /// How tool calls from a single assistant message are executed.
 ///
 /// Ported from pi's `ToolExecutionMode`.
@@ -388,6 +433,18 @@ final class AgentEndEvent extends AgentEvent {
 
   /// Messages produced by this run, in order.
   final List<Message> messages;
+}
+
+/// The agent is fully idle: the run AND every queued follow-up have drained
+/// and all awaited listeners for the run's events (including `agent_end`)
+/// have settled (pi's `agent_settled`).
+///
+/// Emitted only by the stateful `Agent` (in agent.dart), after the last
+/// [AgentEndEvent] of a run and before [Agent.waitForIdle] resolves — the
+/// low-level loop never emits it, so [AgentEventStream] still completes on
+/// [AgentEndEvent].
+final class AgentSettledEvent extends AgentEvent {
+  const AgentSettledEvent();
 }
 
 /// A new turn (assistant response + tool calls) started.

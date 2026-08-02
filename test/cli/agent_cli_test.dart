@@ -1131,6 +1131,39 @@ void main() {
     },
   );
 
+  test(
+    'bash tool executions carry FAH_ session env vars (no secrets)',
+    () async {
+      final shell = FakeShell(stdout: 'ok');
+      final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final fake = FakeStreamFunction([
+        toolTurn([
+          ToolCall(id: 'c1', name: 'bash', arguments: const {'command': 'env'}),
+        ]),
+        textTurn('done'),
+      ]);
+      final cli = cliFor(fake.call, envOverride: shellEnv);
+      final run = cli.run();
+
+      io.sendLine('go');
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      final envVars = shell.lastOptions?.env;
+      expect(envVars, isNotNull);
+      expect(envVars![sessionIdEnvVar], isNotEmpty);
+      expect(envVars[sessionFileEnvVar], endsWith('.jsonl'));
+      expect(envVars[sessionFileEnvVar], contains(envVars[sessionIdEnvVar]));
+      expect(envVars[providerEnvVar], 'openai-completions');
+      expect(envVars[modelEnvVar], testModel.id);
+      // The vars are correlation data only — never the API key.
+      for (final value in envVars.values) {
+        expect(value, isNot(contains('test-key')));
+      }
+    },
+  );
+
   test('status line is printed before idle prompts after a run', () async {
     const usage = Usage(
       input: 10,

@@ -254,6 +254,20 @@ void main() {
       final path = result.getOrThrow().stdout.trim();
       expect(path.split(':').first, '/bin');
     });
+
+    test('env overrides merge over the host environment', () async {
+      // Injected vars (secrets, FAH_SESSION_*) must not strip the inherited
+      // environment — the doc contract is "values override the defaults".
+      final result = await const LocalShell().exec(
+        'echo "\$HOME|\$HARNESS_TEST_VAR"',
+        options: ShellExecOptions(env: const {'HARNESS_TEST_VAR': 'injected'}),
+      );
+      final out = result.getOrThrow().stdout.trim();
+      if (Platform.environment.containsKey('HOME')) {
+        expect(out.split('|').first, Platform.environment['HOME']);
+      }
+      expect(out.split('|').last, 'injected');
+    });
   });
 
   group('LocalExecutionEnv custom shell', () {

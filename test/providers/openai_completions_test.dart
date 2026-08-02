@@ -659,6 +659,77 @@ void main() {
     });
 
     test(
+      'unmapped finish reason is a provider error with the raw value',
+      () async {
+        final client = sseClient(
+          sseBody([
+            {
+              'choices': [
+                {
+                  'delta': {'content': 'partial'},
+                },
+              ],
+            },
+            {
+              'choices': [
+                {
+                  'delta': <String, dynamic>{},
+                  'finish_reason': 'some_new_reason',
+                },
+              ],
+            },
+            'data: [DONE]\n\n',
+          ]),
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.stopReason, StopReason.error);
+        expect(error.error.rawStopReason, 'some_new_reason');
+        expect(error.error.errorMessage, contains('some_new_reason'));
+      },
+    );
+
+    test('mapped finish reason is preserved as rawStopReason', () async {
+      final client = sseClient(
+        sseBody([
+          {
+            'choices': [
+              {
+                'delta': {'content': 'done'},
+              },
+            ],
+          },
+          {
+            'choices': [
+              {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+            ],
+          },
+          'data: [DONE]\n\n',
+        ]),
+      );
+
+      final stream = streamOpenAICompletions(
+        testModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final done = (await stream.toList()).last as DoneEvent;
+      expect(done.reason, StopReason.stop);
+      expect(done.message.rawStopReason, 'stop');
+    });
+
+    test(
       'stream ending without finish_reason completes with a natural stop',
       () async {
         // Some providers (seen on OpenRouter free-tier models) close the SSE

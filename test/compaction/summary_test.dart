@@ -26,6 +26,34 @@ class _FakeSummarizer {
   }
 }
 
+/// A plain [StreamFunction] closure fake recording the active
+/// [StreamCacheRouting] override at call time.
+final class _ZoneRecordingStream {
+  final routings = <({String? sessionId, String? cacheRetention})?>[];
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    routings.add(StreamCacheRouting.current);
+    final message = AssistantMessage(
+      content: [TextContent(text: 'ok')],
+      api: 'a',
+      provider: 'p',
+      model: 'm',
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.utc(2026),
+    );
+    final stream = AssistantMessageEventStream();
+    stream.push(StartEvent(partial: message));
+    stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    stream.end();
+    return stream;
+  }
+}
+
 void main() {
   group('generateSummary', () {
     test('builds pi prompt: conversation tags + structured prompt', () async {
@@ -243,6 +271,51 @@ void main() {
       final result = await summarize(const SummarizationRequest(prompt: 'P'));
       expect(result.isSuccess, isFalse);
       expect(result.error, contains('adapter exploded'));
+    });
+
+    test('cache-routing streams are bypassed: retention none, fresh session id '
+        'per call', () async {
+      final recording = _ZoneRecordingStream();
+      final summarize = streamFunctionSummarizer(recording.call, model);
+
+      final first = await summarize(const SummarizationRequest(prompt: 'a'));
+      final second = await summarize(const SummarizationRequest(prompt: 'b'));
+
+      expect(first.isSuccess, isTrue);
+      expect(second.isSuccess, isTrue);
+      expect(recording.routings, hasLength(2));
+      for (final routing in recording.routings) {
+        expect(routing, isNotNull);
+        expect(routing!.cacheRetention, 'none');
+        expect(routing.sessionId, isNotNull);
+      }
+      // A fresh routing id per call keeps summaries out of the session's
+      // cache-affinity bucket.
+      expect(
+        recording.routings[0]!.sessionId,
+        isNot(recording.routings[1]!.sessionId),
+      );
+      // The override does not leak past the summarization call.
+      expect(StreamCacheRouting.current, isNull);
+    });
+
+    test('plain closures keep the legacy call path', () async {
+      var plainCalls = 0;
+      final summarize = streamFunctionSummarizer((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        plainCalls++;
+        final message = responseOf('ok');
+        return streamOf([
+          StartEvent(partial: message),
+          DoneEvent(reason: StopReason.stop, message: message),
+        ]);
+      }, model);
+      final result = await summarize(const SummarizationRequest(prompt: 'P'));
+      expect(result.isSuccess, isTrue);
+      expect(plainCalls, 1);
     });
   });
 

@@ -17,9 +17,9 @@
 ///   no SDK here, so [formatProviderError] handles the Dart error types this
 ///   adapter can actually produce.
 /// - Not yet ported (later phases): the full compat matrix (zai/qwen/
-///   together/...), prompt-cache retention and session-affinity headers,
-///   `transformMessages` reordering, surrogate sanitization, developer-role
-///   system prompts, and thinking formats beyond OpenAI/OpenRouter.
+///   together/...), `transformMessages` reordering, surrogate sanitization,
+///   developer-role system prompts, and thinking formats beyond
+///   OpenAI/OpenRouter.
 library;
 
 import 'dart:async';
@@ -39,8 +39,8 @@ import 'provider_common.dart';
 ///
 /// Ported subset of pi's `OpenAICompletionsOptions` (which extends
 /// `SimpleStreamOptions`): temperature, maxTokens, apiKey, headers, signal,
-/// reasoningEffort, toolChoice, onPayload, onResponse. pi's `signal:
-/// AbortSignal` is [cancelToken] here.
+/// reasoningEffort, toolChoice, sessionId, cacheRetention, onPayload,
+/// onResponse. pi's `signal: AbortSignal` is [cancelToken] here.
 final class OpenAICompletionsOptions {
   const OpenAICompletionsOptions({
     this.temperature,
@@ -50,6 +50,8 @@ final class OpenAICompletionsOptions {
     this.cancelToken,
     this.reasoningEffort,
     this.toolChoice,
+    this.sessionId,
+    this.cacheRetention,
     this.onPayload,
     this.onResponse,
   });
@@ -84,6 +86,19 @@ final class OpenAICompletionsOptions {
   /// Tool choice: `'auto'`, `'none'`, `'required'`, or a
   /// `{type: 'function', function: {name: ...}}` map.
   final Object? toolChoice;
+
+  /// Session id used as the prompt-cache affinity key: sent as
+  /// `prompt_cache_key` (OpenAI endpoints, or any endpoint under `long`
+  /// retention) and as the `x-session-id` routing header on OpenRouter
+  /// (pi's session-affinity headers). Ignored when [cacheRetention] is
+  /// `none`.
+  final String? sessionId;
+
+  /// Prompt-cache retention: `short` (default), `long` (sends
+  /// `prompt_cache_retention: "24h"` and a 1h TTL on Anthropic-style cache
+  /// markers), or `none` (no cache key, no cache markers, no affinity
+  /// header). pi's `PI_CACHE_RETENTION` env lookup is not ported.
+  final String? cacheRetention;
 
   /// Inspect or replace the request payload before it is sent. Return `null`
   /// to keep the payload unchanged.
@@ -306,6 +321,7 @@ final class _OpenAICompletionsSession {
     if (finishReason != null) {
       final result = _mapStopReason(finishReason as String);
       state.stopReason = result.reason;
+      state.rawStopReason = finishReason;
       state.errorMessage = result.errorMessage;
       hasFinishReason = true;
     }
@@ -621,6 +637,12 @@ Map<String, String> _buildHeaders(
   OpenAICompletionsOptions? options,
 ) {
   final apiKey = options?.apiKey;
+  // pi's session-affinity headers: OpenRouter pins a session to one upstream
+  // provider via `x-session-id`, so cache locality survives across turns.
+  // Suppressed under `none` retention (pi's `cacheSessionId`).
+  final sessionId = _resolveCacheRetention(options) == 'none'
+      ? null
+      : options?.sessionId;
   return mergeProviderHeaders(
     {
       'content-type': 'application/json',
@@ -632,6 +654,10 @@ Map<String, String> _buildHeaders(
       // [OpenAICompletionsOptions.headers].
       if (apiKey != null && apiKey.isNotEmpty)
         'authorization': 'Bearer $apiKey',
+      if (sessionId != null &&
+          sessionId.isNotEmpty &&
+          _isOpenRouterModel(model))
+        'x-session-id': sessionId,
     },
     model.headers,
     options?.headers,
@@ -649,17 +675,33 @@ final class _ResolvedCompat {
     required this.supportsUsageInStreaming,
     required this.thinkingFormat,
     required this.requiresToolResultName,
+    required this.cacheControlFormat,
+    required this.supportsLongCacheRetention,
   });
 
   final String maxTokensField;
   final bool supportsUsageInStreaming;
   final ThinkingFormat thinkingFormat;
   final bool requiresToolResultName;
+
+  /// `anthropic` when the endpoint wants Anthropic-style `cache_control`
+  /// markers (OpenRouter hosting `anthropic/*` models), otherwise null
+  /// (pi's `OpenAICompletionsCompat.cacheControlFormat` detection).
+  final String? cacheControlFormat;
+
+  /// Whether `prompt_cache_retention: "24h"` / 1h marker TTLs are honored
+  /// (pi's `supportsLongCacheRetention`; the non-supporting providers of
+  /// pi's matrix are not detected here, so the default is true).
+  final bool supportsLongCacheRetention;
+}
+
+bool _isOpenRouterModel(Model model) {
+  return model.provider == 'openrouter' ||
+      model.baseUrl.contains('openrouter.ai');
 }
 
 _ResolvedCompat _getCompat(Model model) {
-  final isOpenRouter =
-      model.provider == 'openrouter' || model.baseUrl.contains('openrouter.ai');
+  final isOpenRouter = _isOpenRouterModel(model);
   final compat = model.compat;
   return _ResolvedCompat(
     maxTokensField: compat?.maxTokensField ?? 'max_completion_tokens',
@@ -668,6 +710,10 @@ _ResolvedCompat _getCompat(Model model) {
         compat?.thinkingFormat ??
         (isOpenRouter ? ThinkingFormat.openrouter : ThinkingFormat.openai),
     requiresToolResultName: compat?.requiresToolResultName ?? false,
+    cacheControlFormat: isOpenRouter && model.id.startsWith('anthropic/')
+        ? 'anthropic'
+        : null,
+    supportsLongCacheRetention: true,
   );
 }
 
@@ -677,6 +723,7 @@ Map<String, dynamic> _buildParams(
   OpenAICompletionsOptions? options,
   _ResolvedCompat compat,
 ) {
+  final retention = _resolveCacheRetention(options);
   final messages = _convertMessages(model, context, compat);
 
   final params = <String, dynamic>{
@@ -684,6 +731,8 @@ Map<String, dynamic> _buildParams(
     'messages': messages,
     'stream': true,
   };
+
+  _applyPromptCacheParams(params, model, options, compat, retention);
 
   if (compat.supportsUsageInStreaming) {
     params['stream_options'] = {'include_usage': true};
@@ -704,8 +753,151 @@ Map<String, dynamic> _buildParams(
   }
 
   _applyReasoningParam(params, model, options, compat);
+  _applyAnthropicCacheControl(params, compat, retention);
 
   return params;
+}
+
+/// pi's `resolveCacheRetention` (minus the `PI_CACHE_RETENTION` env lookup):
+/// `short` is the default.
+String _resolveCacheRetention(OpenAICompletionsOptions? options) {
+  return options?.cacheRetention ?? 'short';
+}
+
+/// pi's `prompt_cache_key`/`prompt_cache_retention` params: the key pins the
+/// session to one prompt-cache bucket on OpenAI endpoints (any non-`none`
+/// retention) and everywhere under `long` retention; `long` additionally
+/// asks for a 24h retention window where supported.
+void _applyPromptCacheParams(
+  Map<String, dynamic> params,
+  Model model,
+  OpenAICompletionsOptions? options,
+  _ResolvedCompat compat,
+  String retention,
+) {
+  final sendCacheKey =
+      (model.baseUrl.contains('api.openai.com') && retention != 'none') ||
+      (retention == 'long' && compat.supportsLongCacheRetention);
+  if (sendCacheKey) {
+    final key = _clampPromptCacheKey(options?.sessionId);
+    if (key != null) {
+      params['prompt_cache_key'] = key;
+    }
+  }
+  if (retention == 'long' && compat.supportsLongCacheRetention) {
+    params['prompt_cache_retention'] = '24h';
+  }
+}
+
+/// Ported from pi's `clampOpenAIPromptCacheKey` (`openai-prompt-cache.ts`):
+/// OpenAI caps `prompt_cache_key` at 64 characters.
+String? _clampPromptCacheKey(String? key) {
+  if (key == null) {
+    return null;
+  }
+  const maxLength = 64;
+  final chars = key.runes.toList();
+  return chars.length <= maxLength
+      ? key
+      : String.fromCharCodes(chars.take(maxLength));
+}
+
+/// Anthropic-style `cache_control` markers for OpenAI-compatible endpoints
+/// hosting `anthropic/*` models (OpenRouter; pi's `cacheControlFormat:
+/// "anthropic"`): the system prompt, the last tool definition, and the last
+/// conversation text part get an ephemeral breakpoint.
+void _applyAnthropicCacheControl(
+  Map<String, dynamic> params,
+  _ResolvedCompat compat,
+  String retention,
+) {
+  if (compat.cacheControlFormat != 'anthropic' || retention == 'none') {
+    return;
+  }
+  final cacheControl = <String, dynamic>{
+    'type': 'ephemeral',
+    if (retention == 'long' && compat.supportsLongCacheRetention) 'ttl': '1h',
+  };
+  final messages = params['messages'];
+  if (messages is! List) {
+    return;
+  }
+  _addCacheControlToSystemPrompt(messages, cacheControl);
+  _addCacheControlToLastTool(params['tools'], cacheControl);
+  _addCacheControlToLastConversationMessage(messages, cacheControl);
+}
+
+/// Marks the first system/developer message (pi's
+/// `addCacheControlToSystemPrompt`).
+void _addCacheControlToSystemPrompt(
+  List<dynamic> messages,
+  Map<String, dynamic> cacheControl,
+) {
+  for (final message in messages) {
+    if (message is Map &&
+        (message['role'] == 'system' || message['role'] == 'developer')) {
+      _addCacheControlToTextContent(message, cacheControl);
+      return;
+    }
+  }
+}
+
+/// Marks the last tool definition (pi's `addCacheControlToLastTool`).
+void _addCacheControlToLastTool(
+  Object? tools,
+  Map<String, dynamic> cacheControl,
+) {
+  if (tools is List && tools.isNotEmpty && tools.last is Map) {
+    (tools.last as Map)['cache_control'] = cacheControl;
+  }
+}
+
+/// Marks the last user/assistant/tool message that has a text part (pi's
+/// `addCacheControlToLastConversationMessage`).
+void _addCacheControlToLastConversationMessage(
+  List<dynamic> messages,
+  Map<String, dynamic> cacheControl,
+) {
+  for (var i = messages.length - 1; i >= 0; i--) {
+    final message = messages[i];
+    if (message is Map &&
+        (message['role'] == 'user' ||
+            message['role'] == 'assistant' ||
+            message['role'] == 'tool') &&
+        _addCacheControlToTextContent(message, cacheControl)) {
+      return;
+    }
+  }
+}
+
+/// Sets [cacheControl] on [message]'s text content, wrapping a plain-string
+/// content into a text-part list first (pi's
+/// `addCacheControlToTextContent`). Returns whether a marker was placed.
+bool _addCacheControlToTextContent(
+  Map<dynamic, dynamic> message,
+  Map<String, dynamic> cacheControl,
+) {
+  final content = message['content'];
+  if (content is String) {
+    if (content.isEmpty) {
+      return false;
+    }
+    message['content'] = [
+      {'type': 'text', 'text': content, 'cache_control': cacheControl},
+    ];
+    return true;
+  }
+  if (content is! List) {
+    return false;
+  }
+  for (var i = content.length - 1; i >= 0; i--) {
+    final part = content[i];
+    if (part is Map && part['type'] == 'text') {
+      part['cache_control'] = cacheControl;
+      return true;
+    }
+  }
+  return false;
 }
 
 void _applyToolsParam(Map<String, dynamic> params, Context context) {

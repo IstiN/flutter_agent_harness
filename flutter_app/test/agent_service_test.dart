@@ -838,6 +838,40 @@ void main() {
       expect(sessionText, contains('***'));
     });
 
+    test(
+      'bash tool executions carry FAH_ session env vars (no secrets)',
+      () async {
+        final shell = _RecordingShell();
+        final service = await AgentService.create(
+          config: AgentConfig(
+            providerKind: 'openai-completions',
+            modelId: 'test-model',
+            baseUrl: 'https://example.test',
+            apiKey: 'test-key',
+          ),
+          env: MemoryExecutionEnv(cwd: '/', shell: shell),
+          streamFunction: _singleTextResponse('ok'),
+        );
+        addTearDown(service.dispose);
+        await service.initialize();
+
+        final bash = service.toolsForTest.whereType<AgentTool>().singleWhere(
+          (tool) => tool.name == 'bash',
+        );
+        await bash.execute(const {'command': 'echo hi'}, null, null);
+
+        final envVars = shell.lastOptions!.env!;
+        expect(envVars[sessionIdEnvVar], isNotEmpty);
+        expect(envVars[sessionFileEnvVar], endsWith('.jsonl'));
+        expect(envVars[providerEnvVar], 'openai-completions');
+        expect(envVars[modelEnvVar], 'test-model');
+        // Correlation data only — never the API key.
+        for (final value in envVars.values) {
+          expect(value, isNot(contains('test-key')));
+        }
+      },
+    );
+
     test('reset clears messages and starts a new session', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(
@@ -1619,4 +1653,18 @@ final class _FailingSessionAppendEnv implements ExecutionEnv {
     String command, {
     ShellExecOptions? options,
   }) => _inner.exec(command, options: options);
+}
+
+/// A [Shell] that records its last options and returns an empty success.
+final class _RecordingShell implements Shell {
+  ShellExecOptions? lastOptions;
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    lastOptions = options;
+    return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
 }

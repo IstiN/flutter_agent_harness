@@ -238,6 +238,10 @@ final class JsonlSessionStorage implements SessionStorage {
   final Map<String, String> _labelsById = {};
   String? _currentLeafId;
 
+  /// The header metadata, available synchronously (it is parsed at
+  /// construction). Backs [Session.cachedId].
+  SessionMetadata get cachedMetadata => _metadata;
+
   /// Opens an existing session file, parsing and validating every line.
   static Future<JsonlSessionStorage> open(
     FileSystem fs,

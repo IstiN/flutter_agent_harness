@@ -235,9 +235,10 @@ class Agent {
   /// Subscribe to agent lifecycle events. Returns an unsubscribe function.
   ///
   /// Listener futures are awaited in subscription order and included in the
-  /// current run's settlement. `agent_end` is the final emitted event for a
-  /// run, but the agent does not become idle until all awaited listeners for
-  /// that event have settled (pi semantics).
+  /// current run's settlement. `agent_end` is the final loop event for a
+  /// run; `agent_settled` follows once the run and all queued follow-ups are
+  /// fully idle, and the agent does not become idle until all awaited
+  /// listeners for those events have settled (pi semantics).
   void Function() subscribe(AgentListener listener) {
     _listeners.add(listener);
     return () => _listeners.remove(listener);
@@ -428,7 +429,7 @@ class Agent {
     } catch (error) {
       await _handleRunFailure(error, run.source.token.isCancelled);
     } finally {
-      _finishRun();
+      await _settleRun();
     }
   }
 
@@ -452,6 +453,21 @@ class Agent {
       TurnEndEvent(message: failureMessage, toolResults: const []),
     );
     await _processEvent(AgentEndEvent([failureMessage]));
+  }
+
+  /// Emits [AgentSettledEvent] once the run and every queued follow-up have
+  /// drained, then finishes the run. The event goes out BEFORE the idle
+  /// completer, so its awaited listeners are part of the settlement:
+  /// [waitForIdle] resolves only after they have run (pi's `agent_settled`
+  /// semantics).
+  Future<void> _settleRun() async {
+    try {
+      await _processEvent(const AgentSettledEvent());
+    } finally {
+      // A throwing settled listener must not strand the run: the idle
+      // completer and runtime state are always settled.
+      _finishRun();
+    }
   }
 
   void _finishRun() {

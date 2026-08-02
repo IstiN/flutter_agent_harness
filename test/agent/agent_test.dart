@@ -158,6 +158,7 @@ void main() {
         MessageEndEvent, // final assistant
         TurnEndEvent,
         AgentEndEvent,
+        AgentSettledEvent,
       ]);
 
       expect(agent.state.isStreaming, isFalse);
@@ -581,6 +582,72 @@ void main() {
     });
   });
 
+  group('agent_settled', () {
+    test('fires once after agent_end when the run is fully idle', () async {
+      final fake = _FakeStreamFunction([_textTurn('hello')]);
+      final agent = _agentWith(fake);
+      final events = <AgentEvent>[];
+      agent.subscribe((event, _) => events.add(event));
+
+      await agent.prompt('hi');
+
+      expect(events.whereType<AgentSettledEvent>(), hasLength(1));
+      expect(events.last, isA<AgentSettledEvent>());
+      expect(events[events.length - 2], isA<AgentEndEvent>());
+      expect(agent.state.isStreaming, isFalse);
+    });
+
+    test(
+      'queued follow-up: settled fires only after the follow-up ends',
+      () async {
+        final fake = _FakeStreamFunction([_textTurn('a1'), _textTurn('a2')]);
+        final agent = _agentWith(fake);
+        final events = <AgentEvent>[];
+        var queued = false;
+        agent.subscribe((event, _) {
+          events.add(event);
+          if (event is TurnEndEvent && !queued) {
+            queued = true;
+            agent.followUp(UserMessage.text('one more thing'));
+          }
+          // No settled event may fire while the follow-up is still pending.
+          if (event is AgentSettledEvent) {
+            expect(queued, isTrue);
+          }
+        });
+
+        await agent.prompt('p');
+
+        expect(fake.calls, 2);
+        expect(events.whereType<AgentSettledEvent>(), hasLength(1));
+        // Settled comes after the follow-up's turn, right after agent_end.
+        final types = _types(events);
+        final settledIndex = types.indexOf(AgentSettledEvent);
+        expect(settledIndex, types.length - 1);
+        expect(types[settledIndex - 1], AgentEndEvent);
+        // Both turns completed before the single settled event.
+        expect(types.where((t) => t == TurnEndEvent), hasLength(2));
+      },
+    );
+
+    test('settled listeners settle before waitForIdle resolves', () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final agent = _agentWith(fake);
+      var settledListenerRan = false;
+      agent.subscribe((event, _) async {
+        if (event is AgentSettledEvent) {
+          await Future<void>.delayed(Duration.zero);
+          settledListenerRan = true;
+        }
+      });
+
+      final run = agent.prompt('hi');
+      await run;
+      await agent.waitForIdle();
+      expect(settledListenerRan, isTrue);
+    });
+  });
+
   group('hooks', () {
     test(
       'beforeToolCall fires with pi context and can block with a reason',
@@ -964,7 +1031,8 @@ void main() {
 
         expect(agent.state.isStreaming, isFalse);
         expect(agent.state.errorMessage, 'aborted');
-        expect(events.last, isA<AgentEndEvent>());
+        expect(events.last, isA<AgentSettledEvent>());
+        expect(events[events.length - 2], isA<AgentEndEvent>());
         final last = agent.state.messages.last as AssistantMessage;
         expect(last.stopReason, StopReason.aborted);
       },
@@ -1022,7 +1090,8 @@ void main() {
 
         expect(agent.state.isStreaming, isFalse);
         expect(agent.state.errorMessage, 'HTTP 500');
-        expect(events.last, isA<AgentEndEvent>());
+        expect(events.last, isA<AgentSettledEvent>());
+        expect(events[events.length - 2], isA<AgentEndEvent>());
         final last = agent.state.messages.last as AssistantMessage;
         expect(last.stopReason, StopReason.error);
       },
@@ -1046,7 +1115,8 @@ void main() {
 
       expect(fake.calls, 0);
       expect(agent.state.isStreaming, isFalse);
-      expect(events.last, isA<AgentEndEvent>());
+      expect(events.last, isA<AgentSettledEvent>());
+      expect(events[events.length - 2], isA<AgentEndEvent>());
       final last = agent.state.messages.last as AssistantMessage;
       expect(last.stopReason, StopReason.error);
       expect(last.errorMessage, contains('transform broke'));

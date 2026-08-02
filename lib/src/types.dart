@@ -431,6 +431,7 @@ final class AssistantMessage implements Message {
     this.responseId,
     required this.usage,
     required this.stopReason,
+    this.rawStopReason,
     this.errorMessage,
     required this.timestamp,
   });
@@ -462,6 +463,12 @@ final class AssistantMessage implements Message {
   /// current best guess (usually [StopReason.stop] until the terminal event).
   final StopReason stopReason;
 
+  /// The provider's raw terminal stop/finish reason as reported on the wire
+  /// (e.g. `end_turn`, `max_tokens`, `SAFETY`), when the adapter parsed one.
+  /// Values that do not map onto [StopReason] surface as [StopReason.error]
+  /// with the original string preserved here.
+  final String? rawStopReason;
+
   /// Human-readable error description when [stopReason] is
   /// [StopReason.error] or [StopReason.aborted].
   final String? errorMessage;
@@ -480,6 +487,7 @@ final class AssistantMessage implements Message {
     String? responseId,
     Usage? usage,
     StopReason? stopReason,
+    String? rawStopReason,
     String? errorMessage,
     DateTime? timestamp,
   }) {
@@ -492,6 +500,7 @@ final class AssistantMessage implements Message {
       responseId: responseId ?? this.responseId,
       usage: usage ?? this.usage,
       stopReason: stopReason ?? this.stopReason,
+      rawStopReason: rawStopReason ?? this.rawStopReason,
       errorMessage: errorMessage ?? this.errorMessage,
       timestamp: timestamp ?? this.timestamp,
     );
@@ -511,6 +520,7 @@ final class AssistantMessage implements Message {
     if (responseId != null) 'responseId': responseId,
     'usage': usage.toJson(),
     'stopReason': stopReason.name,
+    if (rawStopReason != null) 'rawStopReason': rawStopReason,
     if (errorMessage != null) 'errorMessage': errorMessage,
     'timestamp': timestamp.millisecondsSinceEpoch,
   };
@@ -534,6 +544,7 @@ final class AssistantMessage implements Message {
           (value) => value.name == json['stopReason'],
           orElse: () => StopReason.stop,
         ),
+        rawStopReason: json['rawStopReason'] as String?,
         errorMessage: json['errorMessage'] as String?,
         timestamp: DateTime.fromMillisecondsSinceEpoch(
           json['timestamp'] as int? ?? 0,

@@ -362,9 +362,13 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
           _config?.supportsImages ??
           modelIdSuggestsVision(_agent.state.model.id),
     );
+    // Session-correlation env vars (FAH_SESSION_ID/FILE/PROVIDER/MODEL) for
+    // the bash tool, resolved live per exec; sits OUTSIDE the secrets
+    // wrapper so neither layer can shadow the other (disjoint FAH_ names).
+    final toolEnv = SessionVarsExecutionEnv(env, _sessionEnvVars);
     final registry = ToolRegistry([
       ...builtinTools(
-        env,
+        toolEnv,
         webSearch: isOnDevice ? null : webSearchConfig,
         model: () => _agent.state.model,
       ),
@@ -462,8 +466,9 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
 
   /// Picks the stream function for [config]'s backend: the on-device
   /// bridges for `webllm`/`gemma`/`transformers_js`, the HTTP adapters
-  /// otherwise.
-  static StreamFunction _streamFunctionFor(AgentConfig config) {
+  /// otherwise. HTTP adapters get the live session id as the prompt-cache
+  /// affinity key (resolved lazily — the session is created after this).
+  StreamFunction _streamFunctionFor(AgentConfig config) {
     if (config.providerKind == webLlmProviderKind) {
       return webLlmStreamFunction(createWebLlmService());
     }
@@ -473,7 +478,11 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
     if (config.providerKind == transformersJsProviderKind) {
       return transformersJsStreamFunction(createTransformersJsService());
     }
-    return providerStreamFunction(config.providerKind, config.apiKey);
+    return providerStreamFunction(
+      config.providerKind,
+      config.apiKey,
+      sessionId: () => _session?.cachedId,
+    );
   }
 
   /// The system prompt plus a secret-name hint (names only, never values).
@@ -941,12 +950,24 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
 
   Session? _session;
   String? _sessionId;
+  String? _sessionFile;
   int _persistedCount = 0;
   FahChatMessage? _currentAssistantMessage;
   FahChatMessage? _currentThinkingMessage;
 
   /// Id of the session new messages persist to (`null` until [initialize]).
   String? get currentSessionId => _sessionId;
+
+  /// Session-correlation env vars injected into bash tool executions (see
+  /// [SessionVarsExecutionEnv]). Read live per exec, so a session (re)load
+  /// or a provider/model switch is picked up by later commands. Never
+  /// secret values — ids, paths, provider kinds, model ids.
+  Map<String, String> _sessionEnvVars() => {
+    if (_sessionId case final id?) sessionIdEnvVar: id,
+    if (_sessionFile case final path?) sessionFileEnvVar: path,
+    providerEnvVar: _providerKind,
+    modelEnvVar: _agent.state.model.id,
+  };
 
   /// Initializes session persistence.
   Future<void> initialize() async {
@@ -957,7 +978,9 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
       ),
     );
     _session = session;
-    _sessionId = (await session.getMetadata()).id;
+    final sessionMetadata = await session.getMetadata();
+    _sessionId = sessionMetadata.id;
+    _sessionFile = sessionMetadata.path;
   }
 
   /// Sends a plain-text user message. While the agent is already running the
@@ -1351,6 +1374,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
     _agent.state.messages = contextMessages;
     _session = session;
     _sessionId = metadata.id;
+    _sessionFile = metadata.path;
     _persistedCount = contextMessages.length;
     _currentAssistantMessage = null;
     error = null;

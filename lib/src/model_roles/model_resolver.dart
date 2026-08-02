@@ -89,6 +89,12 @@ final class ModelRolesResolver {
   /// value.
   void Function(FallbackNotice notice)? onNotice;
 
+  /// Cache-affinity session id bound into every chain entry's provider
+  /// stream (resolved lazily per call, so a host that learns the session id
+  /// after construction — the CLI/app create sessions lazily — still gets
+  /// prompt-cache affinity). Ignored for adapters without cache routing.
+  String? Function()? sessionId;
+
   /// Jitter source forwarded to chain wrappers (tests inject determinism).
   final double Function()? jitterFraction;
 
@@ -156,7 +162,22 @@ final class ModelRolesResolver {
         maxTokens: ref.maxTokens,
       ),
       keyRing: ring,
-      streamForKey: (apiKey) => _streamFactory(spec.kind, apiKey),
+      streamForKey: (apiKey) {
+        final inner = _streamFactory(spec.kind, apiKey);
+        return (model, context, {cancelToken}) {
+          // An explicit per-call override (the compaction bypass) wins over
+          // the resolver's bound session id.
+          if (StreamCacheRouting.current != null) {
+            return inner(model, context, cancelToken: cancelToken);
+          }
+          return StreamCacheRouting.runWith(
+            () => inner(model, context, cancelToken: cancelToken),
+            // Read the mutable field lazily: hosts learn the session id
+            // after the resolver (and its chains) were built.
+            sessionId: sessionId?.call(),
+          );
+        };
+      },
     );
   }
 

@@ -8,6 +8,9 @@
 library;
 
 import '../agent/agent_loop.dart';
+import '../cancel_token.dart';
+import '../context.dart';
+import '../event_stream.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../providers/anthropic.dart';
@@ -182,24 +185,78 @@ Model buildCliDefaultModel(
 /// Builds the [StreamFunction] for a provider adapter [kind]
 /// (`openai-completions`, `anthropic`, `google`) with a static [apiKey].
 /// Throws [ConfigException] for unknown kinds.
-StreamFunction providerStreamFunction(String kind, String apiKey) {
-  return switch (kind) {
-    'openai-completions' =>
-      (model, context, {cancelToken}) => streamOpenAICompletions(
+///
+/// [sessionId] (resolved lazily per call) is the prompt-cache affinity key
+/// threaded to adapters that support one (OpenAI `prompt_cache_key`,
+/// OpenRouter `x-session-id`); [cacheRetention] sets the adapters' cache
+/// retention (`short`/`long`/`none`, adapter default when null). Both are
+/// defaults: an active [StreamCacheRouting] override (the compaction
+/// bypass) wins per call.
+StreamFunction providerStreamFunction(
+  String kind,
+  String apiKey, {
+  String? Function()? sessionId,
+  String? cacheRetention,
+}) {
+  if (kind != 'openai-completions' && kind != 'anthropic' && kind != 'google') {
+    throw ConfigException('Unknown provider kind: $kind');
+  }
+  // ignore: implicit_call_tearoffs
+  return _CatalogStreamFunction(kind, apiKey, sessionId, cacheRetention);
+}
+
+/// The [providerStreamFunction] product: resolves the cache routing at call
+/// time — an active [StreamCacheRouting] override first, then the factory
+/// defaults — and builds the adapter options for one call.
+final class _CatalogStreamFunction {
+  const _CatalogStreamFunction(
+    this._kind,
+    this._apiKey,
+    this._sessionId,
+    this._cacheRetention,
+  );
+
+  final String _kind;
+  final String _apiKey;
+  final String? Function()? _sessionId;
+  final String? _cacheRetention;
+
+  /// The [StreamFunction] entry point.
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    final routing = StreamCacheRouting.current;
+    final effectiveSessionId = routing?.sessionId ?? _sessionId?.call();
+    final effectiveRetention = routing?.cacheRetention ?? _cacheRetention;
+    return switch (_kind) {
+      'openai-completions' => streamOpenAICompletions(
         model,
         context,
-        OpenAICompletionsOptions(apiKey: apiKey, cancelToken: cancelToken),
+        OpenAICompletionsOptions(
+          apiKey: _apiKey,
+          cancelToken: cancelToken,
+          sessionId: effectiveSessionId,
+          cacheRetention: effectiveRetention,
+        ),
       ),
-    'anthropic' => (model, context, {cancelToken}) => streamAnthropic(
-      model,
-      context,
-      AnthropicOptions(apiKey: apiKey, cancelToken: cancelToken),
-    ),
-    'google' => (model, context, {cancelToken}) => streamGoogle(
-      model,
-      context,
-      GoogleOptions(apiKey: apiKey, cancelToken: cancelToken),
-    ),
-    _ => throw ConfigException('Unknown provider kind: $kind'),
-  };
+      'anthropic' => streamAnthropic(
+        model,
+        context,
+        AnthropicOptions(
+          apiKey: _apiKey,
+          cancelToken: cancelToken,
+          cacheRetention: effectiveRetention,
+        ),
+      ),
+      'google' => streamGoogle(
+        model,
+        context,
+        GoogleOptions(apiKey: _apiKey, cancelToken: cancelToken),
+      ),
+      // Validated by providerStreamFunction; unreachable.
+      _ => throw ConfigException('Unknown provider kind: $_kind'),
+    };
+  }
 }

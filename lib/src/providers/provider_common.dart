@@ -352,6 +352,10 @@ final class ProviderStreamState {
   /// Why the stream terminated (best guess until the terminal event).
   var stopReason = StopReason.stop;
 
+  /// The provider's raw stop/finish reason string as reported on the wire,
+  /// when the adapter parsed one (see [AssistantMessage.rawStopReason]).
+  String? rawStopReason;
+
   /// Failure description for error/aborted terminal events.
   String? errorMessage;
 
@@ -377,6 +381,7 @@ final class ProviderStreamState {
     responseId: responseId,
     usage: usage,
     stopReason: stopReason,
+    rawStopReason: rawStopReason,
     errorMessage: errorMessage,
     timestamp: timestamp,
   );

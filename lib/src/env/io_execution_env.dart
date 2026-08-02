@@ -324,16 +324,16 @@ final class LocalShell implements Shell {
   /// Creates a [LocalShell].
   const LocalShell();
 
-  /// The child environment: the caller's `options.env` when given (its PATH
-  /// wins), else the host's. PATH always gains the common tool directories
-  /// (`/opt/homebrew/bin`, `/usr/local/bin` when they exist) — GUI-launched
-  /// apps (the packaged macOS app) inherit a minimal PATH that would
-  /// otherwise hide user-installed tools (Homebrew python/node).
+  /// The child environment: the host's, with the caller's `options.env`
+  /// merged on top (its values override, per the [ShellExecOptions.env]
+  /// contract — injected vars such as secrets or `FAH_SESSION_*` must not
+  /// strip the inherited environment). PATH always gains the common tool
+  /// directories (`/opt/homebrew/bin`, `/usr/local/bin` when they exist) —
+  /// GUI-launched apps (the packaged macOS app) inherit a minimal PATH that
+  /// would otherwise hide user-installed tools (Homebrew python/node).
   static Map<String, String> _environment(ShellExecOptions? options) {
     final given = options?.env;
-    final base = <String, String>{
-      if (given == null) ...Platform.environment else ...given,
-    };
+    final base = <String, String>{...Platform.environment, ...?given};
     var current = base['PATH'] ?? '';
     if (current.isEmpty) {
       // An explicit env without a PATH (or a minimal GUI-app PATH): keep

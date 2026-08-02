@@ -165,6 +165,7 @@ class FakeShell implements Shell {
   final String stderr;
   final int exitCode;
   final commands = <String>[];
+  ShellExecOptions? lastOptions;
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
@@ -172,6 +173,7 @@ class FakeShell implements Shell {
     ShellExecOptions? options,
   }) async {
     commands.add(command);
+    lastOptions = options;
     return Ok(
       ShellExecResult(stdout: stdout, stderr: stderr, exitCode: exitCode),
     );

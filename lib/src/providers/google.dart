@@ -220,7 +220,7 @@ AssistantMessageEventStream streamGoogle(
         }
         if (state.stopReason == StopReason.aborted ||
             state.stopReason == StopReason.error) {
-          throw StateError('An unknown error occurred');
+          throw StateError(state.errorMessage ?? 'An unknown error occurred');
         }
 
         eventStream.push(
@@ -352,11 +352,22 @@ final class _GoogleChunkHandler {
     }
 
     final finishReason = candidate['finishReason'];
-    if (finishReason is String) {
-      _state.stopReason = _mapStopReason(finishReason);
-      if (_blocks.any((b) => b is ToolCallStreamingBlock)) {
-        _state.stopReason = StopReason.toolUse;
-      }
+    if (finishReason is String) _processFinishReason(finishReason);
+  }
+
+  /// Translates a candidate's terminal finish reason. Terminal reasons that
+  /// do not map onto [StopReason] are provider errors, never a silent
+  /// success; the raw value stays diagnosable via
+  /// [AssistantMessage.rawStopReason] and the error message.
+  void _processFinishReason(String finishReason) {
+    _state.rawStopReason = finishReason;
+    final mapped = _mapStopReason(finishReason);
+    if (mapped == StopReason.error) {
+      _state.errorMessage ??= 'Provider finishReason: $finishReason';
+    }
+    _state.stopReason = mapped;
+    if (_blocks.any((b) => b is ToolCallStreamingBlock)) {
+      _state.stopReason = StopReason.toolUse;
     }
   }
 

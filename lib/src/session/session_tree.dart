@@ -74,6 +74,15 @@ final class Session {
   /// The session metadata (from the file header).
   Future<SessionMetadata> getMetadata() => _storage.getMetadata();
 
+  /// The session id when the storage caches the header synchronously
+  /// ([JsonlSessionStorage] always does); `null` otherwise. Used as the
+  /// prompt-cache affinity key, where a synchronous read lets provider
+  /// stream functions resolve it per call without an async hop.
+  String? get cachedId {
+    final storage = _storage;
+    return storage is JsonlSessionStorage ? storage.cachedMetadata.id : null;
+  }
+
   /// The underlying storage.
   SessionStorage getStorage() => _storage;
 

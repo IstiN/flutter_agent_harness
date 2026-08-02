@@ -375,7 +375,26 @@ void main() {
       final error = events.last as ErrorEvent;
       expect(error.reason, StopReason.error);
       expect(error.error.stopReason, StopReason.error);
+      expect(error.error.rawStopReason, 'SAFETY');
+      expect(error.error.errorMessage, contains('SAFETY'));
       expect((error.error.content.single as TextContent).text, 'nope');
+    });
+
+    test('STOP finish reason is preserved as rawStopReason', () async {
+      final client = sseClient(
+        sseBody([textChunk('fine', finishReason: 'STOP')]),
+      );
+
+      final stream = streamGoogle(
+        testModel,
+        simpleContext(),
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final done = (await stream.toList()).last as DoneEvent;
+      expect(done.reason, StopReason.stop);
+      expect(done.message.rawStopReason, 'STOP');
     });
 
     test('429 becomes an error event, never an exception', () async {

@@ -417,6 +417,60 @@ void main() {
       expect(done.reason, StopReason.length);
     });
 
+    test('known stop reason is preserved as rawStopReason', () async {
+      final client = sseClient(
+        sseBody([
+          messageStart(),
+          blockStart(0, {'type': 'text', 'text': ''}),
+          blockDelta(0, {'type': 'text_delta', 'text': 'hi'}),
+          blockStop(0),
+          messageDelta('end_turn'),
+          messageStop,
+        ]),
+      );
+
+      final stream = streamAnthropic(
+        testModel,
+        simpleContext(),
+        const AnthropicOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final done = (await stream.toList()).last as DoneEvent;
+      expect(done.reason, StopReason.stop);
+      expect(done.message.rawStopReason, 'end_turn');
+    });
+
+    test(
+      'unmapped stop reason is a provider error with the raw value',
+      () async {
+        final client = sseClient(
+          sseBody([
+            messageStart(),
+            blockStart(0, {'type': 'text', 'text': ''}),
+            blockDelta(0, {'type': 'text_delta', 'text': 'partial'}),
+            blockStop(0),
+            messageDelta('some_future_reason'),
+            messageStop,
+          ]),
+        );
+
+        final stream = streamAnthropic(
+          testModel,
+          simpleContext(),
+          const AnthropicOptions(apiKey: 'test-key'),
+          client,
+        );
+
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.stopReason, StopReason.error);
+        expect(error.error.rawStopReason, 'some_future_reason');
+        expect(error.error.errorMessage, contains('some_future_reason'));
+      },
+    );
+
     test('429 becomes an error event, never an exception', () async {
       final client = http_testing.MockClient(
         (request) async =>
