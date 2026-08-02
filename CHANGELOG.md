@@ -795,4 +795,8 @@
 
 - feat(fa_ui): present editor/picker pages as constrained dialogs on wide canvases
 
+## 0.1.123
+
+- feat(site): TestFlight public beta link in the hero CTA row
+
 ## Unreleased
