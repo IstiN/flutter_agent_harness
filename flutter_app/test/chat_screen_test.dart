@@ -148,7 +148,9 @@ void main() {
       // custom endpoint — no key needed).
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Acme'));
+      // The provider name shows in both the settings summary behind and the
+      // picker page on top — the top-most page is LAST in the tree.
+      await tester.tap(find.text('Acme').last);
       await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextField, 'Model id'),

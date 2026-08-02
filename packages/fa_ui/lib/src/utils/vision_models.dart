@@ -28,6 +28,13 @@ const _visionMarkers = <String>[
   'claude-haiku',
   // Google — all Gemini chat models are multimodal.
   'gemini-',
+  // Moonshot — the Kimi lines declare `supports_image_in` on /models
+  // (kimi-for-coding, k3/k3-256k, moonshot-v1-*-vision). Bare k2/k3 match
+  // anything containing them — the list errs on the inclusive side by design.
+  'kimi',
+  'moonshot',
+  'k3',
+  'k2-',
   // Qwen vision lines.
   'qwen-vl',
   'qwen2-vl',
