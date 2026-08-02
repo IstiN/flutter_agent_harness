@@ -1,0 +1,9 @@
+{
+  "id": "fitness-trainer",
+  "name": "Fitness Trainer",
+  "description": "Guided workout of the day with live rep counting and rest timer",
+  "version": "1.0.0",
+  "icon": "icon.svg",
+  "allowedCommands": [],
+  "network": false
+}

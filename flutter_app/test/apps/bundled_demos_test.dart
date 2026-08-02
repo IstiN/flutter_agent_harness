@@ -1253,5 +1253,60 @@ void main() {
         });
       },
     );
+
+    testWidgets('fitness-trainer boots and renders the workout card', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = await envWithApp('fitness-trainer');
+        final engine = JsAppEngine(
+          app: app('fitness-trainer', const {
+            'id': 'fitness-trainer',
+            'name': 'Fitness Trainer',
+          }),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+          expect(engine.tree.value, isNotNull);
+          final tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('Goblet Squat'));
+          expect(tree, contains('SET 2 OF 4'));
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
+
+    testWidgets('english-teacher boots and flips flashcards', (tester) async {
+      await tester.runAsync(() async {
+        final env = await envWithApp('english-teacher');
+        final engine = JsAppEngine(
+          app: app('english-teacher', const {
+            'id': 'english-teacher',
+            'name': 'English Teacher',
+          }),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+          var tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('Daily English'));
+          expect(tree, contains('apple'));
+
+          // The flip button swaps the card to its translation.
+          await engine.callEvent('flip');
+          await Future<void>.delayed(settle);
+          tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('яблоко'));
+        } finally {
+          await engine.dispose();
+        }
+      });
+    });
   });
 }

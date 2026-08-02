@@ -1,0 +1,9 @@
+{
+  "id": "english-teacher",
+  "name": "English Teacher",
+  "description": "Daily English flashcards with adaptive practice and streaks",
+  "version": "1.0.0",
+  "icon": "icon.svg",
+  "allowedCommands": [],
+  "network": false
+}
