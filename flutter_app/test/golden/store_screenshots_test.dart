@@ -141,7 +141,7 @@ const _notesSessionId = 'c33ce003-notes';
 /// injected).
 Map<String, String> _sessionNames(String lang) => lang == 'ru'
     ? {
-        _weatherSessionId: 'Приложение погоды',
+        _weatherSessionId: 'Погода',
         _wallpaperSessionId: 'Обои для дашборда',
         _notesSessionId: 'Идеи виджета заметок',
       }

@@ -173,10 +173,16 @@ void main() {
         final existing = await _persistSession(repo, userText: 'earlier chat');
         // Corrupt the file: the header stays readable (so the session is
         // listed and picked for resume) but an entry line is no longer valid
-        // JSON, so opening the full session fails.
+        // JSON. The bad line must sit MID-file (junk after it): a torn LAST
+        // line is treated as a crash-torn append and healed, while mid-file
+        // corruption stays fatal and forces the fallback.
         (await env.appendFile(
           existing.path,
           'this is not json\n',
+        )).getOrThrow();
+        (await env.appendFile(
+          existing.path,
+          '{"broken": true}\n',
         )).getOrThrow();
 
         final result = await boot();
@@ -186,5 +192,49 @@ void main() {
         expect(await repo.list(), hasLength(2));
       },
     );
+
+    test('boot resumes the last ACTIVE session, not the newest file', () async {
+      final older = await _persistSession(repo, userText: 'the real work');
+      await _persistSession(repo, userText: 'a later empty-ish chat');
+      // The user last worked in the OLDER session.
+      (await env.writeFile(
+        '${env.cwd}/last_active_session.json',
+        '{"version":1,"id":"${older.id}"}',
+      )).getOrThrow();
+
+      final result = await boot();
+
+      expect(result.id, older.id);
+      expect(manager.activeId, older.id);
+      expect(result.service.messages.single.content, 'the real work');
+    });
+
+    test('switching sessions persists the pick for the next boot', () async {
+      final older = await _persistSession(repo, userText: 'the real work');
+      // First boot: mints a fresh session and remembers it.
+      await boot();
+      // The user then opens the older session — that choice must stick.
+      await manager.openSession(
+        older,
+        config: _config,
+        serviceFactory: () async {
+          return _fakeService(env);
+        },
+      );
+
+      // Second boot on a fresh manager (same env): lands on the older one.
+      final manager2 = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      final result = await manager2.createOrResumeSession(
+        config: _config,
+        createFactory: () async => _fakeService(env),
+        openFactory: () async => _fakeService(env),
+      );
+
+      expect(result.id, older.id);
+      expect(manager2.activeId, older.id);
+    });
   });
 }

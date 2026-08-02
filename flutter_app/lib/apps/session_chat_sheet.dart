@@ -87,10 +87,10 @@ class SessionChatSheet extends StatefulWidget {
   final SandboxVideoControllerFactory? videoControllerFactory;
 
   @override
-  State<SessionChatSheet> createState() => _SessionChatSheetState();
+  State<SessionChatSheet> createState() => SessionChatSheetState();
 }
 
-class _SessionChatSheetState extends State<SessionChatSheet>
+class SessionChatSheetState extends State<SessionChatSheet>
     with SingleTickerProviderStateMixin {
   /// Diameter of the fully-collapsed round Fa button.
   static const double _iconSize = 56;
@@ -283,6 +283,9 @@ class _SessionChatSheetState extends State<SessionChatSheet>
     duration: const Duration(milliseconds: 260),
     curve: Curves.easeOutCubic,
   );
+
+  /// Expands the sheet programmatically (e.g. the launcher's session chip).
+  void expand() => unawaited(_expand());
 
   Future<void> _expand() => _anim.animateTo(
     1,
@@ -926,13 +929,14 @@ class _SessionTranscriptState extends State<_SessionTranscript>
     super.dispose();
   }
 
-  /// New transcript content keeps the view pinned to the latest message.
+  /// New transcript content keeps the view pinned to the latest message —
+  /// with `reverse: true` that is the list's START (min extent), not its end.
   void _scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (position.maxScrollExtent > position.pixels) {
-        position.jumpTo(position.maxScrollExtent);
+      if (position.pixels > position.minScrollExtent) {
+        position.jumpTo(position.minScrollExtent);
       }
     });
   }
@@ -963,10 +967,14 @@ class _SessionTranscriptState extends State<_SessionTranscript>
         }
         return ListView.builder(
           controller: _scrollController,
+          // reverse: content stays pinned to the BOTTOM (composer) — a short
+          // transcript no longer flies up and out of view when the keyboard
+          // opens and shrinks the viewport.
+          reverse: true,
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
           itemCount: messages.length,
           itemBuilder: (context, index) {
-            final message = messages[index];
+            final message = messages[messages.length - 1 - index];
             return ChatMessageTile(
               message: message,
               images: _images,

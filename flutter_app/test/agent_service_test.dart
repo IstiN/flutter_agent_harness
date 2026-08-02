@@ -564,6 +564,33 @@ void main() {
       },
     );
 
+    test('messages persist incrementally — a mid-run "crash" loses nothing '
+        'that landed (no AgentEnd needed)', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_hungResponse()),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      unawaited(service.sendText('crash me'));
+      for (var i = 0; i < 100 && service.messages.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(service.messages.single.content, 'crash me');
+
+      // The run is STILL in flight (hung provider stream, no AgentEnd),
+      // yet the session file must already hold the user message — this is
+      // what survives an actual app crash mid-run.
+      await Future<void>.delayed(const Duration(milliseconds: 1300));
+      final onDisk = await _readAllFiles(env, '/sessions');
+      expect(onDisk, contains('crash me'));
+
+      service.abort();
+      await service.waitForIdle();
+    });
+
     test(
       'a failed turn ALSO lands as an error tile in the transcript',
       () async {

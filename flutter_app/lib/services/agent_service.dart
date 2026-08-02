@@ -1206,6 +1206,26 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// Aborts the current run, if any.
   void abort() => _agent.abort();
 
+  /// Serializes `_persist` runs so concurrent triggers never double-append
+  /// the same message.
+  Future<void> _persistChain = Future<void>.value();
+
+  /// Crash-safe persistence: append finished messages/tool results to the
+  /// session file AS THEY LAND (serialized through [_persistChain]), so a
+  /// crash mid-run loses nothing the agent already produced — persisting
+  /// only on AgentEnd (the old behavior) lost the whole turn, tool calls
+  /// included, when the app died mid-run. Torn trailing writes from a crash
+  /// mid-append self-heal on the next load (the JSONL storage truncates
+  /// them).
+  void _persistSoon() {
+    _persistChain = _persistChain.then((_) => _persist()).catchError((
+      Object _,
+    ) {
+      // Best effort: the transcript stays in memory; the next trigger
+      // retries the missed appends (see _persistedCount).
+    });
+  }
+
   @override
   void dispose() {
     _idleWatchdog?.cancel();
@@ -1417,6 +1437,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
         } else if (message is AssistantMessage) {
           _finalizeAssistant(message);
         }
+        _persistSoon();
       case ToolExecutionStartEvent(:final toolName, :final args):
         // Tool calls can run long (builds, installs) without producing agent
         // events — the idle watchdog must not fire during them.
@@ -1440,6 +1461,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
           // "Hook" for file-watching UI: the agent may have changed files.
           fsRevision.value++;
         }
+        _persistSoon();
         final text = result.content
             .whereType<TextContent>()
             .map((b) => b.text)

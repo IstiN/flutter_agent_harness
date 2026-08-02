@@ -124,6 +124,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   Object? _error;
   String? _openFolderId;
 
+  /// Key into the session chat sheet so the header's session chip can
+  /// expand it (the chip shows WHICH session is active — the sheet hosts it).
+  final _sheetKey = GlobalKey<SessionChatSheetState>();
+
   /// Live reorder preview while dragging: the order the grid animates to
   /// (the persisted order is only mutated on drop).
   List<String>? _previewOrder;
@@ -650,6 +654,51 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   // --- build ---------------------------------------------------------------
 
+  /// The active-session indicator in the header: which conversation the
+  /// agent is in right now (custom or date-derived title); tapping expands
+  /// the session sheet. Rebuilds on every manager change (switch/rename).
+  Widget _buildSessionChip(FahColors colors) {
+    final active = widget.manager.active;
+    if (active == null) return const SizedBox.shrink();
+    final title =
+        widget.sessionNamesStore?.titleFor(active.id) ??
+        derivedSessionTitle(
+          context,
+          id: active.id,
+          createdAt: active.createdAt,
+        );
+    return GestureDetector(
+      onTap: () => _sheetKey.currentState?.expand(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        constraints: const BoxConstraints(maxWidth: 220),
+        decoration: BoxDecoration(
+          color: colors.panel,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colors.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Icon(Icons.chat_bubble_outline, size: 13, color: colors.dim),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.dim),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -666,6 +715,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             // The collapsed session chat (Fa button / streaming work bar)
             // and, expanded, the 92% session sheet with the pager.
             SessionChatSheet(
+              key: _sheetKey,
               manager: widget.manager,
               registry: widget.registry,
               lastConnectionStore: widget.lastConnectionStore,
@@ -704,12 +754,20 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             children: [
               const FaMark(size: 28),
               const SizedBox(width: 10),
-              Text(
-                context.l10n.appsGridTitle,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+              // The screen title yields to the session chip on narrow frames:
+              // it ellipsizes first, the chip keeps a readable width.
+              Flexible(
+                child: Text(
+                  context.l10n.appsGridTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                ),
               ),
+              const SizedBox(width: 8),
+              _buildSessionChip(colors),
             ],
           ),
         ),

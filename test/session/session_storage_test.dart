@@ -65,6 +65,70 @@ void main() {
       expect((entry as MessageRecord).message.role, 'user');
     });
 
+    test(
+      'a torn LAST line (crash mid-append) is dropped, history intact',
+      () async {
+        final storage = await createStorage();
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'e1',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('hello'),
+          ),
+        );
+        // Simulate a crash mid-append: the final line is truncated JSON.
+        (await fs.appendFile(
+          path,
+          '{"id":"e2","parentId":"e1","timestamp\n',
+        )).getOrThrow();
+
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        final entries = await reopened.getEntries();
+        expect(entries.map((e) => e.id), ['e1']);
+        expect(await reopened.getLeafId(), 'e1');
+
+        // …and the file keeps accepting appends after the tear.
+        await reopened.appendEntry(
+          MessageRecord(
+            id: 'e3',
+            parentId: 'e1',
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('recovered'),
+          ),
+        );
+        final again = await JsonlSessionStorage.open(fs, path);
+        expect((await again.getEntries()).map((e) => e.id), ['e1', 'e3']);
+      },
+    );
+
+    test('a malformed MID-FILE line stays fatal (real corruption)', () async {
+      final storage = await createStorage();
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'e1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('hello'),
+        ),
+      );
+      // Corrupt + a valid record after it: the bad line is NOT the last one.
+      (await fs.appendFile(path, 'not json at all\n')).getOrThrow();
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'e2',
+          parentId: 'e1',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('world'),
+        ),
+      );
+
+      expect(
+        () => JsonlSessionStorage.open(fs, path),
+        throwsA(isA<SessionException>()),
+      );
+    });
+
     test('setLeafId appends a leaf record and validates the target', () async {
       final storage = await createStorage();
       await storage.appendEntry(
@@ -273,6 +337,13 @@ void main() {
     test('open rejects a corrupt entry line with invalid_entry', () async {
       await createStorage();
       await fs.appendFile(path, '{broken json\n');
+      // A trailing valid record makes the corrupt one MID-file: a torn
+      // crash-write is only ever the LAST line, so mid-file corruption
+      // stays fatal.
+      await fs.appendFile(
+        path,
+        '${jsonEncode({'type': 'label', 'id': 'l1', 'parentId': null, 'timestamp': DateTime.utc(2026).toIso8601String(), 'targetId': 'x', 'label': 'y'})}\n',
+      );
       expect(
         () => JsonlSessionStorage.open(fs, path),
         throwsA(
@@ -288,6 +359,11 @@ void main() {
     test('open rejects an entry line missing required fields', () async {
       await createStorage();
       await fs.appendFile(path, '${jsonEncode({'type': 'label'})}\n');
+      // Same mid-file setup: the incomplete record is not the last line.
+      await fs.appendFile(
+        path,
+        '${jsonEncode({'type': 'label', 'id': 'l1', 'parentId': null, 'timestamp': DateTime.utc(2026).toIso8601String(), 'targetId': 'x', 'label': 'y'})}\n',
+      );
       expect(
         () => JsonlSessionStorage.open(fs, path),
         throwsA(

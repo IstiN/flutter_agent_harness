@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -11,14 +12,22 @@ import 'package:fa/services/agent_service.dart';
 
 /// One managed chat session: the [AgentService] and the session id.
 final class FlutterManagedSession {
-  /// Creates a managed session.
-  FlutterManagedSession({required this.id, required this.service});
+  /// Creates a managed session. [createdAt] defaults to now (fresh session);
+  /// disk-opened sessions pass their file-header creation time.
+  FlutterManagedSession({
+    required this.id,
+    required this.service,
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
 
   /// Session id (uuidv7).
   final String id;
 
   /// The agent service driving this session.
   final AgentService service;
+
+  /// When the session was created (drives the date-derived display title).
+  final DateTime createdAt;
 }
 
 /// Manages several concurrent [AgentService] sessions for the Flutter chat
@@ -42,6 +51,41 @@ final class FlutterSessionManager extends ChangeNotifier {
 
   final Map<String, FlutterManagedSession> _sessions = {};
   String? _activeId;
+
+  /// File (under [ExecutionEnv.cwd]) remembering the last ACTIVE session id
+  /// across restarts — boot resumes the chat the user actually worked in,
+  /// not just the newest file (which may be a fresh empty one).
+  static const String lastActiveFile = 'last_active_session.json';
+
+  String? _restoredLastActiveId;
+
+  /// Persists [id] as the last active session (fire-and-forget, best effort).
+  void _rememberActive(String? id) {
+    if (id == null || id == _restoredLastActiveId) return;
+    _restoredLastActiveId = id;
+    unawaited(
+      env
+          .writeFile(
+            '${env.cwd}/$lastActiveFile',
+            '{"version":1,"id":${jsonEncode(id)}}',
+          )
+          .then((_) {})
+          .catchError((Object _) {}),
+    );
+  }
+
+  /// Reads the persisted last-active session id (null when none/unreadable).
+  Future<String?> _readLastActiveId() async {
+    try {
+      final result = await env.readTextFile('${env.cwd}/$lastActiveFile');
+      final raw = result.valueOrNull;
+      if (raw == null) return null;
+      final decoded = jsonDecode(raw);
+      return decoded is Map ? decoded['id'] as String? : null;
+    } on Object {
+      return null;
+    }
+  }
 
   /// All managed sessions, newest first.
   List<FlutterManagedSession> get sessions =>
@@ -71,6 +115,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     final managed = FlutterManagedSession(id: id, service: service);
     _sessions[id] = managed;
     _activeId = id;
+    _rememberActive(id);
     notifyListeners();
     return managed;
   }
@@ -80,6 +125,7 @@ final class FlutterSessionManager extends ChangeNotifier {
   void addSession(String id, AgentService service) {
     _sessions[id] = FlutterManagedSession(id: id, service: service);
     _activeId = id;
+    _rememberActive(id);
     notifyListeners();
   }
 
@@ -92,14 +138,20 @@ final class FlutterSessionManager extends ChangeNotifier {
     final existing = _sessions[metadata.id];
     if (existing != null) {
       _activeId = metadata.id;
+      _rememberActive(metadata.id);
       notifyListeners();
       return existing;
     }
     final service = await serviceFactory();
     await service.loadSession(metadata);
-    final managed = FlutterManagedSession(id: metadata.id, service: service);
+    final managed = FlutterManagedSession(
+      id: metadata.id,
+      service: service,
+      createdAt: metadata.createdAt,
+    );
     _sessions[metadata.id] = managed;
     _activeId = metadata.id;
+    _rememberActive(metadata.id);
     notifyListeners();
     return managed;
   }
@@ -143,6 +195,25 @@ final class FlutterSessionManager extends ChangeNotifier {
     required Future<AgentService> Function() createFactory,
     required FutureOr<AgentService> Function() openFactory,
   }) async {
+    // The last ACTIVE session wins over the newest file: the user may have
+    // switched back to an older chat (or a fresh empty session may have been
+    // minted after it) — reopen the conversation they actually left.
+    final lastActiveId = await _readLastActiveId();
+    if (lastActiveId != null) {
+      try {
+        final all = await _repo.list();
+        final metadata = all.where((m) => m.id == lastActiveId).firstOrNull;
+        if (metadata != null) {
+          return await openSession(
+            metadata,
+            config: config,
+            serviceFactory: openFactory,
+          );
+        }
+      } on Object {
+        // Unreadable list/load — fall through to the reusable pick.
+      }
+    }
     final reusable = await findReusableSession();
     if (reusable != null) {
       try {
@@ -164,6 +235,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (!_sessions.containsKey(sessionId)) return;
     if (_activeId == sessionId) return;
     _activeId = sessionId;
+    _rememberActive(sessionId);
     notifyListeners();
   }
 
@@ -184,6 +256,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     }
     if (_activeId == sessionId) {
       _activeId = _sessions.isEmpty ? null : _sessions.keys.last;
+      _rememberActive(_activeId);
     }
     notifyListeners();
   }

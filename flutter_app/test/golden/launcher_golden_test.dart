@@ -17,6 +17,7 @@ import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
+import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:flutter/material.dart';
@@ -394,8 +395,17 @@ Future<void> _pumpLauncher(
     service.messages.addAll(entry.value);
     manager.addSession(entry.key, service);
   }
+  // Deterministic session chip in the header: the date-derived fallback
+  // title would stamp every golden with the RUN's date (and the pager can
+  // swipe to ANY of the sessions).
+  final namesStore = await SessionNamesStore.load(env);
+  final chipTitles = ['Weather app', 'Second chat', 'Third chat'];
+  for (final (i, session) in manager.sessions.indexed) {
+    await namesStore.rename(session.id, chipTitles[i % chipTitles.length]);
+  }
   final launcher = AppLauncherScreen(
     manager: manager,
+    sessionNamesStore: namesStore,
     layoutStore: LauncherLayoutStore.inMemory(
       order:
           order ??
@@ -697,7 +707,8 @@ void main() {
         1000,
       );
       await tester.pumpAndSettle();
-      expect(find.text('session sess-a'), findsOneWidget);
+      // The sheet header AND the launcher's session chip both show it.
+      expect(find.text('Second chat'), findsWidgets);
       await expectGolden(tester, 'launcher/sheet_pager2_dark');
     });
 

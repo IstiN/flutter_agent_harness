@@ -256,9 +256,23 @@ final class JsonlSessionStorage implements SessionStorage {
     final entries = <SessionRecord>[];
     String? leafId;
     for (var i = 1; i < lines.length; i++) {
-      final entry = _parseEntryLine(lines[i], filePath, i + 1);
-      entries.add(entry);
-      leafId = _leafIdAfter(entry);
+      try {
+        final entry = _parseEntryLine(lines[i], filePath, i + 1);
+        entries.add(entry);
+        leafId = _leafIdAfter(entry);
+      } on Object {
+        // A malformed LAST line is a torn crash-write (the app died
+        // mid-append) — drop the partial record and TRUNCATE the tail so
+        // the file is whole again (every later open/append would
+        // otherwise hit the tear as mid-file corruption). A malformed
+        // MID-FILE line is real corruption and stays fatal.
+        if (i != lines.length - 1) rethrow;
+        try {
+          await fs.writeFile(filePath, '${lines.take(i).join('\n')}\n');
+        } on Object {
+          // Read-only storage: the in-memory state is still consistent.
+        }
+      }
     }
     return JsonlSessionStorage._(fs, filePath, header, entries, leafId);
   }
