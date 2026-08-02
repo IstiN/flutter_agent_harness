@@ -799,4 +799,8 @@
 
 - feat(site): TestFlight public beta link in the hero CTA row
 
+## 0.1.125
+
+- fix(example): pin js_widget_runtime@9498d0c — revert the native-release grace that defeated the lifecycle serialization (tf-6 SIGSEGV); drop the test-only grace config
+
 ## Unreleased
