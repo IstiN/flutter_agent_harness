@@ -14,6 +14,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -418,6 +419,45 @@ void main() {
 
       expect(namesStore.titleFor('sess-b'), isNull);
       expect(find.text('session sess-b'), findsOneWidget);
+    });
+
+    testWidgets('menu: Copy session puts the Markdown transcript on the '
+        'clipboard', (tester) async {
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await _pumpSheet(
+        tester,
+        messages: {
+          'sess-b': [
+            FahChatMessage(role: 'user', content: 'build me a dice app'),
+            FahChatMessage(role: 'assistant', content: 'Done — Dice Roller.'),
+          ],
+        },
+      );
+      await _expand(tester);
+
+      await tester.tap(find.byKey(_menuKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy session'));
+      await tester.pumpAndSettle();
+
+      expect(copied, contains('## You\nbuild me a dice app'));
+      expect(copied, contains('## Fa\nDone — Dice Roller.'));
     });
 
     testWidgets('the header derives a date-based title from the session '

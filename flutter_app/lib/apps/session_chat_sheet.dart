@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/apps/fa_work_bar.dart';
@@ -754,6 +755,22 @@ class SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
+  /// "Copy session" menu action: the visible transcript as Markdown into the
+  /// clipboard (same text the full chat's copy action produces).
+  Future<void> _copyActiveSession() async {
+    final service = widget.manager.active?.service;
+    if (service == null) return;
+    await Clipboard.setData(ClipboardData(text: service.transcriptMarkdown()));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.chatCopiedToClipboard),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   Widget _buildHeader(FahColors colors, AgentService service) {
     final activeId = widget.manager.activeId ?? '';
     final title =
@@ -802,6 +819,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
                     child: Text(context.l10n.appsOpenFullChatTooltip),
                   ),
                   PopupMenuItem(
+                    value: 'copy',
+                    child: Text(context.l10n.chatCopySessionTooltip),
+                  ),
+                  PopupMenuItem(
                     value: 'collapse',
                     child: Text(context.l10n.appsCollapseChatTooltip),
                   ),
@@ -814,6 +835,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
                       unawaited(_renameActive());
                     case 'full':
                       unawaited(_openFullChat());
+                    case 'copy':
+                      unawaited(_copyActiveSession());
                     case 'collapse':
                       unawaited(_collapse());
                   }

@@ -491,20 +491,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   /// Copies the whole session transcript to the clipboard as plain text.
   Future<void> _copySession() async {
-    final buffer = StringBuffer();
-    for (final m in widget.service.messages) {
-      final header = switch (m.role) {
-        'user' => '## You',
-        'assistant' => '## Fa',
-        'tool' => '## tool (${m.toolName ?? 'call'})',
-        _ => '## ${m.role}',
-      };
-      buffer.writeln(header);
-      if (m.imageBytes != null) buffer.writeln('[image attached]');
-      if (m.content.isNotEmpty) buffer.writeln(m.content);
-      buffer.writeln();
-    }
-    await Clipboard.setData(ClipboardData(text: buffer.toString()));
+    await Clipboard.setData(
+      ClipboardData(text: widget.service.transcriptMarkdown()),
+    );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

@@ -1599,6 +1599,26 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
     notifyListeners();
   }
 
+  /// The visible transcript as Markdown (`## You` / `## Fa` / `## tool`
+  /// sections) — shared by the chat screen's and the sheet's "Copy session"
+  /// actions so both copy the exact same text.
+  String transcriptMarkdown() {
+    final buffer = StringBuffer();
+    for (final m in messages) {
+      final header = switch (m.role) {
+        'user' => '## You',
+        'assistant' => '## Fa',
+        'tool' => '## tool (${m.toolName ?? 'call'})',
+        _ => '## ${m.role}',
+      };
+      buffer.writeln(header);
+      if (m.imageBytes != null) buffer.writeln('[image attached]');
+      if (m.content.isNotEmpty) buffer.writeln(m.content);
+      buffer.writeln();
+    }
+    return buffer.toString();
+  }
+
   String _shortArgs(Map<String, dynamic> args) {
     final encoded = jsonEncode(args);
     if (encoded.length <= 80) return encoded;
