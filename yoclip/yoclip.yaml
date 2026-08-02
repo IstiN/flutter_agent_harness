@@ -1,0 +1,91 @@
+config:
+  duration: auto
+  fps: 30
+  width: 1920
+  height: 1080
+  background: '#070A10'
+
+theme:
+  colors:
+    background: '#070A10'
+    surface: '#0E1420'
+    panel: '#26304A'
+    bezel: '#0A0E18'
+    text: '#F4F6FB'
+    textMuted: '#8A93A8'
+    primary: '#818CF8'
+    primaryDeep: '#4F46E5'
+    accent: '#2DD4BF'
+  font:
+    family: Geneva
+  sizes:
+    h1: 76
+    kicker: 26
+    tagline: 34
+
+project_js: project.js
+
+external_assets:
+  icon:
+    type: image
+    path: assets/images/icon_1024.png
+  screen_apps_en:
+    type: image
+    path: assets/images/en_apps.png
+  screen_chat_en:
+    type: image
+    path: assets/images/en_chat.png
+  screen_inapp_en:
+    type: image
+    path: assets/images/en_inapp.png
+  screen_media_en:
+    type: image
+    path: assets/images/en_media.png
+  screen_providers_en:
+    type: image
+    path: assets/images/en_providers.png
+  screen_apps_ru:
+    type: image
+    path: assets/images/ru_apps.png
+  screen_chat_ru:
+    type: image
+    path: assets/images/ru_chat.png
+  screen_inapp_ru:
+    type: image
+    path: assets/images/ru_inapp.png
+  screen_media_ru:
+    type: image
+    path: assets/images/ru_media.png
+  screen_providers_ru:
+    type: image
+    path: assets/images/ru_providers.png
+
+variants:
+  - id: app_preview_en
+    label: 'App Preview · EN'
+    width: 1290
+    height: 2796
+    params: { lang: en }
+  - id: app_preview_ru
+    label: 'App Preview · RU'
+    width: 1290
+    height: 2796
+    params: { lang: ru }
+  - id: social_en
+    label: 'Social 9:16 · EN'
+    width: 1080
+    height: 1920
+    params: { lang: en }
+  - id: social_ru
+    label: 'Social 9:16 · RU'
+    width: 1080
+    height: 1920
+    params: { lang: ru }
+  - id: youtube_ru
+    label: 'YouTube 16:9 · RU'
+    params: { lang: ru }
+
+scenes:
+  - scenes/background.scene.js
+  - scenes/01_showcase.scene.js
+  - scenes/02_endcard.scene.js

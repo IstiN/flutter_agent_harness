@@ -1,0 +1,8 @@
+out/
+.yoclip_cache/
+.dart_tool/
+build/
+pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+test/yoclip_cli_*_test.dart
