@@ -34,6 +34,12 @@ final class SecretsExecutionEnv implements ExecutionEnv {
     _secrets.addAll(secrets);
   }
 
+  /// A snapshot copy of the live secret map currently injected into [exec]
+  /// (name → value). Hosts read it for their own secret bridges (e.g. an
+  /// app-facing keys API); mutating the returned map does not affect the
+  /// env.
+  Map<String, String> secretsSnapshot() => Map.of(_secrets);
+
   @override
   String get cwd => _delegate.cwd;
 

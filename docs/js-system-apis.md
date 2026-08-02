@@ -28,11 +28,19 @@ reuses the exec Promise machinery.
   `FaPlatformHandler` (`js_app_engine.dart:21`). When no handler is wired the
   call resolves to `'... bridge is not available on this platform yet'` — a
   granted stub, not a working API.
+- `jsr.fa.keys.list/get/request` — host secrets: `list()` → `{keys: [names]}`
+  (names only), `get({name})` → `{name, value}` for one exact name,
+  `request({name, reason})` opens the same native secret sheet the agent's
+  `request_secret` tool uses (grant persisted into the Fa Keys store) and
+  resolves `{name, value}`; decline/cancel rejects. Reads ride the injected
+  `FaHostKeysSource` (the session's merged dotenv + saved-keys map), the
+  request rides an injected `RequestSecretCallback`.
 
 ### Permission model (already in place — reuse as-is)
 
 - Declared in `manifest.json` (`network`, `allowedCommands`, `llm`,
-  `homekit`, `health`, `contacts`, `calendar`) — all default **denied**
+  `homekit`, `health`, `contacts`, `calendar`, `microphone`,
+  `notifications`, `media`, `keys`) — all default **denied**
   (`AppPermissions.fromJson`, `lib/apps/apps_store.dart:27`).
 - Runtime override per app, persisted in `apps_permissions.json`
   (`AppPermissionsStore`, `apps_store.dart:167`); effective value =

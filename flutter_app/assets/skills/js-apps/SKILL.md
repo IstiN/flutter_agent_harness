@@ -9,6 +9,23 @@ description: Create JS apps (jsr.render UI) that run inside Fa's Apps section �
 
 ---
 
+## ⛔ HARD RULES (never break these)
+
+1. **NEVER hardcode API keys, tokens, or provider endpoints in app code.** Apps get credentials from the host: read one with `jsr.fa.keys.get('NAME')`, ask the user for a missing one with `jsr.fa.keys.request('NAME', reason)` (declare `"keys": true` in `manifest.json`). A key a user granted lands in their Fa Keys store — reuse it, never paste it into `widget.js`.
+2. **ALL model calls go through the host bridges** — LLM via `jsr.fa.llm` / `jsr.fa.llm.chat` / `jsr.fa.llm.stream`, media via `jsr.fa.media.*`. NEVER fetch a model provider's API directly (no `api.openai.com` etc. in `jsr.fetchJson`): the user's configured models and media slots are the ones to reuse, and their keys never belong in app code.
+3. **Build JS apps on THIS platform** — `manifest.json` + `widget.js` in `apps/<id>/`. Do NOT scaffold Python/Node/web servers or separate Flutter projects: they cannot run here. Everything an app needs is a `jsr.*` bridge, `jsr.fetchJson`, or `jsr.exec` (allow-listed).
+
+## 📱 Platform (what this environment IS and IS NOT)
+
+Apps are **declarative JS widgets** rendered natively by the Fa host (single-page model: one `widget.js` tree, optional live home-screen tile `widget_tile.js`, permissions-gated bridges). This is NOT a general-purpose compute sandbox:
+
+- **No servers / daemons / long-running processes.** An app runs while visible; there is no `node server.js`, no background loop beyond `jsr.setInterval` timers.
+- **No raw sockets, no listening ports, no FFI/native modules.** Network = `jsr.fetchJson` only (HTTPS, permission-gated).
+- **Python exists for short one-shot scripts via `jsr.exec` only** (wasm build, no network stack, no pip installs) — never for hosting an app. If you catch yourself writing `http.server`, `flask`, `express` — stop: build the JS widget instead.
+- **iOS/Android constraints apply** — no JIT outside the provided JS engine, no dynamic native code. Anything the platform can't do must go through a `jsr.fa.*` bridge; if no bridge exists, say so instead of working around it.
+
+---
+
 ## ⚡ Quick Start (Minimal Workflow)
 
 JS apps live in the sandbox env folder `apps/<id>/`. You create and edit them with your normal file tools (write/edit) — no CLI involved.
@@ -80,7 +97,8 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
   "calendar": false,
   "microphone": false,
   "notifications": false,
-  "media": false
+  "media": false,
+  "keys": false
 }
 ```
 
@@ -101,6 +119,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `microphone` | ❌ | `true` to allow `jsr.fa.asr.*` — microphone recording + speech-to-text (macOS/iOS; default: false) |
 | `notifications` | ❌ | `true` to allow `jsr.fa.notify.*` — schedule/cancel local system notifications (macOS/iOS; default: false) |
 | `media` | ❌ | `true` to allow `jsr.fa.media.*` — image / TTS / music generation + video reading on the configured media endpoints (default: false) |
+| `keys` | ❌ | `true` to allow `jsr.fa.keys.*` — read the user's saved host API keys and request new ones via the native secret prompt (default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
 
@@ -276,6 +295,20 @@ jsr.storage.delete('city');
 
 ### `jsr.secrets` — Secure Storage
 Per-app encrypted secure storage (platform Keychain/Keystore), for API keys/tokens/passwords. Same shape as `jsr.storage`: `set(key, value)`, `get(key)` → Promise, `delete(key)`.
+
+### `jsr.locale` — Host UI Language
+Read-only string with the host's UI language code (`'en'`, `'ru'`, …), set before your code runs. Localize by branching on it with your own dictionary — do NOT hardcode one language:
+
+```js
+var T = {
+  en: {title: 'Weather', refresh: 'Refresh'},
+  ru: {title: 'Погода', refresh: 'Обновить'}
+};
+function t(key) { return (T[jsr.locale] || T.en)[key] || T.en[key]; }
+// then render: {type: 'text', data: t('title'), ...}
+```
+
+Fall back to English for unknown locales (as above). Dates/numbers: format per `jsr.locale` (e.g. `new Date(ts).toLocaleString(jsr.locale)`).
 
 ### `jsr.theme` — Current Theme Colors
 Reactive theme object, injected by the Fa host from its own palette. **Always use these colors instead of hardcoded hex values** — the theme follows the app's light/dark mode live, and hardcoded palettes look broken in one of the two modes.
@@ -635,6 +668,33 @@ jsr.fa.media.readVideo({ path: 'generated/clip.mp4', question: 'What happens?' }
 ```
 
 The Fa agent has matching tools (`generate_image`, `speak`, `generate_music` — write-tier; `read_video` — read-tier), so users can also generate media and read videos by chatting — both surfaces resolve endpoints identically.
+
+### `jsr.fa.keys.*` → Promise
+Host keys: the API credentials the user saved in Fa (the settings Keys section / `.env`). This is THE way an app gets a key — never hardcode one. Requires `"keys": true` in the manifest (and the runtime permission toggle).
+
+```javascript
+// List — resolves with { keys: ['OPENAI_API_KEY', ...] } — NAMES ONLY.
+jsr.fa.keys.list().then(function(result) {
+  if (result && result.__error) { jsr.showError(result.__error); return; }
+  renderKeyNames(result.keys);
+});
+
+// Get — resolves with { name, value } for ONE exact name; an unknown name
+// comes back as an __error telling you to list first or request the key.
+jsr.fa.keys.get('WEATHER_API_KEY').then(function(result) {
+  if (result && result.__error) {
+    // Unknown key? Ask the user for it through the native secret prompt:
+    jsr.fa.keys.request('WEATHER_API_KEY', 'Needed to call the weather API').then(function(granted) {
+      if (granted && granted.__error) { jsr.showError(granted.__error); return; } // user declined
+      startApp(granted.value);
+    });
+    return;
+  }
+  startApp(result.value);
+});
+```
+
+`keys.request(name, reason)` opens the same native secret sheet the Fa agent's `request_secret` tool uses (prefilled with `name`); a grant is persisted into the user's Fa Keys store and resolves with `{name, value}`, a decline/cancel comes back as an `__error`. Prefer requesting over failing: the user grants once and every app can then `keys.get` it.
 
 ### `scene3d` — real 3D scenes (games!)
 

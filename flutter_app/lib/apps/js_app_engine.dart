@@ -42,6 +42,11 @@ typedef FaLlmHandler =
 typedef FaPlatformHandler =
     Future<Object?> Function(String action, Map<String, Object?> args);
 
+/// Read source for the host's merged secrets (dotenv + saved keys) behind
+/// the `jsr.fa.keys.list/get` bridge calls; returns a fresh name → value
+/// map on every call.
+typedef FaHostKeysSource = Map<String, String> Function();
+
 /// Host-side engine for one JS app: owns the [JsWidgetEngine], wires every
 /// `jsr.*` I/O call through the shared [ExecutionEnv] and the app's
 /// [AppPermissions], and persists JS storage across reloads.
@@ -76,6 +81,11 @@ typedef FaPlatformHandler =
 ///   [AppPermissions.media] (endpoint resolution via [MediaGateway] over
 ///   `media_models.json` + the main connection, the same resolvers the
 ///   agent's media tools use; video reading via [VideoReader])
+/// - `jsr.fa.keys.list` / `jsr.fa.keys.get` / `jsr.fa.keys.request` →
+///   [AppPermissions.keys] (reads the host's merged secrets via
+///   [FaHostKeysSource]; `request` opens the same native secret prompt the
+///   agent's `request_secret` tool uses, via the injected
+///   [RequestSecretCallback])
 /// - other health actions → the matching flag (stubbed until the platform
 ///   implementations land — a granted call answers "not available").
 class JsAppEngine {
@@ -95,6 +105,9 @@ class JsAppEngine {
     this.notify,
     this.mediaGateway,
     this.videoReader,
+    this.keysSource,
+    this.keyRequestHandler,
+    this.hostLocale = 'en',
     this.initialTheme = const {},
     void Function(String line)? onLog,
   }) : _onLog = onLog;
@@ -154,6 +167,22 @@ class JsAppEngine {
   /// `null` answers with an actionable "not available in this session"
   /// error.
   final VideoReader? videoReader;
+
+  /// Host-secrets source behind `jsr.fa.keys.list/get` (see
+  /// [FaHostKeysSource]); `null` answers with an actionable "not available
+  /// in this session" error.
+  final FaHostKeysSource? keysSource;
+
+  /// The host UI locale exposed to the app as `jsr.locale` (ISO code, e.g.
+  /// `'en'` / `'ru'`) — apps branch their strings on it (see the skill's
+  /// localization section).
+  final String hostLocale;
+
+  /// Secret-request backend behind `jsr.fa.keys.request` — the host renders
+  /// the same native prompt as the agent's `request_secret` tool and
+  /// persists a grant; `null` answers with an actionable error, a `null`
+  /// result (user declined) rejects the bridge call.
+  final RequestSecretCallback? keyRequestHandler;
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -227,7 +256,7 @@ class JsAppEngine {
       widgetId: app.id,
       initialTheme: initialTheme,
       initialStorage: storage,
-      hostBootstrapJs: _faBootstrapJs,
+      hostBootstrapJs: _faBootstrapJsFor(hostLocale),
       onRender: (t) => tree.value = t,
       onSetTitle: (_) {},
       onStorageUpdate: _persistStorage,
@@ -348,6 +377,13 @@ class JsAppEngine {
 
   // --- jsr.exec + the jsr.fa bridge ------------------------------------------
 
+  /// The fa bootstrap with the host locale baked in: `jsr.locale` is set
+  /// before any app code runs (theme pushes only cover `jsr.theme`).
+  static String _faBootstrapJsFor(String locale) {
+    final safe = locale.replaceAll("'", '');
+    return "jsr.locale = '$safe';\n$_faBootstrapJs";
+  }
+
   static const String _faBootstrapJs = '''
 jsr.fa = {
   call: function(method, args) {
@@ -412,6 +448,17 @@ jsr.fa.media = {
   generateMusic: function(args) { return jsr.fa.call('media.generateMusic', args); },
   generateVideo: function(args) { return jsr.fa.call('media.generateVideo', args); },
   readVideo: function(args) { return jsr.fa.call('media.readVideo', args); },
+};
+
+// Host keys (API credentials the user saved in Fa), gated on the `keys`
+// manifest flag. list() → {keys: [names]} — NAMES ONLY; get(name) →
+// {name, value} for one exact name; request(name, reason) opens the host's
+// native secret prompt and resolves {name, value} (rejects when the user
+// declines). Apps must use these instead of hardcoding keys.
+jsr.fa.keys = {
+  list: function() { return jsr.fa.call('keys.list', {}); },
+  get: function(name) { return jsr.fa.call('keys.get', {name: name}); },
+  request: function(name, reason) { return jsr.fa.call('keys.request', {name: name, reason: reason}); },
 };
 
 // Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
@@ -640,6 +687,18 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'media.readVideo') {
         _resolve?.call(id, await _mediaReadVideo(args));
+        return;
+      }
+      if (method == 'keys.list') {
+        _resolve?.call(id, _keysList());
+        return;
+      }
+      if (method == 'keys.get') {
+        _resolve?.call(id, _keysGet(args));
+        return;
+      }
+      if (method == 'keys.request') {
+        _resolve?.call(id, await _keysRequest(args));
         return;
       }
       // Home control (iOS HomeKit). `home.*` is the current surface; the
@@ -1427,6 +1486,67 @@ Object.defineProperty(jsr, 'onBack', {
       );
     }
     return gateway;
+  }
+
+  /// The permission gate the `jsr.fa.keys.list/get` calls share: the `keys`
+  /// permission plus a session host-keys source.
+  FaHostKeysSource _gatedKeys() {
+    if (!permissions.keys) throw StateError(_denied('keys'));
+    final source = keysSource;
+    if (source == null) {
+      throw StateError('host keys are not available in this session');
+    }
+    return source;
+  }
+
+  /// `jsr.fa.keys.list()` → `{keys: [...]}` — the NAMES of the host's
+  /// available env keys, sorted; values never cross this call.
+  Map<String, Object?> _keysList() {
+    final names = _gatedKeys()().keys.toList()..sort();
+    return {'keys': names};
+  }
+
+  /// `jsr.fa.keys.get({name})` → `{name, value}` — the value of ONE host
+  /// env key by exact name; an unknown name is an actionable error (the
+  /// caller should list first or request the key).
+  Map<String, Object?> _keysGet(Map<String, Object?> args) {
+    final source = _gatedKeys();
+    final name = (args['name'] ?? '').toString();
+    if (name.isEmpty) throw StateError('name is required');
+    final value = source()[name];
+    if (value == null) {
+      throw StateError(
+        'unknown host key "$name" — call jsr.fa.keys.list() for the '
+        'available names, or jsr.fa.keys.request() to ask the user for it',
+      );
+    }
+    return {'name': name, 'value': value};
+  }
+
+  /// `jsr.fa.keys.request({name, reason})` → `{name, value}` — opens the
+  /// host's native secret prompt (the same sheet the agent's
+  /// `request_secret` tool uses); a grant is persisted by the host and
+  /// resolves with the value, a decline/cancel rejects.
+  Future<Map<String, Object?>> _keysRequest(Map<String, Object?> args) async {
+    if (!permissions.keys) throw StateError(_denied('keys'));
+    final handler = keyRequestHandler;
+    if (handler == null) {
+      throw StateError(
+        'this host cannot prompt for secrets — ask the user to add the key '
+        'in the Fa settings Keys section',
+      );
+    }
+    final name = (args['name'] ?? '').toString().trim();
+    if (name.isEmpty) throw StateError('name is required');
+    var reason = (args['reason'] ?? '').toString().trim();
+    if (reason.isEmpty) {
+      reason = 'The app "${app.name}" asks for the $name key.';
+    }
+    final result = await handler(name, reason);
+    if (result == null) {
+      throw StateError('the user declined to provide $name');
+    }
+    return {'name': result.name, 'value': result.value};
   }
 
   /// Validates the `messages` argument of `llm.chat`/`llm.stream`:

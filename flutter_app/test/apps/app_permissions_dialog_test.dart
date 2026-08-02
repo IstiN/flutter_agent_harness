@@ -107,4 +107,41 @@ void main() {
     expect(tester.widget<SwitchListTile>(notificationsTile).value, isTrue);
     expect(store.forApp(app).notifications, isTrue);
   });
+
+  testWidgets('permissions dialog shows and toggles the host keys permission', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final app = JsAppInfo.fromManifest(
+      const {'id': 'demo', 'name': 'Demo', 'icon': '🧪'},
+      bundled: false,
+      fallbackId: 'demo',
+    );
+    final store = await AppPermissionsStore.load(env);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppPermissionsDialog(app: app, env: env, store: store),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final keysTile = find.widgetWithText(SwitchListTile, 'Host keys');
+    expect(keysTile, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(keysTile).value, isFalse);
+
+    // The last toggle sits below the fold in the default test window.
+    await tester.ensureVisible(keysTile);
+    await tester.pumpAndSettle();
+    await tester.tap(keysTile);
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<SwitchListTile>(keysTile).value, isTrue);
+    expect(store.forApp(app).keys, isTrue);
+    // The override persisted with the new flag.
+    final reloaded = await AppPermissionsStore.load(env);
+    expect(reloaded.forApp(app).keys, isTrue);
+  });
 }

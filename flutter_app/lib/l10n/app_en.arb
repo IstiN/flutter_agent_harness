@@ -40,6 +40,8 @@
   "appsPermissionHealthDesc": "jsr.fa.health — health data (coming soon)",
   "appsPermissionHomekit": "HomeKit",
   "appsPermissionHomekitDesc": "jsr.fa.homekit — smart home devices (coming soon)",
+  "appsPermissionKeys": "Host keys",
+  "appsPermissionKeysDesc": "jsr.fa.keys — read the API keys saved in Fa and request new ones",
   "appsPermissionLlm": "LLM",
   "appsPermissionLlmDesc": "jsr.fa.llm — let the app ask the connected model",
   "appsPermissionMedia": "Media",

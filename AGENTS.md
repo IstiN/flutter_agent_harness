@@ -242,9 +242,13 @@ factual: paths, commands, invariants — no essays.
   >0.4.20 ships both; ≥0.4.5 adds the `map` node: center/zoom/markers/polylines/
   fitBounds, onTap/onMarkerTap): apps live in env-shared `apps/<id>/
   {manifest.json, widget.js}`; permissions in `apps_permissions.json` (network/
-  allowedCommands/llm/homekit/health/contacts/calendar — default denied);
+  allowedCommands/llm/homekit/health/contacts/calendar/microphone/
+  notifications/media/keys — default denied);
   `jsr.fa.*` bridge over exec (`fa.llm`, `fa.calendar`, `fa.home.*`,
-  `fa.health.*`, `fa.asr.*`, `fa.notify.*`; contacts is a gated "not
+  `fa.health.*`, `fa.asr.*`, `fa.notify.*`, `fa.keys` — list/get/request the
+  host's merged secrets (AgentService.hostSecrets); `request` renders the
+  shared secret_request sheet from JsAppView and persists via
+  AgentService.acceptSecretGrant; contacts is a gated "not
   available yet" stub); the `js-apps` skill seeds
   into `.fah/skills/` on startup. Bundled demos (seeded by
   `AppsStore.demoAppIds`, assets in `flutter_app/assets/apps/`): calculator,

@@ -22,6 +22,7 @@ import 'package:fa/services/video_tool.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/fa_chat_overlay.dart';
@@ -286,6 +287,9 @@ class _JsAppViewState extends State<JsAppView> {
         asrTranscriber: widget.asrTranscriber ?? await _serviceAsrTranscriber(),
         mediaGateway: widget.mediaGateway ?? widget.agentService?.mediaGateway,
         videoReader: widget.videoReader ?? widget.agentService?.videoReader,
+        keysSource: widget.agentService?.hostSecrets,
+        keyRequestHandler: _requestHostSecret,
+        hostLocale: Localizations.localeOf(context).languageCode,
         initialTheme: initialTheme,
       );
       engine.onCloseRequested = _closeFromJs;
@@ -332,6 +336,23 @@ class _JsAppViewState extends State<JsAppView> {
       }
     }
     return null;
+  }
+
+  /// The `jsr.fa.keys.request` backend: renders the shared secret-request
+  /// sheet (the same one the agent's `request_secret` tool uses) and routes
+  /// a grant through the session's persist+activate flow, so the key lands
+  /// in the Keys store, the shell env, and the redactor exactly like an
+  /// agent-requested secret. Null (declined) when there is no session or
+  /// the user dismisses the sheet.
+  Future<RequestSecretResult?> _requestHostSecret(
+    String name,
+    String reason,
+  ) async {
+    final service = widget.agentService;
+    if (service == null || !mounted) return null;
+    final result = await showSecretRequestSheet(context, name, reason);
+    if (result == null) return null;
+    return service.acceptSecretGrant(result);
   }
 
   /// Derives the ASR transcriber through the session's media gateway (the
@@ -987,7 +1008,7 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      // Eight toggles + title can exceed small window heights.
+      // Ten toggles + title can exceed small window heights.
       scrollable: true,
       title: Row(
         children: [
@@ -1057,6 +1078,12 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
             context.l10n.appsPermissionMediaDesc,
             _current.media,
             (v) => _set(_current.copyWith(media: v)),
+          ),
+          _toggle(
+            context.l10n.appsPermissionKeys,
+            context.l10n.appsPermissionKeysDesc,
+            _current.keys,
+            (v) => _set(_current.copyWith(keys: v)),
           ),
         ],
       ),

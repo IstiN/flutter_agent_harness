@@ -136,6 +136,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'jsr.fa.homekit — smart home devices (coming soon)';
 
   @override
+  String get appsPermissionKeys => 'Host keys';
+
+  @override
+  String get appsPermissionKeysDesc =>
+      'jsr.fa.keys — read the API keys saved in Fa and request new ones';
+
+  @override
   String get appsPermissionLlm => 'LLM';
 
   @override

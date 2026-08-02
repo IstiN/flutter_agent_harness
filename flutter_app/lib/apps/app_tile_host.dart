@@ -254,6 +254,7 @@ class _AppTileHostState extends State<AppTileHost> {
             permissions: effective,
             entryFile:
                 widget.app.tileWidget?.entry ?? JsTileWidgetInfo.defaultEntry,
+            hostLocale: Localizations.localeOf(context).languageCode,
             initialTheme: initialTheme,
           );
       try {

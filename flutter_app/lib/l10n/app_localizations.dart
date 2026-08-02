@@ -320,6 +320,18 @@ abstract class AppLocalizations {
   /// **'jsr.fa.homekit — smart home devices (coming soon)'**
   String get appsPermissionHomekitDesc;
 
+  /// No description provided for @appsPermissionKeys.
+  ///
+  /// In en, this message translates to:
+  /// **'Host keys'**
+  String get appsPermissionKeys;
+
+  /// No description provided for @appsPermissionKeysDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'jsr.fa.keys — read the API keys saved in Fa and request new ones'**
+  String get appsPermissionKeysDesc;
+
   /// No description provided for @appsPermissionLlm.
   ///
   /// In en, this message translates to:

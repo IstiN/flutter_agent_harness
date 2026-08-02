@@ -138,6 +138,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'jsr.fa.homekit — устройства умного дома (скоро)';
 
   @override
+  String get appsPermissionKeys => 'Ключи хоста';
+
+  @override
+  String get appsPermissionKeysDesc =>
+      'jsr.fa.keys — доступ к API-ключам, сохранённым в Fa, и запрос новых';
+
+  @override
   String get appsPermissionLlm => 'LLM';
 
   @override

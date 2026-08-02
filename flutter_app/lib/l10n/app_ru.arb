@@ -37,6 +37,8 @@
   "appsPermissionHealthDesc": "jsr.fa.health — данные о здоровье (скоро)",
   "appsPermissionHomekit": "HomeKit",
   "appsPermissionHomekitDesc": "jsr.fa.homekit — устройства умного дома (скоро)",
+  "appsPermissionKeys": "Ключи хоста",
+  "appsPermissionKeysDesc": "jsr.fa.keys — доступ к API-ключам, сохранённым в Fa, и запрос новых",
   "appsPermissionLlm": "LLM",
   "appsPermissionLlmDesc": "jsr.fa.llm — разрешить приложению обращаться к подключённой модели",
   "appsPermissionMedia": "Медиа",

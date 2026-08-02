@@ -312,6 +312,18 @@ void main() {
       expect(shell.lastOptions!.env, {'SECRET': 'new-value'});
     });
 
+    test('secretsSnapshot reflects runtime grants and is a copy', () async {
+      final env = SecretsExecutionEnv(MemoryExecutionEnv(cwd: '/'), const {
+        'SECRET': 's3cr3t-value',
+      });
+      env.addSecrets(const {'NEW_KEY': 'n3w-value'});
+      final snapshot = env.secretsSnapshot();
+      expect(snapshot, {'SECRET': 's3cr3t-value', 'NEW_KEY': 'n3w-value'});
+      // Mutating the snapshot must not leak back into the injected map.
+      snapshot['EVIL'] = 'x';
+      expect(env.secretsSnapshot(), isNot(contains('EVIL')));
+    });
+
     test('per-call env still wins over runtime-added secrets', () async {
       final shell = _RecordingShell();
       final env = SecretsExecutionEnv(

@@ -12,8 +12,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 ///
 /// Mirrors YoLoIT's widget manifest (`network`, `allowedCommands`) and adds
 /// the Fa bridge surface (`llm`, `homekit`, `health`, `contacts`,
-/// `microphone`, `notifications`, `media`). Every capability defaults to
-/// denied; the user can grant/deny per app at runtime (see
+/// `microphone`, `notifications`, `media`, `keys`). Every capability
+/// defaults to denied; the user can grant/deny per app at runtime (see
 /// [AppPermissionsStore]).
 class AppPermissions {
   const AppPermissions({
@@ -27,6 +27,7 @@ class AppPermissions {
     this.microphone = false,
     this.notifications = false,
     this.media = false,
+    this.keys = false,
   });
 
   factory AppPermissions.fromJson(Map<String, Object?> json) {
@@ -44,6 +45,7 @@ class AppPermissions {
       microphone: json['microphone'] == true,
       notifications: json['notifications'] == true,
       media: json['media'] == true,
+      keys: json['keys'] == true,
     );
   }
 
@@ -80,6 +82,10 @@ class AppPermissions {
   /// video reading on the configured media endpoints.
   final bool media;
 
+  /// Host-keys bridge (`jsr.fa.keys`) — list/read the user's saved API keys
+  /// and request new ones through the host's secret prompt.
+  final bool keys;
+
   AppPermissions copyWith({
     bool? network,
     bool? llm,
@@ -90,6 +96,7 @@ class AppPermissions {
     bool? microphone,
     bool? notifications,
     bool? media,
+    bool? keys,
   }) {
     return AppPermissions(
       network: network ?? this.network,
@@ -102,6 +109,7 @@ class AppPermissions {
       microphone: microphone ?? this.microphone,
       notifications: notifications ?? this.notifications,
       media: media ?? this.media,
+      keys: keys ?? this.keys,
     );
   }
 
@@ -116,6 +124,7 @@ class AppPermissions {
     'microphone': microphone,
     'notifications': notifications,
     'media': media,
+    'keys': keys,
   };
 }
 
@@ -296,6 +305,7 @@ class EffectiveAppPermissions {
   bool get microphone => overrides?.microphone ?? declared.microphone;
   bool get notifications => overrides?.notifications ?? declared.notifications;
   bool get media => overrides?.media ?? declared.media;
+  bool get keys => overrides?.keys ?? declared.keys;
   List<String> get allowedCommands => declared.allowedCommands;
 
   AppPermissions effective() => AppPermissions(
@@ -309,6 +319,7 @@ class EffectiveAppPermissions {
     microphone: microphone,
     notifications: notifications,
     media: media,
+    keys: keys,
   );
 }
 
@@ -403,6 +414,8 @@ class AppsStore {
     'voice-notes',
     'reminders',
     '3d-game',
+    'fitness-trainer',
+    'english-teacher',
   ];
 
   /// The demo apps this store seeds (see [seedBundledApps]).

@@ -649,6 +649,25 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
     if (handler == null) return null;
     final result = await handler(name, reason);
     if (result == null) return null;
+    return acceptSecretGrant(result);
+  }
+
+  /// The merged host secrets the agent runs with (dotenv + saved keys +
+  /// `request_secret` grants) — the read surface behind the JS apps'
+  /// `jsr.fa.keys.list/get` bridge. Empty for services built around a
+  /// pre-constructed [Agent].
+  Map<String, String> hostSecrets() =>
+      _secretsEnv?.secretsSnapshot() ?? const {};
+
+  /// Persists and activates a credential the user granted through a
+  /// host-rendered prompt: saved into the Keys store, injected into the
+  /// running shell environment, and registered with the redactor — the
+  /// post-grant half of the `request_secret` flow, reused by the JS apps'
+  /// `jsr.fa.keys.request` bridge (the app view renders the same prompt
+  /// sheet itself).
+  Future<RequestSecretResult> acceptSecretGrant(
+    RequestSecretResult result,
+  ) async {
     // Services built around a pre-constructed Agent (tests) may have none of
     // these; the grant still applies for the caller, it just is not
     // persisted or injected — [RequestSecretResult.persisted] reflects that.
