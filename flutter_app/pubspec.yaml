@@ -36,7 +36,7 @@ dependencies:
   js_widget_runtime:
     git:
       url: https://github.com/IstiN/flutter_js_widget_runtime.git
-      ref: 12430334cb0a2f8fb09e10495ac97769a7c7f415
+      ref: 9498d0c617e48cb82101d6112dc08c7ab8b0b97b
 
   # TileProvider type for injecting offline map tiles (tests, custom hosts).
   flutter_map: ^8.2.2

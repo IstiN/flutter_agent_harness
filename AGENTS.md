@@ -236,10 +236,11 @@ factual: paths, commands, invariants — no essays.
   mount (`/project` → user-picked host dir; security-scoped bookmarks in
   `project_mount.json`; stale bookmark = "pick again" warning).
 - `flutter_app/lib/apps/` — JS apps platform on `package:js_widget_runtime`
-  (git-pinned to IstiN/flutter_js_widget_runtime@12430334 — the queued-
-  callEvent-after-dispose use-after-free guard + the deferred native
-  JSContextGroup release grace (TestFlight SIGSEGV) — until a pub release
-  >0.4.20 ships both; ≥0.4.5 adds the `map` node: center/zoom/markers/polylines/
+  (git-pinned to IstiN/flutter_js_widget_runtime@9498d0c — the queued-
+  callEvent-after-dispose guard + restart-safe bridge channels; the
+  use-after-free SIGSEGV is owned by `js_app_engine.dart`'s process-wide
+  lifecycle serialization — releases must stay immediate, never deferred —
+  until a pub release >0.4.20 ships both; ≥0.4.5 adds the `map` node: center/zoom/markers/polylines/
   fitBounds, onTap/onMarkerTap): apps live in env-shared `apps/<id>/
   {manifest.json, widget.js}`; permissions in `apps_permissions.json` (network/
   allowedCommands/llm/homekit/health/contacts/calendar/microphone/
