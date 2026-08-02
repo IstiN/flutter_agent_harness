@@ -786,4 +786,9 @@
 
 - feat(example): launcher home on all layouts (legacy session sidebar removed), App Store shots v2 ('your own apps, built by chat'), golden orphan gate
 
+## 0.1.119
+
+- feat(yoclip): Fa promo video workspace — 19s promo in 3 aspects x en/ru (App Preview + social + YouTube), creative treatment, VO, music bed, frame QA
+- test(example): realistic providers in the store_providers frame; pre-commit format gate scopes to package dirs (yoclip/ is a standalone workspace)
+
 ## Unreleased
