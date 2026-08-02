@@ -12,6 +12,7 @@ import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
+import 'package:fa_ui/src/utils/page_presentation.dart';
 import 'package:fa_ui/src/utils/vision_models.dart';
 import 'package:fa_ui/src/widgets/model_id_field.dart';
 
@@ -104,14 +105,13 @@ class DefaultChatModelSection extends StatelessWidget {
             const SizedBox(height: 8),
             InkWell(
               onTap: () async {
-                await Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => DefaultModelProviderPickerPage(
-                      registry: registry,
-                      onApply: onApply,
-                      modelsFetcher: modelsFetcher,
-                      onDeviceProviders: onDeviceProviders,
-                    ),
+                await pushFaPage<void>(
+                  context,
+                  DefaultModelProviderPickerPage(
+                    registry: registry,
+                    onApply: onApply,
+                    modelsFetcher: modelsFetcher,
+                    onDeviceProviders: onDeviceProviders,
                   ),
                 );
               },
@@ -261,14 +261,13 @@ class DefaultModelProviderPickerPage extends StatelessWidget {
     ProviderRegistry registry,
     Object provider,
   ) async {
-    final applied = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => DefaultModelPickerPage(
-          provider: provider,
-          registry: registry,
-          onApply: onApply,
-          modelsFetcher: modelsFetcher,
-        ),
+    final applied = await pushFaPage<bool>(
+      context,
+      DefaultModelPickerPage(
+        provider: provider,
+        registry: registry,
+        onApply: onApply,
+        modelsFetcher: modelsFetcher,
       ),
     );
     // Applied: the flow is done — back to the settings screen.
@@ -279,8 +278,9 @@ class DefaultModelProviderPickerPage extends StatelessWidget {
     BuildContext context,
     FaOnDeviceRoute route,
   ) async {
-    final applied = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => route.pageBuilder(context, onApply)),
+    final applied = await pushFaPage<bool>(
+      context,
+      route.pageBuilder(context, onApply),
     );
     if (applied == true && context.mounted) Navigator.of(context).pop();
   }

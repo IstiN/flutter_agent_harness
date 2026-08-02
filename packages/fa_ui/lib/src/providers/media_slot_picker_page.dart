@@ -13,6 +13,7 @@ import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/media_models_store.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
+import 'package:fa_ui/src/utils/page_presentation.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/vision_models.dart';
 import 'package:fa_ui/src/widgets/model_id_field.dart';
@@ -214,15 +215,14 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     ProviderRegistry registry,
     Object provider,
   ) async {
-    final result = await Navigator.of(context).push<MediaSlotEditorResult>(
-      MaterialPageRoute(
-        builder: (_) => MediaSlotModelPage(
-          slot: slot,
-          provider: provider,
-          registry: registry,
-          initialModel: _initialModelFor(provider),
-          modelsFetcher: modelsFetcher,
-        ),
+    final result = await pushFaPage<MediaSlotEditorResult>(
+      context,
+      MediaSlotModelPage(
+        slot: slot,
+        provider: provider,
+        registry: registry,
+        initialModel: _initialModelFor(provider),
+        modelsFetcher: modelsFetcher,
       ),
     );
     // A saved override (or a clear) ends the whole flow.

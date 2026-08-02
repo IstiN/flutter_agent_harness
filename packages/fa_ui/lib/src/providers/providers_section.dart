@@ -11,6 +11,7 @@ import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
+import 'package:fa_ui/src/utils/page_presentation.dart';
 
 /// The settings "Providers" section: every hosted preset and saved
 /// [CustomProvider], the one backing the active connection marked with a
@@ -149,14 +150,13 @@ class ProvidersSection extends StatelessWidget {
           keyName,
           () => keysStore?.valueOf(keyName) ?? '',
         ).isNotEmpty;
-    final result = await Navigator.of(context).push<ProviderEditorResult>(
-      MaterialPageRoute(
-        builder: (_) => ProviderEditorPage(
-          title: preset.labelFor(context),
-          preset: preset,
-          hasSavedKey: hasSavedKey,
-          registry: registry,
-        ),
+    final result = await pushFaPage<ProviderEditorResult>(
+      context,
+      ProviderEditorPage(
+        title: preset.labelFor(context),
+        preset: preset,
+        hasSavedKey: hasSavedKey,
+        registry: registry,
       ),
     );
     if (result == null) return;
@@ -178,13 +178,12 @@ class ProvidersSection extends StatelessWidget {
     ProviderRegistry registry,
     CustomProvider provider,
   ) async {
-    final result = await Navigator.of(context).push<ProviderEditorResult>(
-      MaterialPageRoute(
-        builder: (_) => ProviderEditorPage(
-          title: FaUiStrings.of(context).settingsEditProviderTitle,
-          initial: provider,
-          hasSavedKey: (registry.keyFor(provider.id) ?? '').isNotEmpty,
-        ),
+    final result = await pushFaPage<ProviderEditorResult>(
+      context,
+      ProviderEditorPage(
+        title: FaUiStrings.of(context).settingsEditProviderTitle,
+        initial: provider,
+        hasSavedKey: (registry.keyFor(provider.id) ?? '').isNotEmpty,
       ),
     );
     if (result == null) return;

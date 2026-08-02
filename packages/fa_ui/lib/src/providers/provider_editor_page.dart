@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
+import 'package:fa_ui/src/utils/page_presentation.dart';
 
 /// Pushes the [ProviderEditorPage] in create mode and saves the result to
 /// [registry] (definition + session key). Returns the added provider, or
@@ -17,8 +18,9 @@ Future<CustomProvider?> pushProviderEditor(
   ProviderRegistry registry, {
   required String title,
 }) async {
-  final result = await Navigator.of(context).push<ProviderEditorResult>(
-    MaterialPageRoute(builder: (_) => ProviderEditorPage(title: title)),
+  final result = await pushFaPage<ProviderEditorResult>(
+    context,
+    ProviderEditorPage(title: title),
   );
   if (result == null || result.deleted) return null;
   final provider = await registry.add(
