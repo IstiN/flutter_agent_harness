@@ -5,6 +5,8 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:fa/services/app_log.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -492,12 +494,28 @@ class AppsStore {
     final hashes = await _readSeedHashes();
     var hashesChanged = false;
     for (final id in demoIds ?? seedDemoIds) {
-      hashesChanged = await _seedDemoApp(id, hashes: hashes) || hashesChanged;
+      try {
+        hashesChanged = await _seedDemoApp(id, hashes: hashes) || hashesChanged;
+      } on Object catch (e) {
+        // One broken demo (missing/corrupt asset) must never kill the
+        // seeding of the rest — it lands in [failedSeeds] and gets an
+        // error badge on its launcher tile instead.
+        AppLog.i('apps', 'demo seed failed: $id — $e');
+        failedSeeds.value = {...failedSeeds.value, id};
+        continue;
+      }
+      failedSeeds.value = {...failedSeeds.value}..remove(id);
     }
     if (hashesChanged) {
       await _env.writeFile(demoSeedsFile, jsonEncode(hashes));
     }
   }
+
+  /// Demo app ids whose last seed attempt failed (missing/corrupt asset).
+  /// The launcher badges those tiles instead of letting one broken app
+  /// take down the whole grid (TestFlight 1.0.0 regression: a demo id
+  /// shipped without its assets and killed the entire seeding).
+  final ValueNotifier<Set<String>> failedSeeds = ValueNotifier({});
 
   /// Seeds one demo app; returns true when the hash records changed.
   /// [hashes] is the shared store mutated in place (omit with [force] to

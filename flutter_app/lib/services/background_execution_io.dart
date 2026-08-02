@@ -35,4 +35,18 @@ abstract final class BackgroundExecution {
       AppLog.i('background', 'end failed: $e');
     }
   }
+
+  /// Keeps the screen awake while [on] (iOS `isIdleTimerDisabled`, Android
+  /// `FLAG_KEEP_SCREEN_ON`): an in-flight agent run must not let the phone
+  /// lock itself mid-stream. Best-effort — a channel failure never breaks
+  /// the run (macOS/web have no such toggle).
+  static Future<void> setScreenAwake(bool on) async {
+    try {
+      await _channel.invokeMethod<void>('setIdleTimerDisabled', {
+        'disabled': on,
+      });
+    } on Object catch (e) {
+      AppLog.i('background', 'setIdleTimerDisabled failed: $e');
+    }
+  }
 }

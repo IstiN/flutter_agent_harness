@@ -392,9 +392,17 @@ class SessionChatSheetState extends State<SessionChatSheet>
     // `padding`), so the real display cutouts (Dynamic Island, home
     // indicator) are always known here.
     final viewPad = MediaQuery.viewPaddingOf(context);
+    // The keyboard shrinks the host Scaffold's body (resizeToAvoidBottomInset,
+    // which also CONSUMES the inset from the inherited MediaQuery) — read the
+    // true inset from the platform view so the expanded sheet keeps its
+    // header (drag handle + title) ON screen when the keyboard opens.
+    final keyboardH = MediaQueryData.fromView(
+      View.of(context),
+    ).viewInsets.bottom;
     // Expanded sheet: 92% of the height BELOW the top cutout — the panel
     // top (and its drag handle) never slides under the Dynamic Island.
-    final expandedH = (size.height - viewPad.top) * _expandedFraction;
+    final expandedH =
+        (size.height - viewPad.top - keyboardH) * _expandedFraction;
     // ONE panel, three states driven by a single value: round Fa button
     // (0) ↔ mini bar (handle + status + composer, _miniValue) ↔ full sheet
     // (1). The container's height/width/radius lerp; the body inside is an

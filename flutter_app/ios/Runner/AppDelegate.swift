@@ -67,6 +67,13 @@ private func registerBackgroundChannel(messenger: FlutterBinaryMessenger) {
         )
       }
       result(nil)
+    case "setIdleTimerDisabled":
+      // Wakelock: an in-flight agent run must not let the phone lock
+      // itself mid-stream (disabled=true). Cleared on run end.
+      let disabled =
+        (call.arguments as? [String: Any])?["disabled"] as? Bool ?? false
+      UIApplication.shared.isIdleTimerDisabled = disabled
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }

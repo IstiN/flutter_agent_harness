@@ -835,6 +835,9 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
       _liveActivityEndTimer?.cancel();
       _liveActivityEndTimer = null;
       unawaited(_beginBackgroundTask());
+      // Keep the screen awake for the whole run — the OS must not lock the
+      // phone mid-stream.
+      unawaited(BackgroundExecution.setScreenAwake(true));
       unawaited(
         LiveActivity.start(
           sessionTitle: 'Fa agent run',
@@ -842,6 +845,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
         ),
       );
     } else {
+      unawaited(BackgroundExecution.setScreenAwake(false));
       final id = _backgroundTaskId;
       _backgroundTaskId = null;
       unawaited(BackgroundExecution.end(id));

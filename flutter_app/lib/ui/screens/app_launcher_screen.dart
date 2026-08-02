@@ -966,7 +966,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         ),
       );
     }
-    return _tileIcon(colors, key, size: _feedbackSize);
+    return _maybeSeedErrorBadge(
+      colors,
+      key,
+      _tileIcon(colors, key, size: _feedbackSize),
+    );
   }
 
   Widget _buildCell(FahColors colors, String key, double spacing) {
@@ -1063,7 +1067,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _tileIcon(colors, key),
+          _maybeSeedErrorBadge(colors, key, _tileIcon(colors, key)),
           SizedBox(
             height: LauncherGridSpec.labelHeight,
             // iOS-style: the label may bleed into the (empty) inter-icon
@@ -1120,6 +1124,44 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         border: Border.all(color: colors.border),
       ),
       child: child,
+    );
+  }
+
+  /// The corner badge on a tile whose demo seed failed (missing/corrupt
+  /// asset): the app stays on the grid — flagged, never fatal.
+  Widget _maybeSeedErrorBadge(FahColors colors, String key, Widget tile) {
+    if (!key.startsWith('app:')) return tile;
+    final failed = _appsStore.failedSeeds.value;
+    if (!failed.contains(key.substring(4))) return tile;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        tile,
+        Positioned(
+          top: -3,
+          right: -3,
+          child: Container(
+            width: 16,
+            height: 16,
+            decoration: BoxDecoration(
+              color: colors.error,
+              shape: BoxShape.circle,
+              border: Border.all(color: colors.bg, width: 2),
+            ),
+            child: const Center(
+              child: Text(
+                '!',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  height: 1,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1277,10 +1319,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                             color: Colors.transparent,
                             child: Opacity(
                               opacity: 0.9,
-                              child: _tileIcon(
+                              child: _maybeSeedErrorBadge(
                                 colors,
                                 tile,
-                                size: _feedbackSize,
+                                _tileIcon(colors, tile, size: _feedbackSize),
                               ),
                             ),
                           ),

@@ -460,6 +460,25 @@ void main() {
       expect(copied, contains('## Fa\nDone — Dice Roller.'));
     });
 
+    testWidgets('the sheet header stays on screen when the keyboard opens', (
+      tester,
+    ) async {
+      // Simulate the OS keyboard: viewInsets.bottom consumes the lower part
+      // of the display while MediaQuery.size stays full height — the exact
+      // setup that used to push the header off the top edge.
+      tester.view.viewInsets = FakeViewPadding(bottom: 336);
+      addTearDown(tester.view.resetViewInsets);
+
+      await _pumpSheet(tester);
+      await _expand(tester);
+
+      // The menu button lives in the sheet header: it must be INSIDE the
+      // viewport (its top below the screen's top edge), not flown above it.
+      final topLeft = tester.getTopLeft(find.byKey(_menuKey));
+      expect(topLeft.dy, greaterThanOrEqualTo(0));
+      expect(find.byKey(_menuKey), findsOneWidget);
+    });
+
     testWidgets('the header derives a date-based title from the session '
         'creation time when it is reachable', (tester) async {
       // A session persisted on disk carries its creation time in the file

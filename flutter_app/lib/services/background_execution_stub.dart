@@ -12,4 +12,7 @@ abstract final class BackgroundExecution {
 
   /// Ends the task started by [begin] (null-safe).
   static Future<void> end(int? id) => Future.value();
+
+  /// Keeps the screen awake while [on] (unsupported on this platform).
+  static Future<void> setScreenAwake(bool on) => Future.value();
 }

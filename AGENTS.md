@@ -262,7 +262,10 @@ factual: paths, commands, invariants — no essays.
   ownership-aware: `apps/.demo_seeds.json` records sha256 of each file as
   last seeded — a file whose content no longer matches is user/agent-owned
   and never overwritten (`resetDemoApp(id)` force-restores the reference
-  version, `storage.json` untouched). `open_app_tool.dart` registers
+  version, `storage.json` untouched). A demo id whose seeding FAILS
+  (missing/corrupt asset) never kills the rest: it lands in
+  `AppsStore.failedSeeds` and gets an error badge on its launcher tile
+  instead. `open_app_tool.dart` registers
   the agent tool `open_app`
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
   Live launcher tiles: a manifest `"widget"` section

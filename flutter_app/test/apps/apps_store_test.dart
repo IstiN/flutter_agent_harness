@@ -26,6 +26,37 @@ Future<String> _fakeAssets(String path) async {
 
 void main() {
   group('AppsStore', () {
+    test(
+      'a demo id without assets does not kill the rest — it is flagged',
+      () async {
+        final env = MemoryExecutionEnv();
+        Future<String> assets(String path) async {
+          if (path.contains('ghost')) {
+            throw StateError('Unable to load asset: "$path"');
+          }
+          return path.endsWith('manifest.json')
+              ? _manifest
+              : '(function(){ jsr.render({type:"text",data:"hi"}); })();';
+        }
+
+        final store = AppsStore(env, readAsset: assets);
+
+        // 'ghost' has no bundled assets (the TestFlight 1.0.0 regression):
+        // seeding must still complete and 'demo' must land.
+        await store.seedBundledApps(['ghost', 'demo']);
+
+        final apps = await store.listApps();
+        expect(apps.map((a) => a.id), contains('demo'));
+        expect(store.failedSeeds.value, contains('ghost'));
+        expect(store.failedSeeds.value, isNot(contains('demo')));
+
+        // A later successful seed clears the flag.
+        final healed = AppsStore(env, readAsset: _fakeAssets);
+        await healed.seedBundledApps(['ghost']);
+        expect(healed.failedSeeds.value, isNot(contains('ghost')));
+      },
+    );
+
     test('seeds bundled apps once and lists them', () async {
       final env = MemoryExecutionEnv();
       final store = AppsStore(env, readAsset: _fakeAssets);

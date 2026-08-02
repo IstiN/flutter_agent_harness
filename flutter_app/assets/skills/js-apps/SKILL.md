@@ -44,6 +44,23 @@ You can open any installed app for the user with the `open_app` tool: pass the a
 
 The host **watches the app files and reloads the running app automatically** as soon as you write/edit them. The user can also hit the Reload button. There is no CLI reload step — just write the file and the app picks it up.
 
+### Validating JS — do it right
+
+QuickJS **compiles the whole file before running it**, so a plain file run IS the syntax check — use it on every app you write:
+
+```sh
+qjs apps/my-app/widget.js
+```
+
+- `SyntaxError: <message>` → the file is broken; the message names the line. Nothing executed.
+- `ReferenceError: jsr is not defined` (or any other runtime error) → **syntax is fine** — it parsed and started running; only the host APIs are missing outside the app.
+
+Avoid these traps (they cost real debugging time):
+
+- **Never `qjs -e '...'` with regexes/backslashes** — the shell eats `\`, producing nonsense like `invalid regular expression flags` / `expecting ')'`. Write the snippet to a file with `write` and run `qjs file.js` instead.
+- **There is no `load()`, no `require()`, no `std.loadFile` in the sandbox qjs.** Widget files are self-contained IIFEs; sharing code means concatenating files yourself (or one `lib/` file you inline via the app manifest).
+- `qjs file.js` RUNS the file — for widget code that means it hits `jsr is not defined` immediately after parsing (expected, see above).
+
 ### Critical rules
 
 1. **Write files with your write/edit tools** — never shell out to `printf`/`cat` heredocs; the sandbox `apps/` folder is just a normal directory for your file tools.
