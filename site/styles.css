@@ -172,6 +172,21 @@ section {
   color: #06121a;
 }
 .btn-primary:hover { box-shadow: 0 8px 30px rgba(94, 234, 212, 0.22); }
+.btn-beta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+  box-shadow: 0 0 0 0 rgba(129, 140, 248, 0);
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-beta:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 8px 30px rgba(129, 140, 248, 0.18);
+}
+.btn-beta .beta-mark { flex: none; }
 .pills {
   display: flex;
   flex-wrap: wrap;
