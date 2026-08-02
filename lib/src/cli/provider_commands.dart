@@ -494,7 +494,11 @@ extension on AgentCli {
     _providerKind = spec.kind;
     _apiKey = key;
     _explicitToken = token != null;
-    _streamFunction = providerStreamFunction(spec.kind, key);
+    _streamFunction = providerStreamFunction(
+      spec.kind,
+      key,
+      sessionId: () => _session?.cachedId,
+    );
     _agent.streamFunction = _streamFunction;
     _agent.state.model = buildCatalogModel(
       spec.name,
@@ -650,7 +654,11 @@ extension on AgentCli {
     } else if (spec != null && spec.apiKeyEnvNames.contains(name)) {
       _apiKey = value;
       _explicitToken = false;
-      _streamFunction = providerStreamFunction(spec.kind, value);
+      _streamFunction = providerStreamFunction(
+        spec.kind,
+        value,
+        sessionId: () => _session?.cachedId,
+      );
       _agent.streamFunction = _streamFunction;
       io.writeln('  active provider key updated');
     }
@@ -1219,7 +1227,11 @@ extension on AgentCli {
       _providerKind = spec.kind;
       _apiKey = key;
       _explicitToken = false;
-      _streamFunction = providerStreamFunction(spec.kind, key);
+      _streamFunction = providerStreamFunction(
+        spec.kind,
+        key,
+        sessionId: () => _session?.cachedId,
+      );
       _agent.streamFunction = _streamFunction;
       final built = buildCatalogModel(
         spec.name,

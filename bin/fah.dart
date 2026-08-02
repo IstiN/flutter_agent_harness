@@ -819,6 +819,15 @@ Future<void> main(List<String> args) async {
         transportFactory: ioLspTransportFactory,
         processId: pid,
       ),
+      // MCP servers (`mcp:` config section): the io-side factory spawns
+      // stdio servers; remote (HTTP) servers work everywhere. Servers
+      // connect in the background and register mcp__<server>__<tool> tools.
+      mcpConfig: saved.mcp == null
+          ? null
+          : McpToolConfig(
+              config: saved.mcp!,
+              transportFactory: ioMcpTransportFactory,
+            ),
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,

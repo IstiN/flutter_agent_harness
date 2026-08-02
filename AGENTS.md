@@ -25,6 +25,13 @@ factual: paths, commands, invariants — no essays.
   `SecretsExecutionEnv.addSecrets` (the map is runtime-mutable now), and
   registered into the same `SecretRedactor` — so the next run's prompt name
   list, bash `$NAME`, and redaction all pick it up.
+- `lib/src/env/session_vars_execution_env.dart` — `SessionVarsExecutionEnv`:
+  an `ExecutionEnv` decorator injecting session-correlation env vars
+  (`FAH_SESSION_ID`/`FAH_SESSION_FILE`/`FAH_PROVIDER`/`FAH_MODEL`, resolved
+  live per `exec`, never secrets) into bash tool executions. Wired around
+  `builtinTools` in the CLI (`AgentCli`) and the app (`AgentService`).
+  `LocalShell` merges `ShellExecOptions.env` OVER `Platform.environment`
+  (never replaces), so injected vars keep the inherited environment.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
@@ -52,6 +59,24 @@ factual: paths, commands, invariants — no essays.
   all-or-nothing through the env. IO transport only via `lib/io.dart` +
   `builtinTools(env, lsp:)`; 1-indexed line/character; missing server =
   clean note, never a crash.
+- `lib/src/mcp/` — MCP (Model Context Protocol) servers from the `mcp:`
+  section of `~/.fah/config.yaml` (strict `ConfigException` parsing; config
+  file only, no CLI commands). Stdio (`command`/`args`/`env`,
+  newline-delimited JSON-RPC — NOT LSP's Content-Length framing) and remote
+  (`url`, streamable-http default or legacy sse, `headers`). Message-level
+  `McpTransport`; stdio framing glue is pure Dart over `McpByteChannel`
+  (process impl only via `lib/io.dart`), both HTTP transports are pure Dart
+  over injectable `package:http` (web gets remote servers; stdio = clean
+  "not supported" status). `McpManager` connects lazily in the background
+  (boot never blocks), per-server connecting/connected/failed status,
+  reconnect with capped backoff; tools register as `mcp__<server>__<tool>`
+  (exec approval tier, description prefixed with the origin, inputSchema
+  verbatim) through the manager's `onChanged` (AgentCli re-registers +
+  rebuilds the prompt's tiny MCP section). Results map MCP content blocks
+  onto ours (text as-is, images as ImageContent, resources/links as text
+  placeholders) under a shared 100k-char budget; `isError` throws so the
+  loop records an error result; timeouts name `mcp.toolCallTimeoutMs`.
+  Wired via `builtinTools(env, mcp:)`; resources/prompts out of scope.
 - `lib/src/model_roles/` — model roles (`default`/`smol`/`slow`/`plan`) with
   fallback chains, key rotation (`ApiKeyRing` over `NAME`/`NAME_2`/…), 429
   mid-turn take-over (`FallbackStreamFunction`, never silent). Config:

@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
+import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../ttsr/ttsr.dart';
@@ -31,6 +32,7 @@ final class CliConfig {
     this.ttsr,
     this.customProviders = const [],
     this.models,
+    this.mcp,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -71,6 +73,8 @@ final class CliConfig {
       models: map['models'] == null
           ? null
           : ModelsConfig.fromYaml(map['models']),
+      // The mcp section (external tool servers) is parsed strictly too.
+      mcp: map['mcp'] == null ? null : McpConfig.fromYaml(map['mcp']),
     );
   }
 
@@ -114,6 +118,11 @@ final class CliConfig {
   /// error throws [ConfigException]. `null` means the section is absent.
   final ModelsConfig? models;
 
+  /// Optional MCP servers config (`mcp:` yaml section). Parsed strictly:
+  /// a schema error throws [ConfigException]. `null` disables MCP. Managed
+  /// by editing the config file only (no CLI commands yet).
+  final McpConfig? mcp;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -132,6 +141,8 @@ final class CliConfig {
     if (modelsConfig != null && !modelsConfig.isEmpty) {
       buffer.write(modelsConfig.toYaml());
     }
+    final mcpConfig = mcp;
+    if (mcpConfig != null) buffer.write(mcpConfig.toYaml());
     return buffer.toString();
   }
 

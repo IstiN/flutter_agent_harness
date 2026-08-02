@@ -49,6 +49,7 @@ import '../cancel_token.dart';
 import '../env/execution_env.dart';
 import '../hashline/hashline.dart';
 import '../lsp/lsp_tool.dart';
+import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../prompts/prompts.g.dart';
 import '../types.dart';
@@ -95,6 +96,11 @@ const _maxTimeoutMs = 2147483647;
 /// factory lives in `lib/io.dart`; web/stub construction leaves the tool
 /// out.
 ///
+/// When [mcp] is provided, the tools of currently CONNECTED MCP servers are
+/// included (as `mcp__<server>__<tool>`); servers connect in the background
+/// after startup, so the host must additionally listen to
+/// `McpManager.onChanged` to re-register late arrivals (see `AgentCli`).
+///
 /// [model] is forwarded to [readFileTool] for the non-vision image note.
 List<AgentTool> builtinTools(
   ExecutionEnv env, {
@@ -103,6 +109,7 @@ List<AgentTool> builtinTools(
   Model? Function()? model,
   SqliteEngine? sqlite,
   LspToolConfig? lsp,
+  McpManager? mcp,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return [
@@ -116,6 +123,7 @@ List<AgentTool> builtinTools(
       webSearchTool(config: webSearch),
       webFetchTool(config: webSearch),
     ],
+    ...?mcp?.tools,
   ];
 }
 
