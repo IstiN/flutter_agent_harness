@@ -1,5 +1,8 @@
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
@@ -101,6 +104,31 @@ Future<void> main() async {
   }
   AppAnalytics.installFirebase(analytics);
   AppAnalytics.instance.appStart(analyticsAvailable: analytics != null);
+  // Crashlytics: fatal Flutter errors + uncaught async errors flow into the
+  // Firebase console (no web support — the guard skips both the placeholder
+  // options used by CI builds and the web platform entirely).
+  if (!kIsWeb) {
+    try {
+      if (Firebase.apps.isNotEmpty) {
+        final crashlytics = FirebaseCrashlytics.instance;
+        FlutterError.onError = crashlytics.recordFlutterFatalError;
+        PlatformDispatcher.instance.onError = (error, stack) {
+          crashlytics.recordError(error, stack, fatal: true);
+          return true;
+        };
+        // Breadcrumbs: the debugPrint tee (already feeding AppLog) also
+        // leaves a trail in the crash report.
+        final baseDebugPrint = debugPrint;
+        debugPrint = (message, {wrapWidth}) {
+          baseDebugPrint(message, wrapWidth: wrapWidth);
+          if (message != null) crashlytics.log(message);
+        };
+        debugPrint('[fah] crashlytics wired');
+      }
+    } on Object catch (error) {
+      debugPrint('[fah] crashlytics unavailable, continuing without: $error');
+    }
+  }
   // intl date symbols for the app locales — DateFormat (derived session
   // titles) only ships en_US data compiled in; the rest must be loaded.
   for (final locale in AppLocalizations.supportedLocales) {

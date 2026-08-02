@@ -26,6 +26,9 @@
 	<string>public.app-category.developer-tools</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Crashlytics on macOS: surface Objective-C exceptions as crashes -->
+	<key>NSApplicationCrashOnExceptions</key>
+	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
