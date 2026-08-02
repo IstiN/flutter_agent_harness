@@ -791,4 +791,8 @@
 - feat(yoclip): Fa promo video workspace — 19s promo in 3 aspects x en/ru (App Preview + social + YouTube), creative treatment, VO, music bed, frame QA
 - test(example): realistic providers in the store_providers frame; pre-commit format gate scopes to package dirs (yoclip/ is a standalone workspace)
 
+## 0.1.120
+
+- feat(fa_ui): present editor/picker pages as constrained dialogs on wide canvases
+
 ## Unreleased
