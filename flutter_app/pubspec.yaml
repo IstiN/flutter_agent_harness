@@ -159,6 +159,8 @@ flutter:
     - assets/apps/calendar/
     - assets/apps/contacts/
     - assets/apps/crypto/
+    - assets/apps/english-teacher/
+    - assets/apps/fitness-trainer/
     - assets/apps/health/
     - assets/apps/homekit/
     - assets/apps/map/

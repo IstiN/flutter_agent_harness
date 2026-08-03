@@ -282,7 +282,9 @@ factual: paths, commands, invariants — no essays.
   AgentService.acceptSecretGrant; contacts is a gated "not
   available yet" stub); the `js-apps` skill seeds
   into `.fah/skills/` on startup. Bundled demos (seeded by
-  `AppsStore.demoAppIds`, assets in `flutter_app/assets/apps/`): calculator,
+  `AppsStore.demoAppIds`, assets in `flutter_app/assets/apps/` — each id
+  MUST also have its `- assets/apps/<id>/` entry in pubspec.yaml, gated by
+  `test/apps/demo_assets_declared_test.dart`): calculator,
   weather, stocks, crypto, animation-showcase, yolo-hello, calendar
   (`jsr.fa.calendar`), map (`map` node), health + homekit (real bridge on
   iOS, honest demo-panel fallback elsewhere), 3d-game (`scene3d` node +
