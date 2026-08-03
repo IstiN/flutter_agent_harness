@@ -605,6 +605,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherRenameFolderTooltip => 'Rename folder';
 
   @override
+  String get launcherSeedErrorCopy => 'Copy error';
+
+  @override
+  String get launcherSeedErrorHint =>
+      'Send this error to Fa — it can fix the app.';
+
+  @override
+  String get launcherSeedErrorTitle => 'App failed to install';
+
+  @override
   String get launcherTileSizeLarge => 'Large (4×4)';
 
   @override

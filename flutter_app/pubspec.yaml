@@ -135,6 +135,16 @@ dependency_overrides:
     path: ../vendor/wasm_run
   wasm_run_flutter:
     path: ../vendor/wasm_run_flutter
+  flutter_js:
+    git:
+      url: https://github.com/IstiN/flutter_js.git
+      # fix-jscore-multi-instance: route sendMessage by executing context +
+      # guard post-dispose evaluate. Stock 0.8.7 dispatches the shared native
+      # sendMessage callback to the LAST created runtime, so coexisting JS
+      # engines (launcher tiles + open apps) convert each other's JSValues
+      # with the wrong JSContext — SIGSEGV in JSC::JSLock::lock once one of
+      # them is disposed (TestFlight feedback-7).
+      ref: 74a11bf6e7ab2721146cdc4a80e225115a8ccfe3
 
 flutter:
   uses-material-design: true

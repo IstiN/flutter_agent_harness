@@ -611,6 +611,16 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherRenameFolderTooltip => 'Переименовать папку';
 
   @override
+  String get launcherSeedErrorCopy => 'Скопировать ошибку';
+
+  @override
+  String get launcherSeedErrorHint =>
+      'Отправьте эту ошибку Fa — он сможет починить приложение.';
+
+  @override
+  String get launcherSeedErrorTitle => 'Приложение не установилось';
+
+  @override
   String get launcherTileSizeLarge => 'Большой (4×4)';
 
   @override

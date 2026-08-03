@@ -1100,6 +1100,24 @@ abstract class AppLocalizations {
   /// **'Rename folder'**
   String get launcherRenameFolderTooltip;
 
+  /// No description provided for @launcherSeedErrorCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy error'**
+  String get launcherSeedErrorCopy;
+
+  /// No description provided for @launcherSeedErrorHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Send this error to Fa — it can fix the app.'**
+  String get launcherSeedErrorHint;
+
+  /// No description provided for @launcherSeedErrorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'App failed to install'**
+  String get launcherSeedErrorTitle;
+
   /// No description provided for @launcherTileSizeLarge.
   ///
   /// In en, this message translates to:

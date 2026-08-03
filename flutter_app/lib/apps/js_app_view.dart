@@ -527,10 +527,12 @@ class _JsAppViewState extends State<JsAppView> {
                       color: theme.scaffoldBackgroundColor,
                       // Chrome apps (with the AppBar) keep their content
                       // above the home indicator — HUD rows at the very
-                      // bottom must not clip into it. Immersive full-chrome
-                      // apps (maps) stay edge-to-edge.
+                      // bottom must not clip into it. Full-chrome apps (map)
+                      // stay edge-to-edge at the bottom but drop below the
+                      // status bar: they draw their own opaque header, and
+                      // edge-to-edge top slid it under the system tray.
                       child: fullChrome
-                          ? _buildBody(theme)
+                          ? SafeArea(bottom: false, child: _buildBody(theme))
                           : SafeArea(top: false, child: _buildBody(theme)),
                     ),
                   ),

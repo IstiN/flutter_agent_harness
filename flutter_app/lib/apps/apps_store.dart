@@ -499,9 +499,10 @@ class AppsStore {
       } on Object catch (e) {
         // One broken demo (missing/corrupt asset) must never kill the
         // seeding of the rest — it lands in [failedSeeds] and gets an
-        // error badge on its launcher tile instead.
+        // error badge on its launcher tile instead; tapping the tile shows
+        // the stored error text so it can be handed to Fa for a fix.
         AppLog.i('apps', 'demo seed failed: $id — $e');
-        failedSeeds.value = {...failedSeeds.value, id};
+        failedSeeds.value = {...failedSeeds.value, id: e.toString()};
         continue;
       }
       failedSeeds.value = {...failedSeeds.value}..remove(id);
@@ -511,11 +512,12 @@ class AppsStore {
     }
   }
 
-  /// Demo app ids whose last seed attempt failed (missing/corrupt asset).
-  /// The launcher badges those tiles instead of letting one broken app
-  /// take down the whole grid (TestFlight 1.0.0 regression: a demo id
-  /// shipped without its assets and killed the entire seeding).
-  final ValueNotifier<Set<String>> failedSeeds = ValueNotifier({});
+  /// Demo app ids whose last seed attempt failed, mapped to the error text
+  /// (missing/corrupt asset). The launcher badges those tiles instead of
+  /// letting one broken app take down the whole grid (TestFlight 1.0.0
+  /// regression: a demo id shipped without its assets and killed the entire
+  /// seeding) and shows this text on tap.
+  final ValueNotifier<Map<String, String>> failedSeeds = ValueNotifier({});
 
   /// Seeds one demo app; returns true when the hash records changed.
   /// [hashes] is the shared store mutated in place (omit with [force] to

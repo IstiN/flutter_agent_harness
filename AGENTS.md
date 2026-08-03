@@ -266,7 +266,12 @@ factual: paths, commands, invariants — no essays.
   use-after-free SIGSEGV is owned by `js_app_engine.dart`'s process-wide
   lifecycle serialization — releases must stay immediate, never deferred —
   until a pub release >0.4.20 ships both; ≥0.4.5 adds the `map` node: center/zoom/markers/polylines/
-  fitBounds, onTap/onMarkerTap): apps live in env-shared `apps/<id>/
+  fitBounds, onTap/onMarkerTap). `flutter_js` itself is overridden in
+  `flutter_app/pubspec.yaml` to IstiN/flutter_js@74a11bf
+  (fix-jscore-multi-instance: the shared native sendMessage callback routed
+  to the LAST created runtime, so coexisting engines converted each other's
+  JSValues with the wrong JSContext — SIGSEGV in JSC::JSLock::lock; the fork
+  routes by executing context and refuses post-dispose evaluate): apps live in env-shared `apps/<id>/
   {manifest.json, widget.js}`; permissions in `apps_permissions.json` (network/
   allowedCommands/llm/homekit/health/contacts/calendar/microphone/
   notifications/media/keys — default denied);
@@ -290,8 +295,9 @@ factual: paths, commands, invariants — no essays.
   and never overwritten (`resetDemoApp(id)` force-restores the reference
   version, `storage.json` untouched). A demo id whose seeding FAILS
   (missing/corrupt asset) never kills the rest: it lands in
-  `AppsStore.failedSeeds` and gets an error badge on its launcher tile
-  instead. `open_app_tool.dart` registers
+  `AppsStore.failedSeeds` (id → error text) and gets an error badge on its
+  launcher tile; tapping the tile shows a dialog with the copyable error
+  (hand it to Fa for a fix). `open_app_tool.dart` registers
   the agent tool `open_app`
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
   Live launcher tiles: a manifest `"widget"` section

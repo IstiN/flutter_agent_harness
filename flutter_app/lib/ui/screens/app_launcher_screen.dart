@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
@@ -1132,7 +1133,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   Widget _maybeSeedErrorBadge(FahColors colors, String key, Widget tile) {
     if (!key.startsWith('app:')) return tile;
     final failed = _appsStore.failedSeeds.value;
-    if (!failed.contains(key.substring(4))) return tile;
+    if (!failed.containsKey(key.substring(4))) return tile;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -1229,7 +1230,45 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       return;
     }
     final app = _appsById[key.substring(4)];
-    if (app != null) unawaited(_launchApp(app));
+    if (app == null) return;
+    // A tile whose demo seed failed shows its stored error instead of a
+    // dead-end launch — copyable, so the user can hand it to Fa for a fix.
+    final seedError = _appsStore.failedSeeds.value[app.id];
+    if (seedError != null) {
+      unawaited(_showSeedError(app, seedError));
+      return;
+    }
+    unawaited(_launchApp(app));
+  }
+
+  Future<void> _showSeedError(JsAppInfo app, String error) async {
+    final l10n = context.l10n;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.launcherSeedErrorTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(app.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            SelectableText(error),
+            const SizedBox(height: 12),
+            Text(l10n.launcherSeedErrorHint),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              unawaited(Clipboard.setData(ClipboardData(text: error)));
+              Navigator.of(dialogContext).pop();
+            },
+            child: Text(l10n.launcherSeedErrorCopy),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Full-screen drop surface behind the open folder panel: a tile dragged
