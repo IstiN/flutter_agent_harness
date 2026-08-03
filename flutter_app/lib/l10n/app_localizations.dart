@@ -1688,6 +1688,24 @@ abstract class AppLocalizations {
   /// **'Copy debug logs'**
   String get settingsCopyDebugLogs;
 
+  /// No description provided for @settingsSendTestCrashReport.
+  ///
+  /// In en, this message translates to:
+  /// **'Send test crash report'**
+  String get settingsSendTestCrashReport;
+
+  /// No description provided for @settingsTestCrashReportNoFirebase.
+  ///
+  /// In en, this message translates to:
+  /// **'Crashlytics not initialized on this device'**
+  String get settingsTestCrashReportNoFirebase;
+
+  /// No description provided for @settingsTestCrashReportSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Test report sent — check the Firebase console in a few minutes'**
+  String get settingsTestCrashReportSent;
+
   /// No description provided for @settingsDebugLogsCopied.
   ///
   /// In en, this message translates to:

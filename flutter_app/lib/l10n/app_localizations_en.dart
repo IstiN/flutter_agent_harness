@@ -928,6 +928,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCopyDebugLogs => 'Copy debug logs';
 
   @override
+  String get settingsSendTestCrashReport => 'Send test crash report';
+
+  @override
+  String get settingsTestCrashReportNoFirebase =>
+      'Crashlytics not initialized on this device';
+
+  @override
+  String get settingsTestCrashReportSent =>
+      'Test report sent — check the Firebase console in a few minutes';
+
+  @override
   String get settingsDebugLogsCopied => 'Debug logs copied to clipboard';
 
   @override

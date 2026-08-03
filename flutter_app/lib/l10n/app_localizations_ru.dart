@@ -936,6 +936,17 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsCopyDebugLogs => 'Скопировать логи отладки';
 
   @override
+  String get settingsSendTestCrashReport => 'Отправить тестовый краш-репорт';
+
+  @override
+  String get settingsTestCrashReportNoFirebase =>
+      'Crashlytics не инициализирован на этом устройстве';
+
+  @override
+  String get settingsTestCrashReportSent =>
+      'Тестовый репорт отправлен — проверьте консоль Firebase через пару минут';
+
+  @override
   String get settingsDebugLogsCopied =>
       'Логи отладки скопированы в буфер обмена';
 

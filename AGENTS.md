@@ -425,6 +425,14 @@ factual: paths, commands, invariants — no essays.
   pick, message sent (attachment flag + length bucket — never content),
   session new/switch/delete, settings opened, key set/delete (names only),
   upload count. Privacy rule: never keys, message text, or file contents.
+  Crashlytics (`firebase_crashlytics`, wired in `main.dart`: fatal Flutter
+  errors + uncaught async + debugPrint breadcrumbs) NEEDS
+  `GoogleService-Info.plist` bundled in the Runner target — both
+  pbxproj files carry the reference (gitignored file, CI writes it from
+  `GOOGLE_SERVICE_INFO_PLIST_BASE64`) plus a "Crashlytics: upload dSYMs"
+  build phase and `dwarf-with-dsym` in Release; settings has a
+  "Send test crash report" row (non-fatal recordError) to verify the
+  pipeline from a device.
 - `flutter_app/lib/services/last_connection.dart` — persists last connection
   (never API keys) as `last_connection.json`; at boot `restorableBootConfig`
   (main.dart) rebuilds the AgentConfig (custom-provider key → saved hosted

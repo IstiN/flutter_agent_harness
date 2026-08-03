@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -2256,19 +2258,39 @@ class DebugLogsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    return Row(
+    return Column(
       children: [
-        IconButton(
-          icon: const Icon(Icons.bug_report_outlined),
-          tooltip: context.l10n.settingsCopyDebugLogs,
-          onPressed: () => _copyLogs(context),
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.bug_report_outlined),
+              tooltip: context.l10n.settingsCopyDebugLogs,
+              onPressed: () => _copyLogs(context),
+            ),
+            Expanded(
+              child: Text(
+                context.l10n.settingsCopyDebugLogs,
+                style: TextStyle(color: colors.dim, fontSize: 13),
+              ),
+            ),
+          ],
         ),
-        Expanded(
-          child: Text(
-            context.l10n.settingsCopyDebugLogs,
-            style: TextStyle(color: colors.dim, fontSize: 13),
+        if (!kIsWeb)
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.emergency_share_outlined),
+                tooltip: context.l10n.settingsSendTestCrashReport,
+                onPressed: () => _sendTestReport(context),
+              ),
+              Expanded(
+                child: Text(
+                  context.l10n.settingsSendTestCrashReport,
+                  style: TextStyle(color: colors.dim, fontSize: 13),
+                ),
+              ),
+            ],
           ),
-        ),
       ],
     );
   }
@@ -2279,6 +2301,32 @@ class DebugLogsSection extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(context.l10n.settingsDebugLogsCopied)),
     );
+  }
+
+  /// Non-fatal test error into Crashlytics: proves the whole pipeline
+  /// (init → upload → console) works on this device without crashing the
+  /// app. Native (JSC-level) crash capture rides the same native SDK init.
+  Future<void> _sendTestReport(BuildContext context) async {
+    String message;
+    try {
+      if (Firebase.apps.isEmpty) {
+        message = context.l10n.settingsTestCrashReportNoFirebase;
+      } else {
+        await FirebaseCrashlytics.instance.recordError(
+          StateError('Crashlytics pipeline test (non-fatal)'),
+          StackTrace.current,
+          reason: 'settings test button',
+        );
+        await FirebaseCrashlytics.instance.sendUnsentReports();
+        message = context.l10n.settingsTestCrashReportSent;
+      }
+    } on Object catch (error) {
+      message = '$error';
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
