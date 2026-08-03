@@ -162,6 +162,18 @@
   ]
 }
 </script>
+
+<!-- GA4 (linked to the fa1-mobile Firebase project — landing events sit
+     next to the native app's analytics in one console). Async + guarded:
+     content blockers just skip it. Click events live in analytics.js. -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-YC1TJPHHC1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-YC1TJPHHC1', { anonymize_ip: true });
+</script>
+<script src="analytics.js?v=1" defer></script>
 </head>
 <body>
 <div class="bg" aria-hidden="true"></div>

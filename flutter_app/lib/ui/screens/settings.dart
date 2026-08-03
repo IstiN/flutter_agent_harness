@@ -606,6 +606,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   }
 
   Future<void> _addProvider() async {
+    AppAnalytics.instance.screenOpened('provider_editor');
     final result = await Navigator.of(context).push<ProviderEditorResult>(
       MaterialPageRoute(
         builder: (_) =>
@@ -628,6 +629,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   Future<void> _editProvider() async {
     final selection = _selection;
     if (selection is! CustomProvider) return;
+    AppAnalytics.instance.screenOpened('provider_editor');
     final result = await Navigator.of(context).push<ProviderEditorResult>(
       MaterialPageRoute(
         builder: (_) => ProviderEditorPage(
@@ -1387,7 +1389,10 @@ class ThemeModeSection extends StatelessWidget {
                 ),
               ],
               onChanged: (mode) {
-                if (mode != null) controller.setMode(mode);
+                if (mode != null) {
+                  AppAnalytics.instance.themeChanged(mode.name);
+                  controller.setMode(mode);
+                }
               },
             ),
           ],
@@ -1961,6 +1966,7 @@ class MediaModelsSection extends StatelessWidget {
     MediaModelsStore store,
     String slot,
   ) async {
+    AppAnalytics.instance.screenOpened('media_slot_picker');
     final result = await Navigator.of(context).push<MediaSlotEditorResult>(
       MaterialPageRoute(
         builder: (_) => MediaSlotProviderPickerPage(
@@ -1977,6 +1983,7 @@ class MediaModelsSection extends StatelessWidget {
     );
     if (result == null) return;
     await store.setOverride(slot, result.cleared ? null : result.override);
+    AppAnalytics.instance.mediaSlotSet(slot);
   }
 }
 
@@ -1989,7 +1996,7 @@ class MediaModelsSection extends StatelessWidget {
 /// Applying a chat model swaps the backend of [service] via
 /// [AgentService.reconfigure] — the visible transcript, the sandbox
 /// filesystem, and the current session all survive.
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
     required this.service,
@@ -2035,6 +2042,17 @@ class SettingsScreen extends StatelessWidget {
   final ModelsEndpointFetcher? modelsFetcher;
 
   @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    AppAnalytics.instance.screenOpened('settings');
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(context.l10n.settingsTitle)),
@@ -2044,33 +2062,36 @@ class SettingsScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              ProvidersSection(service: service, registry: registry),
+              ProvidersSection(
+                service: widget.service,
+                registry: widget.registry,
+              ),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
               DefaultChatModelSection(
-                service: service,
-                registry: registry,
-                lastConnectionStore: lastConnectionStore,
-                modelsFetcher: modelsFetcher,
-                webLlmEngine: webLlmEngine,
-                gemmaEngine: gemmaEngine,
-                transformersJsEngine: transformersJsEngine,
+                service: widget.service,
+                registry: widget.registry,
+                lastConnectionStore: widget.lastConnectionStore,
+                modelsFetcher: widget.modelsFetcher,
+                webLlmEngine: widget.webLlmEngine,
+                gemmaEngine: widget.gemmaEngine,
+                transformersJsEngine: widget.transformersJsEngine,
               ),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
               ModelPresetsSection(
-                service: service,
-                lastConnectionStore: lastConnectionStore,
+                service: widget.service,
+                lastConnectionStore: widget.lastConnectionStore,
               ),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
               MediaModelsSection(
-                service: service,
-                registry: registry,
-                modelsFetcher: modelsFetcher,
+                service: widget.service,
+                registry: widget.registry,
+                modelsFetcher: widget.modelsFetcher,
               ),
               const SizedBox(height: 24),
               const Divider(),
@@ -2079,39 +2100,39 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              if (layoutStore != null) ...[
-                HomeGridSection(layoutStore: layoutStore!),
+              if (widget.layoutStore != null) ...[
+                HomeGridSection(layoutStore: widget.layoutStore!),
                 const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 16),
               ],
-              KeysSection(registry: registry),
+              KeysSection(registry: widget.registry),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              ApprovalModeSelector(service: service),
+              ApprovalModeSelector(service: widget.service),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              WebLlmCacheSection(engine: webLlmEngine),
+              WebLlmCacheSection(engine: widget.webLlmEngine),
               // The transformers.js section is web-only (its provider is);
               // the Gemma section hides where its provider is unsupported —
               // on web the litert-lm path is abandoned in favour of
               // transformers.js, on desktop neither exists.
               if (transformersJsProviderSupported) ...[
                 const SizedBox(height: 24),
-                TransformersJsCacheSection(engine: transformersJsEngine),
+                TransformersJsCacheSection(engine: widget.transformersJsEngine),
               ],
               if (gemmaProviderSupported) ...[
                 const SizedBox(height: 24),
-                GemmaCacheSection(engine: gemmaEngine),
+                GemmaCacheSection(engine: widget.gemmaEngine),
               ],
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
               OnboardingReplaySection(
                 mediaModelsStore: MediaModelsScope.maybeOf(context),
-                lastConnectionStore: lastConnectionStore,
+                lastConnectionStore: widget.lastConnectionStore,
               ),
               const SizedBox(height: 24),
               const Divider(),
@@ -2181,7 +2202,13 @@ class HomeGridSection extends StatelessWidget {
                     child: Text('$n'), // l10n:ignore — bare column count
                   ),
               ],
-              onChanged: (value) => layoutStore.setGridColumns(value),
+              onChanged: (value) {
+                // Auto (null) carries no concrete column count to log.
+                if (value != null) {
+                  AppAnalytics.instance.launcherGridColumns(value);
+                }
+                layoutStore.setGridColumns(value);
+              },
             ),
           ],
         );

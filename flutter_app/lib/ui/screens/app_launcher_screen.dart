@@ -14,6 +14,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
@@ -149,6 +150,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   @override
   void initState() {
     super.initState();
+    AppAnalytics.instance.screenOpened('launcher');
     _appsStore = widget.appsStore ?? AppsStore(widget.manager.env);
     _layout = widget.layoutStore;
     widget.manager.addListener(_onManagerChanged);
@@ -425,6 +427,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       final autoName = nameA != null && nameB != null
           ? '$nameA & $nameB'
           : context.l10n.launcherFolderDefaultName;
+      AppAnalytics.instance.launcherFolder('created');
       layout.createFolder(draggedKey, targetKey, name: autoName);
       _clearDragPreview();
       return;
@@ -562,8 +565,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       ],
     );
     if (selected == 'reset') {
+      AppAnalytics.instance.launcherTileResized('reset');
       layout.setTileSize(appId, null);
     } else if (selected is TileSize) {
+      AppAnalytics.instance.launcherTileResized('${selected.w}x${selected.h}');
       layout.setTileSize(appId, selected);
     }
   }
@@ -575,12 +580,18 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   // --- navigation ----------------------------------------------------------
 
   Future<void> _launchApp(JsAppInfo app) async {
-    await pushJsApp(context, manager: widget.manager, app: app);
+    await pushJsApp(
+      context,
+      manager: widget.manager,
+      app: app,
+      source: 'launcher',
+    );
   }
 
   Future<void> _openSettings() async {
     final service = widget.manager.active?.service;
     if (service == null) return;
+    AppAnalytics.instance.settingsOpened();
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SettingsScreen(
@@ -598,6 +609,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   Future<void> _openFiles() async {
     final service = widget.manager.active?.service;
     if (service == null) return;
+    AppAnalytics.instance.filesOpened('launcher');
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => Scaffold(
@@ -615,7 +627,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   // --- folder panel --------------------------------------------------------
 
-  void _openFolder(String folderId) => setState(() => _openFolderId = folderId);
+  void _openFolder(String folderId) {
+    AppAnalytics.instance.launcherFolder('opened');
+    setState(() => _openFolderId = folderId);
+  }
 
   void _closeFolder() => setState(() => _openFolderId = null);
 
@@ -645,10 +660,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         ],
       ),
     );
-    if (saved != null) _layout?.renameFolder(folder.id, saved);
+    if (saved != null) {
+      AppAnalytics.instance.launcherFolder('renamed');
+      _layout?.renameFolder(folder.id, saved);
+    }
   }
 
   void _dissolveFolder(LauncherFolder folder) {
+    AppAnalytics.instance.launcherFolder('dissolved');
     _layout?.dissolveFolder(folder.id);
     _closeFolder();
   }

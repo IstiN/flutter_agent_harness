@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 
 /// Renders an approval prompt as a Material dialog — the Flutter/web
@@ -145,8 +146,10 @@ class ApprovalModeSelector extends StatelessWidget {
                 ),
               ],
               selected: {service.approval.mode},
-              onSelectionChanged: (modes) =>
-                  service.setApprovalMode(modes.first),
+              onSelectionChanged: (modes) {
+                AppAnalytics.instance.approvalModeChanged(modes.first.name);
+                service.setApprovalMode(modes.first);
+              },
             ),
             const SizedBox(height: 8),
             Text(switch (service.approval.mode) {

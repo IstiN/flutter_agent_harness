@@ -33,6 +33,14 @@ connect.
   started", "message sent"), provider/model identifiers, and coarse
   buckets (message-length ranges, counts). Analytics **never** includes
   API keys, message text, prompts, file contents, or paths.
+- **Website analytics.** The landing page (fa1.dev) uses Google Analytics
+  4 with IP anonymization to count page views and outbound clicks (for
+  example the TestFlight and web-demo links). It sets no advertising
+  cookies and tracks nothing inside the app you run from the page.
+- **Crash reports.** If available on your platform, the app sends crash
+  reports (stack traces, device model, OS version) via Firebase
+  Crashlytics so we can fix bugs. Reports contain no message text, API
+  keys, or file contents.
 
 ### 3. Permissions
 
@@ -95,6 +103,15 @@ web), построенное на открытом Flutter Agent Harness. Кор
   провайдера/модели и грубые диапазоны (длина сообщения, счётчики).
   Аналитика **никогда** не включает API-ключи, тексты сообщений, промпты,
   содержимое файлов или пути.
+- **Аналитика сайта.** Лендинг (fa1.dev) использует Google Analytics 4 с
+  анонимизацией IP для подсчёта просмотров страницы и исходящих кликов
+  (например по ссылкам TestFlight и веб-демо). Рекламные cookies не
+  используются, а приложение, которое вы запускаете со страницы, не
+  отслеживается.
+- **Отчёты о сбоях.** Если доступно на вашей платформе, приложение
+  отправляет отчёты о сбоях (стек-трейсы, модель устройства, версия ОС)
+  через Firebase Crashlytics, чтобы мы могли чинить ошибки. Отчёты не
+  содержат текстов сообщений, API-ключей или содержимого файлов.
 
 ### 3. Разрешения
 

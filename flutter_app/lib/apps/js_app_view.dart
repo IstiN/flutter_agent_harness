@@ -16,6 +16,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/video_tool.dart';
@@ -162,6 +163,7 @@ class _JsAppViewState extends State<JsAppView> {
   @override
   void initState() {
     super.initState();
+    AppAnalytics.instance.screenOpened('js_app');
     _agentService = widget.agentService;
     widget.fsRevision?.addListener(_onFsRevision);
     _agentService?.addListener(_onAgentServiceEvent);
@@ -514,7 +516,10 @@ class _JsAppViewState extends State<JsAppView> {
                       IconButton(
                         icon: const Icon(Icons.refresh),
                         tooltip: context.l10n.appsReloadTooltip,
-                        onPressed: _restart,
+                        onPressed: () {
+                          AppAnalytics.instance.jsAppReloaded();
+                          unawaited(_restart());
+                        },
                       ),
                     ],
                   ),
@@ -626,6 +631,7 @@ class _JsAppViewState extends State<JsAppView> {
             case 'permissions':
               unawaited(_openPermissions());
             case 'reload':
+              AppAnalytics.instance.jsAppReloaded();
               unawaited(_restart());
             case 'close':
               // Mirror the system-back contract: an app that registered

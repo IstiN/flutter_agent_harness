@@ -116,8 +116,8 @@ void main() {
       expect(find.text('Get started'), findsOneWidget);
       expect(find.text('Privacy policy'), findsOneWidget);
 
-      // Analytics: only the started event so far (no finish yet).
-      expect(events.map((e) => e.$1), ['onboarding_started']);
+      // Analytics: only the started + screen events so far (no finish yet).
+      expect(events.map((e) => e.$1), ['onboarding_started', 'screen_opened']);
     });
 
     testWidgets('Skip sets the seen flag and reports skipped', (tester) async {
@@ -137,6 +137,7 @@ void main() {
       expect(skippedFlag, isTrue);
       expect(events.map((e) => e.$1), [
         'onboarding_started',
+        'screen_opened',
         'onboarding_skipped',
       ]);
     });
@@ -184,6 +185,7 @@ void main() {
       expect(skippedFlag, isFalse);
       expect(events.map((e) => e.$1), [
         'onboarding_started',
+        'screen_opened',
         'onboarding_completed',
       ]);
     });

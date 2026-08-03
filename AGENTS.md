@@ -424,7 +424,14 @@ factual: paths, commands, invariants — no essays.
   add/edit/delete, models fetch count bucket, suggestion-vs-free-text model
   pick, message sent (attachment flag + length bucket — never content),
   session new/switch/delete, settings opened, key set/delete (names only),
-  upload count. Privacy rule: never keys, message text, or file contents.
+  upload count, screen_opened per screen (the user-path backbone), chat
+  sheet state, JS app open/reload, launcher folders/tiles/grid, theme +
+  approval mode, model presets, media slot set/generated, voice input,
+  secret request outcome, files opened. Privacy rule: never keys, message
+  text, or file contents. `test/analytics_guard_test.dart` hard-fails on a
+  screen/composer/sheet file without an `AppAnalytics.instance` call (or a
+  documented exemption) and on facade events never called from lib/ —
+  keep both sides wired.
   Crashlytics (`firebase_crashlytics`, wired in `main.dart`: fatal Flutter
   errors + uncaught async + debugPrint breadcrumbs) NEEDS
   `GoogleService-Info.plist` bundled in the Runner target — both

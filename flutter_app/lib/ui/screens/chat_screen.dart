@@ -185,7 +185,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   void _openFiles(BuildContext context) {
     if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
       setState(() => _filesPanelOpen = !_filesPanelOpen);
+      if (_filesPanelOpen) AppAnalytics.instance.filesOpened('chat');
     } else {
+      AppAnalytics.instance.filesOpened('chat');
       Scaffold.of(context).openEndDrawer();
     }
   }
@@ -193,6 +195,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    AppAnalytics.instance.screenOpened('chat');
     _chatController = InMemoryChatController();
     _chatScrollController.addListener(_trackNearBottom);
     widget.manager.addListener(_onManagerChanged);
@@ -279,9 +282,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<void> _launchApp(JsAppInfo app) async {
     if (!mounted) return;
     unawaited(
-      pushJsApp(context, manager: widget.manager, app: app).catchError((
-        Object e,
-      ) {
+      pushJsApp(
+        context,
+        manager: widget.manager,
+        app: app,
+        source: 'tool',
+      ).catchError((Object e) {
         debugPrint('open_app navigation failed: $e');
       }),
     );

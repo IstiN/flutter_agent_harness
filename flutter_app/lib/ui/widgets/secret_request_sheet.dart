@@ -5,6 +5,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 
 /// The env var name pattern the Keys settings section enforces; the name
 /// field is normalized to uppercase and validated against it.
@@ -23,13 +24,15 @@ Future<RequestSecretResult?> showSecretRequestSheet(
   BuildContext context,
   String name,
   String reason,
-) {
-  return showModalBottomSheet<RequestSecretResult>(
+) async {
+  final result = await showModalBottomSheet<RequestSecretResult>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
     builder: (_) => SecretRequestSheet(name: name, reason: reason),
   );
+  AppAnalytics.instance.secretRequest(result == null ? 'declined' : 'granted');
+  return result;
 }
 
 /// The secret request sheet: a lock icon, the agent's [reason] as body text,

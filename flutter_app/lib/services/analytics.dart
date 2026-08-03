@@ -129,6 +129,64 @@ final class AppAnalytics {
   void onboardingSkipped(int page) =>
       _log('onboarding_skipped', {'page': page});
 
+  /// A screen became visible. Named 'screen_opened' (not the reserved
+  /// 'screen_view') because the facade is logEvent-based; the param carries
+  /// the stable screen id — this is the user-path backbone.
+  void screenOpened(String screen) =>
+      _log('screen_opened', {'screen_name': screen});
+
+  /// The session chat sheet changed state (collapsed/mini/expanded).
+  void chatSheetState(String state) =>
+      _log('chat_sheet_state', {'state': state});
+
+  /// A JS app was opened from the launcher or the open_app tool. Demo flag
+  /// only — user-given app ids could carry personal naming.
+  void jsAppOpened({required bool isDemo, required String source}) =>
+      _log('js_app_opened', {'is_demo': isDemo, 'source': source});
+
+  /// A JS app was reloaded from its chrome menu.
+  void jsAppReloaded() => _log('js_app_reloaded');
+
+  /// A launcher folder was opened / created / dissolved.
+  void launcherFolder(String action) =>
+      _log('launcher_folder', {'action': action});
+
+  /// A launcher tile was resized (WxH label like "2x2").
+  void launcherTileResized(String size) =>
+      _log('launcher_tile_resized', {'size': size});
+
+  /// The launcher grid column count changed in settings.
+  void launcherGridColumns(int columns) =>
+      _log('launcher_grid_columns', {'columns': columns});
+
+  /// The theme mode changed (system/light/dark).
+  void themeChanged(String mode) => _log('theme_changed', {'mode': mode});
+
+  /// The tool-approval mode changed (always-ask/write/yolo).
+  void approvalModeChanged(String mode) =>
+      _log('approval_mode_changed', {'mode': mode});
+
+  /// A model preset was applied from the presets section.
+  void modelPresetApplied(String presetId) =>
+      _log('model_preset_applied', {'preset_id': presetId});
+
+  /// A media model slot was (re)assigned in settings.
+  void mediaSlotSet(String slot) => _log('media_slot_set', {'slot': slot});
+
+  /// A media generation tool produced a file (image/speak/music/video).
+  void mediaGenerated(String kind) => _log('media_generated', {'kind': kind});
+
+  /// The mic voice input was used from the composer.
+  void voiceInputUsed() => _log('voice_input_used');
+
+  /// A secret-request prompt was answered (granted/declined — never the
+  /// value, never a user-given name).
+  void secretRequest(String outcome) =>
+      _log('secret_request', {'outcome': outcome});
+
+  /// The files browser was opened (from the launcher or chat).
+  void filesOpened(String source) => _log('files_opened', {'source': source});
+
   static String _bucket(int value, List<int> edges) {
     for (final edge in edges) {
       if (value <= edge) return '<=$edge';

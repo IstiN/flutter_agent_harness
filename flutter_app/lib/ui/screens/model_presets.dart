@@ -8,6 +8,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -213,6 +214,7 @@ Future<void> applyModelPreset({
   );
   await service?.reconfigure(config);
   await lastConnectionStore?.saveFromConfig(config);
+  AppAnalytics.instance.modelPresetApplied(preset.id);
 }
 
 /// The settings "Model presets" section: a mini-wizard of swipeable preset
@@ -357,6 +359,7 @@ class _PresetCard extends StatelessWidget {
     if (target is! HostedModelPresetTarget) return;
     final provider = target.provider;
     final keyName = hostedProviderKeyName(provider);
+    AppAnalytics.instance.screenOpened('provider_editor');
     final result = await Navigator.of(context).push<ProviderEditorResult>(
       MaterialPageRoute(
         builder: (_) => ProviderEditorPage(

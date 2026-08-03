@@ -215,6 +215,7 @@ class _ChatComposerState extends State<ChatComposer>
       _textController.selection = TextSelection.collapsed(
         offset: _textController.text.length,
       );
+      AppAnalytics.instance.voiceInputUsed();
     } on Object catch (e) {
       if (mounted) _showSnack(context.l10n.chatMicError(e.toString()));
     } finally {

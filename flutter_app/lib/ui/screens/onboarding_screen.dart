@@ -87,6 +87,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   void initState() {
     super.initState();
     AppAnalytics.instance.onboardingStarted();
+    AppAnalytics.instance.screenOpened('onboarding');
   }
 
   @override
@@ -144,6 +145,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     if (target is! HostedModelPresetTarget) return;
     final provider = target.provider;
     final keyName = hostedProviderKeyName(provider);
+    AppAnalytics.instance.screenOpened('provider_editor');
     final result = await Navigator.of(context).push<ProviderEditorResult>(
       MaterialPageRoute(
         builder: (_) => ProviderEditorPage(

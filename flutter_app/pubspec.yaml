@@ -128,6 +128,7 @@ dev_dependencies:
   latlong2: ^0.9.1
   # Fake WebViewPlatform for golden tests of lib/ui/widgets/html_preview_stub.dart.
   webview_flutter_platform_interface: ^2.15.1
+  test: ^1.31.0
 
 dependency_overrides:
   freezed_annotation: ^3.1.0

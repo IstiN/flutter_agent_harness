@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 
 /// App-open navigation shared by the session sidebar's Apps section and the
@@ -130,15 +131,20 @@ Future<AgentService?> forwardAppMessageToAgent(
 /// Apps section performs, so the agent's `open_app` tool and a user tap land
 /// on the same screen with the same wiring. An app with a bound session
 /// resumes it on open. [permissionsStore] is loaded from the env when not
-/// given.
+/// given. [source] labels the analytics event ('launcher' / 'tool').
 Future<void> pushJsApp(
   BuildContext context, {
   required FlutterSessionManager manager,
   required JsAppInfo app,
+  required String source,
   AppPermissionsStore? permissionsStore,
 }) async {
   final service = manager.active?.service;
   if (service == null) return;
+  AppAnalytics.instance.jsAppOpened(
+    isDemo: AppsStore.demoAppIds.contains(app.id),
+    source: source,
+  );
   final store = permissionsStore ?? await AppPermissionsStore.load(service.env);
   final appService = await resolveAppBoundSession(manager, app.id) ?? service;
   if (!context.mounted) return;

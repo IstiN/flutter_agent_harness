@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:fa/services/analytics.dart';
 import 'package:fa/services/media_models_store.dart';
 
 /// Directory (relative to the env's working directory) generated media
@@ -514,6 +515,9 @@ final class MediaGateway {
         '${writeResult.errorOrNull!.message}',
       );
     }
+    // The file prefixes are 'image'/'speech'/'music'/'video'; the event
+    // kinds follow the tool names ('speak' for speech).
+    AppAnalytics.instance.mediaGenerated(prefix == 'speech' ? 'speak' : prefix);
     return GeneratedMediaFile(path: path, bytes: bytes, detail: detail);
   }
 }

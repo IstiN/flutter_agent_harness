@@ -11,6 +11,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
@@ -279,26 +280,31 @@ class SessionChatSheetState extends State<SessionChatSheet>
     }();
   }
 
-  Future<void> _toMini() => _anim.animateTo(
-    _miniValue,
-    duration: const Duration(milliseconds: 260),
-    curve: Curves.easeOutCubic,
-  );
+  Future<void> _toMini() => _animateToState(_miniValue);
 
   /// Expands the sheet programmatically (e.g. the launcher's session chip).
   void expand() => unawaited(_expand());
 
-  Future<void> _expand() => _anim.animateTo(
-    1,
-    duration: const Duration(milliseconds: 260),
-    curve: Curves.easeOutCubic,
-  );
+  Future<void> _expand() => _animateToState(1);
 
-  Future<void> _collapse() => _anim.animateTo(
+  Future<void> _collapse() => _animateToState(
     0,
     duration: const Duration(milliseconds: 220),
     curve: Curves.easeInCubic,
   );
+
+  /// Animates to a snap target (0 collapsed icon / [_miniValue] mini bar /
+  /// 1 expanded sheet), logging the state transition once per gesture.
+  Future<void> _animateToState(
+    double target, {
+    Duration duration = const Duration(milliseconds: 260),
+    Curve curve = Curves.easeOutCubic,
+  }) {
+    AppAnalytics.instance.chatSheetState(
+      target <= 0 ? 'collapsed' : (target >= 1 ? 'expanded' : 'mini'),
+    );
+    return _anim.animateTo(target, duration: duration, curve: curve);
+  }
 
   Future<void> _newSession() async {
     final manager = widget.manager;
@@ -354,11 +360,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
         : (v < (_miniValue + 1) / 2 ? _miniValue : 1.0);
   }
 
-  Future<void> _snapTo(double target) => _anim.animateTo(
-    target,
-    duration: const Duration(milliseconds: 220),
-    curve: Curves.easeOutCubic,
-  );
+  Future<void> _snapTo(double target) =>
+      _animateToState(target, duration: const Duration(milliseconds: 220));
 
   void _onDragEnd(DragEndDetails details) {
     final velocity = details.velocity.pixelsPerSecond.dy;
@@ -502,15 +505,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
                             !_autoMini) {
                           _autoMini = true;
                           WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted) {
-                              unawaited(
-                                _anim.animateTo(
-                                  _miniValue,
-                                  duration: const Duration(milliseconds: 260),
-                                  curve: Curves.easeOutCubic,
-                                ),
-                              );
-                            }
+                            if (mounted) unawaited(_animateToState(_miniValue));
                           });
                         } else if (!service.isStreaming) {
                           _autoMini = false;
@@ -755,12 +750,18 @@ class SessionChatSheetState extends State<SessionChatSheet>
     final store = _namesStore;
     final activeId = widget.manager.activeId;
     if (store == null || activeId == null) return;
+    // The dialog writes through the store itself (and returns void), so a
+    // title change before/after is the "a rename was saved" signal.
+    final before = store.titleFor(activeId);
     await showRenameSessionDialog(
       context,
       store: store,
       sessionId: activeId,
       createdAt: _createdAtById[activeId],
     );
+    if (store.titleFor(activeId) != before) {
+      AppAnalytics.instance.sessionAction('rename');
+    }
   }
 
   /// "Copy session" menu action: the visible transcript as Markdown into the
