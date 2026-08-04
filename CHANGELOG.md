@@ -815,4 +815,10 @@
 
 - feat(fa_ui): extract the agent chat into the shared fa_ui package
 
+## 0.1.133
+
+- feat(fa_ui): avatar builder + theme-driven chat surfaces
+- feat(fa_ui): host surface tokens + optional app bar in FaChatScreen
+- fix(fa_ui): FaChatScreen honors the host FaUiTheme in the chat theme
+
 ## Unreleased
