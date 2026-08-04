@@ -109,13 +109,17 @@ dependencies:
   audioplayers: ^6.8.1
   video_player: ^2.13.0
 
-  # Firebase: analytics across iOS, Android, macOS, and web.
-  firebase_core: ^4.12.1
-  firebase_analytics: ^12.4.5
+  # Firebase: analytics across iOS, Android, macOS, and web. EXACT pins:
+  # pubspec.lock is gitignored so CI resolves fresh on every build, and a
+  # same-day pub release once pulled firebase_crashlytics 5.2.7 whose
+  # firebase-ios-sdk 12.17.0 did not exist on SPM yet — the build died in
+  # 'Could not resolve package dependencies' (build 80). Bump deliberately.
+  firebase_core: 4.12.1
+  firebase_analytics: 12.4.5
 
   # Opens the privacy policy link (onboarding privacy page) in the browser.
   url_launcher: ^6.3.1
-  firebase_crashlytics: ^5.2.6
+  firebase_crashlytics: 5.2.6
 
 dev_dependencies:
   flutter_test:
