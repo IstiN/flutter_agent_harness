@@ -104,6 +104,23 @@ void main() {
     expect(identical(colors, FahColors.dark), isTrue);
   });
 
+  test('chat theme honors FaUiTheme background/surface overrides', () {
+    const uiTheme = FaUiTheme(
+      background: Color(0xFF0B0B0F),
+      surface: Color(0xFF13131A),
+    );
+    final dark = buildFahChatTheme(uiTheme: uiTheme);
+    expect(dark.colors.surface, const Color(0xFF0B0B0F));
+    expect(dark.colors.surfaceContainer, const Color(0xFF13131A));
+    final light = buildFahChatThemeLight(uiTheme: uiTheme);
+    expect(light.colors.surface, const Color(0xFF0B0B0F));
+    expect(light.colors.surfaceContainer, const Color(0xFF13131A));
+    // Null fields keep the stock palette exactly.
+    final stock = buildFahChatTheme(uiTheme: const FaUiTheme());
+    expect(stock.colors.surface, FahPalette.bg);
+    expect(stock.colors.surfaceContainer, FahPalette.panel);
+  });
+
   testWidgets('the provider builds both brightness themes from its data', (
     tester,
   ) async {

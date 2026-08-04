@@ -63,6 +63,7 @@ class FaChatScreen extends StatefulWidget {
     required this.service,
     this.features = const FaChatFeatures(),
     this.title = 'Fa',
+    this.showAppBar = true,
     this.settingsBuilder,
     this.fileBrowserBuilder,
     this.composerBuilder,
@@ -78,6 +79,12 @@ class FaChatScreen extends StatefulWidget {
 
   /// The app bar title.
   final String title;
+
+  /// Whether the screen renders its own [AppBar] (title, stop/files/copy/
+  /// settings actions). Hosts embedding the chat into their own chrome
+  /// (e.g. a floating panel with a custom header) pass false; the abort
+  /// action then lives on the composer's stop button only.
+  final bool showAppBar;
 
   /// Builder of the settings route pushed by the app bar gear; null hides
   /// the gear.
@@ -657,37 +664,39 @@ class _FaChatScreenState extends State<FaChatScreen>
         ? _fileBrowserBuilder
         : null;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        actions: [
-          if (_isStreaming)
-            IconButton(
-              icon: const Icon(Icons.stop),
-              tooltip: strings.chatAbortTooltip,
-              onPressed: widget.service.abort,
-            ),
-          if (fileBrowserBuilder != null)
-            Builder(
-              builder: (context) => IconButton(
-                icon: const Icon(Icons.folder_outlined),
-                tooltip: strings.chatFilesTooltip,
-                onPressed: () => _openFiles(context),
-              ),
-            ),
-          if (widget.features.copyTranscript)
-            IconButton(
-              icon: const Icon(Icons.copy_outlined),
-              tooltip: strings.chatCopySessionTooltip,
-              onPressed: _copySession,
-            ),
-          if (widget.settingsBuilder != null)
-            IconButton(
-              icon: const Icon(Icons.settings_outlined),
-              tooltip: strings.chatSettingsTooltip,
-              onPressed: _openSettings,
-            ),
-        ],
-      ),
+      appBar: widget.showAppBar
+          ? AppBar(
+              title: Text(widget.title),
+              actions: [
+                if (_isStreaming)
+                  IconButton(
+                    icon: const Icon(Icons.stop),
+                    tooltip: strings.chatAbortTooltip,
+                    onPressed: widget.service.abort,
+                  ),
+                if (fileBrowserBuilder != null)
+                  Builder(
+                    builder: (context) => IconButton(
+                      icon: const Icon(Icons.folder_outlined),
+                      tooltip: strings.chatFilesTooltip,
+                      onPressed: () => _openFiles(context),
+                    ),
+                  ),
+                if (widget.features.copyTranscript)
+                  IconButton(
+                    icon: const Icon(Icons.copy_outlined),
+                    tooltip: strings.chatCopySessionTooltip,
+                    onPressed: _copySession,
+                  ),
+                if (widget.settingsBuilder != null)
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined),
+                    tooltip: strings.chatSettingsTooltip,
+                    onPressed: _openSettings,
+                  ),
+              ],
+            )
+          : null,
       endDrawer: isWide || fileBrowserBuilder == null
           ? null
           : Drawer(

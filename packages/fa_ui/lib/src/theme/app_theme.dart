@@ -616,14 +616,17 @@ ThemeData _buildFahTheme(
 
 /// The `flutter_chat_ui` theme matching [buildFahTheme]: chat surface is the
 /// page background, bubbles/panels come from [FahPalette].
+///
+/// [FaUiTheme.background] / [FaUiTheme.surface] re-seat the transcript on
+/// the host's own palette; null keeps the stock colors.
 ChatTheme buildFahChatTheme({FaUiTheme? uiTheme}) => ChatTheme(
   colors: ChatColors(
     primary: uiTheme?.indigo ?? FahPalette.indigo,
     onPrimary: FahPalette.onAccent,
-    surface: FahPalette.bg,
+    surface: uiTheme?.background ?? FahPalette.bg,
     onSurface: FahPalette.text,
     surfaceContainerLow: const Color(0xFF0A0F18),
-    surfaceContainer: FahPalette.panel,
+    surfaceContainer: uiTheme?.surface ?? FahPalette.panel,
     surfaceContainerHigh: FahPalette.panelAlt,
   ),
   typography: ChatTypography.standard(),
@@ -636,10 +639,10 @@ ChatTheme buildFahChatThemeLight({FaUiTheme? uiTheme}) => ChatTheme(
   colors: ChatColors(
     primary: uiTheme?.indigo ?? FahLightPalette.indigo,
     onPrimary: FahLightPalette.onAccent,
-    surface: FahLightPalette.bg,
+    surface: uiTheme?.background ?? FahLightPalette.bg,
     onSurface: FahLightPalette.text,
     surfaceContainerLow: FahLightPalette.bgAlt,
-    surfaceContainer: FahLightPalette.panel,
+    surfaceContainer: uiTheme?.surface ?? FahLightPalette.panel,
     surfaceContainerHigh: FahLightPalette.panelAlt,
   ),
   typography: ChatTypography.standard(),

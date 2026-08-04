@@ -24,6 +24,8 @@ final class FaUiTheme {
     this.cardRadius,
     this.inputRadius,
     this.buttonRadius,
+    this.background,
+    this.surface,
   });
 
   /// Primary accent (buttons, marks, selections); null keeps the brand
@@ -49,6 +51,16 @@ final class FaUiTheme {
   /// Corner radius of filled/elevated/outlined buttons and snackbars; null
   /// keeps 10.
   final double? buttonRadius;
+
+  /// Chat transcript background (`ChatColors.surface` in the chat theme
+  /// builders); null keeps the brand page background. Lets a host whose own
+  /// surface palette differs from the Fa one (e.g. YoClip Studio) seat the
+  /// chat on its exact background.
+  final Color? background;
+
+  /// Chat raised-surface color (`ChatColors.surfaceContainer`); null keeps
+  /// the brand panel color.
+  final Color? surface;
 
   /// The effective accent colors for a palette built on [baseIndigo] /
   /// [baseTeal].
