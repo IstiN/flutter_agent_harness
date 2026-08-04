@@ -811,4 +811,8 @@
 
 - feat(launcher): 'Restore reference version' tile menu item for demo apps
 
+## 0.1.132
+
+- feat(fa_ui): extract the agent chat into the shared fa_ui package
+
 ## Unreleased
