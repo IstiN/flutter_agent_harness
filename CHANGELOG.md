@@ -807,4 +807,8 @@
 
 - fix(apps): jscore multi-instance crash override + seed-error surface + map top inset
 
+## 0.1.130
+
+- feat(launcher): 'Restore reference version' tile menu item for demo apps
+
 ## Unreleased
