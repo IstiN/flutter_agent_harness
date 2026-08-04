@@ -67,6 +67,7 @@ class FaChatScreen extends StatefulWidget {
     this.settingsBuilder,
     this.fileBrowserBuilder,
     this.composerBuilder,
+    this.avatarBuilder,
     this.audioControllerFactory,
     this.videoControllerFactory,
   });
@@ -98,6 +99,11 @@ class FaChatScreen extends StatefulWidget {
   /// Replacement composer; null builds the default [ChatComposer] with
   /// [features].
   final FaChatComposerBuilder? composerBuilder;
+
+  /// Leading-avatar builder for transcript messages (see
+  /// [ChatMessageTile.avatarBuilder]); null renders no avatars — the stock
+  /// look.
+  final FaChatAvatarBuilder? avatarBuilder;
 
   /// Playback engine factory for inline audio players; null uses the real
   /// `audioplayers`-backed controller. Tests/goldens inject fakes.
@@ -511,6 +517,7 @@ class _FaChatScreenState extends State<FaChatScreen>
         content: message.text,
       ),
       images: _images,
+      avatarBuilder: widget.avatarBuilder,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
     );
@@ -598,6 +605,7 @@ class _FaChatScreenState extends State<FaChatScreen>
         isError: (metadata['isError'] as bool?) ?? false,
       ),
       images: _images,
+      avatarBuilder: widget.avatarBuilder,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
     );

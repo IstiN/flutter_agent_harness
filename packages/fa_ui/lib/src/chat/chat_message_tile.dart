@@ -12,6 +12,11 @@ import 'markdown_style.dart';
 import 'media_player.dart';
 import 'media_tool_names.dart';
 
+/// Builds the leading avatar for a transcript message [role] (`user` /
+/// `assistant` / `system` / `tool`); return null for roles without one.
+typedef FaChatAvatarBuilder =
+    Widget? Function(BuildContext context, String role);
+
 /// One transcript message, rendered the same way on every chat surface: the
 /// full chat screen (through its `flutter_chat_ui` builders) and the in-app
 /// Fa chat overlay both delegate to this widget, so user bubbles, assistant
@@ -28,6 +33,7 @@ class ChatMessageTile extends StatelessWidget {
     required this.images,
     this.audioControllerFactory,
     this.videoControllerFactory,
+    this.avatarBuilder,
     this.compact = false,
   });
 
@@ -46,6 +52,11 @@ class ChatMessageTile extends StatelessWidget {
   /// Playback engine factory for inline video players; null uses the real
   /// `video_player`-backed controller. Tests/goldens inject fakes.
   final SandboxVideoControllerFactory? videoControllerFactory;
+
+  /// Leading-widget builder for non-user bubbles (e.g. the host's brand
+  /// avatar for `assistant`); a null return (or a null builder) renders no
+  /// leading widget — the stock look.
+  final FaChatAvatarBuilder? avatarBuilder;
 
   /// Tighter outer spacing for the in-app Fa overlay, whose panel already
   /// pads the transcript list.
@@ -84,16 +95,15 @@ class ChatMessageTile extends StatelessWidget {
       return const SizedBox.shrink();
     }
     final styleSheet = fahMarkdownStyleSheet(Theme.of(context));
-    final palette = FahColors.of(context);
+    final palette = fahChatColorsOf(context);
+    final border = Theme.of(context).dividerColor;
 
-    return Container(
+    final bubble = Container(
       constraints: const BoxConstraints(maxWidth: 560),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: isUser ? palette.userBubble : palette.panel,
-        border: Border.all(
-          color: isUser ? palette.userBubbleBorder : palette.border,
-        ),
+        border: Border.all(color: isUser ? palette.userBubbleBorder : border),
         borderRadius: BorderRadius.circular(14),
       ),
       child: MarkdownBody(
@@ -109,6 +119,17 @@ class ChatMessageTile extends StatelessWidget {
         onTapLink: (text, href, title) =>
             _onMarkdownLink(context, text, href, title),
       ),
+    );
+    final avatar = isUser ? null : avatarBuilder?.call(context, message.role);
+    if (avatar == null) return bubble;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        avatar,
+        const SizedBox(width: 8),
+        Flexible(child: bubble),
+      ],
     );
   }
 
@@ -134,7 +155,7 @@ class ChatMessageTile extends StatelessWidget {
   }
 
   Widget _thinkingTile(BuildContext context) {
-    final palette = FahColors.of(context);
+    final palette = fahChatColorsOf(context);
     return Container(
       margin: compact
           ? EdgeInsets.zero
@@ -143,7 +164,9 @@ class ChatMessageTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.panelAlt.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: palette.border.withValues(alpha: 0.5)),
+        border: Border.all(
+          color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -171,7 +194,7 @@ class ChatMessageTile extends StatelessWidget {
     final toolName = message.toolName;
     final content = message.content;
     final isError = message.isError;
-    final palette = FahColors.of(context);
+    final palette = fahChatColorsOf(context);
     // generate_image results carry the saved sandbox path — show the image
     // inline under the tool tile instead of waiting for the model to
     // reference it. Errors ("Error: …") simply don't match.
@@ -193,7 +216,7 @@ class ChatMessageTile extends StatelessWidget {
         border: Border.all(
           color: isError
               ? palette.error.withValues(alpha: 0.45)
-              : palette.border,
+              : Theme.of(context).dividerColor,
         ),
       ),
       child: Column(

@@ -649,6 +649,20 @@ ChatTheme buildFahChatThemeLight({FaUiTheme? uiTheme}) => ChatTheme(
   shape: const BorderRadius.all(Radius.circular(12)),
 );
 
+/// The palette for chat surfaces (transcript tiles, the composer strip):
+/// [FahColors.of] re-seated on the host's [FaUiTheme.background] /
+/// [FaUiTheme.surface] tokens when the ambient provider sets them. Without
+/// a provider (or with null tokens) this is exactly the stock palette, so
+/// existing hosts render unchanged.
+FahColors fahChatColorsOf(BuildContext context) {
+  final base = FahColors.of(context);
+  final uiTheme = FaUiThemeProvider.maybeOf(context);
+  final background = uiTheme?.background;
+  final surface = uiTheme?.surface;
+  if (background == null && surface == null) return base;
+  return base.withSurfaces(background: background, surface: surface);
+}
+
 /// A brightness-resolved view of the two palettes, for widgets that read
 /// palette colors directly instead of going through [ThemeData] (chat
 /// bubbles, tool rows, the composer). Resolve once per build with
@@ -752,6 +766,33 @@ final class FahColors {
   final Color userBubbleBorder;
   final Color codeBg;
   final LinearGradient brandGradient;
+
+  /// A copy re-seated on the host's chat surfaces: [background] replaces
+  /// [bg] (composer strip), [surface] replaces the panel colors ([panel],
+  /// [panelAlt]) the tiles paint with. Null keeps the current value, so an
+  /// all-null call is pixel-identical to the stock palette.
+  FahColors withSurfaces({Color? background, Color? surface}) {
+    return FahColors._(
+      bg: background ?? bg,
+      bgAlt: bgAlt,
+      panel: surface ?? panel,
+      panelAlt: surface ?? panelAlt,
+      border: border,
+      borderBright: borderBright,
+      text: text,
+      dim: dim,
+      teal: teal,
+      indigo: indigo,
+      onAccent: onAccent,
+      error: error,
+      errorContainer: errorContainer,
+      pending: pending,
+      userBubble: userBubble,
+      userBubbleBorder: userBubbleBorder,
+      codeBg: codeBg,
+      brandGradient: brandGradient,
+    );
+  }
 
   /// A copy with the accent colors replaced (null keeps the current value);
   /// the brand gradient and the accent-tinted bubble colors derive from the

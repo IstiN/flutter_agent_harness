@@ -386,7 +386,7 @@ class _ChatComposerState extends State<ChatComposer>
   Widget _buildPendingAttachmentChip(int index) {
     final attachment = _pendingAttachments[index];
     final isImage = isInlineImageMimeType(attachment.mimeType);
-    final palette = FahColors.of(context);
+    final palette = fahChatColorsOf(context);
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -434,7 +434,9 @@ class _ChatComposerState extends State<ChatComposer>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final palette = FahColors.of(context);
+    // Chat-surface palette: the host's FaUiTheme background/surface tokens
+    // re-seat the strip on the host palette; stock hosts get FahPalette.
+    final palette = fahChatColorsOf(context);
     final strings = FaChatStrings.of(context);
     final showAttach =
         widget.features.attachments &&
@@ -449,7 +451,9 @@ class _ChatComposerState extends State<ChatComposer>
     return Container(
       decoration: BoxDecoration(
         color: palette.bg,
-        border: Border(top: BorderSide(color: palette.border)),
+        // The ambient divider color (== the palette border in the stock Fa
+        // theme) so hosts with their own hairline color get a seamless join.
+        border: Border(top: BorderSide(color: theme.dividerColor)),
       ),
       child: SafeArea(
         top: false,
