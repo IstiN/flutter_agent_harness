@@ -605,6 +605,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherRenameFolderTooltip => 'Rename folder';
 
   @override
+  String get launcherRestoreDemoApp => 'Restore reference version';
+
+  @override
+  String get launcherRestoreDemoAppDone =>
+      'App code restored (your data was kept)';
+
+  @override
+  String get launcherRestoreDemoAppFailed => 'Could not restore the app';
+
+  @override
   String get launcherSeedErrorCopy => 'Copy error';
 
   @override

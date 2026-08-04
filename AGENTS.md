@@ -310,7 +310,10 @@ factual: paths, commands, invariants — no essays.
   (a JsAppEngine on the tile entry, display-only — any tap opens the app)
   instead of the static icon tile; a WxH tile's edges align exactly with
   the WxH block of icon slots it replaces. Users resize tiles via the
-  hold-release menu (writes `tileSizes` into `launcher_layout.json`).
+  hold-release menu (writes `tileSizes` into `launcher_layout.json`); the
+  same menu offers demo apps "Restore reference version"
+  (`AppsStore.resetDemoApp` — force-reseeds bundled code when
+  ownership-aware seeding skips modified files, `storage.json` untouched).
 - `flutter_app/lib/services/home_service.dart` — smart home: `HomeApi` over
   the `fah/home` MethodChannel (HomeKit in `AppDelegate.swift`, iOS only;
   the macOS channel answers unsupported): `listHomes`/`listRooms`/

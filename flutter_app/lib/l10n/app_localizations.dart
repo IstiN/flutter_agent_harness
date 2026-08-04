@@ -1100,6 +1100,24 @@ abstract class AppLocalizations {
   /// **'Rename folder'**
   String get launcherRenameFolderTooltip;
 
+  /// No description provided for @launcherRestoreDemoApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore reference version'**
+  String get launcherRestoreDemoApp;
+
+  /// No description provided for @launcherRestoreDemoAppDone.
+  ///
+  /// In en, this message translates to:
+  /// **'App code restored (your data was kept)'**
+  String get launcherRestoreDemoAppDone;
+
+  /// No description provided for @launcherRestoreDemoAppFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not restore the app'**
+  String get launcherRestoreDemoAppFailed;
+
   /// No description provided for @launcherSeedErrorCopy.
   ///
   /// In en, this message translates to:

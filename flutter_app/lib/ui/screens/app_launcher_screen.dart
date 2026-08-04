@@ -517,19 +517,25 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   /// The iOS-style tile context menu: live-tile apps get size choices
   /// (Small 2x2 / Medium 4x2 / Large 4x4, persisted as a `tileSizes`
-  /// override) plus "Reset to default" while an override exists.
-  /// Non-widget apps get no menu (nothing to offer yet).
+  /// override) plus "Reset to default" while an override exists. Demo apps
+  /// additionally get "Restore reference version" — the escape hatch when
+  /// ownership-aware seeding skips user/agent-modified (possibly broken)
+  /// demo files; `storage.json` is never touched.
   Future<void> _showTileMenu(String key, Offset globalPosition) async {
     if (!key.startsWith('app:')) return;
     final app = _appsById[key.substring(4)];
     final tile = app?.tileWidget;
     final layout = _layout;
-    if (app == null || tile == null || layout == null) return;
+    if (app == null || layout == null) return;
+    final appId = app.id;
+    final isDemo = AppsStore.demoAppIds.contains(appId);
+    if (tile == null && !isDemo) return;
     final overlay = Overlay.of(context).context.findRenderObject();
     if (overlay is! RenderBox) return;
-    final appId = app.id;
     final override = layout.tileSizeFor(appId);
-    final current = override ?? (w: tile.widthCells, h: tile.heightCells);
+    final current = tile == null
+        ? null
+        : override ?? (w: tile.widthCells, h: tile.heightCells);
     final choices = <({String label, TileSize size})>[
       (label: context.l10n.launcherTileSizeSmall, size: (w: 2, h: 2)),
       (label: context.l10n.launcherTileSizeMedium, size: (w: 4, h: 2)),
@@ -542,25 +548,32 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         Offset.zero & overlay.size,
       ),
       items: [
-        for (final choice in choices)
-          PopupMenuItem<Object?>(
-            value: choice.size,
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 24,
-                  child: choice.size == current
-                      ? const Icon(Icons.check, size: 18)
-                      : null,
-                ),
-                Text(choice.label),
-              ],
+        if (tile != null) ...[
+          for (final choice in choices)
+            PopupMenuItem<Object?>(
+              value: choice.size,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 24,
+                    child: choice.size == current
+                        ? const Icon(Icons.check, size: 18)
+                        : null,
+                  ),
+                  Text(choice.label),
+                ],
+              ),
             ),
-          ),
-        if (override != null)
+          if (override != null)
+            PopupMenuItem<Object?>(
+              value: 'reset',
+              child: Text(context.l10n.launcherTileSizeReset),
+            ),
+        ],
+        if (isDemo)
           PopupMenuItem<Object?>(
-            value: 'reset',
-            child: Text(context.l10n.launcherTileSizeReset),
+            value: 'restore',
+            child: Text(context.l10n.launcherRestoreDemoApp),
           ),
       ],
     );
@@ -570,7 +583,27 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     } else if (selected is TileSize) {
       AppAnalytics.instance.launcherTileResized('${selected.w}x${selected.h}');
       layout.setTileSize(appId, selected);
+    } else if (selected == 'restore') {
+      unawaited(_restoreDemoApp(appId));
     }
+  }
+
+  /// Force-restores a demo app's bundled code files and reloads the grid
+  /// (see [AppsStore.resetDemoApp] — user data in `storage.json` survives).
+  Future<void> _restoreDemoApp(String appId) async {
+    final restored = await _appsStore.resetDemoApp(appId);
+    if (!mounted) return;
+    if (restored) await _reloadApps();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          restored
+              ? context.l10n.launcherRestoreDemoAppDone
+              : context.l10n.launcherRestoreDemoAppFailed,
+        ),
+      ),
+    );
   }
 
   // Registry of tile render boxes so [_onDrop] can translate the global
