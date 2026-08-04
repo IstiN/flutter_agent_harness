@@ -23,6 +23,7 @@ import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/fa_ui_theme.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
 import 'chat_composer.dart';
@@ -637,8 +638,8 @@ class _FaChatScreenState extends State<FaChatScreen>
               composerBuilder: (_) => const SizedBox.shrink(),
             ),
             theme: Theme.of(context).brightness == Brightness.light
-                ? buildFahChatThemeLight()
-                : buildFahChatTheme(),
+                ? buildFahChatThemeLight(uiTheme: FaUiThemeProvider.of(context))
+                : buildFahChatTheme(uiTheme: FaUiThemeProvider.of(context)),
           ),
         ),
         composerBuilder != null
