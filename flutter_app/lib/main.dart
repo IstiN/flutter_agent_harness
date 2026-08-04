@@ -31,7 +31,7 @@ import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
-import 'package:fa_ui/fa_ui.dart' show FaUiHost;
+import 'package:fa_ui/fa_ui.dart' show FaChatHost, FaUiHost;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -104,6 +104,31 @@ Future<void> main() async {
   }
   AppAnalytics.installFirebase(analytics);
   AppAnalytics.instance.appStart(analyticsAvailable: analytics != null);
+  // The fa_ui chat widgets report through FaChatHost.track — route those
+  // events into the app's analytics facade.
+  FaChatHost.analytics = (event, [params = const {}]) {
+    switch (event) {
+      case 'approval_mode_changed':
+        AppAnalytics.instance.approvalModeChanged(params['mode'] as String);
+      case 'secret_request':
+        AppAnalytics.instance.secretRequest(params['result'] as String);
+      case 'message_sent':
+        AppAnalytics.instance.messageSent(
+          hasAttachments: params['has_attachments'] as bool,
+          textLength: params['text_length'] as int,
+        );
+      case 'upload_added':
+        AppAnalytics.instance.uploadAdded(params['count'] as int);
+      case 'voice_input_used':
+        AppAnalytics.instance.voiceInputUsed();
+      case 'screen_opened':
+        AppAnalytics.instance.screenOpened(params['screen_name'] as String);
+      case 'files_opened':
+        AppAnalytics.instance.filesOpened(params['source'] as String);
+      case 'settings_opened':
+        AppAnalytics.instance.settingsOpened();
+    }
+  };
   // Crashlytics: fatal Flutter errors + uncaught async errors flow into the
   // Firebase console (no web support — the guard skips both the placeholder
   // options used by CI builds and the web platform entirely).

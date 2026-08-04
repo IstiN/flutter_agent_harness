@@ -16,6 +16,15 @@ import 'package:test/test.dart';
 
 /// Tracked files that legitimately carry no AppAnalytics call, and why.
 const _documentedExemptions = <String, String>{
+  'lib/ui/widgets/chat_composer.dart':
+      'Adapter shim — the composer lives in packages/fa_ui; messageSent/'
+      'uploadAdded/voiceInputUsed fire via FaChatHost.track, routed into '
+      'AppAnalytics by the FaChatHost.analytics hookup in main.dart.',
+  'lib/ui/screens/chat_screen.dart':
+      'Adapter shim — the screen lives in packages/fa_ui (FaChatScreen); '
+      'screenOpened/filesOpened/settingsOpened fire via FaChatHost.track, '
+      'routed into AppAnalytics by the FaChatHost.analytics hookup in '
+      'main.dart.',
   'lib/ui/screens/media_slot_picker_page.dart':
       'Re-export shim — the page lives in packages/fa_ui; screenOpened is '
       'logged at the app-side push point (MediaModelsSection._editSlot).',

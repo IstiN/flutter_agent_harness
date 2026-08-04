@@ -7,6 +7,20 @@
 /// ([FaUiTheme]) and string ([FaUiStrings]) customization.
 library;
 
+export 'src/chat/approval_ui.dart';
+export 'src/chat/ask_ui.dart';
+export 'src/chat/chat_composer.dart';
+export 'src/chat/chat_message_tile.dart';
+export 'src/chat/chat_strings.dart';
+export 'src/chat/fa_chat_features.dart';
+export 'src/chat/fa_chat_host.dart';
+export 'src/chat/fa_chat_screen.dart';
+export 'src/chat/fa_chat_service.dart';
+export 'src/chat/markdown_style.dart';
+export 'src/chat/media_player.dart';
+export 'src/chat/media_tool_names.dart';
+export 'src/chat/secret_request_sheet.dart';
+export 'src/chat/upload_utils.dart';
 export 'src/host_config.dart';
 export 'src/providers/connection.dart';
 export 'src/providers/default_chat_model.dart';

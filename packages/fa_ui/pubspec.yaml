@@ -24,6 +24,17 @@ dependencies:
   # ChatTheme for the flutter_chat_ui theme builders.
   flutter_chat_core: ^2.9.0
 
+  # The chat transcript UI (chat/): markdown rendering and the chat surface.
+  flutter_markdown: ^0.7.7+1
+  flutter_chat_ui: ^2.11.1
+
+  # Inline playback of sandbox-generated media (chat/media_player.dart):
+  # audio plays from in-memory bytes, video from a temp file staged via
+  # path_provider (video is not supported in the web build).
+  audioplayers: ^6.8.1
+  video_player: ^2.13.0
+  path_provider: ^2.1.6
+
   # The /models endpoint fetch behind the model quick select.
   http: ^1.6.0
 

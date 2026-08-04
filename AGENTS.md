@@ -145,7 +145,25 @@ factual: paths, commands, invariants — no essays.
   `MediaSlotProviderPickerPage`/`MediaSlotModelPage`, `ProviderPreset` +
   helpers, `ModelIdAutocompleteField`), and the stores (`ProviderRegistry`,
   `MediaModelsStore`, `SessionKeysStore`, `KeychainStore`,
-  `modelIdSuggestsVision`). Package strings live in `FaUiStrings`
+  `modelIdSuggestsVision`). The chat leaf widgets live there too
+  (`lib/src/chat/`): the Markdown style/sandbox image resolver
+  (`markdown_style.dart`), the inline audio/video players
+  (`media_player.dart`), the approval/ask/secret-request sheets, the
+  transcript message tile (`chat_message_tile.dart`), the composer
+  (`chat_composer.dart` — file/gallery/camera picking through the
+  `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks, voice
+  input through `FaChatHost.voiceInput`), and the single-service chat
+  screen (`fa_chat_screen.dart` — `FaChatScreen(service:, features:,
+  title:, settingsBuilder:, fileBrowserBuilder:, composerBuilder:)`),
+  plus the upload helpers
+  (`upload_utils.dart`) and the media tool-name constants
+  (`media_tool_names.dart`) —
+  localized via `FaChatStrings` (en/ru defaults, `FaChatStringsScope`
+  override), analytics via the `FaChatHost.track` hook, backend surface is
+  the `FaChatService` interface (which `AgentService` implements;
+  `ApprovalModeSelector` needs only the
+  `FaApprovalModeController` slice).
+  Package strings live in `FaUiStrings`
   (en/ru defaults resolved from the locale, host-overridable via
   `FaUiStringsScope`) — never the app's gen-l10n. App-level concerns are
   injected: the active connection is the `FaChatConnection` interface,
@@ -169,7 +187,8 @@ factual: paths, commands, invariants — no essays.
   shells, wasm, git, fs persistence), feature dirs
   `lib/apps|gemma|webllm|transformers_js|l10n/`. All lib-internal imports
   are absolute `package:fa/...` — no relative imports.
-- `flutter_app/lib/ui/markdown_style.dart` — beyond
+- `flutter_app/lib/ui/markdown_style.dart` (shim re-export of
+  `packages/fa_ui/lib/src/chat/markdown_style.dart`) — beyond
   `fahMarkdownStyleSheet`: `SandboxImageResolver`/`fahSandboxImageBuilder`
   render markdown images with sandbox paths (`![alt](generated/x.png)`,
   leading `/` stripped) by loading bytes via `env.readBinaryFile` (memoized
@@ -178,7 +197,8 @@ factual: paths, commands, invariants — no essays.
   markdown. `generate_image` tool tiles also render the saved image inline
   (path parsed from the result text, which itself teaches the model the
   `![image](<path>)` convention).
-- `flutter_app/lib/ui/widgets/media_player.dart` — inline audio/video
+- `flutter_app/lib/ui/widgets/media_player.dart` (shim re-export of
+  `packages/fa_ui/lib/src/chat/media_player.dart`) — inline audio/video
   playback of sandbox media: `SandboxAudioPlayer` (play/pause, seek slider,
   `m:ss / m:ss`) and `SandboxVideoPlayer` (bounded tap-to-toggle surface,
   progress bar, mute) behind injectable `SandboxAudioController`/
@@ -193,7 +213,8 @@ factual: paths, commands, invariants — no essays.
   (`onTapLink` — flutter_markdown has no custom link renderer) in the chat
   screen and the Fa chat overlay. Bytes load through the same memoized
   `SandboxImageResolver.load`.
-- `flutter_app/lib/ui/widgets/chat_message_tile.dart` — the ONE transcript
+- `flutter_app/lib/ui/widgets/chat_message_tile.dart` (shim re-export of
+  `packages/fa_ui/lib/src/chat/chat_message_tile.dart`) — the ONE transcript
   message renderer, shared by the chat screen (its `flutter_chat_ui`
   builders delegate) and the in-app Fa chat overlay (`compact: true` for
   tighter panel padding): user/assistant Markdown bubbles (sandbox images
@@ -201,6 +222,14 @@ factual: paths, commands, invariants — no essays.
   styled `[ tool ]` tiles with the private collapsible output block,
   `$`-prompt system lines, and inline generated-image/audio/video under
   tool tiles. Never fork message rendering — extend this widget.
+- `flutter_app/lib/ui/widgets/chat_composer.dart` (ADAPTER over
+  `packages/fa_ui/lib/src/chat/chat_composer.dart`) — keeps the app's
+  constructor surface (`AgentService` + injectable `uploadPicker`/`asr`/
+  `asrTranscriber` test fakes) and bridges it to the shared composer's
+  hooks: the `UploadPicker` becomes a `FaChatUploadPicker`, gallery/camera
+  come from `image_picker`, and the ASR stack is wrapped in a
+  `FaChatVoiceInput` (transcriber resolved per take via the session's
+  media gateway, falling back to the active provider).
 - `flutter_app/lib/ui/screens/app_launcher_screen.dart` — THE app home on
   every layout (`faHomeScreen` in main.dart always returns it; the classic
   sidebar chat home is legacy and `session_sidebar.dart` no longer exists —
@@ -232,11 +261,19 @@ factual: paths, commands, invariants — no essays.
   `manager.switchTo`, `FaWorkBar(embedded:)`, and the shared
   `ChatMessageTile` transcript + `ChatComposer`. Pull-down (48px / 300px/s)
   collapses.
-- `flutter_app/lib/ui/widgets/chat_composer.dart` — THE chat composer
-  (attachment chips/staging, mic voice input, steer queue, send/stop),
-  extracted from `chat_screen.dart`; `ChatScreen` delegates to it and the
-  session chat sheet reuses it. Composer changes must keep the chat goldens
-  pixel-identical.
+- `flutter_app/lib/ui/screens/chat_screen.dart` (ADAPTER over
+  `packages/fa_ui/lib/src/chat/fa_chat_screen.dart`; also re-exports
+  `chatImageMessageSource`/`kWideLayoutBreakpoint`) — keeps the app's
+  multi-session surface: the `FlutterSessionManager` subscription (session
+  switch hands the shared screen the new active service, which
+  re-subscribes and re-syncs in place; closing the last session clones a
+  fresh one via `ensureActiveSession`) plus the fa-specific affordances the
+  package screen takes as hooks — the settings route (`settingsBuilder` →
+  `SettingsScreen`), the files panel (`fileBrowserBuilder` → `FileBrowser`
+  with env/fsRevision), the `open_app` launcher (`service.appLauncher` →
+  `FaChatHost.appLauncher` when set, else `pushJsApp`), and the composer
+  test fakes (`composerBuilder` → the app's `ChatComposer` adapter).
+  Composer changes must keep the chat goldens pixel-identical.
 - `flutter_app/lib/l10n/` — gen-l10n: `app_en.arb` + `app_ru.arb` →
   `AppLocalizations` (generated, never edit; `flutter gen-l10n`). UI copy
   via `context.l10n.<key>` (`l10n_ext.dart`); locale follows system.

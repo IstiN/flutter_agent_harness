@@ -11,6 +11,14 @@ import 'package:http/http.dart' as http;
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/media_models_store.dart';
 
+// The tool-name constants live in the fa_ui package (the shared chat
+// message tile keys its inline rendering off them); re-exported here so
+// existing `media_tools.dart` imports keep working.
+import 'package:fa_ui/fa_ui.dart'
+    show generateImageToolName, speakToolName, generateMusicToolName;
+export 'package:fa_ui/fa_ui.dart'
+    show generateImageToolName, speakToolName, generateMusicToolName;
+
 /// Directory (relative to the env's working directory) generated media
 /// files are saved into so the agent (and JS apps) can reference them with
 /// the regular file tools.
@@ -521,15 +529,6 @@ final class MediaGateway {
     return GeneratedMediaFile(path: path, bytes: bytes, detail: detail);
   }
 }
-
-/// Name of the agent tool that generates an image.
-const generateImageToolName = 'generate_image';
-
-/// Name of the agent tool that synthesizes speech.
-const speakToolName = 'speak';
-
-/// Name of the agent tool that generates music.
-const generateMusicToolName = 'generate_music';
 
 /// Name of the agent tool that generates a video clip.
 const generateVideoToolName = 'generate_video';

@@ -4,7 +4,13 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
-import 'package:fa_ui/fa_ui.dart' show FaChatConnection;
+import 'package:fa_ui/fa_ui.dart'
+    show
+        FaApprovalModeController,
+        FaChatConnection,
+        FaChatMessage,
+        FaChatService;
+import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/apps/js_app_engine.dart';
@@ -50,31 +56,10 @@ import 'package:fa/webllm/webllm_stream_function.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
 /// A UI-facing chat message.
-final class FahChatMessage {
-  FahChatMessage({
-    required this.role,
-    required this.content,
-    this.imageBytes,
-    this.toolName,
-    this.isError = false,
-  });
-
-  /// One of `user`, `assistant`, `thinking`, `tool`, `system`.
-  final String role;
-
-  /// Text content. For images the text prompt lives here; the image bytes are
-  /// in [imageBytes].
-  String content;
-
-  /// Non-null when the user attached an image.
-  final Uint8List? imageBytes;
-
-  /// Set for tool-related messages.
-  final String? toolName;
-
-  /// Whether this message represents an error.
-  final bool isError;
-}
+/// A UI-facing chat message: one of `user`, `assistant`, `thinking`,
+/// `tool`, `system`. Alias of the shared fa_ui type — new code should use
+/// [FaChatMessage] directly.
+typedef FahChatMessage = FaChatMessage;
 
 /// Configuration needed to talk to a provider.
 final class AgentConfig {
@@ -140,7 +125,8 @@ final class AgentConfig {
 /// neither text nor tool calls — a small on-device model occasionally
 /// returns an empty completion, and a blank bubble looks like a UI bug.
 /// UI-only: the persisted session message keeps its real (empty) content.
-const emptyResponsePlaceholder = '(empty response — try again)';
+/// Alias of the shared fa_ui constant.
+const emptyResponsePlaceholder = fa_ui.emptyResponsePlaceholder;
 
 /// A chat attachment already staged in the sandbox (see
 /// [AgentService.stageAttachment]): [path] is the env-relative path the
@@ -153,7 +139,8 @@ typedef StagedAttachment = ({String path, Uint8List bytes, String mimeType});
 ///
 /// Persists sessions to [sessionsRoot] via [JsonlSessionRepo] and translates
 /// agent lifecycle events into a list of [FahChatMessage].
-class AgentService extends ChangeNotifier implements FaChatConnection {
+class AgentService extends ChangeNotifier
+    implements FaChatConnection, FaApprovalModeController, FaChatService {
   AgentService({
     required this._agent,
     required this.env,
@@ -567,6 +554,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// dialog). Services built by [AgentService.create] seed it from the
   /// persisted choice (see [ApprovalModeStore]) and write every change
   /// through; the pre-constructed-Agent path (tests) keeps the default.
+  @override
   final ApprovalManager approval;
 
   /// The persisted approval-mode store ([AgentService.create] path only);
@@ -575,16 +563,19 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
 
   /// UI hook rendering the approval prompt (the chat screen installs a
   /// Material dialog). `null` → prompt-policy calls are denied.
+  @override
   ApprovalPrompt? approvalPromptHandler;
 
   /// UI hook rendering the ask tool's questions (the chat screen installs a
   /// Material bottom sheet). `null` → ask calls resolve as cancelled, the
   /// safe headless default.
+  @override
   AskCallback? askHandler;
 
   /// UI hook rendering the `request_secret` prompt (the chat screen installs
   /// a Material bottom sheet). `null` → the request resolves as declined,
   /// the safe headless default.
+  @override
   RequestSecretCallback? secretRequestHandler;
 
   /// The live secrets wrapper around [env] ([AgentService.create] path);
@@ -705,6 +696,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// Switches the approval mode (settings dialog's mode selector) and
   /// persists the choice when a store is wired (fire-and-forget — the UI
   /// never blocks on the write).
+  @override
   void setApprovalMode(ApprovalMode mode) {
     if (approval.mode == mode) return;
     approval.mode = mode;
@@ -819,11 +811,16 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// drives) drop in without UI changes.
   final ExecutionEnv env;
 
+  @override
+  ExecutionEnv get sandboxEnv => env;
+
+  @override
   final List<FahChatMessage> messages = [];
 
   /// User messages typed while the agent is still streaming. They are queued
   /// via [Agent.steer] and injected at the next turn boundary; the UI shows
   /// them above the composer as "pending" until the run picks them up.
+  @override
   final List<String> pendingSteerTexts = [];
 
   /// Tracks [TurnStartEvent]s within the current run so pending steering
@@ -835,6 +832,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// Live Activity (see [LiveActivity]): a run asks the OS for extra time
   /// and shows its status on the Dynamic Island / lock screen when the app
   /// is backgrounded mid-stream.
+  @override
   bool get isStreaming => _isStreaming;
   set isStreaming(bool value) {
     if (value == _isStreaming) return;
@@ -933,6 +931,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
     unawaited(LiveActivity.update(statusText: _liveActivityStatusText()));
   }
 
+  @override
   String? error;
 
   /// Builtin tools whose completion may mean the sandbox filesystem changed
@@ -986,6 +985,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending
   /// until the next turn picks it up.
+  @override
   Future<void> sendText(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
@@ -1015,6 +1015,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   ///
   /// Throws [StateError] with a readable message when nothing was written —
   /// callers must surface it (a snackbar), never fail silently.
+  @override
   Future<String> stageAttachment({
     required String name,
     required Uint8List bytes,
@@ -1056,6 +1057,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// a pending attachment chip is removed before sending. Only paths inside
   /// [uploadsDir] qualify; failures are ignored (the file is small and the
   /// sandbox is ephemeral).
+  @override
   Future<void> discardStagedAttachment(String path) async {
     if (!path.startsWith('$uploadsDir/')) return;
     try {
@@ -1072,6 +1074,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// when the active provider is a hosted one ([inlinesImageAttachments]);
   /// SVG and other non-decodable types always travel as path references
   /// only, and on-device text-only backends receive the paths only.
+  @override
   Future<void> sendAttachments({
     required List<StagedAttachment> attachments,
     String text = '',
@@ -1250,6 +1253,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   }
 
   /// Aborts the current run, if any.
+  @override
   void abort() => _agent.abort();
 
   /// Serializes `_persist` runs so concurrent triggers never double-append
@@ -1649,6 +1653,7 @@ class AgentService extends ChangeNotifier implements FaChatConnection {
   /// The visible transcript as Markdown (`## You` / `## Fa` / `## tool`
   /// sections) — shared by the chat screen's and the sheet's "Copy session"
   /// actions so both copy the exact same text.
+  @override
   String transcriptMarkdown() {
     final buffer = StringBuffer();
     for (final m in messages) {
