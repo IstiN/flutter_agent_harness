@@ -825,4 +825,8 @@
 
 - feat(fa_ui): userBubble/userBubbleBorder tokens in FaUiTheme
 
+## 0.1.135
+
+- feat(fa_ui): providerId through the connect flow
+
 ## Unreleased
