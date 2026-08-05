@@ -726,6 +726,11 @@ class AgentService extends ChangeNotifier
   /// placeholder/default.
   String get activeBaseUrl => _activeBaseUrl;
 
+  /// Fa does not track provider ids in the connection — the provider UI
+  /// falls back to base-URL matching for the "current" mark.
+  @override
+  String? get activeProviderId => null;
+
   /// Base URL and API key of the active backend, tracked alongside
   /// [_providerKind] so the media gateway's fallback follows [reconfigure].
   late String _activeBaseUrl;

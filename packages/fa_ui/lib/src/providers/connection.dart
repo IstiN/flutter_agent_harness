@@ -17,6 +17,13 @@ abstract interface class FaChatConnection implements Listenable {
   /// The active endpoint's base URL (empty for on-device backends).
   String get activeBaseUrl;
 
+  /// The active provider's stable id: the [CustomProvider] id or the
+  /// provider preset's name, whatever the host's apply received as
+  /// [FaChatModelConfig.providerId]. Null when the host does not track
+  /// provider ids — the provider UI then matches "current" by base URL,
+  /// which conflates providers sharing one host.
+  String? get activeProviderId;
+
   /// The active chat model id.
   String get modelId;
 }
@@ -34,6 +41,7 @@ final class FaChatModelConfig {
     this.contextWindow = fallbackContextWindow,
     this.maxTokens = fallbackMaxTokens,
     this.supportsImages,
+    this.providerId,
   });
 
   /// Provider adapter kind (fa_ui's endpoint pickers always produce
@@ -59,6 +67,11 @@ final class FaChatModelConfig {
   /// Whether the model accepts image input; null defers to the host's own
   /// vision heuristic.
   final bool? supportsImages;
+
+  /// The picked provider's stable id: the [CustomProvider] id or the
+  /// provider preset's name; null for on-device routes. Lets hosts tell
+  /// providers apart when several share one base URL.
+  final String? providerId;
 
   @override
   String toString() => 'FaChatModelConfig($providerKind, $baseUrl, $modelId)';

@@ -34,6 +34,16 @@ class ProvidersSection extends StatelessWidget {
     if (service == null || service.providerKind != 'openai-completions') {
       return false;
     }
+    // A host that tracks provider ids disambiguates providers sharing one
+    // base URL (two custom endpoints on one host); others match by URL.
+    final activeId = service.activeProviderId;
+    if (activeId != null) {
+      return switch (provider) {
+        CustomProvider custom => custom.id == activeId,
+        ProviderPreset preset => preset.name == activeId,
+        _ => false,
+      };
+    }
     final baseUrl = switch (provider) {
       ProviderPreset preset => preset.baseUrl,
       CustomProvider custom => custom.baseUrl,

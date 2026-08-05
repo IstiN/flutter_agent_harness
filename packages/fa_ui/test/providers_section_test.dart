@@ -15,12 +15,15 @@ class _FakeConnection extends ChangeNotifier implements FaChatConnection {
   String baseUrl;
   String kind;
   String model = 'test-model';
+  String? providerId;
   FaChatModelConfig? applied;
 
   @override
   String get providerKind => kind;
   @override
   String get activeBaseUrl => baseUrl;
+  @override
+  String? get activeProviderId => providerId;
   @override
   String get modelId => model;
 
@@ -29,6 +32,7 @@ class _FakeConnection extends ChangeNotifier implements FaChatConnection {
     kind = config.providerKind;
     baseUrl = config.baseUrl;
     model = config.modelId;
+    providerId = config.providerId;
     notifyListeners();
   }
 }
@@ -73,6 +77,49 @@ void main() {
       expect(find.text('Add provider'), findsOneWidget);
       // Exactly one row is marked current — the OpenRouter preset.
       expect(find.byIcon(Icons.check), findsOneWidget);
+    });
+
+    testWidgets('two custom providers on one host: only the active id is '
+        'marked current', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Kimi 1',
+        baseUrl: 'https://api.kimi.com/v1',
+        modelId: 'k3-256k',
+      );
+      final kimi2 = await registry.add(
+        name: 'Kimi 2',
+        baseUrl: 'https://api.kimi.com/v1',
+        modelId: 'k3-256k',
+      );
+      final connection = _FakeConnection(
+        baseUrl: 'https://api.kimi.com/v1',
+        kind: 'openai-completions',
+      )..providerId = kimi2.id;
+      await _pump(
+        tester,
+        ProvidersSection(service: connection, registry: registry),
+      );
+
+      // The base-URL match would mark both rows; the id match marks only
+      // the Kimi 2 row.
+      expect(find.byIcon(Icons.check), findsOneWidget);
+      final kimi1Row = find.ancestor(
+        of: find.text('Kimi 1'),
+        matching: find.byType(InkWell),
+      );
+      final kimi2Row = find.ancestor(
+        of: find.text('Kimi 2'),
+        matching: find.byType(InkWell),
+      );
+      expect(
+        find.descendant(of: kimi2Row, matching: find.byIcon(Icons.check)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: kimi1Row, matching: find.byIcon(Icons.check)),
+        findsNothing,
+      );
     });
 
     testWidgets('add provider: the editor page persists via the registry', (
@@ -311,6 +358,9 @@ void main() {
       expect(connection.applied!.modelId, 'acme-2');
       expect(connection.applied!.baseUrl, 'https://acme.example/v1');
       expect(connection.applied!.apiKey, 'sk-acme');
+      // The stable provider id rides along so hosts can tell same-host
+      // providers apart.
+      expect(connection.applied!.providerId, provider.id);
       expect(find.text('acme-2 · Acme'), findsOneWidget);
     });
 

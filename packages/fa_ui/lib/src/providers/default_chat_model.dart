@@ -433,6 +433,13 @@ class _DefaultModelPickerPageState extends State<DefaultModelPickerPage> {
               _endpointContextWindows[model] ?? fallbackContextWindow,
           maxTokens: _endpointMaxTokens[model] ?? fallbackMaxTokens,
           supportsImages: modelIdSuggestsVision(model),
+          // The stable provider id (custom id / preset name) lets hosts tell
+          // apart providers sharing one base URL.
+          providerId: switch (widget.provider) {
+            CustomProvider custom => custom.id,
+            ProviderPreset preset => preset.name,
+            _ => null,
+          },
         ),
       );
       // A successful connect keeps the custom provider's key for the
