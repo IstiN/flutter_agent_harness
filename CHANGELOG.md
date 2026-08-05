@@ -838,4 +838,9 @@
 - chore(deps): bump flutter_gemma to latest official releases
 - feat(fa_llm_flutter): add FlutterGemma on-device provider
 
+## 0.1.138
+
+- feat(gemma): enable on-device Gemma provider on macOS
+- feat(fa_ui): wire fa_llm/fa_llm_flutter into provider config
+
 ## Unreleased
