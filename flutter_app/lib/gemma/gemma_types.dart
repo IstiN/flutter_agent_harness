@@ -27,22 +27,26 @@ const gemmaProviderKind = 'gemma';
 const gemmaUnsupportedPlatformMessage =
     'On-device inference (Gemma 4) is not available in this build of the '
     'app. Pick a hosted provider here — or use the web build (Chrome/Edge), '
-    'which runs Gemma 4 on-device via transformers.js, or the iOS/Android '
-    'app, which runs it via flutter_gemma.';
+    'which runs Gemma 4 on-device via transformers.js, or the iOS/Android/'
+    'macOS app, which runs it via flutter_gemma.';
 
 /// Whether the Gemma provider appears in the settings provider picker.
 /// Pure function so widget/unit tests can exercise the mobile and desktop
 /// cases without a device; the app reads [gemmaProviderSupported].
 ///
-/// iOS/Android only: on web the provider is replaced by the transformers.js
-/// one ([transformersJsProviderVisible] in `lib/transformers_js/`) — the
-/// flutter_gemma web engine (`@litert-lm/core`) is abandoned there.
+/// iOS/Android/macOS: flutter_gemma 1.5.2 + flutter_gemma_litertlm 1.3.1
+/// support on-device inference on these platforms. On web the provider is
+/// replaced by the transformers.js one ([transformersJsProviderVisible] in
+/// `lib/transformers_js/`) — the flutter_gemma web engine is abandoned
+/// there; Windows/Linux are left hidden until explicitly validated.
 bool gemmaProviderVisible({
   required bool isWeb,
   required TargetPlatform platform,
 }) {
   if (isWeb) return false;
-  return platform == TargetPlatform.iOS || platform == TargetPlatform.android;
+  return platform == TargetPlatform.iOS ||
+      platform == TargetPlatform.android ||
+      platform == TargetPlatform.macOS;
 }
 
 /// Whether the Gemma provider is offered on this platform (iOS/Android;
