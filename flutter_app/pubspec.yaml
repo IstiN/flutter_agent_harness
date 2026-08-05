@@ -88,8 +88,8 @@ dependencies:
   # On-device Gemma 4 inference (iOS/Android via FFI, web via @litert-lm/core,
   # .litertlm engine). Imported only from lib/gemma/ behind conditional
   # imports — host tests never touch the plugin.
-  flutter_gemma: ^1.3.1
-  flutter_gemma_litertlm: ^1.1.0
+  flutter_gemma: ^1.5.2
+  flutter_gemma_litertlm: ^1.3.1
 
   # Pinned explicitly because lib/gemma/gemma_web_registration_web.dart
   # imports them directly: dart2js release builds tree-shake the generated
