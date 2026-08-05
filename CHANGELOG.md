@@ -833,4 +833,9 @@
 
 - Add fa_llm package extracted from flutter_agent_memory llm layer
 
+## 0.1.137
+
+- chore(deps): bump flutter_gemma to latest official releases
+- feat(fa_llm_flutter): add FlutterGemma on-device provider
+
 ## Unreleased
