@@ -829,4 +829,8 @@
 
 - feat(fa_ui): providerId through the connect flow
 
+## 0.1.136
+
+- Add fa_llm package extracted from flutter_agent_memory llm layer
+
 ## Unreleased
