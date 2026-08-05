@@ -26,6 +26,8 @@ final class FaUiTheme {
     this.buttonRadius,
     this.background,
     this.surface,
+    this.userBubble,
+    this.userBubbleBorder,
   });
 
   /// Primary accent (buttons, marks, selections); null keeps the brand
@@ -61,6 +63,14 @@ final class FaUiTheme {
   /// Chat raised-surface color (`ChatColors.surfaceContainer`); null keeps
   /// the brand panel color.
   final Color? surface;
+
+  /// User chat bubble fill; null derives the accent-tinted bubble from
+  /// [indigo] (the stock behavior). Hosts that want a neutral bubble with
+  /// only an accent outline set this and [userBubbleBorder] explicitly.
+  final Color? userBubble;
+
+  /// User chat bubble border; null derives it from [indigo].
+  final Color? userBubbleBorder;
 
   /// The effective accent colors for a palette built on [baseIndigo] /
   /// [baseTeal].

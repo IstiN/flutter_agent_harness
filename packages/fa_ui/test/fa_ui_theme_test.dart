@@ -121,6 +121,34 @@ void main() {
     expect(stock.colors.surfaceContainer, FahPalette.panel);
   });
 
+  testWidgets('FahColors.of honors explicit user bubble tokens', (
+    tester,
+  ) async {
+    late FahColors colors;
+    await tester.pumpWidget(
+      FaUiThemeProvider(
+        data: const FaUiTheme(
+          userBubble: Color(0xFF1C1C26),
+          userBubbleBorder: Color(0x597C3AED),
+        ),
+        child: MaterialApp(
+          theme: buildFahTheme(),
+          home: Builder(
+            builder: (context) {
+              colors = FahColors.of(context);
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+    expect(colors.userBubble, const Color(0xFF1C1C26));
+    expect(colors.userBubbleBorder, const Color(0x597C3AED));
+    // Accents and the rest of the palette stay stock.
+    expect(colors.indigo, FahPalette.indigo);
+    expect(colors.panel, FahPalette.panel);
+  });
+
   testWidgets('the provider builds both brightness themes from its data', (
     tester,
   ) async {

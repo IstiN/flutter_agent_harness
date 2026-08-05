@@ -742,10 +742,20 @@ final class FahColors {
         ? light
         : dark;
     final uiTheme = FaUiThemeProvider.maybeOf(context);
-    if (uiTheme == null || (uiTheme.indigo == null && uiTheme.teal == null)) {
+    if (uiTheme == null ||
+        (uiTheme.indigo == null &&
+            uiTheme.teal == null &&
+            uiTheme.userBubble == null &&
+            uiTheme.userBubbleBorder == null)) {
       return base;
     }
-    return base.withAccents(indigo: uiTheme.indigo, teal: uiTheme.teal);
+    // Explicit bubble tokens win over the accent-derived tints.
+    return base
+        .withAccents(indigo: uiTheme.indigo, teal: uiTheme.teal)
+        .withUserBubble(
+          color: uiTheme.userBubble,
+          border: uiTheme.userBubbleBorder,
+        );
   }
 
   final Color bg;
@@ -766,6 +776,32 @@ final class FahColors {
   final Color userBubbleBorder;
   final Color codeBg;
   final LinearGradient brandGradient;
+
+  /// A copy with the user chat bubble colors replaced (null keeps the
+  /// current value) — for hosts that want a neutral bubble instead of the
+  /// accent-tinted one [withAccents] derives.
+  FahColors withUserBubble({Color? color, Color? border}) {
+    return FahColors._(
+      bg: bg,
+      bgAlt: bgAlt,
+      panel: panel,
+      panelAlt: panelAlt,
+      border: this.border,
+      borderBright: borderBright,
+      text: text,
+      dim: dim,
+      teal: teal,
+      indigo: indigo,
+      onAccent: onAccent,
+      error: error,
+      errorContainer: errorContainer,
+      pending: pending,
+      userBubble: color ?? userBubble,
+      userBubbleBorder: border ?? userBubbleBorder,
+      codeBg: codeBg,
+      brandGradient: brandGradient,
+    );
+  }
 
   /// A copy re-seated on the host's chat surfaces: [background] replaces
   /// [bg] (composer strip), [surface] replaces the panel colors ([panel],
