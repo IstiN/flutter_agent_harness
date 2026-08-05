@@ -821,4 +821,8 @@
 - feat(fa_ui): host surface tokens + optional app bar in FaChatScreen
 - fix(fa_ui): FaChatScreen honors the host FaUiTheme in the chat theme
 
+## 0.1.134
+
+- feat(fa_ui): userBubble/userBubbleBorder tokens in FaUiTheme
+
 ## Unreleased
