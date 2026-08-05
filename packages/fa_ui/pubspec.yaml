@@ -38,6 +38,14 @@ dependencies:
   # The /models endpoint fetch behind the model quick select.
   http: ^1.6.0
 
+  # Shared LLM abstractions and the Flutter on-device Gemma provider. fa_ui
+  # stays UI-only for presets/config, but exposes helpers that map its
+  # connection config onto the fa_llm types hosts use to build providers.
+  fa_llm:
+    path: ../fa_llm
+  fa_llm_flutter:
+    path: ../fa_llm_flutter
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
