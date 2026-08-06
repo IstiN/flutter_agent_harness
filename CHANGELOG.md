@@ -852,4 +852,8 @@
 - feat(settings): show on-device providers in the Providers section
 - feat(settings): voice selection for the TTS media slot
 
+## 0.1.141
+
+- fix(macos): bundle LiteRT-LM companion dylibs for flutter_gemma
+
 ## Unreleased
