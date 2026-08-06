@@ -9,10 +9,9 @@ import 'package:flutter/services.dart';
 import 'package:fa/services/health_service.dart';
 
 /// Whether the current platform has a native health backend: HealthKit is
-/// wired up on iOS only (see `AppDelegate.swift` — the macOS handler in
-/// `MainFlutterWindow.swift` reports unsupported, and there is no HealthKit
-/// on the remaining platforms).
-bool get healthPlatformSupported => Platform.isIOS;
+/// wired up on iOS and macOS 14+ (see `AppDelegate.swift` /
+/// `HealthChannel.swift`).
+bool get healthPlatformSupported => Platform.isIOS || Platform.isMacOS;
 
 /// Creates the method-channel-backed [HealthApi] (IO platforms).
 HealthApi createHealthService() => const MethodChannelHealthApi();

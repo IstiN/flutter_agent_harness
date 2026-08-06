@@ -1,6 +1,19 @@
-# flutter_agent_example
+# Fa — Flutter Agent app
 
-A new Flutter project.
+The Flutter macOS/iOS client for the agent harness.
+
+## macOS builds
+
+Two flavors are supported:
+
+- **Sandboxed** (`flutter build macos --release`) — for the App Store.
+  Script execution is blocked by the App Sandbox, so embedded interpreters
+  are required for agent code execution.
+- **Full / no-sandbox** (`scripts/build_macos_nosandbox.sh`) — for GitHub
+  Releases. The hardened-runtime build can spawn system interpreters
+  (`python3`, `bash`, `node`) and declares HealthKit access. Set
+  `MACOS_IDENTITY` to a Developer ID certificate for distribution; the
+  default `-` produces an ad-hoc signed local build.
 
 ## Getting Started
 

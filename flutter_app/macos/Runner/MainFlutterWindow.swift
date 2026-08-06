@@ -898,37 +898,8 @@ private func contactsOpenUrl(_ urlString: String) -> Any {
   return NSWorkspace.shared.open(url)
 }
 
-/// The `fah/health` method channel: HealthKit does not exist on macOS, so
-/// the channel is registered but honestly reports every call as
-/// unsupported. The Dart side (`healthPlatformSupported`) already gates
-/// health to iOS and never gets here in practice.
-private func registerHealthChannel(messenger: FlutterBinaryMessenger) {
-  let channel = FlutterMethodChannel(
-    name: "fah/health",
-    binaryMessenger: messenger,
-  )
-  channel.setMethodCallHandler { call, result in
-    switch call.method {
-    case "isAvailable", "requestAccess":
-      result(false)
-    case "summary":
-      result(
-        FlutterError(
-          code: "unsupported",
-          message: "HealthKit is not available on macOS",
-          details: nil,
-        ),
-      )
-    default:
-      result(FlutterMethodNotImplemented)
-    }
-  }
-}
-
-/// The `fah/home` method channel: there is no HomeKit framework on macOS, so
-/// the channel is registered but honestly reports every call as unsupported.
-/// The Dart side (`homePlatformSupported`) already gates home control to iOS
-/// and never gets here in practice.
+/// The `fah/home` method channel: HomeKit is not part of the macOS SDK,
+/// so the channel is registered but reports every call as unsupported.
 private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/home",

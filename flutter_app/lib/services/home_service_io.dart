@@ -10,9 +10,7 @@ import 'package:fa/services/app_log.dart';
 import 'package:fa/services/home_service.dart';
 
 /// Whether the current platform has a native home backend: HomeKit is wired
-/// up on iOS only (see `AppDelegate.swift` — the macOS handler in
-/// `MainFlutterWindow.swift` reports unsupported, and there is no HomeKit
-/// framework on the remaining platforms).
+/// up on iOS only (the HomeKit framework is not part of the macOS SDK).
 bool get homePlatformSupported => Platform.isIOS;
 
 /// Creates the method-channel-backed [HomeApi] (IO platforms).

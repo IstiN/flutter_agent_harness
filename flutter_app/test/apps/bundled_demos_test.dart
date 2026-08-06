@@ -760,10 +760,12 @@ void main() {
           await Future<void>.delayed(settle);
 
           expect(engine.exportedState?['bridgeAvailable'], isFalse);
-          expect(
-            engine.exportedState?['bridgeError'],
-            contains('not available'),
-          );
+          final error = engine.exportedState?['bridgeError'] as String?;
+          expect(error, isNotNull);
+          // On iOS/macOS the real channel answers "denied" when Health
+          // access is not granted; on other platforms the bridge reports
+          // "not available". Either way the demo falls back to demo data.
+          expect(error, anyOf(contains('not available'), contains('denied')));
           expect(engine.exportedState?['demoData'], isTrue);
           final tree = jsonEncode(engine.tree.value);
           expect(tree, contains('DEMO DATA'));
