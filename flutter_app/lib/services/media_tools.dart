@@ -135,6 +135,9 @@ final class MediaGateway {
   /// Synthesizes speech on the [MediaSlot.audioTts] endpoint
   /// (OpenAI-compatible `POST /audio/speech`, binary mp3 response) and
   /// saves it into [generatedMediaDir].
+  ///
+  /// The voice resolves in order: an explicit [voice] argument, the slot
+  /// override's configured voice, then `alloy`.
   Future<GeneratedMediaFile> speak({
     required String text,
     String? voice,
@@ -142,9 +145,11 @@ final class MediaGateway {
     final trimmed = text.trim();
     if (trimmed.isEmpty) throw StateError('text is required');
     final endpoint = await _requireEndpoint(MediaSlot.audioTts);
-    final usedVoice = (voice == null || voice.trim().isEmpty)
-        ? 'alloy'
-        : voice.trim();
+    final argument = voice?.trim();
+    final configured = endpoint.voice?.trim();
+    final usedVoice = argument != null && argument.isNotEmpty
+        ? argument
+        : (configured != null && configured.isNotEmpty ? configured : 'alloy');
     final client = _httpClient ?? http.Client();
     final http.Response response;
     try {
@@ -608,7 +613,7 @@ AgentTool speakTool(MediaGateway gateway) {
           'type': 'string',
           'description':
               'Voice name (provider-dependent, e.g. "alloy", "nova"; '
-              'default: "alloy")',
+              'default: the audioTts slot\'s configured voice, else "alloy")',
         },
       },
       'required': ['text'],

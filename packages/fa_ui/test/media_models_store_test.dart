@@ -82,6 +82,48 @@ void main() {
       expect(raw, isNot(contains('sk-')));
     });
 
+    test('the tts voice round-trips through the store file', () async {
+      final env = MemoryExecutionEnv();
+      final store = await MediaModelsStore.load(env);
+      await store.setOverride(
+        MediaSlot.audioTts,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://api.openai.com/v1',
+          modelId: 'tts-1',
+          voice: 'af_heart',
+        ),
+      );
+
+      final raw = (await env.readTextFile(
+        '${env.cwd}/${MediaModelsStore.fileName}',
+      )).valueOrNull!;
+      expect(raw, contains('"voice":"af_heart"'));
+
+      final reloaded = await MediaModelsStore.load(env);
+      expect(reloaded.overrideFor(MediaSlot.audioTts)!.voice, 'af_heart');
+    });
+
+    test('an absent voice stays absent from the store file', () async {
+      final env = MemoryExecutionEnv();
+      final store = await MediaModelsStore.load(env);
+      await store.setOverride(
+        MediaSlot.audioTts,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://api.openai.com/v1',
+          modelId: 'tts-1',
+        ),
+      );
+
+      final raw = (await env.readTextFile(
+        '${env.cwd}/${MediaModelsStore.fileName}',
+      )).valueOrNull!;
+      expect(raw, isNot(contains('voice')));
+      final reloaded = await MediaModelsStore.load(env);
+      expect(reloaded.overrideFor(MediaSlot.audioTts)!.voice, isNull);
+    });
+
     test('setting null clears the slot; unknown slots are ignored', () async {
       final store = MediaModelsStore.inMemory();
       await store.setOverride(MediaSlot.imageGeneration, override);
@@ -224,6 +266,25 @@ void main() {
 
       final endpoint = await store.resolve(MediaSlot.audioTts, fallback);
       expect(endpoint!.baseUrl, MediaModelsStore.defaultBaseUrl);
+    });
+
+    test('an override carries its voice into the resolved endpoint', () async {
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.audioTts,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://api.openai.com/v1',
+          modelId: 'tts-1',
+          voice: 'af_heart',
+        ),
+      );
+
+      final endpoint = await store.resolve(MediaSlot.audioTts, fallback);
+      expect(endpoint!.voice, 'af_heart');
+      // The main-connection fallback never invents a voice.
+      final plain = await store.resolve(MediaSlot.imageGeneration, fallback);
+      expect(plain!.voice, isNull);
     });
   });
 }

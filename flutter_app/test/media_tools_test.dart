@@ -189,6 +189,53 @@ void main() {
         'alloy',
       );
     });
+
+    MediaModelsStore ttsStore() {
+      final store = MediaModelsStore.inMemory();
+      store.setOverride(
+        MediaSlot.audioTts,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://api.test/v1',
+          modelId: 'tts-1',
+          voice: 'af_heart',
+        ),
+      );
+      return store;
+    }
+
+    test(
+      'uses the slot\'s configured voice when no argument is given',
+      () async {
+        final env = MemoryExecutionEnv();
+        http.Request? seen;
+        final client = http_testing.MockClient((request) async {
+          seen = request;
+          return http.Response.bytes(Uint8List.fromList([1]), 200);
+        });
+        final tool = speakTool(gateway(env, client, store: ttsStore()));
+
+        final result = await tool.execute(const {'text': 'hi'}, null, null);
+        expect(
+          (jsonDecode(seen!.body) as Map<String, dynamic>)['voice'],
+          'af_heart',
+        );
+        expect(textOf(result), contains('voice "af_heart"'));
+      },
+    );
+
+    test('an explicit voice argument overrides the configured voice', () async {
+      final env = MemoryExecutionEnv();
+      http.Request? seen;
+      final client = http_testing.MockClient((request) async {
+        seen = request;
+        return http.Response.bytes(Uint8List.fromList([1]), 200);
+      });
+      final tool = speakTool(gateway(env, client, store: ttsStore()));
+
+      await tool.execute(const {'text': 'hi', 'voice': 'nova'}, null, null);
+      expect((jsonDecode(seen!.body) as Map<String, dynamic>)['voice'], 'nova');
+    });
   });
 
   group('generate_music', () {

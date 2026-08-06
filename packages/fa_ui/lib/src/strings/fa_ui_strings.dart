@@ -145,6 +145,12 @@ abstract class FaUiStrings {
   /// Note above the capability hint chips.
   String get mediaModelsCapabilitiesNote;
 
+  /// Label of the TTS voice field (audioTts slot editor).
+  String get mediaModelsVoiceLabel;
+
+  /// Hint of the TTS voice field (audioTts slot editor).
+  String get mediaModelsVoiceHint;
+
   /// Label of the image-generation media slot.
   String get mediaModelsSlotImageGeneration;
 
@@ -279,6 +285,10 @@ class FaUiStringsEn extends FaUiStrings {
   String get mediaModelsCapabilitiesNote =>
       "This endpoint's models suggest support for:";
   @override
+  String get mediaModelsVoiceLabel => 'Voice (optional)';
+  @override
+  String get mediaModelsVoiceHint => 'alloy / af_heart / nova';
+  @override
   String get mediaModelsSlotImageGeneration => 'Image generation';
   @override
   String get mediaModelsSlotAudioTts => 'Text-to-speech';
@@ -408,6 +418,10 @@ class FaUiStringsRu extends FaUiStrings {
   @override
   String get mediaModelsCapabilitiesNote =>
       'Модели этого эндпоинта поддерживают:';
+  @override
+  String get mediaModelsVoiceLabel => 'Голос (необязательно)';
+  @override
+  String get mediaModelsVoiceHint => 'alloy / af_heart / nova';
   @override
   String get mediaModelsSlotImageGeneration => 'Генерация изображений';
   @override

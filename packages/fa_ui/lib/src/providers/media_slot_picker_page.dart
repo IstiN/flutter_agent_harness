@@ -210,6 +210,20 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     };
   }
 
+  /// The voice the model page prefills for [provider]: the current
+  /// override's voice when it points at this provider, otherwise null
+  /// (a provider switch must not leak the old endpoint's voice).
+  String? _initialVoiceFor(Object provider) {
+    final initial = this.initial;
+    final baseUrl = switch (provider) {
+      ProviderPreset preset => preset.baseUrl ?? '',
+      CustomProvider custom => custom.baseUrl,
+      _ => '',
+    };
+    if (initial != null && initial.baseUrl == baseUrl) return initial.voice;
+    return null;
+  }
+
   Future<void> _openModelPage(
     BuildContext context,
     ProviderRegistry registry,
@@ -222,6 +236,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
         provider: provider,
         registry: registry,
         initialModel: _initialModelFor(provider),
+        initialVoice: _initialVoiceFor(provider),
         modelsFetcher: modelsFetcher,
       ),
     );
@@ -259,6 +274,7 @@ class MediaSlotModelPage extends StatefulWidget {
     required this.provider,
     this.registry,
     this.initialModel = '',
+    this.initialVoice,
     this.modelsFetcher,
   });
 
@@ -276,6 +292,10 @@ class MediaSlotModelPage extends StatefulWidget {
   /// the provider's default).
   final String initialModel;
 
+  /// The voice the TTS field starts with (the current override's voice);
+  /// the field only renders for the [MediaSlot.audioTts] slot.
+  final String? initialVoice;
+
   /// `/models` fetch override (tests); defaults to the production HTTP
   /// fetch + shared parser ([defaultModelsEndpointFetcher]).
   final ModelsEndpointFetcher? modelsFetcher;
@@ -286,6 +306,7 @@ class MediaSlotModelPage extends StatefulWidget {
 
 class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   late final TextEditingController _modelController;
+  late final TextEditingController _voiceController;
 
   /// The endpoint's `/models` ids feeding the model field's quick select.
   List<String> _endpointModels = const [];
@@ -325,6 +346,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   void initState() {
     super.initState();
     _modelController = TextEditingController(text: widget.initialModel);
+    _voiceController = TextEditingController(text: widget.initialVoice);
     // The fetch resolves the provider key through the inherited saved-keys
     // scope — unavailable during initState, so it runs after the frame.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -336,6 +358,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   void dispose() {
     _modelFocusNode.dispose();
     _modelController.dispose();
+    _voiceController.dispose();
     super.dispose();
   }
 
@@ -395,6 +418,10 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
       CustomProvider _ => ProviderRegistry.keyNameFor(_baseUrl),
       _ => null,
     };
+    // The voice only applies to the TTS slot; an empty field clears it.
+    final voice = widget.slot == MediaSlot.audioTts
+        ? _voiceController.text.trim()
+        : '';
     Navigator.of(context).pop(
       MediaSlotEditorResult.save(
         MediaSlotOverride(
@@ -402,6 +429,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
           baseUrl: _baseUrl,
           modelId: model,
           apiKeyName: keyName,
+          voice: voice.isEmpty ? null : voice,
         ),
       ),
     );
@@ -441,6 +469,16 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
                 models: _endpointModels,
                 loading: _modelsLoading,
               ),
+              if (widget.slot == MediaSlot.audioTts) ...[
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _voiceController,
+                  decoration: InputDecoration(
+                    labelText: strings.mediaModelsVoiceLabel,
+                    hintText: strings.mediaModelsVoiceHint,
+                  ),
+                ),
+              ],
               if (capabilities.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Text(

@@ -306,5 +306,68 @@ void main() {
       expect(find.text('Model id is required'), findsOneWidget);
       expect(popped, isFalse);
     });
+
+    testWidgets('the voice field renders only for the TTS slot, prefilled, '
+        'and rides into the saved override', (tester) async {
+      MediaSlotEditorResult? result;
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotModelPage(
+          slot: MediaSlot.audioTts,
+          provider: ProviderPreset.openrouter,
+          initialModel: 'tts-1',
+          initialVoice: 'af_heart',
+          modelsFetcher: _someModels,
+        ),
+        (value) => result = value,
+      );
+      await _open(tester);
+
+      final voiceField = find.widgetWithText(TextField, 'Voice (optional)');
+      expect(voiceField, findsOneWidget);
+      expect(tester.widget<TextField>(voiceField).controller!.text, 'af_heart');
+
+      await tester.enterText(voiceField, 'nova');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(result!.override!.modelId, 'tts-1');
+      expect(result!.override!.voice, 'nova');
+    });
+
+    testWidgets('no voice field outside the TTS slot', (tester) async {
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotModelPage(
+          slot: MediaSlot.imageGeneration,
+          provider: ProviderPreset.openrouter,
+          modelsFetcher: _someModels,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      expect(find.widgetWithText(TextField, 'Voice (optional)'), findsNothing);
+    });
+
+    testWidgets('an empty voice field saves no voice', (tester) async {
+      MediaSlotEditorResult? result;
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotModelPage(
+          slot: MediaSlot.audioTts,
+          provider: ProviderPreset.openrouter,
+          initialModel: 'tts-1',
+          modelsFetcher: _someModels,
+        ),
+        (value) => result = value,
+      );
+      await _open(tester);
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(result!.override!.voice, isNull);
+    });
   });
 }

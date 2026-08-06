@@ -259,5 +259,60 @@ void main() {
       expect(find.text('whisper-1 · OpenRouter'), findsOneWidget);
       expect(find.textContaining('OPENAI_API_KEY'), findsNothing);
     });
+
+    testWidgets('the TTS flow edits the voice and the override keeps it', (
+      tester,
+    ) async {
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.audioTts,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          modelId: 'tts-1',
+          voice: 'af_heart',
+        ),
+      );
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
+
+      await tester.tap(find.text('Text-to-speech'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+
+      // The voice field renders only for the TTS slot, prefilled from the
+      // current override.
+      final voiceField = find.widgetWithText(TextField, 'Voice (optional)');
+      expect(voiceField, findsOneWidget);
+      expect(tester.widget<TextField>(voiceField).controller!.text, 'af_heart');
+
+      await tester.enterText(voiceField, 'nova');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      final saved = store.overrideFor(MediaSlot.audioTts)!;
+      expect(saved.modelId, 'tts-1');
+      expect(saved.voice, 'nova');
+    });
+
+    testWidgets('non-TTS slots render no voice field', (tester) async {
+      final store = MediaModelsStore.inMemory();
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
+
+      await tester.tap(find.text('Image generation'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'Voice (optional)'), findsNothing);
+    });
   });
 }

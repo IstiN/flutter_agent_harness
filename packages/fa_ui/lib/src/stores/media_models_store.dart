@@ -59,6 +59,7 @@ final class MediaSlotOverride {
     required this.baseUrl,
     required this.modelId,
     this.apiKeyName,
+    this.voice,
   });
 
   /// Restores an override from its JSON form (see [toJson]).
@@ -68,6 +69,7 @@ final class MediaSlotOverride {
         baseUrl: (json['baseUrl'] ?? '').toString(),
         modelId: (json['modelId'] ?? '').toString(),
         apiKeyName: json['apiKeyName']?.toString(),
+        voice: json['voice']?.toString(),
       );
 
   /// Provider adapter kind; the media tools speak the OpenAI-compatible
@@ -86,12 +88,18 @@ final class MediaSlotOverride {
   /// "same provider, different model" case).
   final String? apiKeyName;
 
+  /// Default voice for the [MediaSlot.audioTts] endpoint (e.g. `alloy`,
+  /// `af_heart`); null or empty lets the caller pick its own default.
+  /// Meaningless for the other slots.
+  final String? voice;
+
   /// JSON form persisted in the store file; absent fields stay absent.
   Map<String, dynamic> toJson() => {
     'providerKind': providerKind,
     'baseUrl': baseUrl,
     'modelId': modelId,
     if (apiKeyName != null) 'apiKeyName': apiKeyName,
+    if (voice != null && voice!.isNotEmpty) 'voice': voice,
   };
 
   @override
@@ -108,6 +116,7 @@ final class MediaEndpoint {
     required this.modelId,
     required this.apiKey,
     required this.fromOverride,
+    this.voice,
   });
 
   /// Provider adapter kind (usable media endpoints are
@@ -129,6 +138,10 @@ final class MediaEndpoint {
   /// True when the endpoint came from a slot override rather than the main
   /// connection.
   final bool fromOverride;
+
+  /// The slot override's default voice (TTS only); null when the override
+  /// sets none or the endpoint came from the main connection.
+  final String? voice;
 }
 
 /// The main connection's endpoint details, supplied by the caller (built
@@ -297,6 +310,7 @@ class MediaModelsStore extends ChangeNotifier {
         modelId: override.modelId,
         apiKey: apiKey,
         fromOverride: true,
+        voice: override.voice,
       ),
     );
   }
@@ -312,6 +326,7 @@ class MediaModelsStore extends ChangeNotifier {
       modelId: endpoint.modelId,
       apiKey: endpoint.apiKey,
       fromOverride: endpoint.fromOverride,
+      voice: endpoint.voice,
     );
   }
 
