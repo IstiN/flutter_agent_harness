@@ -847,4 +847,9 @@
 
 - docs(gemma): update platform comments for macOS support
 
+## 0.1.140
+
+- feat(settings): show on-device providers in the Providers section
+- feat(settings): voice selection for the TTS media slot
+
 ## Unreleased
