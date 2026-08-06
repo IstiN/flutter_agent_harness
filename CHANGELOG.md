@@ -843,4 +843,8 @@
 - feat(gemma): enable on-device Gemma provider on macOS
 - feat(fa_ui): wire fa_llm/fa_llm_flutter into provider config
 
+## 0.1.139
+
+- docs(gemma): update platform comments for macOS support
+
 ## Unreleased
