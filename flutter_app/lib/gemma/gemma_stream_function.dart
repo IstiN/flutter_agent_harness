@@ -164,13 +164,18 @@ Future<void> _runGemma(
     await service.loadModel(preset);
     cancelToken?.throwIfCancelled();
 
-    // The engine's KV budget (preset.contextWindow) is shared by input and
-    // output and hard-fails past it (INVALID_ARGUMENT) — fit the context
-    // instead of ever going there.
+    // The engine's KV budget is shared by input and output and hard-fails
+    // past it (INVALID_ARGUMENT) — fit the context instead of ever going
+    // there. The active [Model.contextWindow] controls the effective budget
+    // (agent config may cap it below the preset maximum); fall back to the
+    // preset when the model record carries none.
+    final kvBudget = model.contextWindow > 0
+        ? model.contextWindow
+        : preset.contextWindow;
     final outputReserve = model.maxTokens > 0 ? model.maxTokens : 256;
     final fitted = _fitGemmaContext(
       context,
-      budgetTokens: preset.contextWindow - outputReserve - 64,
+      budgetTokens: kvBudget - outputReserve - 64,
       onNote: (note) => debugPrint('[gemma] $note'),
     );
 

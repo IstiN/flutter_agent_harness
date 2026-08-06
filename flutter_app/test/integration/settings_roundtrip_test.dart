@@ -106,6 +106,10 @@ void main() {
       await tester.tap(cell(LauncherLayoutStore.settingsKey));
       await tester.pumpAndSettle();
       expect(find.byType(HomeGridSection), findsOneWidget);
+      // The settings page is scrollable; the dropdown may sit below the
+      // fold after the providers section grew, so scroll it into view.
+      await tester.ensureVisible(find.byType(DropdownButton<int?>));
+      await tester.pumpAndSettle();
       await tester.tap(find.byType(DropdownButton<int?>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('3').last);

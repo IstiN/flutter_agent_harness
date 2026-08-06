@@ -123,6 +123,11 @@ class ProvidersSection extends StatelessWidget {
               const SizedBox(height: 16),
               const Divider(),
               const SizedBox(height: 8),
+              Text(
+                strings.settingsLocalProvidersSectionTitle,
+                style: theme.textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
               for (final route in onDeviceProviders)
                 _buildRow(
                   context,

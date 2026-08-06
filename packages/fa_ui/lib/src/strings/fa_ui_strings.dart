@@ -34,6 +34,9 @@ abstract class FaUiStrings {
   /// Settings section title above the provider list.
   String get settingsProvidersSectionTitle;
 
+  /// Settings section title above the on-device/local provider list.
+  String get settingsLocalProvidersSectionTitle;
+
   /// The "Add provider" row/button label.
   String get settingsAddProvider;
 
@@ -191,6 +194,8 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsProvidersSectionTitle => 'Providers';
   @override
+  String get settingsLocalProvidersSectionTitle => 'Local models';
+  @override
   String get settingsAddProvider => 'Add provider';
   @override
   String get settingsEditProviderTitle => 'Edit provider';
@@ -322,6 +327,8 @@ class FaUiStringsRu extends FaUiStrings {
 
   @override
   String get settingsProvidersSectionTitle => 'Провайдеры';
+  @override
+  String get settingsLocalProvidersSectionTitle => 'Локальные модели';
   @override
   String get settingsAddProvider => 'Добавить провайдера';
   @override

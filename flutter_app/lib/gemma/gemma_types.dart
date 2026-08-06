@@ -104,7 +104,7 @@ final class GemmaModelPreset {
     required this.filename,
     required this.sizeLabel,
     this.webSizeLabel,
-    this.contextWindow = 4096,
+    this.contextWindow = 131072,
     this.temperature = 1,
     this.topK = 64,
     this.topP = 0.95,
@@ -140,9 +140,9 @@ final class GemmaModelPreset {
   final String? webSizeLabel;
 
   /// Context window (`maxTokens` in the plugin's vocabulary — the KV-cache
-  /// budget shared by input and output). Gemma 4 supports up to 32k tokens
-  /// via LiteRT-LM; 4096 was the plugin example default, but agent
-  /// conversations need the larger window, so we default to 32768.
+  /// budget shared by input and output). Gemma 4 small models (E2B/E4B)
+  /// officially support 128k tokens; 4096 was the plugin example default,
+  /// but agent conversations need the full window, so we default to 131072.
   final int contextWindow;
 
   /// Sampling defaults, matching the plugin example's Gemma 4 settings
