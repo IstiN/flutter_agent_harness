@@ -76,6 +76,7 @@ Future<void> _pumpSettingsFrame(
   Size size = goldenSizeDesktop,
   ThemeData? theme,
   Widget? child,
+  bool? isWeb,
 }) {
   return pumpGolden(
     tester,
@@ -84,6 +85,7 @@ Future<void> _pumpSettingsFrame(
           registry: registry,
           connectLabel: 'Apply',
           onConnect: (_) async {},
+          isWeb: isWeb,
         ),
     size: size,
     theme: theme,
@@ -241,7 +243,9 @@ void main() {
     });
 
     testWidgets('on-device WebLLM form', (tester) async {
-      await _pumpSettingsFrame(tester);
+      // WebLLM is hidden on host platforms, so exercise the web provider
+      // picker even though the test surface is a desktop frame.
+      await _pumpSettingsFrame(tester, isWeb: true);
       await _selectProvider(tester, 'On-device (WebLLM)');
 
       // The key/model/URL fields are replaced by the model picker with the

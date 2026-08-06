@@ -9,10 +9,25 @@
 /// `webllm_service_web.dart` (web) and `webllm_service_stub.dart` (host).
 library;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 /// [AgentConfig.providerKind] value that selects the on-device WebLLM
 /// provider. Kept as a constant so the settings form, [AgentService], and
 /// tests agree on the spelling.
 const webLlmProviderKind = 'webllm';
+
+/// Feature flag for the WebLLM on-device provider. Flip to `false` to
+/// hide WebLLM everywhere (e.g. while the host integration is unfinished).
+const bool kWebLlmEnabled = true;
+
+/// Whether the WebLLM provider appears in the settings provider picker.
+/// WebLLM is a web-only engine; on host platforms its stub just reports
+/// unavailable, so the row is hidden unless [kWebLlmEnabled] is true and
+/// the app is running on the web.
+bool webLlmProviderVisible({required bool isWeb}) => kWebLlmEnabled && isWeb;
+
+/// Whether the WebLLM provider is offered on this platform.
+bool get webLlmProviderSupported => webLlmProviderVisible(isWeb: kIsWeb);
 
 /// A chat message in the OpenAI-style shape WebLLM's `chatCompletion`
 /// expects (`{role, content}`, plain-text only).

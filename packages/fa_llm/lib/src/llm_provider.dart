@@ -14,7 +14,11 @@ abstract class LlmProvider {
   /// [onCancel] is invoked by the provider if the call times out or is
   /// interrupted, giving the caller a chance to call provider-specific cancel
   /// logic (e.g. WebLLM interruptGenerate).
-  Future<String> chat(String prompt, {String? model, void Function()? onCancel});
+  Future<String> chat(
+    String prompt, {
+    String? model,
+    void Function()? onCancel,
+  });
 
   /// Send a conversation and return the generated text.
   Future<String> chatMessages(

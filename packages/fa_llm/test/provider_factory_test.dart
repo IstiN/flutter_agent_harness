@@ -18,23 +18,27 @@ void main() {
   });
 
   test('creates OpenRouterProvider for openrouter provider', () {
-    final provider = ProviderFactory.create(
-      baseConfig.copyWith(providerName: 'openrouter'),
-    ) as OpenRouterProvider;
+    final provider =
+        ProviderFactory.create(baseConfig.copyWith(providerName: 'openrouter'))
+            as OpenRouterProvider;
     expect(provider.baseUrl, 'https://openrouter.ai/api/v1/chat/completions');
   });
 
   test('creates OpenAiProvider with ollama base url for ollama provider', () {
-    final provider = ProviderFactory.create(
-      baseConfig.copyWith(providerName: 'ollama'),
-    ) as OpenAiProvider;
+    final provider =
+        ProviderFactory.create(baseConfig.copyWith(providerName: 'ollama'))
+            as OpenAiProvider;
     expect(provider.baseUrl, 'http://localhost:11434/v1/chat/completions');
   });
 
   test('honors explicit base url', () {
-    final provider = ProviderFactory.create(
-      baseConfig.copyWith(baseUrl: 'https://custom.example.com/v1/chat/completions'),
-    ) as OpenAiProvider;
+    final provider =
+        ProviderFactory.create(
+              baseConfig.copyWith(
+                baseUrl: 'https://custom.example.com/v1/chat/completions',
+              ),
+            )
+            as OpenAiProvider;
     expect(provider.baseUrl, 'https://custom.example.com/v1/chat/completions');
   });
 }

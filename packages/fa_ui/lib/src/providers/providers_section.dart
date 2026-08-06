@@ -130,8 +130,8 @@ class ProvidersSection extends StatelessWidget {
                   label: route.label,
                   leading: Icons.memory_outlined,
                   onTap: () {
-                  unawaited(_openOnDeviceRoute(context, route));
-                },
+                    unawaited(_openOnDeviceRoute(context, route));
+                  },
                 ),
             ],
           ],
@@ -146,13 +146,10 @@ class ProvidersSection extends StatelessWidget {
   ) async {
     final config = await pushFaPage<FaChatModelConfig?>(
       context,
-      route.pageBuilder(
-        context,
-        (config) async {
-          onDeviceConnected?.call(config);
-          if (context.mounted) Navigator.of(context).pop(config);
-        },
-      ),
+      route.pageBuilder(context, (config) async {
+        onDeviceConnected?.call(config);
+        if (context.mounted) Navigator.of(context).pop(config);
+      }),
     );
     if (config != null) onDeviceConnected?.call(config);
     return;

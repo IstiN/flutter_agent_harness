@@ -87,6 +87,7 @@ Future<void> _pumpForm(
   WidgetTester tester,
   ProviderRegistry registry, {
   Future<void> Function(AgentConfig config)? onConnect,
+  WebLlmEngineApi? webLlmEngine,
   GemmaEngineApi? gemmaEngine,
   TransformersJsEngineApi? transformersJsEngine,
   bool? isWeb,
@@ -97,6 +98,7 @@ Future<void> _pumpForm(
         body: SingleChildScrollView(
           child: AgentSettingsForm(
             registry: registry,
+            webLlmEngine: webLlmEngine,
             gemmaEngine: gemmaEngine,
             transformersJsEngine: transformersJsEngine,
             isWeb: isWeb,
@@ -264,7 +266,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Ollama'), findsOneWidget);
       expect(find.text('Custom'), findsOneWidget);
-      expect(find.text('On-device (WebLLM)'), findsOneWidget);
+      // WebLLM is web-only; on the default (non-web) test platform it is
+      // hidden even though its engine stub exists.
+      expect(find.text('On-device (WebLLM)'), findsNothing);
       await tester.tap(find.text('OpenRouter').last);
       await tester.pumpAndSettle();
 
@@ -331,7 +335,7 @@ void main() {
     testWidgets('on-device preset shows the model picker and offline note', (
       tester,
     ) async {
-      await tester.pumpWidget(const MyApp());
+      await _pumpForm(tester, ProviderRegistry.inMemory(), isWeb: true);
 
       await _selectProvider(tester, 'On-device (WebLLM)');
 
@@ -351,21 +355,16 @@ void main() {
       expect(find.textContaining('WebGPU'), findsOneWidget);
     });
 
-    testWidgets('host build reports on-device inference as unavailable', (
-      tester,
-    ) async {
+    testWidgets('host build hides the WebLLM provider row', (tester) async {
       await tester.pumpWidget(const MyApp());
 
-      await _selectProvider(tester, 'On-device (WebLLM)');
-      await _tapConnect(tester, 'Start chat');
-      await tester.pump();
+      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.pumpAndSettle();
 
-      // The stub engine (non-web platform) fails politely, no crash.
-      expect(
-        find.textContaining('only available in the web build'),
-        findsOneWidget,
-      );
-      expect(find.text('Connect to Fa'), findsOneWidget);
+      // WebLLM is web-only; its stub is not selectable on host platforms.
+      expect(find.text('On-device (WebLLM)'), findsNothing);
+      await tester.tap(find.text('OpenRouter').last);
+      await tester.pumpAndSettle();
     });
 
     testWidgets('a typed model is not clobbered by preset switching', (
@@ -864,8 +863,8 @@ void main() {
       await tester.tap(find.byType(DropdownButtonFormField<Object>));
       await tester.pumpAndSettle();
       expect(find.text('On-device (Gemma)'), findsNothing);
-      // WebLLM stays offered everywhere (its stub reports unavailable).
-      expect(find.text('On-device (WebLLM)'), findsOneWidget);
+      // WebLLM is web-only and hidden on host platforms.
+      expect(find.text('On-device (WebLLM)'), findsNothing);
       // The transformers.js provider is web-only: hidden on desktop.
       expect(find.text('On-device (Gemma, transformers.js)'), findsNothing);
       await tester.tap(find.text('OpenRouter').last);
@@ -1093,6 +1092,13 @@ void main() {
     });
   });
 
+  group('webLlmProviderVisible', () {
+    test('web only', () {
+      expect(webLlmProviderVisible(isWeb: true), isTrue);
+      expect(webLlmProviderVisible(isWeb: false), isFalse);
+    });
+  });
+
   group('gemmaProviderVisible', () {
     test('iOS/Android only — web is served by the transformers.js provider, '
         'desktop by neither', () {
@@ -1118,10 +1124,7 @@ void main() {
         isTrue,
         reason: 'macOS is supported by flutter_gemma 1.5.x',
       );
-      for (final desktop in [
-        TargetPlatform.linux,
-        TargetPlatform.windows,
-      ]) {
+      for (final desktop in [TargetPlatform.linux, TargetPlatform.windows]) {
         expect(
           gemmaProviderVisible(isWeb: false, platform: desktop),
           isFalse,

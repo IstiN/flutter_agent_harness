@@ -265,6 +265,7 @@ void main() {
     ) async {
       await _pumpForm(
         tester,
+        isWeb: true,
         initialConnection: const LastConnection(
           providerKind: webLlmProviderKind,
           modelId: 'Qwen3-4B-q4f16_1-MLC',
@@ -285,6 +286,7 @@ void main() {
         'preset with a note', (tester) async {
       await _pumpForm(
         tester,
+        isWeb: true,
         initialConnection: const LastConnection(
           providerKind: webLlmProviderKind,
           modelId: 'Qwen3-4B-q4f16_1-MLC',
@@ -311,6 +313,7 @@ void main() {
         'shows no note', (tester) async {
       await _pumpForm(
         tester,
+        isWeb: true,
         initialConnection: const LastConnection(
           providerKind: webLlmProviderKind,
           modelId: 'Qwen3-4B-q4f16_1-MLC',
@@ -330,6 +333,7 @@ void main() {
     ) async {
       await _pumpForm(
         tester,
+        isWeb: true,
         initialConnection: const LastConnection(
           providerKind: webLlmProviderKind,
           modelId: 'no-such-model-MLC',
@@ -386,10 +390,9 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
 
-    testWidgets('a Gemma record is ignored where the provider is hidden', (
-      tester,
-    ) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    testWidgets('a Gemma record is ignored on desktop platforms that do not '
+        'support flutter_gemma', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       await _pumpForm(
         tester,
         initialConnection: const LastConnection(
@@ -404,6 +407,27 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('OpenRouter'), findsOneWidget);
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    testWidgets('a Gemma record is pre-selected on macOS', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      await _pumpForm(
+        tester,
+        initialConnection: const LastConnection(
+          providerKind: gemmaProviderKind,
+          modelId: 'gemma-4-E2B-it',
+          gemmaPresetId: 'gemma-4-E2B-it',
+        ),
+        gemmaEngine: _FakeGemmaEngine(const [
+          GemmaInstalledModel(filename: 'gemma-4-E2B-it.litertlm'),
+        ]),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('On-device (Gemma)'), findsOneWidget);
+      expect(find.text('Gemma 4 E2B · ~2.4 GB'), findsOneWidget);
+      expect(find.textContaining('previously used model'), findsNothing);
       debugDefaultTargetPlatformOverride = null;
     });
 
@@ -466,6 +490,7 @@ void main() {
       });
       await _pumpForm(
         tester,
+        isWeb: true,
         initialConnection: connection,
         webLlmEngine: engine,
       );
@@ -476,6 +501,7 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: Scaffold()));
       await _pumpForm(
         tester,
+        isWeb: true,
         initialConnection: connection,
         webLlmEngine: engine,
       );
@@ -490,6 +516,7 @@ void main() {
     ) async {
       await _pumpForm(
         tester,
+        isWeb: true,
         initialConnection: const LastConnection(
           providerKind: webLlmProviderKind,
           modelId: 'Qwen3-4B-q4f16_1-MLC',

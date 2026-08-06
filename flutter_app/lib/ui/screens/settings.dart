@@ -433,6 +433,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   void _applyLastConnection(LastConnection connection) {
     switch (connection.providerKind) {
       case webLlmProviderKind:
+        // Web-only; a record written on web must not resurrect the row on
+        // host platforms where the picker hides it.
+        if (!webLlmProviderVisible(isWeb: _isWeb)) return;
         final preset = findWebLlmPreset(
           connection.webllmPresetId ?? connection.modelId,
         );
@@ -938,9 +941,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           ),
           items: [
             for (final preset in ProviderPreset.values)
-              // Gemma runs on iOS/Android/macOS (on web the transformers.js
-              // provider replaces it); transformers.js is web-only.
-              if ((preset != ProviderPreset.gemma ||
+              // Gemma runs on iOS/Android/macOS; WebLLM and transformers.js
+              // are web-only. Hide any on-device preset the current platform
+              // does not support so the dropdown never contains a dead row.
+              if ((preset != ProviderPreset.webllm ||
+                      webLlmProviderVisible(isWeb: _isWeb)) &&
+                  (preset != ProviderPreset.gemma ||
                       gemmaProviderVisible(
                         isWeb: _isWeb,
                         platform: defaultTargetPlatform,

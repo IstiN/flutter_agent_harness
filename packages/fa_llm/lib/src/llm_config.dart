@@ -1,5 +1,4 @@
-import 'llm_config_env.dart'
-    if (dart.library.html) 'llm_config_env_stub.dart';
+import 'llm_config_env.dart' if (dart.library.html) 'llm_config_env_stub.dart';
 
 /// Configuration values for LLM providers.
 ///

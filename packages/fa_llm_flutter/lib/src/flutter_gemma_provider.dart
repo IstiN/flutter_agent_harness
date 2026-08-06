@@ -20,10 +20,7 @@ import 'package:flutter_gemma/flutter_gemma.dart' as gemma;
 /// ```
 class FlutterGemmaProvider extends LlmProvider {
   /// Creates a provider wrapping the given [gemma.InferenceChat].
-  FlutterGemmaProvider({
-    required this.defaultModel,
-    required this._chat,
-  });
+  FlutterGemmaProvider({required this.defaultModel, required this._chat});
 
   final gemma.InferenceChat _chat;
 
@@ -36,9 +33,7 @@ class FlutterGemmaProvider extends LlmProvider {
     String? model,
     void Function()? onCancel,
   }) async {
-    await _chat.addQuery(
-      gemma.Message.text(text: prompt, isUser: true),
-    );
+    await _chat.addQuery(gemma.Message.text(text: prompt, isUser: true));
     final response = await _chat.generateChatResponse();
     return _extractText(response);
   }
@@ -59,9 +54,7 @@ class FlutterGemmaProvider extends LlmProvider {
     String? model,
     void Function()? onCancel,
   }) async* {
-    await _chat.addQuery(
-      gemma.Message.text(text: prompt, isUser: true),
-    );
+    await _chat.addQuery(gemma.Message.text(text: prompt, isUser: true));
     await for (final response in _chat.generateChatResponseAsync()) {
       final text = _extractText(response);
       if (text.isNotEmpty) {

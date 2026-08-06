@@ -80,6 +80,7 @@ class DefaultChatModelSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final web = isWeb ?? kIsWeb;
     return fa_ui.DefaultChatModelSection(
       connection: service,
       onApply: (config) => _apply(agentConfigFrom(config)),
@@ -97,7 +98,8 @@ class DefaultChatModelSection extends StatelessWidget {
         isWeb: isWeb,
       ),
       providerKindLabels: {
-        webLlmProviderKind: ProviderPreset.webllm.labelFor(context),
+        if (webLlmProviderVisible(isWeb: web))
+          webLlmProviderKind: ProviderPreset.webllm.labelFor(context),
         gemmaProviderKind: ProviderPreset.gemma.labelFor(context),
         transformersJsProviderKind: ProviderPreset.transformersJs.labelFor(
           context,
@@ -120,22 +122,21 @@ List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
   bool? isWeb,
 }) {
   final web = isWeb ?? kIsWeb;
-  fa_ui.FaOnDeviceRoute route(ProviderPreset preset) =>
-      fa_ui.FaOnDeviceRoute(
-        label: preset.labelFor(context),
-        pageBuilder: (context, apply) => _OnDeviceFormPage(
-          preset: preset,
-          registry: registry ?? ProviderRegistry.inMemory(),
-          onApply: (config) => apply(_faConfigFrom(config)),
-          webLlmEngine: webLlmEngine,
-          gemmaEngine: gemmaEngine,
-          transformersJsEngine: transformersJsEngine,
-          isWeb: isWeb,
-        ),
-      );
+  fa_ui.FaOnDeviceRoute route(ProviderPreset preset) => fa_ui.FaOnDeviceRoute(
+    label: preset.labelFor(context),
+    pageBuilder: (context, apply) => _OnDeviceFormPage(
+      preset: preset,
+      registry: registry ?? ProviderRegistry.inMemory(),
+      onApply: (config) => apply(_faConfigFrom(config)),
+      webLlmEngine: webLlmEngine,
+      gemmaEngine: gemmaEngine,
+      transformersJsEngine: transformersJsEngine,
+      isWeb: isWeb,
+    ),
+  );
 
   return [
-    route(ProviderPreset.webllm),
+    if (webLlmProviderVisible(isWeb: web)) route(ProviderPreset.webllm),
     if (gemmaProviderVisible(isWeb: web, platform: defaultTargetPlatform))
       route(ProviderPreset.gemma),
     if (transformersJsProviderVisible(isWeb: web))

@@ -49,8 +49,9 @@ bool gemmaProviderVisible({
       platform == TargetPlatform.macOS;
 }
 
-/// Whether the Gemma provider is offered on this platform (iOS/Android;
-/// hidden on web — replaced by transformers.js — and on desktop).
+/// Whether the Gemma provider is offered on this platform (iOS/Android/
+/// macOS; hidden on web — replaced by transformers.js — and on Windows/
+/// Linux until explicitly validated).
 bool get gemmaProviderSupported =>
     gemmaProviderVisible(isWeb: kIsWeb, platform: defaultTargetPlatform);
 
@@ -139,8 +140,9 @@ final class GemmaModelPreset {
   final String? webSizeLabel;
 
   /// Context window (`maxTokens` in the plugin's vocabulary — the KV-cache
-  /// budget shared by input and output). 4096 matches the plugin's own
-  /// example for Gemma 4.
+  /// budget shared by input and output). Gemma 4 supports up to 32k tokens
+  /// via LiteRT-LM; 4096 was the plugin example default, but agent
+  /// conversations need the larger window, so we default to 32768.
   final int contextWindow;
 
   /// Sampling defaults, matching the plugin example's Gemma 4 settings

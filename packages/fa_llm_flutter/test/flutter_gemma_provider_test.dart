@@ -21,10 +21,7 @@ void main() {
 
     setUp(() {
       chat = _MockInferenceChat();
-      provider = FlutterGemmaProvider(
-        defaultModel: 'gemma-test',
-        chat: chat,
-      );
+      provider = FlutterGemmaProvider(defaultModel: 'gemma-test', chat: chat);
     });
 
     test('defaultModel is exposed', () {
@@ -33,23 +30,24 @@ void main() {
 
     test('chat sends a user message and returns response text', () async {
       when(() => chat.addQuery(any())).thenAnswer((_) async {});
-      when(() => chat.generateChatResponse())
-          .thenAnswer((_) async => const TextResponse('Hello!'));
+      when(
+        () => chat.generateChatResponse(),
+      ).thenAnswer((_) async => const TextResponse('Hello!'));
 
       final response = await provider.chat('Hi');
 
       expect(response, 'Hello!');
       verify(
-        () => chat.addQuery(
-          any(that: _isMessageWith(text: 'Hi', isUser: true)),
-        ),
+        () =>
+            chat.addQuery(any(that: _isMessageWith(text: 'Hi', isUser: true))),
       ).called(1);
     });
 
     test('chatMessages builds a single prompt from messages', () async {
       when(() => chat.addQuery(any())).thenAnswer((_) async {});
-      when(() => chat.generateChatResponse())
-          .thenAnswer((_) async => const TextResponse('OK'));
+      when(
+        () => chat.generateChatResponse(),
+      ).thenAnswer((_) async => const TextResponse('OK'));
 
       final response = await provider.chatMessages([
         const LlmMessage(role: 'system', content: 'Be brief.'),
@@ -72,11 +70,12 @@ void main() {
 
     test('chatStream yields tokens from the async generator', () async {
       when(() => chat.addQuery(any())).thenAnswer((_) async {});
-      when(() => chat.generateChatResponseAsync())
-          .thenAnswer((_) => Stream.fromIterable([
-                const TextResponse('Hello'),
-                const TextResponse(' world'),
-              ]));
+      when(() => chat.generateChatResponseAsync()).thenAnswer(
+        (_) => Stream.fromIterable([
+          const TextResponse('Hello'),
+          const TextResponse(' world'),
+        ]),
+      );
 
       final tokens = await provider.chatStream('Hi').toList();
 
@@ -85,12 +84,13 @@ void main() {
 
     test('ignores non-text responses in the stream', () async {
       when(() => chat.addQuery(any())).thenAnswer((_) async {});
-      when(() => chat.generateChatResponseAsync())
-          .thenAnswer((_) => Stream.fromIterable([
-                const TextResponse('A'),
-                const ThinkingResponse('thinking...'),
-                const TextResponse('B'),
-              ]));
+      when(() => chat.generateChatResponseAsync()).thenAnswer(
+        (_) => Stream.fromIterable([
+          const TextResponse('A'),
+          const ThinkingResponse('thinking...'),
+          const TextResponse('B'),
+        ]),
+      );
 
       final tokens = await provider.chatStream('Hi').toList();
 

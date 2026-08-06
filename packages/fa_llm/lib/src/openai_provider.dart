@@ -33,8 +33,15 @@ class OpenAiProvider implements LlmProvider {
   }) : _client = client ?? http.Client();
 
   @override
-  Future<String> chat(String prompt, {String? model, void Function()? onCancel}) =>
-      chatMessages([LlmMessage(role: 'user', content: prompt)], model: model, onCancel: onCancel);
+  Future<String> chat(
+    String prompt, {
+    String? model,
+    void Function()? onCancel,
+  }) => chatMessages(
+    [LlmMessage(role: 'user', content: prompt)],
+    model: model,
+    onCancel: onCancel,
+  );
 
   @override
   Future<String> chatMessages(

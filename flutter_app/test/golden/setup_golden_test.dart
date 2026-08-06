@@ -187,6 +187,7 @@ Future<void> _pumpSetup(
   _FakeWebLlmEngine? webLlmEngine,
   _FakeGemmaEngine? gemmaEngine,
   _FakeTransformersJsEngine? transformersJsEngine,
+  bool? isWeb,
 }) async {
   final store = LastConnectionStore.inMemory();
   if (lastConnection != null) await store.save(lastConnection);
@@ -200,6 +201,7 @@ Future<void> _pumpSetup(
       gemmaEngine: gemmaEngine ?? _FakeGemmaEngine(const []),
       transformersJsEngine:
           transformersJsEngine ?? _FakeTransformersJsEngine(const {}),
+      isWeb: isWeb,
     ),
     size: size,
     wrap: (child) => Builder(
@@ -325,6 +327,7 @@ void main() {
   ) async {
     await _pumpSetup(
       tester,
+      isWeb: true,
       lastConnection: const LastConnection(
         providerKind: webLlmProviderKind,
         modelId: 'Qwen3-4B-q4f16_1-MLC',

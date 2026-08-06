@@ -554,6 +554,7 @@ class SetupScreen extends StatelessWidget {
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
+    this.isWeb,
   });
 
   /// The shared execution env handed to [AgentService.create].
@@ -575,6 +576,10 @@ class SetupScreen extends StatelessWidget {
   final WebLlmEngineApi? webLlmEngine;
   final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
+
+  /// Overrides `kIsWeb` for tests that need to exercise the web provider
+  /// picker on a host test platform.
+  final bool? isWeb;
 
   Future<void> _connect(BuildContext context, AgentConfig config) async {
     final manager = FlutterSessionManager(
@@ -638,6 +643,7 @@ class SetupScreen extends StatelessWidget {
                   webLlmEngine: webLlmEngine,
                   gemmaEngine: gemmaEngine,
                   transformersJsEngine: transformersJsEngine,
+                  isWeb: isWeb,
                   onConnect: (config) => _connect(context, config),
                 ),
               ],
