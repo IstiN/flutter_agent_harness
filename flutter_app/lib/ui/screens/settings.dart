@@ -2065,6 +2065,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ProvidersSection(
                 service: widget.service,
                 registry: widget.registry,
+                onDeviceProviders: buildOnDeviceProviderRoutes(
+                  context,
+                  registry: widget.registry,
+                  onApply: (config) async {
+                    await widget.service.reconfigure(config);
+                    await widget.lastConnectionStore?.saveFromConfig(config);
+                  },
+                  webLlmEngine: widget.webLlmEngine,
+                  gemmaEngine: widget.gemmaEngine,
+                  transformersJsEngine: widget.transformersJsEngine,
+                ),
+                onDeviceConnected: (config) async {
+                  final agentConfig = agentConfigFrom(config);
+                  await widget.service.reconfigure(agentConfig);
+                  await widget.lastConnectionStore?.saveFromConfig(agentConfig);
+                },
               ),
               const SizedBox(height: 24),
               const Divider(),

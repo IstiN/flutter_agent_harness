@@ -856,9 +856,9 @@ void main() {
       setPlatform(null);
     });
 
-    testWidgets('is hidden on desktop (and on web, where transformers.js '
-        'replaces it)', (tester) async {
-      setPlatform(TargetPlatform.macOS);
+    testWidgets('is hidden on non-macOS desktop (and on web, where '
+        'transformers.js replaces it)', (tester) async {
+      setPlatform(TargetPlatform.linux);
       await tester.pumpWidget(const MyApp());
 
       await tester.tap(find.byType(DropdownButtonFormField<Object>));
@@ -1113,8 +1113,12 @@ void main() {
         gemmaProviderVisible(isWeb: false, platform: TargetPlatform.android),
         isTrue,
       );
+      expect(
+        gemmaProviderVisible(isWeb: false, platform: TargetPlatform.macOS),
+        isTrue,
+        reason: 'macOS is supported by flutter_gemma 1.5.x',
+      );
       for (final desktop in [
-        TargetPlatform.macOS,
         TargetPlatform.linux,
         TargetPlatform.windows,
       ]) {

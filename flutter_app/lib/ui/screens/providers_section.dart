@@ -78,41 +78,24 @@ class DefaultChatModelSection extends StatelessWidget {
     await lastConnectionStore?.saveFromConfig(config);
   }
 
-  fa_ui.FaOnDeviceRoute _onDeviceRoute(
-    BuildContext context,
-    ProviderPreset preset,
-  ) {
-    return fa_ui.FaOnDeviceRoute(
-      label: preset.labelFor(context),
-      pageBuilder: (context, apply) => _OnDeviceFormPage(
-        preset: preset,
-        registry: registry ?? ProviderRegistry.inMemory(),
-        onApply: (config) => apply(_faConfigFrom(config)),
+  @override
+  Widget build(BuildContext context) {
+    return fa_ui.DefaultChatModelSection(
+      connection: service,
+      onApply: (config) => _apply(agentConfigFrom(config)),
+      registry: registry,
+      modelsFetcher: modelsFetcher,
+      // The on-device presets connect through the regular form (engine
+      // download + progress) pre-selected to the provider.
+      onDeviceProviders: buildOnDeviceProviderRoutes(
+        context,
+        registry: registry,
+        onApply: _apply,
         webLlmEngine: webLlmEngine,
         gemmaEngine: gemmaEngine,
         transformersJsEngine: transformersJsEngine,
         isWeb: isWeb,
       ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final web = isWeb ?? kIsWeb;
-    return fa_ui.DefaultChatModelSection(
-      connection: service,
-      onApply: (config) => _apply(_agentConfigFrom(config)),
-      registry: registry,
-      modelsFetcher: modelsFetcher,
-      // The on-device presets connect through the regular form (engine
-      // download + progress) pre-selected to the provider.
-      onDeviceProviders: [
-        _onDeviceRoute(context, ProviderPreset.webllm),
-        if (gemmaProviderVisible(isWeb: web, platform: defaultTargetPlatform))
-          _onDeviceRoute(context, ProviderPreset.gemma),
-        if (transformersJsProviderVisible(isWeb: web))
-          _onDeviceRoute(context, ProviderPreset.transformersJs),
-      ],
       providerKindLabels: {
         webLlmProviderKind: ProviderPreset.webllm.labelFor(context),
         gemmaProviderKind: ProviderPreset.gemma.labelFor(context),
@@ -122,6 +105,42 @@ class DefaultChatModelSection extends StatelessWidget {
       },
     );
   }
+}
+
+/// Builds the on-device provider routes (Gemma, WebLLM, transformers.js)
+/// for the current platform. Used both by [DefaultChatModelSection] and by
+/// the unified [ProvidersSection] in the settings page.
+List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
+  BuildContext context, {
+  required ProviderRegistry? registry,
+  required Future<void> Function(AgentConfig config) onApply,
+  WebLlmEngineApi? webLlmEngine,
+  GemmaEngineApi? gemmaEngine,
+  TransformersJsEngineApi? transformersJsEngine,
+  bool? isWeb,
+}) {
+  final web = isWeb ?? kIsWeb;
+  fa_ui.FaOnDeviceRoute route(ProviderPreset preset) =>
+      fa_ui.FaOnDeviceRoute(
+        label: preset.labelFor(context),
+        pageBuilder: (context, apply) => _OnDeviceFormPage(
+          preset: preset,
+          registry: registry ?? ProviderRegistry.inMemory(),
+          onApply: (config) => apply(_faConfigFrom(config)),
+          webLlmEngine: webLlmEngine,
+          gemmaEngine: gemmaEngine,
+          transformersJsEngine: transformersJsEngine,
+          isWeb: isWeb,
+        ),
+      );
+
+  return [
+    route(ProviderPreset.webllm),
+    if (gemmaProviderVisible(isWeb: web, platform: defaultTargetPlatform))
+      route(ProviderPreset.gemma),
+    if (transformersJsProviderVisible(isWeb: web))
+      route(ProviderPreset.transformersJs),
+  ];
 }
 
 /// The on-device route of the default-chat-model flow: the regular
@@ -187,7 +206,7 @@ fa_ui.FaChatModelConfig _faConfigFrom(AgentConfig config) =>
     );
 
 /// The reverse of [_faConfigFrom].
-AgentConfig _agentConfigFrom(fa_ui.FaChatModelConfig config) => AgentConfig(
+AgentConfig agentConfigFrom(fa_ui.FaChatModelConfig config) => AgentConfig(
   providerKind: config.providerKind,
   modelId: config.modelId,
   baseUrl: config.baseUrl,

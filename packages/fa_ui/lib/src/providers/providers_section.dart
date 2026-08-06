@@ -2,10 +2,13 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/connection.dart';
+import 'package:fa_ui/src/providers/default_chat_model.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
@@ -13,13 +16,22 @@ import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 
-/// The settings "Providers" section: every hosted preset and saved
-/// [CustomProvider], the one backing the active connection marked with a
-/// check. Tapping a row pushes the full-screen [ProviderEditorPage]
-/// (presets: key only; custom providers: name/URL/model/key + Delete); the
-/// "Add provider" row opens the same page in create mode.
+/// The settings "Providers" section: every hosted preset, saved
+/// [CustomProvider], and optional on-device route, with the active one
+/// marked with a check. Tapping a hosted row pushes the full-screen
+/// [ProviderEditorPage] (presets: key only; custom providers:
+/// name/URL/model/key + Delete); the "Add provider" row opens the same page
+/// in create mode. On-device rows push the host-supplied [FaOnDeviceRoute]
+/// page and report the resulting [FaChatModelConfig] through
+/// [onDeviceConnected].
 class ProvidersSection extends StatelessWidget {
-  const ProvidersSection({super.key, this.service, this.registry});
+  const ProvidersSection({
+    super.key,
+    this.service,
+    this.registry,
+    this.onDeviceProviders = const [],
+    this.onDeviceConnected,
+  });
 
   /// The active connection, for the current-provider mark. `null` renders
   /// the list without marks (tests, hosts without a live connection).
@@ -28,6 +40,14 @@ class ProvidersSection extends StatelessWidget {
   /// The user-added providers; `null` falls back to a non-persisting
   /// in-memory registry (tests, previews).
   final ProviderRegistry? registry;
+
+  /// On-device provider routes (Gemma, WebLLM, transformers.js, …). Shown
+  /// after the custom providers when non-empty.
+  final List<FaOnDeviceRoute> onDeviceProviders;
+
+  /// Called when an on-device route applies a [FaChatModelConfig] (the user
+  /// connected a local model). The host should reconfigure its service.
+  final ValueChanged<FaChatModelConfig>? onDeviceConnected;
 
   bool _isCurrent(Object provider) {
     final service = this.service;
@@ -99,10 +119,43 @@ class ProvidersSection extends StatelessWidget {
               leading: Icons.add,
               onTap: () => _addProvider(context, registry),
             ),
+            if (onDeviceProviders.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 8),
+              for (final route in onDeviceProviders)
+                _buildRow(
+                  context,
+                  theme,
+                  label: route.label,
+                  leading: Icons.memory_outlined,
+                  onTap: () {
+                  unawaited(_openOnDeviceRoute(context, route));
+                },
+                ),
+            ],
           ],
         );
       },
     );
+  }
+
+  Future<void> _openOnDeviceRoute(
+    BuildContext context,
+    FaOnDeviceRoute route,
+  ) async {
+    final config = await pushFaPage<FaChatModelConfig?>(
+      context,
+      route.pageBuilder(
+        context,
+        (config) async {
+          onDeviceConnected?.call(config);
+          if (context.mounted) Navigator.of(context).pop(config);
+        },
+      ),
+    );
+    if (config != null) onDeviceConnected?.call(config);
+    return;
   }
 
   Widget _buildRow(
