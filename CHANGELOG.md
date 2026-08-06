@@ -856,4 +856,10 @@
 
 - fix(macos): bundle LiteRT-LM companion dylibs for flutter_gemma
 
+## 0.1.142
+
+- macOS: no-sandbox release flavor, HealthKit support, privacy entitlements
+- Local models heading, Gemma 128k context, context-fit budget fix
+- feat(flutter_app): feature-gate WebLLM, expand Gemma context window, filter BYOK picker
+
 ## Unreleased
