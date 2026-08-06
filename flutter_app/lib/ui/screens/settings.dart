@@ -441,9 +441,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         _webllmModel = preset;
         unawaited(_verifyWebLlmCache(preset));
       case gemmaProviderKind:
-        // The provider is iOS/Android-only — a record written there must not
-        // resurrect it where the picker hides it (a selection outside the
-        // dropdown's items breaks it).
+        // The provider is iOS/Android/macOS-only — a record written there
+        // must not resurrect it where the picker hides it (a selection
+        // outside the dropdown's items breaks it).
         if (!gemmaProviderVisible(
           isWeb: _isWeb,
           platform: defaultTargetPlatform,
@@ -938,7 +938,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           ),
           items: [
             for (final preset in ProviderPreset.values)
-              // Gemma runs on iOS/Android only (on web the transformers.js
+              // Gemma runs on iOS/Android/macOS (on web the transformers.js
               // provider replaces it); transformers.js is web-only.
               if ((preset != ProviderPreset.gemma ||
                       gemmaProviderVisible(
@@ -2118,7 +2118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // The transformers.js section is web-only (its provider is);
               // the Gemma section hides where its provider is unsupported —
               // on web the litert-lm path is abandoned in favour of
-              // transformers.js, on desktop neither exists.
+              // transformers.js, and on Windows/Linux it is not enabled yet.
               if (transformersJsProviderSupported) ...[
                 const SizedBox(height: 24),
                 TransformersJsCacheSection(engine: widget.transformersJsEngine),

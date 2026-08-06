@@ -71,7 +71,7 @@ PODS:
     - GoogleUtilities/UserDefaults (~> 8.1)
     - nanopb (~> 3.30910.0)
     - PromisesSwift (~> 2.1)
-  - flutter_gemma (1.1.2):
+  - flutter_gemma (1.4.0):
     - FlutterMacOS
   - flutter_js (0.0.1):
     - FlutterMacOS
@@ -230,7 +230,7 @@ SPEC CHECKSUMS:
   FirebaseInstallations: eb29ccbf64eaedf86fd5b2ccc7fabde567660b52
   FirebaseRemoteConfigInterop: 7e3d57ce4b1e958bb1d15403faa7178f46bbb5b7
   FirebaseSessions: acfe7eadca47cda94ac86592737204581bb1abf6
-  flutter_gemma: c11ad071486512e874e419e25e1e503b85f06803
+  flutter_gemma: de894a36a3b5926a8d1ddb4f8be65f6e347cbe46
   flutter_js: 79c3c70d33ba464c67d8eb88639a61aa718cd8b8
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   GoogleAppMeasurement: a6d37949071d456e9147dac6789c4342e0e7a8c5
