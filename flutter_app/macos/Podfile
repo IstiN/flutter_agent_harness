@@ -40,6 +40,85 @@ post_install do |installer|
     flutter_additional_macos_build_settings(target)
   end
 
+  # flutter_gemma / LiteRT-LM: copy the Apple companion dylibs into the app
+  # bundle as .framework bundles and patch LiteRtLm's load command so that
+  # dlopen("LiteRtLm.framework/LiteRtLm") resolves GemmaModelConstraintProvider
+  # at runtime. Without this macOS builds crash at first inference.
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_targets.each do |user_target|
+      next unless user_target.name == 'Runner'
+      phase_name = '[flutter_gemma] Setup LiteRT-LM macOS'
+      existing = user_target.shell_script_build_phases.find { |p| p.respond_to?(:name) && p.name == phase_name }
+      phase = existing || user_target.new_shell_script_build_phase(phase_name)
+      phase.input_paths = [
+        '$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Frameworks/LiteRtLm.framework/Versions/A/LiteRtLm',
+      ]
+      phase.output_paths = ['$(DERIVED_FILE_DIR)/flutter_gemma_litertlm_macos.stamp']
+      phase.shell_script = <<~SHELL
+        set -e
+        FRAMEWORKS="${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/Frameworks"
+        if [ ! -d "${FRAMEWORKS}" ]; then
+          exit 0
+        fi
+        for base in LiteRtMetalAccelerator LiteRtTopKMetalSampler GemmaModelConstraintProvider; do
+          rm -f "${FRAMEWORKS}/lib${base}.dylib"
+        done
+        for candidate in \\
+            "${HOME}/Library/Caches/flutter_gemma/native/macos_arm64" \\
+            "${PODS_ROOT}/../Flutter/ephemeral/.symlinks/plugins/flutter_gemma/native/litert_lm/prebuilt/macos_arm64" \\
+            "${SRCROOT}/../../native/litert_lm/prebuilt/macos_arm64"; do
+          if [ -f "${candidate}/libGemmaModelConstraintProvider.dylib" ]; then
+            PLUGIN_PREBUILT="${candidate}"
+            break
+          fi
+        done
+        if [ -z "${PLUGIN_PREBUILT:-}" ]; then
+          echo "[flutter_gemma] ERROR: Could not find macOS companion dylibs"
+          exit 1
+        fi
+        echo "[flutter_gemma] Using companion dylibs from: ${PLUGIN_PREBUILT}"
+        for base in GemmaModelConstraintProvider LiteRtMetalAccelerator LiteRtTopKMetalSampler; do
+          src="${PLUGIN_PREBUILT}/lib${base}.dylib"
+          if [ ! -f "${src}" ]; then
+            echo "[flutter_gemma] WARNING: ${src} not found"
+            continue
+          fi
+          fw_dir="${FRAMEWORKS}/${base}.framework"
+          mkdir -p "${fw_dir}/Versions/A/Resources"
+          cp "${src}" "${fw_dir}/Versions/A/${base}"
+          install_name_tool -id "@rpath/${base}.framework/Versions/A/${base}" \\
+            "${fw_dir}/Versions/A/${base}" 2>/dev/null || true
+          (cd "${fw_dir}" && ln -sfh A Versions/Current && ln -sfh "Versions/Current/${base}" "${base}" && ln -sfh "Versions/Current/Resources" Resources)
+          cat > "${fw_dir}/Versions/A/Resources/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key><string>${base}</string>
+  <key>CFBundleIdentifier</key><string>dev.flutterberlin.flutter_gemma.${base}</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundlePackageType</key><string>FMWK</string>
+</dict>
+</plist>
+EOF
+          codesign --force --sign - "${fw_dir}/Versions/A/${base}" 2>/dev/null || true
+          echo "[flutter_gemma] copied ${base}.framework"
+        done
+        LITERTLM="${FRAMEWORKS}/LiteRtLm.framework/Versions/A/LiteRtLm"
+        if [ -f "${LITERTLM}" ]; then
+          install_name_tool -change \\
+            @rpath/libGemmaModelConstraintProvider.dylib \\
+            @rpath/GemmaModelConstraintProvider.framework/Versions/A/GemmaModelConstraintProvider \\
+            "${LITERTLM}" 2>/dev/null || true
+          codesign --force --sign - "${LITERTLM}" 2>/dev/null || true
+        fi
+        mkdir -p "$(dirname "${SCRIPT_OUTPUT_FILE_0}")"
+        touch "${SCRIPT_OUTPUT_FILE_0}"
+      SHELL
+    end
+  end
+
   # wasm_run FFI symbols live in a static library inside WasmRun.xcframework.
   # They are referenced only from Dart via dlsym (DynamicLibrary.executable()),
   # so the linker never pulls them in: force_load alone is not enough because
