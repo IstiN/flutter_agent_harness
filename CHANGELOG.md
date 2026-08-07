@@ -866,4 +866,8 @@
 
 - feat(macos): privacy prompts, configurable signing, and no-sandbox release for Fa
 
+## 0.1.146
+
+- fix(macos): split Debug entitlements for local flutter run
+
 ## Unreleased
