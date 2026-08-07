@@ -870,4 +870,9 @@
 
 - fix(macos): split Debug entitlements for local flutter run
 
+## 0.1.147
+
+- fix(macos): surface EventKit authorization failures
+- feat(macos): allow explicit calendar permission bootstrap
+
 ## Unreleased
