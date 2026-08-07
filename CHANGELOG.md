@@ -875,4 +875,8 @@
 - fix(macos): surface EventKit authorization failures
 - feat(macos): allow explicit calendar permission bootstrap
 
+## 0.1.148
+
+- Gate JS apps and skills by platform
+
 ## Unreleased
