@@ -2,6 +2,7 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa_ui/fa_ui.dart' show FaVoicePresetPicker;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -284,13 +285,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(MediaSlotModelPage), findsOneWidget);
 
-      // The voice field renders only for the TTS slot, prefilled from the
-      // current override.
-      final voiceField = find.widgetWithText(TextField, 'Voice (optional)');
-      expect(voiceField, findsOneWidget);
-      expect(tester.widget<TextField>(voiceField).controller!.text, 'af_heart');
+      // tts-1 matches the OpenAI voice presets, so the voice control is the
+      // preset picker, prefilled from the current override.
+      expect(find.byType(FaVoicePresetPicker), findsOneWidget);
+      expect(find.text('af_heart'), findsOneWidget);
 
-      await tester.enterText(voiceField, 'nova');
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('nova').last);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 

@@ -143,7 +143,9 @@ factual: paths, commands, invariants — no essays.
   family, radii), the provider/model settings widgets (`ProvidersSection`,
   `ProviderEditorPage`, `DefaultChatModelSection` + pickers,
   `MediaSlotProviderPickerPage`/`MediaSlotModelPage`, `ProviderPreset` +
-  helpers, `ModelIdAutocompleteField`), and the stores (`ProviderRegistry`,
+  helpers, `ModelIdAutocompleteField`, `FaVoicePresetPicker` +
+  `faVoicePresetsFor` (per-(baseUrl, modelId) TTS voice presets — Gemini /
+  Kokoro / OpenAI — with inline sample previews), and the stores (`ProviderRegistry`,
   `MediaModelsStore`, `SessionKeysStore`, `KeychainStore`,
   `modelIdSuggestsVision`). The chat leaf widgets live there too
   (`lib/src/chat/`): the Markdown style/sandbox image resolver
@@ -324,8 +326,13 @@ factual: paths, commands, invariants — no essays.
   `test/apps/demo_assets_declared_test.dart`): calculator,
   weather, stocks, crypto, animation-showcase, yolo-hello, calendar
   (`jsr.fa.calendar`), map (`map` node), health + homekit (real bridge on
-  iOS, honest demo-panel fallback elsewhere), fitness-trainer (guided
-  workout timers), english-teacher — the "Language Tutor": Duolingo-style
+  iOS, honest demo-panel fallback elsewhere), fitness-trainer — guided
+  workout with a 3D animated coach (CC0 KayKit Rogue GLB with 76 skeletal
+  clips in `assets/apps/fitness-trainer/models/`, rendered via the
+  `scene3d` node + flame_3d; START-driven exercise/rest steps with
+  per-clip mapping, pause/skip/quit, sessions persisted via jsr.storage;
+  `integration_test/fitness_coach_screenshot_test.dart` screenshot-verifies
+  it on the macOS host), english-teacher — the "Language Tutor": Duolingo-style
   quiz sessions (hearts/XP/streak, choice + typing modes), a per-language
   offline word bank (en/de/es/fr/pl picker persisted via jsr.storage),
   LLM-generated extra words via `jsr.fa.llm.chat` (manifest `llm: true`),

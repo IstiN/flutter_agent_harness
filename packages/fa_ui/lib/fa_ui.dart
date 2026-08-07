@@ -29,6 +29,7 @@ export 'src/providers/media_slot_picker_page.dart';
 export 'src/providers/provider_editor_page.dart';
 export 'src/providers/provider_preset.dart';
 export 'src/providers/providers_section.dart';
+export 'src/providers/voice_presets.dart';
 export 'src/stores/keychain_store.dart';
 export 'src/stores/media_models_store.dart';
 export 'src/stores/provider_registry.dart';

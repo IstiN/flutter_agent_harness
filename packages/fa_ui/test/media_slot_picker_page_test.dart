@@ -312,7 +312,8 @@ void main() {
         const MediaSlotModelPage(
           slot: MediaSlot.audioTts,
           provider: ProviderPreset.openrouter,
-          initialModel: 'tts-1',
+          // No presets match this model — the free-text field stays.
+          initialModel: 'acme-voice-1',
           initialVoice: 'af_heart',
           modelsFetcher: _someModels,
         ),
@@ -328,8 +329,102 @@ void main() {
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
-      expect(result!.override!.modelId, 'tts-1');
+      expect(result!.override!.modelId, 'acme-voice-1');
       expect(result!.override!.voice, 'nova');
+    });
+
+    testWidgets('a Gemini TTS model swaps the voice field for the preset '
+        'picker and saves the picked voice', (tester) async {
+      MediaSlotEditorResult? result;
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotModelPage(
+          slot: MediaSlot.audioTts,
+          provider: ProviderPreset.openrouter,
+          initialModel: 'gemini-2.5-flash-preview-tts',
+          initialVoice: 'Kore',
+          modelsFetcher: _someModels,
+        ),
+        (value) => result = value,
+      );
+      await _open(tester);
+
+      // The picker shows the saved voice (with its trait and a preview
+      // button); the free-text field is gone.
+      expect(find.byType(FaVoicePresetPicker), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'Voice (optional)'), findsNothing);
+      expect(find.text('Kore — Firm'), findsOneWidget);
+      expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Puck — Upbeat').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(result!.override!.modelId, 'gemini-2.5-flash-preview-tts');
+      expect(result!.override!.voice, 'Puck');
+    });
+
+    testWidgets('a saved voice unknown to the presets is kept as-is', (
+      tester,
+    ) async {
+      MediaSlotEditorResult? result;
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotModelPage(
+          slot: MediaSlot.audioTts,
+          provider: ProviderPreset.openrouter,
+          initialModel: 'tts-1',
+          initialVoice: 'my-custom-voice',
+          modelsFetcher: _someModels,
+        ),
+        (value) => result = value,
+      );
+      await _open(tester);
+
+      // tts-1 matches the OpenAI presets; the saved voice is none of them
+      // but still renders (and saves) unchanged.
+      expect(find.byType(FaVoicePresetPicker), findsOneWidget);
+      expect(find.text('my-custom-voice'), findsOneWidget);
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(result!.override!.voice, 'my-custom-voice');
+    });
+
+    testWidgets('the picker tracks the typed model id live', (tester) async {
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotModelPage(
+          slot: MediaSlot.audioTts,
+          provider: ProviderPreset.openrouter,
+          initialModel: 'acme-voice-1',
+          modelsFetcher: _someModels,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      expect(find.byType(FaVoicePresetPicker), findsNothing);
+      expect(
+        find.widgetWithText(TextField, 'Voice (optional)'),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'kokoro-82m',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FaVoicePresetPicker), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'Voice (optional)'), findsNothing);
+      // Kokoro presets publish no samples — no preview button.
+      expect(find.byIcon(Icons.play_arrow), findsNothing);
     });
 
     testWidgets('no voice field outside the TTS slot', (tester) async {

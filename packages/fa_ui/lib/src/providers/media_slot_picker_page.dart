@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
+import 'package:fa_ui/src/providers/voice_presets.dart';
 import 'package:fa_ui/src/stores/media_models_store.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
@@ -342,11 +343,23 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
     _ => '',
   };
 
+  void _onModelChanged() => setState(() {});
+
+  /// The voice presets matching the currently typed model id (empty → the
+  /// free-text voice field stays).
+  List<FaVoicePreset> get _voicePresets => faVoicePresetsFor(
+    baseUrl: _baseUrl.isEmpty ? null : _baseUrl,
+    modelId: _modelController.text,
+  );
+
   @override
   void initState() {
     super.initState();
     _modelController = TextEditingController(text: widget.initialModel);
     _voiceController = TextEditingController(text: widget.initialVoice);
+    // The TTS voice presets derive from the typed model id — rebuild on
+    // every edit so the picker appears/disappears live.
+    _modelController.addListener(_onModelChanged);
     // The fetch resolves the provider key through the inherited saved-keys
     // scope — unavailable during initState, so it runs after the frame.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -471,13 +484,25 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
               ),
               if (widget.slot == MediaSlot.audioTts) ...[
                 const SizedBox(height: 16),
-                TextField(
-                  controller: _voiceController,
-                  decoration: InputDecoration(
-                    labelText: strings.mediaModelsVoiceLabel,
-                    hintText: strings.mediaModelsVoiceHint,
+                // Known models get the preset picker (with sample previews);
+                // anything else keeps the free-text field.
+                if (_voicePresets.isNotEmpty)
+                  FaVoicePresetPicker(
+                    presets: _voicePresets,
+                    value: _voiceController.text.trim().isEmpty
+                        ? null
+                        : _voiceController.text.trim(),
+                    onChanged: (voice) =>
+                        setState(() => _voiceController.text = voice),
+                  )
+                else
+                  TextField(
+                    controller: _voiceController,
+                    decoration: InputDecoration(
+                      labelText: strings.mediaModelsVoiceLabel,
+                      hintText: strings.mediaModelsVoiceHint,
+                    ),
                   ),
-                ),
               ],
               if (capabilities.isNotEmpty) ...[
                 const SizedBox(height: 16),

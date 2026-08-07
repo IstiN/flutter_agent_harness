@@ -405,9 +405,10 @@ void main() {
         size: goldenSizeDesktop,
         wrap: _wrapPage,
         const MediaSlotModelPage(
-          slot: MediaSlot.imageGeneration,
+          slot: MediaSlot.audioTts,
           provider: ProviderPreset.openrouter,
-          initialModel: 'gpt-image-1',
+          initialModel: 'gemini-2.5-flash-preview-tts',
+          initialVoice: 'Kore',
           modelsFetcher: _editorModels,
         ),
       );
@@ -415,8 +416,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pumpAndSettle();
 
-      // The provider header, the prefilled model field, the Save action,
-      // and the capability chips derived from the endpoint's /models list.
+      // The provider header, the prefilled model field, the voice preset
+      // picker (Gemini voices, with the sample preview button), the Save
+      // action, and the capability chips derived from the endpoint's
+      // /models list.
       await expectGolden(tester, 'settings_media_model_page');
     });
 
