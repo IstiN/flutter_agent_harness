@@ -3,6 +3,7 @@
   "name": "Voice Notes",
   "description": "Record short voice takes and keep their transcripts",
   "version": "1.0.0",
+  "platforms": ["ios", "macos"],
   "icon": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='9' y='2' width='6' height='12' rx='3' fill='#3b82f6'/><path d='M5 11a7 7 0 0 0 14 0' stroke='#93c5fd' stroke-width='2' fill='none' stroke-linecap='round'/><rect x='11' y='18' width='2' height='4' rx='1' fill='#1d4ed8'/></svg>",
   "allowedCommands": [],
   "network": false,

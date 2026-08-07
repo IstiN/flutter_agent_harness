@@ -17,6 +17,10 @@ description: Create JS apps (jsr.render UI) that run inside Fa's Apps section �
 
 ## 📱 Platform (what this environment IS and IS NOT)
 
+The current Fa host platform is **`{{FA_PLATFORM}}`**. App manifests can use
+`"platforms"` to opt into specific hosts; never create or recommend an app or
+bridge that is unavailable on this platform.
+
 Apps are **declarative JS widgets** rendered natively by the Fa host (single-page model: one `widget.js` tree, optional live home-screen tile `widget_tile.js`, permissions-gated bridges). This is NOT a general-purpose compute sandbox:
 
 - **No servers / daemons / long-running processes.** An app runs while visible; there is no `node server.js`, no background loop beyond `jsr.setInterval` timers.
@@ -68,7 +72,7 @@ Avoid these traps (they cost real debugging time):
 3. **Register `jsr.onEvent`** — even if you handle few events.
 4. **Set the permissions the app actually needs** in `manifest.json`, and tell the user they may also need to enable them at runtime in the app's permissions dialog.
 5. **Never hand-edit `apps/<id>/storage.json`** — that file is owned by `jsr.storage`.
-6. **Study the demo apps first** — the `apps/` folder ships working examples (calculator, weather, stocks, crypto, yolo-hello, animation-showcase, calendar, contacts, map, health, homekit, voice-notes, reminders). Read their source before building something similar.
+6. **Study the available demo apps first** — Fa filters bundled examples by the current host platform. Read the closest visible app's source before building something similar.
 
 ---
 
@@ -104,6 +108,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
   "name": "My App",
   "description": "Short description shown in the app picker",
   "version": "1.0.0",
+  "platforms": ["ios", "macos"],
   "icon": "🚀",
   "network": true,
   "allowedCommands": [],
@@ -125,16 +130,17 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `name` | ✅ | Display name shown in UI |
 | `description` | ✅ | Short description |
 | `version` | ✅ | Semver string |
+| `platforms` | ❌ | Host allowlist: `web`, `android`, `ios`, `macos`, `windows`, `linux`, `fuchsia`. Omit for every platform. Apps outside the current platform are hidden and cannot start. |
 | `icon` | ✅ | App-picker icon: an emoji, inline SVG markup (`"<svg …>"`), or an SVG filename inside the app folder (see below) |
 | `network` | ❌ | `true` to allow `jsr.fetchJson` (default: false) |
 | `allowedCommands` | ❌ | Array of shell commands allowed via `jsr.exec` (default: none) |
 | `llm` | ❌ | `true` to allow `jsr.fa.llm` / `jsr.fa.llm.chat` / `jsr.fa.llm.stream` (default: false) |
-| `homekit` | ❌ | `true` to allow `jsr.fa.home.*` (and the legacy `jsr.fa.homekit`) — HomeKit home control (iOS; default: false) |
-| `health` | ❌ | `true` to allow `jsr.fa.health.summary` — read-only HealthKit data (iOS; default: false) |
-| `contacts` | ❌ | `true` to allow `jsr.fa.contacts.*` — system contacts access (search + create/update/delete + call/sms; default: false) |
-| `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — system calendar access (read + create/update/delete; default: false) |
-| `microphone` | ❌ | `true` to allow `jsr.fa.asr.*` — microphone recording + speech-to-text (macOS/iOS; default: false) |
-| `notifications` | ❌ | `true` to allow `jsr.fa.notify.*` — schedule/cancel local system notifications (macOS/iOS; default: false) |
+| `homekit` | ❌ | `true` to allow `jsr.fa.home.*` (and legacy `jsr.fa.homekit`) — HomeKit home control (default: false) | <!-- fa-platforms: ios -->
+| `health` | ❌ | `true` to allow `jsr.fa.health.summary` — read-only HealthKit data (default: false) | <!-- fa-platforms: ios,macos -->
+| `contacts` | ❌ | `true` to allow `jsr.fa.contacts.*` — system contacts access (search + create/update/delete + call/sms; default: false) | <!-- fa-platforms: ios,macos -->
+| `calendar` | ❌ | `true` to allow `jsr.fa.calendar` — system calendar access (read + create/update/delete; default: false) | <!-- fa-platforms: ios,macos -->
+| `microphone` | ❌ | `true` to allow `jsr.fa.asr.*` — microphone recording + speech-to-text (default: false) | <!-- fa-platforms: ios,macos -->
+| `notifications` | ❌ | `true` to allow `jsr.fa.notify.*` — schedule/cancel local system notifications (default: false) | <!-- fa-platforms: ios,macos -->
 | `media` | ❌ | `true` to allow `jsr.fa.media.*` — image / TTS / music generation + video reading on the configured media endpoints (default: false) |
 | `keys` | ❌ | `true` to allow `jsr.fa.keys.*` — read the user's saved host API keys and request new ones via the native secret prompt (default: false) |
 
@@ -473,6 +479,7 @@ jsr.onEvent(function(actionId, payload) {
 });
 ```
 
+<!-- fa-platforms: ios,macos -->
 ### `jsr.fa.calendar(args)` → Promise
 Access to the user's system calendar (macOS/iOS). Requires `"calendar": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS calendar-access prompt. `args` is optional: `{date: 'YYYY-MM-DD', days: N}` — defaults to today, 1 day (max 31).
 
@@ -539,9 +546,11 @@ jsr.fa.contacts.sms({ phone: '+1 555 0100', text: 'Running late, sorry!' });
 ```
 
 The Fa agent has matching tools (`contacts_search`, plus write-tier `contacts_add` / `contacts_call` / `contacts_sms`), so users can also reach their contacts by chatting — the call/SMS tools follow a search-then-confirm flow.
+<!-- /fa-platforms -->
 
+<!-- fa-platforms: ios,macos -->
 ### `jsr.fa.health.summary(args)` → Promise
-Read-only health data (iOS HealthKit — there is no HealthKit on macOS). Requires `"health": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS health-access prompt. `args` is optional: `{days: 7}` — how many days back to summarize (1–31, default 7).
+Read-only HealthKit data (iOS and macOS 14+). Requires `"health": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS health-access prompt. `args` is optional: `{days: 7}` — how many days back to summarize (1–31, default 7).
 
 ```javascript
 jsr.fa.health.summary({ days: 7 }).then(function(result) {
@@ -554,9 +563,11 @@ jsr.fa.health.summary({ days: 7 }).then(function(result) {
 ```
 
 Days without data are omitted from each series. The Fa agent has a matching read-tier tool (`health_summary`), so users can also ask about their health data by chatting.
+<!-- /fa-platforms -->
 
+<!-- fa-platforms: ios -->
 ### `jsr.fa.home.*` → Promise
-Home control via HomeKit (iOS — there is no HomeKit framework on macOS). Requires `"homekit": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS home-data prompt. All methods share the same permission:
+Home control via HomeKit (iOS). Requires `"homekit": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS home-data prompt. All methods share the same permission:
 
 ```javascript
 // Homes and rooms.
@@ -604,7 +615,9 @@ jsr.fa.home.list().then(function(result) {
   renderDevices(result.accessories);
 });
 ```
+<!-- /fa-platforms -->
 
+<!-- fa-platforms: ios,macos -->
 ### `jsr.fa.asr.*` → Promise
 Microphone capture + speech-to-text (macOS/iOS). Requires `"microphone": true` in the manifest (and the runtime permission toggle); the first call also triggers the OS microphone-access prompt. Both methods share the same permission:
 
@@ -645,6 +658,7 @@ jsr.fa.notify.cancel({ id: notificationId });
 ```
 
 The Fa agent has a matching write-tier tool (`notify`), so users can also ask for notifications by chatting — both are steered to fire sparingly (long-running/background-relevant updates only, never per-turn chatter).
+<!-- /fa-platforms -->
 
 ### `jsr.fa.media.*` → Promise
 Media generation: images, text-to-speech, and music — plus video reading. Requires `"media": true` in the manifest (and the runtime permission toggle). Endpoints resolve from `media_models.json` per-modality slots (`imageGeneration`, `audioTts`, `musicGeneration`, `vision`), falling back to the connected provider when it is OpenAI-compatible. Errors (permission off, no usable endpoint, provider failure) REJECT the promise with an actionable message — always pass an error handler. Every generation method saves the file into the sandbox `generated/` folder and resolves with `{ path, bytes, detail }` — render it with a `file:<path>` source in `image` / `audio` nodes:
@@ -1165,13 +1179,13 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 | `stocks` | Stock Prices | Real-time stock quotes, textField + fetch | ✅ |
 | `yolo-hello` | Hello Animated | Interactive demo: bounce, gradient, gestures, RAF | ❌ |
 | `animation-showcase` | Animation Showcase | 7 animation demos: fade, morph, bounce, cards, drag, pulse, colors | ❌ |
-| `calendar` | Calendar | System calendar events via `jsr.fa.calendar`, day navigation, add/edit/delete forms + permission states | ❌ |
-| `contacts` | Contacts | System contacts via `jsr.fa.contacts.*`, search, detail card with call/SMS, add form + permission states | ❌ |
+| `calendar` | Calendar | System calendar events via `jsr.fa.calendar`, day navigation, add/edit/delete forms + permission states | ❌ | <!-- fa-platforms: ios,macos -->
+| `contacts` | Contacts | System contacts via `jsr.fa.contacts.*`, search, detail card with call/SMS, add form + permission states | ❌ | <!-- fa-platforms: ios,macos -->
 | `map` | Map | OSM `map` node: preset markers, tap-to-pin, zoom controls | ✅ |
-| `health` | Health | HealthKit dashboard via `jsr.fa.health.summary` (steps/HR/sleep cards + charts), demo fallback | ❌ |
-| `homekit` | Home | HomeKit control via `jsr.fa.home.*` — rooms, accessory cards, power/brightness/temperature controls + demo fallback | ❌ |
-| `voice-notes` | Voice Notes | Microphone record + transcript list via `jsr.fa.asr.*`, persisted via `jsr.storage` | ❌ |
-| `reminders` | Reminders | Local notifications via `jsr.fa.notify.*` — schedule in N minutes, list + cancel per row, persisted via `jsr.storage` | ❌ |
+| `health` | Health | HealthKit dashboard via `jsr.fa.health.summary` (steps/HR/sleep cards + charts), demo fallback | ❌ | <!-- fa-platforms: ios,macos -->
+| `homekit` | Home | HomeKit control via `jsr.fa.home.*` — rooms, accessory cards, power/brightness/temperature controls + demo fallback | ❌ | <!-- fa-platforms: ios -->
+| `voice-notes` | Voice Notes | Microphone record + transcript list via `jsr.fa.asr.*`, persisted via `jsr.storage` | ❌ | <!-- fa-platforms: ios,macos -->
+| `reminders` | Reminders | Local notifications via `jsr.fa.notify.*` — schedule in N minutes, list + cancel per row, persisted via `jsr.storage` | ❌ | <!-- fa-platforms: ios,macos -->
 
 **Tip**: Before building a new app, always read the source of the most similar demo — especially for network fetch, storage, and theming patterns.
 

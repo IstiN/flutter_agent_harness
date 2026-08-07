@@ -10,6 +10,56 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+/// Stable manifest/platform identifier for the current Flutter host.
+String get currentFaPlatform {
+  if (kIsWeb) return 'web';
+  return switch (defaultTargetPlatform) {
+    TargetPlatform.android => 'android',
+    TargetPlatform.iOS => 'ios',
+    TargetPlatform.macOS => 'macos',
+    TargetPlatform.windows => 'windows',
+    TargetPlatform.linux => 'linux',
+    TargetPlatform.fuchsia => 'fuchsia',
+  };
+}
+
+/// Removes platform-tagged Markdown that does not apply to [platform].
+///
+/// Whole blocks use `<!-- fa-platforms: ios,macos -->` and
+/// `<!-- /fa-platforms -->`. A single table/list line can carry only the
+/// opening marker; the marker is stripped when the line is retained.
+String filterPlatformInstructions(String source, {required String platform}) {
+  final block = RegExp(
+    r'<!-- fa-platforms:\s*([^>]+?)\s*-->(.*?)<!-- /fa-platforms -->',
+    dotAll: true,
+  );
+  var filtered = source.replaceAllMapped(block, (match) {
+    return _platformList(match.group(1)).contains(platform)
+        ? match.group(2)!
+        : '';
+  });
+  final taggedLine = RegExp(
+    r'^.*<!-- fa-platforms:\s*([^>]+?)\s*-->.*$',
+    multiLine: true,
+  );
+  filtered = filtered.replaceAllMapped(taggedLine, (match) {
+    if (!_platformList(match.group(1)).contains(platform)) return '';
+    return match
+        .group(0)!
+        .replaceFirst(RegExp(r'\s*<!-- fa-platforms:\s*[^>]+?\s*-->'), '');
+  });
+  return filtered.replaceAll('{{FA_PLATFORM}}', platform);
+}
+
+Set<String> _platformList(Object? value) => {
+  for (final item in switch (value) {
+    List<Object?> values => values,
+    String text => text.split(','),
+    _ => const <Object?>[],
+  })
+    if (item.toString().trim().isNotEmpty) item.toString().trim().toLowerCase(),
+};
+
 /// Declared capabilities of a JS app, parsed from its `manifest.json`.
 ///
 /// Mirrors YoLoIT's widget manifest (`network`, `allowedCommands`) and adds
@@ -229,6 +279,7 @@ class JsAppInfo {
     this.chrome = chromeHeader,
     this.tileWidget,
     this.bundled = false,
+    this.platforms,
   });
 
   factory JsAppInfo.fromManifest(
@@ -249,6 +300,9 @@ class JsAppInfo {
           : null,
       declaredPermissions: AppPermissions.fromJson(json),
       bundled: bundled,
+      platforms: json.containsKey('platforms')
+          ? _platformList(json['platforms'])
+          : null,
     );
   }
 
@@ -258,6 +312,15 @@ class JsAppInfo {
   final String icon;
   final String version;
   final AppPermissions declaredPermissions;
+
+  /// Host platforms on which this app is enabled, or null for every platform.
+  ///
+  /// Manifest identifiers are `web`, `android`, `ios`, `macos`, `windows`,
+  /// `linux`, and `fuchsia`.
+  final Set<String>? platforms;
+
+  bool supportsPlatform(String platform) =>
+      platforms == null || platforms!.contains(platform.toLowerCase());
 
   /// Default display chrome: the app renders under a regular AppBar.
   static const String chromeHeader = 'header';
@@ -395,7 +458,9 @@ class AppsStore {
     this._env, {
     Future<String> Function(String path)? readAsset,
     this.seedDemoIds = demoAppIds,
-  }) : _readAsset = readAsset ?? rootBundle.loadString;
+    String? platform,
+  }) : platform = platform ?? currentFaPlatform,
+       _readAsset = readAsset ?? rootBundle.loadString;
 
   /// Asset root holding the bundled demo apps (see pubspec.yaml).
   static const String bundledAssetRoot = 'assets/apps';
@@ -424,6 +489,7 @@ class AppsStore {
   final List<String> seedDemoIds;
 
   final ExecutionEnv _env;
+  final String platform;
 
   /// Asset reader — reads bundled demo app sources; injectable for tests.
   final Future<String> Function(String path) _readAsset;
@@ -443,13 +509,12 @@ class AppsStore {
       try {
         final decoded = jsonDecode(raw);
         if (decoded is Map<String, Object?>) {
-          apps.add(
-            JsAppInfo.fromManifest(
-              decoded,
-              bundled: false,
-              fallbackId: entry.name,
-            ),
+          final app = JsAppInfo.fromManifest(
+            decoded,
+            bundled: false,
+            fallbackId: entry.name,
           );
+          if (app.supportsPlatform(platform)) apps.add(app);
         }
       } on FormatException {
         // Skip malformed app folders.

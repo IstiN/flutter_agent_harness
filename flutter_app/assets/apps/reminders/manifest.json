@@ -3,6 +3,7 @@
   "name": "Reminders",
   "description": "Local notification reminders — schedule one, cancel it later",
   "version": "1.0.0",
+  "platforms": ["ios", "macos"],
   "icon": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 3a6 6 0 0 0-6 6v3.2L4 15.5V17h16v-1.5l-2-3.3V9a6 6 0 0 0-6-6z' fill='#f59e0b'/><path d='M10 19a2 2 0 0 0 4 0z' fill='#fbbf24'/><circle cx='12' cy='3' r='1.4' fill='#fbbf24'/></svg>",
   "allowedCommands": [],
   "network": false,

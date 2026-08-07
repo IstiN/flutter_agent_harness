@@ -61,7 +61,7 @@ typedef FaHostKeysSource = Map<String, String> Function();
 /// - `jsr.fa.contacts.*` → [AppPermissions.contacts] (real backend via
 ///   [ContactApi]; requests OS access on first use)
 /// - `jsr.fa.health.summary` → [AppPermissions.health] (real backend via
-///   [HealthApi], iOS HealthKit; requests OS access on first use)
+///   [HealthApi], iOS/macOS HealthKit; requests OS access on first use)
 /// - `jsr.fa.home.*` (and the legacy `jsr.fa.homekit(action, …)` calls) →
 ///   [AppPermissions.homekit] (real backend via [HomeApi], iOS HomeKit;
 ///   requests OS access on first use)
@@ -246,6 +246,10 @@ class JsAppEngine {
     _engine = null;
     if (old != null) await old.dispose();
     backHandlerRegistered.value = false;
+
+    if (!app.supportsPlatform(currentFaPlatform)) {
+      throw StateError("App '${app.id}' is not enabled on $currentFaPlatform");
+    }
 
     // Log WHICH app boots — engine-start lines in the debug log used to
     // be indistinguishable between apps (and tiles vs full apps).

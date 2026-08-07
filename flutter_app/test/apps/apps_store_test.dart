@@ -25,6 +25,8 @@ Future<String> _fakeAssets(String path) async {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('AppsStore', () {
     test(
       'a demo id without assets does not kill the rest — it is flagged',
@@ -240,9 +242,56 @@ void main() {
       );
       expect(source, contains('jsr.render'));
     });
+
+    test('filters apps by the injected host platform', () async {
+      final env = MemoryExecutionEnv();
+      const iosManifest = '''
+{
+  "id": "demo",
+  "name": "Demo App",
+  "platforms": ["ios"]
+}
+''';
+      final store = AppsStore(
+        env,
+        platform: 'macos',
+        readAsset: (path) async =>
+            path.endsWith('manifest.json') ? iosManifest : '// widget',
+      );
+      await store.seedBundledApps(['demo']);
+
+      expect(await store.listApps(), isEmpty);
+    });
   });
 
   group('JsAppInfo', () {
+    test('missing platforms enables every host', () {
+      final app = JsAppInfo.fromManifest(
+        const {'id': 'demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+
+      expect(app.platforms, isNull);
+      expect(app.supportsPlatform('macos'), isTrue);
+      expect(app.supportsPlatform('android'), isTrue);
+    });
+
+    test('platform allowlist is normalized and enforced', () {
+      final app = JsAppInfo.fromManifest(
+        const {
+          'id': 'demo',
+          'platforms': [' iOS ', 'MACOS'],
+        },
+        bundled: false,
+        fallbackId: 'demo',
+      );
+
+      expect(app.platforms, {'ios', 'macos'});
+      expect(app.supportsPlatform('macos'), isTrue);
+      expect(app.supportsPlatform('linux'), isFalse);
+    });
+
     test('chrome flag parses with the header fallback', () {
       final full = JsAppInfo.fromManifest(
         const {'id': 'map', 'chrome': 'full'},
@@ -366,6 +415,50 @@ void main() {
         permissions: const AppPermissions(),
       );
       expect(engine.entryFile, JsAppEngine.defaultEntryFile);
+    });
+
+    test('rejects an app disabled on the current host', () async {
+      final engine = JsAppEngine(
+        app: JsAppInfo.fromManifest(
+          const {
+            'id': 'demo',
+            'platforms': ['not-a-flutter-platform'],
+          },
+          bundled: false,
+          fallbackId: 'demo',
+        ),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+
+      await expectLater(engine.start(), throwsA(isA<StateError>()));
+    });
+  });
+
+  group('filterPlatformInstructions', () {
+    test('filters blocks and tagged lines and expands the host', () {
+      const source = '''
+Host: {{FA_PLATFORM}}
+<!-- fa-platforms: ios,macos -->
+Apple bridge
+<!-- /fa-platforms -->
+<!-- fa-platforms: ios -->
+iOS only
+<!-- /fa-platforms -->
+Always
+macOS row <!-- fa-platforms: macos -->
+iOS row <!-- fa-platforms: ios -->
+''';
+
+      final result = filterPlatformInstructions(source, platform: 'macos');
+
+      expect(result, contains('Host: macos'));
+      expect(result, contains('Apple bridge'));
+      expect(result, contains('Always'));
+      expect(result, contains('macOS row'));
+      expect(result, isNot(contains('fa-platforms')));
+      expect(result, isNot(contains('iOS only')));
+      expect(result, isNot(contains('iOS row')));
     });
   });
 

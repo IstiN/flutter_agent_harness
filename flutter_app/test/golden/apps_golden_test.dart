@@ -688,6 +688,7 @@ void main() {
         permissionsStore: permissions,
         appsStore: AppsStore(
           env,
+          platform: 'macos',
           readAsset: (path) async =>
               throw StateError('no bundled assets in this test'),
           seedDemoIds: const [],

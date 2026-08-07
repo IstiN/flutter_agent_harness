@@ -13,6 +13,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
@@ -279,7 +280,11 @@ class AgentService extends ChangeNotifier
     for (final entry in bundled.entries) {
       try {
         final target = '.fah/skills/${entry.key}/SKILL.md';
-        final body = await rootBundle.loadString(entry.value);
+        final bundledBody = await rootBundle.loadString(entry.value);
+        final body = filterPlatformInstructions(
+          bundledBody,
+          platform: currentFaPlatform,
+        );
         final existing = await env.readTextFile(target);
         if (existing.valueOrNull == body) continue;
         await env.writeFile(target, body);
