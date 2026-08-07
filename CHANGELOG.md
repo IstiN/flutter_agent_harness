@@ -862,4 +862,8 @@
 - Local models heading, Gemma 128k context, context-fit budget fix
 - feat(flutter_app): feature-gate WebLLM, expand Gemma context window, filter BYOK picker
 
+## 0.1.143
+
+- feat(macos): privacy prompts, configurable signing, and no-sandbox release for Fa
+
 ## Unreleased
