@@ -576,6 +576,8 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
           ARCH: ${{ matrix.arch }}
+          FA_CODE_SIGN_IDENTITY: ${{ secrets.MACOS_CERTIFICATE_ID }}
+          FA_DEVELOPMENT_TEAM: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
         run: |
           set -euo pipefail
           cd flutter_app
