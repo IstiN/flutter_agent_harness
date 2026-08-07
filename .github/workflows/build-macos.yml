@@ -301,6 +301,16 @@ jobs:
           if [ -n "$MACOS_PROVISIONING_PROFILE_BASE64" ]; then
             echo "$MACOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > profile.provisionprofile
             echo "profile_embedded=true" >> $GITHUB_OUTPUT
+
+            # Make the profile visible to Xcode manual signing.
+            PROFILE_UUID=$(security cms -D -i profile.provisionprofile | plutil -extract UUID raw -)
+            PROFILE_NAME=$(security cms -D -i profile.provisionprofile | plutil -extract Name raw -)
+            PROFILE_TEAM=$(security cms -D -i profile.provisionprofile | plutil -extract TeamIdentifier.0 raw - 2>/dev/null || true)
+            echo "Profile: $PROFILE_NAME / UUID: $PROFILE_UUID / team: $PROFILE_TEAM"
+            mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+            cp profile.provisionprofile "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.provisionprofile"
+            echo "profile_uuid=$PROFILE_UUID" >> $GITHUB_OUTPUT
+            echo "profile_team=$PROFILE_TEAM" >> $GITHUB_OUTPUT
           else
             echo "⚠️  No provisioning profile found — TestFlight will warn"
             echo "profile_embedded=false" >> $GITHUB_OUTPUT
@@ -312,14 +322,23 @@ jobs:
           BUILD_VERSION: ${{ needs.version.outputs.version }}
           MACOS_CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
           MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+          PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+          PROFILE_TEAM: ${{ steps.signing.outputs.profile_team }}
         run: |
           ARCH="${{ matrix.arch }}"
           echo "Building for architecture: $ARCH"
           cd flutter_app
           if [ -n "${MACOS_CERTIFICATE_ID:-}" ]; then
             export FA_CODE_SIGN_IDENTITY="$MACOS_CERTIFICATE_ID"
-            export FA_DEVELOPMENT_TEAM="${MACOS_NOTARIZE_TEAM_ID:-}"
             export FA_CODE_SIGN_STYLE=Manual
+            if [ -n "${MACOS_NOTARIZE_TEAM_ID:-}" ]; then
+              export FA_DEVELOPMENT_TEAM="$MACOS_NOTARIZE_TEAM_ID"
+            elif [ -n "${PROFILE_TEAM:-}" ]; then
+              export FA_DEVELOPMENT_TEAM="$PROFILE_TEAM"
+            fi
+            if [ -n "${PROFILE_UUID:-}" ]; then
+              export FA_PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID"
+            fi
           else
             export FA_CODE_SIGN_IDENTITY="-"
             export FA_CODE_SIGN_STYLE=Automatic
@@ -588,9 +607,17 @@ jobs:
           ARCH: ${{ matrix.arch }}
           FA_CODE_SIGN_IDENTITY: ${{ secrets.MACOS_CERTIFICATE_ID }}
           FA_DEVELOPMENT_TEAM: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+          PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+          PROFILE_TEAM: ${{ steps.signing.outputs.profile_team }}
         run: |
           set -euo pipefail
           cd flutter_app
+          if [ -z "${FA_DEVELOPMENT_TEAM:-}" ] && [ -n "${PROFILE_TEAM:-}" ]; then
+            export FA_DEVELOPMENT_TEAM="$PROFILE_TEAM"
+          fi
+          if [ -n "${PROFILE_UUID:-}" ]; then
+            export FA_PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID"
+          fi
           FLUTTER_XCODE_ARCHS="$ARCH" ./scripts/build_macos_nosandbox.sh
           APP_PATH="build/macos/Build/Products/Release/Fa.app"
           NO_DMG="fa-macos-nosandbox-${ARCH}-${VERSION}.dmg"

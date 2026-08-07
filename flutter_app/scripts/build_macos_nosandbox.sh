@@ -55,6 +55,7 @@ fi
 
 export FA_CODE_SIGN_IDENTITY="$identity"
 export FA_DEVELOPMENT_TEAM="$team"
+export FA_PROVISIONING_PROFILE_SPECIFIER="${FA_PROVISIONING_PROFILE_SPECIFIER:-}"
 
 readonly APP="build/macos/Build/Products/Release/Fa.app"
 readonly ENTITLEMENTS="macos/Runner/ReleaseNoSandbox.entitlements"
