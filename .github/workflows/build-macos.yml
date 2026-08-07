@@ -571,6 +571,45 @@ jobs:
             ${{ steps.package.outputs.manifest_name }}
           retention-days: 14
 
+      - name: Build and package no-sandbox release
+        id: package_nosandbox
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          cd flutter_app
+          FLUTTER_XCODE_ARCHS="$ARCH" ./scripts/build_macos_nosandbox.sh
+          APP_PATH="build/macos/Build/Products/Release/Fa.app"
+          NO_DMG="fa-macos-nosandbox-${ARCH}-${VERSION}.dmg"
+          NO_DMGTMP="tmp-fa-nosandbox.dmg"
+          rm -rf dmg-staging-nosandbox
+          mkdir dmg-staging-nosandbox
+          cp -R "$APP_PATH" dmg-staging-nosandbox/
+          ln -s /Applications dmg-staging-nosandbox/Applications
+          hdiutil create \
+            -volname "Fa $VERSION (no sandbox)" \
+            -srcfolder dmg-staging-nosandbox \
+            -ov \
+            -format UDRW \
+            "$NO_DMGTMP"
+          hdiutil convert "$NO_DMGTMP" -format UDZO -o "$NO_DMG"
+          rm -f "$NO_DMGTMP"
+          rm -rf dmg-staging-nosandbox
+          NO_ZIP="fa-macos-nosandbox-${ARCH}-${VERSION}-mac.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$NO_ZIP"
+          echo "dmg_name=$NO_DMG" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$NO_ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Upload no-sandbox macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fa-macos-nosandbox-${{ matrix.arch }}
+          path: |
+            ${{ steps.package_nosandbox.outputs.dmg_name }}
+            ${{ steps.package_nosandbox.outputs.zip_name }}
+          retention-days: 14
+
       - name: Cleanup keychain
         if: always()
         run: |
@@ -622,6 +661,11 @@ jobs:
           STABLE_COPIES=()
           for zip in $ZIPS; do
             base=$(basename "$zip")
+            # Skip no-sandbox zips from the auto-update stable names; the
+            # sandboxed build is the default update feed.
+            if [[ "$base" == *nosandbox* ]]; then
+              continue
+            fi
             if [[ "$base" == *arm64* ]]; then
               cp "$zip" "dmgs/fa-macos-arm64-mac.zip"
               STABLE_COPIES+=("dmgs/fa-macos-arm64-mac.zip")

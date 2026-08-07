@@ -10,5 +10,13 @@ PRODUCT_NAME = Fa
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = dev.fa1.app
 
+// Signing is controlled through environment variables so the same project can
+// build ad-hoc for contributors and with a real Apple Development identity for
+// TCC prompts (Calendar, Contacts, HealthKit, HomeKit). Use scripts/run_macos.sh
+// or scripts/build_macos.sh for an ad-hoc default; set FA_CODE_SIGN_IDENTITY and
+// FA_DEVELOPMENT_TEAM to sign with your developer certificate.
+CODE_SIGN_IDENTITY = $(FA_CODE_SIGN_IDENTITY)
+DEVELOPMENT_TEAM = $(FA_DEVELOPMENT_TEAM)
+
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 fa1.dev. All rights reserved.

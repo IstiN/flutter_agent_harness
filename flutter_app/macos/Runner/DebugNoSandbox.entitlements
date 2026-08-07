@@ -14,5 +14,7 @@
 	<true/>
 	<key>com.apple.developer.healthkit</key>
 	<true/>
+	<key>com.apple.developer.homekit</key>
+	<true/>
 </dict>
 </plist>

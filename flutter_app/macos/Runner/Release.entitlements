@@ -16,5 +16,9 @@
 	<true/>
 	<key>com.apple.security.personal-information.addressbook</key>
 	<true/>
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+	<key>com.apple.developer.homekit</key>
+	<true/>
 </dict>
 </plist>

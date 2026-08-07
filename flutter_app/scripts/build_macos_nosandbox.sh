@@ -7,24 +7,47 @@
 #   scripts/build_macos_nosandbox.sh
 #
 # Optional environment variables:
-#   MACOS_IDENTITY  - signing identity (default: '-' for ad-hoc signature).
-#   MACOS_TEAM_ID   - Apple Team ID; exported into the archive for notarization.
-#
+#   FA_CODE_SIGN_IDENTITY / MACOS_IDENTITY - signing identity.
+#   FA_DEVELOPMENT_TEAM / MACOS_TEAM_ID     - Apple Team ID.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-readonly IDENTITY="${MACOS_IDENTITY:--}"
+# Prefer the new FA_* variables; fall back to the older MACOS_* names.
+identity="${FA_CODE_SIGN_IDENTITY:-${MACOS_IDENTITY:--}}"
+team="${FA_DEVELOPMENT_TEAM:-${MACOS_TEAM_ID:-}}"
+
+# If no identity was requested, try to use a local Apple Development cert so
+# the no-sandbox build still has a stable TeamIdentifier for TCC.
+if [[ "$identity" == "-" ]]; then
+  development_identity=$(security find-identity -v -p codesigning 2>/dev/null \
+    | grep -m1 'Apple Development' \
+    | sed -n 's/.*"\(.*\)".*/\1/p' || true)
+  if [[ -n "$development_identity" ]]; then
+    identity="Apple Development"
+    if [[ -z "$team" ]]; then
+      team=$(security find-certificate -c "$development_identity" -p 2>/dev/null \
+        | openssl x509 -noout -subject 2>/dev/null \
+        | grep -oE 'OU=[A-Z0-9]+' \
+        | cut -d= -f2 \
+        | head -n1 || true)
+    fi
+  fi
+fi
+
+export FA_CODE_SIGN_IDENTITY="$identity"
+export FA_DEVELOPMENT_TEAM="$team"
+
 readonly APP="build/macos/Build/Products/Release/Fa.app"
 readonly ENTITLEMENTS="macos/Runner/ReleaseNoSandbox.entitlements"
 
-echo "[build_macos_nosandbox] Building Release..."
+echo "[build_macos_nosandbox] Building Release (identity='${identity}', team='${team:-}')..."
 flutter build macos --release
 
 echo "[build_macos_nosandbox] Re-signing with no-sandbox entitlements..."
 codesign --force \
   --deep \
-  --sign "${IDENTITY}" \
+  --sign "${identity}" \
   --entitlements "${ENTITLEMENTS}" \
   --options runtime \
   "${APP}"
