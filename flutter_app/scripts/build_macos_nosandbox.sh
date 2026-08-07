@@ -25,13 +25,23 @@ if [[ "$identity" == "-" ]]; then
     | sed -n 's/.*"\(.*\)".*/\1/p' || true)
   if [[ -n "$development_identity" ]]; then
     identity="Apple Development"
-    if [[ -z "$team" ]]; then
-      team=$(security find-certificate -c "$development_identity" -p 2>/dev/null \
-        | openssl x509 -noout -subject 2>/dev/null \
-        | grep -oE 'OU=[A-Z0-9]+' \
-        | cut -d= -f2 \
-        | head -n1 || true)
-    fi
+  fi
+fi
+
+# If we have a real identity but no team, extract the team identifier (OU)
+# from the matching certificate's subject. HealthKit/HomeKit entitlements
+# require a non-empty team.
+if [[ "$identity" != "-" && -z "$team" ]]; then
+  cert_label=$(security find-identity -v -p codesigning 2>/dev/null \
+    | grep -F "$identity" \
+    | head -n1 \
+    | sed -n 's/.*"\(.*\)".*/\1/p' || true)
+  if [[ -n "$cert_label" ]]; then
+    team=$(security find-certificate -c "$cert_label" -p 2>/dev/null \
+      | openssl x509 -noout -subject 2>/dev/null \
+      | grep -oE 'OU=[A-Z0-9]+' \
+      | cut -d= -f2 \
+      | head -n1 || true)
   fi
 fi
 
