@@ -16,6 +16,7 @@ PRODUCT_BUNDLE_IDENTIFIER = dev.fa1.app
 // or scripts/build_macos.sh for an ad-hoc default; set FA_CODE_SIGN_IDENTITY and
 // FA_DEVELOPMENT_TEAM to sign with your developer certificate.
 CODE_SIGN_IDENTITY = $(FA_CODE_SIGN_IDENTITY)
+CODE_SIGN_STYLE = $(FA_CODE_SIGN_STYLE)
 DEVELOPMENT_TEAM = $(FA_DEVELOPMENT_TEAM)
 
 // The copyright displayed in application information

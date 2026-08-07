@@ -310,10 +310,20 @@ jobs:
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           BUILD_VERSION: ${{ needs.version.outputs.version }}
+          MACOS_CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+          MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
         run: |
           ARCH="${{ matrix.arch }}"
           echo "Building for architecture: $ARCH"
           cd flutter_app
+          if [ -n "${MACOS_CERTIFICATE_ID:-}" ]; then
+            export FA_CODE_SIGN_IDENTITY="$MACOS_CERTIFICATE_ID"
+            export FA_DEVELOPMENT_TEAM="${MACOS_NOTARIZE_TEAM_ID:-}"
+            export FA_CODE_SIGN_STYLE=Manual
+          else
+            export FA_CODE_SIGN_IDENTITY="-"
+            export FA_CODE_SIGN_STYLE=Automatic
+          fi
           FLUTTER_XCODE_ARCHS="$ARCH" flutter build macos --release \
             --build-name=$BUILD_VERSION \
             --build-number=$BUILD_NUMBER

@@ -45,6 +45,14 @@ if [[ "$identity" != "-" && -z "$team" ]]; then
   fi
 fi
 
+# Distribution/Developer ID certificates require manual signing; local
+# Apple Development certificates use automatic signing.
+if [[ "$identity" == "-" || "$identity" == "Apple Development" ]]; then
+  export FA_CODE_SIGN_STYLE="${FA_CODE_SIGN_STYLE:-Automatic}"
+else
+  export FA_CODE_SIGN_STYLE="${FA_CODE_SIGN_STYLE:-Manual}"
+fi
+
 export FA_CODE_SIGN_IDENTITY="$identity"
 export FA_DEVELOPMENT_TEAM="$team"
 

@@ -28,4 +28,6 @@ if [[ "$FA_CODE_SIGN_IDENTITY" != "-" && -z "${FA_DEVELOPMENT_TEAM:-}" && -n "$d
   fi
 fi
 
+export FA_CODE_SIGN_STYLE="${FA_CODE_SIGN_STYLE:-Automatic}"
+
 flutter run -d macos "$@"
