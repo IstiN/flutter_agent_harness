@@ -56,8 +56,24 @@ class MainFlutterWindow: NSWindow {
     super.awakeFromNib()
 
     if ProcessInfo.processInfo.arguments.contains("--request-calendar-access") {
-      requestCalendarAccess { response in
-        NSLog("Calendar access bootstrap result: \(String(describing: response))")
+      DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+        NSApp.activate(ignoringOtherApps: true)
+        requestCalendarAccess { response in
+          NSLog("Calendar access bootstrap result: \(String(describing: response))")
+          let calendars = calendarEventStore.calendars(for: .event)
+          let start = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
+          let end = Calendar.current.date(byAdding: .year, value: 1, to: Date()) ?? Date()
+          let predicate = calendarEventStore.predicateForEvents(
+            withStart: start,
+            end: end,
+            calendars: nil,
+          )
+          let events = calendarEventStore.events(matching: predicate)
+          NSLog(
+            "Calendar diagnostics: status=\(calendarAuthorizationStatus()), "
+              + "calendars=\(calendars.map(\.title)), eventsInTwoYears=\(events.count)",
+          )
+        }
       }
     }
   }
@@ -222,13 +238,49 @@ private func registerCalendarChannel(messenger: FlutterBinaryMessenger) {
 /// on older systems). The OS shows its prompt at most once.
 private func requestCalendarAccess(result: @escaping FlutterResult) {
   if #available(macOS 14.0, *) {
-    calendarEventStore.requestFullAccessToEvents { granted, _ in
-      DispatchQueue.main.async { result(granted) }
+    calendarEventStore.requestFullAccessToEvents { granted, error in
+      DispatchQueue.main.async {
+        if let error {
+          result(
+            FlutterError(
+              code: "calendar_access_failed",
+              message: error.localizedDescription,
+              details: calendarAuthorizationStatus(),
+            ),
+          )
+        } else {
+          result(granted)
+        }
+      }
     }
   } else {
-    calendarEventStore.requestAccess(to: .event) { granted, _ in
-      DispatchQueue.main.async { result(granted) }
+    calendarEventStore.requestAccess(to: .event) { granted, error in
+      DispatchQueue.main.async {
+        if let error {
+          result(
+            FlutterError(
+              code: "calendar_access_failed",
+              message: error.localizedDescription,
+              details: calendarAuthorizationStatus(),
+            ),
+          )
+        } else {
+          result(granted)
+        }
+      }
     }
+  }
+}
+
+private func calendarAuthorizationStatus() -> String {
+  switch EKEventStore.authorizationStatus(for: .event) {
+  case .notDetermined: return "notDetermined"
+  case .restricted: return "restricted"
+  case .denied: return "denied"
+  case .fullAccess: return "fullAccess"
+  case .writeOnly: return "writeOnly"
+  case .authorized: return "authorized"
+  @unknown default: return "unknown"
   }
 }
 
