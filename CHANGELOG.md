@@ -879,4 +879,8 @@
 
 - Gate JS apps and skills by platform
 
+## 0.1.149
+
+- feat(apps): Language Tutor rewrite + fitness-trainer device-path probes
+
 ## Unreleased
