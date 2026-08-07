@@ -324,7 +324,12 @@ factual: paths, commands, invariants — no essays.
   `test/apps/demo_assets_declared_test.dart`): calculator,
   weather, stocks, crypto, animation-showcase, yolo-hello, calendar
   (`jsr.fa.calendar`), map (`map` node), health + homekit (real bridge on
-  iOS, honest demo-panel fallback elsewhere), 3d-game (`scene3d` node +
+  iOS, honest demo-panel fallback elsewhere), fitness-trainer (guided
+  workout timers), english-teacher — the "Language Tutor": Duolingo-style
+  quiz sessions (hearts/XP/streak, choice + typing modes), a per-language
+  offline word bank (en/de/es/fr/pl picker persisted via jsr.storage),
+  LLM-generated extra words via `jsr.fa.llm.chat` (manifest `llm: true`),
+  3d-game (`scene3d` node +
   `jsr.scene3d.*` bridge on the runtime's flutter_cube/flame_3d dispatcher
   — the engine's `JsRuntimeConfig` and both renderers (JsAppView,
   AppTileHost) wire `js3dHost: createJs3dHost()`, tap picking flows back

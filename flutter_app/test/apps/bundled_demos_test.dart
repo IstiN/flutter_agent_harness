@@ -1282,13 +1282,15 @@ void main() {
       });
     });
 
-    testWidgets('english-teacher boots and flips flashcards', (tester) async {
+    testWidgets('english-teacher runs a Duolingo-style quiz session', (
+      tester,
+    ) async {
       await tester.runAsync(() async {
         final env = await envWithApp('english-teacher');
         final engine = JsAppEngine(
           app: app('english-teacher', const {
             'id': 'english-teacher',
-            'name': 'English Teacher',
+            'name': 'Language Tutor',
           }),
           env: env,
           permissions: const AppPermissions(),
@@ -1296,15 +1298,35 @@ void main() {
         try {
           await engine.start();
           await Future<void>.delayed(settle);
+          // No stored settings → the language picker comes first.
           var tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('Daily English'));
-          expect(tree, contains('apple'));
+          expect(tree, contains('Pick a language'));
 
-          // The flip button swaps the card to its translation.
-          await engine.callEvent('flip');
+          // Pick English → the home screen offers a lesson.
+          await engine.callEvent('lang:en');
           await Future<void>.delayed(settle);
           tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('яблоко'));
+          expect(tree, contains('Language Tutor'));
+          expect(tree, contains('words in the bank'));
+
+          // Start the lesson → question 1 of 10 with 3 hearts.
+          await engine.callEvent('start');
+          await Future<void>.delayed(settle);
+          tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('Question'));
+          expect(tree, contains('Pick the translation'));
+
+          // Answer (any option) → the feedback bar offers Continue.
+          await engine.callEvent('opt:0');
+          await Future<void>.delayed(settle);
+          tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('Continue'));
+
+          // Continue → the quiz advances.
+          await engine.callEvent('next');
+          await Future<void>.delayed(settle);
+          tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('Question'));
         } finally {
           await engine.dispose();
         }

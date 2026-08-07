@@ -1,9 +1,10 @@
 {
   "id": "english-teacher",
-  "name": "English Teacher",
-  "description": "Daily English flashcards with adaptive practice and streaks",
-  "version": "1.0.0",
+  "name": "Language Tutor",
+  "description": "Duolingo-style word quizzes with hearts and XP, LLM-generated vocabulary, multiple languages",
+  "version": "2.0.0",
   "icon": "icon.svg",
   "allowedCommands": [],
-  "network": false
+  "network": false,
+  "llm": true
 }
