@@ -781,7 +781,6 @@
 					"-Wl,-exported_symbol,_wire_write_memory__method__WasmRunModuleId",
 					"-Wl,-exported_symbol,_wire_xor__method__Atomics",
 				);
-				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_STYLE = "non-global";
 				SWIFT_VERSION = 5.0;
 			};
@@ -917,7 +916,6 @@
 					"$(inherited)",
 					"-Wl,-force_load,$(SRCROOT)/../../vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a",
 				);
-				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_STYLE = "non-global";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -1081,7 +1079,6 @@
 					"-Wl,-exported_symbol,_wire_write_memory__method__WasmRunModuleId",
 					"-Wl,-exported_symbol,_wire_xor__method__Atomics",
 				);
-				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_STYLE = "non-global";
 				SWIFT_VERSION = 5.0;
 			};
