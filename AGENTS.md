@@ -336,7 +336,8 @@ factual: paths, commands, invariants — no essays.
   via `dispatchHostEvent('scene3d.tap:<id>')`). Demo seeding is
   ownership-aware: `apps/.demo_seeds.json` records sha256 of each file as
   last seeded — a file whose content no longer matches is user/agent-owned
-  and never overwritten (`resetDemoApp(id)` force-restores the reference
+  and never overwritten, UNLESS the on-disk manifest is unparseable (a
+  half-written skeleton is re-seeded, not protected: it bricks the tile), (`resetDemoApp(id)` force-restores the reference
   version, `storage.json` untouched). A demo id whose seeding FAILS
   (missing/corrupt asset) never kills the rest: it lands in
   `AppsStore.failedSeeds` (id → error text) and gets an error badge on its

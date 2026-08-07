@@ -140,6 +140,46 @@ void main() {
       expect(await store.resetDemoApp('nope'), isFalse);
     });
 
+    test(
+      'a broken on-disk manifest is re-seeded despite ownership (dead tile)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = AppsStore(env, readAsset: _fakeAssets);
+        await store.seedBundledApps(['demo']);
+
+        // An agent half-writes the manifest (unparseable JSON). Ownership
+        // must not protect a broken skeleton — otherwise listApps skips the
+        // folder forever and the launcher tile turns into a dead
+        // placeholder (fitness-trainer on TestFlight).
+        await env.writeFile('apps/demo/manifest.json', '{"id": "demo", ');
+        await store.seedBundledApps(['demo']);
+
+        expect(
+          (await env.readTextFile('apps/demo/manifest.json')).valueOrNull,
+          contains('Demo App'),
+        );
+        final apps = await store.listApps();
+        expect(apps.map((a) => a.id), contains('demo'));
+      },
+    );
+
+    test('a VALID user-owned manifest is still preserved', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await store.seedBundledApps(['demo']);
+
+      // Well-formed but customized: ownership applies (JSON parses).
+      await env.writeFile(
+        'apps/demo/manifest.json',
+        _manifest.replaceAll('Demo App', 'Agent Edit'),
+      );
+      await store.seedBundledApps(['demo']);
+      expect(
+        (await env.readTextFile('apps/demo/manifest.json')).valueOrNull,
+        contains('Agent Edit'),
+      );
+    });
+
     test('seeds the svg icon file when the manifest references one', () async {
       final env = MemoryExecutionEnv();
       Future<String> assets(String path) async {

@@ -526,12 +526,33 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final app = _appsById[key.substring(4)];
     final tile = app?.tileWidget;
     final layout = _layout;
-    if (app == null || layout == null) return;
+    if (layout == null) return;
+    final overlay = Overlay.of(context).context.findRenderObject();
+    if (overlay is! RenderBox) return;
+    if (app == null) {
+      // Dead placeholder of a demo app (broken/removed files): the only
+      // sensible action is restoring the reference version.
+      final demoId = key.substring(4);
+      if (!AppsStore.demoAppIds.contains(demoId)) return;
+      final selected = await showMenu<Object?>(
+        context: context,
+        position: RelativeRect.fromRect(
+          globalPosition & const Size(1, 1),
+          Offset.zero & overlay.size,
+        ),
+        items: [
+          PopupMenuItem<Object?>(
+            value: 'restore',
+            child: Text(context.l10n.launcherRestoreDemoApp),
+          ),
+        ],
+      );
+      if (selected == 'restore') unawaited(_restoreDemoApp(demoId));
+      return;
+    }
     final appId = app.id;
     final isDemo = AppsStore.demoAppIds.contains(appId);
     if (tile == null && !isDemo) return;
-    final overlay = Overlay.of(context).context.findRenderObject();
-    if (overlay is! RenderBox) return;
     final override = layout.tileSizeFor(appId);
     final current = tile == null
         ? null
@@ -1282,7 +1303,16 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       return;
     }
     final app = _appsById[key.substring(4)];
-    if (app == null) return;
+    if (app == null) {
+      // A layout key whose app no longer lists (broken/removed files)
+      // renders a dead placeholder. For a demo id that's recoverable:
+      // force-reseed the reference version instead of a silent no-op.
+      final demoId = key.substring(4);
+      if (AppsStore.demoAppIds.contains(demoId)) {
+        unawaited(_restoreDemoApp(demoId));
+      }
+      return;
+    }
     // A tile whose demo seed failed shows its stored error instead of a
     // dead-end launch — copyable, so the user can hand it to Fa for a fix.
     final seedError = _appsStore.failedSeeds.value[app.id];

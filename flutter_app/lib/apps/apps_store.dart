@@ -623,6 +623,23 @@ class AppsStore {
       // Keep the app even if its manifest doesn't parse.
     }
     final appHashes = store.putIfAbsent(id, () => {});
+    // A broken skeleton is not user content: when the on-disk manifest is
+    // present but unparseable (a half-written agent file), ownership
+    // protection would otherwise skip every file forever and brick the
+    // tile (listApps skips the folder, the launcher shows a dead
+    // placeholder). Re-seed the whole app instead.
+    final currentManifest = (await _env.readTextFile(
+      'apps/$id/manifest.json',
+    )).valueOrNull;
+    var skeletonBroken = false;
+    if (currentManifest != null) {
+      try {
+        jsonDecode(currentManifest);
+      } on FormatException {
+        skeletonBroken = true;
+        AppLog.i('apps', 'demo app $id has a broken manifest — re-seeding');
+      }
+    }
     for (final file in files.entries) {
       final path = 'apps/$id/${file.key}';
       final bundled = file.value;
@@ -638,7 +655,9 @@ class AppsStore {
         continue;
       }
       final userModified =
-          current != null && (recorded == null || _digest(current) != recorded);
+          !skeletonBroken &&
+          current != null &&
+          (recorded == null || _digest(current) != recorded);
       if (userModified && !force) {
         // The user (or the agent) owns this file now — never overwrite.
         continue;
