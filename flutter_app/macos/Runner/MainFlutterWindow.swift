@@ -54,6 +54,12 @@ class MainFlutterWindow: NSWindow {
     registerVideoChannel(messenger: messenger)
 
     super.awakeFromNib()
+
+    if ProcessInfo.processInfo.arguments.contains("--request-calendar-access") {
+      requestCalendarAccess { response in
+        NSLog("Calendar access bootstrap result: \(String(describing: response))")
+      }
+    }
   }
 }
 
