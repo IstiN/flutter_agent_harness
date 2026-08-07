@@ -30,6 +30,11 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- flame_3d (the scene3d GLB path — fitness coach) renders via
+             Flutter GPU on Impeller. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableFlutterGPU"
+            android:value="true" />
         <!-- flutter_gemma: required for the GPU backend on Android 12+ — the
              OpenCL loader uses libvndksupport.so (android_load_sphal_library)
              to dlopen the vendor OpenCL driver. Without it OpenCL can't load

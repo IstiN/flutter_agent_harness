@@ -165,6 +165,7 @@ flutter:
     - assets/apps/crypto/
     - assets/apps/english-teacher/
     - assets/apps/fitness-trainer/
+    - assets/apps/fitness-trainer/models/
     - assets/apps/health/
     - assets/apps/homekit/
     - assets/apps/map/

@@ -403,7 +403,7 @@
   function langScreen(t) {
     var buttons = LANGS.map(function(lang) {
       return { type: 'padding', padding: [16, 4, 16, 4], child:
-        bigButton(t, state.native === 'ru' ? lang.ru : lang.en, 'globe', 'lang:' + lang.id, lang.id === 'en') };
+        bigButton(t, state.native === 'ru' ? lang.ru : lang.en, 'language', 'lang:' + lang.id, lang.id === 'en') };
     });
     return { type: 'safeArea', child: { type: 'column', crossAxisAlignment: 'stretch', children: [
       header(t, L().pickHint, []),
@@ -425,10 +425,10 @@
         data: allWords().length + ' ' + L().words + ' · ' + learned + ' ' + L().learned,
         style: { color: t.muted, fontSize: 12, fontWeight: 'w600' } } },
       { type: 'padding', padding: [16, 16, 16, 0], child: bigButton(t, L().start, 'check', 'start', true, allWords().length < 4) },
-      { type: 'padding', padding: [16, 8, 16, 0], child: bigButton(t, L().typing, 'keyboard', 'typing', false, allWords().length < 1) },
+      { type: 'padding', padding: [16, 8, 16, 0], child: bigButton(t, L().typing, 'edit', 'typing', false, allWords().length < 1) },
       { type: 'padding', padding: [16, 8, 16, 0], child: bigButton(t,
-        state.generating ? L().generating : L().generate, 'spark', 'generate', false, state.generating) },
-      { type: 'padding', padding: [16, 8, 16, 0], child: bigButton(t, L().changeLang, 'globe', 'changelang', false, state.generating) }
+        state.generating ? L().generating : L().generate, 'star', 'generate', false, state.generating) },
+      { type: 'padding', padding: [16, 8, 16, 0], child: bigButton(t, L().changeLang, 'language', 'changelang', false, state.generating) }
     ] } };
   }
 
@@ -527,7 +527,7 @@
             style: { color: t.muted, fontSize: 13 } }
         ] } },
       { type: 'padding', padding: [16, 16, 16, 0], child: bigButton(t, L().again, 'check', 'start', true, allWords().length < 4) },
-      { type: 'padding', padding: [16, 8, 16, 0], child: bigButton(t, L().home, 'globe', 'home', false) }
+      { type: 'padding', padding: [16, 8, 16, 0], child: bigButton(t, L().home, 'language', 'home', false) }
     ] } };
   }
 

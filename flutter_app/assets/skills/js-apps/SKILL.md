@@ -732,7 +732,7 @@ jsr.fa.keys.get('WEATHER_API_KEY').then(function(result) {
 Renders an interactive 3D scene. Two paths:
 
 1. **Software mesh path (pure Dart, no host engine)** — give the node a `meshes` prop: `[{vertices: [[x,y,z],…], faces: [[i,j,k],…], color: '#hex'}]`. Perspective-projected, flat-shaded, ≤ ~500 triangles at interactive rates. Animate by re-rendering with a new `rotation` on a raf/timer tick. Great for low-poly models, dice, simple 3D charts.
-2. **Host engine path (for games)** — omit `meshes` and drive the scene imperatively through the `jsr.scene3d.*` bridge (the Fa host wires the runtime's dispatcher: `flutter_cube` for procedural primitives and OBJ models, `flame_3d` for `.glb`/`.gltf`). Primitives: `cube`, `sphere`, `torus`, `city`.
+2. **Host engine path (for games)** — omit `meshes` and drive the scene imperatively through the `jsr.scene3d.*` bridge (the Fa host wires the runtime's dispatcher: `flutter_cube` for procedural primitives and OBJ models, `flame_3d` for `.glb`/`.gltf`). Primitives: `cube`, `sphere`, `torus`, `city`. **A GLB/GLTF scene MUST pass `engine: 'flame'` in `jsr.scene3d.create(sceneId, {engine: 'flame', ...})`** — the dispatcher binds the scene to a host on the FIRST create call (no `src` in the config → cube host), and a later `.glb` `addModel` into a cube-bound scene fails parsing it as OBJ.
 
 ```javascript
 // Node (in the render tree): { type: 'scene3d', id: sceneId }

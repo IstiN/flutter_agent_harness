@@ -19,6 +19,10 @@ void main() {
       final entry = '- ${AppsStore.bundledAssetRoot}/$id/';
       if (!pubspec.contains(entry)) missing.add(id);
     }
+    // Asset directory entries are NOT recursive: the fitness coach's
+    // models/ subdirectory needs its own declaration.
+    const models = '- ${AppsStore.bundledAssetRoot}/fitness-trainer/models/';
+    if (!pubspec.contains(models)) missing.add('fitness-trainer/models');
     expect(
       missing,
       isEmpty,
@@ -36,6 +40,10 @@ void main() {
         if (!File(path).existsSync()) missing.add(path);
       }
     }
+    // The fitness coach's skeletal-animated GLB must ship too.
+    const coach =
+        '${AppsStore.bundledAssetRoot}/fitness-trainer/models/rogue.glb';
+    if (!File(coach).existsSync()) missing.add(coach);
     expect(missing, isEmpty, reason: 'missing demo asset files: $missing');
   });
 }

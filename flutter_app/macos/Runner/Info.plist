@@ -49,5 +49,9 @@
 	<string>Fa uses the microphone only when you use voice input.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>FLTEnableImpeller</key>
+	<true/>
+	<key>FLTEnableFlutterGPU</key>
+	<true/>
 </dict>
 </plist>

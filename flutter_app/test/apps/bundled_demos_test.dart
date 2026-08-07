@@ -1256,7 +1256,7 @@ void main() {
       },
     );
 
-    testWidgets('fitness-trainer boots and renders the workout card', (
+    testWidgets('fitness-trainer runs a guided workout with the 3D coach', (
       tester,
     ) async {
       await tester.runAsync(() async {
@@ -1272,10 +1272,33 @@ void main() {
         try {
           await engine.start();
           await Future<void>.delayed(settle);
-          expect(engine.tree.value, isNotNull);
-          final tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('Goblet Squat'));
-          expect(tree, contains('SET 2 OF 4'));
+          // Home: the workout plan + the START button.
+          var tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('START WORKOUT'));
+          expect(tree, contains('Jumping Jacks'));
+
+          // START → the first exercise with its countdown.
+          await engine.callEvent('start');
+          await Future<void>.delayed(settle);
+          tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('JUMPING JACKS'));
+          expect(tree, contains('PAUSE'));
+
+          // Pause offers RESUME; skip moves to the rest step.
+          await engine.callEvent('pause');
+          await Future<void>.delayed(settle);
+          tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('RESUME'));
+          await engine.callEvent('skip');
+          await Future<void>.delayed(settle);
+          tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('REST'));
+
+          // Quit returns home.
+          await engine.callEvent('quit');
+          await Future<void>.delayed(settle);
+          tree = jsonEncode(engine.tree.value);
+          expect(tree, contains('START WORKOUT'));
         } finally {
           await engine.dispose();
         }
