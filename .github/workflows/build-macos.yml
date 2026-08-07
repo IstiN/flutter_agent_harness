@@ -546,6 +546,7 @@ jobs:
 
       - name: Submit PKG to TestFlight
         if: steps.testflight_pkg.outputs.pkg_name != ''
+        continue-on-error: true
         working-directory: flutter_app
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
