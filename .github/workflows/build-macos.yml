@@ -646,8 +646,8 @@ jobs:
         with:
           name: Fa-macos-nosandbox-${{ matrix.arch }}
           path: |
-            ${{ steps.package_nosandbox.outputs.dmg_name }}
-            ${{ steps.package_nosandbox.outputs.zip_name }}
+            flutter_app/${{ steps.package_nosandbox.outputs.dmg_name }}
+            flutter_app/${{ steps.package_nosandbox.outputs.zip_name }}
           retention-days: 14
 
       - name: Cleanup keychain
