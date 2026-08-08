@@ -887,4 +887,8 @@
 
 - fix(providers): voice sample URLs are case-sensitive on the CDN
 
+## 0.1.153
+
+- feat(providers): Google Gemini media provider + MediaModelsSection in fa_ui
+
 ## Unreleased
