@@ -883,4 +883,8 @@
 
 - feat(apps): Language Tutor rewrite + fitness-trainer device-path probes
 
+## 0.1.152
+
+- fix(providers): voice sample URLs are case-sensitive on the CDN
+
 ## Unreleased
