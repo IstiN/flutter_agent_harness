@@ -74,9 +74,9 @@ final List<FaVoicePreset> _geminiTtsVoices = [
     FaVoicePreset(
       id: entry.key,
       trait: entry.value,
+      // The CDN file names are case-sensitive (Zephyr.wav, not zephyr.wav).
       sampleUrl:
-          'https://www.gstatic.com/aistudio/voices/samples/'
-          '${entry.key.toLowerCase()}.wav',
+          'https://www.gstatic.com/aistudio/voices/samples/${entry.key}.wav',
     ),
 ];
 

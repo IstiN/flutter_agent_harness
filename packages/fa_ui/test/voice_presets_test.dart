@@ -12,7 +12,7 @@ void main() {
       expect(presets.first.trait, 'Bright');
       expect(
         presets.first.sampleUrl,
-        'https://www.gstatic.com/aistudio/voices/samples/zephyr.wav',
+        'https://www.gstatic.com/aistudio/voices/samples/Zephyr.wav',
       );
       expect(presets.last.id, 'Sulafat');
       expect(presets.last.trait, 'Warm');
