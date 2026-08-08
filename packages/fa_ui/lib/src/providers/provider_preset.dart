@@ -29,6 +29,10 @@ enum ProviderPreset {
     defaultModel: 'openai/gpt-4o-mini',
   ),
   ollamaCloud(baseUrl: 'https://ollama.com/v1', defaultModel: 'gpt-oss:120b'),
+  gemini(
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    defaultModel: 'gemini-2.5-flash',
+  ),
   custom(baseUrl: null, defaultModel: ''),
   webllm(baseUrl: null, defaultModel: ''),
   gemma(baseUrl: null, defaultModel: ''),
@@ -60,6 +64,7 @@ enum ProviderPreset {
   String label(FaUiStrings strings) => switch (this) {
     ProviderPreset.openrouter => strings.settingsPresetOpenrouter,
     ProviderPreset.ollamaCloud => strings.settingsPresetOllama,
+    ProviderPreset.gemini => strings.settingsPresetGemini,
     ProviderPreset.custom => strings.settingsPresetCustom,
     ProviderPreset.webllm => strings.settingsPresetWebllm,
     ProviderPreset.gemma => strings.settingsPresetGemma,
@@ -67,13 +72,13 @@ enum ProviderPreset {
   };
 
   /// Shown under the form for providers that may reject browser (CORS)
-  /// calls. OpenRouter allows cross-origin browser requests, so it has no
-  /// note; other endpoints are not guaranteed to.
+  /// calls. OpenRouter and the Gemini API allow cross-origin browser
+  /// requests, so they have no note; other endpoints are not guaranteed to.
   String? corsNote(BuildContext context) => cors(FaUiStrings.of(context));
 
   /// The CORS note resolved from [strings] directly.
   String? cors(FaUiStrings strings) => switch (this) {
-    ProviderPreset.openrouter => null,
+    ProviderPreset.openrouter || ProviderPreset.gemini => null,
     ProviderPreset.ollamaCloud => strings.settingsCorsNoteOllama,
     ProviderPreset.custom => strings.settingsCorsNoteCustom,
     ProviderPreset.webllm ||
@@ -85,6 +90,9 @@ enum ProviderPreset {
   static ProviderPreset fromBaseUrl(String url) {
     if (url.contains('openrouter.ai')) return ProviderPreset.openrouter;
     if (url.contains('ollama.com')) return ProviderPreset.ollamaCloud;
+    if (url.contains('generativelanguage.googleapis.com')) {
+      return ProviderPreset.gemini;
+    }
     return ProviderPreset.custom;
   }
 }
@@ -94,6 +102,7 @@ enum ProviderPreset {
 String? hostedProviderKeyName(ProviderPreset preset) => switch (preset) {
   ProviderPreset.openrouter => 'OPENROUTER_API_KEY',
   ProviderPreset.ollamaCloud => 'OLLAMA_API_KEY',
+  ProviderPreset.gemini => 'GEMINI_API_KEY',
   _ => null,
 };
 
@@ -104,6 +113,7 @@ String? hostedProviderKeyName(ProviderPreset preset) => switch (preset) {
 const hostedProviderPresets = [
   ProviderPreset.openrouter,
   ProviderPreset.ollamaCloud,
+  ProviderPreset.gemini,
 ];
 
 /// The display name of a provider entry (a [ProviderPreset] or a

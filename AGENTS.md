@@ -142,8 +142,11 @@ factual: paths, commands, invariants — no essays.
   `FaUiTheme`/`FaUiThemeProvider` customization layer (accent colors, font
   family, radii), the provider/model settings widgets (`ProvidersSection`,
   `ProviderEditorPage`, `DefaultChatModelSection` + pickers,
+  `MediaModelsSection` (the settings media-models section, moved from the
+  app — store/`mainBaseUrl`/`modelsFetcher` in, host analytics via the
+  `onSlotEditorOpened`/`onSlotOverrideSaved` hooks),
   `MediaSlotProviderPickerPage`/`MediaSlotModelPage`, `ProviderPreset` +
-  helpers, `ModelIdAutocompleteField`, `FaVoicePresetPicker` +
+  helpers (hosted presets: OpenRouter, Ollama Cloud, Google Gemini), `ModelIdAutocompleteField`, `FaVoicePresetPicker` +
   `faVoicePresetsFor` (per-(baseUrl, modelId) TTS voice presets — Gemini /
   Kokoro / OpenAI — with inline sample previews), and the stores (`ProviderRegistry`,
   `MediaModelsStore`, `SessionKeysStore`, `KeychainStore`,
@@ -511,7 +514,13 @@ factual: paths, commands, invariants — no essays.
   rides the `videoGeneration` slot (required — no fallback): async
   OpenAI/OpenRouter `/videos` contract (POST job → poll `GET /videos/{id}`
   every 3s, 4-min cap, cancel-token aware → `unsigned_urls` or
-  `GET /videos/{id}/content` mp4).
+  `GET /videos/{id}/content` mp4). Google (`generativelanguage`) endpoints
+  switch to the native Gemini protocol by baseUrl: `speak` posts
+  `/models/{model}:generateContent` (`x-goog-api-key` auth, LINEAR16 PCM
+  24 kHz mono wrapped into a `.wav`), `generate_music` posts
+  `/interactions` with `{model, input}` and deep-searches the response for
+  base64 audio; the image/video slots answer an honest "not supported for
+  the Google provider yet" error.
 - `site/` — static GitHub Pages landing; `.github/workflows/pages.yml`
   builds the web demo into `app/` (never committed). `site/privacy.html`
   is the published privacy policy (`PRIVACY.md` in the repo root is the

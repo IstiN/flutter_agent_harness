@@ -114,6 +114,12 @@ final class MediaGateway {
     final trimmed = prompt.trim();
     if (trimmed.isEmpty) throw StateError('prompt is required');
     final endpoint = await _requireEndpoint(MediaSlot.imageGeneration);
+    if (_isGoogleEndpoint(endpoint)) {
+      throw StateError(
+        'Image generation is not supported for the Google provider yet — '
+        'point the imageGeneration slot at an OpenAI-compatible endpoint.',
+      );
+    }
     final body = <String, Object?>{
       'model': endpoint.modelId,
       'prompt': trimmed,
@@ -134,10 +140,14 @@ final class MediaGateway {
 
   /// Synthesizes speech on the [MediaSlot.audioTts] endpoint
   /// (OpenAI-compatible `POST /audio/speech`, binary mp3 response) and
-  /// saves it into [generatedMediaDir].
+  /// saves it into [generatedMediaDir]. A Google (`generativelanguage`)
+  /// endpoint speaks the native Gemini TTS protocol instead:
+  /// `POST /models/{model}:generateContent` with `x-goog-api-key`, answering
+  /// base64 LINEAR16 PCM (24 kHz mono) that is wrapped in a WAV header and
+  /// saved as `.wav`.
   ///
   /// The voice resolves in order: an explicit [voice] argument, the slot
-  /// override's configured voice, then `alloy`.
+  /// override's configured voice, then `alloy` (`Kore` on Google endpoints).
   Future<GeneratedMediaFile> speak({
     required String text,
     String? voice,
@@ -147,6 +157,12 @@ final class MediaGateway {
     final endpoint = await _requireEndpoint(MediaSlot.audioTts);
     final argument = voice?.trim();
     final configured = endpoint.voice?.trim();
+    if (_isGoogleEndpoint(endpoint)) {
+      final googleVoice = argument != null && argument.isNotEmpty
+          ? argument
+          : (configured != null && configured.isNotEmpty ? configured : 'Kore');
+      return _speakGoogle(endpoint, trimmed, googleVoice);
+    }
     final usedVoice = argument != null && argument.isNotEmpty
         ? argument
         : (configured != null && configured.isNotEmpty ? configured : 'alloy');
@@ -183,6 +199,40 @@ final class MediaGateway {
     );
   }
 
+  /// The Google-native speech path (see [speak]): Gemini TTS over
+  /// `generateContent`, PCM wrapped as WAV.
+  Future<GeneratedMediaFile> _speakGoogle(
+    MediaEndpoint endpoint,
+    String text,
+    String voice,
+  ) async {
+    final decoded = await _postJson(
+      endpoint,
+      '/models/${endpoint.modelId}:generateContent',
+      {
+        'contents': [
+          {
+            'parts': [
+              {'text': text},
+            ],
+          },
+        ],
+        'generationConfig': {
+          'responseModalities': ['AUDIO'],
+          'speechConfig': {
+            'voiceConfig': {
+              'prebuiltVoiceConfig': {'voiceName': voice},
+            },
+          },
+        },
+      },
+      what: 'Speech synthesis',
+      googleApiKey: true,
+    );
+    final pcm = _googleInlineAudioBytes(decoded, what: 'Speech synthesis');
+    return _save('speech', 'wav', _wrapPcmInWav(pcm), detail: 'voice "$voice"');
+  }
+
   /// Generates music on the [MediaSlot.musicGeneration] endpoint and saves
   /// the audio into [generatedMediaDir].
   ///
@@ -190,8 +240,10 @@ final class MediaGateway {
   /// user-configured and must conform to an OpenAI-images-style contract:
   /// `POST {baseUrl}/music/generations` with `{model, prompt, duration}`
   /// answering `{data: [{b64_json | url}]}` (audio bytes base64-encoded, or
-  /// a URL to fetch). Without a configured slot the call fails with an
-  /// actionable error — there is no main-connection fallback.
+  /// a URL to fetch). A Google (`generativelanguage`) endpoint instead gets
+  /// `POST {baseUrl}/interactions` with `{model, input}`; the base64 audio
+  /// is deep-searched in the response. Without a configured slot the call
+  /// fails with an actionable error — there is no main-connection fallback.
   Future<GeneratedMediaFile> generateMusic({
     required String prompt,
     int? seconds,
@@ -200,6 +252,25 @@ final class MediaGateway {
     if (trimmed.isEmpty) throw StateError('prompt is required');
     final endpoint = await _requireEndpoint(MediaSlot.musicGeneration);
     final duration = seconds == null || seconds < 1 ? 30 : seconds;
+    if (_isGoogleEndpoint(endpoint)) {
+      final decoded = await _postJson(
+        endpoint,
+        '/interactions',
+        {'model': endpoint.modelId, 'input': trimmed},
+        what: 'Music generation',
+        googleApiKey: true,
+      );
+      final b64 = _deepFindAudioBase64(decoded);
+      if (b64 == null) {
+        throw StateError('Music generation returned no audio payload.');
+      }
+      return _save(
+        'music',
+        'mp3',
+        base64Decode(b64),
+        detail: '$duration s requested',
+      );
+    }
     final decoded = await _postJson(endpoint, '/music/generations', {
       'model': endpoint.modelId,
       'prompt': trimmed,
@@ -234,6 +305,12 @@ final class MediaGateway {
     if (trimmed.isEmpty) throw StateError('prompt is required');
     final endpoint = await _requireEndpoint(MediaSlot.videoGeneration);
     cancelToken?.throwIfCancelled();
+    if (_isGoogleEndpoint(endpoint)) {
+      throw StateError(
+        'Video generation is not supported for the Google provider yet — '
+        'point the videoGeneration slot at an OpenAI-compatible endpoint.',
+      );
+    }
     final usedSeconds = seconds != null && seconds > 0 ? seconds : null;
     final usedSize = size != null && size.trim().isNotEmpty
         ? size.trim()
@@ -436,16 +513,22 @@ final class MediaGateway {
     Map<String, Object?> body, {
     required String what,
     Set<int> okStatuses = const {200},
+    bool googleApiKey = false,
   }) async {
     final client = _httpClient ?? http.Client();
     final http.Response response;
     try {
       response = await client.post(
         Uri.parse('${endpoint.baseUrl}$path'),
-        headers: {
-          'authorization': 'Bearer ${endpoint.apiKey}',
-          'content-type': 'application/json',
-        },
+        headers: googleApiKey
+            ? {
+                'x-goog-api-key': endpoint.apiKey,
+                'content-type': 'application/json',
+              }
+            : {
+                'authorization': 'Bearer ${endpoint.apiKey}',
+                'content-type': 'application/json',
+              },
         body: jsonEncode(body),
       );
     } finally {
@@ -504,6 +587,104 @@ final class MediaGateway {
       return response.bodyBytes;
     }
     throw StateError('$what returned neither b64_json nor a URL.');
+  }
+
+  /// True when [endpoint] points at Google's Generative Language API — the
+  /// media calls then speak the native Gemini protocol (and authenticate
+  /// with `x-goog-api-key`) instead of the OpenAI-compatible one.
+  static bool _isGoogleEndpoint(MediaEndpoint endpoint) =>
+      endpoint.baseUrl.contains('generativelanguage');
+
+  /// The audio bytes of a Gemini `generateContent` response:
+  /// `candidates[].content.parts[].inlineData.data` (base64).
+  static Uint8List _googleInlineAudioBytes(
+    Map<String, dynamic> decoded, {
+    required String what,
+  }) {
+    final candidates = decoded['candidates'];
+    if (candidates is List) {
+      for (final candidate in candidates) {
+        if (candidate is! Map) continue;
+        final content = candidate['content'];
+        if (content is! Map) continue;
+        final parts = content['parts'];
+        if (parts is! List) continue;
+        for (final part in parts) {
+          if (part is! Map) continue;
+          final inline = part['inlineData'] ?? part['inline_data'];
+          if (inline is! Map) continue;
+          final data = inline['data'];
+          if (data is String && data.isNotEmpty) return base64Decode(data);
+        }
+      }
+    }
+    throw StateError('$what returned no audio payload.');
+  }
+
+  /// Deep-searches a decoded JSON tree for base64 audio: `b64_json`, a
+  /// content block with `type: "audio"`, or an `output_audio`/`outputAudio`/
+  /// `audio`/`inlineData` map carrying a non-empty `data` string.
+  static String? _deepFindAudioBase64(Object? node) {
+    if (node is Map) {
+      final b64 = node['b64_json'];
+      if (b64 is String && b64.isNotEmpty) return b64;
+      for (final key in const [
+        'output_audio',
+        'outputAudio',
+        'audio',
+        'inlineData',
+        'inline_data',
+      ]) {
+        final value = node[key];
+        if (value is Map) {
+          final data = value['data'];
+          if (data is String && data.isNotEmpty) return data;
+        }
+      }
+      if (node['type'] == 'audio') {
+        final data = node['data'];
+        if (data is String && data.isNotEmpty) return data;
+      }
+      for (final value in node.values) {
+        final found = _deepFindAudioBase64(value);
+        if (found != null) return found;
+      }
+    } else if (node is List) {
+      for (final value in node) {
+        final found = _deepFindAudioBase64(value);
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
+  /// Wraps raw LINEAR16 PCM (24 kHz mono — the Gemini TTS output format) in
+  /// a 44-byte RIFF/WAVE header so the bytes play as a `.wav` file.
+  static Uint8List _wrapPcmInWav(Uint8List pcm, {int sampleRate = 24000}) {
+    const channels = 1;
+    const bitsPerSample = 16;
+    const blockAlign = channels * bitsPerSample ~/ 8;
+    final header = ByteData(44);
+    void ascii(int offset, String text) {
+      for (var i = 0; i < text.length; i++) {
+        header.setUint8(offset + i, text.codeUnitAt(i));
+      }
+    }
+
+    ascii(0, 'RIFF');
+    header.setUint32(4, 36 + pcm.length, Endian.little);
+    ascii(8, 'WAVE');
+    ascii(12, 'fmt ');
+    header.setUint32(16, 16, Endian.little); // PCM chunk size
+    header.setUint16(20, 1, Endian.little); // PCM format
+    header.setUint16(22, channels, Endian.little);
+    header.setUint32(24, sampleRate, Endian.little);
+    header.setUint32(28, sampleRate * blockAlign, Endian.little);
+    header.setUint16(32, blockAlign, Endian.little);
+    header.setUint16(34, bitsPerSample, Endian.little);
+    ascii(36, 'data');
+    header.setUint32(40, pcm.length, Endian.little);
+    return Uint8List.fromList([...header.buffer.asUint8List(), ...pcm]);
   }
 
   Future<GeneratedMediaFile> _save(
@@ -600,8 +781,10 @@ AgentTool speakTool(MediaGateway gateway) {
     description:
         'Convert text to speech. Uses the configured audioTts endpoint '
         '(media_models.json override, or the connected provider when it is '
-        'OpenAI-compatible). Saves an mp3 into the sandbox generated/ '
-        'folder and returns its path.',
+        'OpenAI-compatible; a Google generativelanguage endpoint is called '
+        'with the native Gemini TTS protocol). Saves the audio (mp3, wav on '
+        'the Google provider) into the sandbox generated/ folder and '
+        'returns its path.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -624,8 +807,10 @@ AgentTool speakTool(MediaGateway gateway) {
           text: (arguments['text'] ?? '').toString(),
           voice: arguments['voice']?.toString(),
         );
-        // Rough duration hint: mp3 at ~128 kbps ≈ 16 KB per second.
-        final seconds = (file.bytes.length / 16000).round();
+        // Rough duration hint: mp3 at ~128 kbps ≈ 16 KB/s; the Google TTS
+        // wav (LINEAR16 PCM, 24 kHz mono) is 48 KB/s.
+        final bytesPerSecond = file.path.endsWith('.wav') ? 48000 : 16000;
+        final seconds = (file.bytes.length / bytesPerSecond).round();
         return ToolExecutionResult.text(
           'Speech saved to ${file.path} '
           '(${file.bytes.length} bytes, ${file.detail}, ~${seconds}s).',
@@ -654,8 +839,9 @@ AgentTool generateMusicTool(MediaGateway gateway) {
         'must accept POST {baseUrl}/music/generations with a JSON body '
         '{model, prompt, duration} and answer like the OpenAI images API: '
         '{"data": [{"b64_json": "<audio base64>"}]} or {"data": [{"url": '
-        '"<audio url>"}]}. Saves an mp3 into the sandbox generated/ folder '
-        'and returns its path.',
+        '"<audio url>"}]}. A Google (generativelanguage) endpoint is called '
+        'via POST {baseUrl}/interactions with {model, input} instead. Saves '
+        'an mp3 into the sandbox generated/ folder and returns its path.',
     parameters: const {
       'type': 'object',
       'properties': {

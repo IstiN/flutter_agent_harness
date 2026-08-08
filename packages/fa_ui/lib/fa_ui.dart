@@ -25,6 +25,7 @@ export 'src/host_config.dart';
 export 'src/providers/connection.dart';
 export 'src/providers/default_chat_model.dart';
 export 'src/providers/llm_config_mapping.dart';
+export 'src/providers/media_models_section.dart';
 export 'src/providers/media_slot_picker_page.dart';
 export 'src/providers/provider_editor_page.dart';
 export 'src/providers/provider_preset.dart';

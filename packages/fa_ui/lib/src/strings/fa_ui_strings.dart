@@ -127,6 +127,9 @@ abstract class FaUiStrings {
   /// Label of the Ollama Cloud preset.
   String get settingsPresetOllama;
 
+  /// Label of the Google Gemini preset.
+  String get settingsPresetGemini;
+
   /// Label of the ad-hoc custom preset.
   String get settingsPresetCustom;
 
@@ -172,6 +175,15 @@ abstract class FaUiStrings {
   /// Label of the transcription media slot.
   String get mediaModelsSlotTranscription;
 
+  /// Settings section title above the media slot list.
+  String get mediaModelsSectionTitle;
+
+  /// Note under the media models section title.
+  String get mediaModelsSectionNote;
+
+  /// The row summary of a slot without an override.
+  String get mediaModelsFallbackSummary;
+
   /// Title of the provider-delete confirmation dialog (`Delete {name}?`).
   String settingsDeleteProviderTitle(String name);
 
@@ -184,6 +196,9 @@ abstract class FaUiStrings {
   /// The endpoint summary of a provider/media-slot row
   /// (`{modelId} · {host}`).
   String mediaModelsOverrideSummary(String host, String modelId);
+
+  /// App bar title of the media slot editor (`Edit {slot}`).
+  String mediaModelsEditTitle(String slot);
 }
 
 /// The English [FaUiStrings] defaults.
@@ -274,6 +289,8 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsPresetOllama => 'Ollama';
   @override
+  String get settingsPresetGemini => 'Google Gemini';
+  @override
   String get settingsPresetCustom => 'Custom';
   @override
   String get settingsPresetWebllm => 'On-device (WebLLM)';
@@ -305,6 +322,14 @@ class FaUiStringsEn extends FaUiStrings {
   String get mediaModelsSlotVision => 'Vision (image reading)';
   @override
   String get mediaModelsSlotTranscription => 'Transcription';
+  @override
+  String get mediaModelsSectionTitle => 'Media models';
+  @override
+  String get mediaModelsSectionNote =>
+      'Image, audio, video and transcription calls use the main connection '
+      'unless a slot overrides it.';
+  @override
+  String get mediaModelsFallbackSummary => 'Same as main connection';
 
   @override
   String settingsDeleteProviderTitle(String name) => 'Delete $name?';
@@ -318,6 +343,8 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String mediaModelsOverrideSummary(String host, String modelId) =>
       '$modelId · $host';
+  @override
+  String mediaModelsEditTitle(String slot) => 'Edit $slot';
 }
 
 /// The Russian [FaUiStrings] defaults.
@@ -410,6 +437,8 @@ class FaUiStringsRu extends FaUiStrings {
   @override
   String get settingsPresetOllama => 'Ollama';
   @override
+  String get settingsPresetGemini => 'Google Gemini';
+  @override
   String get settingsPresetCustom => 'Пользовательский';
   @override
   String get settingsPresetWebllm => 'На устройстве (WebLLM)';
@@ -441,6 +470,14 @@ class FaUiStringsRu extends FaUiStrings {
   String get mediaModelsSlotVision => 'Зрение (чтение изображений)';
   @override
   String get mediaModelsSlotTranscription => 'Транскрипция';
+  @override
+  String get mediaModelsSectionTitle => 'Медиамодели';
+  @override
+  String get mediaModelsSectionNote =>
+      'Запросы изображений, аудио, видео и транскрипции используют основное '
+      'подключение, если слот не переопределён.';
+  @override
+  String get mediaModelsFallbackSummary => 'Как основное подключение';
 
   @override
   String settingsDeleteProviderTitle(String name) => 'Удалить $name?';
@@ -454,6 +491,8 @@ class FaUiStringsRu extends FaUiStrings {
   @override
   String mediaModelsOverrideSummary(String host, String modelId) =>
       '$modelId · $host';
+  @override
+  String mediaModelsEditTitle(String slot) => 'Изменить: $slot';
 }
 
 /// Exposes a host-provided [FaUiStrings] implementation to the widget tree;

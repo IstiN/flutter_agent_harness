@@ -658,4 +658,265 @@ void main() {
       },
     );
   });
+
+  group('google (generativelanguage) endpoints', () {
+    const googleBaseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+
+    MediaGateway googleGateway(
+      MemoryExecutionEnv env,
+      http.Client client, {
+      required String slot,
+      String modelId = 'gemini-2.5-flash-preview-tts',
+      String? voice,
+    }) {
+      final store = MediaModelsStore.inMemory();
+      store.setOverride(
+        slot,
+        MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: googleBaseUrl,
+          modelId: modelId,
+          apiKeyName: 'GEMINI_API_KEY',
+          voice: voice,
+        ),
+      );
+      return MediaGateway(
+        env: env,
+        fallback: () => fallback,
+        store: store,
+        resolveKey: (name) async =>
+            name == 'GEMINI_API_KEY' ? 'goog-key' : null,
+        httpClient: client,
+      );
+    }
+
+    http_testing.MockClient geminiTtsClient(
+      Uint8List pcm,
+      void Function(http.Request) onRequest,
+    ) => http_testing.MockClient((request) async {
+      onRequest(request);
+      return http.Response(
+        jsonEncode({
+          'candidates': [
+            {
+              'content': {
+                'parts': [
+                  {
+                    'inlineData': {
+                      'mimeType': 'audio/L16;rate=24000',
+                      'data': base64Encode(pcm),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        200,
+      );
+    });
+
+    test(
+      'speak posts Gemini generateContent and saves a wrapped wav',
+      () async {
+        final env = MemoryExecutionEnv();
+        http.Request? seen;
+        final pcm = Uint8List.fromList([1, 2, 3, 4]);
+        final client = geminiTtsClient(pcm, (request) => seen = request);
+        final tool = speakTool(
+          googleGateway(env, client, slot: MediaSlot.audioTts),
+        );
+
+        final result = await tool.execute(const {'text': 'hello'}, null, null);
+
+        expect(
+          seen!.url.toString(),
+          '$googleBaseUrl/models/gemini-2.5-flash-preview-tts:generateContent',
+        );
+        expect(seen!.headers['x-goog-api-key'], 'goog-key');
+        expect(seen!.headers['authorization'], isNull);
+        final body = jsonDecode(seen!.body) as Map<String, dynamic>;
+        expect(body['contents'], [
+          {
+            'parts': [
+              {'text': 'hello'},
+            ],
+          },
+        ]);
+        final config = body['generationConfig'] as Map<String, dynamic>;
+        expect(config['responseModalities'], ['AUDIO']);
+        expect(
+          (config['speechConfig'] as Map<String, dynamic>)['voiceConfig'],
+          {
+            'prebuiltVoiceConfig': {'voiceName': 'Kore'},
+          },
+        );
+
+        final text = textOf(result);
+        expect(text, contains('generated/speech-'));
+        expect(text, contains('.wav'));
+        expect(text, contains('voice "Kore"'));
+        final path = RegExp(r'generated/\S+\.wav').firstMatch(text)![0]!;
+        final saved = (await env.readBinaryFile(path)).valueOrNull!;
+        expect(saved, hasLength(44 + pcm.length));
+        expect(String.fromCharCodes(saved.sublist(0, 4)), 'RIFF');
+        expect(String.fromCharCodes(saved.sublist(8, 12)), 'WAVE');
+        expect(saved.sublist(44), pcm);
+        // The fmt chunk describes LINEAR16 PCM, 24 kHz mono.
+        final header = ByteData.sublistView(saved);
+        expect(header.getUint16(20, Endian.little), 1);
+        expect(header.getUint16(22, Endian.little), 1);
+        expect(header.getUint32(24, Endian.little), 24000);
+        expect(header.getUint16(34, Endian.little), 16);
+        expect(header.getUint32(40, Endian.little), pcm.length);
+      },
+    );
+
+    test('speak on google: the argument wins, then the slot voice', () async {
+      final env = MemoryExecutionEnv();
+      final bodies = <Map<String, dynamic>>[];
+      final client = geminiTtsClient(Uint8List.fromList([0]), (request) {
+        bodies.add(jsonDecode(request.body) as Map<String, dynamic>);
+      });
+      final tool = speakTool(
+        googleGateway(env, client, slot: MediaSlot.audioTts, voice: 'Aoede'),
+      );
+
+      await tool.execute(const {'text': 'a'}, null, null);
+      await tool.execute(const {'text': 'b', 'voice': 'Zephyr'}, null, null);
+
+      String voiceOf(Map<String, dynamic> body) =>
+          ((body['generationConfig'] as Map<String, dynamic>)['speechConfig']
+                  as Map<String, dynamic>)['voiceConfig']
+              .toString();
+      expect(voiceOf(bodies[0]), contains('Aoede'));
+      expect(voiceOf(bodies[1]), contains('Zephyr'));
+    });
+
+    test(
+      'generateMusic posts to /interactions and deep-finds the audio',
+      () async {
+        final env = MemoryExecutionEnv();
+        http.Request? seen;
+        final client = http_testing.MockClient((request) async {
+          seen = request;
+          return http.Response(
+            jsonEncode({
+              'outputs': [
+                {'type': 'text', 'text': 'composing'},
+                {
+                  'type': 'audio',
+                  'data': base64Encode(Uint8List.fromList([5, 5, 5])),
+                },
+              ],
+            }),
+            200,
+          );
+        });
+        final tool = generateMusicTool(
+          googleGateway(
+            env,
+            client,
+            slot: MediaSlot.musicGeneration,
+            modelId: 'lyria-2',
+          ),
+        );
+
+        final result = await tool.execute(
+          const {'prompt': 'lo-fi loop'},
+          null,
+          null,
+        );
+
+        expect(seen!.url.toString(), '$googleBaseUrl/interactions');
+        expect(seen!.headers['x-goog-api-key'], 'goog-key');
+        expect(jsonDecode(seen!.body), {
+          'model': 'lyria-2',
+          'input': 'lo-fi loop',
+        });
+        final text = textOf(result);
+        expect(text, contains('generated/music-'));
+        expect(text, contains('.mp3'));
+        expect(text, contains('3 bytes'));
+        final path = RegExp(r'generated/\S+\.mp3').firstMatch(text)![0]!;
+        expect((await env.readBinaryFile(path)).valueOrNull, [5, 5, 5]);
+      },
+    );
+
+    test('generateMusic finds output_audio-style blocks too', () async {
+      final env = MemoryExecutionEnv();
+      final client = http_testing.MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'result': {
+              'output_audio': {
+                'data': base64Encode(Uint8List.fromList([7, 7])),
+              },
+            },
+          }),
+          200,
+        );
+      });
+      final tool = generateMusicTool(
+        googleGateway(env, client, slot: MediaSlot.musicGeneration),
+      );
+
+      final result = await tool.execute(const {'prompt': 'x'}, null, null);
+      expect(textOf(result), contains('2 bytes'));
+    });
+
+    test(
+      'generateMusic without audio in the response errors honestly',
+      () async {
+        final env = MemoryExecutionEnv();
+        final client = http_testing.MockClient(
+          (request) async => http.Response(jsonEncode({'outputs': []}), 200),
+        );
+        final tool = generateMusicTool(
+          googleGateway(env, client, slot: MediaSlot.musicGeneration),
+        );
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+        final text = textOf(result);
+        expect(text, startsWith('Error:'));
+        expect(text, contains('no audio payload'));
+      },
+    );
+
+    test('generateImage on google is an honest not-supported error', () async {
+      final env = MemoryExecutionEnv();
+      var calls = 0;
+      final client = http_testing.MockClient((request) async {
+        calls++;
+        return http.Response('{}', 500);
+      });
+      final tool = generateImageTool(
+        googleGateway(env, client, slot: MediaSlot.imageGeneration),
+      );
+
+      final result = await tool.execute(const {'prompt': 'x'}, null, null);
+      final text = textOf(result);
+      expect(text, startsWith('Error:'));
+      expect(text, contains('not supported for the Google provider yet'));
+      expect(calls, 0);
+    });
+
+    test('generateVideo on google is an honest not-supported error', () async {
+      final env = MemoryExecutionEnv();
+      var calls = 0;
+      final client = http_testing.MockClient((request) async {
+        calls++;
+        return http.Response('{}', 500);
+      });
+      final tool = generateVideoTool(
+        googleGateway(env, client, slot: MediaSlot.videoGeneration),
+      );
+
+      final result = await tool.execute(const {'prompt': 'x'}, null, null);
+      final text = textOf(result);
+      expect(text, startsWith('Error:'));
+      expect(text, contains('not supported for the Google provider yet'));
+      expect(calls, 0);
+    });
+  });
 }

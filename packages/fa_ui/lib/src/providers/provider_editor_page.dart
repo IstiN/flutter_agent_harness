@@ -88,7 +88,8 @@ final class ProviderEditorResult {
 ///   write-only — it starts empty and an empty save keeps the current key
 ///   ([hasSavedKey] shows a note). A Delete action pops
 ///   [ProviderEditorResult.delete].
-/// - **preset** ([preset] set): a hosted preset (OpenRouter, Ollama Cloud)
+/// - **preset** ([preset] set): a hosted preset (OpenRouter, Ollama Cloud,
+///   Google Gemini)
 ///   — name/URL are read-only; the default model (seeded from the
 ///   registry's preset override when [registry] is given, falling back to
 ///   the preset's built-in default) and the key are editable.

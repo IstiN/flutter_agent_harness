@@ -9,6 +9,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa_ui/fa_ui.dart' as faui;
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
@@ -1818,16 +1819,14 @@ class _AddKeyDialogState extends State<AddKeyDialog> {
   }
 }
 
-/// The settings "Media models" section: one row per [MediaSlot] showing the
-/// effective endpoint — the slot's override (`model · host`) or the main
-/// connection fallback. Tapping a row pushes the two-step flow
-/// ([MediaSlotProviderPickerPage] → [MediaSlotModelPage]); picking "Same as
-/// main connection" removes the override, restoring the fallback.
+/// The settings "Media models" section — ADAPTER over the fa_ui
+/// `MediaModelsSection` (the rows, the [MediaSlotProviderPickerPage] →
+/// [MediaSlotModelPage] flow, and the strings live in the package). Keeps
+/// the app's constructor surface ([service] + the AppAnalytics wiring) and
+/// the gen-l10n slot labels `model_presets.dart` reuses.
 ///
 /// The store comes from [store] or the nearest [MediaModelsScope]; the whole
 /// section hides when no store is available (tests pumping the bare form).
-/// [service] supplies the main connection's base URL for the editor's
-/// placeholder/default.
 class MediaModelsSection extends StatelessWidget {
   const MediaModelsSection({
     super.key,
@@ -1852,14 +1851,7 @@ class MediaModelsSection extends StatelessWidget {
   final ModelsEndpointFetcher? modelsFetcher;
 
   /// The icon each slot's row (and the model preset combo summary) shows.
-  static const slotIcons = <String, IconData>{
-    MediaSlot.imageGeneration: Icons.image_outlined,
-    MediaSlot.audioTts: Icons.record_voice_over_outlined,
-    MediaSlot.musicGeneration: Icons.music_note_outlined,
-    MediaSlot.videoGeneration: Icons.videocam_outlined,
-    MediaSlot.vision: Icons.visibility_outlined,
-    MediaSlot.transcription: Icons.transcribe_outlined,
-  };
+  static const slotIcons = faui.MediaModelsSection.slotIcons;
 
   /// The localized label for [slot] (the raw name for unknown slots).
   static String slotLabelFor(AppLocalizations l10n, String slot) =>
@@ -1873,124 +1865,16 @@ class MediaModelsSection extends StatelessWidget {
         _ => slot,
       };
 
-  /// The host part of [baseUrl] for the row summary (the raw string when it
-  /// does not parse as a URI with a host).
-  static String _hostOf(String baseUrl) {
-    final host = Uri.tryParse(baseUrl)?.host ?? '';
-    return host.isEmpty ? baseUrl : host;
-  }
-
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final store = this.store ?? MediaModelsScope.maybeOf(context);
-    if (store == null) return const SizedBox.shrink();
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              context.l10n.mediaModelsSectionTitle,
-              style: theme.textTheme.titleSmall,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              context.l10n.mediaModelsSectionNote,
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 8),
-            for (final slot in MediaSlot.all)
-              _buildSlotRow(context, theme, store, slot),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildSlotRow(
-    BuildContext context,
-    ThemeData theme,
-    MediaModelsStore store,
-    String slot,
-  ) {
-    final override = store.overrideFor(slot);
-    // Overrides are summarized with the provider NAME, never the raw URL;
-    // an override whose URL matches no known provider falls back to the
-    // host (a hand-edited store file).
-    final provider = override == null
-        ? null
-        : providerForBaseUrl(override.baseUrl, registry);
-    final summary = override == null
-        ? context.l10n.mediaModelsFallbackSummary
-        : context.l10n.mediaModelsOverrideSummary(
-            provider != null
-                ? providerDisplayName(context, provider)
-                : _hostOf(override.baseUrl),
-            override.modelId,
-          );
-    return InkWell(
-      onTap: () => _editSlot(context, store, slot),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Icon(
-              slotIcons[slot] ?? Icons.tune,
-              size: 20,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(slotLabelFor(context.l10n, slot)),
-                  Text(
-                    summary,
-                    style: theme.textTheme.bodySmall,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _editSlot(
-    BuildContext context,
-    MediaModelsStore store,
-    String slot,
-  ) async {
-    AppAnalytics.instance.screenOpened('media_slot_picker');
-    final result = await Navigator.of(context).push<MediaSlotEditorResult>(
-      MaterialPageRoute(
-        builder: (_) => MediaSlotProviderPickerPage(
-          slot: slot,
-          title: context.l10n.mediaModelsEditTitle(
-            slotLabelFor(context.l10n, slot),
-          ),
-          initial: store.overrideFor(slot),
-          mainBaseUrl: service?.activeBaseUrl ?? '',
-          registry: registry,
-          modelsFetcher: modelsFetcher,
-        ),
-      ),
-    );
-    if (result == null) return;
-    await store.setOverride(slot, result.cleared ? null : result.override);
-    AppAnalytics.instance.mediaSlotSet(slot);
-  }
+  Widget build(BuildContext context) => faui.MediaModelsSection(
+    store: store,
+    mainBaseUrl: service?.activeBaseUrl ?? '',
+    registry: registry,
+    modelsFetcher: modelsFetcher,
+    onSlotEditorOpened: (_) =>
+        AppAnalytics.instance.screenOpened('media_slot_picker'),
+    onSlotOverrideSaved: (slot) => AppAnalytics.instance.mediaSlotSet(slot),
+  );
 }
 
 /// The gear-icon screen from the chat screen (also opened from the session
