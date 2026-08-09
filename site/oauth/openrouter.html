@@ -50,6 +50,7 @@
         type: 'openrouter_oauth_code',
         code: code,
         error: error,
+        ts: Date.now(),
       };
 
       // Notify the Fa web app that opened this window. A wildcard target is
@@ -79,10 +80,34 @@
         // window.opener above.
       }
 
+      // Last-resort fallback for older Safari / partitioned storage: write the
+      // code to localStorage so the opener can pick it up by polling. Guard
+      // the write so a stale code does not overwrite a newer one.
+      try {
+        const existing = window.localStorage.getItem('openrouter_oauth_code');
+        const existingTs = existing ? (JSON.parse(existing).ts || 0) : 0;
+        if (payload.ts >= existingTs) {
+          window.localStorage.setItem('openrouter_oauth_code', JSON.stringify(payload));
+        }
+        delivered = true;
+      } catch (e) {
+        // Storage may be unavailable in private mode.
+      }
+
       // Close the popup/tab once the code has been handed off. This works for
-      // windows opened by script (Chrome/Firefox reliably; Safari may keep it).
-      if (delivered && code) {
+      // windows opened by script; give older WebKit a moment before attempting
+      // to close, and also try to close the named popup from inside.
+      function closePopup() {
         try { window.close(); } catch (e) { /* ignore */ }
+        try {
+          const named = window.open('', 'openrouter_oauth');
+          if (named) named.close();
+        } catch (e) { /* ignore */ }
+      }
+      if (delivered && code) {
+        closePopup();
+        setTimeout(closePopup, 150);
+        setTimeout(closePopup, 500);
       }
 
       const title = document.getElementById('title');

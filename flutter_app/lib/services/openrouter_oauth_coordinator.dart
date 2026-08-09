@@ -142,6 +142,9 @@ final class OpenRouterOAuthCoordinator {
       c.complete(code);
     }
     _completer = null;
+    // Close the web OAuth popup once the code has been handed off. On
+    // non-web platforms this is a no-op.
+    closeOpenRouterOAuthPopup();
   }
 
   /// Resets any in-flight capture by completing it with `null` and closing the

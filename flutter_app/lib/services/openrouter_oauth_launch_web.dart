@@ -4,6 +4,9 @@
 
 import 'dart:html' as html;
 
+/// The popup window opened for the OAuth flow, if any.
+html.WindowBase? _openRouterOAuthPopup;
+
 /// Opens the OpenRouter OAuth authorization page in a named popup window so
 /// that `window.opener` is preserved on the callback page. The standard
 /// `package:url_launcher` `externalApplication` mode uses `_blank`, which
@@ -14,7 +17,7 @@ bool _launchOpenRouterOAuth(String url) {
   // page, allowing `site/oauth/openrouter.html` to call
   // `window.opener.postMessage`. The dimensions are large enough to show the
   // provider UI comfortably without being fullscreen.
-  html.window.open(
+  _openRouterOAuthPopup = html.window.open(
     url,
     'openrouter_oauth',
     'width=520,height=720,scrollbars=yes,resizable=yes',
@@ -22,6 +25,19 @@ bool _launchOpenRouterOAuth(String url) {
   // The dart:html binding reports success/failure through the returned
   // [Window] reference; popup blockers are not surfaced as exceptions here.
   return true;
+}
+
+/// Closes the OAuth popup opened by [_launchOpenRouterOAuth].
+///
+/// This is called from the coordinator once the authorization code has been
+/// received, so the user does not have to close the tab manually.
+void closeOpenRouterOAuthPopup() {
+  try {
+    _openRouterOAuthPopup?.close();
+  } on Object {
+    // Ignore cross-origin or already-closed errors.
+  }
+  _openRouterOAuthPopup = null;
 }
 
 /// Factory selected by the conditional import at the call site.

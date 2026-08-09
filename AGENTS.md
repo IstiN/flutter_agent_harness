@@ -527,6 +527,10 @@ factual: paths, commands, invariants — no essays.
   `/interactions` with `{model, input}` and deep-searches the response for
   base64 audio; the image/video slots answer an honest "not supported for
   the Google provider yet" error.
+- `docs/subagents/` — the subagents-2.0 + long-term-memory master plan
+  (phased: memory package publish, memory foundation, memory-aware
+  compaction, session-backed retained subagents, agent-type menu); update
+  the checklists there as work lands.
 - `site/` — static GitHub Pages landing; `.github/workflows/pages.yml`
   builds the web demo into `app/` (never committed). `site/privacy.html`
   is the published privacy policy (`PRIVACY.md` in the repo root is the
