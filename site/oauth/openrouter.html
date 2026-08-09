@@ -56,8 +56,15 @@
       // required because the opener may be served from localhost during local
       // web development or from fa1.dev in production; the payload contains no
       // secrets (only the short-lived authorization code).
+      let delivered = false;
       if (window.opener) {
-        window.opener.postMessage(payload, '*');
+        try {
+          window.opener.postMessage(payload, '*');
+          delivered = true;
+        } catch (e) {
+          // Cross-origin or closed opener; fall through to the redirect
+          // fallback so the code is not lost.
+        }
       }
 
       const title = document.getElementById('title');
@@ -65,13 +72,26 @@
       if (code) {
         title.textContent = 'Authorized';
         title.className = 'success';
-        message.textContent = 'You can close this tab and return to Fa.';
+        if (delivered) {
+          message.textContent = 'You can close this tab and return to Fa.';
+        } else {
+          message.innerHTML = 'The app could not be notified automatically. '
+            + 'Copy the code below, close this tab, and paste it into the Fa app:'
+            + '<br><br><code style="user-select:all;word-break:break-all;background:#111827;padding:0.5rem 0.75rem;border-radius:0.375rem;color:#e8ecf2;">'
+            + escapeHtml(code) + '</code>';
+        }
       } else {
         title.textContent = 'Authorization failed';
         title.className = 'error';
         message.textContent = errorDescription
           ? 'Error: ' + errorDescription + '. Please close this tab and try again in the app.'
           : 'No authorization code was received. Please close this tab and try again in the app.';
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
       }
     })();
   </script>

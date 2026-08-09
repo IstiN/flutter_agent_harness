@@ -9,6 +9,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/openrouter_oauth_callback.dart';
+import 'package:fa/services/openrouter_oauth_launch_stub.dart'
+    if (dart.library.html) 'package:fa/services/openrouter_oauth_launch_web.dart';
 
 /// Coordinates the OpenRouter OAuth PKCE callback across desktop, mobile, and
 /// web builds of the app.
@@ -111,10 +113,20 @@ final class OpenRouterOAuthCoordinator {
       return future;
     }
 
-    final launched = await doLaunch(
-      authUrl,
-      mode: url_launcher.LaunchMode.externalApplication,
-    );
+    final webLaunch = createOpenRouterOAuthLauncher();
+    final bool launched;
+    if (kIsWeb && webLaunch != null) {
+      // Web uses a named popup so that `window.opener` is preserved on the
+      // callback page and `postMessage` can deliver the authorization code.
+      // `url_launcher`'s `externalApplication` mode opens `_blank`, which
+      // browsers treat as `noopener` and leaves `window.opener` null.
+      launched = webLaunch(authUrl.toString());
+    } else {
+      launched = await doLaunch(
+        authUrl,
+        mode: url_launcher.LaunchMode.externalApplication,
+      );
+    }
     if (!launched) {
       await _reset();
       return future;
