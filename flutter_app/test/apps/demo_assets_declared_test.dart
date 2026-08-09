@@ -42,7 +42,7 @@ void main() {
     }
     // The fitness coach's skeletal-animated GLB must ship too.
     const coach =
-        '${AppsStore.bundledAssetRoot}/fitness-trainer/models/rogue.glb';
+        '${AppsStore.bundledAssetRoot}/fitness-trainer/models/coach_anny.glb';
     if (!File(coach).existsSync()) missing.add(coach);
     expect(missing, isEmpty, reason: 'missing demo asset files: $missing');
   });

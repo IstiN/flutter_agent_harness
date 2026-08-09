@@ -1,9 +1,11 @@
 // Fitness Trainer — guided workout with a 3D animated coach.
-// The coach is the CC0 KayKit Rogue (assets/apps/fitness-trainer/models/
-// rogue.glb, 76 skeletal clips) rendered via scene3d (flame_3d). Press
-// START and follow along: each exercise plays its clip with a countdown,
-// rests play Idle, the finale plays Cheer. Pause / skip / quit any time.
-// Completed sessions persist in jsr.storage. All colors from jsr.theme.
+// The coach is a realistic human baked from NAVER's anny body model
+// (Apache-2.0, assets/apps/fitness-trainer/models/coach_anny.glb — 10
+// skeletal clips authored in tools/bake_coach_glb.py) rendered via
+// scene3d (flame_3d). Press START and follow along: each exercise plays
+// its clip with a countdown, rests play Idle, the finale plays Cheer.
+// Pause / skip / quit any time. Completed sessions persist in
+// jsr.storage. All colors from jsr.theme.
 (function() {
   var SVG = {
     dumbbell: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 7.5v9M4.5 9v6M16.5 7.5v9M19.5 9v6M7.5 12h9"/></svg>',
@@ -32,7 +34,7 @@
   ];
 
   var sceneId = 'fitness-' + (jsr.instanceId || 'app') + '-' + Math.floor(Math.random() * 1e9);
-  var MODEL_SRC = 'apps/fitness-trainer/models/rogue.glb';
+  var MODEL_SRC = 'apps/fitness-trainer/models/coach_anny.glb';
 
   var state = {
     screen: 'home', // home | workout | done
@@ -293,7 +295,7 @@
   // cube-bound scene dies trying to parse it as OBJ.
   jsr.scene3d.create(sceneId, {
     engine: 'flame',
-    camera: { position: [0, 1.6, 3.4], target: [0, 0.95, 0], fov: 45 },
+    camera: { position: [0, 1.3, 3.2], target: [0, 0.85, 0], fov: 45 },
     light: { position: [3, 6, 4], color: '#ffffff', ambient: 0.6, diffuse: 0.8 }
   });
   jsr.scene3d.addModel(sceneId, {

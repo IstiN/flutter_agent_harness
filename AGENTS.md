@@ -330,9 +330,15 @@ factual: paths, commands, invariants — no essays.
   weather, stocks, crypto, animation-showcase, yolo-hello, calendar
   (`jsr.fa.calendar`), map (`map` node), health + homekit (real bridge on
   iOS, honest demo-panel fallback elsewhere), fitness-trainer — guided
-  workout with a 3D animated coach (CC0 KayKit Rogue GLB with 76 skeletal
-  clips in `assets/apps/fitness-trainer/models/`, rendered via the
-  `scene3d` node + flame_3d; START-driven exercise/rest steps with
+  workout with a 3D animated coach (a realistic human baked from NAVER's
+  anny body model — Apache-2.0 — into
+  `assets/apps/fitness-trainer/models/coach_anny.glb` with 10
+  hand-authored skeletal clips; baker script in
+  `references/anny/tools/bake_coach_glb.py` — anny `local-bone` deltas in
+  world axes → glTF: IBMs are column-major, mesh split into ≤16-joint
+  surfaces for flame_3d, and the skinned node must NOT be parented to a
+  joint (flame_3d's dependency count then never settles); rendered via
+  the `scene3d` node + flame_3d; START-driven exercise/rest steps with
   per-clip mapping, pause/skip/quit, sessions persisted via jsr.storage;
   `integration_test/fitness_coach_screenshot_test.dart` screenshot-verifies
   it on the macOS host), english-teacher — the "Language Tutor": Duolingo-style
