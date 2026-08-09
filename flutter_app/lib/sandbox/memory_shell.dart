@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/sandbox/shell_parser.dart';
+import 'package:fa/sandbox/shell_script.dart';
 import 'package:fa/sandbox/web_git.dart';
 import 'package:fa/sandbox/web_interpreters_stub.dart'
     if (dart.library.html) 'web_interpreters_web.dart';
@@ -96,54 +97,70 @@ final class MemoryShell implements Shell {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
 
-    late final ShellCommand parsed;
+    late final ShellScript script;
     try {
-      parsed = parseCommandLine(command);
+      script = parseShellScript(command);
     } on ShellParseException catch (e) {
       return Err(ExecutionError(ExecutionErrorCode.unknown, 'parse error: $e'));
     }
 
-    var exitCode = 0;
-    for (var i = 0; i < parsed.statements.length; i++) {
-      final statement = parsed.statements[i];
-      if (statement.operator == StatementOperator.and && exitCode != 0) {
-        continue;
-      }
-      if (statement.operator == StatementOperator.or && exitCode == 0) {
-        continue;
-      }
-
-      final result = await _runPipeline(statement.pipeline, options);
-      exitCode = result.exitCode;
-
-      if (token != null && token.isCancelled) {
-        return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
-      }
-    }
+    // One output accumulator per exec: pipelines APPEND to it (POSIX — the
+    // output of `echo a; echo b` is both lines, not the last one).
+    _lastStdout = '';
+    _lastStderr = '';
+    final result = await runShellScript(script, _scriptRunner, options);
+    if (result.isErr) return Err(result.errorOrNull!);
 
     return Ok(
       ShellExecResult(
         stdout: _lastStdout ?? '',
         stderr: _lastStderr ?? '',
-        exitCode: exitCode,
+        exitCode: result.valueOrNull!,
       ),
     );
   }
 
-  Future<_StageResult> _runPipeline(
-    Pipeline pipeline,
-    ShellExecOptions? options,
-  ) async {
-    _lastStdout = '';
-    _lastStderr = '';
+  /// Script interpreter callbacks (control flow + command substitution are
+  /// implemented once in `shell_script.dart` and shared with WasiSandboxShell).
+  late final ShellScriptRunner _scriptRunner = ShellScriptRunner(
+    runPipeline: (pipeline, options, depth) async {
+      final result = await _runPipeline(pipeline, options, depth);
+      if (result.isErr) return Err(result.errorOrNull!);
+      return Ok(result.valueOrNull!.exitCode);
+    },
+    environment: _effectiveEnv,
+    setVariable: (name, value) => _shellEnv[name] = value,
+    capture: _capture,
+    saveOutputs: () =>
+        ShellOutputSnapshot(stdout: _lastStdout, stderr: _lastStderr),
+    restoreOutputs: (snapshot) {
+      _lastStdout = snapshot.stdout;
+      _lastStderr = snapshot.stderr;
+    },
+  );
 
+  final ShellOutputCapture _capture = ShellOutputCapture();
+
+  Future<Result<_StageResult, ExecutionError>> _runPipeline(
+    Pipeline pipeline,
+    ShellExecOptions? options, [
+    int depth = 0,
+  ]) async {
     List<int>? pipeInput;
     var stageResult = const _StageResult(stdout: [], stderr: [], exitCode: 0);
 
     for (var i = 0; i < pipeline.stages.length; i++) {
-      // Expand `$VAR` references at execution time so earlier statements in
-      // the same command line (e.g. `export A=1 && echo $A`) are visible.
-      final stage = _expandStage(pipeline.stages[i], _effectiveEnv(options));
+      final isLastStage = i == pipeline.stages.length - 1;
+      // Expand `$VAR`/`$(...)` references at execution time so earlier
+      // statements in the same command line (e.g. `export A=1 && echo $A`)
+      // are visible.
+      final expansion = await expandShellStage(
+        pipeline.stages[i],
+        _effectiveEnv(options),
+        (source) => _scriptRunner.substitute(source, options, depth),
+      );
+      if (expansion.isErr) return Err(expansion.errorOrNull!);
+      final stage = expansion.valueOrNull!;
       final cwd = options?.cwd ?? _currentDir;
 
       String? stdoutFile;
@@ -175,8 +192,7 @@ final class MemoryShell implements Shell {
             stderr: utf8.encode('sh: $stdinFile: No such file or directory\n'),
             exitCode: 1,
           );
-          _lastStdout = '';
-          _lastStderr = utf8.decode(stageResult.stderr);
+          _lastStderr = (_lastStderr ?? '') + utf8.decode(stageResult.stderr);
           pipeInput = null;
           continue;
         }
@@ -195,24 +211,32 @@ final class MemoryShell implements Shell {
 
       if (stdoutFile != null) {
         await _writeRedirect(stdoutFile, stageResult.stdout, appendStdout, cwd);
-        _lastStdout = '';
       } else {
-        _lastStdout = utf8.decode(stageResult.stdout, allowMalformed: true);
-        if (_lastStdout!.isNotEmpty) options?.onStdout?.call(_lastStdout!);
+        final text = utf8.decode(stageResult.stdout, allowMalformed: true);
+        // Only the LAST stage's stdout leaves the pipeline (the rest goes
+        // into the pipe) — intermediate stages must not leak into command
+        // substitution captures or the exec accumulator.
+        if (isLastStage && text.isNotEmpty) {
+          _lastStdout = (_lastStdout ?? '') + text;
+          _capture.feed(text);
+          if (!_capture.isActive) options?.onStdout?.call(text);
+        }
       }
 
       if (stderrFile != null) {
         await _writeRedirect(stderrFile, stageResult.stderr, appendStderr, cwd);
-        _lastStderr = '';
       } else {
-        _lastStderr = utf8.decode(stageResult.stderr, allowMalformed: true);
-        if (_lastStderr!.isNotEmpty) options?.onStderr?.call(_lastStderr!);
+        final text = utf8.decode(stageResult.stderr, allowMalformed: true);
+        if (isLastStage && text.isNotEmpty) {
+          _lastStderr = (_lastStderr ?? '') + text;
+          if (!_capture.isActive) options?.onStderr?.call(text);
+        }
       }
 
       pipeInput = stageResult.stdout;
     }
 
-    return stageResult;
+    return Ok(stageResult);
   }
 
   Future<void> _writeRedirect(
@@ -1391,92 +1415,6 @@ final class MemoryShell implements Shell {
       ..._shellEnv,
       ...?options?.env,
     };
-  }
-
-  /// Expands `$NAME` and `${NAME}` references in [input] using [env]. Unknown
-  /// variables expand to the empty string; other `$` forms are kept literal.
-  String _expandVars(String input, Map<String, String> env) {
-    final buffer = StringBuffer();
-    var i = 0;
-    while (i < input.length) {
-      final ch = input[i];
-      if (ch != '\$') {
-        buffer.write(ch);
-        i++;
-        continue;
-      }
-      if (i + 1 >= input.length) {
-        buffer.write('\$');
-        i++;
-        continue;
-      }
-      final next = input[i + 1];
-      if (next == '{') {
-        final end = input.indexOf('}', i + 2);
-        if (end == -1) {
-          buffer.write('\${');
-          i += 2;
-          continue;
-        }
-        buffer.write(env[input.substring(i + 2, end)] ?? '');
-        i = end + 1;
-        continue;
-      }
-      final code = next.codeUnitAt(0);
-      final isVarStart =
-          (code >= 65 && code <= 90) ||
-          (code >= 97 && code <= 122) ||
-          code == 95;
-      if (!isVarStart) {
-        buffer.write('\$');
-        i++;
-        continue;
-      }
-      var j = i + 1;
-      while (j < input.length) {
-        final c = input.codeUnitAt(j);
-        final isVarChar =
-            (c >= 65 && c <= 90) ||
-            (c >= 97 && c <= 122) ||
-            (c >= 48 && c <= 57) ||
-            c == 95;
-        if (!isVarChar) break;
-        j++;
-      }
-      buffer.write(env[input.substring(i + 1, j)] ?? '');
-      i = j;
-    }
-    return buffer.toString();
-  }
-
-  /// Applies `$VAR` expansion to a parsed [stage] using [env], honoring the
-  /// per-word `expandable` flags set by the parser for single quotes and
-  /// `\$` escapes.
-  Stage _expandStage(Stage stage, Map<String, String> env) {
-    final expandedCommand = stage.isExpandable(0)
-        ? _expandVars(stage.command, env)
-        : stage.command;
-    final expandedArgs = <String>[
-      for (var k = 0; k < stage.args.length; k++)
-        stage.isExpandable(k + 1)
-            ? _expandVars(stage.args[k], env)
-            : stage.args[k],
-    ];
-    final expandedRedirects = <Redirect>[
-      for (final redirect in stage.redirects)
-        Redirect(
-          kind: redirect.kind,
-          fd: redirect.fd,
-          target: redirect.expandable
-              ? _expandVars(redirect.target, env)
-              : redirect.target,
-        ),
-    ];
-    return Stage(
-      command: expandedCommand,
-      args: expandedArgs,
-      redirects: expandedRedirects,
-    );
   }
 
   /// Reads the input for a command: the files in [paths] concatenated, or the

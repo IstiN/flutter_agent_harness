@@ -48,12 +48,15 @@ void main() {
     });
 
     test('parses logical operators and semicolons', () {
+      // POSIX attachment: the operator belongs to the statement that
+      // FOLLOWS it — `a; b && c || d` runs a, always runs b, runs c when b
+      // succeeded, and runs d when c failed.
       final cmd = parseCommandLine('a; b \u0026\u0026 c || d');
       expect(cmd.statements.length, 4);
       expect(cmd.statements[0].operator, StatementOperator.none);
-      expect(cmd.statements[1].operator, StatementOperator.and);
-      expect(cmd.statements[2].operator, StatementOperator.or);
-      expect(cmd.statements[3].operator, StatementOperator.none);
+      expect(cmd.statements[1].operator, StatementOperator.none);
+      expect(cmd.statements[2].operator, StatementOperator.and);
+      expect(cmd.statements[3].operator, StatementOperator.or);
     });
 
     test('parses output redirects', () {

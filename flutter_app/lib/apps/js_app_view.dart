@@ -17,6 +17,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/video_tool.dart';
@@ -305,6 +306,7 @@ class _JsAppViewState extends State<JsAppView> {
       // [_restartIfAppChanged]) — record the signature we booted from.
       _appSignature = await _readAppSignature();
     } on Object catch (error) {
+      AppLog.i('apps', 'app start failed: ${widget.app.id} — $error');
       if (mounted) setState(() => _startError = error);
     }
   }

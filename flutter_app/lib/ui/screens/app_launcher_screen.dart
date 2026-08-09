@@ -14,6 +14,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -613,6 +614,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// (see [AppsStore.resetDemoApp] — user data in `storage.json` survives).
   Future<void> _restoreDemoApp(String appId) async {
     final restored = await _appsStore.resetDemoApp(appId);
+    AppLog.i(
+      'apps',
+      'restore demo app: $appId → ${restored ? 'ok' : 'FAILED'}',
+    );
     if (!mounted) return;
     if (restored) await _reloadApps();
     if (!mounted) return;
@@ -634,6 +639,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   // --- navigation ----------------------------------------------------------
 
   Future<void> _launchApp(JsAppInfo app) async {
+    AppLog.i('apps', 'open app: ${app.id}');
     await pushJsApp(
       context,
       manager: widget.manager,
@@ -1308,11 +1314,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       // renders a dead placeholder. For a demo id that's recoverable:
       // force-reseed the reference version instead of a silent no-op.
       final demoId = key.substring(4);
+      AppLog.i('apps', 'tile tap on dead placeholder: $key (demo=$demoId)');
       if (AppsStore.demoAppIds.contains(demoId)) {
         unawaited(_restoreDemoApp(demoId));
       }
       return;
     }
+    AppLog.i('apps', 'tile tap: ${app.id}');
     // A tile whose demo seed failed shows its stored error instead of a
     // dead-end launch — copyable, so the user can hand it to Fa for a fix.
     final seedError = _appsStore.failedSeeds.value[app.id];

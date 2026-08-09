@@ -203,6 +203,18 @@ final class LocalFileSystem implements FileSystem {
     final resolved = _resolve(path);
     try {
       final stat = await FileStat.stat(resolved);
+      // A missing path reports FileSystemEntityType.notFound — surface a
+      // real not-found instead of the misleading "Unsupported file type"
+      // (which only fits exotic nodes: sockets, fifos, devices).
+      if (stat.type == FileSystemEntityType.notFound) {
+        return Err(
+          FileError(
+            FileErrorCode.notFound,
+            'No such file or directory',
+            path: resolved,
+          ),
+        );
+      }
       final kind = switch (stat.type) {
         FileSystemEntityType.file => FileKind.file,
         FileSystemEntityType.directory => FileKind.directory,
