@@ -11,6 +11,7 @@ import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa_ui/fa_ui.dart' show ProviderPreset;
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -299,7 +300,10 @@ void main() {
       final url = _field(tester, 'Base URL');
       expect(url.enabled, isFalse);
       expect(url.controller!.text, 'https://openrouter.ai/api/v1');
-      expect(_field(tester, 'Model id').controller!.text, 'openai/gpt-4o-mini');
+      expect(
+        _field(tester, 'Model id').controller!.text,
+        ProviderPreset.openrouter.defaultModel,
+      );
       // Built-in presets cannot be edited or deleted.
       expect(find.text('Edit'), findsNothing);
       expect(find.text('Delete'), findsNothing);

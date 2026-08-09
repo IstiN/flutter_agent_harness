@@ -26,7 +26,7 @@ import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 enum ProviderPreset {
   openrouter(
     baseUrl: 'https://openrouter.ai/api/v1',
-    defaultModel: 'openai/gpt-4o-mini',
+    defaultModel: 'z-ai/glm-5.2',
   ),
   ollamaCloud(baseUrl: 'https://ollama.com/v1', defaultModel: 'gpt-oss:120b'),
   gemini(

@@ -55,6 +55,7 @@ const _visionMarkers = <String>[
   'mini-cpm-v',
   'glm-4v',
   'glm-4.5v',
+  'glm-5',
   'internvl',
   'cogvlm',
   'phi-3.5-vision',

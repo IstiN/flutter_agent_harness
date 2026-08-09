@@ -127,7 +127,7 @@ Future<void> _pumpSettingsFrame(
 AgentService _fakeService({
   String baseUrl = 'https://openrouter.ai/api/v1',
   String provider = 'openai-completions',
-  String modelId = 'openai/gpt-4o-mini',
+  String modelId = 'z-ai/glm-5.2',
 }) {
   return AgentService(
     agent: Agent(
@@ -194,7 +194,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Key/model/url fields, the vision checkbox (auto-checked: the default
-      // gpt-4o-mini model id suggests vision), and the hosted key note.
+      // OpenRouter model id suggests vision), and the hosted key note.
       await expectGolden(tester, 'settings_hosted');
     });
 

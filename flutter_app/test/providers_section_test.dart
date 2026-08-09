@@ -6,6 +6,7 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa_ui/fa_ui.dart' show ProviderPreset;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -208,7 +209,10 @@ void main() {
       // means the default, enabled) and prefilled with the preset default.
       final modelField = tester.widget<TextField>(_editorField('Model id'));
       expect(modelField.enabled ?? true, isTrue);
-      expect(modelField.controller!.text, 'openai/gpt-4o-mini');
+      expect(
+        modelField.controller!.text,
+        ProviderPreset.openrouter.defaultModel,
+      );
 
       await tester.enterText(_editorField('Model id'), 'anthropic/claude');
       await tester.enterText(_editorField('API key (optional)'), 'sk-or-new');
