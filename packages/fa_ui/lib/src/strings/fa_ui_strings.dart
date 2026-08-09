@@ -139,6 +139,10 @@ abstract class FaUiStrings {
   /// Label of the confirm button on the OAuth code-paste sheet.
   String get settingsOpenRouterOAuthConfirmButton;
 
+  /// Error message when OAuth code exchange fails; [message] is the backend
+  /// or network error text.
+  String settingsOpenRouterOAuthError(String message);
+
   /// Label of the Ollama Cloud preset.
   String get settingsPresetOllama;
 
@@ -314,6 +318,9 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsOpenRouterOAuthConfirmButton => 'Connect';
   @override
+  String settingsOpenRouterOAuthError(String message) =>
+      'OpenRouter authorization failed: $message';
+  @override
   String get settingsPresetOllama => 'Ollama';
   @override
   String get settingsPresetGemini => 'Google Gemini';
@@ -472,6 +479,9 @@ class FaUiStringsRu extends FaUiStrings {
   String get settingsOpenRouterOAuthCodeLabel => 'Код авторизации';
   @override
   String get settingsOpenRouterOAuthConfirmButton => 'Подключить';
+  @override
+  String settingsOpenRouterOAuthError(String message) =>
+      'Ошибка авторизации OpenRouter: $message';
   @override
   String get settingsPresetOllama => 'Ollama';
   @override

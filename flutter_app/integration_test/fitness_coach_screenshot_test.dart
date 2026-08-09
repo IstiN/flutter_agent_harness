@@ -76,6 +76,17 @@ void main() {
       await Future<void>.delayed(const Duration(seconds: 2));
       await _shot('04_rest_idle');
       expect(find.text('REST'), findsOneWidget);
+
+      // Orbit: drag the 3D view sideways, the camera must swing around
+      // the coach (the pose silhouette changes visibly). dragFrom lands
+      // inside the scene box regardless of detector ordering.
+      final sceneCenter = tester.getCenter(find.text('REST'));
+      await tester.dragFrom(
+        sceneCenter.translate(0, -140),
+        const Offset(-160, 0),
+      );
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await _shot('05_orbit_left');
     });
     await unmountAll(tester);
   });

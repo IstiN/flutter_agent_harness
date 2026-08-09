@@ -11,8 +11,27 @@ import 'package:fa/services/openrouter_oauth_coordinator.dart';
 Future<void> attachOpenRouterOAuthLinks() async {
   html.window.onMessage.listen((event) {
     final data = event.data;
-    if (data is! Map) return;
-    if (data['type'] != 'openrouter_oauth_code') return;
-    OpenRouterOAuthCoordinator.instance.complete(data['code'] as String?);
+    if (data == null) return;
+
+    String? type;
+    String? code;
+
+    if (data is Map) {
+      type = data['type'] as String?;
+      code = data['code'] as String?;
+    } else {
+      // postMessage from a same-origin JS page arrives as a native JS object
+      // in dart2js, not a Dart Map. Use dynamic dispatch to read its fields.
+      try {
+        final dynamic jsData = data;
+        type = jsData['type'] as String?;
+        code = jsData['code'] as String?;
+      } on Object {
+        return;
+      }
+    }
+
+    if (type != 'openrouter_oauth_code') return;
+    OpenRouterOAuthCoordinator.instance.complete(code);
   });
 }

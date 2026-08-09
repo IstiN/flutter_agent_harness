@@ -157,10 +157,31 @@
     ].concat(chips || []) } };
   }
 
+  // ── camera orbit (drag on the 3D view) ───────────────────────────────
+
+  var orbit = { az: 0.0, el: 0.22, radius: 3.2 };
+
+  function applyCamera() {
+    var target = [0, 0.85, 0];
+    var cx = orbit.radius * Math.cos(orbit.el) * Math.sin(orbit.az);
+    var cy = orbit.radius * Math.sin(orbit.el) + 0.45;
+    var cz = orbit.radius * Math.cos(orbit.el) * Math.cos(orbit.az);
+    jsr.scene3d.setCamera(sceneId, {
+      position: [cx, cy, cz],
+      target: target,
+      fov: 45
+    });
+  }
+
   function sceneBox(t, height) {
     return { type: 'container', margin: [16, 4, 16, 0], height: height,
       decoration: { color: t.surface, borderRadius: 16, border: { color: t.borderBright } },
-      child: { type: 'scene3d', id: sceneId } };
+      child: { type: 'stack', children: [
+        { type: 'scene3d', id: sceneId },
+        // Transparent drag layer: horizontal pans orbit the coach.
+        { type: 'gestureDetector', onPanUpdate: 'orbit',
+          child: { type: 'fill', color: '#00000000' } }
+      ] } };
   }
 
   function bigButton(t, label, icon, action, accent) {
@@ -280,7 +301,15 @@
     return jsr.render(homeScreen(t));
   }
 
-  jsr.onEvent(function(name) {
+  jsr.onEvent(function(name, payload) {
+    if (name === 'orbit') {
+      if (payload && typeof payload.dx === 'number') {
+        orbit.az -= payload.dx * 0.012;
+        orbit.el = Math.max(-0.1, Math.min(1.2, orbit.el + (payload.dy || 0) * 0.008));
+        applyCamera();
+      }
+      return;
+    }
     if (name === 'start') return startWorkout();
     if (name === 'pause') return togglePause();
     if (name === 'skip') return advance();
@@ -293,10 +322,13 @@
   // dispatcher binds the scene to a host on the FIRST create (no src in
   // the config → flutter_cube), and a later .glb addModel into a
   // cube-bound scene dies trying to parse it as OBJ.
+  // Lighting tuned like yoclip's promo scenes: low ambient + strong
+  // diffuse gives the coach actual muscle shading instead of a flat
+  // silhouette.
   jsr.scene3d.create(sceneId, {
     engine: 'flame',
     camera: { position: [0, 1.3, 3.2], target: [0, 0.85, 0], fov: 45 },
-    light: { position: [3, 6, 4], color: '#ffffff', ambient: 0.6, diffuse: 0.8 }
+    light: { position: [1.2, 1.6, 1.8], color: '#ffffff', ambient: 0.28, diffuse: 4.5 }
   });
   jsr.scene3d.addModel(sceneId, {
     modelId: 'coach', src: MODEL_SRC,

@@ -97,14 +97,34 @@ class OpenRouterOAuthButton extends StatelessWidget {
       }
     }
     if (code == null || code.isEmpty) return;
+    if (!context.mounted) return;
 
-    final key = await (exchange ?? exchangeOpenRouterCode)(
-      code,
-      codeVerifier: verifier,
-    );
+    final strings = FaUiStrings.of(context);
+    try {
+      final key = await (exchange ?? exchangeOpenRouterCode)(
+        code,
+        codeVerifier: verifier,
+      );
 
-    if (context.mounted) {
-      onSuccess?.call(key.key);
+      if (context.mounted) {
+        onSuccess?.call(key.key);
+      }
+    } on ConfigException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(strings.settingsOpenRouterOAuthError(e.message)),
+          ),
+        );
+      }
+    } on Object catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(strings.settingsOpenRouterOAuthError(e.toString())),
+          ),
+        );
+      }
     }
   }
 
