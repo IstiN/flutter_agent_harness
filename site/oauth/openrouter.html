@@ -62,9 +62,27 @@
           window.opener.postMessage(payload, '*');
           delivered = true;
         } catch (e) {
-          // Cross-origin or closed opener; fall through to the redirect
-          // fallback so the code is not lost.
+          // Cross-origin or closed opener; fall through to broadcast/fallback.
         }
+      }
+
+      // Safari's ITP may strip window.opener after the cross-origin OpenRouter
+      // redirect, so also broadcast on a named channel. The Fa app listens on
+      // the same channel as a fallback.
+      try {
+        const channel = new BroadcastChannel('openrouter_oauth');
+        channel.postMessage(payload);
+        channel.close();
+        delivered = true;
+      } catch (e) {
+        // BroadcastChannel not supported (older browsers); delivery depends on
+        // window.opener above.
+      }
+
+      // Close the popup/tab once the code has been handed off. This works for
+      // windows opened by script (Chrome/Firefox reliably; Safari may keep it).
+      if (delivered && code) {
+        try { window.close(); } catch (e) { /* ignore */ }
       }
 
       const title = document.getElementById('title');

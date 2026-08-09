@@ -6,32 +6,45 @@ import 'dart:html' as html;
 
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 
-/// Listens for the `postMessage` from `https://fa1.dev/oauth/openrouter.html`
-/// that carries the OpenRouter authorization code.
-Future<void> attachOpenRouterOAuthLinks() async {
-  html.window.onMessage.listen((event) {
-    final data = event.data;
-    if (data == null) return;
+/// Extracts the OpenRouter authorization code from a JS object or Dart Map
+/// delivered by `postMessage` or `BroadcastChannel`.
+void _completeFromData(Object? data) {
+  if (data == null) return;
 
-    String? type;
-    String? code;
+  String? type;
+  String? code;
 
-    if (data is Map) {
-      type = data['type'] as String?;
-      code = data['code'] as String?;
-    } else {
-      // postMessage from a same-origin JS page arrives as a native JS object
-      // in dart2js, not a Dart Map. Use dynamic dispatch to read its fields.
-      try {
-        final dynamic jsData = data;
-        type = jsData['type'] as String?;
-        code = jsData['code'] as String?;
-      } on Object {
-        return;
-      }
+  if (data is Map) {
+    type = data['type'] as String?;
+    code = data['code'] as String?;
+  } else {
+    // Messages from JS arrive as native objects in dart2js, not Dart Maps.
+    // Use dynamic dispatch to read the fields.
+    try {
+      final dynamic jsData = data;
+      type = jsData['type'] as String?;
+      code = jsData['code'] as String?;
+    } on Object {
+      return;
     }
+  }
 
-    if (type != 'openrouter_oauth_code') return;
-    OpenRouterOAuthCoordinator.instance.complete(code);
-  });
+  if (type != 'openrouter_oauth_code') return;
+  OpenRouterOAuthCoordinator.instance.complete(code);
+}
+
+/// Listens for the OpenRouter authorization code delivered either by
+/// `postMessage` from the callback page (Chrome/Firefox) or by
+/// `BroadcastChannel` (Safari fallback, because ITP may strip `window.opener`
+/// after the cross-origin OpenRouter redirect).
+Future<void> attachOpenRouterOAuthLinks() async {
+  html.window.onMessage.listen((event) => _completeFromData(event.data));
+
+  try {
+    final channel = html.BroadcastChannel('openrouter_oauth');
+    channel.onMessage.listen((event) => _completeFromData(event.data));
+  } on Object {
+    // BroadcastChannel is not supported on very old browsers; the postMessage
+    // path above is enough for those.
+  }
 }

@@ -59,7 +59,9 @@
   }
 
   function exportNow() {
-    var step = PLAN[state.step];
+    // After the last step state.step == PLAN.length (finish) — clamp or the
+    // read throws and every later event (SKIP!) dies on 'step.type'.
+    var step = PLAN[Math.min(state.step, PLAN.length - 1)];
     jsr.exportState({
       screen: state.screen,
       step: step.type === 'exercise' ? step.name : 'rest',
