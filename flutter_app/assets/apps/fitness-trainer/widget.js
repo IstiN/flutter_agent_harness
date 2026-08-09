@@ -24,7 +24,7 @@
     { type: 'rest', dur: 15 },
     { type: 'exercise', name: 'Squats', detail: 'legs', clip: 'PickUp', dur: 40 },
     { type: 'rest', dur: 15 },
-    { type: 'exercise', name: 'Shadow Boxing', detail: 'arms', clip: 'Unarmed_Melee_Attack_Punch_A', dur: 40 },
+    { type: 'exercise', name: 'Shadow Boxing', detail: 'arms', clip: 'Unarmed_Melee_Attack_Punch_A', clipAlt: 'Unarmed_Melee_Attack_Punch_B', dur: 40 },
     { type: 'rest', dur: 15 },
     { type: 'exercise', name: 'Lunges', detail: 'legs & balance', clip: 'Dodge_Left', clipAlt: 'Dodge_Right', dur: 40 },
     { type: 'rest', dur: 15 },
@@ -71,20 +71,27 @@
 
   function tick() {
     if (state.screen !== 'workout' || state.paused) return;
-    state.left -= 1;
-    state.stats.seconds += 1;
-    // Lunges: alternate sides every 2 seconds.
-    var step = PLAN[state.step];
-    if (step.clipAlt && state.left % 2 === 0) {
-      state.altClip = !state.altClip;
-      playCurrent();
+    try {
+      state.left -= 1;
+      state.stats.seconds += 1;
+      // Lunges/boxing: alternate sides every 2 seconds.
+      var step = PLAN[state.step];
+      if (step.clipAlt && state.left % 2 === 0) {
+        state.altClip = !state.altClip;
+        playCurrent();
+      }
+      if (state.left <= 0) {
+        advance();
+        return;
+      }
+      render();
+    } catch (e) {
+      // A tick exception must never freeze the workout timer.
+      jsr.log('tick error: ' + (e && e.message ? e.message : e));
     }
-    if (state.left <= 0) {
-      advance();
-      return;
-    }
-    render();
   }
+
+  setInterval(tick, 1000);
 
   function advance() {
     state.step += 1;
@@ -131,8 +138,6 @@
     if (sceneReady) jsr.scene3d.playAnimation(sceneId, 'coach', { name: 'Idle', loop: true });
     render();
   }
-
-  setInterval(tick, 1000);
 
   // ── shared widgets ─────────────────────────────────────────────────────
 
