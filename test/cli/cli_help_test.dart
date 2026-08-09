@@ -134,6 +134,7 @@ void main() {
       '/model',
       '/model-edit',
       '/provider',
+      'openrouter oauth',
       '/provider-edit',
       '/key',
       '/mode',

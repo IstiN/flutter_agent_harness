@@ -202,7 +202,7 @@ void main() {
 
     test('code mode uses default coding prompt', () {
       final mode = builtInAgentModes('/work')['code']!;
-      expect(mode.systemPrompt, contains('You are fah'));
+      expect(mode.systemPrompt, contains('You are Fa'));
       expect(mode.systemPrompt, contains('/work'));
     });
 

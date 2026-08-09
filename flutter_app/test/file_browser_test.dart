@@ -95,7 +95,7 @@ AgentService _fakeService(ExecutionEnv env) {
         contextWindow: 100000,
         maxTokens: 4096,
       ),
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: _singleTextResponse('ok'),
       toolRegistry: ToolRegistry(const []),
     ),
@@ -171,7 +171,7 @@ AgentService _toolService(
   final service = AgentService(
     agent: Agent(
       model: _testModel,
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: (model, context, {cancelToken}) {
         final stream = AssistantMessageEventStream();
         for (final event in turns.removeAt(0)) {
@@ -217,7 +217,7 @@ final class _ThrowingSendService extends AgentService {
     : super(
         agent: Agent(
           model: _testModel,
-          systemPrompt: 'You are fah.',
+          systemPrompt: 'You are Fa.',
           streamFunction: _singleTextResponse('ok'),
           toolRegistry: ToolRegistry(const []),
         ),

@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
@@ -103,6 +104,9 @@ class ProviderEditorPage extends StatefulWidget {
     this.initial,
     this.hasSavedKey = false,
     this.registry,
+    this.onOAuthSuccess,
+    this.openRouterOAuthCallbackUrl,
+    this.openRouterOAuthCapture,
   });
 
   /// App bar title (`Add provider` / `Edit provider` / the preset label).
@@ -121,6 +125,18 @@ class ProviderEditorPage extends StatefulWidget {
   /// The provider registry: in preset mode the model field seeds from its
   /// preset-model override when one was saved.
   final ProviderRegistry? registry;
+
+  /// Called when the OpenRouter OAuth flow succeeds. Only used when
+  /// [preset] is [ProviderPreset.openrouter].
+  final ValueChanged<String>? onOAuthSuccess;
+
+  /// `callback_url` passed to the OpenRouter OAuth authorization URL. Used
+  /// together with [openRouterOAuthCapture] for automatic callback capture.
+  final String? openRouterOAuthCallbackUrl;
+
+  /// Automatic callback capture for the OpenRouter OAuth flow. When provided,
+  /// the button calls this instead of showing the manual code-paste sheet.
+  final OpenRouterOAuthCaptureCallback? openRouterOAuthCapture;
 
   @override
   State<ProviderEditorPage> createState() => _ProviderEditorPageState();
@@ -279,6 +295,17 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                 autocorrect: false,
                 enableSuggestions: false,
               ),
+              if (preset == ProviderPreset.openrouter) ...[
+                const SizedBox(height: 12),
+                OpenRouterOAuthButton(
+                  callbackUrl: widget.openRouterOAuthCallbackUrl,
+                  onCapture: widget.openRouterOAuthCapture,
+                  onSuccess: (key) {
+                    _keyController.text = key;
+                    widget.onOAuthSuccess?.call(key);
+                  },
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,

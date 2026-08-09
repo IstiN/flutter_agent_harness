@@ -41,7 +41,9 @@ import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
 import '../providers/models_endpoint.dart';
+import '../providers/openrouter_oauth.dart';
 import '../prompts/prompt_overrides.dart';
+import 'openrouter_oauth_server.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_repo.dart';
 import 'custom_providers.dart';
@@ -1023,7 +1025,7 @@ class AgentCli {
     final session = await _repo.create(
       JsonlSessionCreateOptions(
         cwd: config.env.cwd,
-        metadata: {'agent': 'fah', 'model': _agent.state.model.id},
+        metadata: {'agent': 'Fa', 'model': _agent.state.model.id},
       ),
     );
     if (name != null && name.isNotEmpty) {

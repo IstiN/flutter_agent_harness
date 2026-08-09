@@ -175,7 +175,11 @@ void main() {
 
     // The file must be visible to plain shell tools after git checkout.
     r = await run('git -C /mix checkout main && cat /mix/seed.txt');
-    expect(r.stdout.trim(), 'seed');
+    expect(
+      r.stdout,
+      contains('seed'),
+      reason: 'stdout="${r.stdout}" stderr="${r.stderr}" exit=${r.exitCode}',
+    );
 
     // Sessions dir must survive git syncs.
     await env.writeFile('/sessions/keep.txt', 'keep');

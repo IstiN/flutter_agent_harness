@@ -70,7 +70,7 @@ AgentService _fakeService(ExecutionEnv env, StreamFunction streamFunction) {
         contextWindow: 100000,
         maxTokens: 4096,
       ),
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: streamFunction,
       toolRegistry: ToolRegistry(const []),
     ),

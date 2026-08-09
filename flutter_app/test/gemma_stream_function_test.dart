@@ -188,13 +188,13 @@ void main() {
         await streamGemma(
           engine,
           _model(),
-          _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
+          _context(systemPrompt: 'You are Fa.', tools: [_bashTool]),
         ).toList();
 
         expect(engine.loadedPreset?.id, gemmaModelPresets.first.id);
         // The system prompt travels as the chat's system instruction, not
         // as a message.
-        expect(engine.lastSystemInstruction, 'You are fah.');
+        expect(engine.lastSystemInstruction, 'You are Fa.');
         expect(engine.lastMessages, [
           (role: 'user', content: 'hi', toolName: null),
         ]);
@@ -436,7 +436,7 @@ void main() {
   group('convertGemmaMessages', () {
     test('system prompt is not a message (travels as systemInstruction)', () {
       final messages = convertGemmaMessages(
-        _context(systemPrompt: 'You are fah.'),
+        _context(systemPrompt: 'You are Fa.'),
       );
       expect(messages.single, (role: 'user', content: 'hi', toolName: null));
     });

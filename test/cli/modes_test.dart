@@ -44,7 +44,7 @@ void main() {
     test('defaults to code mode system prompt', () {
       final cli = cliFactory();
       expect(cli.currentMode.name, 'code');
-      expect(cli.systemPrompt, contains('You are fah'));
+      expect(cli.systemPrompt, contains('You are Fa'));
       expect(cli.agent.state.systemPrompt, cli.systemPrompt);
     });
 

@@ -27,6 +27,7 @@ export 'src/providers/default_chat_model.dart';
 export 'src/providers/llm_config_mapping.dart';
 export 'src/providers/media_models_section.dart';
 export 'src/providers/media_slot_picker_page.dart';
+export 'src/providers/openrouter_oauth_button.dart';
 export 'src/providers/provider_editor_page.dart';
 export 'src/providers/provider_preset.dart';
 export 'src/providers/providers_section.dart';

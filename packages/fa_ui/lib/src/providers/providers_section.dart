@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/default_chat_model.dart';
+import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
@@ -31,6 +32,8 @@ class ProvidersSection extends StatelessWidget {
     this.registry,
     this.onDeviceProviders = const [],
     this.onDeviceConnected,
+    this.openRouterOAuthCallbackUrl,
+    this.openRouterOAuthCapture,
   });
 
   /// The active connection, for the current-provider mark. `null` renders
@@ -48,6 +51,14 @@ class ProvidersSection extends StatelessWidget {
   /// Called when an on-device route applies a [FaChatModelConfig] (the user
   /// connected a local model). The host should reconfigure its service.
   final ValueChanged<FaChatModelConfig>? onDeviceConnected;
+
+  /// `callback_url` passed to the OpenRouter OAuth authorization URL when the
+  /// user edits the OpenRouter preset. Used with [openRouterOAuthCapture].
+  final String? openRouterOAuthCallbackUrl;
+
+  /// Automatic callback capture for the OpenRouter OAuth flow in the preset
+  /// editor. When null the button falls back to the manual code-paste sheet.
+  final OpenRouterOAuthCaptureCallback? openRouterOAuthCapture;
 
   bool _isCurrent(Object provider) {
     final service = this.service;
@@ -222,6 +233,16 @@ class ProvidersSection extends StatelessWidget {
         preset: preset,
         hasSavedKey: hasSavedKey,
         registry: registry,
+        onOAuthSuccess: preset == ProviderPreset.openrouter
+            ? (key) async {
+                final keyName = hostedProviderKeyName(preset);
+                if (keyName != null) {
+                  await keysStore?.set(keyName, key);
+                }
+              }
+            : null,
+        openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
+        openRouterOAuthCapture: openRouterOAuthCapture,
       ),
     );
     if (result == null) return;

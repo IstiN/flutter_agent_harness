@@ -39,6 +39,10 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:fa/sandbox/wasm_setup_stub.dart'
     if (dart.library.io) 'package:fa/sandbox/wasm_setup_io.dart';
 
+import 'package:fa/services/openrouter_oauth_links_stub.dart'
+    if (dart.library.io) 'package:fa/services/openrouter_oauth_links_io.dart'
+    if (dart.library.html) 'package:fa/services/openrouter_oauth_links_web.dart';
+
 import 'package:fa/firebase_options.dart';
 
 Future<void> main() async {
@@ -172,6 +176,10 @@ Future<void> main() async {
       analytics: analytics,
     ),
   );
+  // Attach deep-link (mobile) and postMessage (web) listeners for the
+  // OpenRouter OAuth callback. This is fire-and-forget: the coordinator
+  // singleton forwards codes to any in-flight settings-sheet flow.
+  unawaited(attachOpenRouterOAuthLinks());
 }
 
 class MyApp extends StatelessWidget {

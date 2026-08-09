@@ -49,7 +49,7 @@ void main() {
       final builtin = defaultAgentMode(env.cwd).systemPrompt;
       expect(plain.systemPrompt, builtin);
       expect(empty.systemPrompt, builtin);
-      expect(plain.systemPrompt, contains('You are fah'));
+      expect(plain.systemPrompt, contains('You are Fa'));
     });
 
     test('config override replaces the code mode prompt at startup', () {
@@ -109,7 +109,7 @@ void main() {
       io.sendLine('/code');
       await _waitFor(() => io.out.toString().contains('switched mode to code'));
       // Un-overridden modes keep their built-in prompt.
-      expect(cli.agent.state.systemPrompt, contains('You are fah'));
+      expect(cli.agent.state.systemPrompt, contains('You are Fa'));
       io.sendLine('/exit');
       await run;
     });
@@ -193,7 +193,7 @@ void main() {
         isTrue,
       );
       // The main run still used the built-in mode prompt.
-      expect(contexts.first.systemPrompt, contains('You are fah'));
+      expect(contexts.first.systemPrompt, contains('You are Fa'));
     });
 
     test('compaction without overrides uses the built-in prompts', () async {

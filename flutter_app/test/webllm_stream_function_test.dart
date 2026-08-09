@@ -176,12 +176,12 @@ void main() {
         await streamWebLlm(
           engine,
           _model(),
-          _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
+          _context(systemPrompt: 'You are Fa.', tools: [_bashTool]),
         ).toList();
 
         expect(engine.loadedPreset?.id, webLlmModelPresets.first.id);
         expect(engine.lastMessages, [
-          (role: 'system', content: 'You are fah.'),
+          (role: 'system', content: 'You are Fa.'),
           (role: 'user', content: 'hi'),
         ]);
         expect(engine.lastMaxTokens, 1024);
@@ -345,14 +345,14 @@ void main() {
       final engine = FakeWebLlmEngine()..chunks = ['ok'];
       final events = await webLlmStreamFunction(engine)(
         _model(),
-        _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
+        _context(systemPrompt: 'You are Fa.', tools: [_bashTool]),
       ).toList();
 
       expect(events.whereType<DoneEvent>(), hasLength(1));
       final system = engine.lastMessages!.first;
       expect(system.role, 'system');
       // The fah system prompt passes through untouched...
-      expect(system.content, startsWith('You are fah.'));
+      expect(system.content, startsWith('You are Fa.'));
       // ...with the wrapper's tool section appended: the actual tool
       // name, description, and parameter schema reach the model.
       expect(system.content, contains('## Available tools'));
@@ -458,12 +458,12 @@ void main() {
       final engine = FakeWebLlmEngine()..chunks = ['plain'];
       final events = await webLlmStreamFunction(engine)(
         _model(),
-        _context(systemPrompt: 'You are fah.'),
+        _context(systemPrompt: 'You are Fa.'),
       ).toList();
 
       final system = engine.lastMessages!.first;
       expect(system.role, 'system');
-      expect(system.content, startsWith('You are fah.'));
+      expect(system.content, startsWith('You are Fa.'));
       expect(system.content, contains(webLlmNoToolsNote));
       expect(system.content, isNot(contains('## Available tools')));
 
@@ -492,21 +492,21 @@ void main() {
     test('system prompt becomes the leading system message (no note when tools '
         'are registered)', () {
       final messages = convertWebLlmMessages(
-        _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
+        _context(systemPrompt: 'You are Fa.', tools: [_bashTool]),
       );
-      expect(messages.first, (role: 'system', content: 'You are fah.'));
+      expect(messages.first, (role: 'system', content: 'You are Fa.'));
       expect(messages.last, (role: 'user', content: 'hi'));
     });
 
     test('the no-tools note is appended only when the registry is empty', () {
       final noTools = convertWebLlmMessages(
-        _context(systemPrompt: 'You are fah.'),
+        _context(systemPrompt: 'You are Fa.'),
       );
       expect(noTools.first.role, 'system');
-      expect(noTools.first.content, 'You are fah.\n\n$webLlmNoToolsNote');
+      expect(noTools.first.content, 'You are Fa.\n\n$webLlmNoToolsNote');
 
       final emptyTools = convertWebLlmMessages(
-        _context(systemPrompt: 'You are fah.', tools: const []),
+        _context(systemPrompt: 'You are Fa.', tools: const []),
       );
       expect(emptyTools.first.content, contains(webLlmNoToolsNote));
     });

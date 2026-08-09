@@ -56,7 +56,7 @@ Future<_Harness> _pumpLauncher(WidgetTester tester) async {
         contextWindow: 100000,
         maxTokens: 4096,
       ),
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: scriptedTurns([
         (model) => toolCallTurn(model, [
           writeCall('c1', 'apps/todo/manifest.json', _todoManifest),

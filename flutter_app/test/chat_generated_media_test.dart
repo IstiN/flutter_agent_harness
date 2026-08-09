@@ -49,7 +49,7 @@ AgentService _fakeService(ExecutionEnv env) {
         contextWindow: 100000,
         maxTokens: 4096,
       ),
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: _singleTextResponse('ok'),
       toolRegistry: ToolRegistry(const []),
     ),

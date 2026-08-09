@@ -124,6 +124,21 @@ abstract class FaUiStrings {
   /// Label of the OpenRouter preset.
   String get settingsPresetOpenrouter;
 
+  /// Label of the "Authorize with OpenRouter" OAuth button.
+  String get settingsOpenRouterOAuthButton;
+
+  /// Title of the OpenRouter OAuth code-paste bottom sheet.
+  String get settingsOpenRouterOAuthSheetTitle;
+
+  /// Body text of the OpenRouter OAuth code-paste bottom sheet.
+  String get settingsOpenRouterOAuthSheetBody;
+
+  /// Label of the authorization-code field.
+  String get settingsOpenRouterOAuthCodeLabel;
+
+  /// Label of the confirm button on the OAuth code-paste sheet.
+  String get settingsOpenRouterOAuthConfirmButton;
+
   /// Label of the Ollama Cloud preset.
   String get settingsPresetOllama;
 
@@ -287,6 +302,18 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsPresetOpenrouter => 'OpenRouter';
   @override
+  String get settingsOpenRouterOAuthButton => 'Authorize with OpenRouter';
+  @override
+  String get settingsOpenRouterOAuthSheetTitle => 'OpenRouter authorization';
+  @override
+  String get settingsOpenRouterOAuthSheetBody =>
+      'After authorizing on the OpenRouter page, paste the code shown on '
+      'screen below.';
+  @override
+  String get settingsOpenRouterOAuthCodeLabel => 'Authorization code';
+  @override
+  String get settingsOpenRouterOAuthConfirmButton => 'Connect';
+  @override
   String get settingsPresetOllama => 'Ollama';
   @override
   String get settingsPresetGemini => 'Google Gemini';
@@ -434,6 +461,17 @@ class FaUiStringsRu extends FaUiStrings {
       'поэтому к моделям Anthropic обращайтесь через OpenRouter.';
   @override
   String get settingsPresetOpenrouter => 'OpenRouter';
+  @override
+  String get settingsOpenRouterOAuthButton => 'Авторизоваться через OpenRouter';
+  @override
+  String get settingsOpenRouterOAuthSheetTitle => 'Авторизация OpenRouter';
+  @override
+  String get settingsOpenRouterOAuthSheetBody =>
+      'После авторизации на странице OpenRouter вставьте показанный код ниже.';
+  @override
+  String get settingsOpenRouterOAuthCodeLabel => 'Код авторизации';
+  @override
+  String get settingsOpenRouterOAuthConfirmButton => 'Подключить';
   @override
   String get settingsPresetOllama => 'Ollama';
   @override

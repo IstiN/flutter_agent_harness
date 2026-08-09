@@ -14,7 +14,7 @@
 /// WebLLM runs chat-only. The engine's native function calling was removed:
 /// web-llm's FC mode (Hermes presets only) forces JSON-only output so the
 /// model loops on tool calls, and it rejects a custom system prompt
-/// (`CustomSystemPromptError`) — the fah identity would never reach the
+/// (`CustomSystemPromptError`) — the Fa identity would never reach the
 /// model. Tool calling goes through the harness's universal prompt-tools
 /// wrapper instead: [webLlmStreamFunction] wraps the plain chat stream with
 /// `promptToolStreamFunction`, which appends the tool instructions to the

@@ -110,6 +110,9 @@ PROVIDERS AND API KEYS
   otherwise. The provider is saved (customProviders: in ~/.fah/config.yaml)
   and listed first in the /provider picker, remembering its last-used
   model; /provider-edit re-runs the wizard for the active provider.
+  /provider openrouter oauth opens a browser PKCE flow that mints a user-
+  controlled OpenRouter API key and stores it as OPENROUTER_API_KEY; add
+  `headless` for terminals without a browser (copy the URL, paste the code).
 
   Secure key storage: keys resolve in order — a genuine environment value
   of the catalog env names, then the endpoint-scoped secure-store entry
@@ -322,11 +325,12 @@ SKILLS AND CONTEXT FILES
                      this session (an endpoint-reported window from /models
                      wins over the 200k catalog default; persist per chain
                      via roles yaml contextWindow:/maxTokens:)
-  /provider [name] [baseUrl] [token] | custom
+  /provider [name] [baseUrl] [token] | custom | openrouter oauth [headless]
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
                      a guided setup that saves the provider (api type, url,
-                     key, model)
+                     key, model); openrouter oauth authenticates via OpenRouter
+                     PKCE and stores the resulting key in the secure store
   /provider-edit     edit the active provider via the guided setup
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode

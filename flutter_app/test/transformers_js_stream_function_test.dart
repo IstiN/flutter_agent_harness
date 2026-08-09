@@ -207,12 +207,12 @@ void main() {
         await streamTransformersJs(
           engine,
           _model(),
-          _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
+          _context(systemPrompt: 'You are Fa.', tools: [_bashTool]),
         ).toList();
 
         expect(engine.loadedPreset?.id, transformersJsModelPresets.first.id);
         expect(engine.lastMessages, [
-          (role: 'system', content: 'You are fah.', images: const <String>[]),
+          (role: 'system', content: 'You are Fa.', images: const <String>[]),
           (role: 'user', content: 'hi', images: const <String>[]),
         ]);
         expect(engine.lastMaxTokens, 1024);
@@ -555,14 +555,14 @@ void main() {
       final engine = FakeTransformersJsEngine()..chunks = ['ok'];
       final events = await transformersJsStreamFunction(engine)(
         _model(),
-        _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
+        _context(systemPrompt: 'You are Fa.', tools: [_bashTool]),
       ).toList();
 
       expect(events.whereType<DoneEvent>(), hasLength(1));
       final system = engine.lastMessages!.first;
       expect(system.role, 'system');
       // The fah system prompt passes through untouched...
-      expect(system.content, startsWith('You are fah.'));
+      expect(system.content, startsWith('You are Fa.'));
       // ...with the wrapper's tool section appended: the actual tool
       // name, description, and parameter schema reach the model.
       expect(system.content, contains('## Available tools'));
@@ -665,12 +665,12 @@ void main() {
       final engine = FakeTransformersJsEngine()..chunks = ['plain'];
       final events = await transformersJsStreamFunction(engine)(
         _model(),
-        _context(systemPrompt: 'You are fah.'),
+        _context(systemPrompt: 'You are Fa.'),
       ).toList();
 
       final system = engine.lastMessages!.first;
       expect(system.role, 'system');
-      expect(system.content, startsWith('You are fah.'));
+      expect(system.content, startsWith('You are Fa.'));
       expect(system.content, contains(transformersJsNoToolsNote));
       expect(system.content, isNot(contains('## Available tools')));
 
@@ -699,12 +699,12 @@ void main() {
     test('system prompt becomes the leading system message (no note when tools '
         'are registered)', () {
       final messages = convertTransformersJsMessages(
-        _context(systemPrompt: 'You are fah.', tools: [_bashTool]),
+        _context(systemPrompt: 'You are Fa.', tools: [_bashTool]),
         supportsVision: true,
       );
       expect(messages.first, (
         role: 'system',
-        content: 'You are fah.',
+        content: 'You are Fa.',
         images: const <String>[],
       ));
       expect(messages.last, (
@@ -716,17 +716,17 @@ void main() {
 
     test('the no-tools note is appended only when the registry is empty', () {
       final noTools = convertTransformersJsMessages(
-        _context(systemPrompt: 'You are fah.'),
+        _context(systemPrompt: 'You are Fa.'),
         supportsVision: true,
       );
       expect(noTools.first.role, 'system');
       expect(
         noTools.first.content,
-        'You are fah.\n\n$transformersJsNoToolsNote',
+        'You are Fa.\n\n$transformersJsNoToolsNote',
       );
 
       final emptyTools = convertTransformersJsMessages(
-        _context(systemPrompt: 'You are fah.', tools: const []),
+        _context(systemPrompt: 'You are Fa.', tools: const []),
         supportsVision: true,
       );
       expect(emptyTools.first.content, contains(transformersJsNoToolsNote));

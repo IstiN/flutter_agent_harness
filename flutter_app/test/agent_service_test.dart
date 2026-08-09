@@ -214,7 +214,7 @@ Agent _createAgent(
   List<AgentTool> tools = const [],
   String provider = 'test',
   int contextWindow = 100000,
-  String systemPrompt = 'You are fah.',
+  String systemPrompt = 'You are Fa.',
 }) {
   return Agent(
     model: Model(
@@ -1250,7 +1250,7 @@ void main() {
             contextWindow: 4096,
             maxTokens: 1024,
           ),
-          systemPrompt: 'You are fah.',
+          systemPrompt: 'You are Fa.',
           streamFunction: capturing,
           toolRegistry: ToolRegistry(const []),
         ),
@@ -1408,7 +1408,7 @@ void main() {
       // appends — the engine counts all of it.
       final overhead = estimateTokens(
         UserMessage.text(
-          'You are fah.\n\n${promptToolInstructions(service.toolsForTest)}',
+          'You are Fa.\n\n${promptToolInstructions(service.toolsForTest)}',
         ),
       );
       final expected = CompactionSettings.forWindow(8192 - overhead);

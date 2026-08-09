@@ -30,7 +30,7 @@ AgentService _fakeService({
         contextWindow: 100000,
         maxTokens: 4096,
       ),
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: (model, context, {cancelToken}) =>
           AssistantMessageEventStream()..end(),
       toolRegistry: ToolRegistry(const []),

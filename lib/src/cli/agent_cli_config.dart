@@ -42,12 +42,23 @@ final class AgentCliConfig {
     this.onApprovalChanged,
     this.isShiftPressed,
     this.homeDir,
+    this.openRouterOAuthExchangeFn,
   });
 
   /// The user's home directory, when the host has one (used for user-level
   /// skill/context discovery: `~/.fah/skills`, `~/.fah/AGENTS.md`). Null on
   /// sandboxed hosts (web) where only the project FS exists.
   final String? homeDir;
+
+  /// Optional override for the OpenRouter OAuth code exchange. Tests inject a
+  /// fake here so the `/provider openrouter oauth` flow can run without
+  /// network. Production leaves this null and uses the real exchange endpoint.
+  final Future<OpenRouterOAuthKey> Function({
+    required String code,
+    required String codeVerifier,
+    String? label,
+  })?
+  openRouterOAuthExchangeFn;
 
   /// Directories to scan for `/name` prompt templates (`.md` files).
   final List<String> promptTemplateDirs;

@@ -110,7 +110,7 @@ AgentService _seedingService(MemoryExecutionEnv env) {
         contextWindow: 100000,
         maxTokens: 4096,
       ),
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: scriptedTurns([(model) => textTurn(model, 'ok')]),
       toolRegistry: ToolRegistry(const []),
     ),

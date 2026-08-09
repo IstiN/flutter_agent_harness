@@ -59,12 +59,12 @@ void main() {
   }
 
   test(
-    'default system prompt uses fah branding and forbids pi/Claude names',
+    'default system prompt uses Fa branding and forbids pi/Claude names',
     () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
       final prompt = cli.systemPrompt;
-      expect(prompt, contains('You are fah'));
+      expect(prompt, contains('You are Fa'));
       expect(prompt, contains('also called fa'));
       expect(
         prompt.toLowerCase(),

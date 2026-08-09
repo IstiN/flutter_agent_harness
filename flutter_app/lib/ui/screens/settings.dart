@@ -22,6 +22,7 @@ import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
+import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -39,7 +40,8 @@ import 'package:fa/webllm/webllm_cache_section.dart';
 import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
-export 'package:fa_ui/fa_ui.dart' show ProviderPreset, ModelIdAutocompleteField;
+export 'package:fa_ui/fa_ui.dart'
+    show ProviderPreset, ModelIdAutocompleteField, OpenRouterOAuthButton;
 
 /// Compile-time configuration injected via `--dart-define`. Values fall back
 /// to the `.env` file (local dev) at runtime — see [settingsEnv].
@@ -225,6 +227,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// be cancelled).
   Timer? _gemmaVerifyTimer;
 
+  /// Platform-appropriate OpenRouter OAuth callback URL. `null` on desktop
+  /// (a localhost server is started lazily by the coordinator).
+  String? _oauthCallbackUrl;
+
   /// The endpoint's `/models` ids feeding the model field's quick select.
   /// Free text always stays valid (the field is a [RawAutocomplete]).
   List<String> _endpointModels = const [];
@@ -287,6 +293,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _urlController.addListener(_scheduleModelsFetch);
     _keyController.addListener(_scheduleModelsFetch);
     _scheduleModelsFetch();
+    _oauthCallbackUrl = OpenRouterOAuthCoordinator.instance.platformCallbackUrl;
   }
 
   void _onModelIdChanged() {
@@ -607,6 +614,16 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           _applyCustomProvider(provider);
       }
     });
+  }
+
+  /// Captures the OpenRouter OAuth authorization code automatically.
+  ///
+  /// On desktop this starts a localhost callback server, rewrites the
+  /// `callback_url`, and waits for the redirect. On mobile it waits for a
+  /// `fah://oauth/openrouter` deep link; on web it waits for a `postMessage`
+  /// from `https://fa1.dev/oauth/openrouter.html`.
+  Future<String?> _captureOAuthCallback(Uri authUrl) async {
+    return OpenRouterOAuthCoordinator.instance.capture(authUrl);
   }
 
   Future<void> _addProvider() async {
@@ -1008,6 +1025,22 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             autocorrect: false,
             enableSuggestions: false,
           ),
+          if (selection == ProviderPreset.openrouter) ...[
+            const SizedBox(height: 12),
+            faui.OpenRouterOAuthButton(
+              callbackUrl: _oauthCallbackUrl,
+              onCapture: _captureOAuthCallback,
+              onSuccess: (key) {
+                _keyController.text = key;
+                final keyName = faui.hostedProviderKeyName(
+                  ProviderPreset.openrouter,
+                );
+                if (keyName != null) {
+                  widget.keysStore?.set(keyName, key);
+                }
+              },
+            ),
+          ],
           const SizedBox(height: 12),
           ModelIdAutocompleteField(
             controller: _modelController,
@@ -1955,6 +1988,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ProvidersSection(
                 service: widget.service,
                 registry: widget.registry,
+                openRouterOAuthCallbackUrl:
+                    OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
+                openRouterOAuthCapture:
+                    OpenRouterOAuthCoordinator.instance.capture,
                 onDeviceProviders: buildOnDeviceProviderRoutes(
                   context,
                   registry: widget.registry,

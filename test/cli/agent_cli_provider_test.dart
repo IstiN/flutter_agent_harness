@@ -29,6 +29,12 @@ void main() {
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
     String? providerKind,
+    Future<OpenRouterOAuthKey> Function({
+      required String code,
+      required String codeVerifier,
+      String? label,
+    })?
+    openRouterOAuthExchangeFn,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -44,6 +50,7 @@ void main() {
         customProviders: customProviders,
         onSecretStored: onSecretStored,
         providerKind: providerKind ?? 'openai-completions',
+        openRouterOAuthExchangeFn: openRouterOAuthExchangeFn,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -920,5 +927,95 @@ void main() {
     expect(entry.name, 'renamed-ollama');
     expect(entry.modelId, 'new-model');
     expect(entry.baseUrl, 'http://localhost:11434/v1');
+  });
+
+  group('OpenRouter OAuth', () {
+    test(
+      '/provider openrouter oauth headless exchanges, stores key and switches',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          openRouterOAuthExchangeFn:
+              ({
+                required String code,
+                required String codeVerifier,
+                String? label,
+              }) async {
+                expect(code, 'auth-code-123');
+                expect(codeVerifier, isNotEmpty);
+                expect(label, 'Fa');
+                return const OpenRouterOAuthKey(
+                  key: 'sk-or-oauth-123',
+                  keyHash: 'abc123',
+                  label: 'Fa',
+                );
+              },
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider openrouter oauth headless');
+        await waitForIt(
+          () => io.out.toString().contains('OpenRouter OAuth (headless)'),
+        );
+        await waitForIt(
+          () => io.out.toString().contains('authorization code:'),
+        );
+
+        io.sendLine('auth-code-123');
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to openrouter'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(
+          output,
+          contains('authorization code received, exchanging for API key'),
+        );
+        expect(output, contains('OpenRouter authorized'));
+        expect(
+          output,
+          contains('key settings: https://openrouter.ai/keys/abc123'),
+        );
+        expect(store.map['OPENROUTER_API_KEY'], 'sk-or-oauth-123');
+        expect(cli.agent.state.model.provider, 'openrouter');
+        expect(cli.providerKind, 'openai-completions');
+      },
+    );
+
+    test('/provider openrouter oauth rejects invalid usage', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider openrouter oauth too many args');
+      await waitForIt(
+        () => io.out.toString().contains('usage: /provider openrouter oauth'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('/provider openrouter oauth headless cancels on empty code', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider openrouter oauth headless');
+      await waitForIt(() => io.out.toString().contains('authorization code:'));
+      io.sendLine('');
+      await waitForIt(
+        () => io.out.toString().contains('OpenRouter OAuth cancelled'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
   });
 }

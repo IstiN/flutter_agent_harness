@@ -119,6 +119,8 @@ dependencies:
 
   # Opens the privacy policy link (onboarding privacy page) in the browser.
   url_launcher: ^6.3.1
+  # Deep-link handling for mobile OAuth callbacks (fah://oauth/openrouter).
+  app_links: ^6.4.0
   firebase_crashlytics: 5.2.6
 
 dev_dependencies:

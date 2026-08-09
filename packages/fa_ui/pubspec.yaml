@@ -38,6 +38,9 @@ dependencies:
   # The /models endpoint fetch behind the model quick select.
   http: ^1.6.0
 
+  # Opens the OpenRouter OAuth authorization page in the system browser.
+  url_launcher: ^6.3.1
+
   # Shared LLM abstractions and the Flutter on-device Gemma provider. fa_ui
   # stays UI-only for presets/config, but exposes helpers that map its
   # connection config onto the fa_llm types hosts use to build providers.

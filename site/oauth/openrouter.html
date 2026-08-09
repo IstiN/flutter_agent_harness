@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenRouter authorization</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #070a10;
+      color: #e8ecf2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      text-align: center;
+    }
+    .card {
+      max-width: 420px;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: 0 0 0.75rem;
+    }
+    p {
+      margin: 0;
+      line-height: 1.5;
+      color: #9aa3b2;
+    }
+    .error { color: #f87171; }
+    .success { color: #4ade80; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="title">Authorizing…</h1>
+    <p id="message">You can close this tab once the app updates.</p>
+  </div>
+  <script>
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      const error = params.get('error');
+      const errorDescription = params.get('error_description') || error;
+
+      const payload = {
+        type: 'openrouter_oauth_code',
+        code: code,
+        error: error,
+      };
+
+      // Notify the Fa web app that opened this window. A wildcard target is
+      // required because the opener may be served from localhost during local
+      // web development or from fa1.dev in production; the payload contains no
+      // secrets (only the short-lived authorization code).
+      if (window.opener) {
+        window.opener.postMessage(payload, '*');
+      }
+
+      const title = document.getElementById('title');
+      const message = document.getElementById('message');
+      if (code) {
+        title.textContent = 'Authorized';
+        title.className = 'success';
+        message.textContent = 'You can close this tab and return to Fa.';
+      } else {
+        title.textContent = 'Authorization failed';
+        title.className = 'error';
+        message.textContent = errorDescription
+          ? 'Error: ' + errorDescription + '. Please close this tab and try again in the app.'
+          : 'No authorization code was received. Please close this tab and try again in the app.';
+      }
+    })();
+  </script>
+</body>
+</html>

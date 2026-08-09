@@ -305,7 +305,7 @@ AgentService _hungService([MemoryExecutionEnv? env]) {
         contextWindow: 100000,
         maxTokens: 4096,
       ),
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: fn,
       toolRegistry: ToolRegistry(const []),
     ),

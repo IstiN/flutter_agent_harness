@@ -36,7 +36,7 @@ AgentService _fakeService(ExecutionEnv env, {bool withConfig = false}) {
         contextWindow: 100000,
         maxTokens: 4096,
       ),
-      systemPrompt: 'You are fah.',
+      systemPrompt: 'You are Fa.',
       streamFunction: _singleTextResponse('ok'),
       toolRegistry: ToolRegistry(const []),
     ),

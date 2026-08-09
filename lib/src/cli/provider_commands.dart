@@ -392,6 +392,7 @@ extension on AgentCli {
       return;
     }
     if (_startCustomProviderArg(args)) return;
+    if (_startOpenRouterOAuthArg(args)) return;
     if (args.length > 3) {
       io.writeln('usage: /provider <name> [baseUrl] [token]');
       return;
@@ -419,6 +420,157 @@ extension on AgentCli {
     }
     _startProviderFlow();
     return true;
+  }
+
+  Future<OpenRouterOAuthKey> _defaultOpenRouterExchange({
+    required String code,
+    required String codeVerifier,
+    String? label,
+  }) => exchangeOpenRouterCode(code, codeVerifier: codeVerifier, label: label);
+
+  /// The `/provider openrouter oauth [headless]` branch: authenticates the
+  /// user with OpenRouter via PKCE and stores the resulting API key.
+  /// Returns true when the command targeted the OAuth flow.
+  bool _startOpenRouterOAuthArg(List<String> args) {
+    if (args.first != 'openrouter') return false;
+    if (args.length < 2 || args[1] != 'oauth') {
+      return false;
+    }
+    final headless = args.length > 2 && args[2] == 'headless';
+    if (args.length > 3 || (args.length == 3 && !headless)) {
+      io.writeln('usage: /provider openrouter oauth [headless]');
+      return true;
+    }
+    unawaited(_handleOpenRouterOAuthCommand(headless: headless));
+    return true;
+  }
+
+  /// Runs the OpenRouter OAuth flow and saves the resulting key.
+  ///
+  /// When [headless] is true, prints a URL the user opens manually and prompts
+  /// for the authorization code OpenRouter displays. Otherwise starts a local
+  /// HTTP server, opens the browser, captures the callback, and exchanges the
+  /// code automatically.
+  ///
+  /// [exchangeFn] is injectable for tests; production uses [exchangeOpenRouterCode].
+  Future<void> _handleOpenRouterOAuthCommand({required bool headless}) async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      await _runOpenRouterOAuthCommand(headless: headless);
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
+  Future<void> _runOpenRouterOAuthCommand({required bool headless}) async {
+    final spec = providerCatalog['openrouter'];
+    if (spec == null) {
+      io.writeln('OpenRouter provider not found in catalog');
+      return;
+    }
+
+    final exchangeFn =
+        config.openRouterOAuthExchangeFn ?? _defaultOpenRouterExchange;
+
+    OpenRouterOAuthKey? key;
+    if (headless) {
+      key = await _runOpenRouterHeadlessOAuth(exchangeFn: exchangeFn);
+    } else {
+      key = await runOpenRouterOAuthCliFlow(
+        onStatus: io.writeln,
+        exchangeFn: exchangeFn,
+      );
+    }
+
+    if (key == null) return;
+
+    await _applyOpenRouterOAuthKey(spec, key);
+  }
+
+  /// Headless OAuth: show the URL, ask the user to paste the code, exchange it.
+  Future<OpenRouterOAuthKey?> _runOpenRouterHeadlessOAuth({
+    required Future<OpenRouterOAuthKey> Function({
+      required String code,
+      required String codeVerifier,
+      String? label,
+    })
+    exchangeFn,
+  }) async {
+    final verifier = generateOpenRouterCodeVerifier();
+    final challenge = generateOpenRouterCodeChallenge(verifier);
+    final authUrl = buildOpenRouterAuthUrl(
+      codeChallenge: challenge,
+      keyLabel: openRouterDefaultKeyLabel,
+    );
+
+    io.writeln(
+      'OpenRouter OAuth (headless): open this URL in a browser, authorize, '
+      'then paste the code shown on screen:',
+    );
+    io.writeln(authUrl.toString());
+
+    final code = await _askLine('authorization code: ');
+    if (code == null || code.trim().isEmpty) {
+      io.writeln('OpenRouter OAuth cancelled');
+      return null;
+    }
+    io.writeln('authorization code received, exchanging for API key...');
+
+    try {
+      return await exchangeFn(
+        code: code.trim(),
+        codeVerifier: verifier,
+        label: openRouterDefaultKeyLabel,
+      );
+    } on ConfigException catch (e) {
+      io.writeln('OpenRouter OAuth failed: ${e.message}');
+      return null;
+    }
+  }
+
+  /// Saves an OAuth-derived OpenRouter key and switches to OpenRouter.
+  Future<void> _applyOpenRouterOAuthKey(
+    ProviderSpec spec,
+    OpenRouterOAuthKey key,
+  ) async {
+    io.writeln('OpenRouter authorized');
+    final keyName = spec.apiKeyEnvNames.first;
+    await _storeProviderToken(
+      spec,
+      spec.defaultBaseUrl,
+      key.key,
+      keyName: keyName,
+    );
+    // already active (not just any openai-completions endpoint).
+    final isOpenRouterActive =
+        _activeCustomName == null &&
+        _agent.state.model.provider == spec.name &&
+        _agent.state.model.baseUrl == spec.defaultBaseUrl;
+    if (isOpenRouterActive) {
+      _apiKey = key.key;
+      _explicitToken = true;
+      _streamFunction = providerStreamFunction(
+        spec.kind,
+        key.key,
+        sessionId: () => _session?.cachedId,
+      );
+      _agent.streamFunction = _streamFunction;
+      io.writeln('OpenRouter key updated for current session');
+    } else {
+      // Switch to OpenRouter so the key is immediately usable.
+      await _switchProvider(
+        spec,
+        spec.defaultBaseUrl,
+        _agent.state.model.id,
+        token: key.key,
+        tokenKeyName: keyName,
+      );
+    }
+    if (key.settingsUrl != null) {
+      io.writeln('key settings: ${key.settingsUrl}');
+    }
   }
 
   /// The catalog-switch branch of [_handleProviderCommand]: resolves the
