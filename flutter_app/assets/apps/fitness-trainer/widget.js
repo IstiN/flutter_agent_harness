@@ -18,7 +18,7 @@
   };
 
   // The workout: exercise steps + rest steps between them. `clip` is a
-  // skeletal animation name inside rogue.glb.
+  // skeletal animation name inside coach_anny.glb.
   var PLAN = [
     { type: 'exercise', name: 'Jumping Jacks', detail: 'warm-up', clip: 'Jump_Full_Long', dur: 40 },
     { type: 'rest', dur: 15 },
