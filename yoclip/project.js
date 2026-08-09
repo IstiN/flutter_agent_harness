@@ -1,49 +1,105 @@
-// Project layout for the Fa — AI Agent hero promo.
+// Project layout for the Fa — AI Agent promo v2 ("Describe it. Fa builds it.").
 //
-// Layers: background (orbs + vignette, full length) → content (showcase,
-// then endcard overlapping the showcase's fade-out).
+// One continuous canvas: a prompt pill types at each station, launches, and
+// the real app capture assembles where it lands. Dark brand stage, two
+// white-flash theme wipes, off-white end card. Beats per CREATIVE_V2.md.
+//
+// Layers: background (orbs + vignette, full length) → content beats with
+// ~6f crossfade overlaps.
 
 project = {
   lib: 'lib/animation.js',
   texts: {
     en: {
-      showcase: {
-        timeline: 'Showcase',
-        phases: [
-          { kicker: 'L I V E   W I D G E T S', line1: 'A dashboard that is', line2: 'truly yours.' },
-          { kicker: 'T H E   A G E N T   B U I L D S   I T', line1: 'Your own apps,', line2: 'built by chat.' },
-          { kicker: 'I N - A P P   C H A T', line1: 'Fa lives inside', line2: 'every app.' },
-          { kicker: 'M E D I A', line1: 'It draws, speaks', line2: 'and plays.' },
-          { kicker: 'P R I V A C Y', line1: 'Any provider — keys', line2: 'stay in the Keychain.' },
-        ],
+      hook: { timeline: 'Hook', pill: 'Fa — build a game' },
+      game: {
+        timeline: 'Game',
+        caption: 'apps built by chat',
+        pill: 'Fa — build my fitness trainer',
       },
-      endcard: {
-        timeline: 'End card',
-        title: 'Fa — AI Agent',
-        tag: 'on your hardware, under your rules',
+      fitness: {
+        timeline: 'Fitness',
+        caption: 'your coach, in a tap',
+        pill: 'Fa — teach me English',
+      },
+      teacher: {
+        timeline: 'English',
+        caption: 'a tutor that adapts',
+        pill: 'Fa — help with my homework',
+      },
+      homework: {
+        timeline: 'Homework',
+        caption: 'homework? solved, shown',
+        chip: 'python3',
+        pill: 'Fa — watch my stocks',
+      },
+      stocks: {
+        timeline: 'Stocks',
+        caption: 'it keeps watch for you',
+        pill: 'Fa — keys stay mine',
+      },
+      zoomout: {
+        timeline: 'Everywhere',
+        lock: 'your keys stay in the Keychain',
+        headline1: 'One agent.',
+        headline2: 'Every device.',
+      },
+      end: {
+        timeline: 'End',
+        title: 'Describe it. Fa builds it.',
+        meta: 'one agent harness · every device',
       },
     },
     ru: {
-      showcase: {
-        timeline: 'Витрина',
-        phases: [
-          { kicker: 'Ж И В Ы Е   В И Д Ж Е Т Ы', line1: 'Дашборд, который', line2: 'по-настоящему ваш.' },
-          { kicker: 'А Г Е Н Т   С Т Р О И Т', line1: 'Свои приложения —', line2: 'прямо из чата.' },
-          { kicker: 'Ч А Т   В Н У Т Р И', line1: 'Fa живёт внутри', line2: 'каждого приложения.' },
-          { kicker: 'М Е Д И А', line1: 'Рисует, говорит', line2: 'и играет.' },
-          { kicker: 'П Р И В А Т Н О С Т Ь', line1: 'Любой провайдер —', line2: 'ключи в Keychain.' },
-        ],
+      hook: { timeline: 'Хук', pill: 'Fa — собери игру' },
+      game: {
+        timeline: 'Игра',
+        caption: 'приложения из чата',
+        pill: 'Fa — собери мне фитнес-тренера',
       },
-      endcard: {
+      fitness: {
+        timeline: 'Фитнес',
+        caption: 'твой тренер — в один тап',
+        pill: 'Fa — научи меня английскому',
+      },
+      teacher: {
+        timeline: 'Английский',
+        caption: 'репетитор, который подстраивается',
+        pill: 'Fa — помоги с домашкой',
+      },
+      homework: {
+        timeline: 'Домашка',
+        caption: 'домашка? решено и объяснено',
+        chip: 'python3',
+        pill: 'Fa — следи за моими акциями',
+      },
+      stocks: {
+        timeline: 'Акции',
+        caption: 'оно следит за тобой',
+        pill: 'Fa — ключи не трогай',
+      },
+      zoomout: {
+        timeline: 'Везде',
+        lock: 'ключи — только в Keychain',
+        headline1: 'Один агент.',
+        headline2: 'Все устройства.',
+      },
+      end: {
         timeline: 'Финал',
-        title: 'Fa — AI-агент',
-        tag: 'на вашем железе, по вашим правилам',
+        title: 'Скажи — и Fa построит.',
+        meta: 'один агент · все устройства',
       },
     },
   },
   scenes: [
-    { path: 'scenes/background.scene.js', layer: 'background', start: 0, duration: 570 },
-    { path: 'scenes/01_showcase.scene.js', layer: 'content', start: 0, duration: 456 },
-    { path: 'scenes/02_endcard.scene.js', layer: 'content', start: 444, duration: 126 },
+    { path: 'scenes/background.scene.js', layer: 'background', start: 0, duration: 900 },
+    { path: 'scenes/v2_00_hook.scene.js', layer: 'content', start: 0, duration: 60 },
+    { path: 'scenes/v2_01_game.scene.js', layer: 'content', start: 54, duration: 156 },
+    { path: 'scenes/v2_02_fitness.scene.js', layer: 'content', start: 204, duration: 126 },
+    { path: 'scenes/v2_03_teacher.scene.js', layer: 'content', start: 324, duration: 126 },
+    { path: 'scenes/v2_04_homework.scene.js', layer: 'content', start: 444, duration: 126 },
+    { path: 'scenes/v2_05_stocks.scene.js', layer: 'content', start: 564, duration: 126 },
+    { path: 'scenes/v2_06_zoomout.scene.js', layer: 'content', start: 684, duration: 96 },
+    { path: 'scenes/v2_07_endcard.scene.js', layer: 'content', start: 774, duration: 126 },
   ],
 };

@@ -108,3 +108,67 @@ function yoclipOrientation() {
 function yoclipIsPortrait() {
   return yoclipOrientation() === 'portrait';
 }
+
+// ---- v2 promo: prompt pill (the video's input metaphor) -------------------
+// Bordered rounded chip with typed text + block caret. Width is CONSTANT
+// over the full text so typing never jitters the layout (yoclip containers
+// without an explicit size expand to fill the stack).
+
+// Approximate Geneva (bold 600) advance width in font-size fractions. The
+// runtime cannot measure text, so the pill width is estimated per glyph
+// class — a flat 0.58*fs per character underestimates wide glyphs (caps,
+// digits, em dash) and the text overflows the pill border.
+function textAdvance(text, fs) {
+  var w = 0;
+  for (var i = 0; i < text.length; i++) {
+    var ch = text.charAt(i);
+    var code = ch.charCodeAt(0);
+    if (ch === ' ') { w += 0.36; continue; }
+    if (code >= 0x2012 && code <= 0x2015) { w += 1.0; continue; }   // ‒ – — ―
+    if ('iIljJ.,:;\'"`!|()[]{}'.indexOf(ch) >= 0) { w += 0.34; continue; }
+    var wide =
+      (code >= 0x41 && code <= 0x5a) ||   // A-Z
+      (code >= 0x30 && code <= 0x39) ||   // 0-9
+      (code >= 0x410 && code <= 0x42f) || // А-Я
+      code === 0x401;                     // Ё
+    w += wide ? 0.74 : 0.60;
+  }
+  return w * fs;
+}
+
+function promptPill(text, typed, caretOn, opts) {
+  var fs = opts.fs;
+  var fg = opts.color;
+  var border = opts.border;
+  // The pill HUGS the typed content and grows with it like a real input —
+  // yoclip rows are always full-width, so a fixed pill width leaves the
+  // text stuck to the left edge with a dead zone on the right.
+  var padX = fs * 1.05;
+  var textW = Math.max(textAdvance(typed, fs) * 1.04, 1);
+  var caretBarW = fs * 0.14;
+  var caretGap = fs * 0.18;
+  var caretW = caretOn ? caretGap + caretBarW : 0;
+  var pillW = padX * 2 + textW + caretW;
+  var pillH = fs * 2.1;
+  var children = [
+    { type: 'text', text: typed, style: { color: fg, fontSize: fs, fontWeight: 600, fontFamily: opts.fontFamily } },
+  ];
+  if (caretOn) {
+    children.push({ type: 'container', width: caretBarW, height: fs * 1.05, color: border, offsetX: caretGap });
+  }
+  return {
+    type: 'container',
+    width: pillW, height: pillH,
+    borderRadius: pillH / 2,
+    color: opts.bg,
+    borderColor: border, borderWidth: 1.75,
+    shadow: opts.shadow,
+    alignment: 'center',
+    offsetX: opts.offsetX || 0, offsetY: opts.offsetY || 0,
+    scale: opts.scale || 1,
+    opacity: opts.opacity == null ? 1 : opts.opacity,
+    // Rows are always full-width in yoclip — center the content group so any
+    // width-estimate slack distributes evenly on both sides.
+    child: { type: 'row', mainAxisAlignment: 'center', crossAxisAlignment: 'center', children: children },
+  };
+}

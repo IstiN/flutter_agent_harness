@@ -2,7 +2,7 @@
 
 scene = {
   id: 'background',
-  duration: 570,
+  duration: 900,
   from: 0,
   timeline: { label: 'Background', color: '#26304A', lane: 'video' },
   render: function(frame) {

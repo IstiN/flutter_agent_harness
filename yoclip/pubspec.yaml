@@ -26,3 +26,5 @@ flutter:
   assets:
     - yoclip.yaml
     - assets/audio/
+    - assets/models/
+    - assets/models/Textures/

@@ -1,5 +1,5 @@
 config:
-  duration: auto
+  duration: 900
   fps: 30
   width: 1920
   height: 1080
@@ -26,39 +26,27 @@ theme:
 project_js: project.js
 
 external_assets:
-  icon:
+  fa_icon:
     type: image
     path: assets/images/icon_1024.png
-  screen_apps_en:
+  promo_game:
     type: image
-    path: assets/images/en_apps.png
-  screen_chat_en:
+    path: assets/images/promo/promo_game_dark.png
+  promo_fitness:
     type: image
-    path: assets/images/en_chat.png
-  screen_inapp_en:
+    path: assets/images/promo/fitness_crop.png
+  promo_teacher:
     type: image
-    path: assets/images/en_inapp.png
-  screen_media_en:
+    path: assets/images/promo/teacher_crop.png
+  promo_chat:
     type: image
-    path: assets/images/en_media.png
-  screen_providers_en:
+    path: assets/images/promo/chat_crop.png
+  promo_stocks:
     type: image
-    path: assets/images/en_providers.png
-  screen_apps_ru:
+    path: assets/images/promo/stocks_crop.png
+  promo_providers:
     type: image
-    path: assets/images/ru_apps.png
-  screen_chat_ru:
-    type: image
-    path: assets/images/ru_chat.png
-  screen_inapp_ru:
-    type: image
-    path: assets/images/ru_inapp.png
-  screen_media_ru:
-    type: image
-    path: assets/images/ru_media.png
-  screen_providers_ru:
-    type: image
-    path: assets/images/ru_providers.png
+    path: assets/images/promo/providers_crop.png
 
 variants:
   - id: app_preview_en
@@ -87,5 +75,11 @@ variants:
 
 scenes:
   - scenes/background.scene.js
-  - scenes/01_showcase.scene.js
-  - scenes/02_endcard.scene.js
+  - scenes/v2_00_hook.scene.js
+  - scenes/v2_01_game.scene.js
+  - scenes/v2_02_fitness.scene.js
+  - scenes/v2_03_teacher.scene.js
+  - scenes/v2_04_homework.scene.js
+  - scenes/v2_05_stocks.scene.js
+  - scenes/v2_06_zoomout.scene.js
+  - scenes/v2_07_endcard.scene.js
