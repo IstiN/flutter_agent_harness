@@ -891,4 +891,8 @@
 
 - feat(providers): Google Gemini media provider + MediaModelsSection in fa_ui
 
+## 0.1.157
+
+- fix(oauth): capture OpenRouter web callback via JS object postMessage
+
 ## Unreleased
