@@ -211,7 +211,7 @@ final class SandboxBuiltins {
     if (args.contains('--version') || args.contains('-V')) {
       return _ok(
         utf8.encode(
-          'curl 8.5.0 (fah-sandbox) Dart (fah-sandbox)\n'
+          'curl 8.5.0 (Fa sandbox) Dart (Fa sandbox)\n'
           'Release-Date: 2026-01-01\n'
           'Protocols: http https\n'
           'Features: builtin\n',

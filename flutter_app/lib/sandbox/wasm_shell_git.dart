@@ -61,7 +61,7 @@ final class GitSandboxCommands {
     if (subcommand == '--version' || subcommand == '-v') {
       return Ok(
         StageResult(
-          stdout: utf8.encode('git version 2.47.0-fah\n'),
+          stdout: utf8.encode('git version 2.47.0-Fa\n'),
           stderr: const [],
           exitCode: 0,
         ),
@@ -492,11 +492,11 @@ final class GitSandboxCommands {
     final name =
         env?['GIT_AUTHOR_NAME'] ??
         io.Platform.environment['GIT_AUTHOR_NAME'] ??
-        'fah';
+        'Fa';
     final email =
         env?['GIT_AUTHOR_EMAIL'] ??
         io.Platform.environment['GIT_AUTHOR_EMAIL'] ??
-        'fah@example.com';
+        'fa@example.com';
     return dart_git.GitAuthor(name: name, email: email);
   }
 

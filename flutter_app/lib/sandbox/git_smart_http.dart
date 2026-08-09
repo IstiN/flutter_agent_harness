@@ -41,7 +41,7 @@ final class HttpGitTransport implements GitTransport {
   /// HTTP client used for requests.
   final http.Client client;
 
-  static const _userAgent = 'fah/1.0';
+  static const _userAgent = 'Fa/1.0';
 
   @override
   Future<Uint8List> advertise(String service) async {
@@ -189,7 +189,7 @@ final class GitSmartHttp {
   /// smart-HTTP transport is created per call.
   final GitTransport? transport;
 
-  static const _userAgent = 'fah/1.0';
+  static const _userAgent = 'Fa/1.0';
 
   GitTransport _transportFor(String url, String? token) {
     return transport ??

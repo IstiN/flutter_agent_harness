@@ -147,7 +147,7 @@ void main() {
       var r = await run(env, 'curl --version');
       expect(r.exitCode, 0);
       expect(r.stdout, contains('curl'));
-      expect(r.stdout, contains('fah'));
+      expect(r.stdout, contains('Fa'));
 
       r = await run(env, 'curl --help');
       expect(r.exitCode, 0);

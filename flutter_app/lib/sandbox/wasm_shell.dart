@@ -583,7 +583,7 @@ final class WasiSandboxShell implements Shell {
       'PWD': cwd,
       'SHELL': '/bin/sh',
       'TERM': 'dumb',
-      'USER': io.Platform.environment['USER'] ?? 'fah',
+      'USER': io.Platform.environment['USER'] ?? 'Fa',
       ..._shellEnv,
       ...?options?.env,
     };
@@ -1455,7 +1455,7 @@ final class WasiSandboxShell implements Shell {
     final user =
         io.Platform.environment['USER'] ??
         io.Platform.environment['USERNAME'] ??
-        'fah';
+        'Fa';
     return Ok(
       StageResult(
         stdout: utf8.encode('$user\n'),
@@ -2052,7 +2052,7 @@ final class WasiSandboxShell implements Shell {
   }
 
   Future<Result<StageResult, ExecutionError>> _idBuiltin(Stage stage) async {
-    const user = 'fah';
+    const user = 'Fa';
     if (stage.args.contains('-u')) {
       final name = stage.args.contains('-n') ? user : '0';
       return Ok(

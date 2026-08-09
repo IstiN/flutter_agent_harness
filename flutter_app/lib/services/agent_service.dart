@@ -489,7 +489,7 @@ class AgentService extends ChangeNotifier
     final platform = _sandboxPlatform;
     final commandSection = formatSandboxCommandSection(platform);
     debugPrint(
-      '[fah] system prompt platform=$platform, '
+      '[Fa] system prompt platform=$platform, '
       'commands section ${commandSection.length} chars',
     );
     final base = (config.systemPrompt ?? sandboxSystemPrompt).replaceAll(

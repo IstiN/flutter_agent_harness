@@ -416,7 +416,7 @@ final class SandboxPipBuiltins {
     }
     return switch (parsed.subcommand) {
       PipSubcommand.help => _ok(pipUsageText),
-      PipSubcommand.version => _ok('pip 24.0 (fah-sandbox pip-lite)\n'),
+      PipSubcommand.version => _ok('pip 24.0 (Fa sandbox pip-lite)\n'),
       PipSubcommand.list => _list(),
       PipSubcommand.show => _show(parsed.specs.single),
       PipSubcommand.install => _install(parsed.specs, timeout),
@@ -673,7 +673,7 @@ Future<PipRunResult> runMicropipPip(
       return (stdout: pipUsageText, stderr: '', exitCode: 0);
     case PipSubcommand.version:
       return (
-        stdout: 'pip 24.0 (fah-sandbox pip-lite, micropip)\n',
+        stdout: 'pip 24.0 (Fa sandbox pip-lite, micropip)\n',
         stderr: '',
         exitCode: 0,
       );

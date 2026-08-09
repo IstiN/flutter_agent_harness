@@ -471,7 +471,7 @@ final class MemoryShell implements Shell {
     if (args.contains('--version') || args.contains('-version')) {
       final version = await WebInterpreters.sqliteVersion();
       if (version == null) return _interpreterUnavailable('sqlite3');
-      return _text('$version (fah-sandbox sql.js)\n');
+      return _text('$version (Fa sandbox sql.js)\n');
     }
 
     final positionals = <String>[];
@@ -1411,7 +1411,7 @@ final class MemoryShell implements Shell {
       'PWD': cwd,
       'SHELL': '/bin/sh',
       'TERM': 'dumb',
-      'USER': 'fah',
+      'USER': 'Fa',
       ..._shellEnv,
       ...?options?.env,
     };

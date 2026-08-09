@@ -147,7 +147,7 @@ void main() {
     r = await run('command -v ls');
     expect(r.exitCode, 0);
     r = await run('whoami');
-    expect(r.stdout.trim(), 'fah');
+    expect(r.stdout.trim(), 'Fa');
     r = await run('env');
     expect(r.stdout, contains('PATH=/bin'));
     r = await run('echo x > /f.txt && test -f /f.txt');
@@ -405,7 +405,7 @@ void main() {
     var r = await m.run('curl --version');
     expect(r.exitCode, 0);
     expect(r.stdout, contains('curl'));
-    expect(r.stdout, contains('fah'));
+    expect(r.stdout, contains('Fa'));
 
     r = await m.run('curl --help');
     expect(r.exitCode, 0);

@@ -332,7 +332,7 @@ final class SandboxSshBuiltins {
     Duration? timeout,
   }) async {
     if (args.contains('--version') || args.contains('-V')) {
-      return _ok(utf8.encode('ssh (fah-sandbox builtin, package:dartssh2)\n'));
+      return _ok(utf8.encode('ssh (Fa sandbox builtin, package:dartssh2)\n'));
     }
     if (args.contains('--help')) {
       return _ok(utf8.encode(_sshUsage));
@@ -378,8 +378,8 @@ final class SandboxSshBuiltins {
     if (host.isEmpty || (at >= 0 && user!.isEmpty)) {
       return _error(_sshUsage, 2);
     }
-    user ??= env['USER'] ?? 'fah';
-    if (user.isEmpty) user = 'fah';
+    user ??= env['USER'] ?? 'Fa';
+    if (user.isEmpty) user = 'Fa';
 
     final command = args.sublist(i);
     if (command.isEmpty) {
@@ -618,10 +618,10 @@ final class SandboxSshBuiltins {
     required Map<String, String> env,
     required Duration? timeout,
   }) async {
-    final user = connection.user ?? env['USER'] ?? 'fah';
+    final user = connection.user ?? env['USER'] ?? 'Fa';
     final paramsOrError = await _connectParams(
       identity: identity,
-      user: user.isEmpty ? 'fah' : user,
+      user: user.isEmpty ? 'Fa' : user,
       host: connection.host,
       port: port,
       env: env,
@@ -927,8 +927,8 @@ final class SandboxSshBuiltins {
     if (host.isEmpty || (at >= 0 && user!.isEmpty)) {
       return _error(_sftpUsage, 2);
     }
-    user ??= env['USER'] ?? 'fah';
-    if (user.isEmpty) user = 'fah';
+    user ??= env['USER'] ?? 'Fa';
+    if (user.isEmpty) user = 'Fa';
 
     final String batch;
     if (batchFile != null) {

@@ -173,7 +173,7 @@ void main() {
 
       r = await h.builtins.ssh(const ['host', 'true']);
       expect(r.exitCode, 0);
-      expect(h.connections.last.username, 'fah');
+      expect(h.connections.last.username, 'Fa');
     });
 
     test('passphrase and password envs flow into connect params', () async {

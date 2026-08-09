@@ -141,7 +141,7 @@ final class WebGitCommands {
     final subArgs = args.sublist(1);
 
     if (subcommand == '--version' || subcommand == '-v') {
-      return _ok('git version 2.47.0-fah-web\n');
+      return _ok('git version 2.47.0-Fa-web\n');
     }
 
     const networkCommands = {
@@ -371,8 +371,8 @@ final class WebGitCommands {
     }
 
     final author = GitAuthor(
-      name: env?['GIT_AUTHOR_NAME'] ?? 'fah',
-      email: env?['GIT_AUTHOR_EMAIL'] ?? 'fah@example.com',
+      name: env?['GIT_AUTHOR_NAME'] ?? 'Fa',
+      email: env?['GIT_AUTHOR_EMAIL'] ?? 'fa@example.com',
     );
     try {
       final commit = repo.commit(
