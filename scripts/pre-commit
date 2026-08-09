@@ -112,7 +112,7 @@ if command -v dart >/dev/null 2>&1 && \
     exit 1
   fi
 else
-  echo "⚠️  crap4dart not activated (dart pub global activate crap4dart 0.1.1) — skipping CRAP gate"
+  echo "⚠️  crap4dart not activated (dart pub global activate crap4dart 0.2.1) — skipping CRAP gate"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════

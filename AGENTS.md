@@ -590,7 +590,7 @@ tests are done right:
 - Line coverage of `lib/` ≥ 80%; jscpd duplication < 1% core `lib/`,
   < 2.2% `flutter_app/lib/` (ratchet — only tighten).
 - CRAP ratchet (`crap4dart analyze`, config `crap4dart.yaml`, tool pinned
-  as `dart pub global activate crap4dart 0.1.1`): the threshold is the
+  as `dart pub global activate crap4dart 0.2.1`): the threshold is the
   current repo max — only down from here; runs after the coverage step in
   pre-commit and in the `ci.yml` quality job.
 - Max 2800 lines per `.dart` file (`*.g.dart` exempt).
