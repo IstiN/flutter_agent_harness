@@ -13,6 +13,8 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import 'package:archive/archive.dart';
+
 const _repo = 'IstiN/flutter_agent_harness';
 
 void _say(String text) => stdout.writeln(text);
@@ -235,7 +237,8 @@ Future<int> _pubGlobalUpdate({
 
 /// Binary update path: download the release asset for this platform and
 /// swap it in (atomic rename on Unix; rename-aside of the locked exe on
-/// Windows).
+/// Windows). Falls back to downloading and extracting the macOS `.zip`
+/// asset when the plain binary is missing from the release.
 Future<int> _binaryUpdate(
   http.Client client,
   Install install,
@@ -248,28 +251,100 @@ Future<int> _binaryUpdate(
     _warn('no prebuilt binary for this platform — install via Dart instead');
     return 1;
   }
-  final url = 'https://github.com/$_repo/releases/download/$tag/$asset';
   final target = install.executable;
-  final staging = '$target.new';
+  final url = 'https://github.com/$_repo/releases/download/$tag/$asset';
   _say('downloading $asset…');
   final request = http.Request('GET', Uri.parse(url));
   final streamed = await client.send(request);
+  if (streamed.statusCode == 200) {
+    return _swapBinary(streamed, target, latest, runProcess);
+  }
+  // Fallback: macOS release may only have the versioned .zip (the sandboxed
+  // app bundle). Try the stable zip name and extract the binary.
+  if (Platform.isMacOS) {
+    final zipAsset = _zipAssetName();
+    if (zipAsset != null) {
+      _say('binary not found — trying $zipAsset…');
+      return _fallbackZipUpdate(client, tag, zipAsset, target, latest, runProcess);
+    }
+  }
+  _warn('download failed (HTTP ${streamed.statusCode}): $url');
+  return 1;
+}
+
+/// The stable zip asset name for macOS (uploaded by build-macos.yml).
+String? _zipAssetName() {
+  final abi = Abi.current().toString();
+  return switch (abi) {
+    'macos_arm64' => 'fa-macos-arm64-mac.zip',
+    'macos_x64' => 'fa-macos-x64-mac.zip',
+    _ => null,
+  };
+}
+
+/// Downloads the [zipAsset] (a `.zip` containing `Fa.app`), extracts the
+/// binary from `Fa.app/Contents/MacOS/Fa`, and swaps it in.
+Future<int> _fallbackZipUpdate(
+  http.Client client,
+  String tag,
+  String zipAsset,
+  String target,
+  String latest,
+  Future<ProcessResult> Function(String, List<String>) runProcess,
+) async {
+  final zipUrl = 'https://github.com/$_repo/releases/download/$tag/$zipAsset';
+  final request = http.Request('GET', Uri.parse(zipUrl));
+  final streamed = await client.send(request);
   if (streamed.statusCode != 200) {
-    _warn('download failed (HTTP ${streamed.statusCode}): $url');
+    _warn('download failed (HTTP ${streamed.statusCode}): $zipUrl');
     return 1;
   }
+  _say('extracting $zipAsset…');
+  final bytes = await streamed.stream.toBytes();
+  final archive = ZipDecoder().decodeBytes(bytes.toList());
+  // Find Fa.app/Contents/MacOS/Fa in the archive.
+  for (final entry in archive) {
+    if (entry.name.endsWith('Contents/MacOS/Fa') && !entry.isFile) continue;
+    if (entry.name.endsWith('Contents/MacOS/Fa') && entry.isFile) {
+      final data = entry.content as List<int>;
+      await File('$target.new').writeAsBytes(data);
+      break;
+    }
+  }
+  final staging = '$target.new';
+  final staged = File(staging);
+  if (!staged.existsSync()) {
+    _warn('could not find Fa binary inside $zipAsset');
+    return 1;
+  }
+  if (Platform.isWindows) {
+    final aside = '$target.old';
+    try { File(aside).deleteSync(); } on PathNotFoundException {}
+    File(target).renameSync(aside);
+    File(staging).renameSync(target);
+  } else {
+    await File(staging).rename(target);
+    await runProcess('chmod', ['+x', target]);
+  }
+  _say('updated to $latest — restart fa to use it.');
+  return 0;
+}
+
+/// Downloads the streamed response to a staging file, then atomically swaps
+/// it with [target].
+Future<int> _swapBinary(
+  http.StreamedResponse streamed,
+  String target,
+  String latest,
+  Future<ProcessResult> Function(String, List<String>) runProcess,
+) async {
+  final staging = '$target.new';
   final sink = File(staging).openWrite();
   await streamed.stream.pipe(sink);
   await sink.close();
-
   if (Platform.isWindows) {
-    // A running .exe cannot be overwritten, but it CAN be renamed aside.
     final aside = '$target.old';
-    try {
-      File(aside).deleteSync();
-    } on PathNotFoundException {
-      // Nothing to clean from a previous update.
-    }
+    try { File(aside).deleteSync(); } on PathNotFoundException {}
     File(target).renameSync(aside);
     File(staging).renameSync(target);
   } else {

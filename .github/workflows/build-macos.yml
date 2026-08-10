@@ -719,6 +719,28 @@ jobs:
             fi
           done
 
+          # Extract the raw binary from the .app bundle and upload it as the
+          # plain asset name (fa-macos-arm64 / fa-macos-x64) so `fa update`
+          # and direct downloads work without knowing the version suffix.
+          for zip in $ZIPS; do
+            base=$(basename "$zip")
+            if [[ "$base" == *nosandbox* ]]; then
+              continue
+            fi
+            unzip -qo "$zip" -d /tmp/fa-extract >/dev/null 2>&1 || true
+            BIN="/tmp/fa-extract/Fa.app/Contents/MacOS/Fa"
+            if [ -f "$BIN" ]; then
+              if [[ "$base" == *arm64* ]]; then
+                cp "$BIN" "dmgs/fa-macos-arm64"
+                ASSETS+=("dmgs/fa-macos-arm64")
+              elif [[ "$base" == *x86_64* ]]; then
+                cp "$BIN" "dmgs/fa-macos-x64"
+                ASSETS+=("dmgs/fa-macos-x64")
+              fi
+              chmod +x "dmgs/fa-macos-arm64" "dmgs/fa-macos-x64" 2>/dev/null || true
+            fi
+            rm -rf /tmp/fa-extract
+          done
           ASSETS=($DMGS $ZIPS $MANIFEST "${STABLE_COPIES[@]}")
 
           if gh release view "$RELEASE_TAG" --repo ${{ github.repository }} &>/dev/null; then
