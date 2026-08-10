@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_tui/dart_tui.dart';
 
 import 'ansi_markdown.dart';
+import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem;
 
 /// The site palette (site/styles.css): a teal accent (#5eead4) and an indigo
@@ -119,6 +120,13 @@ final class DrainQueueMsg extends Msg {
   final Completer<List<String>> completer;
 }
 
+/// Message opening the interactive prompt zone (ask/secret/approval).
+final class OpenPromptMsg extends Msg {
+  OpenPromptMsg(this.spec, this.completer);
+  final TuiPromptSpec spec;
+  final Completer<TuiPromptAnswer?> completer;
+}
+
 /// The braille spinner frames cycled while [FaTuiModel.busy] is set.
 const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -147,6 +155,7 @@ final class FaTuiModel extends Model {
   FaTuiModel({
     required this.callbacks,
     required this.isExited,
+    this.prompt,
     this.outputLines = const [],
     this.inputText = '',
     this.cursor = 0,
@@ -172,6 +181,15 @@ final class FaTuiModel extends Model {
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
+
+  /// The interactive prompt zone (ask/secret/approval) rendered in place of
+  /// the input zone while the agent needs a decision from the user; null
+  /// outside prompt mode.
+  final TuiPromptState? prompt;
+
+  /// Completer for the active prompt zone, filled when it resolves so the
+  /// host's [FaTuiController.openPrompt] future can complete.
+  Completer<TuiPromptAnswer?>? _promptCompleter;
 
   final List<String> outputLines;
   final String inputText;
@@ -317,12 +335,14 @@ final class FaTuiModel extends Model {
     final busyH = busy ? 1 : 0;
     final stickyH = _stickyActive ? stickyLines.length : 0;
     final queueH = queue.isEmpty ? 0 : queue.length + 1; // + hint line
+    final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
     final used =
         progressH +
         _menuReservedLines +
         busyH +
         stickyH +
         queueH +
+        promptH +
         inputFrameH +
         statusH +
         _inputLineCount;
@@ -366,6 +386,7 @@ final class FaTuiModel extends Model {
       offset.clamp(0, _scrollBottom(wrapped));
 
   FaTuiModel copyWith({
+    TuiPromptState? prompt,
     List<String>? outputLines,
     String? inputText,
     int? cursor,
@@ -390,6 +411,7 @@ final class FaTuiModel extends Model {
     final copy = FaTuiModel(
       callbacks: callbacks,
       isExited: isExited,
+      prompt: prompt ?? this.prompt,
       outputLines: outputLines ?? this.outputLines,
       inputText: inputText ?? this.inputText,
       cursor: cursor ?? this.cursor,
@@ -442,6 +464,10 @@ final class FaTuiModel extends Model {
     if (msg is BusyMsg) return _handleBusyMsg(msg);
     if (msg is SpinnerTickMsg) return _handleSpinnerTick();
     if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
+    if (msg is OpenPromptMsg) {
+      _promptCompleter = msg.completer;
+      return (copyWith(prompt: TuiPromptState(msg.spec)), null);
+    }
     if (isExited()) return (this, () => quit());
     return _updateAfterExitCheck(msg);
   }
@@ -639,6 +665,9 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleKey(KeyMsg msg) {
+    // Prompt mode: route keys to the interactive prompt zone.
+    if (prompt != null) return _handlePromptKey(msg);
+
     // Picker mode: arrows navigate, enter/tab select, esc closes.
     if (menuOpen && menuModelMode) return _handlePickerKey(msg);
 
@@ -1193,6 +1222,37 @@ final class FaTuiModel extends Model {
     return (this, null);
   }
 
+  /// Prompt-mode key routing: forwards the key to [handleTuiPromptKey] and
+  /// resolves the host completer when it produces an answer (closing the
+  /// prompt zone and handing control back to normal input).
+  (Model, Cmd?) _handlePromptKey(KeyMsg msg) {
+    final key = _promptKeyFromMsg(msg);
+    if (key == null) return (this, null);
+    final (state: next, resolved: answer) = handleTuiPromptKey(prompt!, key);
+    if (answer != null) {
+      _promptCompleter?.complete(answer);
+      _promptCompleter = null;
+      return (copyWith(prompt: null), null);
+    }
+    return (copyWith(prompt: next), null);
+  }
+
+  /// Re-shapes a dart_tui [KeyMsg] into a transport-neutral [PromptKey] for
+  /// the pure-Dart prompt handler.
+  PromptKey? _promptKeyFromMsg(KeyMsg msg) {
+    return switch (msg.key) {
+      'enter' => const PromptEnter(),
+      'esc' => const PromptEscape(),
+      'tab' => const PromptTab(),
+      'up' => const PromptArrowUp(),
+      'down' => const PromptArrowDown(),
+      'left' => const PromptArrowLeft(),
+      'right' => const PromptArrowRight(),
+      'backspace' => const PromptBackspace(),
+      _ => msg.keyEvent.text.length == 1 ? PromptChar(msg.keyEvent.text) : null,
+    };
+  }
+
   static bool _isWordBreak(String ch) => ch == ' ' || ch == '\n' || ch == '\t';
 
   (FaTuiModel, Cmd?) _insertNewlineAtCursor() {
@@ -1396,6 +1456,24 @@ final class FaTuiModel extends Model {
     _writeMenu(b);
 
     _writeBusyAndQueue(b);
+
+    // Prompt mode: the prompt zone replaces the entire input zone below it,
+    // including the status line. The cursor is homed to the bottom of the
+    // frame so typed characters land inside the prompt's input field.
+    if (prompt != null) {
+      for (final line in renderTuiPrompt(prompt!, termWidth)) {
+        b.writeln(line);
+      }
+      b.writeln(); // spacer
+      b.write(_dim(_fitWidth(callbacks.statusLine())));
+      final lines = b.toString().split('\n');
+      final cursorLine = '\x1b[?25h\x1b[${lines.length};1H';
+      return View(
+        content: b.toString() + cursorLine,
+        cursor: Cursor(x: 0, y: lines.length - 1, shape: CursorShape.bar),
+        mouseMode: MouseMode.cellMotion,
+      );
+    }
 
     final (cursorInputLine, cursorScreenCol) = _writeInputLines(b);
     b.writeln(_dim('─' * termWidth));
@@ -1711,6 +1789,16 @@ final class FaTuiController {
 
   void sendQuit() {
     _send(_QuitRequestedMsg());
+  }
+
+  /// Opens the interactive prompt zone (ask/secret/approval) and resolves
+  /// when the user answers (or cancels). The caller awaits the returned
+  /// future, which completes from the model once the prompt key handler
+  /// produces an answer.
+  Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) {
+    final completer = Completer<TuiPromptAnswer?>();
+    _send(OpenPromptMsg(spec, completer));
+    return completer.future;
   }
 
   /// Toggles the animated thinking indicator while a run streams.

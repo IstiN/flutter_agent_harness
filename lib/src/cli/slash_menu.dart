@@ -58,7 +58,7 @@ const builtinSlashCommands = <String, String>{
   '/rename-session': '<name> — rename the current session',
   '/approval': '[mode] — show or set tool approval',
   '/allow': '[tool] — always-allow a tool (or list them)',
-  '/mcp': '[list] — show MCP servers and connection status',
+  '/mcp': '[list|reload] — show MCP servers or reload config',
   '/code': 'switch to coding mode',
   '/architect': 'switch to architect mode',
   '/review': 'switch to review mode',

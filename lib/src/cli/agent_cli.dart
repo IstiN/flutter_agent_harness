@@ -18,6 +18,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:yaml/yaml.dart';
 
 import '../agent/agent.dart';
 import 'key_event.dart';
@@ -72,6 +73,7 @@ import 'slash_menu.dart';
 import 'task_list.dart';
 import 'text_format.dart';
 import 'tui_helpers.dart';
+import 'tui_prompt.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 
@@ -1821,11 +1823,22 @@ class AgentCli {
   /// Info commands without a TUI picker variant. Returns whether [command]
   /// was handled.
   Future<bool> _handleInfoCommand(String command, String rest) async {
+    // `/mcp` needs the async [rest == 'reload'] branch, so it is owned here
+    // (the basic handler is synchronous); a plain `/mcp` still just prints
+    // the status.
+    if (command == '/mcp') {
+      if (rest == 'reload') {
+        await _reloadMcpConfig(this);
+      } else {
+        _printMcpStatus();
+      }
+      return true;
+    }
     if (_handleInfoCommandBasic(command, rest)) return true;
     return _handleInfoCommandSession(command, rest);
   }
 
-  /// `/exit`, `/help`, `/stats`, `/tasks`, `/skills`, `/mcp`.
+  /// `/exit`, `/help`, `/stats`, `/tasks`, `/skills`.
   bool _handleInfoCommandBasic(String command, String rest) {
     switch (command) {
       case '/exit':
@@ -1839,8 +1852,6 @@ class AgentCli {
         _listTaskJobs(rest);
       case '/skills':
         _listSkills();
-      case '/mcp':
-        _printMcpStatus();
       default:
         return false;
     }
@@ -2033,6 +2044,22 @@ class AgentCli {
   /// which [_handleLine] routes into [_pendingApprovalAnswer]. A Ctrl-C
   /// interrupt while waiting answers "no" so the run can unwind.
   Future<ApprovalDecision> _promptForApproval(ApprovalRequest request) async {
+    // TUI mode: prompt through the on-screen approval zone (y/a/n keys).
+    final tui = _tuiController;
+    if (_useTui && tui != null) {
+      final spec = ApprovalPromptSpec(request: request);
+      final result = await tui.openPrompt(spec);
+      if (result == null || result is TuiPromptCancelled) {
+        return ApprovalDecision.deny;
+      }
+      if (result is ApprovalPromptAnswer) {
+        if (result.value == ApprovalDecision.approveAlways) {
+          config.onApprovalChanged?.call();
+        }
+        return result.value;
+      }
+      return ApprovalDecision.deny;
+    }
     // Tool calls prepare sequentially (even in parallel batches), so at most
     // one prompt is pending; complete a stray one defensively.
     _pendingApprovalAnswer?.complete('n');
@@ -2109,6 +2136,32 @@ class AgentCli {
   Future<List<AskAnswer>?> _answerAskQuestions(
     List<AskQuestion> questions,
   ) async {
+    // TUI mode: each question runs through the on-screen prompt zone. Any
+    // cancel (Esc on the zone) aborts the whole batch, matching line mode.
+    final tui = _tuiController;
+    if (_useTui && tui != null) {
+      final answers = <AskAnswer>[];
+      for (var i = 0; i < questions.length; i++) {
+        final q = questions[i];
+        final spec = AskPromptSpec(
+          header: 'Ask',
+          question: q.question,
+          index: i,
+          total: questions.length,
+          options: q.options,
+          multiSelect: q.multiSelect,
+          recommended: q.recommended,
+        );
+        final result = await tui.openPrompt(spec);
+        if (result == null || result is TuiPromptCancelled) return null;
+        if (result is AskPromptAnswer) {
+          answers.add(result.value);
+        } else {
+          return null; // unexpected type, bail
+        }
+      }
+      return answers;
+    }
     final answers = <AskAnswer>[];
     for (var i = 0; i < questions.length; i++) {
       final answer = await _askOneQuestion(questions[i], i, questions.length);
@@ -2127,6 +2180,20 @@ class AgentCli {
     String name,
     String reason,
   ) async {
+    // TUI mode: prompt through the on-screen secret zone; the value stays
+    // hidden behind dots like the line mode.
+    final tui = _tuiController;
+    if (_useTui && tui != null) {
+      final spec = SecretPromptSpec(name: name, reason: reason);
+      final result = await tui.openPrompt(spec);
+      if (result == null || result is TuiPromptCancelled) return null;
+      if (result is SecretPromptAnswer) {
+        _runtimeSecrets[name] = result.value.value;
+        config.onSecretGranted?.call(name, result.value.value);
+        return result.value;
+      }
+      return null; // unexpected type, treat as declined
+    }
     io.writeln('[secret] $name needed: $reason');
     io.write('[secret] Enter value for $name (empty = decline): ');
     final line = await _nextAskLine();

@@ -15,6 +15,7 @@
 /// VM-only and not part of this surface.
 library;
 
+import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem;
 
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL. See
@@ -72,6 +73,8 @@ final class FaTuiController {
   void sendQuit() {}
 
   void sendBusy(bool busy) {}
+
+  Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) async => null;
 
   Future<List<String>> drainQueue() async => const [];
 
