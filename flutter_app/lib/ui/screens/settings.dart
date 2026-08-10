@@ -271,9 +271,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     );
     final preset = ProviderPreset.fromBaseUrl(initialUrl);
     _selection = preset;
-    _keyController = TextEditingController(
-      text: settingsKeyEnv('OPENROUTER_API_KEY', widget.keysStore),
-    );
+    // The key starts empty: the value depends on the selected provider
+    // (env/saved-keys for hosted presets, the registry/keychain for saved
+    // custom providers) and is filled after the initial selection lands.
+    _keyController = TextEditingController(text: '');
     _lastDefaultModel = _presetDefaultModel(preset);
     _modelController = TextEditingController(
       text: settingsEnv('MODEL_ID', _presetDefaultModel(preset)),
@@ -284,12 +285,19 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _hfTokenController = TextEditingController(
       text: settingsKeyEnv('HUGGINGFACE_TOKEN', widget.keysStore),
     );
-    // The last connection wins over the env-based defaults; the key field is
-    // never touched (keys are session-only and never persisted).
+    // The last connection wins over the env-based defaults.
     final forcedProvider = widget.initialProvider;
     if (forcedProvider != null) _applyPreset(forcedProvider);
     final connection = widget.initialConnection;
     if (connection != null) _applyLastConnection(connection);
+    // Fill the key field according to the final selection (hosted preset →
+    // env/saved-keys; custom provider → registry).
+    if (_selection is ProviderPreset) {
+      _keyController.text = _prefillKeyForPreset(_selection as ProviderPreset);
+    } else if (_selection is CustomProvider) {
+      _keyController.text =
+          _registry.keyFor((_selection as CustomProvider).id) ?? '';
+    }
     // The endpoint's model list feeds the model field's quick select;
     // endpoint/key edits refetch (debounced).
     _urlController.addListener(_scheduleModelsFetch);
@@ -403,6 +411,24 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   String _presetDefaultModel(ProviderPreset preset) =>
       _registry.presetModelOverride(preset.name) ?? preset.defaultModel;
 
+  /// The env-var name whose value (env → saved-keys → .env) prefills the key
+  /// field for a hosted preset. Returns empty string for the blank-slate
+  /// [ProviderPreset.custom] and on-device presets (keyless).
+  static String _envVarNameForPreset(ProviderPreset preset) => switch (preset) {
+    ProviderPreset.openrouter => 'OPENROUTER_API_KEY',
+    ProviderPreset.ollamaCloud => 'OPENAI_API_KEY',
+    _ => '',
+  };
+
+  /// Resolves the key value to prefill for a hosted [preset]: env-var →
+  /// saved-keys store → .env → empty. For [ProviderPreset.custom] and
+  /// on-device presets returns empty string (no key or keyless).
+  String _prefillKeyForPreset(ProviderPreset preset) {
+    final envName = _envVarNameForPreset(preset);
+    if (envName.isEmpty) return '';
+    return settingsKeyEnv(envName, widget.keysStore);
+  }
+
   void _applyPreset(ProviderPreset preset) {
     _selection = preset;
     _visionOverridden = false;
@@ -417,9 +443,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (current.isEmpty || current == _lastDefaultModel) {
       _modelController.text = defaultModel;
     }
+
     _lastDefaultModel = defaultModel;
     _staleModelNote = null;
     _error = null;
+    _keyController.text = _prefillKeyForPreset(preset);
   }
 
   void _applyCustomProvider(CustomProvider provider) {
@@ -486,13 +514,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         for (final provider in _registry.providers) {
           if (provider.baseUrl == baseUrl &&
               provider.modelId == connection.modelId) {
-            // Set fields directly instead of _applyCustomProvider: the key
-            // field keeps its env-seeded value (session keys are empty at
-            // boot anyway — keys are never persisted).
-            _selection = provider;
-            _urlController.text = provider.baseUrl;
-            _modelController.text = provider.modelId;
-            _lastDefaultModel = provider.modelId;
+            // Use _applyCustomProvider so the key is loaded from the registry
+            // (keychain on iOS/macOS, session memory otherwise).
+            _applyCustomProvider(provider);
             return;
           }
         }
@@ -503,6 +527,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             ? connection.modelId
             : _presetDefaultModel(preset);
         _lastDefaultModel = _modelController.text;
+        _keyController.text = _prefillKeyForPreset(preset);
     }
   }
 
