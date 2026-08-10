@@ -341,6 +341,7 @@ SKILLS AND CONTEXT FILES
   /rename-session <n> rename the current session
   /approval [mode]   show or set tool approval (always-ask|write|yolo)
   /allow [tool]      always-allow a tool (or list them)
+  /mcp               show MCP servers and connection status
   /code              switch to coding mode
   /architect         switch to architect mode
   /review            switch to review mode

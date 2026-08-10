@@ -37,6 +37,7 @@ import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
 import '../exceptions.dart';
 import '../lsp/lsp_tool.dart';
+import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
@@ -51,6 +52,7 @@ import 'provider_flow.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
 import '../tools/ask_tool.dart';
+import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
 import '../tools/inspect_image.dart';
@@ -336,6 +338,13 @@ class AgentCli {
       // Non-interactive input (piped) gets a null ask callback: ask calls
       // then fail with a "host cannot answer" error result (safe default).
       askTool(callback: io.isInteractive ? _answerAskQuestions : null),
+      // request_secret: let the agent ask for missing API keys securely.
+      // In interactive mode the user types the value (echoed as dots in the
+      // future; for now plain text like the ask flow). Non-interactive hosts
+      // get null → the tool errors with guidance to set the key manually.
+      requestSecretTool(
+        callback: io.isInteractive ? _answerSecretRequest : null,
+      ),
       if (config.visionConfig != null)
         inspectImageTool(config.env, config.visionConfig!),
       if (config.transcribeConfig != null)
@@ -492,6 +501,7 @@ class AgentCli {
       if (metadata != null) sessionFileEnvVar: metadata.path,
       providerEnvVar: _providerKind,
       modelEnvVar: _agent.state.model.id,
+      ..._runtimeSecrets,
     };
   }
 
@@ -1637,6 +1647,50 @@ class AgentCli {
     }
   }
 
+  /// `/mcp`: prints the configured MCP servers and their live connection
+  /// status, or a guidance line when none are configured.
+  void _printMcpStatus() {
+    final manager = _mcp.manager;
+    if (manager == null || manager.config.servers.isEmpty) {
+      io.writeln(
+        'No MCP servers configured. Add servers to the mcp: section of '
+        '~/.fah/config.yaml:\n'
+        '  mcp:\n'
+        '    servers:\n'
+        '      example:\n'
+        '        command: npx\n'
+        '        args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]\n'
+        '      # or a remote server:\n'
+        '      remote:\n'
+        '        url: https://example.com/mcp',
+      );
+      return;
+    }
+    io.writeln('MCP servers:');
+    final states = manager.states;
+    for (final entry in manager.config.servers.entries) {
+      final name = entry.key;
+      final state = states[name];
+      final status = switch (state?.status) {
+        null => _style.dim('(connecting…)'),
+        _ => switch (state!.status) {
+          McpServerStatus.connected =>
+            '${_style.green('connected')} — ${state.tools.length} tool(s)',
+          McpServerStatus.failed =>
+            '${_style.red('failed')}: ${state.error ?? 'unknown'}',
+          McpServerStatus.connecting => _style.dim('(connecting…)'),
+        },
+      };
+      final server = entry.value;
+      final detail = server is McpStdioServerConfig
+          ? '${server.command} ${(server.args).join(' ')}'
+          : server is McpHttpServerConfig
+          ? server.url
+          : '';
+      io.writeln('  $name — $status  ${_style.dim(detail)}');
+    }
+  }
+
   void _startRun(String text) {
     final settled = _agent.prompt(text).then((_) => _afterRun()).catchError((
       Object error,
@@ -1771,7 +1825,7 @@ class AgentCli {
     return _handleInfoCommandSession(command, rest);
   }
 
-  /// `/exit`, `/help`, `/stats`, `/tasks`, `/skills`.
+  /// `/exit`, `/help`, `/stats`, `/tasks`, `/skills`, `/mcp`.
   bool _handleInfoCommandBasic(String command, String rest) {
     switch (command) {
       case '/exit':
@@ -1785,6 +1839,8 @@ class AgentCli {
         _listTaskJobs(rest);
       case '/skills':
         _listSkills();
+      case '/mcp':
+        _printMcpStatus();
       default:
         return false;
     }
@@ -2049,8 +2105,7 @@ class AgentCli {
   /// `_tuiPickerCancelled` on Esc).
   Completer<String?>? _wizardPickerAnswer;
 
-  /// The stdin ask surface: walks [questions] one at a time and returns one
-  /// answer per question, or `null` when the user cancels.
+  /// Answers an `ask` question set by walking [questions] one at a time.
   Future<List<AskAnswer>?> _answerAskQuestions(
     List<AskQuestion> questions,
   ) async {
@@ -2062,6 +2117,31 @@ class AgentCli {
     }
     return answers;
   }
+
+  /// Answers a `request_secret` call: prompts the user for the credential
+  /// value via the same input mechanism as ask. Returns `null` on cancel
+  /// (the agent sees "user declined"). The value is injected into the live
+  /// shell env via the session-correlation env decorator so `$NAME` works
+  /// in subsequent bash commands, and registered with the secret redactor.
+  Future<RequestSecretResult?> _answerSecretRequest(
+    String name,
+    String reason,
+  ) async {
+    io.writeln('[secret] $name needed: $reason');
+    io.write('[secret] Enter value for $name (empty = decline): ');
+    final line = await _nextAskLine();
+    if (line == null || line.trim().isEmpty) return null;
+    final value = line.trim();
+    // Inject into the live session env so `$NAME` works in bash.
+    _runtimeSecrets[name] = value;
+    // Register with the redactor so the value is masked in output.
+    config.onSecretGranted?.call(name, value);
+    return RequestSecretResult(name: name, value: value, persisted: false);
+  }
+
+  /// Runtime secrets granted via `request_secret` — merged into the session
+  /// env vars so `$NAME` works in bash tool executions.
+  final Map<String, String> _runtimeSecrets = {};
 
   /// Renders one question as a numbered menu (+ "(Recommended)" marker) and
   /// reads the answer: a number selects an option, `m` opens the

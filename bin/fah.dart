@@ -881,6 +881,14 @@ Future<void> main(List<String> args) async {
           redactorAttached = true;
         }
       },
+      // `request_secret` tool granted a secret: same redactor lazy attach.
+      onSecretGranted: (name, value) {
+        redactor.register(name, value);
+        if (!redactorAttached && !redactor.isEmpty) {
+          attachSecretRedactor(cli.agent, redactor);
+          redactorAttached = true;
+        }
+      },
       onModeChanged: (_) async => persistConfig(),
       onApprovalChanged: () async => persistConfig(),
       // Shift+Enter in the TUI: terminals that do not encode the modifier

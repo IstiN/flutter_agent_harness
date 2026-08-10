@@ -38,6 +38,7 @@ final class AgentCliConfig {
     this.secureKeys,
     this.customProviders,
     this.onSecretStored,
+    this.onSecretGranted,
     this.onModeChanged,
     this.onApprovalChanged,
     this.isShiftPressed,
@@ -125,6 +126,11 @@ final class AgentCliConfig {
   /// Called when the user stores a secret via `/key set`, so the executable
   /// can redact the value from tool results and session files.
   final void Function(String name, String value)? onSecretStored;
+
+  /// Called when the agent requests a secret via the `request_secret` tool
+  /// and the user grants it, so the executable can redact the value from
+  /// tool results and inject it into the shell environment.
+  final void Function(String name, String value)? onSecretGranted;
 
   /// Called when the user switches the active mode via `/mode`, `/code`,
   /// `/architect`, or `/review`.
