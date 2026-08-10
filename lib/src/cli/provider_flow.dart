@@ -66,8 +66,9 @@ final class CustomProviderFlowConfig {
 
   /// Prints [question] and resolves to the typed line (trimmed, possibly
   /// empty — the host maps empty to the question's default), or null on
-  /// cancel (Ctrl-C / input shutdown).
-  final Future<String?> Function(String question) askLine;
+  /// cancel (Ctrl-C / input shutdown). When [secret] is true the host masks
+  /// the input (API keys, tokens).
+  final Future<String?> Function(String question, {bool secret}) askLine;
 
   /// Renders [title] + [options] (a TUI menu or a numbered list) and
   /// resolves to the chosen option key, or null on cancel. [initialKey]
@@ -246,7 +247,10 @@ Future<({bool aborted, String? token})> _askApiToken(
     );
     return (aborted: false, token: null);
   }
-  final keyAnswer = await config.askLine('API key (empty for none): ');
+  final keyAnswer = await config.askLine(
+    'API key (empty for none): ',
+    secret: true,
+  );
   if (keyAnswer == null) {
     cancelled();
     return (aborted: true, token: null);

@@ -374,10 +374,12 @@ void main() {
     final cli = cliFor(fake.call, secureKeys: cache);
     final run = cli.run();
 
+    // Line mode: /key set NAME (without value) prompts for the value;
+    // an empty value cancels.
     io.sendLine('/key set ONLYNAME');
-    await waitForIt(
-      () => io.out.toString().contains('usage: /key set <NAME> <value>'),
-    );
+    await waitForIt(() => io.out.toString().contains('value'));
+    io.sendLine('');
+    await waitForIt(() => io.out.toString().contains('cancelled'));
     io.sendLine('/key set bad-name! value');
     await waitForIt(
       () => io.out.toString().contains('invalid key name: bad-name!'),

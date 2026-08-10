@@ -63,8 +63,35 @@ extension on AgentCli {
     );
   }
 
-  /// The flow's free-form questions are plain line prompts.
-  Future<String?> _askLine(String question) => _promptLine(question);
+  /// The flow's free-form questions: a TUI text prompt when the controller
+  /// is up (masked input for secrets), a plain line prompt otherwise.
+  Future<String?> _askLine(String question, {bool secret = false}) async {
+    final tui = _tuiController;
+    if (_useTui && tui != null) {
+      final defaultValue = _extractDefault(question);
+      final spec = TextPromptSpec(
+        question: question,
+        defaultValue: defaultValue,
+        secret: secret,
+      );
+      final result = await tui.openPrompt(spec);
+      if (result == null || result is TuiPromptCancelled) return null;
+      if (result is TextPromptAnswer) return result.value;
+      return null;
+    }
+    return _promptLine(question);
+  }
+
+  /// Parses a `(empty = X):` or `(empty keeps 'X'):` hint from [question],
+  /// returning `X` so the TUI prompt can show it as the default value, or
+  /// null when no default hint is present.
+  String? _extractDefault(String question) {
+    final match = RegExp(r'\(empty\s*=\s*(.+?)\)').firstMatch(question);
+    if (match != null) return match.group(1)!.trim();
+    final keeps = RegExp(r"\(empty\s*keeps\s*'(.+?)'\)").firstMatch(question);
+    if (keeps != null) return keeps.group(1)!.trim();
+    return null;
+  }
 
   /// Reads one input line for a guided-flow prompt (printed inline).
   /// Resolves to `null` on cancel (Ctrl-C interrupt or input shutdown),
@@ -759,41 +786,148 @@ extension on AgentCli {
     io.writeln('removed ${args[1]} from ${keys.label}');
   }
 
-  /// `/key set <NAME> <value>`: validates the name, writes the value to
+  /// `/key set <NAME> [<value>]`: validates the name, writes the value to
   /// the secure store, and picks the key up immediately when it serves the
-  /// active provider (roles mode applies it on the next start).
+  /// active provider (roles mode applies it on the next start). The explicit
+  /// 3-arg form (`/key set NAME value`) takes the value verbatim from the
+  /// command line (scriptable, visible in scrollback); with fewer args the
+  /// value is prompted — through the TUI prompt zone (masked) when available,
+  /// or a plain line prompt otherwise.
   Future<void> _handleKeySet(List<String> args) async {
     final keys = config.secureKeys;
     final storeAvailable = keys != null && keys.available;
-    if (args.length != 3) {
-      io.writeln('usage: /key set <NAME> <value>');
+    // Explicit 3-arg form stays scriptable (value verbatim from the line).
+    if (args.length == 3) {
+      if (!_keyNamePattern.hasMatch(args[1])) {
+        io.writeln('invalid key name: ${args[1]} (use [A-Za-z0-9_]+)');
+        return;
+      }
+      if (!storeAvailable) {
+        io.writeln(
+          'secure storage unavailable on this host — '
+          'set ${args[1]} in the environment instead',
+        );
+        return;
+      }
+      if (!await keys.save(args[1], args[2])) {
+        io.writeln(
+          'could not save ${args[1]} to ${keys.label}: the write failed '
+          '(locked or managed keychain?) — '
+          'set ${args[1]} in the environment instead',
+        );
+        return;
+      }
+      config.onSecretStored?.call(args[1], args[2]);
+      io.writeln('saved ${args[1]} to ${keys.label}');
+      // When the stored key serves the active provider, pick it up
+      // immediately. Roles mode resolves keys from the resolver's startup
+      // snapshot, so there it takes effect on the next start.
+      _applySavedKeyToActiveProvider(args[1], args[2]);
       return;
     }
-    if (!_keyNamePattern.hasMatch(args[1])) {
-      io.writeln('invalid key name: ${args[1]} (use [A-Za-z0-9_]+)');
+    if (args.length > 3) {
+      io.writeln('usage: /key set <NAME> [<value>]');
+      return;
+    }
+    // 0-1 value args after `set`: interactive (TUI) or prompted (line mode).
+    final name = args.length == 2 ? args[1] : null;
+    final tui = _tuiController;
+    if (_useTui && tui != null) {
+      await _handleKeySetInteractive(tui: tui, name: name);
+      return;
+    }
+    // Line mode: bare `/key set` cannot prompt for the name interactively.
+    if (name == null) {
+      io.writeln('usage: /key set <NAME> [<value>]');
+      return;
+    }
+    if (!_keyNamePattern.hasMatch(name)) {
+      io.writeln('invalid key name: $name (use [A-Za-z0-9_]+)');
       return;
     }
     if (!storeAvailable) {
       io.writeln(
         'secure storage unavailable on this host — '
-        'set ${args[1]} in the environment instead',
+        'set $name in the environment instead',
       );
       return;
     }
-    if (!await keys.save(args[1], args[2])) {
-      io.writeln(
-        'could not save ${args[1]} to ${keys.label}: the write failed '
-        '(locked or managed keychain?) — '
-        'set ${args[1]} in the environment instead',
-      );
+    // Line mode with name only: prompt for the value through a
+    // fire-and-forget flow so the REPL keeps reading lines (same pattern
+    // as the provider wizard — _promptLine blocks on the next input line).
+    _providerFlowActive = true;
+    unawaited(() async {
+      try {
+        final value = await _promptLine('value for $name: ');
+        if (value == null || value.isEmpty) {
+          io.writeln('cancelled');
+          return;
+        }
+        if (!await keys.save(name, value)) {
+          io.writeln(
+            'could not save $name to ${keys.label}: the write failed '
+            '(locked or managed keychain?) — '
+            'set $name in the environment instead',
+          );
+          return;
+        }
+        config.onSecretStored?.call(name, value);
+        io.writeln('saved $name to ${keys.label}');
+        _applySavedKeyToActiveProvider(name, value);
+      } finally {
+        _providerFlowActive = false;
+        _promptLineBuffer.clear();
+      }
+    }());
+  }
+
+  /// The TUI interactive variant of [_handleKeySet]: prompts for the key
+  /// name (when [name] is null) and a masked value through the TUI prompt
+  /// zone, then saves. Cancelling either prompt (Esc) aborts silently.
+  Future<void> _handleKeySetInteractive({
+    required FaTuiController tui,
+    String? name,
+  }) async {
+    final keys = config.secureKeys;
+    if (keys == null || !keys.available) {
+      io.writeln('secure storage unavailable on this host');
       return;
     }
-    config.onSecretStored?.call(args[1], args[2]);
-    io.writeln('saved ${args[1]} to ${keys.label}');
-    // When the stored key serves the active provider, pick it up
-    // immediately. Roles mode resolves keys from the resolver's startup
-    // snapshot, so there it takes effect on the next start.
-    _applySavedKeyToActiveProvider(args[1], args[2]);
+    // Step 1: name (if not provided on the command line).
+    var keyName = name;
+    if (keyName == null) {
+      final nameSpec = TextPromptSpec(
+        header: 'Key',
+        question: 'Key name (UPPER_SNAKE or [A-Za-z0-9_]+):',
+      );
+      final nameResult = await tui.openPrompt(nameSpec);
+      if (nameResult == null || nameResult is! TextPromptAnswer) return;
+      keyName = nameResult.value.trim();
+    }
+    if (!_keyNamePattern.hasMatch(keyName)) {
+      io.writeln('invalid key name: $keyName');
+      return;
+    }
+    // Step 2: value (masked so it never appears in the terminal).
+    final valueSpec = TextPromptSpec(
+      header: 'Key',
+      question: 'Value for $keyName:',
+      secret: true,
+    );
+    final valueResult = await tui.openPrompt(valueSpec);
+    if (valueResult == null || valueResult is! TextPromptAnswer) return;
+    final value = valueResult.value;
+    if (value.isEmpty) {
+      io.writeln('cancelled');
+      return;
+    }
+    if (!await keys.save(keyName, value)) {
+      io.writeln('could not save $keyName');
+      return;
+    }
+    config.onSecretStored?.call(keyName, value);
+    io.writeln('saved $keyName to ${keys.label}');
+    _applySavedKeyToActiveProvider(keyName, value);
   }
 
   /// The tail of [_handleKeySet]: picks the freshly saved key up
@@ -1485,15 +1619,20 @@ extension on AgentCli {
 
   /// `/model-edit [contextWindow|maxTokens <n>]`: shows or overrides the
   /// active model's token limits for this session (persist per chain via
-  /// roles yaml `contextWindow:`/`maxTokens:`).
-  void _handleModelEdit(String rest) {
+  /// roles yaml `contextWindow:`/`maxTokens:`). Bare in TUI mode opens an
+  /// interactive two-step picker (field → preset/custom value).
+  Future<void> _handleModelEdit(String rest) async {
     final args = rest
         .trim()
         .split(RegExp(r'\s+'))
         .where((part) => part.isNotEmpty)
         .toList();
     if (args.isEmpty) {
-      _printModelLimits();
+      if (_useTui && _tuiController != null) {
+        await _modelEditInteractive();
+      } else {
+        _printModelLimits();
+      }
       return;
     }
     _applyModelEditArg(args);
@@ -1510,6 +1649,111 @@ extension on AgentCli {
     io.writeln(
       _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
     );
+  }
+
+  /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
+  /// (1) which field to edit (context window or max output tokens),
+  /// (2) a standard preset list plus a "Custom…" free-text entry. The
+  /// picked value is applied via [_replaceModelLimits]. Cancelling either
+  /// step aborts without changes.
+  Future<void> _modelEditInteractive() async {
+    final tui = _tuiController!;
+    final current = _agent.state.model;
+
+    // Step 1: pick field.
+    final fieldSpec = AskPromptSpec(
+      header: 'Model Edit',
+      question: 'Which limit to edit?',
+      index: 0,
+      total: 1,
+      options: [
+        AskOption(
+          label: 'Context Window',
+          description: 'Current: ${current.contextWindow}',
+        ),
+        AskOption(
+          label: 'Max Output Tokens',
+          description: 'Current: ${current.maxTokens}',
+        ),
+      ],
+    );
+    final fieldResult = await tui.openPrompt(fieldSpec);
+    if (fieldResult == null || fieldResult is! AskPromptAnswer) return;
+    final fieldLabel = fieldResult.value.selected.first;
+    final isContext = fieldLabel.contains('Context');
+
+    // Step 2: pick preset (or Custom → free-text).
+    final presets = isContext
+        ? [4096, 8192, 16384, 32768, 65536, 131072, 204800, 1048576]
+        : [4096, 8192, 16384, 32768, 65536];
+    final presetSpec = AskPromptSpec(
+      header: 'Model Edit',
+      question: '${isContext ? 'Context window' : 'Max tokens'} size:',
+      index: 0,
+      total: 1,
+      options: [
+        for (final p in presets) AskOption(label: _formatTokenPreset(p)),
+        const AskOption(
+          label: 'Custom…',
+          description: 'Enter a number manually',
+        ),
+      ],
+    );
+    final presetResult = await tui.openPrompt(presetSpec);
+    if (presetResult == null || presetResult is! AskPromptAnswer) return;
+    final picked = presetResult.value.selected.first;
+
+    int value;
+    if (picked == 'Custom…') {
+      // Step 3: free-text number entry.
+      final textSpec = TextPromptSpec(
+        header: 'Model Edit',
+        question: 'Enter value (tokens):',
+      );
+      final textResult = await tui.openPrompt(textSpec);
+      if (textResult == null || textResult is! TextPromptAnswer) return;
+      value = int.tryParse(textResult.value.trim()) ?? 0;
+      if (value <= 0) {
+        io.writeln('invalid value');
+        return;
+      }
+    } else {
+      value = _parseTokenPreset(picked);
+    }
+
+    _replaceModelLimits(
+      contextWindow: isContext ? value : null,
+      maxTokens: isContext ? null : value,
+    );
+    io.writeln('${isContext ? 'context window' : 'max tokens'} set to $value');
+  }
+
+  /// Formats a token count as a compact preset label (`4K`, `16K`, `1M`).
+  String _formatTokenPreset(int tokens) {
+    if (tokens >= 1048576 && tokens % 1048576 == 0) {
+      return '${tokens ~/ 1048576}M';
+    }
+    if (tokens >= 1024 && tokens % 1024 == 0) {
+      return '${tokens ~/ 1024}K';
+    }
+    return '$tokens';
+  }
+
+  /// Parses a compact preset label (`4K`, `16K`, `1M`) back to tokens.
+  int _parseTokenPreset(String label) {
+    final trimmed = label.trim();
+    final match = RegExp(
+      r'^(\d+)([KM])?$',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+    if (match == null) return int.tryParse(trimmed) ?? 0;
+    final base = int.parse(match.group(1)!);
+    final suffix = match.group(2)?.toUpperCase();
+    return switch (suffix) {
+      'K' => base * 1024,
+      'M' => base * 1048576,
+      _ => base,
+    };
   }
 
   /// `/model-edit <contextWindow|maxTokens> <n>`: validates the value and

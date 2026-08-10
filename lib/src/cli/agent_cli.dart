@@ -1549,21 +1549,26 @@ class AgentCli {
   }
 
   /// Routes input owned by a pending prompt (ask question, guided provider
-  /// flow — including empty lines, which buffer or complete the pending
-  /// answer). Returns whether the line was consumed.
+  /// flow, or a prompted slash command like `/key set NAME` — including
+  /// empty lines, which buffer or complete the pending answer). Returns
+  /// whether the line was consumed.
   bool _routePendingInput(String trimmed) {
     final pendingAsk = _pendingAskAnswer;
     if (pendingAsk != null && !pendingAsk.isCompleted) {
       pendingAsk.complete(trimmed);
       return true;
     }
+    // A pending prompt answer can come from the guided provider flow OR
+    // from a prompted slash command (e.g. `/key set NAME` in line mode).
+    final pendingPrompt = _pendingPromptAnswer;
+    if (pendingPrompt != null && !pendingPrompt.isCompleted) {
+      pendingPrompt.complete(trimmed);
+      return true;
+    }
+    // While a guided provider flow is active but between prompts, buffer
+    // the lines so the flow's next _promptLine call drains them.
     if (_providerFlowActive) {
-      final pendingPrompt = _pendingPromptAnswer;
-      if (pendingPrompt != null && !pendingPrompt.isCompleted) {
-        pendingPrompt.complete(trimmed);
-      } else {
-        _promptLineBuffer.add(trimmed);
-      }
+      _promptLineBuffer.add(trimmed);
       return true;
     }
     return false;
@@ -1886,7 +1891,7 @@ class AgentCli {
       case '/models':
         await _handleModelsCommand(rest);
       case '/model-edit':
-        _handleModelEdit(rest);
+        await _handleModelEdit(rest);
       case '/provider':
         await _providerSlash(rest);
       case '/provider-edit':

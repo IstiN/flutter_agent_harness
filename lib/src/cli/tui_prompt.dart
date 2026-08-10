@@ -105,6 +105,22 @@ final class ApprovalPromptSpec extends TuiPromptSpec {
   final ApprovalRequest request;
 }
 
+/// A standalone free-text question (used by the provider wizard's `askLine`
+/// step): the user types a line of text, optionally with a visible default
+/// hint. When [secret] is true the typed characters are masked with dots.
+final class TextPromptSpec extends TuiPromptSpec {
+  const TextPromptSpec({
+    required this.question,
+    this.defaultValue,
+    this.secret = false,
+    super.header = 'Input',
+  });
+
+  final String question;
+  final String? defaultValue;
+  final bool secret; // mask input with dots
+}
+
 /// The answer to a [TuiPromptSpec], tagged so the host can downcast without
 /// re-matching the spec.
 sealed class TuiPromptAnswer {
@@ -128,6 +144,12 @@ final class SecretPromptAnswer extends TuiPromptAnswer {
 final class ApprovalPromptAnswer extends TuiPromptAnswer {
   const ApprovalPromptAnswer(this.value);
   final ApprovalDecision value;
+}
+
+/// The typed line from a [TextPromptSpec].
+final class TextPromptAnswer extends TuiPromptAnswer {
+  const TextPromptAnswer(this.value);
+  final String value;
 }
 
 /// The live state for one [TuiPromptSpec].
@@ -171,6 +193,7 @@ final class TuiPromptState {
   AskPromptSpec get askSpec => spec as AskPromptSpec;
   SecretPromptSpec get secretSpec => spec as SecretPromptSpec;
   ApprovalPromptSpec get approvalSpec => spec as ApprovalPromptSpec;
+  TextPromptSpec get textSpec => spec as TextPromptSpec;
 
   TuiPromptState copyWith({
     Set<int>? askSelected,
@@ -225,6 +248,7 @@ List<String> renderTuiPrompt(TuiPromptState state, int width) {
     AskPromptSpec() => _handleAskKey(state, key),
     SecretPromptSpec() => _handleSecretKey(state, key),
     ApprovalPromptSpec() => _handleApprovalKey(state, key),
+    TextPromptSpec() => _handleTextKey(state, key),
   };
 }
 
@@ -614,6 +638,66 @@ bool _secretSubmittable(TuiPromptState state) {
 }
 
 // ---------------------------------------------------------------------------
+// Text
+// ---------------------------------------------------------------------------
+
+({TuiPromptState state, TuiPromptAnswer? resolved}) _handleTextKey(
+  TuiPromptState state,
+  PromptKey key,
+) {
+  final spec = state.textSpec;
+  var buffer = state.secretValue;
+  var cursor = state.secretCursor;
+
+  switch (key) {
+    case PromptArrowLeft():
+      if (cursor > 0) cursor--;
+      return (
+        state: state.copyWith(secretValue: buffer, secretCursor: cursor),
+        resolved: null,
+      );
+    case PromptArrowRight():
+      if (cursor < buffer.length) cursor++;
+      return (
+        state: state.copyWith(secretValue: buffer, secretCursor: cursor),
+        resolved: null,
+      );
+    case PromptBackspace():
+      if (cursor == 0 || buffer.isEmpty) {
+        return (
+          state: state.copyWith(secretValue: buffer, secretCursor: cursor),
+          resolved: null,
+        );
+      }
+      final next = buffer.substring(0, cursor - 1) + buffer.substring(cursor);
+      return (
+        state: state.copyWith(secretValue: next, secretCursor: cursor - 1),
+        resolved: null,
+      );
+    case PromptChar():
+      final ch = (key).text;
+      final next = buffer.substring(0, cursor) + ch + buffer.substring(cursor);
+      return (
+        state: state.copyWith(secretValue: next, secretCursor: cursor + 1),
+        resolved: null,
+      );
+    case PromptEnter():
+      final text = buffer.trim();
+      if (text.isEmpty) {
+        final def = spec.defaultValue;
+        return (state: state, resolved: TextPromptAnswer(def ?? ''));
+      }
+      return (state: state, resolved: TextPromptAnswer(text));
+    case PromptEscape():
+      return (state: state, resolved: const TuiPromptCancelled());
+    case PromptTab():
+    case PromptArrowUp():
+    case PromptArrowDown():
+      return (state: state, resolved: null);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 
@@ -677,6 +761,17 @@ List<String> _bodyRows(TuiPromptState state, int inner) {
           .join(', ');
       final argLine = args.isEmpty ? '(no arguments)' : args;
       rows.add(_wrapBodyLine('Args: ${_fitWidth(argLine, inner - 6)}', inner));
+    case TextPromptSpec():
+      rows.add(_wrapBodyLine(spec.question, inner, bold: true));
+      if (spec.defaultValue != null && spec.defaultValue!.isNotEmpty) {
+        rows.add(
+          _wrapBodyLine(
+            _dim('(default: ${spec.defaultValue})'),
+            inner,
+            dim: true,
+          ),
+        );
+      }
   }
   return rows;
 }
@@ -752,6 +847,7 @@ List<String> _inputRows(TuiPromptState state, int inner, int width) {
     AskPromptSpec() => _askInputRows(state, inner),
     SecretPromptSpec() => _secretInputRows(state, inner),
     ApprovalPromptSpec() => _approvalInputRows(inner),
+    TextPromptSpec() => _textInputRows(state, inner),
   };
 }
 
@@ -782,6 +878,25 @@ List<String> _askInputRows(TuiPromptState state, int inner) {
     _wrapBodyLine(_dim(hint), inner, dim: true),
     _wrapBodyLine('', inner),
   ];
+}
+
+List<String> _textInputRows(TuiPromptState state, int inner) {
+  final spec = state.textSpec;
+  final buffer = state.secretValue;
+  final cursor = state.secretCursor;
+  final display = spec.secret ? '•' * buffer.length : buffer;
+  final hint = spec.secret
+      ? 'Type your answer (hidden, Enter to send, Esc to cancel):'
+      : 'Type your answer (Enter to send, Esc to cancel):';
+  final rows = <String>[];
+  rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
+  final (line, cursorCol) = _inputField(display, cursor, inner - 2);
+  rows.add(
+    '│ ${_accent2Plain('>')} ${_accent(line)}'
+    '${' ' * (inner - 1 - line.length)}│',
+  );
+  rows.add(_wrapBodyLine(' ' * cursorCol + '█', inner, dim: true));
+  return rows;
 }
 
 List<String> _secretInputRows(TuiPromptState state, int inner) {
