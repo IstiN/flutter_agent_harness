@@ -145,7 +145,10 @@ final class TuiPromptState {
         _ => '',
       },
       secretValue = '',
-      secretCursor = 0;
+      secretCursor = switch (spec) {
+        SecretPromptSpec _ => -1, // -1 = focus on name field
+        _ => 0,
+      };
 
   final TuiPromptSpec spec;
   final Set<int> askSelected;
@@ -409,13 +412,8 @@ List<String> renderTuiPrompt(TuiPromptState state, int width) {
         resolved: null,
       );
     case PromptEnter():
-      final text = buffer.trim();
-      if (text.isEmpty) {
-        return (state: state, resolved: const TuiPromptCancelled());
-      }
-      if (text == '!') {
-        return (state: state, resolved: const TuiPromptCancelled());
-      }
+      // Empty buffer with options → revert to option selection instead of
+      // cancelling (user entered free-text accidentally via space).
       if (buffer.isEmpty && spec.options.isNotEmpty) {
         final revertedMode = spec.multiSelect
             ? AskInputMode.multiSelect
@@ -426,6 +424,13 @@ List<String> renderTuiPrompt(TuiPromptState state, int width) {
           askMode: revertedMode,
         );
         return (state: reverted, resolved: null);
+      }
+      final text = buffer.trim();
+      if (text.isEmpty) {
+        return (state: state, resolved: const TuiPromptCancelled());
+      }
+      if (text == '!') {
+        return (state: state, resolved: const TuiPromptCancelled());
       }
       return (state: state, resolved: AskPromptAnswer(AskAnswer.text(text)));
     case PromptEscape():
@@ -468,6 +473,8 @@ bool _secretSubmittable(TuiPromptState state) {
 ) {
   switch (key) {
     case PromptArrowLeft():
+      // -1 = name focus (no cursor motion in name field).
+      if (state.secretCursor < 0) return (state: state, resolved: null);
       if (state.secretCursor > 0) {
         return (
           state: state.copyWith(secretCursor: state.secretCursor - 1),
@@ -476,6 +483,7 @@ bool _secretSubmittable(TuiPromptState state) {
       }
       return (state: state, resolved: null);
     case PromptArrowRight():
+      if (state.secretCursor < 0) return (state: state, resolved: null);
       if (state.secretCursor < state.secretValue.length) {
         return (
           state: state.copyWith(secretCursor: state.secretCursor + 1),
@@ -484,6 +492,19 @@ bool _secretSubmittable(TuiPromptState state) {
       }
       return (state: state, resolved: null);
     case PromptBackspace():
+      if (state.secretCursor < 0) {
+        // Name focus: trim the last char from the name, if any.
+        if (state.secretName.isEmpty) return (state: state, resolved: null);
+        return (
+          state: state.copyWith(
+            secretName: state.secretName.substring(
+              0,
+              state.secretName.length - 1,
+            ),
+          ),
+          resolved: null,
+        );
+      }
       if (state.secretCursor == 0 || state.secretValue.isEmpty) {
         return (state: state, resolved: null);
       }
@@ -499,7 +520,8 @@ bool _secretSubmittable(TuiPromptState state) {
       );
     case PromptChar():
       final ch = (key).text;
-      if (state.secretValue.isEmpty && state.secretCursor == 0) {
+      if (state.secretCursor < 0) {
+        // Name focus: append to the name.
         final next = state.secretName + ch;
         return (state: state.copyWith(secretName: next), resolved: null);
       }
@@ -527,6 +549,10 @@ bool _secretSubmittable(TuiPromptState state) {
         ),
       );
     case PromptTab():
+      // Tab moves from name (-1) to value (0) focus.
+      if (state.secretCursor < 0) {
+        return (state: state.copyWith(secretCursor: 0), resolved: null);
+      }
       return (state: state, resolved: null);
     case PromptEscape():
       return (state: state, resolved: const TuiPromptCancelled());
@@ -768,8 +794,7 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
     ),
   );
   rows.add(_wrapBodyLine(state.secretName, inner, bold: true));
-  final focusedOnValue =
-      !(state.secretValue.isEmpty && state.secretCursor == 0);
+  final focusedOnValue = state.secretCursor >= 0;
   final hint = focusedOnValue
       ? 'Enter to save · Esc to cancel'
       : 'Start typing the value · Esc to cancel';
