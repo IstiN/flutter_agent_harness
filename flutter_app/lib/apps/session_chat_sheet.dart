@@ -128,6 +128,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
   Map<String, DateTime> _createdAtById = const {};
   var _openingPersisted = false;
 
+  /// Ids of persisted sessions that have been pre-cached or are in flight,
+  /// so we don't kick off duplicate speculative loads.
+  final Set<String> _preCached = {};
+
   /// One-shot guard for the stream-start auto-grow to the mini state.
   var _autoMini = false;
 
@@ -201,6 +205,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
           _persisted = persisted;
           _createdAtById = {for (final m in all) m.id: m.createdAt};
         });
+        // Pre-cache the first persisted neighbor after the live sessions
+        // so the user's first swipe into the persisted tail is instant.
+        _preCacheNeighbors(_activeIndex());
       }
     } on Object {
       // A broken sessions dir must not break the sheet.
@@ -229,7 +236,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
       for (final m in _persisted)
         if (!liveIds.contains(m.id)) m,
     ];
-    if (filtered.length != _persisted.length) _persisted = filtered;
+    if (filtered.length != _persisted.length) {
+      _persisted = filtered;
+      // A pre-cached session just became live — clean up the tracking set.
+      _preCached.removeAll(liveIds);
+    }
     // Live count changes (session opened/closed) also re-sync the
     // persisted tail from disk (closed sessions reappear there).
     if (liveIds.length != _lastLiveCount) {
@@ -253,6 +264,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
   void _onPageChanged(int index) {
     if (index < _liveSessions.length) {
       widget.manager.switchTo(_liveSessions[index].id);
+      _preCacheNeighbors(index);
       return;
     }
     final metadata = _persisted[index - _liveSessions.length];
@@ -278,6 +290,39 @@ class SessionChatSheetState extends State<SessionChatSheet>
         _openingPersisted = false;
       }
     }();
+    _preCacheNeighbors(index);
+  }
+
+  /// Speculatively opens the persisted sessions at [index] ± 1 in the
+  /// background so the next swipe into a neighbor is instant. Live
+  /// sessions are already in memory and need no pre-caching.
+  void _preCacheNeighbors(int currentIndex) {
+    final active = _activeService;
+    if (active == null) return;
+    final config =
+        active.configForClone ??
+        AgentConfig(
+          providerKind: active.providerKind,
+          modelId: active.modelId,
+          baseUrl: '',
+          apiKey: '',
+        );
+    for (final delta in [1, -1]) {
+      final neighborIndex = currentIndex + delta;
+      if (neighborIndex < 0 || neighborIndex >= _pageCount) continue;
+      // Only persisted sessions (beyond the live range) need pre-caching.
+      if (neighborIndex < _liveSessions.length) continue;
+      final metadata = _persisted[neighborIndex - _liveSessions.length];
+      if (_preCached.add(metadata.id)) {
+        unawaited(
+          widget.manager.preCacheSession(
+            metadata,
+            config: config,
+            serviceFactory: () async => active.clone(),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _toMini() => _animateToState(_miniValue);

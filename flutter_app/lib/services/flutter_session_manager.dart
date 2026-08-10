@@ -101,6 +101,43 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// Whether any session is currently streaming.
   bool get anyStreaming => _sessions.values.any((s) => s.service.isStreaming);
 
+  /// The ids of sessions currently being pre-cached (opened in the
+  /// background without switching the active session). Prevents duplicate
+  /// speculative loads for the same session.
+  final Set<String> _preCaching = {};
+
+  /// Opens a persisted session in the background **without** making it
+  /// active. Used for speculative pre-caching of adjacent sessions in the
+  /// pager so the user does not see a spinner when swiping to a neighbor.
+  ///
+  /// Silently skips sessions that are already live or already being
+  /// pre-cached. Never throws — a failed pre-cache is a no-op.
+  Future<void> preCacheSession(
+    SessionMetadata metadata, {
+    required AgentConfig config,
+    required FutureOr<AgentService> Function() serviceFactory,
+  }) async {
+    if (_sessions.containsKey(metadata.id)) return;
+    if (!_preCaching.add(metadata.id)) return; // already in flight
+    try {
+      final service = await serviceFactory();
+      await service.loadSession(metadata);
+      if (_sessions.containsKey(metadata.id)) return; // lost a race
+      _sessions[metadata.id] = FlutterManagedSession(
+        id: metadata.id,
+        service: service,
+        createdAt: metadata.createdAt,
+      );
+      // Do NOT set _activeId or _rememberActive — this is background work.
+      notifyListeners();
+    } on Object {
+      // Pre-cache failure is invisible to the user — they will see a
+      // spinner when they actually swipe to this session, same as before.
+    } finally {
+      _preCaching.remove(metadata.id);
+    }
+  }
+
   /// Creates a new session and makes it active.
   Future<FlutterManagedSession> createSession({
     required AgentConfig config,
