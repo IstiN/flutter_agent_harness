@@ -640,12 +640,21 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   Future<void> _launchApp(JsAppInfo app) async {
     AppLog.i('apps', 'open app: ${app.id}');
-    await pushJsApp(
-      context,
-      manager: widget.manager,
-      app: app,
-      source: 'launcher',
-    );
+    try {
+      await pushJsApp(
+        context,
+        manager: widget.manager,
+        app: app,
+        source: 'launcher',
+      );
+    } on Object catch (error) {
+      // Never a silent dead tile: log + show why the app did not open.
+      AppLog.i('apps', 'open app FAILED: ${app.id} — $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.launcherOpenAppError('$error'))),
+      );
+    }
   }
 
   Future<void> _openSettings() async {

@@ -96,4 +96,31 @@ void main() {
       session.service.dispose();
     }
   });
+
+  testWidgets('a malformed binding never blocks the app from opening', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    final original = _fakeService(env);
+    manager.addSession('original-session', original);
+
+    // A binding whose sessionId JSON value is NOT a string map (a torn or
+    // agent-written file) used to throw out of resolveAppBoundSession and
+    // silently dead the launcher tile (fitness-trainer on TestFlight).
+    await env.writeFile('apps/fitness-trainer/session.json', '[1,2]');
+    final resolved = await resolveAppBoundSession(manager, 'fitness-trainer');
+    expect(resolved, isNull);
+
+    // Valid-but-unknown session id also resolves to null (stale binding).
+    await env.writeFile(
+      'apps/fitness-trainer/session.json',
+      '{"sessionId":"deleted-session"}',
+    );
+    expect(await resolveAppBoundSession(manager, 'fitness-trainer'), isNull);
+
+    for (final session in manager.sessions) {
+      session.service.dispose();
+    }
+  });
 }

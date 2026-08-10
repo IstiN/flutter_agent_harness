@@ -1094,6 +1094,12 @@ abstract class AppLocalizations {
   /// **'Folder name'**
   String get launcherFolderNameHint;
 
+  /// No description provided for @launcherOpenAppError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open the app: {error}'**
+  String launcherOpenAppError(Object error);
+
   /// No description provided for @launcherRenameFolderTooltip.
   ///
   /// In en, this message translates to:

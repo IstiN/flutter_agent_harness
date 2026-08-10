@@ -166,6 +166,7 @@
   "launcherDissolveFolder": "Убрать папку",
   "launcherFolderDefaultName": "Папка",
   "launcherFolderNameHint": "Название папки",
+  "launcherOpenAppError": "Не удалось открыть приложение: {error}",
   "launcherRenameFolderTooltip": "Переименовать папку",
   "launcherRestoreDemoApp": "Восстановить эталонную версию",
   "launcherRestoreDemoAppDone": "Код приложения восстановлен (данные сохранены)",

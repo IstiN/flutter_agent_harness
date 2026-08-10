@@ -602,6 +602,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherFolderNameHint => 'Folder name';
 
   @override
+  String launcherOpenAppError(Object error) {
+    return 'Could not open the app: $error';
+  }
+
+  @override
   String get launcherRenameFolderTooltip => 'Rename folder';
 
   @override

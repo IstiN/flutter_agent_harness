@@ -10,6 +10,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 
 /// App-open navigation shared by the session sidebar's Apps section and the
@@ -25,44 +26,53 @@ Future<AgentService?> resolveAppBoundSession(
 ) async {
   final active = manager.active?.service;
   if (active == null) return null;
-  final raw = await active.env.readTextFile('apps/$appId/session.json');
-  final text = raw.valueOrNull;
-  if (text == null) return null;
-  String? boundId;
   try {
-    boundId = (jsonDecode(text) as Map<String, dynamic>)['sessionId']
-        ?.toString();
-  } on FormatException {
+    final raw = await active.env.readTextFile('apps/$appId/session.json');
+    final text = raw.valueOrNull;
+    if (text == null) return null;
+    String? boundId;
+    try {
+      boundId = (jsonDecode(text) as Map<String, dynamic>)['sessionId']
+          ?.toString();
+    } on FormatException {
+      return null;
+    }
+    if (boundId == null || boundId.isEmpty) return null;
+    // Already open in this app run?
+    for (final session in manager.sessions) {
+      if (session.id == boundId) {
+        manager.switchTo(boundId);
+        return session.service;
+      }
+    }
+    // Open it from disk.
+    final all = await active.listSessions();
+    for (final metadata in all) {
+      if (metadata.id == boundId) {
+        final managed = await manager.openSession(
+          metadata,
+          config:
+              active.configForClone ??
+              AgentConfig(
+                providerKind: active.providerKind,
+                modelId: active.modelId,
+                baseUrl: '',
+                apiKey: '',
+              ),
+          serviceFactory: () => active.clone(),
+        );
+        return managed.service;
+      }
+    }
+    return null; // stale binding (session deleted)
+  } on Object catch (error) {
+    // A broken binding (corrupt session.json, torn session file on disk)
+    // must never block the app from opening — fall back to the active
+    // session. Seen on-device: a stale agent-written session.json made a
+    // fitness-trainer tap silently dead.
+    AppLog.i('apps', 'resolve bound session failed for $appId: $error');
     return null;
   }
-  if (boundId == null || boundId.isEmpty) return null;
-  // Already open in this app run?
-  for (final session in manager.sessions) {
-    if (session.id == boundId) {
-      manager.switchTo(boundId);
-      return session.service;
-    }
-  }
-  // Open it from disk.
-  final all = await active.listSessions();
-  for (final metadata in all) {
-    if (metadata.id == boundId) {
-      final managed = await manager.openSession(
-        metadata,
-        config:
-            active.configForClone ??
-            AgentConfig(
-              providerKind: active.providerKind,
-              modelId: active.modelId,
-              baseUrl: '',
-              apiKey: '',
-            ),
-        serviceFactory: () => active.clone(),
-      );
-      return managed.service;
-    }
-  }
-  return null; // stale binding (session deleted)
 }
 
 /// Creates a fresh session dedicated to [appId] and records the binding.

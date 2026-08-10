@@ -169,6 +169,7 @@
   "launcherDissolveFolder": "Remove folder",
   "launcherFolderDefaultName": "Folder",
   "launcherFolderNameHint": "Folder name",
+  "launcherOpenAppError": "Could not open the app: {error}",
   "launcherRenameFolderTooltip": "Rename folder",
   "launcherRestoreDemoApp": "Restore reference version",
   "launcherRestoreDemoAppDone": "App code restored (your data was kept)",
