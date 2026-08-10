@@ -901,4 +901,11 @@
 - fix(oauth): native iOS/macOS OAuth via HTTPS callback + custom scheme redirect
 - fix(oauth): iOS web redirect flow with state + verifier
 
+## 0.1.164
+
+- test(cli): avoid real network in /provider custom default URL test
+- refactor(self_manage): lower fallbackZipUpdate CRAP and cover zip path
+- ci: pin crap4dart to 0.2.1 to match pre-commit ratchet
+- fix(installer): fallback to .zip extraction when raw binary not in release
+
 ## Unreleased
