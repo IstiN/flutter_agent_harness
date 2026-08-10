@@ -73,7 +73,7 @@ jobs:
 
       - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
         run: |
-          dart pub global activate crap4dart 0.1.1
+          dart pub global activate crap4dart 0.2.1
           dart pub global run crap4dart analyze
 
       - name: Duplication guard (lib/ < 1%)
