@@ -16,37 +16,43 @@ import 'package:fa/services/openrouter_oauth_launch_stub.dart'
 /// Coordinates the OpenRouter OAuth PKCE callback across desktop, mobile, and
 /// web builds of the app.
 ///
-/// - **Desktop** (macOS/Windows/Linux): starts a one-shot localhost server,
-///   rewrites the authorization URL's `callback_url` to that server, launches
-///   the browser, and returns the captured code.
-/// - **Mobile** (iOS/Android): launches the browser with
-///   `callback_url=<deepLinkScheme>://oauth/openrouter` and waits for a deep
-///   link to call [complete].
+/// - **Desktop** (Windows/Linux): starts a one-shot localhost server, rewrites
+///   the authorization URL's `callback_url` to that server, launches the
+///   browser, and returns the captured code.
+/// - **iOS/macOS native**: launches the browser with
+///   `callback_url=<nativeCallbackUrl>` (an HTTPS page that redirects back to
+///   `<deepLinkScheme>://oauth/openrouter`) and waits for the deep link.
+/// - **Android native**: launches the browser with
+///   `callback_url=<deepLinkScheme>://oauth/openrouter` and waits for the deep
+///   link.
 /// - **Web**: launches the browser with `callback_url=<webCallbackUrl>` and
 ///   waits for a `postMessage` from that page to call [complete].
 ///
 /// The coordinator is a singleton because the code can arrive through a
 /// platform channel or a browser event while the settings sheet that started
 /// the flow may already be disposed. Other apps can create non-shared
-/// instances with custom [deepLinkScheme] / [webCallbackUrl] to reuse the
-/// coordinator without rewriting it.
+/// instances with custom [deepLinkScheme] / [webCallbackUrl] / [nativeCallbackUrl]
+/// to reuse the coordinator without rewriting it.
 final class OpenRouterOAuthCoordinator {
   /// Creates a coordinator.
   ///
-  /// [deepLinkScheme] is used for mobile deep links
+  /// [deepLinkScheme] is used for native-app deep links
   /// (`<scheme>://oauth/openrouter`).
   /// [webCallbackUrl] is the full page URL used for web `postMessage`
   /// callbacks.
+  /// [nativeCallbackUrl] is the full HTTPS page URL used for iOS/macOS native
+  /// OAuth callbacks; the page redirects to `<deepLinkScheme>://oauth/openrouter`.
   OpenRouterOAuthCoordinator({
     this.deepLinkScheme = 'fah',
     this.webCallbackUrl = 'https://fa1.dev/oauth/openrouter.html',
     this.webAppCallbackUrl = 'https://fa1.dev/app/index.html',
+    this.nativeCallbackUrl = 'https://fa1.dev/oauth/openrouter.html?scheme=fah',
   });
 
   /// The shared coordinator instance with the Fa defaults.
   static final instance = OpenRouterOAuthCoordinator();
 
-  /// Deep-link URL scheme for mobile OAuth callbacks.
+  /// Deep-link URL scheme for native OAuth callbacks.
   final String deepLinkScheme;
 
   /// Full web page URL that posts the authorization code back via
@@ -57,6 +63,11 @@ final class OpenRouterOAuthCoordinator {
   /// post the code back. OpenRouter redirects here with `?code=...&state=...`,
   /// and the app completes the exchange on startup.
   final String webAppCallbackUrl;
+
+  /// Full HTTPS page URL used for iOS/macOS native OAuth callbacks. The page
+  /// redirects to `<deepLinkScheme>://oauth/openrouter` so the native app can
+  /// receive the authorization code via its registered URL scheme.
+  final String nativeCallbackUrl;
 
   Completer<String?>? _completer;
   OpenRouterOAuthCallbackServer? _server;
@@ -77,15 +88,17 @@ final class OpenRouterOAuthCoordinator {
           defaultTargetPlatform == TargetPlatform.android;
       return isMobileWeb ? webAppCallbackUrl : webCallbackUrl;
     }
-    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) return null;
+    if (Platform.isWindows || Platform.isLinux) return null;
+    if (Platform.isIOS || Platform.isMacOS) return nativeCallbackUrl;
     return '$deepLinkScheme://oauth/openrouter';
   }
 
   /// Launches [authUrl] and waits for the authorization code.
   ///
-  /// On desktop the `callback_url` query parameter is replaced with the local
-  /// server URL. On mobile and web [authUrl] is launched as-is (the caller
-  /// should already include [platformCallbackUrl] as `callback_url`).
+  /// On Windows/Linux the `callback_url` query parameter is replaced with the
+  /// local server URL. On iOS, macOS, Android, and web [authUrl] is launched
+  /// as-is (the caller should already include [platformCallbackUrl] as
+  /// `callback_url`).
   ///
   /// [launchUrl] is injectable for tests; when omitted the real
   /// `package:url_launcher` function is used.
@@ -103,8 +116,7 @@ final class OpenRouterOAuthCoordinator {
 
     final doLaunch = launchUrl ?? url_launcher.launchUrl;
 
-    if (!kIsWeb &&
-        (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+    if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
       _server = OpenRouterOAuthCallbackServer();
       final server = _server!;
       final callbackUrl = await server.start();
