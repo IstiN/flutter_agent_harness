@@ -6,10 +6,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 
 /// Storage key used by the callback page as a last-resort fallback.
 const _storageKey = 'openrouter_oauth_code';
+
+/// Prefix for persisting the PKCE verifier keyed by OAuth `state`.
+const _verifierPrefix = 'openrouter_oauth_verifier_';
 
 /// Maximum age of a stored code (in seconds) that we will still accept.
 const _storageMaxAgeSeconds = 90;
@@ -78,6 +82,62 @@ void _startStoragePolling() {
   // Run an immediate check in case the code was written before the listener
   // started.
   check();
+}
+
+/// Persists the PKCE verifier keyed by OAuth `state` for the redirect flow.
+///
+/// Mobile Safari/PWAs cannot reliably return the code through a popup, so the
+/// verifier is stored locally before the browser is opened and looked up when
+/// OpenRouter redirects back to the app URL.
+void storeOpenRouterOAuthVerifier(String state, String verifier) {
+  try {
+    html.window.localStorage['$_verifierPrefix$state'] = verifier;
+  } on Object {
+    // Storage may be unavailable in private mode.
+  }
+}
+
+/// If the app was launched from an OpenRouter redirect, exchanges the code
+/// for an API key and returns it.
+///
+/// Returns `null` when there is no code in the URL, the verifier is missing,
+/// or the exchange failed.
+Future<String?> completeOpenRouterOAuthFromRedirect() async {
+  try {
+    final params = Uri.parse(html.window.location.href).queryParameters;
+    final code = params['code'];
+    final error = params['error'];
+    final state = params['state'];
+    if (code == null || code.isEmpty) {
+      if (error != null && error.isNotEmpty) {
+        // Surface a clear message without crashing boot.
+        OpenRouterOAuthCoordinator.instance.complete(null);
+      }
+      return null;
+    }
+
+    String? verifier;
+    if (state != null && state.isNotEmpty) {
+      final key = '$_verifierPrefix$state';
+      verifier = html.window.localStorage[key];
+      html.window.localStorage.remove(key);
+    }
+    if (verifier == null || verifier.isEmpty) {
+      return null;
+    }
+
+    // Strip the OAuth query parameters from the URL so a reload does not
+    // re-trigger the flow.
+    final cleaned = Uri.parse(
+      html.window.location.href,
+    ).replace(queryParameters: {});
+    html.window.history.replaceState(null, '', cleaned.toString());
+
+    final key = await exchangeOpenRouterCode(code, codeVerifier: verifier);
+    return key.key;
+  } on Object {
+    return null;
+  }
 }
 
 /// Listens for the OpenRouter authorization code delivered either by

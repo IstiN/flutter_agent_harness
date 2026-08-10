@@ -19,6 +19,14 @@ typedef OpenRouterOAuthSuccessCallback = void Function(String apiKey);
 /// Returning `null` falls back to the manual sheet.
 typedef OpenRouterOAuthCaptureCallback = Future<String?> Function(Uri authUrl);
 
+/// Callback invoked with the PKCE verifier before the browser is opened.
+///
+/// Hosts that use a full-page redirect flow (e.g. iOS Safari/PWA) can persist
+/// the verifier keyed by [state] so the app can exchange the code after the
+/// browser redirects back to the app URL.
+typedef OpenRouterOAuthVerifierCallback =
+    void Function(String state, String verifier);
+
 /// A button that starts the OpenRouter OAuth PKCE flow.
 ///
 /// By default the flow is **headless**: it opens the OpenRouter authorization
@@ -35,6 +43,7 @@ class OpenRouterOAuthButton extends StatelessWidget {
     super.key,
     this.onSuccess,
     this.onCapture,
+    this.onStoreVerifier,
     this.callbackUrl,
     this.exchange,
   });
@@ -47,6 +56,11 @@ class OpenRouterOAuthButton extends StatelessWidget {
   /// captured through a redirect/deep link/postMessage. Returning `null` or
   /// an empty string falls back to the manual code-paste sheet.
   final OpenRouterOAuthCaptureCallback? onCapture;
+
+  /// Called with the OAuth `state` and PKCE `verifier` before the browser is
+  /// opened. Hosts that rely on a full-page redirect can persist the verifier
+  /// here and look it up on app restart to exchange the returned code.
+  final OpenRouterOAuthVerifierCallback? onStoreVerifier;
 
   /// When provided, the authorization URL includes this `callback_url` so the
   /// provider can redirect back automatically. Used together with [onCapture]
@@ -74,10 +88,13 @@ class OpenRouterOAuthButton extends StatelessWidget {
   Future<void> _startFlow(BuildContext context) async {
     final verifier = generateOpenRouterCodeVerifier();
     final challenge = generateOpenRouterCodeChallenge(verifier);
+    final state = generateOpenRouterCodeVerifier();
+    onStoreVerifier?.call(state, verifier);
     final authUrl = buildOpenRouterAuthUrl(
       codeChallenge: challenge,
       callbackUrl: callbackUrl,
       keyLabel: openRouterDefaultKeyLabel,
+      state: state,
     );
 
     String? code;

@@ -22,6 +22,7 @@ void main() {
       final custom = OpenRouterOAuthCoordinator(
         deepLinkScheme: 'yoclip',
         webCallbackUrl: 'https://yoclip.studio/oauth/openrouter.html',
+        webAppCallbackUrl: 'https://yoclip.studio/app/index.html',
       );
       // On desktop tests the desktop branch still returns null.
       expect(custom.platformCallbackUrl, isNull);
@@ -30,6 +31,7 @@ void main() {
         custom.webCallbackUrl,
         'https://yoclip.studio/oauth/openrouter.html',
       );
+      expect(custom.webAppCallbackUrl, 'https://yoclip.studio/app/index.html');
     });
 
     test(

@@ -28,3 +28,10 @@ Future<void> attachOpenRouterOAuthLinks() async {
     // app startup.
   }
 }
+
+/// No-op on mobile: verifier persistence is only needed for the web redirect
+/// flow.
+void storeOpenRouterOAuthVerifier(String state, String verifier) {}
+
+/// No-op on mobile: redirect completion is only needed on web.
+Future<String?> completeOpenRouterOAuthFromRedirect() async => null;

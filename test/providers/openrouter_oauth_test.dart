@@ -62,6 +62,22 @@ void main() {
       expect(url.queryParameters.containsKey('key_label'), isFalse);
       expect(url.queryParameters['code_challenge_method'], 'S256');
     });
+
+    test('includes state when provided', () {
+      final url = buildOpenRouterAuthUrl(
+        codeChallenge: 'challenge123',
+        state: 'state-abc',
+      );
+      expect(url.queryParameters['state'], 'state-abc');
+    });
+
+    test('omits state when null/empty', () {
+      final url = buildOpenRouterAuthUrl(
+        codeChallenge: 'challenge123',
+        state: '',
+      );
+      expect(url.queryParameters.containsKey('state'), isFalse);
+    });
   });
 
   group('exchangeOpenRouterCode', () {

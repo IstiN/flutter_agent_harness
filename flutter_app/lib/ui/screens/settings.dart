@@ -23,6 +23,8 @@ import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
+import 'package:fa/services/openrouter_oauth_links_stub.dart'
+    if (dart.library.html) 'package:fa/services/openrouter_oauth_links_web.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -1030,6 +1032,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             faui.OpenRouterOAuthButton(
               callbackUrl: _oauthCallbackUrl,
               onCapture: _captureOAuthCallback,
+              onStoreVerifier: storeOpenRouterOAuthVerifier,
               onSuccess: (key) {
                 _keyController.text = key;
                 final keyName = faui.hostedProviderKeyName(

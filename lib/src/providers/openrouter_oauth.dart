@@ -105,6 +105,7 @@ Uri buildOpenRouterAuthUrl({
   required String codeChallenge,
   String? callbackUrl,
   String? keyLabel,
+  String? state,
 }) {
   final params = <String, String>{
     'code_challenge': codeChallenge,
@@ -115,6 +116,9 @@ Uri buildOpenRouterAuthUrl({
   }
   if (keyLabel != null && keyLabel.isNotEmpty) {
     params['key_label'] = keyLabel;
+  }
+  if (state != null && state.isNotEmpty) {
+    params['state'] = state;
   }
   return Uri.parse(openRouterAuthEndpoint).replace(queryParameters: params);
 }

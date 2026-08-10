@@ -5,7 +5,8 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/openrouter_oauth_callback.dart';
@@ -39,6 +40,7 @@ final class OpenRouterOAuthCoordinator {
   OpenRouterOAuthCoordinator({
     this.deepLinkScheme = 'fah',
     this.webCallbackUrl = 'https://fa1.dev/oauth/openrouter.html',
+    this.webAppCallbackUrl = 'https://fa1.dev/app/index.html',
   });
 
   /// The shared coordinator instance with the Fa defaults.
@@ -51,6 +53,11 @@ final class OpenRouterOAuthCoordinator {
   /// `postMessage`.
   final String webCallbackUrl;
 
+  /// Full app URL used for mobile web/Safari where the popup cannot reliably
+  /// post the code back. OpenRouter redirects here with `?code=...&state=...`,
+  /// and the app completes the exchange on startup.
+  final String webAppCallbackUrl;
+
   Completer<String?>? _completer;
   OpenRouterOAuthCallbackServer? _server;
 
@@ -61,7 +68,15 @@ final class OpenRouterOAuthCoordinator {
   /// The platform-appropriate OAuth callback URL, or `null` on desktop where
   /// a localhost server is started lazily by [capture].
   String? get platformCallbackUrl {
-    if (kIsWeb) return webCallbackUrl;
+    if (kIsWeb) {
+      // Mobile Safari and PWAs cannot reliably return data from a popup,
+      // so redirect back to the app URL and let the app read the code from
+      // the query string on startup.
+      final isMobileWeb =
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android;
+      return isMobileWeb ? webAppCallbackUrl : webCallbackUrl;
+    }
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) return null;
     return '$deepLinkScheme://oauth/openrouter';
   }

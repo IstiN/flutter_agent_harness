@@ -180,6 +180,19 @@ Future<void> main() async {
   // OpenRouter OAuth callback. This is fire-and-forget: the coordinator
   // singleton forwards codes to any in-flight settings-sheet flow.
   unawaited(attachOpenRouterOAuthLinks());
+
+  // On mobile web (iOS Safari / PWA) the popup cannot reliably hand the code
+  // back, so OpenRouter redirects to the app URL with `?code=...&state=...`.
+  // Exchange it after the first frame and persist the key.
+  if (kIsWeb) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final key = await completeOpenRouterOAuthFromRedirect();
+      if (key != null && key.isNotEmpty) {
+        await sessionKeys.set('OPENROUTER_API_KEY', key);
+        debugPrint('[Fa] OpenRouter key saved from redirect');
+      }
+    });
+  }
 }
 
 class MyApp extends StatelessWidget {
