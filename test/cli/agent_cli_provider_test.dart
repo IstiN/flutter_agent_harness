@@ -778,7 +778,11 @@ void main() {
     '/provider custom applies the spec default URL on an empty answer',
     () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call, envVarValue: (_) => null);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      );
       final run = cli.run();
 
       io.sendLine('/provider custom');
