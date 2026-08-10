@@ -4,6 +4,7 @@
 
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';
@@ -370,6 +371,83 @@ void main() {
       );
       expect(code, 0);
       expect(asks, 1);
+    });
+  });
+
+  group('fallbackZipUpdate', () {
+    List<int> zipWithBinary(List<int> binary) {
+      final archive = Archive()
+        ..addFile(
+          ArchiveFile('Fa.app/Contents/MacOS/Fa', binary.length, binary),
+        );
+      return ZipEncoder().encode(archive);
+    }
+
+    test('extracts and swaps the macOS binary from a zip asset', () async {
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final binary = 'new-zip-binary'.codeUnits;
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('fa-macos-arm64-mac.zip')) {
+          return http.Response.bytes(zipWithBinary(binary), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      final processes = <List<String>>[];
+      final code = await fallbackZipUpdate(
+        client,
+        'v9.9.9',
+        'fa-macos-arm64-mac.zip',
+        target.path,
+        '9.9.9',
+        (exe, args) async {
+          processes.add([exe, ...args]);
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+      expect(code, 0);
+      expect(target.readAsStringSync(), 'new-zip-binary');
+      if (!Platform.isWindows) {
+        expect(processes, [
+          ['chmod', '+x', target.path],
+        ]);
+      }
+    });
+
+    test('reports a missing binary inside the zip', () async {
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final archive = Archive()
+        ..addFile(ArchiveFile('wrong/path', 3, 'abc'.codeUnits));
+      final zipBytes = ZipEncoder().encode(archive);
+      final client = MockClient((request) async {
+        return http.Response.bytes(zipBytes, 200);
+      });
+      final code = await fallbackZipUpdate(
+        client,
+        'v9.9.9',
+        'fa-macos-arm64-mac.zip',
+        target.path,
+        '9.9.9',
+        (exe, args) async => ProcessResult(0, 0, '', ''),
+      );
+      expect(code, 1);
+      expect(target.readAsStringSync(), 'old');
+    });
+
+    test('reports a failed zip download', () async {
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final client = MockClient((request) async {
+        return http.Response('gone', 404);
+      });
+      final code = await fallbackZipUpdate(
+        client,
+        'v9.9.9',
+        'fa-macos-arm64-mac.zip',
+        target.path,
+        '9.9.9',
+        (exe, args) async => ProcessResult(0, 0, '', ''),
+      );
+      expect(code, 1);
+      expect(target.readAsStringSync(), 'old');
     });
   });
 }

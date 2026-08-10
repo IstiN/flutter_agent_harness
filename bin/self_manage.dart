@@ -265,7 +265,14 @@ Future<int> _binaryUpdate(
     final zipAsset = _zipAssetName();
     if (zipAsset != null) {
       _say('binary not found — trying $zipAsset…');
-      return _fallbackZipUpdate(client, tag, zipAsset, target, latest, runProcess);
+      return fallbackZipUpdate(
+        client,
+        tag,
+        zipAsset,
+        target,
+        latest,
+        runProcess,
+      );
     }
   }
   _warn('download failed (HTTP ${streamed.statusCode}): $url');
@@ -282,9 +289,46 @@ String? _zipAssetName() {
   };
 }
 
+/// Extracts the `Fa.app/Contents/MacOS/Fa` binary bytes from a decoded
+/// macOS `.zip` archive, or `null` if the entry is missing.
+List<int>? _extractMacBinary(Archive archive) {
+  for (final entry in archive) {
+    if (entry.name.endsWith('Contents/MacOS/Fa') && entry.isFile) {
+      return entry.content as List<int>;
+    }
+  }
+  return null;
+}
+
+/// Atomically replaces [target] with the file at [staging]. On Windows the
+/// locked executable is moved aside first; on Unix [staging] is renamed over
+/// [target] and made executable.
+Future<void> _atomicSwap(
+  String staging,
+  String target,
+  Future<ProcessResult> Function(String, List<String>) runProcess,
+) async {
+  if (Platform.isWindows) {
+    final aside = '$target.old';
+    try {
+      File(aside).deleteSync();
+    } on PathNotFoundException {
+      // No stale aside file to clean up — safe to proceed.
+    }
+    File(target).renameSync(aside);
+    File(staging).renameSync(target);
+  } else {
+    await File(staging).rename(target);
+    await runProcess('chmod', ['+x', target]);
+  }
+}
+
 /// Downloads the [zipAsset] (a `.zip` containing `Fa.app`), extracts the
 /// binary from `Fa.app/Contents/MacOS/Fa`, and swaps it in.
-Future<int> _fallbackZipUpdate(
+///
+/// Public only so the self-management unit tests can exercise the macOS
+/// zip fallback path on non-macOS hosts; not intended for external callers.
+Future<int> fallbackZipUpdate(
   http.Client client,
   String tag,
   String zipAsset,
@@ -302,30 +346,14 @@ Future<int> _fallbackZipUpdate(
   _say('extracting $zipAsset…');
   final bytes = await streamed.stream.toBytes();
   final archive = ZipDecoder().decodeBytes(bytes.toList());
-  // Find Fa.app/Contents/MacOS/Fa in the archive.
-  for (final entry in archive) {
-    if (entry.name.endsWith('Contents/MacOS/Fa') && !entry.isFile) continue;
-    if (entry.name.endsWith('Contents/MacOS/Fa') && entry.isFile) {
-      final data = entry.content as List<int>;
-      await File('$target.new').writeAsBytes(data);
-      break;
-    }
-  }
-  final staging = '$target.new';
-  final staged = File(staging);
-  if (!staged.existsSync()) {
+  final data = _extractMacBinary(archive);
+  if (data == null) {
     _warn('could not find Fa binary inside $zipAsset');
     return 1;
   }
-  if (Platform.isWindows) {
-    final aside = '$target.old';
-    try { File(aside).deleteSync(); } on PathNotFoundException {}
-    File(target).renameSync(aside);
-    File(staging).renameSync(target);
-  } else {
-    await File(staging).rename(target);
-    await runProcess('chmod', ['+x', target]);
-  }
+  final staging = '$target.new';
+  await File(staging).writeAsBytes(data);
+  await _atomicSwap(staging, target, runProcess);
   _say('updated to $latest — restart fa to use it.');
   return 0;
 }
@@ -342,15 +370,7 @@ Future<int> _swapBinary(
   final sink = File(staging).openWrite();
   await streamed.stream.pipe(sink);
   await sink.close();
-  if (Platform.isWindows) {
-    final aside = '$target.old';
-    try { File(aside).deleteSync(); } on PathNotFoundException {}
-    File(target).renameSync(aside);
-    File(staging).renameSync(target);
-  } else {
-    await File(staging).rename(target);
-    await runProcess('chmod', ['+x', target]);
-  }
+  await _atomicSwap(staging, target, runProcess);
   _say('updated to $latest — restart fa to use it.');
   return 0;
 }
