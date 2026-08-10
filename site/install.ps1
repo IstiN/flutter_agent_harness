@@ -60,7 +60,7 @@ $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "ia32" }
 if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") {
     $arch = "arm64"
 }
-$assetName = "fa-windows-$arch.exe"
+$assetName = "fa-windows-$arch.zip"
 
 # ── 2. Resolve install directory ─────────────────────────────────────────────
 # DMTools-style: keep every binary in a dedicated bin directory and prepend
@@ -77,20 +77,47 @@ $target = Join-Path $binDir "$BinaryName.exe"
 # ── 3. Resolve download URL ──────────────────────────────────────────────────
 $downloadUrl = "https://github.com/$Repo/releases/latest/download/$assetName"
 
-# ── 4. Install binary (or fall back to Dart) ─────────────────────────────────
+# ── 4. Install bundle (or fall back to Dart) ────────────────────────────────
 Write-Info "Downloading Fa for windows-$arch..."
+$archivePath = Join-Path $env:TEMP "fa-windows-$arch.zip"
 try {
     $progressPreference = 'silentlyContinue'
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $target -UseBasicParsing -MaximumRedirection 5
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing -MaximumRedirection 5
     $progressPreference = 'Continue'
-    Write-Ok "Downloaded $target"
+
+    # dart build cli produces: bundle/{bin/fah.exe, lib/*.dll}
+    # We rename to fa.exe and extract into the install directory.
+    $extractDir = Join-Path $env:TEMP "fa-extract-$(Get-Random)"
+    Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
+    $bundleDir = Join-Path $extractDir "bundle"
+    $srcExe = Join-Path $bundleDir "bin\fah.exe"
+    if (Test-Path $srcExe) {
+        Copy-Item $srcExe $target -Force
+    } else {
+        # Fallback: try fa.exe directly
+        $srcFa = Join-Path $bundleDir "bin\fa.exe"
+        if (Test-Path $srcFa) {
+            Copy-Item $srcFa $target -Force
+        }
+    }
+    $srcLib = Join-Path $bundleDir "lib"
+    if (Test-Path $srcLib) {
+        $libDir = Join-Path $installDir "lib"
+        if (-not (Test-Path $libDir)) {
+            New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+        }
+        Copy-Item "$srcLib\*" $libDir -Force -Recurse
+    }
+    Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
+    Remove-Item $archivePath -ErrorAction SilentlyContinue
+    Write-Ok "Downloaded and installed $target"
 } catch {
     # A 404 usually means no binary was published for this platform yet.
     $status = $_.Exception.Response.StatusCode.value__
     if ($status -eq 404) {
-        Write-Warn "No prebuilt binary found for windows-$arch. Falling back to Dart pub global activate."
+        Write-Warn "No prebuilt bundle found for windows-$arch. Falling back to Dart pub global activate."
     } else {
-        Write-Warn "Binary download failed (HTTP $status). Falling back to Dart pub global activate."
+        Write-Warn "Bundle download failed (HTTP $status). Falling back to Dart pub global activate."
     }
     $dart = Get-Command dart -ErrorAction SilentlyContinue
     if (-not $dart) {

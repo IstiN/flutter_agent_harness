@@ -34,7 +34,7 @@ void main() {
     for (var i = 1; i <= 30; i++) {
       db.execute('INSERT INTO big (val) VALUES (?)', ['row$i']);
     }
-    db.dispose();
+    db.close();
 
     env = LocalExecutionEnv(cwd: tempDir.path);
     tool = readFileTool(env, sqlite: const Sqlite3Engine());
@@ -215,7 +215,7 @@ void main() {
     final db = sqlite3.open('${tempDir.path}/real.db');
     db.execute('CREATE TABLE prices (id REAL PRIMARY KEY, label TEXT)');
     db.execute("INSERT INTO prices (id, label) VALUES (1.5, 'a'), (2.5, 'b')");
-    db.dispose();
+    db.close();
 
     final found = await tool.execute(
       {'path': 'real.db:prices:1.5'},
@@ -238,7 +238,7 @@ void main() {
     final db = sqlite3.open('${tempDir.path}/text.db');
     db.execute('CREATE TABLE tags (code TEXT PRIMARY KEY, v TEXT)');
     db.execute("INSERT INTO tags (code, v) VALUES ('x1', 'one')");
-    db.dispose();
+    db.close();
 
     final result = await tool.execute({'path': 'text.db:tags:x1'}, null, null);
     expect(_text(result), 'code: x1\nv: one');
@@ -251,8 +251,8 @@ void main() {
     for (var i = 0; i < 1100; i++) {
       insert.execute(['v$i']);
     }
-    insert.dispose();
-    db.dispose();
+    insert.close();
+    db.close();
 
     final result = await tool.execute(
       {'path': 'huge.db?q=SELECT * FROM t'},

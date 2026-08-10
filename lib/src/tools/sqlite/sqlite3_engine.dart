@@ -62,7 +62,7 @@ final class _Sqlite3Database implements SqliteDatabase {
       }
       return SqliteRows(columns: columnNames, rows: rows, truncated: truncated);
     } finally {
-      statement.dispose();
+      statement.close();
     }
   }
 
@@ -72,7 +72,7 @@ final class _Sqlite3Database implements SqliteDatabase {
     try {
       return statement.parameterCount;
     } finally {
-      statement.dispose();
+      statement.close();
     }
   }
 
@@ -83,7 +83,7 @@ final class _Sqlite3Database implements SqliteDatabase {
 
   @override
   void close() {
-    _db.dispose();
+    _db.close();
   }
 
   Map<String, Object?> _rowToMap(List<String> columnNames, Row row) {

@@ -161,13 +161,22 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// a relaunched app continues the day's chat. Older sessions are reused
   /// only while still empty (no user messages), so every relaunch of an
   /// untouched app does not pile up another empty session file.
-  Future<SessionMetadata?> findReusableSession() async {
+  ///
+  /// [cachedSessionList] avoids a redundant `_repo.list()` call when the
+  /// boot path already fetched the list.
+  Future<SessionMetadata?> findReusableSession({
+    List<SessionMetadata>? cachedSessionList,
+  }) async {
     final List<SessionMetadata> all;
-    try {
-      all = await _repo.list();
-    } on Object {
-      // Storage-level failure — boot must not die on it; create fresh.
-      return null;
+    if (cachedSessionList != null) {
+      all = cachedSessionList;
+    } else {
+      try {
+        all = await _repo.list();
+      } on Object {
+        // Storage-level failure — boot must not die on it; create fresh.
+        return null;
+      }
     }
     if (all.isEmpty) return null;
     final newest = all.first;
@@ -179,9 +188,15 @@ final class FlutterSessionManager extends ChangeNotifier {
       return newest;
     }
     try {
+      // Lightweight check: scan raw message records instead of building the
+      // full context tree (which is O(n²) for long sessions). We only need
+      // to know whether any user message exists.
       final session = await _repo.open(newest);
-      final messages = await session.buildContextMessages();
-      return messages.any((m) => m is UserMessage) ? null : newest;
+      final messages = await session.getStorage().findEntries('message');
+      final hasUser = messages.any(
+        (r) => r is MessageRecord && r.message is UserMessage,
+      );
+      return hasUser ? null : newest;
     } on Object {
       // Unreadable session file — do not resume it.
       return null;
@@ -199,10 +214,15 @@ final class FlutterSessionManager extends ChangeNotifier {
     // switched back to an older chat (or a fresh empty session may have been
     // minted after it) — reopen the conversation they actually left.
     final lastActiveId = await _readLastActiveId();
+    // Cache the session list once — findReusableSession also needs it,
+    // and a redundant _repo.list() scans all session directories.
+    List<SessionMetadata>? cachedList;
     if (lastActiveId != null) {
       try {
-        final all = await _repo.list();
-        final metadata = all.where((m) => m.id == lastActiveId).firstOrNull;
+        cachedList = await _repo.list();
+        final metadata = cachedList
+            .where((m) => m.id == lastActiveId)
+            .firstOrNull;
         if (metadata != null) {
           return await openSession(
             metadata,
@@ -214,7 +234,7 @@ final class FlutterSessionManager extends ChangeNotifier {
         // Unreadable list/load — fall through to the reusable pick.
       }
     }
-    final reusable = await findReusableSession();
+    final reusable = await findReusableSession(cachedSessionList: cachedList);
     if (reusable != null) {
       try {
         return await openSession(

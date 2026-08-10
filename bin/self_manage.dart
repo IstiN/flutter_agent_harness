@@ -21,14 +21,14 @@ void _say(String text) => stdout.writeln(text);
 void _warn(String text) => stderr.writeln('fa: $text');
 
 /// The host OS/arch pair as used in the release asset names.
-String? _assetName() {
+String? _archiveName() {
   final abi = Abi.current().toString(); // e.g. windows_x64, macos_arm64
   return switch (abi) {
-    'windows_x64' => 'fa-windows-x64.exe',
-    'macos_x64' => 'fa-macos-x64',
-    'macos_arm64' => 'fa-macos-arm64',
-    'linux_x64' => 'fa-linux-x64',
-    'linux_arm64' => 'fa-linux-arm64',
+    'windows_x64' => 'fa-windows-x64.zip',
+    'macos_x64' => 'fa-macos-x64.tar.gz',
+    'macos_arm64' => 'fa-macos-arm64.tar.gz',
+    'linux_x64' => 'fa-linux-x64.tar.gz',
+    'linux_arm64' => 'fa-linux-arm64.tar.gz',
     _ => null,
   };
 }
@@ -235,10 +235,9 @@ Future<int> _pubGlobalUpdate({
   return result.exitCode;
 }
 
-/// Binary update path: download the release asset for this platform and
-/// swap it in (atomic rename on Unix; rename-aside of the locked exe on
-/// Windows). Falls back to downloading and extracting the macOS `.zip`
-/// asset when the plain binary is missing from the release.
+/// Binary update path: download the release archive for this platform and
+/// swap in the new binary + dylibs. Falls back to the macOS `.zip` asset
+/// when the archive is missing from the release.
 Future<int> _binaryUpdate(
   http.Client client,
   Install install,
@@ -246,25 +245,34 @@ Future<int> _binaryUpdate(
   String latest,
   Future<ProcessResult> Function(String, List<String>) runProcess,
 ) async {
-  final asset = _assetName();
-  if (asset == null) {
-    _warn('no prebuilt binary for this platform — install via Dart instead');
+  final archive = _archiveName();
+  if (archive == null) {
+    _warn('no prebuilt archive for this platform — install via Dart instead');
     return 1;
   }
   final target = install.executable;
-  final url = 'https://github.com/$_repo/releases/download/$tag/$asset';
-  _say('downloading $asset…');
+  final installDir = File(target).parent;
+  final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
+  _say('downloading $archive…');
   final request = http.Request('GET', Uri.parse(url));
   final streamed = await client.send(request);
   if (streamed.statusCode == 200) {
-    return _swapBinary(streamed, target, latest, runProcess);
+    final bytes = await streamed.stream.toBytes();
+    return _extractAndSwap(
+      bytes,
+      archive,
+      target,
+      installDir,
+      latest,
+      runProcess,
+    );
   }
   // Fallback: macOS release may only have the versioned .zip (the sandboxed
-  // app bundle). Try the stable zip name and extract the binary.
+  // app bundle). Try the stable zip name and extract the binary from the app bundle.
   if (Platform.isMacOS) {
     final zipAsset = _zipAssetName();
     if (zipAsset != null) {
-      _say('binary not found — trying $zipAsset…');
+      _say('archive not found — trying $zipAsset…');
       return fallbackZipUpdate(
         client,
         tag,
@@ -323,6 +331,117 @@ Future<void> _atomicSwap(
   }
 }
 
+/// Extracts a tar.gz archive into [tmpDir] via the system `tar` command.
+///
+/// Returns `null` on success, or an error message string on failure.
+Future<String?> _extractTarGz(
+  List<int> archiveBytes,
+  String archiveName,
+  Directory tmpDir,
+  Future<ProcessResult> Function(String, List<String>) runProcess,
+) async {
+  final archiveFile = File('${tmpDir.path}/bundle.tar.gz');
+  await archiveFile.writeAsBytes(archiveBytes);
+  final result = await runProcess('tar', [
+    '-xzf',
+    archiveFile.path,
+    '-C',
+    tmpDir.path,
+  ]);
+  return result.exitCode == 0 ? null : 'failed to extract $archiveName';
+}
+
+/// Extracts a zip archive into [tmpDir] in-process (no system command).
+void _extractZip(List<int> archiveBytes, Directory tmpDir) {
+  final archive = ZipDecoder().decodeBytes(archiveBytes);
+  for (final entry in archive) {
+    if (!entry.isFile) continue;
+    final parts = entry.name.split('/');
+    final dest = File('${tmpDir.path}/${parts.join('/')}');
+    dest.parent.createSync(recursive: true);
+    dest.writeAsBytesSync(entry.content as List<int>);
+  }
+}
+
+/// Extracts a tar.gz or zip archive into [tmpDir].
+///
+/// Returns `null` on success, or an error message string on failure.
+Future<String?> _extractArchive(
+  List<int> archiveBytes,
+  String archiveName,
+  Directory tmpDir,
+  Future<ProcessResult> Function(String, List<String>) runProcess,
+) async {
+  if (archiveName.endsWith('.tar.gz')) {
+    return _extractTarGz(archiveBytes, archiveName, tmpDir, runProcess);
+  }
+  if (archiveName.endsWith('.zip')) {
+    _extractZip(archiveBytes, tmpDir);
+    return null;
+  }
+  return 'unknown archive format: $archiveName';
+}
+
+/// Copies the `bundle/lib/` shared libraries next to the binary.
+Future<void> _copyBundleLibs(Directory bundleDir, Directory installDir) async {
+  final srcLib = Directory('${bundleDir.path}/lib');
+  if (!srcLib.existsSync()) return;
+  final libDir = Directory('${installDir.path}/lib');
+  libDir.createSync(recursive: true);
+  await for (final entity in srcLib.list()) {
+    if (entity is File) {
+      await entity.copy('${libDir.path}/${entity.uri.pathSegments.last}');
+    }
+  }
+}
+
+/// Extracts the downloaded archive and swaps the binary + dylibs in place.
+///
+/// The archive contains a `bundle/` directory with `bin/fa[.exe]` and
+/// `lib/*.dylib|.so|.dll`. We extract to a temp dir, copy the binary over
+/// the target, and copy the lib files next to it.
+Future<int> _extractAndSwap(
+  List<int> archiveBytes,
+  String archiveName,
+  String target,
+  Directory installDir,
+  String latest,
+  Future<ProcessResult> Function(String, List<String>) runProcess,
+) async {
+  final tmpDir = Directory.systemTemp.createTempSync('fa-update');
+  try {
+    final extractError = await _extractArchive(
+      archiveBytes,
+      archiveName,
+      tmpDir,
+      runProcess,
+    );
+    if (extractError != null) {
+      _warn(extractError);
+      return 1;
+    }
+    final bundleDir = Directory('${tmpDir.path}/bundle');
+    if (!bundleDir.existsSync()) {
+      _warn('archive did not contain a bundle/ directory');
+      return 1;
+    }
+    final exeName = Platform.isWindows ? 'fa.exe' : 'fa';
+    final srcExe = File('${bundleDir.path}/bin/$exeName');
+    if (!srcExe.existsSync()) {
+      _warn('archive did not contain bundle/bin/$exeName');
+      return 1;
+    }
+    final staging = '$target.new';
+    await File(staging).writeAsBytes(srcExe.readAsBytesSync());
+    await _atomicSwap(staging, target, runProcess);
+    await _copyBundleLibs(bundleDir, installDir);
+    _say('updated to $latest — restart fa to use it.');
+    return 0;
+  } finally {
+    await tmpDir.delete(recursive: true);
+  }
+}
+
 /// Downloads the [zipAsset] (a `.zip` containing `Fa.app`), extracts the
 /// binary from `Fa.app/Contents/MacOS/Fa`, and swaps it in.
 ///
@@ -353,23 +472,6 @@ Future<int> fallbackZipUpdate(
   }
   final staging = '$target.new';
   await File(staging).writeAsBytes(data);
-  await _atomicSwap(staging, target, runProcess);
-  _say('updated to $latest — restart fa to use it.');
-  return 0;
-}
-
-/// Downloads the streamed response to a staging file, then atomically swaps
-/// it with [target].
-Future<int> _swapBinary(
-  http.StreamedResponse streamed,
-  String target,
-  String latest,
-  Future<ProcessResult> Function(String, List<String>) runProcess,
-) async {
-  final staging = '$target.new';
-  final sink = File(staging).openWrite();
-  await streamed.stream.pipe(sink);
-  await sink.close();
   await _atomicSwap(staging, target, runProcess);
   _say('updated to $latest — restart fa to use it.');
   return 0;

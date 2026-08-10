@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
@@ -171,6 +172,11 @@ void main() {
 
     test('binary update downloads and swaps the executable', () async {
       final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      // Build a tar.gz containing bundle/bin/fa with the new binary content.
+      final newBinaryBytes = utf8.encode('new-binary');
+      final archive = Archive()
+        ..addFile(ArchiveFile.bytes('bundle/bin/fa', newBinaryBytes));
+      final tarGzBytes = GZipEncoder().encode(TarEncoder().encode(archive));
       final client = MockClient((request) async {
         if (request.url.path.endsWith('/releases/latest')) {
           return http.Response(
@@ -183,7 +189,7 @@ void main() {
             },
           );
         }
-        return http.Response.bytes('new-binary'.codeUnits, 200);
+        return http.Response.bytes(tarGzBytes, 200);
       });
       final processes = <List<String>>[];
       final code = await runSelfUpdate(
@@ -192,6 +198,23 @@ void main() {
         newClient: () => client,
         runProcess: (exe, args) async {
           processes.add([exe, ...args]);
+          if (exe == 'tar') {
+            // Actually extract into the CWD passed as last arg.
+            final destDir = args.last;
+            final archiveFile = args[args.indexOf('-xzf') + 1];
+            final data = File(archiveFile).readAsBytesSync();
+            final decoded = TarDecoder().decodeBytes(
+              GZipDecoder().decodeBytes(data),
+            );
+            for (final entry in decoded) {
+              if (entry.isFile) {
+                final parts = entry.name.split('/');
+                final dest = File('$destDir/${parts.join('/')}');
+                dest.parent.createSync(recursive: true);
+                dest.writeAsBytesSync(entry.content as List<int>);
+              }
+            }
+          }
           return ProcessResult(0, 0, '', '');
         },
       );
@@ -200,6 +223,7 @@ void main() {
       expect(File('${target.path}.new').existsSync(), isFalse);
       if (!Platform.isWindows) {
         expect(processes, [
+          ['tar', '-xzf', anything, '-C', anything],
           ['chmod', '+x', target.path],
         ]);
       }

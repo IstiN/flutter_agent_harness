@@ -159,26 +159,26 @@ jobs:
           - runner: windows-latest
             os: windows
             arch: x64
-            ext: .exe
+            archive: zip
           - runner: macos-latest
             os: macos
             arch: arm64
-            ext: ''
+            archive: tar
           # Intel Mac runner (macos-13 is retired; AOT cannot cross-compile
           # macos_x64 from arm64 — only linux_* targets cross).
           - runner: macos-15-intel
             os: macos
             arch: x64
-            ext: ''
+            archive: tar
           - runner: ubuntu-latest
             os: linux
             arch: x64
-            ext: ''
-          - runner: ubuntu-latest
+            archive: tar
+          # Native ARM64 runner — dart build cli does not cross-compile.
+          - runner: ubuntu-24.04-arm
             os: linux
             arch: arm64
-            ext: ''
-            cross: true
+            archive: tar
     steps:
       - uses: actions/checkout@v4
 
@@ -201,24 +201,47 @@ jobs:
 
       - run: dart pub get
 
-      - name: Build native executable
+      - name: Build CLI bundle
         shell: bash
         run: |
-          out="fa-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
           version=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            dart compile exe bin/fah.dart --target-os ${{ matrix.os }} --target-arch ${{ matrix.arch }} -DFA_VERSION="$version" -o "$out"
+          # dart build cli produces: <output>/bundle/{bin/fah, lib/*.dylib}
+          # We rename the executable to `fa`, write version.txt, then archive
+          # the whole bundle so the installer can extract bin/ + lib/ together.
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            dart build cli --target=bin/fah.dart --output=build/out
+            mv build/out/bundle/bin/fah.exe build/out/bundle/bin/fa.exe
           else
-            dart compile exe bin/fah.dart -DFA_VERSION="$version" -o "$out"
+            dart build cli --target=bin/fah.dart --output=build/out
+            mv build/out/bundle/bin/fah build/out/bundle/bin/fa
+            chmod +x build/out/bundle/bin/fa
           fi
-          ls -lh "$out"
+          echo "$version" > build/out/bundle/version.txt
 
-      - name: Upload binary to GitHub Release
+      - name: Archive bundle
+        shell: bash
+        run: |
+          archive_name="fa-${{ matrix.os }}-${{ matrix.arch }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            asset="${archive_name}.zip"
+            cd build/out && zip -r "../../$asset" bundle && cd -
+          else
+            asset="${archive_name}.tar.gz"
+            tar -czf "$asset" -C build/out bundle
+          fi
+          ls -lh "$asset"
+
+      - name: Upload archive to GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          asset="fa-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          archive_name="fa-${{ matrix.os }}-${{ matrix.arch }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            asset="${archive_name}.zip"
+          else
+            asset="${archive_name}.tar.gz"
+          fi
           # gh release upload needs the release to exist; create it lazily
           # (matrix jobs race here, so a duplicate create is tolerated).
           if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then

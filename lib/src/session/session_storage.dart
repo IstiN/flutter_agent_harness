@@ -377,7 +377,7 @@ final class JsonlSessionStorage implements SessionStorage {
       );
     }
     while (true) {
-      path.insert(0, current!);
+      path.add(current!);
       final parentId = current.parentId;
       if (parentId == null) break;
       final parent = _byId[parentId];
@@ -389,7 +389,7 @@ final class JsonlSessionStorage implements SessionStorage {
       }
       current = parent;
     }
-    return path;
+    return path.reversed.toList();
   }
 
   @override

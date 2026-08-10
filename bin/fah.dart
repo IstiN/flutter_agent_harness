@@ -36,20 +36,29 @@ import 'self_manage.dart';
 
 const _fallbackVersion = '0.1.0';
 
-/// Reads the package version with three fallbacks so compiled binaries stay
-/// accurate: `-DFA_VERSION=` baked at compile time (CI releases), then the
+/// Reads the package version with four fallbacks so compiled binaries stay
+/// accurate: `-DFA_VERSION=` baked at compile time (legacy AOT builds), then
+/// a `version.txt` file alongside the `dart build cli` bundle, then the
 /// `pubspec.yaml` next to the executable (source runs), then the constant.
 String _packageVersion() {
   const fromEnv = String.fromEnvironment('FA_VERSION');
   if (fromEnv.isNotEmpty) return fromEnv;
   try {
     final scriptPath = Platform.script.toFilePath();
-    final pubspec = File('${File(scriptPath).parent.parent.path}/pubspec.yaml');
+    // dart build cli bundle layout: <root>/bin/<exe> + <root>/version.txt
+    final bundleRoot = File(scriptPath).parent.parent;
+    final versionFile = File('${bundleRoot.path}/version.txt');
+    if (versionFile.existsSync()) {
+      final v = versionFile.readAsStringSync().trim();
+      if (v.isNotEmpty) return v;
+    }
+    // Source run: pubspec.yaml sits two levels up from bin/.
+    final pubspec = File('${bundleRoot.path}/pubspec.yaml');
     final doc = yaml.loadYaml(pubspec.readAsStringSync()) as Map;
     final value = doc['version'];
     if (value is String && value.isNotEmpty) return value;
   } on Object {
-    // Fall back to the compile-time constant when the pubspec is unavailable.
+    // Fall back to the compile-time constant when nothing is available.
   }
   return _fallbackVersion;
 }

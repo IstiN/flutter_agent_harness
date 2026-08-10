@@ -85,7 +85,7 @@ case "$(uname -m)" in
     ;;
 esac
 
-asset="fa-${os}-${arch}"
+asset="fa-${os}-${arch}.tar.gz"
 
 # ── 2. Resolve install directory ─────────────────────────────────────────────
 # Prefer a directory already on PATH, falling back to ~/.local/bin.
@@ -120,18 +120,36 @@ _extract_macos_zip() {
   return 1
 }
 
-# ── 5. Install binary (or fall back to .zip, then Dart) ──────────────────────
+# ── 5. Install bundle (or fall back to .zip, then Dart) ──────────────────────
 info "Downloading Fa for ${os}-${arch}..."
 dl_ok=false
+tmp_archive="$(mktemp 2>/dev/null || mktemp -t fa-archive)"
 if command -v curl >/dev/null 2>&1; then
-  if curl -fSL --progress-bar "$download_url" -o "$target" 2>/dev/null; then
-    chmod +x "$target"
+  if curl -fSL --progress-bar "$download_url" -o "$tmp_archive" 2>/dev/null; then
     dl_ok=true
   fi
 else
-  if wget --show-progress -qO "$target" "$download_url" 2>/dev/null; then
-    chmod +x "$target"
+  if wget --show-progress -qO "$tmp_archive" "$download_url" 2>/dev/null; then
     dl_ok=true
+  fi
+fi
+
+if [ "$dl_ok" = true ]; then
+  # dart build cli produces a bundle/ dir: bundle/bin/fa + bundle/lib/*.dylib
+  # Extract the bundle, copy bin/ and lib/ into the install dir.
+  tmp_extract="$(mktemp -d 2>/dev/null || mktemp -d -t fa-extract)"
+  if tar -xzf "$tmp_archive" -C "$tmp_extract" 2>/dev/null; then
+    mkdir -p "$install_dir/lib"
+    cp "$tmp_extract/bundle/bin/fa" "$target"
+    chmod +x "$target"
+    if [ -d "$tmp_extract/bundle/lib" ]; then
+      cp -r "$tmp_extract/bundle/lib/"* "$install_dir/lib/" 2>/dev/null || true
+    fi
+    rm -rf "$tmp_extract" "$tmp_archive"
+    ok "Installed $target"
+  else
+    rm -rf "$tmp_extract" "$tmp_archive"
+    dl_ok=false
   fi
 fi
 
@@ -139,7 +157,7 @@ fi
 if [ "$dl_ok" = false ] && [ "$os" = "macos" ]; then
   zip_asset="fa-${os}-${arch}-mac.zip"
   zip_url="https://github.com/$REPO/releases/latest/download/$zip_asset"
-  info "binary not found — trying $zip_asset…"
+  info "archive not found — trying $zip_asset…"
   zip_tmp="$(mktemp 2>/dev/null || mktemp -t fa-zip)"
   if command -v curl >/dev/null 2>&1; then
     curl -fSL --progress-bar "$zip_url" -o "$zip_tmp" 2>/dev/null
