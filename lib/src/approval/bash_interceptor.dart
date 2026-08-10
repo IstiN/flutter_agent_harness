@@ -95,8 +95,11 @@ final criticalBashPatterns = <CriticalBashPattern>[
   // or evaled).
   CriticalBashPattern(
     'remote fetch piped to a shell',
+    // Require curl/wget and the pipe to live in the same shell command so an
+    // unrelated `curl` mention (e.g. inside a commit message or a prior `&&`
+    // clause) does not false-positive against a later `| bash`.
     RegExp(
-      r'\b(curl|wget)\b[^|]*\|\s*(bash|sh|zsh|fish)\b',
+      r'\b(curl|wget)\b[^|&;\n]*\|\s*(bash|sh|zsh|fish)\b',
       caseSensitive: false,
     ),
   ),

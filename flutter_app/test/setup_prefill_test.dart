@@ -199,17 +199,20 @@ void main() {
       await _pumpForm(
         tester,
         initialConnection: const LastConnection(
-          providerKind: 'openai-completions',
-          modelId: 'my-ollama-model',
-          baseUrl: 'https://ollama.com/v1',
+          providerKind: 'openrouter',
+          modelId: 'my-openrouter-model',
+          baseUrl: 'https://openrouter.ai/api/v1',
         ),
       );
 
-      expect(find.text('Ollama'), findsOneWidget);
-      expect(_field(tester, 'Model id').controller!.text, 'my-ollama-model');
+      expect(find.text('OpenRouter'), findsOneWidget);
+      expect(
+        _field(tester, 'Model id').controller!.text,
+        'my-openrouter-model',
+      );
       expect(
         _field(tester, 'Base URL').controller!.text,
-        'https://ollama.com/v1',
+        'https://openrouter.ai/api/v1',
       );
       // Keys are never persisted; the env-provided one survives prefill.
       expect(_field(tester, 'API key').controller!.text, 'sk-env-seeded');

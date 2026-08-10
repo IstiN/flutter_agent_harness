@@ -30,7 +30,7 @@ executables:
 dependencies:
   archive: ^4.0.9
   crypto: ^3.0.3
-  dart_tui: ^1.4.0
+  dart_tui: ^2.0.0
   http: ^1.6.0
   image: ^4.9.1
   meta: ^1.18.0

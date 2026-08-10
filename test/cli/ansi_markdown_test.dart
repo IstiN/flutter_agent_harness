@@ -160,6 +160,24 @@ void main() {
         expect(columnsOf(visible[1], '┼'), headerColumns);
       });
 
+      test('formats at exactly the table width, not four columns over', () {
+        // Regression: the width budget used to add 4 extra columns, so a table
+        // whose rendered grid is exactly N characters only formatted when the
+        // terminal was at least N+4 wide.
+        final wideTable = [
+          '| A | B | C |',
+          '|---|---|---|',
+          '| x | ${"y" * 40} | ${"z" * 30} |',
+          '| a | b | c |',
+        ];
+        final out = AnsiMarkdown(width: 89).formatAll(wideTable);
+        expect(out[0], contains('│'));
+        expect(out[1], contains('┼'));
+        final ansi = RegExp(r'\x1b\[[0-9;]*m');
+        final visible = out.map((l) => l.replaceAll(ansi, '')).toList();
+        expect(visible.map((l) => l.length).toSet(), hasLength(1));
+      });
+
       test('falls back to raw lines when the table does not fit', () {
         final out = AnsiMarkdown(width: 20).formatAll(table);
         for (var i = 0; i < table.length; i++) {

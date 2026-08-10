@@ -137,6 +137,10 @@ dev_dependencies:
   test: ^1.31.0
 
 dependency_overrides:
+  # Flutter 3.44.4 pins meta 1.18.0; dart_tui 2.0.0 declares ^1.19.0 but does
+  # not appear to use 1.19-only APIs. Force the SDK-pinned version so the app
+  # can resolve while the core package migrates.
+  meta: 1.18.0
   freezed_annotation: ^3.1.0
   wasm_run:
     path: ../vendor/wasm_run

@@ -134,12 +134,10 @@ Stream<List<int>> _preprocessInput(Stream<List<int>> input) {
 Future<void> main() async {
   try {
     await Program(
-      options: const ProgramOptions(
-        altScreen: true,
-        tickInterval: Duration(milliseconds: 100),
-        hideCursor: false,
-      ),
-      programOptions: [
+      options: [
+        withAltScreen(),
+        withTickInterval(const Duration(milliseconds: 100)),
+        withHideCursor(false),
         withInput(_preprocessInput(stdin)),
         withMouseAllMotion(),
       ],
@@ -155,7 +153,7 @@ Future<void> main() async {
   }
 }
 
-final class FaPrototypeModel extends TeaModel {
+final class FaPrototypeModel extends Model {
   FaPrototypeModel({
     ViewportModel? viewport,
     TextAreaModel? input,

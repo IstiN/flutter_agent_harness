@@ -230,11 +230,10 @@ final class AnsiMarkdown {
     // by raw text would push the separators right of the header's grid.
     final formatted = _formattedCells(rows, cells, widths);
     // ' cell ' per column plus ' │ ' joins; pi falls back to raw when the
-    // table does not fit — so do we.
+    // table does not fit — so do we. The total is sum(widths) plus the joiners
+    // between columns (' │ ' = 3 each) plus the single leading/trailing space.
     final total =
-        widths.fold<int>(0, (a, b) => a + b) +
-        columnCount * 2 +
-        (columnCount - 1) * 3;
+        widths.fold<int>(0, (a, b) => a + b) + (columnCount - 1) * 3 + 2;
     if (total > width) {
       return _rawTableRows(rows);
     }

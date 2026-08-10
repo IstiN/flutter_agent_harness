@@ -143,7 +143,7 @@ final class _WrapCache {
 }
 
 /// The dart_tui model backing the Fa interactive REPL.
-final class FaTuiModel extends TeaModel {
+final class FaTuiModel extends Model {
   FaTuiModel({
     required this.callbacks,
     required this.isExited,
@@ -1632,8 +1632,7 @@ final class FaTuiController {
     isExited: isExited,
   );
   late final Program _program = Program(
-    options: const ProgramOptions(altScreen: true, hideCursor: false),
-    programOptions: [withMouseCellMotion()],
+    options: [withAltScreen(), withHideCursor(false), withMouseCellMotion()],
   );
 
   /// Messages sent before [run] starts (e.g. the banner printed while the
