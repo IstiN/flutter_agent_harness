@@ -895,4 +895,10 @@
 
 - fix(oauth): capture OpenRouter web callback via JS object postMessage
 
+## 0.1.162
+
+- fix(app): key field no longer prefills OPENROUTER_API_KEY for non-OpenRouter providers
+- fix(oauth): native iOS/macOS OAuth via HTTPS callback + custom scheme redirect
+- fix(oauth): iOS web redirect flow with state + verifier
+
 ## Unreleased
