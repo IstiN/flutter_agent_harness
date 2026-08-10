@@ -46,7 +46,7 @@ final class OpenRouterOAuthCoordinator {
     this.deepLinkScheme = 'fah',
     this.webCallbackUrl = 'https://fa1.dev/oauth/openrouter.html',
     this.webAppCallbackUrl = 'https://fa1.dev/app/index.html',
-    this.nativeCallbackUrl = 'https://fa1.dev/oauth/openrouter.html?scheme=fah',
+    this.nativeCallbackUrl = 'https://fa1.dev/oauth/openrouter-native.html',
   });
 
   /// The shared coordinator instance with the Fa defaults.
@@ -64,9 +64,10 @@ final class OpenRouterOAuthCoordinator {
   /// and the app completes the exchange on startup.
   final String webAppCallbackUrl;
 
-  /// Full HTTPS page URL used for iOS/macOS native OAuth callbacks. The page
-  /// redirects to `<deepLinkScheme>://oauth/openrouter` so the native app can
-  /// receive the authorization code via its registered URL scheme.
+  /// Full HTTPS page URL used for iOS/macOS native OAuth callbacks. OpenRouter
+  /// redirects here, and the page immediately redirects to
+  /// `<deepLinkScheme>://oauth/openrouter` so the native app receives the code
+  /// via its registered URL scheme.
   final String nativeCallbackUrl;
 
   Completer<String?>? _completer;

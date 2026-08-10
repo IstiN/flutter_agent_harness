@@ -43,26 +43,8 @@
     (function () {
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');
-      const state = params.get('state');
       const error = params.get('error');
       const errorDescription = params.get('error_description') || error;
-      const nativeScheme = params.get('scheme');
-
-      // Native iOS/macOS flow: the app cannot receive the code directly from
-      // the browser, so redirect to its registered custom URL scheme. This must
-      // happen before the web postMessage flow because the page unloads.
-      if (nativeScheme && code) {
-        const nativeParams = new URLSearchParams({ code: code });
-        if (state) nativeParams.set('state', state);
-        const nativeUrl = nativeScheme + '://oauth/openrouter?' + nativeParams.toString();
-        try {
-          window.location.replace(nativeUrl);
-          // If the redirect did not unload the page (e.g. unknown scheme),
-          // fall through and show a helpful message.
-        } catch (e) {
-          // Ignore and show the manual fallback below.
-        }
-      }
 
       const payload = {
         type: 'openrouter_oauth_code',
@@ -133,9 +115,7 @@
       if (code) {
         title.textContent = 'Authorized';
         title.className = 'success';
-        if (nativeScheme) {
-          message.textContent = 'Return to the Fa app to finish connecting.';
-        } else if (delivered) {
+        if (delivered) {
           message.textContent = 'You can close this tab and return to Fa.';
         } else {
           message.innerHTML = 'The app could not be notified automatically. '

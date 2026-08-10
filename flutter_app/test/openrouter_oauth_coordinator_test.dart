@@ -18,7 +18,7 @@ void main() {
       // server (null here); macOS uses the HTTPS native callback URL.
       final url = OpenRouterOAuthCoordinator.instance.platformCallbackUrl;
       if (Platform.isMacOS) {
-        expect(url, 'https://fa1.dev/oauth/openrouter.html?scheme=fah');
+        expect(url, 'https://fa1.dev/oauth/openrouter-native.html');
       } else {
         expect(url, isNull);
       }
@@ -29,15 +29,14 @@ void main() {
         deepLinkScheme: 'yoclip',
         webCallbackUrl: 'https://yoclip.studio/oauth/openrouter.html',
         webAppCallbackUrl: 'https://yoclip.studio/app/index.html',
-        nativeCallbackUrl:
-            'https://yoclip.studio/oauth/openrouter.html?scheme=yoclip',
+        nativeCallbackUrl: 'https://yoclip.studio/oauth/openrouter-native.html',
       );
       // On desktop tests the desktop branch still returns null for
       // Windows/Linux; macOS gets the native callback URL.
       if (Platform.isMacOS) {
         expect(
           custom.platformCallbackUrl,
-          'https://yoclip.studio/oauth/openrouter.html?scheme=yoclip',
+          'https://yoclip.studio/oauth/openrouter-native.html',
         );
       } else {
         expect(custom.platformCallbackUrl, isNull);
@@ -50,7 +49,7 @@ void main() {
       expect(custom.webAppCallbackUrl, 'https://yoclip.studio/app/index.html');
       expect(
         custom.nativeCallbackUrl,
-        'https://yoclip.studio/oauth/openrouter.html?scheme=yoclip',
+        'https://yoclip.studio/oauth/openrouter-native.html',
       );
     });
 
