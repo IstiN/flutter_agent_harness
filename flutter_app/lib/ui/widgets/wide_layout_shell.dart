@@ -13,6 +13,7 @@ import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
@@ -115,48 +116,35 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   // ---------------------------------------------------------------------------
 
   Widget _buildSidebar(FahColors colors) {
-    return Container(
-      color: colors.panel,
-      child: Column(
-        children: [
-          _buildBrandHeader(colors),
-          Divider(height: 1, thickness: 1, color: colors.border),
-          Expanded(
-            child: SidebarSessionsList(
-              manager: widget.manager,
-              sessionNamesStore: widget.sessionNamesStore,
-              collapsed: _sidebarCollapsed,
-              onNewSession: _newSession,
-              onSessionTap: () => setState(() {}),
+    // SelectionContainer.disabled prevents macOS spell-check squiggly
+    // underlines from appearing on sidebar text widgets.
+    return SelectionContainer.disabled(
+      child: Container(
+        color: colors.panel,
+        child: Column(
+          children: [
+            _buildBrandHeader(colors),
+            Divider(height: 1, thickness: 1, color: colors.border),
+            Expanded(
+              child: SidebarSessionsList(
+                manager: widget.manager,
+                sessionNamesStore: widget.sessionNamesStore,
+                collapsed: _sidebarCollapsed,
+                onNewSession: _newSession,
+                onSessionTap: () => setState(() {}),
+              ),
             ),
-          ),
-          Divider(height: 1, thickness: 1, color: colors.border),
-          _buildNavItems(colors),
-          _buildModelFooter(colors),
-        ],
+            Divider(height: 1, thickness: 1, color: colors.border),
+            _buildNavItems(colors),
+            _buildModelFooter(colors),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildBrandHeader(FahColors colors) {
-    final brandIcon = Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        gradient: colors.brandGradient,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Center(
-        child: Text(
-          context.l10n.appTitle,
-          style: TextStyle(
-            color: colors.onAccent,
-            fontWeight: FontWeight.w700,
-            fontSize: 14,
-          ),
-        ),
-      ),
-    );
+    const brandIcon = FaMark(size: 28);
 
     if (_sidebarCollapsed) {
       return Padding(
