@@ -1241,7 +1241,9 @@ final class FaTuiModel extends Model {
   /// the pure-Dart prompt handler.
   PromptKey? _promptKeyFromMsg(KeyMsg msg) {
     return switch (msg.key) {
-      'enter' => const PromptEnter(),
+      // dart_tui maps CR to 'enter' and LF to 'ctrl+j' — both mean Enter.
+      // ctrl+c is NOT mapped here: it stays the global interrupt/quit key.
+      'enter' || 'ctrl+j' => const PromptEnter(),
       'esc' => const PromptEscape(),
       'tab' => const PromptTab(),
       'up' => const PromptArrowUp(),
