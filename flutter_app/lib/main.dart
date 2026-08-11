@@ -541,10 +541,13 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       );
       if (!mounted) return;
       AppAnalytics.instance.bootstrapResult('chat');
-      await Navigator.of(context).pushReplacement(
+      // Use the Navigator's context, not the State's — after a hot restart
+      // the State is defunct but the Navigator's context stays valid.
+      final navigator = Navigator.of(context);
+      await navigator.pushReplacement(
         MaterialPageRoute(
           builder: (_) => faHomeScreen(
-            context: context,
+            context: navigator.context,
             manager: manager,
             registry: widget.registry,
             lastConnectionStore: widget.lastConnectionStore,
@@ -695,10 +698,11 @@ class SetupScreen extends StatelessWidget {
     // below completes only when the chat screen pops, which may be never.
     await lastConnectionStore?.saveFromConfig(config);
     if (!context.mounted) return;
-    await Navigator.of(context).pushReplacement(
+    final navigator = Navigator.of(context);
+    await navigator.pushReplacement(
       MaterialPageRoute(
         builder: (_) => faHomeScreen(
-          context: context,
+          context: navigator.context,
           manager: manager,
           registry: registry,
           lastConnectionStore: lastConnectionStore,
