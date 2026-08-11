@@ -595,6 +595,22 @@ tests are done right:
   pre-commit and in the `ci.yml` quality job.
 - Max 2800 lines per `.dart` file (`*.g.dart` exempt).
 
+## Cross-platform parity
+
+Every shared setting and interactive prompt type must exist on BOTH the CLI
+(`lib/src/cli/`) and the Flutter app (`flutter_app/lib/`) unless it is
+**fundamentally impossible** on the target platform. When a setting or prompt
+type is platform-only (e.g. MCP servers need process spawning — impossible on
+web), it MUST be explicitly listed in `cliOnlySettings` or `appOnlySettings`
+in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
+
+**Workflow when adding a new setting or interactive type:**
+1. Add it to `SharedSetting` enum in `settings_registry.dart` FIRST
+2. Implement on BOTH platforms (CLI + Flutter app)
+3. If one platform genuinely cannot support it: add to the exemption set
+   with a one-line reason comment
+4. Run `dart test test/parity/` — the parity guard must pass
+
 ## Commits and releases
 
 - Commit identity: human/AI contributors commit as `ai.teammate
