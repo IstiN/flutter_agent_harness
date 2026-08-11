@@ -71,6 +71,15 @@ const _exempt = <String, String>{
   'lib/ui/widgets/html_preview_web.dart':
       'web-only conditional implementation; the '
       'stub variant (same widget API) is covered instead',
+  'lib/ui/widgets/wide_layout_shell.dart':
+      '3-pane desktop/tablet shell; needs a full app-frame golden '
+      '(planned for a dedicated wide-layout golden test file)',
+  'lib/ui/widgets/sidebar_nav_item.dart':
+      'sidebar nav row; rendered inside wide_layout_shell (covered indirectly)',
+  'lib/ui/widgets/sidebar_sessions_list.dart':
+      'sidebar sessions list; rendered inside wide_layout_shell (covered indirectly)',
+  'lib/ui/widgets/code_viewer.dart':
+      'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
 };
 
 final _widgetPattern = RegExp(
