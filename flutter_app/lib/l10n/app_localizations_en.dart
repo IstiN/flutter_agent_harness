@@ -389,6 +389,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filePreviewNoPreview => 'No preview available';
 
   @override
+  String get filePreviewEdit => 'Edit';
+
+  @override
+  String get filePreviewSave => 'Save';
+
+  @override
+  String get filePreviewSaved => 'Saved';
+
+  @override
+  String get filePreviewSaveError => 'Save failed';
+
+  @override
   String get filePreviewTabPreview => 'Preview';
 
   @override

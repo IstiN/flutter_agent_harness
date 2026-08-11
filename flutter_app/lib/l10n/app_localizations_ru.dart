@@ -391,6 +391,18 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filePreviewNoPreview => 'Предпросмотр недоступен';
 
   @override
+  String get filePreviewEdit => 'Изменить';
+
+  @override
+  String get filePreviewSave => 'Сохранить';
+
+  @override
+  String get filePreviewSaved => 'Сохранено';
+
+  @override
+  String get filePreviewSaveError => 'Ошибка сохранения';
+
+  @override
   String get filePreviewTabPreview => 'Просмотр';
 
   @override

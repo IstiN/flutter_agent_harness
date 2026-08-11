@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
+import 'package:fa/ui/widgets/code_viewer.dart';
 import 'package:fa/ui/widgets/html_preview_stub.dart'
     if (dart.library.html) 'package:fa/ui/widgets/html_preview_web.dart';
 import 'package:fa/ui/markdown_style.dart';
@@ -163,6 +164,9 @@ class _FilePreviewViewState extends State<FilePreviewView> {
 
   /// Which pane is shown when [_richKind] offers a rendered preview.
   _TextViewMode _viewMode = _TextViewMode.preview;
+
+  /// Whether the source view is in edit mode (inline [CodeEditor]).
+  bool _editing = false;
 
   @override
   void initState() {
@@ -386,16 +390,38 @@ class _FilePreviewViewState extends State<FilePreviewView> {
   }
 
   /// The raw monospace view used for plain text and the Source pane.
+  /// Falls back to the inline [CodeEditor] when [_editing] is toggled.
   Widget _buildSourceView(ThemeData theme) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: SelectableText(
-        _text!,
-        style: theme.textTheme.bodySmall?.copyWith(
-          fontFamily: 'JetBrainsMono',
-          fontFamilyFallback: const ['Courier', 'monospace'],
+    if (_editing && !_truncated) {
+      return CodeEditor(
+        content: _text!,
+        path: widget.path,
+        env: widget.env,
+        onSaved: () {},
+      );
+    }
+    return Column(
+      children: [
+        if (!_truncated)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => setState(() => _editing = true),
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                // l10n:ignore
+                label: const Text('Edit'), // l10n:ignore
+              ),
+            ),
+          ),
+        Expanded(
+          child: CodeViewer(
+            content: _text!,
+            language: detectLanguage(widget.name),
+          ),
         ),
-      ),
+      ],
     );
   }
 }

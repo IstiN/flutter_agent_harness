@@ -47,6 +47,7 @@ dependencies:
   cupertino_icons: ^1.0.9
   flutter_chat_ui: ^2.11.1
   flutter_markdown: ^0.7.7+1
+  re_highlight: ^0.0.3
   http: ^1.6.0
   uuid: ^4.6.0
   flutter_chat_core: ^2.9.0

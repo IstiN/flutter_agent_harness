@@ -746,6 +746,30 @@ abstract class AppLocalizations {
   /// **'No preview available'**
   String get filePreviewNoPreview;
 
+  /// No description provided for @filePreviewEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get filePreviewEdit;
+
+  /// No description provided for @filePreviewSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get filePreviewSave;
+
+  /// No description provided for @filePreviewSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved'**
+  String get filePreviewSaved;
+
+  /// No description provided for @filePreviewSaveError.
+  ///
+  /// In en, this message translates to:
+  /// **'Save failed'**
+  String get filePreviewSaveError;
+
   /// No description provided for @filePreviewTabPreview.
   ///
   /// In en, this message translates to:
