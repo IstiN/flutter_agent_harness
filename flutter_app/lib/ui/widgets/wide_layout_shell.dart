@@ -13,7 +13,6 @@ import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
@@ -62,8 +61,14 @@ class WideLayoutShell extends StatefulWidget {
 class _WideLayoutShellState extends State<WideLayoutShell> {
   bool _sidebarCollapsed = false;
 
-  /// Width of the right-side apps panel.
-  static const double _appsPanelWidth = 380;
+  /// Width of the right-side apps panel (user-resizable via drag handle).
+  double _appsPanelWidth = 380;
+
+  /// Minimum/maximum width for the apps panel drag handle.
+  static const double _appsPanelMinWidth = 240;
+  static const double _appsPanelMaxWidth = 640;
+
+  /// Minimum/maximum width for the sidebar drag handle.
 
   void _onManagerChanged() {
     if (mounted) setState(() {});
@@ -84,30 +89,38 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    return Row(
-      children: [
-        // Left: collapsible sidebar.
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeInOut,
-          width: _sidebarCollapsed ? 60 : 240,
-          decoration: BoxDecoration(
-            border: Border(right: BorderSide(color: colors.border)),
+    // Material ancestor is REQUIRED — without it, Text widgets get the
+    // debug-mode yellow double-underline style.
+    return Material(
+      color: colors.bg,
+      child: Row(
+        children: [
+          // Left: collapsible sidebar.
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            width: _sidebarCollapsed ? 60 : 240,
+            decoration: BoxDecoration(
+              border: Border(right: BorderSide(color: colors.border)),
+            ),
+            child: _buildSidebar(colors),
           ),
-          child: _buildSidebar(colors),
-        ),
-        // Center: chat (always visible when a session is active).
-        Expanded(child: _buildChatArea(colors)),
-        // Right: apps panel — a nested Navigator so launched apps push
-        // within the panel instead of replacing the whole screen.
-        Container(
-          width: _appsPanelWidth,
-          decoration: BoxDecoration(
-            border: Border(left: BorderSide(color: colors.border)),
+          // Center: chat (always visible when a session is active).
+          Expanded(child: _buildChatArea(colors)),
+          // Drag handle: resizes the apps panel.
+          _PaneDragHandle(
+            onDrag: (dx) => setState(() {
+              _appsPanelWidth = (_appsPanelWidth - dx).clamp(
+                _appsPanelMinWidth,
+                _appsPanelMaxWidth,
+              );
+            }),
           ),
-          child: _buildAppsArea(),
-        ),
-      ],
+          // Right: apps panel — a nested Navigator so launched apps push
+          // within the panel instead of replacing the whole screen.
+          SizedBox(width: _appsPanelWidth, child: _buildAppsArea()),
+        ],
+      ),
     );
   }
 
@@ -144,7 +157,46 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   Widget _buildBrandHeader(FahColors colors) {
-    const brandIcon = FaMark(size: 28);
+    // The actual launcher icon: dark background + gradient rounded square
+    // with the `>_` terminal glyph — same as the macOS/iOS app icon.
+    const brandIcon = SizedBox(
+      width: 28,
+      height: 28,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Color(0xFF0B0F16),
+          borderRadius: BorderRadius.all(Radius.circular(7)),
+        ),
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF818CF8), Color(0xFF5EEAD4)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.all(Radius.circular(6)),
+              ),
+              child: Center(
+                child: Text(
+                  '>_',
+                  style: TextStyle(
+                    color: Color(0xFF0B0F16),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 9,
+                    letterSpacing: -0.5,
+                    height: 1.0,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
 
     if (_sidebarCollapsed) {
       return Padding(
@@ -362,6 +414,53 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             inlinePreview: false,
             fsRevision: service.fsRevision,
             onProjectMountChanged: service.refreshProjectMountPrompt,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A draggable vertical divider between panes. The user grabs it and drags
+/// horizontally to resize the adjacent panel. Renders a 1px line that
+/// thickens on hover with a subtle color change.
+class _PaneDragHandle extends StatefulWidget {
+  const _PaneDragHandle({required this.onDrag});
+
+  /// Called with the horizontal delta of each drag update.
+  final void Function(double dx) onDrag;
+
+  @override
+  State<_PaneDragHandle> createState() => _PaneDragHandleState();
+}
+
+class _PaneDragHandleState extends State<_PaneDragHandle> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeLeftRight,
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: GestureDetector(
+        onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: 6,
+          color: _hovering
+              ? colors.indigo.withValues(alpha: 0.3)
+              : colors.border,
+          child: Center(
+            child: Container(
+              width: 2,
+              height: 32,
+              decoration: BoxDecoration(
+                color: _hovering ? colors.indigo : colors.dim,
+                borderRadius: BorderRadius.circular(1),
+              ),
+            ),
           ),
         ),
       ),
