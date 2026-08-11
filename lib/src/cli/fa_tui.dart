@@ -387,6 +387,7 @@ final class FaTuiModel extends Model {
 
   FaTuiModel copyWith({
     TuiPromptState? prompt,
+    bool clearPrompt = false,
     List<String>? outputLines,
     String? inputText,
     int? cursor,
@@ -411,7 +412,7 @@ final class FaTuiModel extends Model {
     final copy = FaTuiModel(
       callbacks: callbacks,
       isExited: isExited,
-      prompt: prompt ?? this.prompt,
+      prompt: clearPrompt ? null : (prompt ?? this.prompt),
       outputLines: outputLines ?? this.outputLines,
       inputText: inputText ?? this.inputText,
       cursor: cursor ?? this.cursor,
@@ -437,6 +438,7 @@ final class FaTuiModel extends Model {
       frameNonce: frameNonce + 1,
     );
     copy._wrapCache = _wrapCache;
+    copy._promptCompleter = _promptCompleter;
     return copy;
   }
 
@@ -1232,7 +1234,7 @@ final class FaTuiModel extends Model {
     if (answer != null) {
       _promptCompleter?.complete(answer);
       _promptCompleter = null;
-      return (copyWith(prompt: null), null);
+      return (copyWith(clearPrompt: true), null);
     }
     return (copyWith(prompt: next), null);
   }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
+import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:test/test.dart';
 
@@ -1212,6 +1213,55 @@ void main() {
           ..openPicker('sessions', 'Sessions', items),
         returnsNormally,
       );
+    });
+
+    test('openPrompt completer survives copyWith (regression test)', () {
+      // Regression: _promptCompleter was lost on every copyWith, so
+      // Enter/Esc could never resolve the prompt — chars worked (no
+      // completer needed) but submit/cancel silently deadlocked.
+      FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      final completer = Completer<TuiPromptAnswer?>();
+      var updated = send(
+        model,
+        OpenPromptMsg(TextPromptSpec(question: 'Enter value:'), completer),
+      );
+      expect(updated.prompt, isNotNull);
+      expect(updated.prompt!.spec, isA<TextPromptSpec>());
+
+      // Type a character — this creates a new model via copyWith.
+      updated = send(
+        updated,
+        KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'x')),
+      );
+      expect(updated.prompt, isNotNull);
+      expect(updated.prompt!.secretValue, 'x');
+
+      // Press Enter — the completer must complete with the typed value.
+      // Before the fix this silently did nothing (completer was null on
+      // the copied model).
+      updated = send(updated, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      expect(updated.prompt, isNull);
+      expect(completer.isCompleted, isTrue);
+      expect(completer.future, completion(isA<TextPromptAnswer>()));
+    });
+
+    test('openPrompt Esc cancels and resolves with TuiPromptCancelled', () {
+      FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      final completer = Completer<TuiPromptAnswer?>();
+      var updated = send(
+        model,
+        OpenPromptMsg(TextPromptSpec(question: 'Enter value:'), completer),
+      );
+      expect(updated.prompt, isNotNull);
+
+      updated = send(updated, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
+      expect(updated.prompt, isNull);
+      expect(completer.isCompleted, isTrue);
+      expect(completer.future, completion(isA<TuiPromptCancelled>()));
     });
   });
 }
