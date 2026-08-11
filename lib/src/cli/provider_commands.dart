@@ -51,12 +51,21 @@ extension on AgentCli {
   /// edit flow (prefilled with the active provider) or deletes it with
   /// confirmation. Catalog providers can only be edited (no registry entry).
   void _startProviderEditFlow() {
-    final entry = config.customProviders?.find(_activeCustomName ?? '');
+    // Find the entry by active custom name, or by matching the current
+    // provider's baseUrl to a saved entry (covers catalog-switched
+    // providers that happen to be in the registry).
+    var entry = config.customProviders?.find(_activeCustomName ?? '');
+    if (entry == null) {
+      final currentBaseUrl = _agent.state.model.baseUrl;
+      entry = config.customProviders?.entries
+          .where((e) => e.baseUrl == currentBaseUrl)
+          .firstOrNull;
+    }
     if (entry != null) {
       _providerEditOrDelete(entry);
       return;
     }
-    // Catalog provider: no registry entry to delete — just edit.
+    // No registry entry: no delete option — just edit.
     _startProviderEditWizard(entry);
   }
 
