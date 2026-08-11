@@ -277,31 +277,24 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
               style: theme.textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
-            // The carousel is full-BLEED: it breaks out of the settings
-            // page padding so swiped cards slide behind the screen edges
-            // (peek effect) instead of being clipped by the padding void.
-            // viewportFraction 0.9 keeps the active card centered with the
-            // neighbors peeking in from beyond the edges.
+            // The carousel fills the available width — no OverflowBox forcing
+            // it to the full screen width (which would overflow the narrower
+            // content area of the wide-screen sidebar layout). viewportFraction
+            // 0.9 keeps the active card centered with neighbors peeking in.
             SizedBox(
               height: 380,
-              child: OverflowBox(
-                maxWidth: double.infinity,
-                child: SizedBox(
-                  width: MediaQuery.sizeOf(context).width,
-                  child: PageView.builder(
-                    controller: _pageController,
-                    itemCount: kModelPresets.length,
-                    onPageChanged: (page) => setState(() => _page = page),
-                    itemBuilder: (context, index) => Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: _PresetCard(
-                        preset: kModelPresets[index],
-                        service: widget.service,
-                        store: store,
-                        keysStore: keysStore,
-                        lastConnectionStore: widget.lastConnectionStore,
-                      ),
-                    ),
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: kModelPresets.length,
+                onPageChanged: (page) => setState(() => _page = page),
+                itemBuilder: (context, index) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: _PresetCard(
+                    preset: kModelPresets[index],
+                    service: widget.service,
+                    store: store,
+                    keysStore: keysStore,
+                    lastConnectionStore: widget.lastConnectionStore,
                   ),
                 ),
               ),

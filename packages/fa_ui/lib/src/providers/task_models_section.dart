@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/task_models_store.dart';
 
 /// The settings "Task models" section: one row per [TaskRole.all] entry
@@ -170,6 +171,7 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
   late final TextEditingController _baseUrlCtrl;
   late final TextEditingController _modelIdCtrl;
   late final TextEditingController _apiKeyCtrl;
+  late ProviderPreset _selectedPreset;
 
   @override
   void initState() {
@@ -178,6 +180,9 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
     _baseUrlCtrl = TextEditingController(text: initial?.baseUrl ?? '');
     _modelIdCtrl = TextEditingController(text: initial?.modelId ?? '');
     _apiKeyCtrl = TextEditingController(text: initial?.apiKeyName ?? '');
+    _selectedPreset = _baseUrlCtrl.text.isEmpty
+        ? ProviderPreset.custom
+        : ProviderPreset.fromBaseUrl(_baseUrlCtrl.text);
   }
 
   @override
@@ -186,6 +191,16 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
     _modelIdCtrl.dispose();
     _apiKeyCtrl.dispose();
     super.dispose();
+  }
+
+  void _onPresetChanged(ProviderPreset? preset) {
+    if (preset == null) return;
+    setState(() {
+      _selectedPreset = preset;
+      if (preset.baseUrl != null) {
+        _baseUrlCtrl.text = preset.baseUrl!;
+      }
+    });
   }
 
   void _save() {
@@ -229,8 +244,27 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Provider preset row: pick a hosted provider to prefill the
+              // base URL, or "Custom" to type one manually.
+              DropdownButtonFormField<ProviderPreset>(
+                value: _selectedPreset,
+                decoration: const InputDecoration(
+                  labelText: 'Provider', // l10n:ignore
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final p in ProviderPreset.values)
+                    DropdownMenuItem(
+                      value: p,
+                      child: Text(p.name), // l10n:ignore
+                    ),
+                ],
+                onChanged: _onPresetChanged,
+              ),
+              const SizedBox(height: 16),
               TextField(
                 controller: _baseUrlCtrl,
+                enabled: _selectedPreset == ProviderPreset.custom,
                 decoration: InputDecoration(
                   labelText: 'Base URL', // l10n:ignore
                   hintText: widget.mainBaseUrl.isEmpty
@@ -247,6 +281,8 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
                   hintText: widget.mainModelId.isEmpty
                       ? null
                       : widget.mainModelId,
+                  helperText:
+                      'Available models: GET {baseUrl}/models', // l10n:ignore
                   border: const OutlineInputBorder(),
                 ),
               ),

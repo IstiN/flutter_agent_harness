@@ -7,6 +7,10 @@ import 'package:flutter/material.dart';
 /// The sessions list for the wide-screen sidebar: shows every live session
 /// (from [manager]) with its derived or custom title, the active session
 /// highlighted with a teal dot, and a "New session" button at the top.
+///
+/// When [collapsed] is true the list degrades to a centered column of dots
+/// (active = teal, inactive = dim) with a tooltip per dot — the icon-rail
+/// companion to the collapsed [WideLayoutShell] sidebar.
 class SidebarSessionsList extends StatefulWidget {
   const SidebarSessionsList({
     super.key,
@@ -14,6 +18,7 @@ class SidebarSessionsList extends StatefulWidget {
     this.sessionNamesStore,
     this.onNewSession,
     this.onSessionTap,
+    this.collapsed = false,
   });
 
   final FlutterSessionManager manager;
@@ -22,6 +27,9 @@ class SidebarSessionsList extends StatefulWidget {
 
   /// Called after a session is tapped and [manager.switchTo] has run.
   final VoidCallback? onSessionTap;
+
+  /// When true the list renders as a compact column of session dots.
+  final bool collapsed;
 
   @override
   State<SidebarSessionsList> createState() => _SidebarSessionsListState();
@@ -46,9 +54,27 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     super.dispose();
   }
 
+  String _titleFor(FlutterManagedSession session) {
+    return widget.sessionNamesStore?.titleFor(session.id) ??
+        derivedSessionTitle(
+          context,
+          id: session.id,
+          createdAt: session.createdAt,
+        );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    if (widget.collapsed) return _buildCollapsed(colors);
+    return _buildExpanded(colors);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Expanded
+  // ---------------------------------------------------------------------------
+
+  Widget _buildExpanded(FahColors colors) {
     final sessions = widget.manager.sessions;
     return Column(
       children: [
@@ -87,20 +113,70 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                   itemBuilder: (context, index) {
                     final session = sessions[index];
                     final isActive = widget.manager.active?.id == session.id;
-                    final title =
-                        widget.sessionNamesStore?.titleFor(session.id) ??
-                        derivedSessionTitle(
-                          context,
-                          id: session.id,
-                          createdAt: session.createdAt,
-                        );
                     return _SessionTile(
-                      title: title,
+                      title: _titleFor(session),
                       isActive: isActive,
                       onTap: () {
                         widget.manager.switchTo(session.id);
                         widget.onSessionTap?.call();
                       },
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Collapsed (icon rail)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildCollapsed(FahColors colors) {
+    final sessions = widget.manager.sessions;
+    return Column(
+      children: [
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline),
+          onPressed: widget.onNewSession,
+          tooltip: context.l10n.sidebarNewSessionTooltip,
+          iconSize: 18,
+          color: colors.dim,
+          padding: const EdgeInsets.only(top: 8),
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+        ),
+        Expanded(
+          child: sessions.isEmpty
+              ? const SizedBox.shrink()
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: sessions.length,
+                  itemBuilder: (context, index) {
+                    final session = sessions[index];
+                    final isActive = widget.manager.active?.id == session.id;
+                    return Tooltip(
+                      message: _titleFor(session),
+                      child: GestureDetector(
+                        onTap: () {
+                          widget.manager.switchTo(session.id);
+                          widget.onSessionTap?.call();
+                        },
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          height: 10,
+                          alignment: Alignment.center,
+                          child: Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: isActive
+                                  ? colors.teal
+                                  : colors.dim.withValues(alpha: 0.35),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                      ),
                     );
                   },
                 ),

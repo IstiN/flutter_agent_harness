@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
@@ -16,13 +19,11 @@ import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
-/// The tabs switchable from the sidebar.
-enum WideLayoutTab { home, chat, files, settings }
-
-/// The wide-screen adaptive shell: a 240 px sidebar (sessions list + nav
-/// items + model footer) on the left, and the active tab's content
-/// (launcher grid, chat, files, or settings) on the right. Used at widths
-/// `>=` [kWideLayoutBreakpoint] (900 px).
+/// The wide-screen adaptive shell: a 3-pane layout with a collapsible
+/// sidebar (sessions list + Settings/Files nav) on the left, the active
+/// session's chat in the center, and the apps launcher panel (with its own
+/// nested [Navigator] so JS apps open inline within the panel) on the right.
+/// Used at widths `>=` [kWideLayoutBreakpoint] (900 px).
 class WideLayoutShell extends StatefulWidget {
   const WideLayoutShell({
     super.key,
@@ -58,7 +59,10 @@ class WideLayoutShell extends StatefulWidget {
 }
 
 class _WideLayoutShellState extends State<WideLayoutShell> {
-  WideLayoutTab _tab = WideLayoutTab.home;
+  bool _sidebarCollapsed = false;
+
+  /// Width of the right-side apps panel.
+  static const double _appsPanelWidth = 380;
 
   void _onManagerChanged() {
     if (mounted) setState(() {});
@@ -81,8 +85,27 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final colors = FahColors.of(context);
     return Row(
       children: [
-        SizedBox(width: 240, child: _buildSidebar(colors)),
-        Expanded(child: _buildContent(colors)),
+        // Left: collapsible sidebar.
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          width: _sidebarCollapsed ? 60 : 240,
+          decoration: BoxDecoration(
+            border: Border(right: BorderSide(color: colors.border)),
+          ),
+          child: _buildSidebar(colors),
+        ),
+        // Center: chat (always visible when a session is active).
+        Expanded(child: _buildChatArea(colors)),
+        // Right: apps panel — a nested Navigator so launched apps push
+        // within the panel instead of replacing the whole screen.
+        Container(
+          width: _appsPanelWidth,
+          decoration: BoxDecoration(
+            border: Border(left: BorderSide(color: colors.border)),
+          ),
+          child: _buildAppsArea(),
+        ),
       ],
     );
   }
@@ -102,8 +125,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             child: SidebarSessionsList(
               manager: widget.manager,
               sessionNamesStore: widget.sessionNamesStore,
-              onNewSession: () => setState(() => _tab = WideLayoutTab.chat),
-              onSessionTap: () => setState(() => _tab = WideLayoutTab.chat),
+              collapsed: _sidebarCollapsed,
+              onNewSession: _newSession,
+              onSessionTap: () => setState(() {}),
             ),
           ),
           Divider(height: 1, thickness: 1, color: colors.border),
@@ -115,36 +139,69 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   Widget _buildBrandHeader(FahColors colors) {
+    final brandIcon = Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        gradient: colors.brandGradient,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Center(
+        child: Text(
+          context.l10n.appTitle,
+          style: TextStyle(
+            color: colors.onAccent,
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+          ),
+        ),
+      ),
+    );
+
+    if (_sidebarCollapsed) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          children: [
+            brandIcon,
+            const SizedBox(height: 8),
+            IconButton(
+              icon: const Icon(Icons.chevron_right),
+              onPressed: () => setState(() => _sidebarCollapsed = false),
+              iconSize: 20,
+              color: colors.dim,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              tooltip: 'Expand', // l10n:ignore
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 16, 8, 12),
       child: Row(
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              gradient: colors.brandGradient,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: Text(
-                context.l10n.appTitle,
-                style: TextStyle(
-                  color: colors.onAccent,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ),
+          brandIcon,
           const SizedBox(width: 10),
           Text(
-            'fa1.dev', // l10n:ignore
+            'Fa', // l10n:ignore
             style: TextStyle(
               color: colors.text,
               fontSize: 16,
               fontWeight: FontWeight.w600,
             ),
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.chevron_left),
+            onPressed: () => setState(() => _sidebarCollapsed = true),
+            iconSize: 20,
+            color: colors.dim,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            tooltip: 'Collapse', // l10n:ignore
           ),
         ],
       ),
@@ -158,28 +215,18 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         mainAxisSize: MainAxisSize.min,
         children: [
           SidebarNavItem(
-            icon: Icons.grid_view_rounded,
-            label: 'Home', // l10n:ignore
-            selected: _tab == WideLayoutTab.home,
-            onTap: () => setState(() => _tab = WideLayoutTab.home),
-          ),
-          SidebarNavItem(
-            icon: Icons.chat_bubble_outline_rounded,
-            label: 'Chat', // l10n:ignore
-            selected: _tab == WideLayoutTab.chat,
-            onTap: () => setState(() => _tab = WideLayoutTab.chat),
-          ),
-          SidebarNavItem(
             icon: Icons.folder_outlined,
-            label: 'Files', // l10n:ignore
-            selected: _tab == WideLayoutTab.files,
-            onTap: () => setState(() => _tab = WideLayoutTab.files),
+            label: context.l10n.chatFilesTooltip,
+            selected: false,
+            collapsed: _sidebarCollapsed,
+            onTap: _openFiles,
           ),
           SidebarNavItem(
             icon: Icons.settings_outlined,
-            label: 'Settings', // l10n:ignore
-            selected: _tab == WideLayoutTab.settings,
-            onTap: () => setState(() => _tab = WideLayoutTab.settings),
+            label: context.l10n.settingsTitle,
+            selected: false,
+            collapsed: _sidebarCollapsed,
+            onTap: _openSettings,
           ),
         ],
       ),
@@ -188,6 +235,15 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Widget _buildModelFooter(FahColors colors) {
     final modelId = widget.manager.active?.service.modelId;
+    if (_sidebarCollapsed) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: colors.border)),
+        ),
+        child: Center(child: Icon(Icons.memory, size: 16, color: colors.dim)),
+      );
+    }
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       decoration: BoxDecoration(
@@ -211,13 +267,46 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   // ---------------------------------------------------------------------------
-  // Content
+  // Chat (center)
   // ---------------------------------------------------------------------------
 
-  Widget _buildContent(FahColors colors) {
-    switch (_tab) {
-      case WideLayoutTab.home:
-        return AppLauncherScreen(
+  Widget _buildChatArea(FahColors colors) {
+    final active = widget.manager.active;
+    if (active == null) {
+      return _buildPlaceholder(colors);
+    }
+    return ChatScreen(
+      manager: widget.manager,
+      registry: widget.registry,
+      lastConnectionStore: widget.lastConnectionStore,
+      uploadPicker: widget.uploadPicker,
+      asr: widget.asr,
+      asrTranscriber: widget.asrTranscriber,
+      audioControllerFactory: widget.audioControllerFactory,
+      videoControllerFactory: widget.videoControllerFactory,
+    );
+  }
+
+  Widget _buildPlaceholder(FahColors colors) {
+    return Center(
+      child: Text(
+        'No active session', // l10n:ignore
+        style: TextStyle(color: colors.dim, fontSize: 14),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Apps panel (right) — nested Navigator
+  // ---------------------------------------------------------------------------
+
+  Widget _buildAppsArea() {
+    // The nested Navigator ensures that calls to Navigator.of(context) from
+    // within AppLauncherScreen (app launches via pushJsApp, Settings/Files
+    // tiles) push within this panel rather than replacing the whole shell.
+    return Navigator(
+      onGenerateRoute: (settings) => MaterialPageRoute(
+        builder: (context) => AppLauncherScreen(
           manager: widget.manager,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,
@@ -230,43 +319,63 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           audioControllerFactory: widget.audioControllerFactory,
           videoControllerFactory: widget.videoControllerFactory,
           tileEngineFactory: widget.tileEngineFactory,
-        );
-      case WideLayoutTab.chat:
-        return ChatScreen(
-          manager: widget.manager,
-          registry: widget.registry,
-          lastConnectionStore: widget.lastConnectionStore,
-          uploadPicker: widget.uploadPicker,
-          asr: widget.asr,
-          asrTranscriber: widget.asrTranscriber,
-          audioControllerFactory: widget.audioControllerFactory,
-          videoControllerFactory: widget.videoControllerFactory,
-        );
-      case WideLayoutTab.files:
-        final service = widget.manager.active?.service;
-        if (service == null) return _buildPlaceholder(colors);
-        return FileBrowser(
-          env: service.env,
-          fsRevision: service.fsRevision,
-          uploadPicker: widget.uploadPicker,
-        );
-      case WideLayoutTab.settings:
-        final service = widget.manager.active?.service;
-        if (service == null) return _buildPlaceholder(colors);
-        return SettingsScreen(
+          hideChatSheet: true,
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Actions
+  // ---------------------------------------------------------------------------
+
+  void _newSession() {
+    final active = widget.manager.active;
+    if (active == null) return;
+    final service = active.service;
+    final config = service.configForClone;
+    if (config == null) return;
+    unawaited(
+      widget.manager.createSession(
+        config: config,
+        serviceFactory: () async => service.clone(),
+      ),
+    );
+  }
+
+  Future<void> _openSettings() async {
+    final service = widget.manager.active?.service;
+    if (service == null) return;
+    AppAnalytics.instance.settingsOpened();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(
           service: service,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,
           layoutStore: widget.layoutStore,
-        );
-    }
+        ),
+      ),
+    );
   }
 
-  Widget _buildPlaceholder(FahColors colors) {
-    return Center(
-      child: Text(
-        'No active session', // l10n:ignore
-        style: TextStyle(color: colors.dim, fontSize: 14),
+  Future<void> _openFiles() async {
+    final service = widget.manager.active?.service;
+    if (service == null) return;
+    AppAnalytics.instance.filesOpened('sidebar');
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: Text(context.l10n.chatFilesTooltip)),
+          body: FileBrowser(
+            env: service.env,
+            inlinePreview: false,
+            fsRevision: service.fsRevision,
+            onProjectMountChanged: service.refreshProjectMountPrompt,
+          ),
+        ),
       ),
     );
   }
