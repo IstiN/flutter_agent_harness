@@ -718,16 +718,18 @@ List<String> _frameRows(TuiPromptState state, int width) {
   final inner = width - 2;
   final rows = <String>[];
 
+  // Border rows must be exactly `width` visible columns (inner + 2).
+  // ┌─${header}${dashes}┐ = 1 + 1 + header + dashes + 1 = inner + 2
   final headerText = ' ${state.spec.header} ';
   final headerStyled = _accent(headerText);
   final headerVisible = headerText.length;
-  final dashesAfter = (inner - headerVisible).clamp(0, inner);
+  final dashesAfter = (inner - headerVisible - 1).clamp(0, inner);
   rows.add('┌─$headerStyled${'─' * dashesAfter}┐');
 
   rows.addAll(_bodyRows(state, inner));
-  rows.add('├─${'─' * inner}┤');
+  rows.add('├─${'─' * (inner - 1)}┤');
   rows.addAll(_inputRows(state, inner, width));
-  rows.add('└─${'─' * inner}┘');
+  rows.add('└─${'─' * (inner - 1)}┘');
   return rows;
 }
 
@@ -862,12 +864,7 @@ List<String> _askInputRows(TuiPromptState state, int inner) {
         : 'Type your answer (Enter to send, Esc to cancel):';
     final rows = <String>[];
     rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-    final (line, cursorCol) = _inputField(buffer, cursor, inner - 2);
-    rows.add(
-      '│ ${_accent2Plain('>')} ${_accent(line)}'
-      '${' ' * (inner - 1 - line.length)}│',
-    );
-    rows.add(_wrapBodyLine(' ' * cursorCol + '█', inner, dim: true));
+    rows.add(_cursorInputRow(buffer, cursor, inner));
     return rows;
   }
   final hint = spec.multiSelect
@@ -890,12 +887,7 @@ List<String> _textInputRows(TuiPromptState state, int inner) {
       : 'Type your answer (Enter to send, Esc to cancel):';
   final rows = <String>[];
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-  final (line, cursorCol) = _inputField(display, cursor, inner - 2);
-  rows.add(
-    '│ ${_accent2Plain('>')} ${_accent(line)}'
-    '${' ' * (inner - 1 - line.length)}│',
-  );
-  rows.add(_wrapBodyLine(' ' * cursorCol + '█', inner, dim: true));
+  rows.add(_cursorInputRow(display, cursor, inner));
   return rows;
 }
 
@@ -934,11 +926,24 @@ List<String> _approvalInputRows(int inner) {
   ];
 }
 
-(String text, int cursorCol) _inputField(String buffer, int cursor, int avail) {
-  if (avail <= 0) return ('', 0);
-  if (buffer.length <= avail) {
-    return (buffer, cursor);
-  }
-  final start = (cursor - avail ~/ 2).clamp(0, buffer.length - avail);
-  return (buffer.substring(start, start + avail), cursor - start);
+/// Renders an input row with the cursor inline (reverse-video block at
+/// [cursor] position). The visible width is exactly `inner + 2` columns:
+/// `│` + ` > ` + text + padding + `│`.
+String _cursorInputRow(String display, int cursor, int inner) {
+  final clampedCursor = cursor.clamp(0, display.length);
+  final before = display.substring(0, clampedCursor);
+  final at = clampedCursor < display.length ? display[clampedCursor] : ' ';
+  final after = clampedCursor < display.length
+      ? display.substring(clampedCursor + 1)
+      : '';
+  const invert = '\x1b[7m';
+  const reset = '\x1b[0m';
+  // Visible width: │(1) (1) >(1) (1) + contentWidth + padding + │(1)
+  // = 5 + contentWidth + padding = inner + 2 → padding = inner - 3 - contentWidth
+  final contentWidth =
+      display.length + (clampedCursor >= display.length ? 1 : 0);
+  final padding = (inner - 3 - contentWidth).clamp(0, inner);
+  return '│ ${_accent2Plain('>')} ${_accent(before)}'
+      '$invert$at$reset${_accent(after)}'
+      '${' ' * padding}│';
 }
