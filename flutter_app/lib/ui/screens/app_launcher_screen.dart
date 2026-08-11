@@ -60,6 +60,7 @@ class AppLauncherScreen extends StatefulWidget {
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.tileEngineFactory,
+    this.hideChatSheet = false,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -101,6 +102,10 @@ class AppLauncherScreen extends StatefulWidget {
   /// Test seam for live tiles: substitutes the [AppTileHost] engine so
   /// widget tests and goldens render a deterministic tile tree.
   final TileEngineFactory? tileEngineFactory;
+
+  /// When true the [SessionChatSheet] floating overlay is NOT rendered —
+  /// the wide-screen [WideLayoutShell] owns chat instead.
+  final bool hideChatSheet;
 
   @override
   State<AppLauncherScreen> createState() => _AppLauncherScreenState();
@@ -803,18 +808,19 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             _buildGridArea(colors),
             // The collapsed session chat (Fa button / streaming work bar)
             // and, expanded, the 92% session sheet with the pager.
-            SessionChatSheet(
-              key: _sheetKey,
-              manager: widget.manager,
-              registry: widget.registry,
-              lastConnectionStore: widget.lastConnectionStore,
-              sessionNamesStore: widget.sessionNamesStore,
-              uploadPicker: widget.uploadPicker,
-              asr: widget.asr,
-              asrTranscriber: widget.asrTranscriber,
-              audioControllerFactory: widget.audioControllerFactory,
-              videoControllerFactory: widget.videoControllerFactory,
-            ),
+            if (!widget.hideChatSheet)
+              SessionChatSheet(
+                key: _sheetKey,
+                manager: widget.manager,
+                registry: widget.registry,
+                lastConnectionStore: widget.lastConnectionStore,
+                sessionNamesStore: widget.sessionNamesStore,
+                uploadPicker: widget.uploadPicker,
+                asr: widget.asr,
+                asrTranscriber: widget.asrTranscriber,
+                audioControllerFactory: widget.audioControllerFactory,
+                videoControllerFactory: widget.videoControllerFactory,
+              ),
             if (_openFolderId != null) ...[
               _buildFolderBarrier(colors),
               _buildFolderPanel(colors),

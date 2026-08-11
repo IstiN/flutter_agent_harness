@@ -12,7 +12,14 @@ import 'package:fa/services/app_log.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
+import 'package:fa/services/session_names_store.dart';
+import 'package:fa/services/launcher_layout_store.dart';
+import 'package:fa/services/upload.dart';
+import 'package:fa/services/asr_service.dart';
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/analytics.dart';
@@ -31,7 +38,13 @@ import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
-import 'package:fa_ui/fa_ui.dart' show FaChatHost, FaUiHost;
+import 'package:fa_ui/fa_ui.dart'
+    show
+        FaChatHost,
+        FaUiHost,
+        kWideLayoutBreakpoint,
+        SandboxAudioControllerFactory,
+        SandboxVideoControllerFactory;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -349,20 +362,54 @@ AgentConfig? restorableBootConfig({
   );
 }
 
-/// The app home after a successful connect: the apps launcher (iOS-style
-/// grid + folders + live widget tiles) with the session chat sheet on EVERY
-/// layout. The classic sidebar chat is legacy — sessions are managed by the
-/// sheet's pager and menus, never by a left panel.
+/// The app home after a successful connect: on wide screens (≥900px) the
+/// [WideLayoutShell] (sidebar + content area), otherwise the [AppLauncherScreen]
+/// with the floating session chat sheet.
 Widget faHomeScreen({
   required BuildContext context,
   required FlutterSessionManager manager,
   ProviderRegistry? registry,
   LastConnectionStore? lastConnectionStore,
+  SessionNamesStore? sessionNamesStore,
+  UploadPicker? uploadPicker,
+  AsrApi? asr,
+  AsrTranscriber? asrTranscriber,
+  SandboxAudioControllerFactory? audioControllerFactory,
+  SandboxVideoControllerFactory? videoControllerFactory,
+  TileEngineFactory? tileEngineFactory,
+  LauncherLayoutStore? layoutStore,
+  AppsStore? appsStore,
 }) {
+  final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
+  if (isWide) {
+    return WideLayoutShell(
+      manager: manager,
+      registry: registry,
+      lastConnectionStore: lastConnectionStore,
+      sessionNamesStore: sessionNamesStore,
+      uploadPicker: uploadPicker,
+      asr: asr,
+      asrTranscriber: asrTranscriber,
+      audioControllerFactory: audioControllerFactory,
+      videoControllerFactory: videoControllerFactory,
+      tileEngineFactory: tileEngineFactory,
+      layoutStore: layoutStore,
+      appsStore: appsStore,
+    );
+  }
   return AppLauncherScreen(
     manager: manager,
     registry: registry,
     lastConnectionStore: lastConnectionStore,
+    sessionNamesStore: sessionNamesStore,
+    uploadPicker: uploadPicker,
+    asr: asr,
+    asrTranscriber: asrTranscriber,
+    audioControllerFactory: audioControllerFactory,
+    videoControllerFactory: videoControllerFactory,
+    tileEngineFactory: tileEngineFactory,
+    layoutStore: layoutStore,
+    appsStore: appsStore,
   );
 }
 

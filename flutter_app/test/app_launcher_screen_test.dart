@@ -12,6 +12,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:flutter/material.dart';
@@ -820,14 +821,13 @@ void main() {
       );
     });
 
-    testWidgets('wide (>= 900px) also boots into the apps launcher', (
+    testWidgets('wide (>= 900px) boots into the wide layout shell', (
       tester,
     ) async {
-      // The classic sidebar chat is legacy: the launcher + session chat
-      // sheet is the home on EVERY layout — no left sessions panel anywhere.
+      // Wide screens use the sidebar + content layout.
       expect(
         await homeAt(tester, const Size(1280, 800)),
-        isA<AppLauncherScreen>(),
+        isA<WideLayoutShell>(),
       );
     });
   });
