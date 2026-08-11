@@ -214,7 +214,9 @@ void main() {
     final output = io.out.toString();
     expect(
       output,
-      contains('supported providers: openrouter, openai, anthropic, google'),
+      contains(
+        'supported providers: openrouter, openai, chatgpt, anthropic, google',
+      ),
     );
     expect(cli.agent.state.model.provider, 'test-provider');
     expect(cli.providerKind, 'openai-completions');

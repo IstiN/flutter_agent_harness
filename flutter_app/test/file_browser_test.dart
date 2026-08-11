@@ -47,7 +47,10 @@ Widget _wrap(Widget child) {
 }
 
 Finder _selectableText(String text) => find.byWidgetPredicate(
-  (widget) => widget is SelectableText && widget.data == text,
+  (widget) =>
+      widget is SelectableText &&
+      (widget.data == text ||
+          (widget.textSpan != null && widget.textSpan!.toPlainText() == text)),
 );
 
 /// Finds a `SelectableText.rich` (how flutter_markdown renders selectable
