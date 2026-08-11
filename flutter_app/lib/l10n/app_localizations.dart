@@ -2060,6 +2060,42 @@ abstract class AppLocalizations {
   /// **'Runs fully offline after download · needs WebGPU (Chrome/Edge/newer Safari) · weights ~0.5-4 GB cached in your browser'**
   String get settingsWebllmNote;
 
+  /// No description provided for @taskModelSameAsMain.
+  ///
+  /// In en, this message translates to:
+  /// **'Same as main'**
+  String get taskModelSameAsMain;
+
+  /// No description provided for @taskModelSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get taskModelSave;
+
+  /// No description provided for @taskModelSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Task models'**
+  String get taskModelSectionTitle;
+
+  /// No description provided for @taskModelSmolDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'For summaries and subagents'**
+  String get taskModelSmolDescription;
+
+  /// No description provided for @taskModelSmolTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick model'**
+  String get taskModelSmolTitle;
+
+  /// No description provided for @taskModelUseMain.
+  ///
+  /// In en, this message translates to:
+  /// **'Use main model'**
+  String get taskModelUseMain;
+
   /// No description provided for @setupAppBarTitle.
   ///
   /// In en, this message translates to:

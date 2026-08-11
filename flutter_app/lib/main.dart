@@ -33,6 +33,7 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -43,8 +44,10 @@ import 'package:fa_ui/fa_ui.dart'
         FaChatHost,
         FaUiHost,
         kWideLayoutBreakpoint,
+        MediaModelsScope,
         SandboxAudioControllerFactory,
-        SandboxVideoControllerFactory;
+        SandboxVideoControllerFactory,
+        TaskModelsScope;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -104,6 +107,7 @@ Future<void> main() async {
   final onboardingStore = await OnboardingStore.load(env);
   final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
   final mediaModels = await MediaModelsStore.load(env);
+  final taskModels = await TaskModelsStore.load(env);
   // fa_ui's provider UI resolves named keys through the app's chain
   // (dart-defines → saved keys → .env), exactly like the connection form.
   FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
@@ -186,6 +190,7 @@ Future<void> main() async {
       onboardingStore: onboardingStore,
       sessionKeysStore: sessionKeys,
       mediaModelsStore: mediaModels,
+      taskModelsStore: taskModels,
       analytics: analytics,
     ),
   );
@@ -218,6 +223,7 @@ class MyApp extends StatelessWidget {
     this.onboardingStore,
     this.sessionKeysStore,
     this.mediaModelsStore,
+    this.taskModelsStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -251,6 +257,10 @@ class MyApp extends StatelessWidget {
   /// The persisted media-model overrides store; `null` skips the scope (the
   /// settings Media models section hides, tests).
   final MediaModelsStore? mediaModelsStore;
+
+  /// The persisted task-model overrides store; `null` skips the scope (the
+  /// settings Task models section hides, tests).
+  final TaskModelsStore? taskModelsStore;
 
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
@@ -305,6 +315,7 @@ class MyApp extends StatelessWidget {
             lastConnectionStore: lastConnectionStore,
             onboardingStore: onboardingStore,
             sessionKeysStore: sessionKeys,
+            taskModelsStore: taskModelsStore,
             webLlmEngine: webLlmEngine,
             gemmaEngine: gemmaEngine,
             transformersJsEngine: transformersJsEngine,
@@ -318,6 +329,10 @@ class MyApp extends StatelessWidget {
     }
     if (mediaModels != null) {
       child = MediaModelsScope(store: mediaModels, child: child);
+    }
+    final taskModels = taskModelsStore;
+    if (taskModels != null) {
+      child = TaskModelsScope(store: taskModels, child: child);
     }
     return child;
   }
@@ -432,6 +447,7 @@ class BootstrapScreen extends StatefulWidget {
     this.lastConnectionStore,
     this.onboardingStore,
     this.sessionKeysStore,
+    this.taskModelsStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -453,6 +469,9 @@ class BootstrapScreen extends StatefulWidget {
 
   /// The persisted saved-keys store (hosted key resolution).
   final SessionKeysStore? sessionKeysStore;
+
+  /// The persisted task-model overrides store, passed to [AgentService.create].
+  final TaskModelsStore? taskModelsStore;
 
   /// Engine overrides for the on-device providers (tests).
   final WebLlmEngineApi? webLlmEngine;
@@ -510,12 +529,14 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
           env: env,
           sessionKeys: widget.sessionKeysStore,
           providerRegistry: widget.registry,
+          taskModelsStore: widget.taskModelsStore,
         ),
         openFactory: () => AgentService.create(
           config: config,
           env: env,
           sessionKeys: widget.sessionKeysStore,
           providerRegistry: widget.registry,
+          taskModelsStore: widget.taskModelsStore,
         ),
       );
       if (!mounted) return;

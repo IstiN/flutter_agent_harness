@@ -1139,6 +1139,24 @@ class AppLocalizationsEn extends AppLocalizations {
       'Runs fully offline after download · needs WebGPU (Chrome/Edge/newer Safari) · weights ~0.5-4 GB cached in your browser';
 
   @override
+  String get taskModelSameAsMain => 'Same as main';
+
+  @override
+  String get taskModelSave => 'Save';
+
+  @override
+  String get taskModelSectionTitle => 'Task models';
+
+  @override
+  String get taskModelSmolDescription => 'For summaries and subagents';
+
+  @override
+  String get taskModelSmolTitle => 'Quick model';
+
+  @override
+  String get taskModelUseMain => 'Use main model';
+
+  @override
   String get setupAppBarTitle => 'Connect to Fa';
 
   @override

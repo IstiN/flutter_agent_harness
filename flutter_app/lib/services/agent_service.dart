@@ -36,6 +36,7 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
 import 'package:fa/services/notify_tool.dart';
+import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/video_service.dart';
 import 'package:fa/services/video_tool.dart';
 import 'package:fa/gemma/gemma_service.dart';
@@ -156,6 +157,7 @@ class AgentService extends ChangeNotifier
        _resolveSecretName = null,
        _secretsEnv = null,
        _sessionKeys = null,
+       _taskModelsStore = null,
        _approvalModeStore = null,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -189,6 +191,7 @@ class AgentService extends ChangeNotifier
     ExecutionEnv? env,
     SessionKeysStore? sessionKeys,
     ProviderRegistry? providerRegistry,
+    TaskModelsStore? taskModelsStore,
     @visibleForTesting StreamFunction? streamFunction,
   }) async {
     final resolvedEnv = env ?? await createPlatformEnv();
@@ -233,6 +236,7 @@ class AgentService extends ChangeNotifier
       config: config,
       redactor: redactor,
       streamFunction: streamFunction,
+      taskModelsStore: taskModelsStore,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
       initialApprovalMode: savedApprovalMode,
       approvalModeStore: approvalModeStore,
@@ -303,6 +307,7 @@ class AgentService extends ChangeNotifier
     MediaKeyResolver? resolveSecretName,
     SecretsExecutionEnv? secretsEnv,
     SessionKeysStore? sessionKeys,
+    TaskModelsStore? taskModelsStore,
     String promptSuffix = '',
     ApprovalMode? initialApprovalMode,
     ApprovalModeStore? approvalModeStore,
@@ -310,6 +315,7 @@ class AgentService extends ChangeNotifier
        _resolveSecretName = resolveSecretName,
        _secretsEnv = secretsEnv,
        _sessionKeys = sessionKeys,
+       _taskModelsStore = taskModelsStore,
        _promptSuffix = promptSuffix,
        _approvalModeStore = approvalModeStore,
        approval = ApprovalManager(
@@ -596,6 +602,12 @@ class AgentService extends ChangeNotifier
   /// reflects that via [RequestSecretResult.persisted]).
   final SessionKeysStore? _sessionKeys;
 
+  /// Per-task-role model overrides (`task_models.json`); `null` for services
+  /// built around a pre-constructed [Agent] (tests). When the `smol` role
+  /// carries an override, compaction uses that model instead of the main
+  /// connection.
+  final TaskModelsStore? _taskModelsStore;
+
   /// The registry built in [_withEnv]; `null` for services constructed
   /// around a pre-constructed [Agent] (tests), where the registry is owned
   /// by the caller.
@@ -730,6 +742,10 @@ class AgentService extends ChangeNotifier
   /// settings Media models section uses it as the editor's
   /// placeholder/default.
   String get activeBaseUrl => _activeBaseUrl;
+
+  /// Model id of the active backend, read live from the agent's model state;
+  /// the settings Task models section uses it as the editor's placeholder.
+  String get agentModelId => _agent.state.model.id;
 
   /// Fa does not track provider ids in the connection — the provider UI
   /// falls back to base-URL matching for the "current" mark.
@@ -1365,6 +1381,7 @@ class AgentService extends ChangeNotifier
       // `request_secret` grant in one session is live and persisted for all.
       secretsEnv: _secretsEnv,
       sessionKeys: _sessionKeys,
+      taskModelsStore: _taskModelsStore,
       // Clones inherit the CURRENT approval mode (not a fresh disk read) and
       // share the store so their mode changes persist too.
       initialApprovalMode: approval.mode,
@@ -1756,11 +1773,40 @@ class AgentService extends ChangeNotifier
     final session = _session;
     if (session == null) return;
     try {
+      final smolConfig = _taskModelsStore?.overrideFor(TaskRole.smol);
+      final StreamFunction summarizeStream;
+      final Model summarizeModel;
+      if (smolConfig != null && smolConfig.modelId.isNotEmpty) {
+        // Resolve the API key: the smol config's named key from the session
+        // secrets, falling back to the main connection's active key.
+        var apiKey = _activeApiKey;
+        final keyName = smolConfig.apiKeyName;
+        if (keyName != null && keyName.isNotEmpty) {
+          final resolved = _secretsEnv != null
+              ? _secretsEnv.secretsSnapshot()[keyName]
+              : null;
+          if (resolved != null && resolved.isNotEmpty) apiKey = resolved;
+        }
+        summarizeModel = Model(
+          id: smolConfig.modelId,
+          name: smolConfig.modelId,
+          api: _agent.state.model.api,
+          provider: _agent.state.model.provider,
+          baseUrl: smolConfig.baseUrl,
+          contextWindow: _agent.state.model.contextWindow,
+          maxTokens: _agent.state.model.maxTokens,
+          input: _agent.state.model.input,
+        );
+        summarizeStream = providerStreamFunction(
+          smolConfig.providerKind,
+          apiKey,
+        );
+      } else {
+        summarizeStream = _agent.streamFunction;
+        summarizeModel = _agent.state.model;
+      }
       final manager = CompactionManager(
-        summarize: streamFunctionSummarizer(
-          _agent.streamFunction,
-          _agent.state.model,
-        ),
+        summarize: streamFunctionSummarizer(summarizeStream, summarizeModel),
         settings: settings,
       );
       final record = await manager.compactSession(session);

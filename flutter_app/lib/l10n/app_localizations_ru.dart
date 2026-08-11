@@ -1149,6 +1149,24 @@ class AppLocalizationsRu extends AppLocalizations {
       'Работает полностью офлайн после скачивания · требуется WebGPU (Chrome/Edge/новые Safari) · веса ~0.5-4 ГБ кешируются в браузере';
 
   @override
+  String get taskModelSameAsMain => 'Как основная';
+
+  @override
+  String get taskModelSave => 'Сохранить';
+
+  @override
+  String get taskModelSectionTitle => 'Модели для задач';
+
+  @override
+  String get taskModelSmolDescription => 'Для саммари и сабагентов';
+
+  @override
+  String get taskModelSmolTitle => 'Быстрая модель';
+
+  @override
+  String get taskModelUseMain => 'Использовать основную';
+
+  @override
   String get setupAppBarTitle => 'Подключение к Fa';
 
   @override

@@ -28,6 +28,7 @@ import 'package:fa/services/openrouter_oauth_links_stub.dart'
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
@@ -1958,6 +1959,7 @@ class SettingsScreen extends StatefulWidget {
     this.gemmaEngine,
     this.transformersJsEngine,
     this.modelsFetcher,
+    this.taskModelsStore,
   });
 
   /// The service whose backend the default-chat-model flow reconfigures.
@@ -1992,6 +1994,10 @@ class SettingsScreen extends StatefulWidget {
   /// flow and the media slot editor.
   final ModelsEndpointFetcher? modelsFetcher;
 
+  /// Per-task-role model overrides (`task_models.json`); `null` hides the
+  /// Task models section (tests pumping the bare form).
+  final TaskModelsStore? taskModelsStore;
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -2005,6 +2011,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final taskModels =
+        widget.taskModelsStore ?? TaskModelsScope.maybeOf(context);
     return Scaffold(
       appBar: AppBar(title: Text(context.l10n.settingsTitle)),
       body: SafeArea(
@@ -2052,6 +2060,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
+              if (taskModels != null) ...[
+                faui.TaskModelsSection(
+                  store: taskModels,
+                  mainBaseUrl: widget.service.activeBaseUrl,
+                  mainModelId: widget.service.agentModelId,
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
               ModelPresetsSection(
                 service: widget.service,
                 lastConnectionStore: widget.lastConnectionStore,
@@ -2059,6 +2077,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
+              if ((widget.taskModelsStore ??
+                      faui.TaskModelsScope.maybeOf(context)) !=
+                  null) ...[
+                // l10n:ignore
+                faui.TaskModelsSection(
+                  store: widget.taskModelsStore,
+                  mainBaseUrl: widget.service.activeBaseUrl,
+                  mainModelId: widget.service.modelId,
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
               MediaModelsSection(
                 service: widget.service,
                 registry: widget.registry,
