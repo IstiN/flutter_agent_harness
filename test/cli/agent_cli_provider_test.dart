@@ -905,6 +905,11 @@ void main() {
       () => io.out.toString().contains('switched provider to openai'),
     );
     io.sendLine('/provider-edit');
+    // The new Edit/Delete picker shows first; pick "Edit provider".
+    await waitForIt(
+      () => io.out.toString().contains('provider localhost:11434'),
+    );
+    io.sendLine('1');
     await waitForIt(
       () => io.out.toString().contains('editing provider localhost:11434'),
     );
@@ -935,6 +940,79 @@ void main() {
     expect(entry.name, 'renamed-ollama');
     expect(entry.modelId, 'new-model');
     expect(entry.baseUrl, 'http://localhost:11434/v1');
+  });
+
+  test('/provider-edit delete removes the custom provider', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final registry = CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'to-delete',
+        apiType: 'openai',
+        baseUrl: 'http://delete.me/v1',
+        modelId: 'm1',
+      ),
+    ]);
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      customProviders: registry,
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider to-delete');
+    await waitForIt(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/provider-edit');
+    await waitForIt(() => io.out.toString().contains('provider to-delete'));
+    io.sendLine('2'); // pick "Delete provider"
+    await waitForIt(
+      () => io.out.toString().contains('Delete provider to-delete'),
+    );
+    io.sendLine('1'); // confirm "Yes, delete"
+    await waitForIt(
+      () => io.out.toString().contains('deleted provider to-delete'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    expect(registry.entries, isEmpty);
+  });
+
+  test('/provider-edit delete cancelled keeps the provider', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final registry = CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'to-keep',
+        apiType: 'openai',
+        baseUrl: 'http://keep.me/v1',
+        modelId: 'm1',
+      ),
+    ]);
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      customProviders: registry,
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider to-keep');
+    await waitForIt(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('/provider-edit');
+    await waitForIt(() => io.out.toString().contains('provider to-keep'));
+    io.sendLine('2'); // pick "Delete provider"
+    await waitForIt(
+      () => io.out.toString().contains('Delete provider to-keep'),
+    );
+    io.sendLine('2'); // confirm "No, cancel"
+    await waitForIt(() => io.out.toString().contains('delete cancelled'));
+    io.sendLine('/exit');
+    await run;
+
+    expect(registry.entries, hasLength(1));
+    expect(registry.find('to-keep'), isNotNull);
   });
 
   group('OpenRouter OAuth', () {

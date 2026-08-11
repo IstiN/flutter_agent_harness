@@ -47,11 +47,36 @@ extension on AgentCli {
     );
   }
 
-  /// `/provider-edit`: the guided flow prefilled with the active provider —
-  /// editing its registry entry when one is active, a plain session switch
-  /// otherwise.
+  /// `/provider-edit`: asks Edit/Delete first, then either runs the guided
+  /// edit flow (prefilled with the active provider) or deletes it with
+  /// confirmation. Catalog providers can only be edited (no registry entry).
   void _startProviderEditFlow() {
     final entry = config.customProviders?.find(_activeCustomName ?? '');
+    if (entry != null) {
+      _providerEditOrDelete(entry);
+      return;
+    }
+    // Catalog provider: no registry entry to delete — just edit.
+    _startProviderEditWizard(entry);
+  }
+
+  /// The Edit/Delete picker for a custom provider entry.
+  Future<void> _providerEditOrDelete(CustomProviderEntry entry) async {
+    io.writeln('provider ${entry.name} (${entry.baseUrl})');
+    final choice = await _pickOption('action', [
+      ('edit', 'Edit provider', 'change base URL, name, key, or model'),
+      ('delete', 'Delete provider', 'remove from the registry'),
+    ]);
+    if (choice == null) return;
+    if (choice == 'delete') {
+      await _deleteProviderWithConfirmation(entry);
+      return;
+    }
+    _startProviderEditWizard(entry);
+  }
+
+  /// The edit wizard (prefilled from the entry or active provider).
+  void _startProviderEditWizard(CustomProviderEntry? entry) {
     final model = _agent.state.model;
     final spec = catalogProvider(model.provider) ?? providerCatalog['openai']!;
     _startProviderFlow(
@@ -61,6 +86,31 @@ extension on AgentCli {
       initialModelId: model.id,
       editName: entry?.name,
     );
+  }
+
+  /// Deletes [entry] after a y/N confirmation.
+  Future<void> _deleteProviderWithConfirmation(
+    CustomProviderEntry entry,
+  ) async {
+    io.writeln(
+      'Delete provider ${entry.name} (${entry.baseUrl}, model: ${entry.modelId})?',
+    );
+    final answer = await _pickOption('confirm delete', [
+      ('y', 'Yes, delete', 'remove from the registry'),
+      ('n', 'No, cancel', 'keep the provider'),
+    ]);
+    if (answer != 'y') {
+      io.writeln('delete cancelled');
+      return;
+    }
+    final registry = config.customProviders;
+    if (registry == null) return;
+    registry.entries.removeWhere((e) => e.name == entry.name);
+    // Clear the active custom name if the deleted provider was active.
+    if (_activeCustomName == entry.name) {
+      _activeCustomName = null;
+    }
+    io.writeln('deleted provider ${entry.name}');
   }
 
   /// The flow's free-form questions: a TUI text prompt when the controller
