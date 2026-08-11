@@ -923,6 +923,8 @@ Future<void> main(List<String> args) async {
             cli.config.customProviders?.entries ?? saved.customProviders,
         // Models config (the live instance `/models set`/`remove` mutates).
         models: cli.config.modelsConfig ?? saved.models,
+        // MCP servers (the live config — re-read on `/mcp reload`).
+        mcp: cli.config.mcpConfig?.config ?? saved.mcp,
       ),
     );
   };
