@@ -643,7 +643,7 @@ Map<String, String> _buildHeaders(
   final sessionId = _resolveCacheRetention(options) == 'none'
       ? null
       : options?.sessionId;
-  return mergeProviderHeaders(
+  final headers = mergeProviderHeaders(
     {
       'content-type': 'application/json',
       // An empty/absent key sends NO Authorization header: keyless local
@@ -662,6 +662,7 @@ Map<String, String> _buildHeaders(
     model.headers,
     options?.headers,
   );
+  return headers;
 }
 
 /// Auto-detected plus overridden compatibility settings for [model].
