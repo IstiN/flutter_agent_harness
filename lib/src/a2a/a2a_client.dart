@@ -123,9 +123,10 @@ final class A2aTask {
   A2aTask({
     required this.id,
     required this.state,
-    this.messages = const [],
-    this.artifacts = const [],
-  });
+    List<A2aMessage>? messages,
+    List<A2aArtifact>? artifacts,
+  }) : messages = messages ?? [],
+       artifacts = artifacts ?? [];
 
   factory A2aTask.fromJson(Map<String, dynamic> json) => A2aTask(
     id: json['id'] as String,
