@@ -904,141 +904,29 @@ void main() {
     },
   );
 
-  test('/provider-edit updates the active custom provider', () async {
-    final fake = FakeStreamFunction([textTurn('ok')]);
-    final registry = CustomProviderRegistry([
-      CustomProviderEntry(
-        name: 'localhost:11434',
-        apiType: 'openai',
-        baseUrl: 'http://localhost:11434/v1',
-        modelId: 'old-model',
-      ),
-    ]);
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      customProviders: registry,
-      modelsFetcher: (baseUrl, {required apiKey}) async => [
-        'new-model',
-        'old-model',
-      ],
-    );
-    final run = cli.run();
+  // /provider-edit edit/delete tests moved to visual TUI suite — the
+  // command was removed; edit/delete is now inline in the /provider picker
+  // (select a saved provider → Edit/Delete sub-picker). Line mode no longer
+  // has a dedicated edit command.
 
-    io.sendLine('/provider localhost:11434');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/provider-edit');
-    // The new Edit/Delete picker shows first; pick "Edit provider".
-    await waitForIt(
-      () => io.out.toString().contains('provider localhost:11434'),
-    );
-    io.sendLine('1');
-    await waitForIt(
-      () => io.out.toString().contains('editing provider localhost:11434'),
-    );
-    io.sendLine('1');
-    await waitForIt(
-      () => io.out.toString().contains(
-        'base URL (empty = http://localhost:11434/v1)',
-      ),
-    );
-    io.sendLine('');
-    await waitForIt(
-      () =>
-          io.out.toString().contains('provider name (empty = localhost:11434)'),
-    );
-    io.sendLine('renamed-ollama');
-    await waitForIt(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
-    io.sendLine('');
-    await waitForIt(() => io.out.toString().contains('1) new-model'));
-    io.sendLine('1');
-    await waitForIt(() => cli.agent.state.model.id == 'new-model');
-    io.sendLine('/exit');
-    await run;
+  test(
+    '/provider-edit line-mode is gone — typed command falls through',
+    () async {
+      // /provider-edit was removed; its functionality is now inline in the
+      // /provider picker (saved provider → Edit/Delete). A typed /provider-edit
+      // is an unknown command → filtered menu.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
 
-    expect(registry.find('localhost:11434'), isNull);
-    final entry = registry.entries.single;
-    expect(entry.name, 'renamed-ollama');
-    expect(entry.modelId, 'new-model');
-    expect(entry.baseUrl, 'http://localhost:11434/v1');
-  });
-
-  test('/provider-edit delete removes the custom provider', () async {
-    final fake = FakeStreamFunction([textTurn('ok')]);
-    final registry = CustomProviderRegistry([
-      CustomProviderEntry(
-        name: 'to-delete',
-        apiType: 'openai',
-        baseUrl: 'http://delete.me/v1',
-        modelId: 'm1',
-      ),
-    ]);
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      customProviders: registry,
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider to-delete');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/provider-edit');
-    await waitForIt(() => io.out.toString().contains('provider to-delete'));
-    io.sendLine('2'); // pick "Delete provider"
-    await waitForIt(
-      () => io.out.toString().contains('Delete provider to-delete'),
-    );
-    io.sendLine('1'); // confirm "Yes, delete"
-    await waitForIt(
-      () => io.out.toString().contains('deleted provider to-delete'),
-    );
-    io.sendLine('/exit');
-    await run;
-
-    expect(registry.entries, isEmpty);
-  });
-
-  test('/provider-edit delete cancelled keeps the provider', () async {
-    final fake = FakeStreamFunction([textTurn('ok')]);
-    final registry = CustomProviderRegistry([
-      CustomProviderEntry(
-        name: 'to-keep',
-        apiType: 'openai',
-        baseUrl: 'http://keep.me/v1',
-        modelId: 'm1',
-      ),
-    ]);
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      customProviders: registry,
-    );
-    final run = cli.run();
-
-    io.sendLine('/provider to-keep');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
-    io.sendLine('/provider-edit');
-    await waitForIt(() => io.out.toString().contains('provider to-keep'));
-    io.sendLine('2'); // pick "Delete provider"
-    await waitForIt(
-      () => io.out.toString().contains('Delete provider to-keep'),
-    );
-    io.sendLine('2'); // confirm "No, cancel"
-    await waitForIt(() => io.out.toString().contains('delete cancelled'));
-    io.sendLine('/exit');
-    await run;
-
-    expect(registry.entries, hasLength(1));
-    expect(registry.find('to-keep'), isNotNull);
-  });
+      io.sendLine('/provider-edit');
+      await waitForIt(
+        () => io.out.toString().contains('unknown command: /provider-edit'),
+      );
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 
   group('OpenRouter OAuth', () {
     test(

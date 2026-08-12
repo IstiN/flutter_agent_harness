@@ -85,9 +85,8 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('models for anthropic:'));
-    expect(output, contains('1) claude-sonnet-4-5'));
-    expect(output, contains('use /model <n> or /model <id> to switch'));
+    expect(output, contains('models (provider/model):'));
+    expect(output, contains('claude-sonnet-4-5'));
   });
 
   test('/models filters known models by substring', () async {
@@ -105,11 +104,11 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('1) claude-opus-4'));
+    expect(output, contains('claude-opus-4'));
     expect(output, isNot(contains('claude-haiku-4')));
   });
 
-  test('/model picker lets the user switch by number', () async {
+  test('/model ? lists models and /model <id> switches', () async {
     final fake = FakeStreamFunction([]);
     final cli = cliFor(
       fake.call,
@@ -119,8 +118,8 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/model ?');
-    await waitForIt(() => io.out.toString().contains('use /model <n>'));
-    io.sendLine('/model 2');
+    await waitForIt(() => io.out.toString().contains('use /model'));
+    io.sendLine('/model claude-opus-4');
     await waitForIt(
       () => io.out.toString().contains('switched model to claude-opus-4'),
     );

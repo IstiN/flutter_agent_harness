@@ -48,8 +48,9 @@ const builtinSlashCommands = <String, String>{
   '/models': '[filter] | config | set <slot> <model> [baseUrl] | remove <slot>',
   '/model-edit':
       '[contextWindow|maxTokens <n>] — show or override token limits',
-  '/provider': '[name] [baseUrl] [token] | custom — switch provider/endpoint',
-  '/provider-edit': 'edit the active provider via the guided setup',
+  '/provider':
+      '[name] [baseUrl] [token] | add | custom — switch or add provider',
+  // /provider-edit removed — edit/delete is now inline in /provider picker.
   '/mode': '[name] — show or switch the active mode',
   '/session': '[name] — show current or switch/create a named session',
   '/session-new': '<name> — create a new named session',

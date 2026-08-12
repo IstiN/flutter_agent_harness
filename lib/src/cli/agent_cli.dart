@@ -606,6 +606,12 @@ class AgentCli {
   List<String> _modelCache = const [];
   Future<void>? _modelCacheFuture;
 
+  /// Per-provider cached model lists: entry name → model ids. Refreshed
+  /// lazily for ALL saved providers so `/model` can switch across
+  /// providers in one pick.
+  final Map<String, List<String>> _allProvidersModelCache = {};
+  bool _allProvidersCacheRefreshed = false;
+
   /// Context windows reported by the endpoint's `/models` payload (see
   /// [parseModelsResponse] in provider_commands.dart); empty when the
   /// fetcher is replaced (tests) or the endpoint reports none. Drives
@@ -873,6 +879,7 @@ class AgentCli {
     'mode': _switchMode,
     'approval': (key) async => _handleApprovalMode(key),
     'provider': _tuiPickProvider,
+    'addProvider': _tuiPickAddProvider,
     'settings': _tuiPickSetting,
   };
 
@@ -917,21 +924,85 @@ class AgentCli {
   /// `saved:<name>` switches to a saved custom provider, anything else is a
   /// catalog provider name.
   Future<void> _tuiPickProvider(String key) async {
+    if (key == 'add') {
+      _openAddProviderPicker();
+      return;
+    }
+    if (key.startsWith('saved:')) {
+      // Selecting a saved provider opens its Edit/Delete sub-picker.
+      final name = key.substring('saved:'.length);
+      final entry = config.customProviders?.find(name);
+      if (entry != null) _providerEditOrDelete(entry);
+      return;
+    }
+    // Fallback: a bare catalog name typed in line mode.
+    await _tuiPickCatalogOrSaved(key);
+  }
+
+  /// The preset picker for adding a new provider: catalog presets each
+  /// launching their specific setup flow, plus `Custom` as the generic
+  /// openai-compatible path.
+  void _openAddProviderPicker() {
+    _tuiController?.openPicker('addProvider', 'Add provider', [
+      const MenuItem(
+        key: 'preset:openrouter',
+        label: 'OpenRouter',
+        description: 'OAuth or API key — 300+ models',
+      ),
+      const MenuItem(
+        key: 'preset:chatgpt',
+        label: 'ChatGPT (Codex)',
+        description: 'account sign-in via OAuth',
+      ),
+      const MenuItem(
+        key: 'preset:codemie',
+        label: 'CodeMie',
+        description: 'organization SSO sign-in',
+      ),
+      const MenuItem(
+        key: 'preset:openai',
+        label: 'OpenAI',
+        description: 'api.openai.com — API key',
+      ),
+      const MenuItem(
+        key: 'preset:anthropic',
+        label: 'Anthropic',
+        description: 'api.anthropic.com — API key',
+      ),
+      const MenuItem(
+        key: 'preset:google',
+        label: 'Google',
+        description: 'Gemini models — API key',
+      ),
+      const MenuItem(
+        key: 'custom',
+        label: 'Custom',
+        description: 'any OpenAI-compatible endpoint',
+      ),
+    ]);
+  }
+
+  /// Routes a preset-picker selection to the matching setup flow.
+  Future<void> _tuiPickAddProvider(String key) async {
     if (key == 'custom') {
       _startProviderFlow();
       return;
     }
-    // Provider types that require interactive auth get their flow launched
-    // instead of a plain catalog switch (codemie → SSO, chatgpt → OAuth).
-    if (key == 'codemie') {
-      await _handleCodeMieSsoCommand(defaultCodeMieBaseUrl);
-      return;
+    if (key.startsWith('preset:')) {
+      final preset = key.substring('preset:'.length);
+      switch (preset) {
+        case 'openrouter':
+          await _handleOpenRouterOAuthCommand(headless: false);
+        case 'chatgpt':
+          await _handleChatGptOAuthCommand(headless: false);
+        case 'codemie':
+          await _handleCodeMieSsoCommand(defaultCodeMieBaseUrl);
+        case 'openai' || 'anthropic' || 'google':
+          _startProviderFlow(initialType: preset);
+        default:
+          io.writeln('unknown preset: $preset');
+      }
     }
-    if (key == 'chatgpt') {
-      await _handleChatGptOAuthCommand(headless: false);
-      return;
-    }
-    await _tuiPickCatalogOrSaved(key);
   }
 
   /// A non-`custom` provider-picker selection: a saved entry or a catalog
@@ -1909,8 +1980,6 @@ class AgentCli {
         await _handleModelEdit(rest);
       case '/provider':
         await _providerSlash(rest);
-      case '/provider-edit':
-        _startProviderEditFlow();
       case '/key':
         await _handleKeyCommand(rest);
       default:

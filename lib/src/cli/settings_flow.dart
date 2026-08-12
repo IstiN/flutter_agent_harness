@@ -247,11 +247,6 @@ extension SettingsFlow on AgentCli {
     final model = _agent.state.model;
     final items = [
       MenuItem(key: 'provider', label: 'Provider', description: model.provider),
-      const MenuItem(
-        key: 'provider-edit',
-        label: 'Edit / delete provider',
-        description: 'guided setup: api type, url, key, model',
-      ),
       MenuItem(key: 'model', label: 'Chat model', description: model.id),
       const MenuItem(
         key: 'model-edit',
@@ -296,7 +291,6 @@ extension SettingsFlow on AgentCli {
   /// Settings-hub key → the flow its dedicated slash command would open.
   Map<String, Future<void> Function()> get _settingsPickerHandlers => {
     'provider': () async => _openProviderPicker(),
-    'provider-edit': () async => _startProviderEditFlow(),
     'model': startChatModelFlow,
     'model-edit': () => _handleModelEdit(''),
     'media': startMediaSlotFlow,

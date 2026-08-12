@@ -47,28 +47,6 @@ extension on AgentCli {
     );
   }
 
-  /// `/provider-edit`: asks Edit/Delete first, then either runs the guided
-  /// edit flow (prefilled with the active provider) or deletes it with
-  /// confirmation. Catalog providers can only be edited (no registry entry).
-  void _startProviderEditFlow() {
-    // Find the entry by active custom name, or by matching the current
-    // provider's baseUrl to a saved entry (covers catalog-switched
-    // providers that happen to be in the registry).
-    var entry = config.customProviders?.find(_activeCustomName ?? '');
-    if (entry == null) {
-      final currentBaseUrl = _agent.state.model.baseUrl;
-      entry = config.customProviders?.entries
-          .where((e) => e.baseUrl == currentBaseUrl)
-          .firstOrNull;
-    }
-    if (entry != null) {
-      _providerEditOrDelete(entry);
-      return;
-    }
-    // No registry entry: no delete option — just edit.
-    _startProviderEditWizard(entry);
-  }
-
   /// The Edit/Delete picker for a custom provider entry.
   Future<void> _providerEditOrDelete(CustomProviderEntry entry) async {
     io.writeln('provider ${entry.name} (${entry.baseUrl})');
@@ -417,17 +395,21 @@ extension on AgentCli {
   /// The TUI provider picker (bare `/provider`): saved custom providers
   /// first, then the catalog presets, then the `+ Add provider` wizard
   /// entry last. A saved selection restores the entry's last-used model.
+  /// The TUI provider picker (bare `/provider`): saved providers only,
+  /// plus `+ Add provider` as the last entry. Selecting a saved provider
+  /// opens its Edit/Delete sub-picker; selecting add opens the preset
+  /// picker. No catalog presets shown — they are only reachable from the
+  /// add flow.
   void _openProviderPicker() {
     final items = <MenuItem>[
       ..._savedProviderItems(),
-      ..._catalogProviderItems(),
       const MenuItem(
-        key: 'custom',
+        key: 'add',
         label: '+ Add provider',
-        description: 'guided setup: api type, url, key, model',
+        description: 'openrouter, chatgpt, codemie, openai, ...',
       ),
     ];
-    _tuiController?.openPicker('provider', 'Select provider', items);
+    _tuiController?.openPicker('provider', 'Providers', items);
   }
 
   /// The picker's saved-custom-provider entries (registry order), each
@@ -447,30 +429,6 @@ extension on AgentCli {
         '${entry.baseUrl} · ${entry.modelId}'
         '${entry.name == _activeCustomName ? ' (current)' : ''}',
   );
-
-  /// The picker's catalog presets; the active provider is marked
-  /// `(current)` unless a saved custom provider is active instead.
-  Iterable<MenuItem> _catalogProviderItems() {
-    final current = _agent.state.model.provider;
-    final activeName = _activeCustomName;
-    return [
-      for (final spec in providerCatalog.values)
-        _catalogProviderItem(
-          spec,
-          isCurrent: activeName == null && spec.name == current,
-        ),
-    ];
-  }
-
-  /// One picker entry for a catalog preset.
-  MenuItem _catalogProviderItem(ProviderSpec spec, {required bool isCurrent}) =>
-      MenuItem(
-        key: spec.name,
-        label: spec.name,
-        description:
-            '${spec.defaultBaseUrl}'
-            '${isCurrent ? ' (current)' : ''}',
-      );
 
   /// `/provider [name] [baseUrl] [token] | custom` — shows the active
   /// provider, endpoint, and key status plus the supported catalog; switches
@@ -1614,45 +1572,160 @@ extension on AgentCli {
 
   // ------------------------------------------------------------- models
 
-  /// Whether the model list still needs its background fetch: no cached
-  /// models yet and no fetch already in flight.
+  // _allProvidersModelCache and _allProvidersCacheRefreshed are fields on
+  // AgentCli (agent_cli.dart line 608-610); this part file accesses them
+  // directly because it's the same library.
+
   bool get _modelCacheNeedsRefresh =>
-      _modelCache.isEmpty && _modelCacheFuture == null;
+      !_allProvidersCacheRefreshed && _modelCacheFuture == null;
 
   List<MenuItem> _buildModelMenu(String filter) {
-    // If we have no cached models yet, kick off a background fetch and show a
-    // loading placeholder. The picker will refresh automatically when the list
-    // arrives.
     if (_modelCacheNeedsRefresh) {
-      unawaited(_refreshModelCache());
+      unawaited(_refreshAllProvidersModelCache());
     }
-    return _modelMenuItems(_modelCandidates(filter));
+    return _crossProviderModelMenuItems(_crossProviderCandidates(filter));
   }
 
-  /// The picker items of [_buildModelMenu]: a loading placeholder while the
-  /// candidate list is empty, else the numbered model entries with a vision
-  /// marker from the shared heuristic (endpoints expose no modality
-  /// metadata, so the checkmark is how the user sees what the agent will
-  /// believe about the model).
-  List<MenuItem> _modelMenuItems(List<String> models) {
-    if (models.isEmpty) {
+  /// Builds MenuItem list from cross-provider candidates. Each entry is
+  /// `provider/model-id` with a vision marker; the key encodes
+  /// `providerName|modelId` for the selection handler.
+  List<MenuItem> _crossProviderModelMenuItems(
+    List<(String provider, String modelId)> entries,
+  ) {
+    if (entries.isEmpty) {
       return const [MenuItem(key: '', label: 'loading models...')];
     }
+    final currentModel = _agent.state.model;
     return [
-      for (var i = 0; i < models.length; i++)
-        MenuItem(
-          key: models[i],
-          label: '${i + 1}) ${models[i]}',
-          description: visionMarker(models[i]),
-        ),
+      for (var i = 0; i < entries.length; i++)
+        () {
+          final (provider, modelId) = entries[i];
+          final isCurrent =
+              provider == currentModel.provider && modelId == currentModel.id;
+          return MenuItem(
+            key: '$provider|$modelId',
+            label:
+                '${i + 1}) $provider/$modelId'
+                '${isCurrent ? ' (current)' : ''}',
+            description: visionMarker(modelId),
+          );
+        }(),
     ];
   }
 
-  Future<void> _tuiSelectModel(String modelId) async {
-    await _handleModelCommand(modelId);
+  Future<void> _tuiSelectModel(String key) async {
+    // Cross-provider model picker encodes the selection as
+    // `providerName|modelId`. If the active provider matches, it's a plain
+    // model switch; otherwise switch provider first, then model.
+    final pipe = key.indexOf('|');
+    if (pipe < 0) {
+      await _handleModelCommand(key);
+      return;
+    }
+    final providerName = key.substring(0, pipe);
+    final modelId = key.substring(pipe + 1);
+    final registry = config.customProviders;
+    final entry = registry?.find(providerName);
+    if (entry != null && entry.name != _activeCustomName) {
+      await _switchToSavedProvider(entry);
+    }
+    await _switchModel(modelId);
   }
 
-  /// Fetches the model list from an OpenAI-compatible `/models` endpoint and
+  /// Fetches model lists from ALL saved providers in the background and
+  /// populates [_allProvidersModelCache]. Also keeps the legacy
+  /// [_modelCache] (active provider only) in sync for context-window
+  /// detection.
+  Future<void> _refreshAllProvidersModelCache() async {
+    if (_modelCacheFuture != null) return;
+    final completer = Completer<void>();
+    _modelCacheFuture = completer.future;
+    try {
+      final registry = config.customProviders;
+      if (registry != null && registry.entries.isNotEmpty) {
+        // Fetch all providers in parallel.
+        await Future.wait(
+          registry.entries.map((entry) => _fetchProviderModels(entry)),
+        );
+      }
+      // Always include the active provider's fallback list.
+      final activeProvider = _agent.state.model.provider;
+      if (!_allProvidersModelCache.containsKey(activeProvider)) {
+        _allProvidersModelCache[activeProvider] =
+            _knownModels[activeProvider] ?? [_agent.state.model.id];
+      }
+      _allProvidersCacheRefreshed = true;
+      _tuiController?.sendModelsRefresh();
+    } finally {
+      _modelCacheFuture = null;
+      completer.complete();
+    }
+  }
+
+  /// Fetches models for one saved provider entry and caches them.
+  Future<void> _fetchProviderModels(CustomProviderEntry entry) async {
+    try {
+      final spec = entry.spec;
+      final keyName = entry.keyName;
+      final token = keyName != null ? config.secureKeys?.read(keyName) : null;
+      final cookieOrKey = token ?? '';
+
+      List<String> ids;
+      if (entry.baseUrl.contains('/code-assistant-api/')) {
+        ids = await fetchCodeMieModels(entry.baseUrl, cookieOrKey);
+      } else if (spec.kind == 'openai-completions') {
+        final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
+        ids = await fetch(entry.baseUrl, apiKey: cookieOrKey);
+      } else {
+        ids = const [];
+      }
+      if (ids.isEmpty) ids = [entry.modelId];
+      _allProvidersModelCache[entry.name] = ids;
+    } on Object {
+      // Dead endpoint — use the entry's last-known model.
+      _allProvidersModelCache[entry.name] = [entry.modelId];
+    }
+  }
+
+  /// Returns cross-provider model candidates as `(providerName, modelId)`
+  /// pairs, optionally filtered by a lowercase substring match on either
+  /// the provider name or the model id.
+  List<(String, String)> _crossProviderCandidates([String filter = '']) {
+    final registry = config.customProviders;
+    final entries = <(String, String)>[];
+    if (registry != null) {
+      for (final entry in registry.entries) {
+        final models = _allProvidersModelCache[entry.name] ?? [entry.modelId];
+        for (final modelId in models) {
+          entries.add((entry.name, modelId));
+        }
+      }
+    }
+    // Always include the active provider's known models (catalog fallback
+    // when there are no saved entries or the cache hasn't populated yet).
+    final activeProvider = _agent.state.model.provider;
+    final activeName = _activeCustomName ?? activeProvider;
+    if (entries.isEmpty || registry == null || registry.entries.isEmpty) {
+      final known =
+          _allProvidersModelCache[activeName] ??
+          (_modelCache.isNotEmpty
+              ? _modelCache
+              : (_knownModels[activeProvider] ?? [_agent.state.model.id]));
+      for (final modelId in known) {
+        entries.add((activeProvider, modelId));
+      }
+    }
+    if (filter.isEmpty) return entries;
+    final lower = filter.toLowerCase();
+    return entries
+        .where(
+          (e) =>
+              e.$1.toLowerCase().contains(lower) ||
+              e.$2.toLowerCase().contains(lower),
+        )
+        .toList();
+  }
+
   /// refreshes the TUI picker if it is currently open. Failures are swallowed
   /// so the UI keeps working with the hardcoded fallback list. When the
   /// payload reports the active model's real context window, the model is
@@ -1741,33 +1814,35 @@ extension on AgentCli {
   /// and cached.
   Future<void> _listModels(String filter) async {
     if (_modelCacheNeedsRefresh) {
-      await _refreshModelCache();
+      await _refreshAllProvidersModelCache();
     }
-    final candidates = _modelCandidates(filter);
-    if (candidates.isEmpty) {
-      io.writeln('no known models for provider ${_agent.state.model.provider}');
+    final entries = _crossProviderCandidates(filter);
+    if (entries.isEmpty) {
+      io.writeln('no models available');
       return;
     }
-    io.writeln('models for ${_agent.state.model.provider}:');
-    for (var i = 0; i < candidates.length; i++) {
-      io.writeln('  ${i + 1}) ${candidates[i]}');
+    io.writeln('models (provider/model):');
+    for (var i = 0; i < entries.length; i++) {
+      io.writeln('  ${i + 1}) ${entries[i].$1}/${entries[i].$2}');
     }
-    _lastModelList = candidates;
-    io.writeln('use /model <n> or /model <id> to switch');
+    _lastModelList = [for (final e in entries) '${e.$1}/${e.$2}'];
+    io.writeln('use /model <n> or /model <provider>/<id> to switch');
   }
 
   /// Returns the full list of known model ids for the active provider.
   List<String> _listModelsForMenu() => _modelCandidates('');
 
-  /// Returns known model ids for the active provider, filtered by an optional
-  /// lowercase substring. Prefers the live cache fetched from the provider's
-  /// `/models` endpoint; falls back to the hardcoded subset when the cache is
-  /// empty or the fetch has not completed yet.
+  /// Returns known model ids for the ACTIVE provider only (used by
+  /// `/model <id>` line-mode switches and the number picker). The TUI
+  /// picker uses [_crossProviderCandidates] instead for cross-provider.
   List<String> _modelCandidates([String filter = '']) {
     final provider = _agent.state.model.provider;
-    final all = _modelCache.isNotEmpty
-        ? _modelCache
-        : (_knownModels[provider] ?? const <String>[]);
+    final activeName = _activeCustomName ?? provider;
+    final all =
+        _allProvidersModelCache[activeName] ??
+        (_modelCache.isNotEmpty
+            ? _modelCache
+            : (_knownModels[provider] ?? [_agent.state.model.id]));
     if (filter.isEmpty) return all.toList();
     final lower = filter.toLowerCase();
     return all.where((id) => id.toLowerCase().contains(lower)).toList();
