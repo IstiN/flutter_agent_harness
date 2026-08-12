@@ -1226,7 +1226,7 @@ void main() {
 
   group('CodeMie SSO', () {
     test(
-      '/provider codemie sso saves a custom provider, stores the JWT and switches',
+      '/provider codemie sso saves a custom provider, stores the cookie and switches',
       () async {
         final fake = FakeStreamFunction([textTurn('ok')]);
         final store = FakeSecureKeyStore();
@@ -1241,12 +1241,12 @@ void main() {
           codeMieSsoAuthenticateFn: (url, onStatus) async {
             expect(url, 'https://codemie.lab.epam.com');
             return const CodeMieSsoCredentials(
-              cookies: {'codemie_access_token': 'jwt-abc'},
+              cookies: {'_oauth2_proxy': 'proxy-val', 'session': 's-1'},
               apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
               expiresAt: 9999999999999,
             );
           },
-          codeMieGuidedSetupFn: (apiBase, token, pickOption, askLine) async {
+          codeMieGuidedSetupFn: (apiBase, cookie, pickOption, askLine) async {
             return 'codemie-model-1';
           },
         );
@@ -1265,12 +1265,17 @@ void main() {
           entry!.baseUrl,
           'https://codemie.lab.epam.com/code-assistant-api/v1',
         );
-        expect(store.map[entry.keyName], 'jwt-abc');
+        // The full cookie string is stored as the key.
+        expect(store.map[entry.keyName], '_oauth2_proxy=proxy-val;session=s-1');
         expect(cli.providerKind, 'openai-completions');
         expect(
           cli.agent.state.model.baseUrl,
           'https://codemie.lab.epam.com/code-assistant-api/v1',
         );
+        // The model carries cookie-header auth, not Bearer.
+        expect(cli.agent.state.model.headers, {
+          'cookie': '_oauth2_proxy=proxy-val;session=s-1',
+        });
       },
     );
 
@@ -1290,7 +1295,7 @@ void main() {
         customProviders: registry,
         codeMieSsoAuthenticateFn: (url, onStatus) async {
           return const CodeMieSsoCredentials(
-            cookies: {'codemie_access_token': 'jwt-new'},
+            cookies: {'_oauth2_proxy': 'new-val'},
             apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
             expiresAt: 9999999999999,
           );

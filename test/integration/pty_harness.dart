@@ -109,6 +109,10 @@ final class FaCliHarness {
   /// Accumulated raw output (with ANSI escape sequences).
   final _rawBuffer = StringBuffer();
 
+  /// All raw bytes written by the CLI so far (ANSI escape sequences
+  /// preserved), exposed for terminal-reset assertions.
+  String get rawOutput => _rawBuffer.toString();
+
   var _listening = false;
   StreamSubscription<String>? _outputSub;
 

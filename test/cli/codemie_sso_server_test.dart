@@ -114,7 +114,7 @@ void main() {
 
       final result = await flowFuture;
       expect(result, isNotNull);
-      expect(result!.accessToken, jwt);
+      expect(result!.authToken, contains('codemie_access_token=$jwt'));
       expect(result.apiUrl, contains('code-assistant-api'));
       expect(statuses, contains(contains('listening for the CodeMie SSO')));
       expect(statuses, contains('CodeMie authorized'));
@@ -167,11 +167,12 @@ void main() {
       expect(statuses, contains(contains('open this URL manually:')));
     });
 
-    test('returns null when token has no codemie_access_token', () async {
+    test('succeeds with non-access-token cookies (cookie-based auth)', () async {
       final statuses = <String>[];
       final driver = _CodeMieFlowDriver();
-      // A valid base64 JSON with cookies, but no access token.
-      final token = _tokenCookie({'other_cookie': 'val'});
+      // A valid base64 JSON with cookies but no codemie_access_token —
+      // the new cookie-based auth accepts any cookie set.
+      final token = _tokenCookie({'_oauth2_proxy': 'proxy-val'});
 
       final flowFuture = runCodeMieSsoCliFlow(
         codeMieUrl: 'https://codemie.example.com',
@@ -182,11 +183,8 @@ void main() {
       await driver.hitCallback(token);
       final result = await flowFuture;
 
-      expect(result, isNull);
-      expect(
-        statuses,
-        contains('CodeMie SSO callback carried no codemie_access_token'),
-      );
+      expect(result, isNotNull);
+      expect(result!.authToken, contains('_oauth2_proxy=proxy-val'));
     });
 
     test('returns null on a malformed token', () async {

@@ -379,11 +379,23 @@ extension on AgentCli {
   }
 
   /// Switches to a saved registry entry (picker or typed `/provider <name>`):
-  /// restores its last-used model and marks it active.
+  /// restores its last-used model and marks it active. CodeMie endpoints
+  /// (detected by the `/code-assistant-api/` URL marker) use Cookie-header
+  /// auth instead of the default Bearer token.
   Future<void> _switchToSavedProvider(CustomProviderEntry entry) async {
     final keyName = entry.keyName;
     final token = keyName != null ? config.secureKeys?.read(keyName) : null;
     _activeCustomName = entry.name;
+    if (token != null && entry.baseUrl.contains('/code-assistant-api/')) {
+      await _switchCodeMieProvider(
+        entry.spec,
+        entry.baseUrl,
+        entry.modelId,
+        token,
+        keyName ?? '',
+      );
+      return;
+    }
     await _switchProvider(
       entry.spec,
       entry.baseUrl,
@@ -831,10 +843,11 @@ extension on AgentCli {
       );
 
   /// The `/provider codemie sso [url]` branch: browser SSO against a
-  /// CodeMie organization (localhost callback), then the session JWT rides
-  /// the standard openai-completions adapter as a Bearer token. The org is
-  /// saved as a custom provider entry (host-derived name) so it shows up in
-  /// the /provider picker and re-login just refreshes its key. Returns true
+  /// CodeMie organization (localhost callback), then the full cookie string
+  /// rides the standard openai-completions adapter via a `cookie:` model
+  /// header (suppressing the default Bearer auth). The org is saved as a
+  /// custom provider entry (host-derived name) so it shows up in the
+  /// /provider picker and re-login just refreshes its key. Returns true
   /// when the command targeted the SSO flow.
   bool _startCodeMieSsoArg(List<String> args) {
     if (args.first != 'codemie') return false;
@@ -870,17 +883,19 @@ extension on AgentCli {
     }
   }
 
-  /// Saves the SSO session: the `codemie_access_token` JWT becomes the
-  /// Bearer key of a saved custom provider pointing at
-  /// `<apiUrl>/v1` (re-login replaces the key, keeps the last-used model).
-  /// After saving, runs the guided project → model selection (matching the
-  /// CodeMie CLI's setup flow) so the user lands on a working connection.
+  /// Saves the SSO session: the full cookie string becomes the stored "key"
+  /// of a saved custom provider pointing at `<apiUrl>/v1` (re-login replaces
+  /// the key, keeps the last-used model). The model's headers carry a
+  /// `cookie:` entry so the openai-completions adapter sends Cookie-header
+  /// auth instead of the default `authorization: Bearer`. After saving, runs
+  /// the guided project → model selection (matching the CodeMie CLI's setup
+  /// flow) so the user lands on a working connection.
   Future<void> _applyCodeMieSsoCredentials(
     CodeMieSsoCredentials credentials,
   ) async {
-    final token = credentials.accessToken;
-    if (token == null) {
-      io.writeln('CodeMie SSO carried no codemie_access_token — aborted');
+    final cookie = credentials.authToken;
+    if (cookie.isEmpty) {
+      io.writeln('CodeMie SSO carried no cookies — aborted');
       return;
     }
     final baseUrl = '${credentials.apiUrl}/v1';
@@ -893,13 +908,13 @@ extension on AgentCli {
       providerName: name,
     );
     final spec = providerCatalog['openai']!;
-    await _storeProviderToken(spec, baseUrl, token, keyName: keyName);
+    await _storeProviderToken(spec, baseUrl, cookie, keyName: keyName);
 
     // Guided project → model selection (first login only; re-login keeps
     // the existing model choice).
     final modelId =
         existing?.modelId ??
-        await _codemieGuidedSetup(credentials.apiUrl, token) ??
+        await _codemieGuidedSetup(credentials.apiUrl, cookie) ??
         _agent.state.model.id;
 
     if (registry != null) {
@@ -915,13 +930,7 @@ extension on AgentCli {
       _activeCustomName = name;
       io.writeln('saved provider $name (listed first in /provider)');
     }
-    await _switchProvider(
-      spec,
-      baseUrl,
-      modelId,
-      token: token,
-      tokenKeyName: keyName,
-    );
+    await _switchCodeMieProvider(spec, baseUrl, modelId, cookie, keyName);
     final hours =
         (credentials.expiresAt - DateTime.now().millisecondsSinceEpoch) ~/
         3600000;
@@ -934,21 +943,76 @@ extension on AgentCli {
   /// Post-SSO guided setup: fetch projects, let the user pick one, then
   /// fetch and pick a model. Returns the chosen model id, or null on cancel.
   /// Dispatches to the config-injected guided setup, or the real flow.
-  Future<String?> _codemieGuidedSetup(String apiBase, String token) {
+  Future<String?> _codemieGuidedSetup(String apiBase, String cookie) {
     final override = config.codeMieGuidedSetupFn;
     if (override != null) {
-      return override(apiBase, token, _pickOption, _askLine);
+      return override(apiBase, cookie, _pickOption, _askLine);
     }
-    return _codemiePickProjectAndModel(apiBase, token);
+    return _codemiePickProjectAndModel(apiBase, cookie);
+  }
+
+  /// Switches to a CodeMie provider using Cookie-header auth instead of the
+  /// default Bearer token. The cookie string is stored as the session key
+  /// (for `/models` fetches and key status display), but the openai-completions
+  /// adapter receives an empty apiKey (so it skips `authorization: Bearer`)
+  /// while the model's `headers` carry `cookie: <full cookie string>`.
+  Future<void> _switchCodeMieProvider(
+    ProviderSpec spec,
+    String baseUrl,
+    String modelId,
+    String cookie,
+    String keyName,
+  ) async {
+    final modelLine = modelId == _agent.state.model.id
+        ? '  model unchanged: $modelId — use /model to change'
+        : '  model: $modelId';
+    _providerKind = spec.kind;
+    // The cookie is the "key" for session/display purposes, but the stream
+    // function gets an empty string so the adapter generates NO authorization
+    // header; the cookie rides in via model.headers instead.
+    _apiKey = cookie;
+    _explicitToken = true;
+    _streamFunction = _catalogStreamFunction(spec.kind, '');
+    _agent.streamFunction = _streamFunction;
+    final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);
+    _agent.state.model = Model(
+      id: builtModel.id,
+      name: builtModel.name,
+      api: builtModel.api,
+      provider: builtModel.provider,
+      baseUrl: builtModel.baseUrl,
+      reasoning: builtModel.reasoning,
+      input: inputModalitiesFor(modelId),
+      cost: builtModel.cost,
+      contextWindow: builtModel.contextWindow,
+      maxTokens: builtModel.maxTokens,
+      // Cookie-header auth: the adapter sees an empty apiKey (no Bearer) and
+      // merges model.headers, adding `cookie: <full cookie jar>`.
+      headers: {'cookie': cookie},
+      compat: builtModel.compat,
+    );
+    _modelCache = const [];
+    _modelContextWindows = const {};
+    _modelMaxTokens = const {};
+    _lastModelList = null;
+    unawaited(_refreshModelCache());
+    await _session?.appendModelChange(provider: spec.name, modelId: modelId);
+    io.writeln('switched provider to ${spec.name} (${spec.api})');
+    io.writeln('  endpoint: $baseUrl');
+    io.writeln('  key: SSO cookie (saved as $keyName)');
+    io.writeln(modelLine);
+    config.onProviderChanged?.call(_providerKind, _apiKey);
   }
 
   Future<String?> _codemiePickProjectAndModel(
     String apiBase,
-    String token,
+    String cookie,
   ) async {
     // Step 1: projects.
     io.writeln('fetching CodeMie projects...');
-    final projects = await fetchCodeMieProjects(apiBase, token).catchError((e) {
+    final projects = await fetchCodeMieProjects(apiBase, cookie).catchError((
+      e,
+    ) {
       return const <String>[];
     });
     if (projects.isNotEmpty) {
@@ -962,7 +1026,7 @@ extension on AgentCli {
 
     // Step 2: models.
     io.writeln('fetching CodeMie models...');
-    final models = await fetchCodeMieModels('$apiBase/v1', token).catchError((
+    final models = await fetchCodeMieModels('$apiBase/v1', cookie).catchError((
       e,
     ) {
       return const <String>[];

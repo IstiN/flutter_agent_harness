@@ -99,8 +99,8 @@ Future<CodeMieSsoCredentials?> runCodeMieSsoCliFlow({
       apiUrl: codeMieApiBase(codeMieUrl),
       expiresAt: deriveCodeMieExpiresAt(cookies),
     );
-    if (credentials.accessToken == null) {
-      onStatus('CodeMie SSO callback carried no codemie_access_token');
+    if (credentials.authToken.isEmpty) {
+      onStatus('CodeMie SSO callback carried no cookies');
       return null;
     }
     onStatus('CodeMie authorized');

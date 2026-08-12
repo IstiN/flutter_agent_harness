@@ -966,7 +966,9 @@ Future<void> main(List<String> args) async {
   // dart_tui's shutdown writes the reset sequences (?25h ?1049l ?1002l etc.)
   // and flushes stdout, but on some terminals the mouse-tracking disable
   // (?1002l ?1006l) arrives too late or is lost. Write them again here with
-  // an explicit flush to guarantee the shell never sees raw mouse sequences.
+  // an explicit flush + exit(0) to guarantee the shell never sees raw mouse
+  // sequences (the natural main() return can race the VM shutdown and drop
+  // the buffered reset bytes).
   if (stdin.hasTerminal) {
     stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
     stdout.write('\x1b[?1004l\x1b[?2004l');
@@ -982,4 +984,5 @@ Future<void> main(List<String> args) async {
       // Nothing to drain.
     }
   }
+  exit(0);
 }

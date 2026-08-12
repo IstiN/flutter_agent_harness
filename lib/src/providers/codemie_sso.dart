@@ -1,9 +1,12 @@
 /// CodeMie SSO helpers: browser-based login against a CodeMie organization
 /// (`/v1/auth/login/<port>` redirects to a localhost callback with a base64
 /// token carrying the session cookies) and the model list endpoint. The
-/// `codemie_access_token` cookie is a JWT the CodeMie API also accepts as a
-/// Bearer token, so the chat traffic itself rides the standard
-/// openai-completions adapter — no special wire format.
+/// CodeMie API authenticates via the FULL cookie string (sent as a `Cookie:`
+/// header), not via a Bearer JWT — the SSO callback returns an
+/// `_oauth2_proxy` cookie (Keycloak OAuth2 proxy), and the API expects the
+/// entire cookie jar. The chat traffic rides the standard openai-completions
+/// adapter with a `cookie:` model header that suppresses the default
+/// `authorization` header.
 ///
 /// Pure Dart (no `dart:io`); the localhost callback server lives in
 /// `lib/src/cli/codemie_sso_server.dart` (exported from `lib/io.dart`).
@@ -55,9 +58,12 @@ final class CodeMieSsoCredentials {
   /// 24h fallback).
   final int expiresAt;
 
-  /// The JWT usable as a Bearer token against the CodeMie API, or null when
-  /// the callback carried no `codemie_access_token` cookie.
-  String? get accessToken => cookies['codemie_access_token'];
+  /// The full cookie string (`key=value;key=value`) used for Cookie-header
+  /// authentication against the CodeMie API. All cookies from the SSO
+  /// callback are joined — the CodeMie API expects the complete cookie jar,
+  /// not a single Bearer JWT.
+  String get authToken =>
+      cookies.entries.map((e) => '${e.key}=${e.value}').join(';');
 
   /// Whether the credentials are past [expiresAt].
   bool get isExpired => DateTime.now().millisecondsSinceEpoch > expiresAt;
@@ -109,19 +115,17 @@ int deriveCodeMieExpiresAt(Map<String, String> cookies) {
 
 /// Fetches the user's accessible projects from `<apiBase>/user` — the
 /// `applications` + `applications_admin` arrays merged and deduplicated.
+/// Authentication uses the full cookie string as a `Cookie:` header.
 Future<List<String>> fetchCodeMieProjects(
   String apiBase,
-  String token, {
+  String cookie, {
   http.Client? client,
 }) async {
   final httpClient = client ?? http.Client();
   final ownsClient = client == null;
   try {
     final response = await httpClient
-        .get(
-          Uri.parse('$apiBase/user'),
-          headers: {'authorization': 'Bearer $token'},
-        )
+        .get(Uri.parse('$apiBase/user'), headers: {'cookie': cookie})
         .timeout(const Duration(seconds: 30));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ConfigException(
@@ -153,12 +157,12 @@ Future<List<String>> fetchCodeMieProjects(
 
 /// Fetches the model ids from `<apiBase>/llm_models?include_all=true`
 /// ([apiBase] is `<org>/code-assistant-api/v1`), authenticating with the
-/// SSO JWT as a Bearer token. The response is a list of descriptors whose
-/// id lives in `id`, `base_name`, or `deployment_name` (first non-empty
-/// wins).
+/// full cookie string as a `Cookie:` header. The response is a list of
+/// descriptors whose id lives in `id`, `base_name`, or `deployment_name`
+/// (first non-empty wins).
 Future<List<String>> fetchCodeMieModels(
   String apiBase,
-  String token, {
+  String cookie, {
   http.Client? client,
 }) async {
   final httpClient = client ?? http.Client();
@@ -167,7 +171,7 @@ Future<List<String>> fetchCodeMieModels(
     final response = await httpClient
         .get(
           Uri.parse('$apiBase/llm_models?include_all=true'),
-          headers: {'authorization': 'Bearer $token'},
+          headers: {'cookie': cookie},
         )
         .timeout(const Duration(seconds: 30));
     if (response.statusCode == 401 || response.statusCode == 403) {

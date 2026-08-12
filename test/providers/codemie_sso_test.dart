@@ -75,22 +75,33 @@ void main() {
   });
 
   group('CodeMieSsoCredentials', () {
-    test('accessToken reads the codemie_access_token cookie', () {
+    test('authToken joins all cookies into key=value;key=value', () {
+      const credentials = CodeMieSsoCredentials(
+        cookies: {'_oauth2_proxy': 'proxy-val', 'session': 's-1'},
+        apiUrl: 'https://org/code-assistant-api',
+        expiresAt: 0,
+      );
+      expect(credentials.authToken, '_oauth2_proxy=proxy-val;session=s-1');
+      expect(credentials.isExpired, isTrue);
+    });
+
+    test('authToken works with codemie_access_token cookie too', () {
       const credentials = CodeMieSsoCredentials(
         cookies: {'codemie_access_token': 'jwt-1'},
         apiUrl: 'https://org/code-assistant-api',
         expiresAt: 0,
       );
-      expect(credentials.accessToken, 'jwt-1');
-      expect(credentials.isExpired, isTrue);
+      expect(credentials.authToken, 'codemie_access_token=jwt-1');
     });
   });
 
   group('fetchCodeMieModels', () {
-    test('sends the bearer token and parses all id field variants', () async {
-      String? authorization;
+    test('sends the cookie header and parses all id field variants', () async {
+      String? cookieHeader;
+      String? authHeader;
       final client = http_testing.MockClient((request) async {
-        authorization = request.headers['authorization'];
+        cookieHeader = request.headers['cookie'];
+        authHeader = request.headers['authorization'];
         expect(request.url.path, endsWith('/v1/llm_models'));
         expect(request.url.queryParameters['include_all'], 'true');
         return http.Response(
@@ -106,10 +117,11 @@ void main() {
       });
       final models = await fetchCodeMieModels(
         'https://org/code-assistant-api/v1',
-        'jwt-1',
+        '_oauth2_proxy=val;session=s',
         client: client,
       );
-      expect(authorization, 'Bearer jwt-1');
+      expect(cookieHeader, '_oauth2_proxy=val;session=s');
+      expect(authHeader, isNull);
       expect(models, ['gpt-4o', 'claude-sonnet-4', 'gemini-2.5-pro']);
     });
 
