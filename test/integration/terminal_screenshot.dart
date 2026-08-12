@@ -1,10 +1,9 @@
 /// Renders a terminal screen buffer as a PNG image so integration tests can
 /// attach visual artifacts for vision-based verification.
 ///
-/// The palette matches the Fa chrome: dark background (#070A10), light text
-/// (#E8EEF7). Colors are read from the xterm cell attributes (ANSI 256-color,
-/// RGB true-color, and named colors) — the screenshot shows the same colors
-/// the real terminal displays.
+/// Reads the xterm cell attributes (ANSI colors) so the screenshot shows the
+/// same colors the real terminal displays. Box-drawing characters (┌│└─)
+/// are rendered as rectangles/lines because the bitmap font lacks them.
 library;
 
 import 'dart:io';
@@ -19,7 +18,7 @@ const _dim = (147, 161, 181); // #93A1B5
 const _text = (232, 238, 247); // #E8EEF7
 const _bg = (7, 10, 16); // #070A10
 
-/// The 16 named ANSI colors (standard + bright).
+/// The 16 named ANSI colors.
 const _namedColors = [
   (0, 0, 0), // black
   (248, 113, 113), // red
@@ -39,11 +38,8 @@ const _namedColors = [
   (255, 255, 255), // bright white
 ];
 
-/// Renders terminal screen lines as a PNG screenshot with colors from the
-/// xterm cell attributes.
-///
-/// [terminal] is the xterm Terminal whose buffer contains the rendered
-/// screen. [columns]/[rows] fix the canvas geometry (80x24 by default).
+/// Renders terminal screen as a PNG screenshot with colors from the xterm
+/// cell attributes. Box-drawing characters are rendered as rectangles/lines.
 Future<File> renderTerminalScreenshot({
   required Terminal terminal,
   required String outputPath,
@@ -61,21 +57,14 @@ Future<File> renderTerminalScreenshot({
 
   for (var row = 0; row < rows && row < buf.lines.length; row++) {
     final line = buf.lines[row + buf.scrollBack];
-    final y = row * cellH + 2;
+    final y = row * cellH;
     for (var col = 0; col < columns && col < line.length; col++) {
       line.getCellData(col, cellData);
       final content = cellData.content & CellContent.codepointMask;
-      if (content == 0) continue; // empty cell
-      final char = String.fromCharCode(content);
+      if (content == 0) continue;
       final color = _resolveColor(cellData);
-      img.drawString(
-        image,
-        char,
-        font: font,
-        x: col * cellW + 2,
-        y: y,
-        color: img.ColorRgb8(color.$1, color.$2, color.$3),
-      );
+      final x = col * cellW;
+      _drawCell(image, content, x, y, cellW, cellH, color, font);
     }
   }
 
@@ -83,8 +72,137 @@ Future<File> renderTerminalScreenshot({
   return File(outputPath).writeAsBytes(png);
 }
 
+/// Draws a single terminal cell. Box-drawing characters are rendered as
+/// rectangles/lines; everything else goes through the bitmap font.
+void _drawCell(
+  img.Image image,
+  int content,
+  int x,
+  int y,
+  int w,
+  int h,
+  (int, int, int) color,
+  img.BitmapFont font,
+) {
+  final c = img.ColorRgb8(color.$1, color.$2, color.$3);
+  final midY = y + h ~/ 2;
+  final midX = x + w ~/ 2;
+
+  switch (content) {
+    case 0x2500: // ─ horizontal line
+      img.drawLine(image, x1: x, y1: midY, x2: x + w, y2: midY, color: c);
+    case 0x2502: // │ vertical line
+      img.drawLine(image, x1: midX, y1: y, x2: midX, y2: y + h, color: c);
+    case 0x250C: // ┌ top-left corner
+      img.drawLine(image, x1: midX, y1: midY, x2: x + w, y2: midY, color: c);
+      img.drawLine(image, x1: midX, y1: midY, x2: midX, y2: y + h, color: c);
+    case 0x2510: // ┐ top-right corner
+      img.drawLine(image, x1: x, y1: midY, x2: midX, y2: midY, color: c);
+      img.drawLine(image, x1: midX, y1: midY, x2: midX, y2: y + h, color: c);
+    case 0x2514: // └ bottom-left corner
+      img.drawLine(image, x1: midX, y1: y, x2: midX, y2: midY, color: c);
+      img.drawLine(image, x1: midX, y1: midY, x2: x + w, y2: midY, color: c);
+    case 0x2518: // ┘ bottom-right corner
+      img.drawLine(image, x1: x, y1: midY, x2: midX, y2: midY, color: c);
+      img.drawLine(image, x1: midX, y1: y, x2: midX, y2: midY, color: c);
+    case 0x251C: // ├ left T junction
+      img.drawLine(image, x1: midX, y1: y, x2: midX, y2: y + h, color: c);
+      img.drawLine(image, x1: midX, y1: midY, x2: x + w, y2: midY, color: c);
+    case 0x2524: // ┤ right T junction
+      img.drawLine(image, x1: midX, y1: y, x2: midX, y2: y + h, color: c);
+      img.drawLine(image, x1: x, y1: midY, x2: midX, y2: midY, color: c);
+    case 0x2588: // █ full block (cursor)
+      img.fillRect(
+        image,
+        x1: x + 1,
+        y1: y + 1,
+        x2: x + w - 1,
+        y2: y + h - 1,
+        color: c,
+      );
+    case 0x25B8: // ▸ right-pointing triangle (selection marker)
+      img.drawLine(
+        image,
+        x1: x + 1,
+        y1: y + 2,
+        x2: x + w - 2,
+        y2: midY,
+        color: c,
+      );
+      img.drawLine(
+        image,
+        x1: x + 1,
+        y1: y + h - 2,
+        x2: x + w - 2,
+        y2: midY,
+        color: c,
+      );
+      img.drawLine(
+        image,
+        x1: x + 1,
+        y1: y + 2,
+        x2: x + 1,
+        y2: y + h - 2,
+        color: c,
+      );
+    case 0x2022: // • bullet (masked input)
+      img.fillCircle(image, x: midX, y: midY, radius: 2, color: c);
+    case 0x25CB: // ○ circle (unselected)
+      img.drawCircle(image, x: midX, y: midY, radius: w ~/ 3, color: c);
+    case 0x25C9: // ◉ filled circle (selected)
+      img.fillCircle(image, x: midX, y: midY, radius: w ~/ 3, color: c);
+    case 0x2605: // ★ star (recommended)
+      _drawStar(image, midX, midY, w ~/ 3, c);
+    case 0x00B7: // · middle dot
+      img.fillCircle(image, x: midX, y: midY, radius: 1, color: c);
+    default:
+      // Regular character — use the bitmap font.
+      final char = String.fromCharCode(content);
+      img.drawString(image, char, font: font, x: x + 2, y: y + 2, color: c);
+  }
+}
+
+/// Draws a simple star shape (for the ★ recommended marker).
+void _drawStar(img.Image image, int cx, int cy, int radius, img.Color c) {
+  // Simple 5-pointed star approximation using lines.
+  final points = <(int, int)>[];
+  for (var i = 0; i < 5; i++) {
+    final angle = -90.0 + i * 72.0;
+    final rad = angle * 3.14159 / 180.0;
+    points.add((
+      (cx + radius * _cos(rad)).round(),
+      (cy + radius * _sin(rad)).round(),
+    ));
+  }
+  for (var i = 0; i < 5; i++) {
+    final next = (i + 2) % 5;
+    img.drawLine(
+      image,
+      x1: points[i].$1,
+      y1: points[i].$2,
+      x2: points[next].$1,
+      y2: points[next].$2,
+      color: c,
+    );
+  }
+}
+
+double _cos(double rad) {
+  // Taylor series approximation for small angles.
+  var x = rad % (2 * 3.14159);
+  if (x > 3.14159) x -= 2 * 3.14159;
+  final x2 = x * x;
+  return 1.0 - x2 / 2.0 + x2 * x2 / 24.0;
+}
+
+double _sin(double rad) {
+  var x = rad % (2 * 3.14159);
+  if (x > 3.14159) x -= 2 * 3.14159;
+  final x2 = x * x;
+  return x - x * x2 / 6.0 + x * x2 * x2 / 120.0;
+}
+
 /// Resolves a cell's foreground color to RGB.
-/// Falls back to the default text color for unstyled cells.
 (int, int, int) _resolveColor(CellData cell) {
   final fg = cell.foreground;
   final type = fg & CellColor.typeMask;
@@ -106,25 +224,22 @@ Future<File> renderTerminalScreenshot({
     return _palette256(value);
   }
 
-  // Normal/unstyled: check for bold/dim flags
   if (cell.flags & CellAttr.bold != 0) return _text;
   if (cell.flags & CellAttr.faint != 0) return _dim;
 
   return _text;
 }
 
-/// The 256-color xterm palette (first 16 are named, rest are computed).
+/// The 256-color xterm palette.
 (int, int, int) _palette256(int index) {
   if (index < 16) return _namedColors[index];
   if (index < 232) {
-    // 216-color cube: index 16-231
     final i = index - 16;
     final r = (i ~/ 36) % 6;
     final g = (i ~/ 6) % 6;
     final b = i % 6;
     return (r * 51, g * 51, b * 51);
   }
-  // Grayscale: index 232-255
   final gray = 8 + (index - 232) * 10;
   return (gray, gray, gray);
 }

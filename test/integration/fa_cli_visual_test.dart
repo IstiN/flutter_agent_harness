@@ -21,7 +21,12 @@ void main() {
   });
 
   /// Takes a screenshot of the current terminal screen.
+  /// Waits for the view to settle first so the frame has rendered.
   Future<void> screenshot(FaCliHarness harness, String name) async {
+    await harness.waitForOutput(
+      settleMs: 300,
+      timeout: const Duration(seconds: 5),
+    );
     await renderTerminalScreenshot(
       terminal: harness.terminal,
       outputPath: '${screenshotsDir.path}/$name.png',
