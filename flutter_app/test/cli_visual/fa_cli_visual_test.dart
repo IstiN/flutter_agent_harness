@@ -295,8 +295,9 @@ void main() {
   });
 
   group('settings', () {
-    testWidgets('/settings hub → chat model flow', (tester) async {
-      final harness = await boot(tester);
+    testWidgets('/settings hub → chat model: provider → model', (tester) async {
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '80_boot_settings');
 
       await harness.runSlashCommand('/settings');
@@ -312,14 +313,90 @@ void main() {
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '82_settings_model_highlight');
 
+      // Step 1: the provider picker (saved entries first).
       harness.sendEnter();
       await harness.liveWaitForText(
-        'Select model',
+        'test-provider',
         timeout: const Duration(seconds: 15),
       );
-      await harness.screenshot(shotsDir, '83_settings_model_picker');
+      await harness.screenshot(shotsDir, '83_settings_chat_provider');
+
+      // Pick the saved test-provider. Its endpoint is dead
+      // (localhost:9999), so the model step falls back to manual entry.
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'model id',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '84_settings_chat_model_manual');
+
+      // Type a model id and submit — the connection switches.
+      harness.sendText('picked-model');
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'switched provider',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '85_settings_chat_switched');
 
       await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+
+    testWidgets('/settings hub → media models: slot → provider → model', (
+      tester,
+    ) async {
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      await harness.runSlashCommand('/settings');
+      await harness.liveWaitForText(
+        'Media models',
+        timeout: const Duration(seconds: 15),
+      );
+
+      // Navigate to "Media models" (fifth entry) and open it.
+      for (var i = 0; i < 4; i++) {
+        harness.sendArrowDown();
+      }
+      harness.sendEnter();
+
+      // Step 1: the slot picker.
+      await harness.liveWaitForText(
+        'imageGeneration',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '86_settings_media_slot');
+
+      // Pick imageGeneration → the provider picker (openai-compatible).
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'test-provider',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '87_settings_media_provider');
+
+      // Pick the saved test-provider; dead endpoint → manual model entry.
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'model id',
+        timeout: const Duration(seconds: 15),
+      );
+      harness.sendText('image-model-1');
+      // Confirm the prompt actually received the text before submitting.
+      await harness.liveWaitForText(
+        'image-model-1',
+        timeout: const Duration(seconds: 15),
+      );
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'slot imageGeneration → image-model-1',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '88_settings_media_done');
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
   });
 

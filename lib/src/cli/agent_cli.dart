@@ -82,6 +82,7 @@ export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 part 'provider_commands.dart';
 part 'agent_cli_mcp.dart';
 part 'agent_cli_config.dart';
+part 'settings_flow.dart';
 
 /// Terminal IO abstracted for testability.
 ///
@@ -2025,6 +2026,11 @@ class AgentCli {
         label: 'Model parameters',
         description: 'context window, token limits',
       ),
+      const MenuItem(
+        key: 'media',
+        label: 'Media models',
+        description: 'image, speech, music, video slots',
+      ),
       MenuItem(
         key: 'approval',
         label: 'Approval mode',
@@ -2058,9 +2064,11 @@ class AgentCli {
       case 'provider-edit':
         _startProviderEditFlow();
       case 'model':
-        await _handleModelCommand('');
+        await startChatModelFlow();
       case 'model-edit':
         await _handleModelEdit('');
+      case 'media':
+        await startMediaSlotFlow();
       case 'approval':
         _openApprovalPicker();
       case 'mode':
