@@ -168,9 +168,11 @@ void _drawCell(
     case 0x00B7: // · middle dot
       img.fillCircle(image, x: midX, y: midY, radius: 1, color: c);
     default:
-      // Regular character — use the bitmap font.
+      // Regular character — render via the bitmap font, centered in the cell.
+      // drawString advances by the font's natural width; drawChar does not
+      // advance, so each character stays in its own cell without overlap.
       final char = String.fromCharCode(content);
-      img.drawString(image, char, font: font, x: x + 2, y: y + 2, color: c);
+      img.drawChar(image, char, font: font, x: x + 2, y: y + 2, color: c);
   }
 }
 
