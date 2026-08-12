@@ -26,90 +26,54 @@ final class ExecutionEnvKbStorage implements KbStorage {
   @override
   FutureOr<void> initialize({bool clean = false}) async {
     if (clean) {
-      // Best-effort: list and delete everything under baseDir.
-      try {
-        final entries = await _env.listDirectory(_baseDir);
-        for (final entry in entries) {
-          if (entry.isDirectory) {
-            await _env.deleteDirectory(entry.path, recursive: true);
-          } else {
-            await _env.deleteFile(entry.path);
-          }
-        }
-      } on Object {
-        // Directory may not exist yet — fine.
-      }
+      await _env.remove(_baseDir, recursive: true, force: true);
     }
-    // Ensure the base directory exists.
-    try {
-      await _env.createDirectory('$_baseDir/question');
-      await _env.createDirectory('$_baseDir/answer');
-      await _env.createDirectory('$_baseDir/note');
-    } on Object {
-      // May already exist — fine.
-    }
+    await _env.createDir('$_baseDir/question');
+    await _env.createDir('$_baseDir/answer');
+    await _env.createDir('$_baseDir/note');
   }
 
   @override
-  FutureOr<KBContext> loadContext() {
-    // KBContext is loaded lazily by KBMemoryStore; return empty.
-    return KBContext();
-  }
+  FutureOr<KBContext> loadContext() => KBContext();
 
   @override
-  FutureOr<String?> readEntity(String type, String id) async {
-    final result = await _env.readTextFile(_path(type, id));
-    return result.valueOrNull;
-  }
+  FutureOr<String?> readEntity(String type, String id) async =>
+      (await _env.readTextFile(_path(type, id))).valueOrNull;
 
   @override
-  FutureOr<void> writeEntity(String type, String id, String content) {
-    return _env.writeFile(_path(type, id), content);
-  }
+  FutureOr<void> writeEntity(String type, String id, String content) =>
+      _env.writeFile(_path(type, id), content);
 
   @override
-  FutureOr<void> deleteEntity(String type, String id) async {
-    try {
-      await _env.deleteFile(_path(type, id));
-    } on Object {
-      // Already gone — fine.
-    }
-  }
+  FutureOr<void> deleteEntity(String type, String id) =>
+      _env.remove(_path(type, id), force: true);
 
   @override
   FutureOr<List<String>> listEntityIds(String type) async {
-    final dir = '$_baseDir/$type';
-    try {
-      final entries = await _env.listDirectory(dir);
-      return [
-        for (final entry in entries)
-          if (!entry.isDirectory && entry.path.endsWith('.md'))
-            entry.path.split('/').last.replaceAll('.md', ''),
-      ];
-    } on Object {
-      return const [];
-    }
+    final result = await _env.listDir('$_baseDir/$type');
+    final entries = result.valueOrNull ?? const [];
+    return [
+      for (final entry in entries)
+        if (entry.kind != FileKind.directory && entry.path.endsWith('.md'))
+          entry.path.split('/').last.replaceAll('.md', ''),
+    ];
   }
 
   @override
-  FutureOr<String?> readFile(String path) async {
-    final result = await _env.readTextFile(_filePath(path));
-    return result.valueOrNull;
-  }
+  FutureOr<String?> readFile(String path) async =>
+      (await _env.readTextFile(_filePath(path))).valueOrNull;
 
   @override
-  FutureOr<void> writeFile(String path, String content) {
-    return _env.writeFile(_filePath(path), content);
-  }
+  FutureOr<void> writeFile(String path, String content) =>
+      _env.writeFile(_filePath(path), content);
 
   @override
   FutureOr<List<String>> listFilePaths(String prefix) async {
-    try {
-      final entries = await _env.listDirectory(_filePath(prefix));
-      return [for (final entry in entries) entry.path.replaceFirst('$_baseDir/', '')];
-    } on Object {
-      return const [];
-    }
+    final result = await _env.listDir(_filePath(prefix));
+    final entries = result.valueOrNull ?? const [];
+    return [
+      for (final entry in entries) entry.path.replaceFirst('$_baseDir/', ''),
+    ];
   }
 
   @override

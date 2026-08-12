@@ -64,6 +64,8 @@ import '../tools/checkpoint_tool.dart';
 import '../tools/inspect_image.dart';
 import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
+import '../memory/memory_controller.dart';
+import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
@@ -327,6 +329,13 @@ class AgentCli {
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
     _mcp = AgentCliMcpWiring(config: config.mcpConfig, cwd: config.env.cwd);
+    // Long-term memory: controller owns project + user scope stores,
+    // lazily initialized. Null when disabled (no LLM provider for search).
+    _memory = MemoryController(
+      env: config.env,
+      projectRoot: config.env.cwd,
+      userRoot: config.homeDir,
+    );
     final coreTools = <AgentTool>[
       ...builtinTools(
         // Session-correlation env vars (FAH_SESSION_ID/FILE/PROVIDER/MODEL)
@@ -339,6 +348,7 @@ class AgentCli {
         lsp: config.lspConfig,
         mcp: _mcp.manager,
       ),
+      ...memoryTools(_memory),
       // Non-interactive input (piped) gets a null ask callback: ask calls
       // then fail with a "host cannot answer" error result (safe default).
       askTool(callback: io.isInteractive ? _answerAskQuestions : null),
@@ -516,6 +526,10 @@ class AgentCli {
   late final Agent _agent;
   late final ApprovalManager _approval;
   late final ToolRegistry _toolRegistry;
+
+  /// Long-term memory controller (project + user scope stores). Always
+  /// constructed; search is disabled when no LLM provider is injected.
+  late final MemoryController _memory;
   late final CheckpointRewindController _checkpoints;
   TtsrController? _ttsr;
   final _Style _style;
