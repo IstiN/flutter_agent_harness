@@ -164,7 +164,12 @@ final class CliVisualHarness {
                 theme: faTerminalTheme,
                 textStyle: faTerminalStyle,
                 readOnly: true,
-                alwaysShowCursor: true,
+                // Respect the app's cursor visibility (?25h/?25l): with
+                // alwaysShowCursor the view would paint a cursor even where
+                // the CLI deliberately hides it (prompt/picker focus).
+                // Focus is needed for the cursor to paint at all (idle
+                // input), so autofocus stays on.
+                autofocus: true,
                 hardwareKeyboardOnly: true,
               ),
             ),
