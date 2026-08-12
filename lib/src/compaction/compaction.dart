@@ -28,6 +28,7 @@
 ///   harness rethrows the error).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -905,6 +906,7 @@ final class CompactionManager {
     required this.summarize,
     this.settings = defaultCompactionSettings,
     this.prompts = defaultCompactionPrompts,
+    this.memoryExtractionHook,
   });
 
   /// The summary LLM call used for every summarization.
@@ -916,6 +918,11 @@ final class CompactionManager {
   /// The summarization prompts (built-in unless overridden via the CLI
   /// config `prompts:` section).
   final CompactionPrompts prompts;
+
+  /// Optional Phase 2 hook: called after a successful compaction with the
+  /// summarized span's text, so durable facts can be extracted into the
+  /// long-term memory store. Failures are swallowed (never block compaction).
+  final Future<void> Function(String summarizedText)? memoryExtractionHook;
 
   /// Prepare session branch records for compaction, or return `null` when
   /// compaction is not applicable (empty branch, or the last entry is already
@@ -1074,6 +1081,26 @@ final class CompactionManager {
       details: result.details,
     );
     final record = await session.getEntry(recordId);
-    return record is CompactionRecord ? record : null;
+    final compactionRecord = record is CompactionRecord ? record : null;
+
+    // Phase 2: extract durable facts from the summarized span into memory.
+    // Fire-and-forget — never blocks or fails the compaction.
+    if (compactionRecord != null && memoryExtractionHook != null) {
+      final summarizedText = preparation.messagesToSummarize
+          .map(
+            (m) => m is UserMessage
+                ? m.content.toString()
+                : m is AssistantMessage
+                ? m.content.whereType<TextContent>().map((t) => t.text).join()
+                : '',
+          )
+          .where((t) => t.isNotEmpty)
+          .join('\n');
+      if (summarizedText.isNotEmpty) {
+        unawaited(memoryExtractionHook!(summarizedText).catchError((_) {}));
+      }
+    }
+
+    return compactionRecord;
   }
 }
