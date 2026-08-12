@@ -738,10 +738,22 @@ extension on AgentCli {
       sessionId: () => _session?.cachedId,
     );
     _agent.streamFunction = _streamFunction;
-    _agent.state.model = buildCatalogModel(
-      spec.name,
-      modelId,
-      baseUrl: baseUrl,
+    final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);
+    _agent.state.model = Model(
+      id: builtModel.id,
+      name: builtModel.name,
+      api: builtModel.api,
+      provider: builtModel.provider,
+      baseUrl: builtModel.baseUrl,
+      reasoning: builtModel.reasoning,
+      // The catalog default claims ['text', 'image'] for every model of the
+      // provider — the shared heuristic is more accurate per id.
+      input: inputModalitiesFor(modelId),
+      cost: builtModel.cost,
+      contextWindow: builtModel.contextWindow,
+      maxTokens: builtModel.maxTokens,
+      headers: builtModel.headers,
+      compat: builtModel.compat,
     );
     // The cached model list belongs to the previous provider/endpoint.
     _modelCache = const [];
@@ -1243,14 +1255,21 @@ extension on AgentCli {
   }
 
   /// The picker items of [_buildModelMenu]: a loading placeholder while the
-  /// candidate list is empty, else the numbered model entries.
+  /// candidate list is empty, else the numbered model entries with a vision
+  /// marker from the shared heuristic (endpoints expose no modality
+  /// metadata, so the checkmark is how the user sees what the agent will
+  /// believe about the model).
   List<MenuItem> _modelMenuItems(List<String> models) {
     if (models.isEmpty) {
       return const [MenuItem(key: '', label: 'loading models...')];
     }
     return [
       for (var i = 0; i < models.length; i++)
-        MenuItem(key: models[i], label: '${i + 1}) ${models[i]}'),
+        MenuItem(
+          key: models[i],
+          label: '${i + 1}) ${models[i]}',
+          description: visionMarker(models[i]),
+        ),
     ];
   }
 
@@ -1660,7 +1679,11 @@ extension on AgentCli {
       provider: current.provider,
       baseUrl: current.baseUrl,
       reasoning: current.reasoning,
-      input: current.input,
+      // The endpoint exposes no modality metadata — recompute from the
+      // shared vision heuristic instead of carrying the previous model's
+      // modalities (a text-only pick would otherwise keep claiming image
+      // support, and vice versa).
+      input: inputModalitiesFor(modelId),
       cost: current.cost,
       contextWindow: window,
       maxTokens: cap,

@@ -42,6 +42,7 @@ import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
+import '../model_roles/vision_models.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../prompts/prompt_overrides.dart';

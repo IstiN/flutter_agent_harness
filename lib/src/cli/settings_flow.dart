@@ -83,7 +83,10 @@ extension on AgentCli {
       if (models.isNotEmpty) {
         final pickedModel = await _pickOption(
           '$title — model',
-          [for (final id in models) (id, id, ''), ('', '+ enter manually', '')],
+          [
+            for (final id in models) (id, id, visionMarker(id)),
+            ('', '+ enter manually', ''),
+          ],
           initialKey: models.contains(currentModelId) ? currentModelId : null,
         );
         if (pickedModel == null) return;

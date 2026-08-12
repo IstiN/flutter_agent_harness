@@ -36,6 +36,7 @@ export 'src/lsp/lsp.dart';
 export 'src/mcp/mcp.dart';
 export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';
+export 'src/model_roles/vision_models.dart';
 export 'src/overflow.dart';
 export 'src/providers/anthropic.dart';
 export 'src/providers/google.dart';

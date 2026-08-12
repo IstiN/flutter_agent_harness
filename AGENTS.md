@@ -140,6 +140,11 @@ factual: paths, commands, invariants — no essays.
   `builtinTools(env, webSearch:)`.
 - `lib/src/model_roles/provider_catalog.dart` — provider table; specs
   default `input: ['text','image']` (vision).
+  `lib/src/model_roles/vision_models.dart` — the shared vision heuristic
+  (`modelIdSuggestsVision`, `visionMarker` picker checkmark,
+  `inputModalitiesFor`): CLI model switches recompute `Model.input` from it
+  and the model pickers show the ✓/✗ marker; `packages/fa_ui` re-exports it
+  (one marker list for CLI and app).
 - `packages/fa_ui/` — reusable Flutter package for hosts embedding the Fa
   agent: the Fa theme (`FahPalette`/`FahLightPalette`/`FahColors.of(context)`,
   `buildFahTheme()`/`buildFahThemeLight()` + chat themes) with the
@@ -524,7 +529,8 @@ factual: paths, commands, invariants — no essays.
   (main.dart) rebuilds the AgentConfig (custom-provider key → saved hosted
   key) for the auto-connect, else it pre-selects the settings form.
 - `flutter_app/lib/services/vision_models.dart` — shim re-exporting the
-  fa_ui `modelIdSuggestsVision` heuristic, which fills `Model.input`;
+  `modelIdSuggestsVision` heuristic (fa_ui shim → the pure-Dart core
+  `lib/src/model_roles/vision_models.dart`), which fills `Model.input`;
   `AgentConfig.supportsImages` overrides;
   without `image` the `read` tool notes non-vision and adapters drop image
   blocks.
