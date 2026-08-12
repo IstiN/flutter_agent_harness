@@ -63,6 +63,13 @@ import 'package:fa/webllm/webllm_types.dart';
 /// [FaChatMessage] directly.
 typedef FahChatMessage = FaChatMessage;
 
+/// Whether [baseUrl] points at a CodeMie organization (SSO/cookie-based
+/// auth). CodeMie providers authenticate via the full cookie string sent as
+/// a `Cookie:` header (riding in [Model.headers]) instead of a Bearer key —
+/// the adapter skips `Authorization: Bearer` when the key is empty.
+bool isCodeMieProvider(String baseUrl) =>
+    baseUrl.contains('/code-assistant-api/');
+
 /// Configuration needed to talk to a provider.
 final class AgentConfig {
   AgentConfig({
@@ -116,6 +123,13 @@ final class AgentConfig {
     baseUrl: baseUrl,
     contextWindow: contextWindow,
     maxTokens: maxTokens,
+    // CodeMie authenticates via cookies: the stored apiKey is the full
+    // cookie string, which rides in model.headers as a `cookie` entry. The
+    // openai-completions adapter skips `Authorization: Bearer` when the key
+    // is empty, so the cookie is the sole auth credential.
+    headers: isCodeMieProvider(baseUrl) && apiKey.isNotEmpty
+        ? {'cookie': apiKey}
+        : null,
     input: [
       'text',
       if (supportsImages ?? modelIdSuggestsVision(modelId)) 'image',
@@ -476,9 +490,13 @@ class AgentService extends ChangeNotifier
     if (config.providerKind == transformersJsProviderKind) {
       return transformersJsStreamFunction(createTransformersJsService());
     }
+    // CodeMie: the cookie rides in model.headers (set by toModel); pass an
+    // empty key so the adapter skips `Authorization: Bearer`.
+    final apiKey =
+        isCodeMieProvider(config.baseUrl) ? '' : config.apiKey;
     return providerStreamFunction(
       config.providerKind,
-      config.apiKey,
+      apiKey,
       sessionId: () => _session?.cachedId,
     );
   }
@@ -1337,7 +1355,15 @@ class AgentService extends ChangeNotifier
   Future<void> reconfigure(AgentConfig config) async {
     abort();
     await waitForIdle();
-    _agent.state.model = config.toModel();
+    final newModel = config.toModel();
+    debugPrint(
+      '[Fa] reconfigure: baseUrl=${config.baseUrl}, '
+      'apiKey.len=${config.apiKey.length}, '
+      'isCodeMie=${isCodeMieProvider(config.baseUrl)}, '
+      'model.headers=${newModel.headers?.keys.toList() ?? null}, '
+      'streamApiKey.len=${isCodeMieProvider(config.baseUrl) ? 0 : config.apiKey.length}',
+    );
+    _agent.state.model = newModel;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
     _agent.streamFunction = _streamFunctionFor(config);
     _providerKind = config.providerKind;

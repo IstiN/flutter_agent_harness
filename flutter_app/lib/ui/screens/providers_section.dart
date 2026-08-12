@@ -16,7 +16,10 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/chatgpt_oauth_flow.dart';
+import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
@@ -45,6 +48,7 @@ class DefaultChatModelSection extends StatelessWidget {
     this.registry,
     this.lastConnectionStore,
     this.modelsFetcher,
+    this.providerModelFetcher,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -62,6 +66,10 @@ class DefaultChatModelSection extends StatelessWidget {
 
   /// `/models` fetch override (tests), forwarded to the model page.
   final ModelsEndpointFetcher? modelsFetcher;
+
+  /// Provider-specific model-list fetcher for non-standard endpoints (e.g.
+  /// CodeMie). Forwarded to the [fa_ui.UnifiedModelPickerPage].
+  final fa_ui.ProviderModelFetcher? providerModelFetcher;
 
   /// Engine overrides for the on-device routes (tests).
   final WebLlmEngineApi? webLlmEngine;
@@ -81,16 +89,24 @@ class DefaultChatModelSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final web = isWeb ?? kIsWeb;
+    final reg = registry ?? ProviderRegistry.inMemory();
     return fa_ui.DefaultChatModelSection(
       connection: service,
       onApply: (config) => _apply(agentConfigFrom(config)),
-      registry: registry,
+      registry: reg,
       modelsFetcher: modelsFetcher,
+      providerModelFetcher: (baseUrl, apiKey) async {
+        // CodeMie uses /llm_models with Cookie auth instead of /models Bearer.
+        if (baseUrl.contains('/code-assistant-api/')) {
+          return fetchCodeMieModels(baseUrl, apiKey);
+        }
+        return const [];
+      },
       // The on-device presets connect through the regular form (engine
       // download + progress) pre-selected to the provider.
       onDeviceProviders: buildOnDeviceProviderRoutes(
         context,
-        registry: registry,
+        registry: reg,
         onApply: _apply,
         webLlmEngine: webLlmEngine,
         gemmaEngine: gemmaEngine,
@@ -105,6 +121,32 @@ class DefaultChatModelSection extends StatelessWidget {
           context,
         ),
       },
+      addProviderPage: (context) => fa_ui.AddProviderPresetPickerPage(
+        registry: reg,
+        onCodeMieSso: () async {
+          Navigator.of(context).pop();
+          await runCodemieSsoFlow(
+            context: context,
+            registry: reg,
+            service: service,
+            lastConnectionStore:
+                lastConnectionStore ?? LastConnectionStore.inMemory(),
+          );
+        },
+        onChatGptOAuth: () async {
+          Navigator.of(context).pop();
+          await runChatGptOAuthFlow(
+            context: context,
+            registry: reg,
+            service: service,
+            lastConnectionStore:
+                lastConnectionStore ?? LastConnectionStore.inMemory(),
+          );
+        },
+        openRouterOAuthCallbackUrl:
+            OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
+        openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
+      ),
     );
   }
 }

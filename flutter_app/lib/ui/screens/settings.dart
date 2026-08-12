@@ -14,6 +14,8 @@ import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/chatgpt_oauth_flow.dart';
+import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/gemma/gemma_cache_section.dart';
@@ -2028,6 +2030,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
                 openRouterOAuthCapture:
                     OpenRouterOAuthCoordinator.instance.capture,
+                onCodeMieSso: () async {
+                  final registry = widget.registry;
+                  if (registry == null) return;
+                  await runCodemieSsoFlow(
+                    context: context,
+                    registry: registry,
+                    service: widget.service,
+                    lastConnectionStore:
+                        widget.lastConnectionStore ??
+                        LastConnectionStore.inMemory(),
+                  );
+                },
+                onChatGptOAuth: () async {
+                  final registry = widget.registry;
+                  if (registry == null) return;
+                  await runChatGptOAuthFlow(
+                    context: context,
+                    registry: registry,
+                    service: widget.service,
+                    lastConnectionStore:
+                        widget.lastConnectionStore ??
+                        LastConnectionStore.inMemory(),
+                  );
+                },
                 onDeviceProviders: buildOnDeviceProviderRoutes(
                   context,
                   registry: widget.registry,

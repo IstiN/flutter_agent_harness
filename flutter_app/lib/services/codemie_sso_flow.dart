@@ -1,0 +1,374 @@
+import 'dart:async';
+import 'dart:io' show Platform;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
+import 'package:url_launcher/url_launcher.dart' as url_launcher;
+
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/last_connection.dart';
+import 'package:fa/ui/screens/codemie_sso_webview.dart';
+import 'package:fa/services/provider_registry.dart';
+
+/// Runs the full CodeMie SSO flow:
+///
+/// **macOS** — a local callback server is started on a random port (the
+/// port is baked into the SSO login URL), the system browser is opened so
+/// the user authenticates with real cookies/passwords, and the redirect to
+/// `http://localhost:<port>/?token=...` is caught by the server. This
+/// mirrors the CLI flow and gives the best UX (password manager, saved
+/// sessions). The macOS sandbox's `network.server` entitlement covers it.
+///
+/// **iOS** — a local server is not viable (Safari won't redirect to
+/// `http://localhost`, background networking is restricted). An in-app
+/// WebView ([CodeMieSsoWebViewPage]) intercepts the localhost redirect via
+/// its `NavigationDelegate` — the redirect never leaves the app.
+///
+/// After SSO completes on either platform, the flow continues with model
+/// selection and provider/connection setup:
+/// 1. Fetches available models from the CodeMie API and shows a picker.
+/// 2. Saves the org as a [CustomProvider] (or updates an existing one —
+///    re-login keeps the model) and stores the cookie as the provider key.
+/// 3. Reconfigures [service] with the new connection (cookie auth via
+///    `model.headers`, no Bearer key) and persists it as the last connection.
+///
+/// Returns `true` when the flow completed and the service was reconfigured,
+/// `false` when the user cancelled at any step.
+Future<bool> runCodemieSsoFlow({
+  required BuildContext context,
+  required ProviderRegistry registry,
+  required AgentService service,
+  required LastConnectionStore lastConnectionStore,
+  String orgUrl = defaultCodeMieBaseUrl,
+}) async {
+  // ── Step 1: SSO ─────────────────────────────────────────────────────
+  CodeMieSsoCredentials? credentials;
+  if (Platform.isMacOS) {
+    // macOS: local server + system browser (real cookies, password manager).
+    credentials = await _desktopSso(context, orgUrl);
+  } else {
+    // iOS and others: in-app WebView.
+    credentials = await Navigator.of(context).push<CodeMieSsoCredentials?>(
+      MaterialPageRoute(
+        builder: (_) => CodeMieSsoWebViewPage(orgUrl: orgUrl),
+      ),
+    );
+  }
+  if (credentials == null) return false; // cancelled / timed out
+
+  if (!context.mounted) return false;
+
+  // ── Step 2: Pick project ───────────────────────────────────────────
+  final baseUrl = '${credentials.apiUrl}/v1';
+  final cookie = credentials.authToken;
+
+  // Check for an existing provider (re-login keeps the same model).
+  final existing = registry.providers
+      .where((p) => p.baseUrl == baseUrl)
+      .firstOrNull;
+
+  // Fetch projects (informational, like the CLI flow).
+  List<String> projects = const [];
+  try {
+    projects = await fetchCodeMieProjects(credentials.apiUrl, cookie);
+  } on Object {
+    // Network error — skip the project picker.
+  }
+
+  if (!context.mounted) return false;
+  if (projects.isNotEmpty) {
+    await _pickProject(context, projects);
+    if (!context.mounted) return false;
+  }
+
+  // ── Step 3: Pick model ──────────────────────────────────────────────
+  String? modelId = existing?.modelId;
+
+  // Fetch available models for the picker.
+  List<String> models = const [];
+  try {
+    models = await fetchCodeMieModels(baseUrl, cookie);
+  } on Object {
+    // Network error — fall through to the picker with an empty list
+    // (the user can type a model id manually).
+  }
+
+  if (!context.mounted) return false;
+
+  if (modelId == null || modelId.isEmpty) {
+    modelId = await _pickModel(
+      context,
+      models,
+      preselected: modelId,
+    );
+    if (modelId == null || modelId.isEmpty) return false;
+  } else {
+    // Re-login: briefly show the fetched models so the user can switch
+    // if they want, but pre-select the current model.
+    final switched = await _pickModel(
+      context,
+      models,
+      preselected: modelId,
+      allowCancel: true,
+    );
+    if (switched != null && switched.isNotEmpty) {
+      modelId = switched;
+    }
+  }
+
+  if (!context.mounted) return false;
+
+  // ── Step 3: Save provider + key ─────────────────────────────────────
+  final name = _hostFromUrl(orgUrl);
+  if (existing != null) {
+    final updated = CustomProvider(
+      id: existing.id,
+      name: existing.name,
+      baseUrl: baseUrl,
+      modelId: modelId,
+    );
+    await registry.update(updated);
+    registry.rememberKey(updated.id, cookie);
+  } else {
+    final provider = await registry.add(
+      name: name,
+      baseUrl: baseUrl,
+      modelId: modelId,
+    );
+    registry.rememberKey(provider.id, cookie);
+  }
+
+  // ── Step 4: Connect ─────────────────────────────────────────────────
+  final config = AgentConfig(
+    providerKind: 'openai-completions',
+    modelId: modelId,
+    baseUrl: baseUrl,
+    apiKey: cookie,
+  );
+  await service.reconfigure(config);
+  await lastConnectionStore.saveFromConfig(config);
+
+  return true;
+}
+
+/// Extracts the host name from [url] for the provider display name.
+String _hostFromUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri != null && uri.host.isNotEmpty) {
+    final port = uri.port;
+    final defaultPort = uri.scheme == 'https' ? 443 : 80;
+    return port != 0 && port != defaultPort
+        ? '${uri.host}:$port'
+        : uri.host;
+  }
+  return 'codemie';
+}
+
+/// Shows a simple project picker dialog. Purely informational (like the
+/// CLI flow) — the selection does not affect auth headers.
+Future<void> _pickProject(BuildContext context, List<String> projects) async {
+  String? selected;
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('CodeMie Project'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: StatefulBuilder(
+          builder: (context, setState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final project in projects)
+                ListTile(
+                  title: Text(project),
+                  dense: true,
+                  trailing: selected == project
+                      ? const Icon(Icons.check_circle, size: 20)
+                      : const Icon(Icons.radio_button_unchecked, size: 20),
+                  onTap: () {
+                    setState(() => selected = project);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('Continue'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// macOS desktop SSO: starts a local callback server, opens the system
+/// browser (so the user gets their real cookies and password manager), and
+/// waits for the CodeMie redirect to `http://localhost:<port>/?token=...`.
+///
+/// Shows a non-blocking [SnackBar] with status so the user knows what is
+/// happening. Returns `null` if the browser could not be opened or the
+/// callback timed out / was cancelled.
+Future<CodeMieSsoCredentials?> _desktopSso(
+  BuildContext context,
+  String orgUrl,
+) async {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('Opening browser for CodeMie sign-in…'),
+      duration: Duration(seconds: 3),
+    ),
+  );
+  return runCodeMieSsoCliFlow(
+    codeMieUrl: orgUrl,
+    onStatus: (msg) => debugPrint('[CodeMie SSO] $msg'),
+    openBrowserFn: (url) async {
+      return url_launcher.launchUrl(
+        Uri.parse(url),
+        mode: url_launcher.LaunchMode.externalApplication,
+      );
+    },
+  );
+}
+
+/// Shows a model picker dialog and returns the chosen model id.
+///
+/// When [models] is non-empty, a list of radio tiles is shown with a manual
+/// entry field at the bottom. When [models] is empty, only the manual entry
+/// field is shown.
+///
+/// [preselected] highlights the current model. When [allowCancel] is true,
+/// the user can dismiss the dialog without picking (returns null).
+Future<String?> _pickModel(
+  BuildContext context,
+  List<String> models, {
+  String? preselected,
+  bool allowCancel = false,
+}) async {
+  return showDialog<String>(
+    context: context,
+    barrierDismissible: allowCancel,
+    builder: (dialogContext) => _ModelPickerDialog(
+      models: models,
+      preselected: preselected,
+      allowCancel: allowCancel,
+    ),
+  );
+}
+
+class _ModelPickerDialog extends StatefulWidget {
+  const _ModelPickerDialog({
+    required this.models,
+    this.preselected,
+    this.allowCancel = false,
+  });
+
+  final List<String> models;
+  final String? preselected;
+  final bool allowCancel;
+
+  @override
+  State<_ModelPickerDialog> createState() => _ModelPickerDialogState();
+}
+
+class _ModelPickerDialogState extends State<_ModelPickerDialog> {
+  late final TextEditingController _manualController;
+  String? _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _manualController = TextEditingController();
+    _selected = widget.preselected;
+  }
+
+  @override
+  void dispose() {
+    _manualController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Select Model'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.models.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'Could not fetch the model list. Enter a model id manually.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: widget.models.length,
+                  itemBuilder: (context, index) {
+                    final model = widget.models[index];
+                    return ListTile(
+                      title: Text(model),
+                      dense: true,
+                      trailing: _selected == model
+                          ? Icon(
+                              Icons.check_circle,
+                              size: 20,
+                              color: theme.colorScheme.primary,
+                            )
+                          : Icon(
+                              Icons.radio_button_unchecked,
+                              size: 20,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                      onTap: () {
+                        setState(() => _selected = model);
+                      },
+                    );
+                  },
+                ),
+              ),
+            const Divider(),
+            TextField(
+              controller: _manualController,
+              decoration: const InputDecoration(
+                labelText: 'Or enter model id',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                if (value.trim().isNotEmpty) {
+                  setState(() => _selected = value.trim());
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        if (widget.allowCancel)
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        FilledButton(
+          onPressed: () {
+            final manual = _manualController.text.trim();
+            Navigator.of(context).pop(
+              manual.isNotEmpty ? manual : _selected,
+            );
+          },
+          child: const Text('Connect'),
+        ),
+      ],
+    );
+  }
+}

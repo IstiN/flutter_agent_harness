@@ -6,25 +6,28 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'package:fa_ui/src/host_config.dart';
+import 'package:fa_ui/src/providers/add_provider_picker.dart';
 import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/default_chat_model.dart';
 import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
-import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 
-/// The settings "Providers" section: every hosted preset, saved
-/// [CustomProvider], and optional on-device route, with the active one
-/// marked with a check. Tapping a hosted row pushes the full-screen
-/// [ProviderEditorPage] (presets: key only; custom providers:
-/// name/URL/model/key + Delete); the "Add provider" row opens the same page
-/// in create mode. On-device rows push the host-supplied [FaOnDeviceRoute]
-/// page and report the resulting [FaChatModelConfig] through
-/// [onDeviceConnected].
+/// The settings "Providers" section: saved providers only, plus an
+/// "Add provider" row that opens the [AddProviderPresetPickerPage].
+///
+/// Unlike the old design, built-in presets (OpenRouter, Ollama Cloud, Gemini)
+/// are NOT shown until they are actually configured — they are only
+/// reachable from the add flow. This mirrors the CLI's `/provider` command:
+/// the list reflects what is connected, not what is available.
+///
+/// Each saved [CustomProvider] row pushes the [ProviderEditorPage] in edit
+/// mode (name/URL/model/key + Delete). On-device rows push the host-supplied
+/// [FaOnDeviceRoute] page and report the resulting [FaChatModelConfig]
+/// through [onDeviceConnected].
 class ProvidersSection extends StatelessWidget {
   const ProvidersSection({
     super.key,
@@ -34,6 +37,8 @@ class ProvidersSection extends StatelessWidget {
     this.onDeviceConnected,
     this.openRouterOAuthCallbackUrl,
     this.openRouterOAuthCapture,
+    this.onCodeMieSso,
+    this.onChatGptOAuth,
   });
 
   /// The active connection, for the current-provider mark. `null` renders
@@ -59,6 +64,16 @@ class ProvidersSection extends StatelessWidget {
   /// Automatic callback capture for the OpenRouter OAuth flow in the preset
   /// editor. When null the button falls back to the manual code-paste sheet.
   final OpenRouterOAuthCaptureCallback? openRouterOAuthCapture;
+
+  /// Called when the user picks CodeMie from the add-provider preset
+  /// picker. When null, CodeMie is not offered. The host should open the
+  /// CodeMie WebView SSO flow.
+  final VoidCallback? onCodeMieSso;
+
+  /// Called when the user picks ChatGPT from the add-provider preset
+  /// picker. When null, ChatGPT is not offered. The host should open the
+  /// ChatGPT OAuth flow.
+  final VoidCallback? onChatGptOAuth;
 
   bool _isCurrent(Object provider) {
     final service = this.service;
@@ -100,14 +115,13 @@ class ProvidersSection extends StatelessWidget {
               style: theme.textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
-            for (final preset in hostedProviderPresets)
-              _buildRow(
-                context,
-                theme,
-                label: preset.labelFor(context),
-                subtitle: providerHostOf(preset.baseUrl!),
-                current: _isCurrent(preset),
-                onTap: () => _editPreset(context, preset),
+            if (registry.providers.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'No providers configured. Tap "Add provider" to get started.',
+                  style: theme.textTheme.bodySmall,
+                ),
               ),
             for (final provider in registry.providers)
               _buildRow(
@@ -216,49 +230,6 @@ class ProvidersSection extends StatelessWidget {
     );
   }
 
-  Future<void> _editPreset(BuildContext context, ProviderPreset preset) async {
-    final keysStore = SessionKeysScope.maybeOf(context);
-    final registry = this.registry;
-    final keyName = hostedProviderKeyName(preset);
-    final hasSavedKey =
-        keyName != null &&
-        FaUiHost.resolveKey(
-          keyName,
-          () => keysStore?.valueOf(keyName) ?? '',
-        ).isNotEmpty;
-    final result = await pushFaPage<ProviderEditorResult>(
-      context,
-      ProviderEditorPage(
-        title: preset.labelFor(context),
-        preset: preset,
-        hasSavedKey: hasSavedKey,
-        registry: registry,
-        onOAuthSuccess: preset == ProviderPreset.openrouter
-            ? (key) async {
-                final keyName = hostedProviderKeyName(preset);
-                if (keyName != null) {
-                  await keysStore?.set(keyName, key);
-                }
-              }
-            : null,
-        openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
-        openRouterOAuthCapture: openRouterOAuthCapture,
-      ),
-    );
-    if (result == null) return;
-    // The preset's default model is user-editable: persist the override,
-    // clearing it when the field is empty or back to the built-in default.
-    if (registry != null) {
-      final model = result.modelId;
-      await registry.setPresetModelOverride(
-        preset.name,
-        model.isEmpty || model == preset.defaultModel ? null : model,
-      );
-    }
-    if (result.apiKey.isEmpty || keyName == null) return;
-    await keysStore?.set(keyName, result.apiKey);
-  }
-
   Future<void> _editCustom(
     BuildContext context,
     ProviderRegistry registry,
@@ -293,10 +264,15 @@ class ProvidersSection extends StatelessWidget {
     BuildContext context,
     ProviderRegistry registry,
   ) async {
-    await pushProviderEditor(
+    await pushFaPage<void>(
       context,
-      registry,
-      title: FaUiStrings.of(context).settingsAddProvider,
+      AddProviderPresetPickerPage(
+        registry: registry,
+        onCodeMieSso: onCodeMieSso,
+        onChatGptOAuth: onChatGptOAuth,
+        openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
+        openRouterOAuthCapture: openRouterOAuthCapture,
+      ),
     );
   }
 }

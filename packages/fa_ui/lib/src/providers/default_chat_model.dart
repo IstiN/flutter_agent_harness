@@ -9,11 +9,11 @@ import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/media_slot_picker_page.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
+import 'package:fa_ui/src/providers/unified_model_picker.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
-import 'package:fa_ui/src/utils/vision_models.dart';
 import 'package:fa_ui/src/widgets/model_id_field.dart';
 
 /// Builds the connect page of an on-device provider (engine download,
@@ -53,8 +53,10 @@ class DefaultChatModelSection extends StatelessWidget {
     required this.onApply,
     this.registry,
     this.modelsFetcher,
+    this.providerModelFetcher,
     this.onDeviceProviders = const [],
     this.providerKindLabels = const {},
+    this.addProviderPage,
   });
 
   /// The active connection, displayed and listened to.
@@ -70,6 +72,10 @@ class DefaultChatModelSection extends StatelessWidget {
   /// `/models` fetch override (tests), forwarded to the model page.
   final ModelsEndpointFetcher? modelsFetcher;
 
+  /// Provider-specific model-list fetcher for non-standard endpoints (e.g.
+  /// CodeMie). Forwarded to the [UnifiedModelPickerPage].
+  final ProviderModelFetcher? providerModelFetcher;
+
   /// The on-device provider entries appended to the picker (already
   /// filtered for the platform by the host).
   final List<FaOnDeviceRoute> onDeviceProviders;
@@ -78,6 +84,10 @@ class DefaultChatModelSection extends StatelessWidget {
   /// keyed by [FaChatConnection.providerKind] — a connection whose kind is
   /// listed here summarizes with the label instead of its (empty) base URL.
   final Map<String, String> providerKindLabels;
+
+  /// Host-provided builder for the "Add provider" page (preset picker).
+  /// When null, the fallback [pushProviderEditor] is used.
+  final WidgetBuilder? addProviderPage;
 
   String _activeProviderLabel(BuildContext context) {
     final kindLabel = providerKindLabels[connection.providerKind];
@@ -107,11 +117,15 @@ class DefaultChatModelSection extends StatelessWidget {
               onTap: () async {
                 await pushFaPage<void>(
                   context,
-                  DefaultModelProviderPickerPage(
-                    registry: registry,
+                  UnifiedModelPickerPage(
+                    connection: connection,
                     onApply: onApply,
+                    registry: registry,
                     modelsFetcher: modelsFetcher,
+                    providerModelFetcher: providerModelFetcher,
                     onDeviceProviders: onDeviceProviders,
+                    providerKindLabels: providerKindLabels,
+                    addProviderPage: addProviderPage,
                   ),
                 );
               },
