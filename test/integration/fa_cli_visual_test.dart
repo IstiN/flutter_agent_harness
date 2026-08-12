@@ -18,6 +18,13 @@ void main() {
     if (!screenshotsDir.existsSync()) {
       screenshotsDir.createSync(recursive: true);
     }
+    // Remove stale screenshots from previous runs so only the current
+    // run's output is left in the directory.
+    for (final file in screenshotsDir.listSync()) {
+      if (file is File && file.path.endsWith('.png')) {
+        file.deleteSync();
+      }
+    }
   });
 
   /// Takes a screenshot of the current terminal screen.
