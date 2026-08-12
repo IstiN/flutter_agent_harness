@@ -43,9 +43,11 @@ import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
 import '../model_roles/vision_models.dart';
+import '../providers/chatgpt_oauth.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../prompts/prompt_overrides.dart';
+import 'chatgpt_oauth_server.dart';
 import 'openrouter_oauth_server.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_repo.dart';
@@ -319,11 +321,7 @@ class AgentCli {
 
     _streamFunction =
         streamFunction ??
-        providerStreamFunction(
-          config.providerKind,
-          config.apiKey,
-          sessionId: () => _session?.cachedId,
-        );
+        _catalogStreamFunction(config.providerKind, config.apiKey);
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
     _mcp = AgentCliMcpWiring(config: config.mcpConfig, cwd: config.env.cwd);
@@ -1998,97 +1996,6 @@ class AgentCli {
     } else {
       _handleApprovalMode(rest);
     }
-  }
-
-  /// `/settings`: a bare command opens the TUI settings hub; anything else
-  /// (and line mode) prints the current settings summary.
-  Future<void> _settingsSlash(String rest) async {
-    if (rest.isEmpty && _useTui && _tuiController != null) {
-      _openSettingsPicker();
-    } else {
-      _printSettingsSummary();
-    }
-  }
-
-  /// The settings hub picker: one entry per configurable area, each
-  /// launching the same interactive flow its dedicated slash command would.
-  void _openSettingsPicker() {
-    final model = _agent.state.model;
-    final items = [
-      MenuItem(key: 'provider', label: 'Provider', description: model.provider),
-      const MenuItem(
-        key: 'provider-edit',
-        label: 'Edit / delete provider',
-        description: 'guided setup: api type, url, key, model',
-      ),
-      MenuItem(key: 'model', label: 'Chat model', description: model.id),
-      const MenuItem(
-        key: 'model-edit',
-        label: 'Model parameters',
-        description: 'context window, token limits',
-      ),
-      const MenuItem(
-        key: 'media',
-        label: 'Media models',
-        description: 'image, speech, music, video slots',
-      ),
-      MenuItem(
-        key: 'approval',
-        label: 'Approval mode',
-        description: _approval.mode.label,
-      ),
-      MenuItem(
-        key: 'mode',
-        label: 'Agent mode',
-        description: _currentMode.name,
-      ),
-      const MenuItem(
-        key: 'keys',
-        label: 'API keys',
-        description: 'set or inspect stored keys',
-      ),
-      const MenuItem(
-        key: 'mcp',
-        label: 'MCP servers',
-        description: 'status and config reload',
-      ),
-    ];
-    _tuiController?.openPicker('settings', 'Settings', items);
-  }
-
-  /// A settings-hub selection launches the same flow its dedicated slash
-  /// command would open.
-  Future<void> _tuiPickSetting(String key) async {
-    switch (key) {
-      case 'provider':
-        _openProviderPicker();
-      case 'provider-edit':
-        _startProviderEditFlow();
-      case 'model':
-        await startChatModelFlow();
-      case 'model-edit':
-        await _handleModelEdit('');
-      case 'media':
-        await startMediaSlotFlow();
-      case 'approval':
-        _openApprovalPicker();
-      case 'mode':
-        _openModePicker();
-      case 'keys':
-        await _handleKeyCommand('');
-      case 'mcp':
-        _printMcpStatus();
-    }
-  }
-
-  /// The line-mode `/settings` summary (the TUI opens the hub instead).
-  void _printSettingsSummary() {
-    final model = _agent.state.model;
-    io.writeln('provider: ${model.provider}');
-    io.writeln('model: ${model.id}');
-    io.writeln('approval: ${_approval.mode.label}');
-    io.writeln('mode: ${_currentMode.name}');
-    io.writeln('change via /provider, /model, /approval, /mode, /key, /mcp');
   }
 
   /// Anything that is not a builtin command: a plugin slash command, a

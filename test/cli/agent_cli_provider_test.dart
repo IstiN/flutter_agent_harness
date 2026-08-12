@@ -35,6 +35,12 @@ void main() {
       String? label,
     })?
     openRouterOAuthExchangeFn,
+    Future<ChatGptOAuthCredentials> Function({
+      required String code,
+      required String redirectUri,
+      required String verifier,
+    })?
+    chatGptOAuthExchangeFn,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -51,6 +57,7 @@ void main() {
         onSecretStored: onSecretStored,
         providerKind: providerKind ?? 'openai-completions',
         openRouterOAuthExchangeFn: openRouterOAuthExchangeFn,
+        chatGptOAuthExchangeFn: chatGptOAuthExchangeFn,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -1099,6 +1106,100 @@ void main() {
       io.sendLine('');
       await waitForIt(
         () => io.out.toString().contains('OpenRouter OAuth cancelled'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+  });
+
+  group('ChatGPT OAuth', () {
+    test(
+      '/provider chatgpt oauth headless exchanges, stores credentials and switches',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          chatGptOAuthExchangeFn:
+              ({
+                required String code,
+                required String redirectUri,
+                required String verifier,
+              }) async {
+                expect(code, 'auth-code-xyz');
+                expect(redirectUri, 'http://127.0.0.1:1455/auth/callback');
+                expect(verifier, isNotEmpty);
+                return const ChatGptOAuthCredentials(
+                  accessToken: 'at-123',
+                  refreshToken: 'rt-123',
+                  idToken: 'it-123',
+                  accountId: 'acc-123',
+                );
+              },
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider chatgpt oauth headless');
+        await waitForIt(
+          () => io.out.toString().contains('ChatGPT OAuth (headless)'),
+        );
+        await waitForIt(() => io.out.toString().contains('redirect URL:'));
+
+        // The printed authorize URL carries the state parameter the
+        // callback must echo back.
+        final authUrlLine = io.out
+            .toString()
+            .split('\n')
+            .firstWhere((line) => line.contains('auth.openai.com'));
+        final state = Uri.parse(authUrlLine.trim()).queryParameters['state'];
+        expect(state, isNotNull);
+
+        io.sendLine(
+          'http://127.0.0.1:1455/auth/callback?code=auth-code-xyz&state=$state',
+        );
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to chatgpt'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('ChatGPT authorized'));
+        final stored = store.map['CHATGPT_OAUTH_CREDENTIALS'];
+        expect(stored, isNotNull);
+        expect(stored, contains('"access_token":"at-123"'));
+        expect(stored, contains('"refresh_token":"rt-123"'));
+        expect(stored, contains('"chatgpt_account_id":"acc-123"'));
+        expect(cli.agent.state.model.provider, 'chatgpt');
+        expect(cli.providerKind, 'chatgpt-codex');
+      },
+    );
+
+    test('/provider chatgpt oauth headless rejects a bad-state URL', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt oauth headless');
+      await waitForIt(() => io.out.toString().contains('redirect URL:'));
+      io.sendLine('http://127.0.0.1:1455/auth/callback?code=x&state=wrong');
+      await waitForIt(() => io.out.toString().contains('invalid redirect URL'));
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('/provider chatgpt oauth rejects invalid usage', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt oauth too many args');
+      await waitForIt(
+        () => io.out.toString().contains('usage: /provider chatgpt oauth'),
       );
       io.sendLine('/exit');
       await run;

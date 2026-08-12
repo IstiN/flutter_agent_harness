@@ -44,6 +44,7 @@ final class AgentCliConfig {
     this.isShiftPressed,
     this.homeDir,
     this.openRouterOAuthExchangeFn,
+    this.chatGptOAuthExchangeFn,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -60,6 +61,16 @@ final class AgentCliConfig {
     String? label,
   })?
   openRouterOAuthExchangeFn;
+
+  /// Optional override for the ChatGPT OAuth code exchange. Tests inject a
+  /// fake here so the `/provider chatgpt oauth` flow can run without network.
+  /// Production leaves this null and uses the real exchange endpoint.
+  final Future<ChatGptOAuthCredentials> Function({
+    required String code,
+    required String redirectUri,
+    required String verifier,
+  })?
+  chatGptOAuthExchangeFn;
 
   /// Directories to scan for `/name` prompt templates (`.md` files).
   final List<String> promptTemplateDirs;

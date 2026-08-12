@@ -39,6 +39,8 @@ export 'src/model_roles/model_roles.dart';
 export 'src/model_roles/vision_models.dart';
 export 'src/overflow.dart';
 export 'src/providers/anthropic.dart';
+export 'src/providers/chatgpt_codex.dart';
+export 'src/providers/chatgpt_oauth.dart';
 export 'src/providers/google.dart';
 export 'src/providers/models_endpoint.dart';
 export 'src/providers/openai_completions.dart';

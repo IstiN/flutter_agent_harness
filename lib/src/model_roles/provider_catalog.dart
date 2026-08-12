@@ -14,6 +14,8 @@ import '../event_stream.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../providers/anthropic.dart';
+import '../providers/chatgpt_codex.dart';
+import '../providers/chatgpt_oauth.dart';
 import '../providers/google.dart';
 import '../providers/openai_completions.dart';
 
@@ -81,6 +83,15 @@ const providerCatalog = <String, ProviderSpec>{
     defaultBaseUrl: 'https://api.openai.com/v1',
     apiKeyEnvNames: ['OPENAI_API_KEY'],
     contextWindow: 200000,
+    maxTokens: 16384,
+  ),
+  'chatgpt': ProviderSpec(
+    name: 'chatgpt',
+    kind: 'chatgpt-codex',
+    api: 'responses',
+    defaultBaseUrl: chatGptCodexBaseUrl,
+    apiKeyEnvNames: ['CHATGPT_OAUTH_CREDENTIALS'],
+    contextWindow: 128000,
     maxTokens: 16384,
   ),
   'anthropic': ProviderSpec(
@@ -197,12 +208,22 @@ StreamFunction providerStreamFunction(
   String apiKey, {
   String? Function()? sessionId,
   String? cacheRetention,
+  ChatGptCredentialsPersist? onChatGptCredentialsRefreshed,
 }) {
-  if (kind != 'openai-completions' && kind != 'anthropic' && kind != 'google') {
+  if (kind != 'openai-completions' &&
+      kind != 'anthropic' &&
+      kind != 'google' &&
+      kind != 'chatgpt-codex') {
     throw ConfigException('Unknown provider kind: $kind');
   }
   // ignore: implicit_call_tearoffs
-  return _CatalogStreamFunction(kind, apiKey, sessionId, cacheRetention);
+  return _CatalogStreamFunction(
+    kind,
+    apiKey,
+    sessionId,
+    cacheRetention,
+    onChatGptCredentialsRefreshed,
+  );
 }
 
 /// The [providerStreamFunction] product: resolves the cache routing at call
@@ -214,12 +235,14 @@ final class _CatalogStreamFunction {
     this._apiKey,
     this._sessionId,
     this._cacheRetention,
+    this._onChatGptCredentialsRefreshed,
   );
 
   final String _kind;
   final String _apiKey;
   final String? Function()? _sessionId;
   final String? _cacheRetention;
+  final ChatGptCredentialsPersist? _onChatGptCredentialsRefreshed;
 
   /// The [StreamFunction] entry point.
   AssistantMessageEventStream call(
@@ -254,6 +277,13 @@ final class _CatalogStreamFunction {
         model,
         context,
         GoogleOptions(apiKey: _apiKey, cancelToken: cancelToken),
+      ),
+      'chatgpt-codex' => streamChatGptCodex(
+        model,
+        context,
+        credentials: _apiKey,
+        onCredentialsRefreshed: _onChatGptCredentialsRefreshed,
+        cancelToken: cancelToken,
       ),
       // Validated by providerStreamFunction; unreachable.
       _ => throw ConfigException('Unknown provider kind: $_kind'),

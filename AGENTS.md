@@ -138,8 +138,18 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/web_search/` — `web_search` (DDG keyless → Brave/Tavily keyed)
   and `web_fetch` (HTML→markdown, pub.dev handler) via
   `builtinTools(env, webSearch:)`.
-- `lib/src/model_roles/provider_catalog.dart` — provider table; specs
+- `lib/src/model_roles/provider_catalog.dart` — provider table (incl. the
+  `chatgpt` Codex-backend entry, kind `chatgpt-codex`); specs
   default `input: ['text','image']` (vision).
+  `lib/src/providers/chatgpt_oauth.dart` + `chatgpt_codex.dart` — ChatGPT
+  account sign-in (PKCE against auth.openai.com, Codex CLI client id) and
+  the Responses-API SSE adapter (`store: false` — the backend rejects
+  server-side storage; `ChatGPT-Account-ID` header; 401 → refresh →
+  re-persist via `ChatGptCredentialsPersist`). CLI:
+  `/provider chatgpt oauth [headless]` (callback server in
+  `lib/src/cli/chatgpt_oauth_server.dart`, exported from `lib/io.dart`);
+  the credentials blob lives in the secure store as
+  `CHATGPT_OAUTH_CREDENTIALS`.
   `lib/src/model_roles/vision_models.dart` — the shared vision heuristic
   (`modelIdSuggestsVision`, `visionMarker` picker checkmark,
   `inputModalitiesFor`): CLI model switches recompute `Model.input` from it

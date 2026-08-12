@@ -6,6 +6,7 @@
 library;
 
 export 'src/cli/cli_config.dart';
+export 'src/cli/chatgpt_oauth_server.dart';
 export 'src/cli/headless_prompt.dart';
 export 'src/cli/openrouter_oauth_server.dart';
 export 'src/cli/prompt_overrides_io.dart';

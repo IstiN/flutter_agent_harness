@@ -479,6 +479,7 @@ extension on AgentCli {
     }
     if (_startCustomProviderArg(args)) return;
     if (_startOpenRouterOAuthArg(args)) return;
+    if (_startChatGptOAuthArg(args)) return;
     if (args.length > 3) {
       io.writeln('usage: /provider <name> [baseUrl] [token]');
       return;
@@ -637,11 +638,7 @@ extension on AgentCli {
     if (isOpenRouterActive) {
       _apiKey = key.key;
       _explicitToken = true;
-      _streamFunction = providerStreamFunction(
-        spec.kind,
-        key.key,
-        sessionId: () => _session?.cachedId,
-      );
+      _streamFunction = _catalogStreamFunction(spec.kind, key.key);
       _agent.streamFunction = _streamFunction;
       io.writeln('OpenRouter key updated for current session');
     } else {
@@ -658,6 +655,172 @@ extension on AgentCli {
       io.writeln('key settings: ${key.settingsUrl}');
     }
   }
+
+  /// The `/provider chatgpt oauth [headless]` branch: authenticates the
+  /// user with their ChatGPT account via PKCE (the Codex CLI client id) and
+  /// stores the resulting OAuth credentials — access + refresh tokens as
+  /// one JSON blob — under CHATGPT_OAUTH_CREDENTIALS. Returns true when the
+  /// command targeted the OAuth flow.
+  bool _startChatGptOAuthArg(List<String> args) {
+    if (args.first != 'chatgpt') return false;
+    if (args.length < 2 || args[1] != 'oauth') {
+      return false;
+    }
+    final headless = args.length > 2 && args[2] == 'headless';
+    if (args.length > 3 || (args.length == 3 && !headless)) {
+      io.writeln('usage: /provider chatgpt oauth [headless]');
+      return true;
+    }
+    unawaited(_handleChatGptOAuthCommand(headless: headless));
+    return true;
+  }
+
+  /// Runs the ChatGPT OAuth flow and saves the resulting credentials.
+  Future<void> _handleChatGptOAuthCommand({required bool headless}) async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      await _runChatGptOAuthCommand(headless: headless);
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
+  Future<void> _runChatGptOAuthCommand({required bool headless}) async {
+    final spec = providerCatalog['chatgpt']!;
+
+    final exchangeFn = config.chatGptOAuthExchangeFn ?? _defaultChatGptExchange;
+
+    ChatGptOAuthCredentials? credentials;
+    if (headless) {
+      credentials = await _runChatGptHeadlessOAuth(exchangeFn: exchangeFn);
+    } else {
+      credentials = await runChatGptOAuthCliFlow(
+        onStatus: io.writeln,
+        exchangeFn: exchangeFn,
+      );
+    }
+
+    if (credentials == null) return;
+
+    await _applyChatGptOAuthCredentials(spec, credentials);
+  }
+
+  Future<ChatGptOAuthCredentials> _defaultChatGptExchange({
+    required String code,
+    required String redirectUri,
+    required String verifier,
+  }) => exchangeChatGptAuthorizationCode(
+    code: code,
+    redirectUri: redirectUri,
+    codeVerifier: verifier,
+  );
+
+  /// Headless ChatGPT OAuth: no localhost server — the user opens the URL,
+  /// authorizes, and pastes the FULL redirect URL they land on (it carries
+  /// the code and state as query parameters).
+  Future<ChatGptOAuthCredentials?> _runChatGptHeadlessOAuth({
+    required Future<ChatGptOAuthCredentials> Function({
+      required String code,
+      required String redirectUri,
+      required String verifier,
+    })
+    exchangeFn,
+  }) async {
+    final verifier = generateChatGptPkceVerifier();
+    final state = generateChatGptState();
+    const redirectUri = 'http://127.0.0.1:1455/auth/callback';
+    final authUrl = buildChatGptAuthorizeUrl(
+      redirectUri: redirectUri,
+      codeChallenge: generateChatGptPkceChallenge(verifier),
+      state: state,
+    );
+
+    io.writeln(
+      'ChatGPT OAuth (headless): open this URL in a browser, authorize, '
+      'then paste the FULL redirect URL you land on '
+      '(it starts with $redirectUri):',
+    );
+    io.writeln(authUrl.toString());
+
+    final pasted = await _askLine('redirect URL: ');
+    if (pasted == null || pasted.trim().isEmpty) {
+      io.writeln('ChatGPT OAuth cancelled');
+      return null;
+    }
+    final uri = Uri.tryParse(pasted.trim());
+    final code = uri?.queryParameters['code'];
+    final callbackState = uri?.queryParameters['state'];
+    if (code == null || code.isEmpty || callbackState != state) {
+      io.writeln(
+        'invalid redirect URL (missing code or bad state) — '
+        'ChatGPT OAuth aborted',
+      );
+      return null;
+    }
+
+    try {
+      return await exchangeFn(
+        code: code,
+        redirectUri: redirectUri,
+        verifier: verifier,
+      );
+    } on ConfigException catch (e) {
+      io.writeln('ChatGPT OAuth failed: ${e.message}');
+      return null;
+    }
+  }
+
+  /// Saves OAuth-derived ChatGPT credentials and switches to the Codex
+  /// backend so the session is usable at once.
+  Future<void> _applyChatGptOAuthCredentials(
+    ProviderSpec spec,
+    ChatGptOAuthCredentials credentials,
+  ) async {
+    io.writeln('ChatGPT authorized');
+    final encoded = credentials.encode();
+    final keyName = spec.apiKeyEnvNames.first;
+    await _storeProviderToken(
+      spec,
+      spec.defaultBaseUrl,
+      encoded,
+      keyName: keyName,
+    );
+    await _switchProvider(
+      spec,
+      spec.defaultBaseUrl,
+      _agent.state.model.id,
+      token: encoded,
+      tokenKeyName: keyName,
+    );
+  }
+
+  /// Persists refreshed ChatGPT OAuth credentials: the access token rotates
+  /// on refresh, so the fresh blob replaces the stored one (and the live
+  /// session key) — the next start resolves it like the initial grant.
+  Future<void> _persistChatGptCredentials(String encoded) async {
+    _apiKey = encoded;
+    final spec = providerCatalog['chatgpt']!;
+    await _storeProviderToken(
+      spec,
+      spec.defaultBaseUrl,
+      encoded,
+      keyName: spec.apiKeyEnvNames.first,
+    );
+  }
+
+  /// [providerStreamFunction] with the CLI's session id and — for the
+  /// ChatGPT Codex provider — the credentials-persist callback wired.
+  StreamFunction _catalogStreamFunction(String kind, String key) =>
+      providerStreamFunction(
+        kind,
+        key,
+        sessionId: () => _session?.cachedId,
+        onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
+            ? _persistChatGptCredentials
+            : null,
+      );
 
   /// The catalog-switch branch of [_handleProviderCommand]: resolves the
   /// provider name against the catalog and switches with the optional
@@ -732,11 +895,7 @@ extension on AgentCli {
     _providerKind = spec.kind;
     _apiKey = key;
     _explicitToken = token != null;
-    _streamFunction = providerStreamFunction(
-      spec.kind,
-      key,
-      sessionId: () => _session?.cachedId,
-    );
+    _streamFunction = _catalogStreamFunction(spec.kind, key);
     _agent.streamFunction = _streamFunction;
     final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);
     _agent.state.model = Model(
@@ -1011,11 +1170,7 @@ extension on AgentCli {
     } else if (spec != null && spec.apiKeyEnvNames.contains(name)) {
       _apiKey = value;
       _explicitToken = false;
-      _streamFunction = providerStreamFunction(
-        spec.kind,
-        value,
-        sessionId: () => _session?.cachedId,
-      );
+      _streamFunction = _catalogStreamFunction(spec.kind, value);
       _agent.streamFunction = _streamFunction;
       io.writeln('  active provider key updated');
     }
@@ -1591,11 +1746,7 @@ extension on AgentCli {
       _providerKind = spec.kind;
       _apiKey = key;
       _explicitToken = false;
-      _streamFunction = providerStreamFunction(
-        spec.kind,
-        key,
-        sessionId: () => _session?.cachedId,
-      );
+      _streamFunction = _catalogStreamFunction(spec.kind, key);
       _agent.streamFunction = _streamFunction;
       final built = buildCatalogModel(
         spec.name,
