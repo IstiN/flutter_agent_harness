@@ -963,24 +963,23 @@ Future<void> main(List<String> args) async {
     await sigintSub.cancel();
   }
 
-  // Swallow late terminal query responses: dart_tui asks the terminal for its
-  // background color and sync-update support at startup, and the replies
-  // arrive as ordinary stdin bytes. If they land after the program stopped
-  // listening, the shell echoes them as garbage characters at the prompt.
-  // Drain stdin briefly WITHOUT re-entering raw mode — the terminal is
-  // already restored by dart_tui's shutdown, and re-entering raw mode
-  // risks leaving the shell broken (no echo, no Ctrl-C) if the drain or
-  // its cleanup throws.
+  // dart_tui's shutdown writes the reset sequences (?25h ?1049l ?1002l etc.)
+  // and flushes stdout, but on some terminals the mouse-tracking disable
+  // (?1002l ?1006l) arrives too late or is lost. Write them again here with
+  // an explicit flush to guarantee the shell never sees raw mouse sequences.
   if (stdin.hasTerminal) {
+    stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+    stdout.write('\x1b[?1004l\x1b[?2004l');
+    stdout.write('\x1b[?25h\x1b[?1049l');
+    await stdout.flush();
+    // Drain any pending terminal query/mouse responses so they don't echo
+    // as garbage at the shell prompt.
     try {
-      // A brief non-blocking read in canonical mode: any pending query
-      // responses are consumed by the listen; 150 ms is enough for the
-      // last reply to arrive.
       final drain = stdin.listen((_) {});
       await Future<void>.delayed(const Duration(milliseconds: 150));
       await drain.cancel();
     } on Object {
-      // Nothing to drain: stdin may already be listened to or unavailable.
+      // Nothing to drain.
     }
   }
 }
