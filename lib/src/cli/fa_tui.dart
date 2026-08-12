@@ -1,10 +1,24 @@
 import 'dart:async';
+import 'dart:io' show IOSink;
 
 import 'package:dart_tui/dart_tui.dart';
 
 import 'ansi_markdown.dart';
 import 'tui_prompt.dart';
-import 'tui_repl.dart' show MenuItem;
+import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
+
+/// Translates the (web-safe) headless test hooks into dart_tui program
+/// options: a scripted key byte stream replaces stdin, the rendered frames
+/// go to the given byte consumer, and the OS signal handler stays off (the
+/// test runner owns the signals). Empty without hooks.
+List<ProgramOption> _programHookOptions(TuiProgramHooks? hooks) {
+  if (hooks == null) return const [];
+  return [
+    if (hooks.input != null) withInput(hooks.input),
+    if (hooks.output != null) withOutput(IOSink(hooks.output!)),
+    withoutSignalHandler(),
+  ];
+}
 
 /// The site palette (site/styles.css): a teal accent (#5eead4) and an indigo
 /// accent-2 (#818cf8) on a dark background. Width math in the view always
@@ -1716,17 +1730,30 @@ final class FaTuiModel extends Model {
 /// Thin wrapper around [Program] that lets [AgentCli] push output and refresh
 /// the model picker without knowing dart_tui internals.
 final class FaTuiController {
-  FaTuiController({required this.callbacks, required this.isExited});
+  FaTuiController({
+    required this.callbacks,
+    required this.isExited,
+    this.programHooks,
+  });
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
+
+  /// Headless test hooks (scripted key bytes, captured frames) — null in
+  /// production, where the program reads stdin and renders to stdout.
+  final TuiProgramHooks? programHooks;
 
   late final FaTuiModel _model = FaTuiModel(
     callbacks: callbacks,
     isExited: isExited,
   );
   late final Program _program = Program(
-    options: [withAltScreen(), withHideCursor(false), withMouseCellMotion()],
+    options: [
+      withAltScreen(),
+      withHideCursor(false),
+      withMouseCellMotion(),
+      ..._programHookOptions(programHooks),
+    ],
   );
 
   /// Messages sent before [run] starts (e.g. the banner printed while the

@@ -366,7 +366,7 @@ void _extractZip(List<int> archiveBytes, Directory tmpDir) {
 /// Extracts a tar.gz or zip archive into [tmpDir].
 ///
 /// Returns `null` on success, or an error message string on failure.
-Future<String?> _extractArchive(
+Future<String?> extractArchive(
   List<int> archiveBytes,
   String archiveName,
   Directory tmpDir,
@@ -410,7 +410,7 @@ Future<int> _extractAndSwap(
 ) async {
   final tmpDir = Directory.systemTemp.createTempSync('fa-update');
   try {
-    final extractError = await _extractArchive(
+    final extractError = await extractArchive(
       archiveBytes,
       archiveName,
       tmpDir,

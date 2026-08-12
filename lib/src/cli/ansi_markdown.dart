@@ -91,7 +91,11 @@ final class AnsiMarkdown {
 
     // Full-width rules are stored baked at submit-time width; re-render them
     // at the current width so a resize never leaves ragged bars behind.
-    final stripped = line.replaceAll(_ansiRe, '');
+    // Skip the ANSI strip when the line carries no escape codes (the common
+    // case during streaming).
+    final stripped = line.codeUnits.any((c) => c == 0x1b)
+        ? line.replaceAll(_ansiRe, '')
+        : line;
     if (stripped.length > 2 && _ruleRe.hasMatch(stripped)) {
       return '$_dim${'─' * width}$_reset';
     }
@@ -132,29 +136,60 @@ final class AnsiMarkdown {
   /// Markdown block forms: headers, horizontal rules, quotes, bullets —
   /// anything else goes through inline formatting.
   String _formatMarkdownLine(String line) {
-    final header = _headerRe.firstMatch(line);
-    if (header != null) {
-      final level = header.group(1)!.length;
-      final text = header.group(2)!;
-      // pi: H1 bold+underline, H2 bold, H3+ keeps the literal ### prefix.
-      return switch (level) {
-        1 => '$_indigo$_bold$_underline$text$_reset',
-        2 => '$_indigo$_bold$text$_reset',
-        _ => '$_indigo$_bold${header.group(1)} $text$_reset',
-      };
+    // Hot path: ~10M calls, most lines are plain text. Skip 4 regex
+    // firstMatch calls when the line carries no markdown block marker.
+    if (_isBlockCandidate(line)) {
+      return _formatHeader(line) ??
+          _formatHr(line) ??
+          _formatQuote(line) ??
+          _formatBulletLine(line) ??
+          _formatInline(line);
     }
-    if (_hrRe.hasMatch(line)) {
-      final ruleWidth = width < 80 ? width : 80;
-      return '$_dim${'─' * ruleWidth}$_reset';
-    }
-    final quote = _quoteRe.firstMatch(line);
-    if (quote != null) {
-      final body = _formatInline(quote.group(3)!);
-      return '${quote.group(1)}$_dim│$_reset $_dim$_italic$body$_reset';
-    }
-    final bullet = _bulletRe.firstMatch(line);
-    if (bullet != null) return _formatBullet(bullet);
     return _formatInline(line);
+  }
+
+  /// Quick first-char dispatch: returns false for lines that cannot be a
+  /// markdown block form (plain text — skip the regex scans).
+  bool _isBlockCandidate(String line) {
+    if (line.isEmpty) return false;
+    final c = line.codeUnitAt(0);
+    if (_blockMarkerChars.contains(c)) return true;
+    return c >= 0x30 && c <= 0x39 /*0-9*/;
+  }
+
+  /// Header line formatting (H1 bold+underline, H2 bold, H3+ keeps prefix).
+  String? _formatHeader(String line) {
+    final header = _headerRe.firstMatch(line);
+    if (header == null) return null;
+    final level = header.group(1)!.length;
+    final text = header.group(2)!;
+    return switch (level) {
+      1 => '$_indigo$_bold$_underline$text$_reset',
+      2 => '$_indigo$_bold$text$_reset',
+      _ => '$_indigo$_bold${header.group(1)} $text$_reset',
+    };
+  }
+
+  /// Horizontal rule formatting (capped at 80 chars).
+  String? _formatHr(String line) {
+    if (!_hrRe.hasMatch(line)) return null;
+    final ruleWidth = width < 80 ? width : 80;
+    return '$_dim${'─' * ruleWidth}$_reset';
+  }
+
+  /// Block-quote formatting.
+  String? _formatQuote(String line) {
+    final quote = _quoteRe.firstMatch(line);
+    if (quote == null) return null;
+    final body = _formatInline(quote.group(3)!);
+    return '${quote.group(1)}$_dim│$_reset $_dim$_italic$body$_reset';
+  }
+
+  /// Bullet / numeric list formatting.
+  String? _formatBulletLine(String line) {
+    final bullet = _bulletRe.firstMatch(line);
+    if (bullet == null) return null;
+    return _formatBullet(bullet);
   }
 
   /// Bullet and task-list lines: `-`/`+` markers become a teal `•`, numeric
@@ -182,6 +217,16 @@ final class AnsiMarkdown {
   /// spans are formatted before emphasis so markers inside them stay
   /// literal; every span is self-contained (SGR + reset).
   String _formatInline(String text) {
+    // Hot path: ~11M calls, the vast majority are plain text with no inline
+    // markdown markers at all. Skip 5 chained replaceAllMapped regex scans
+    // when none of the trigger characters are present.
+    if (!text.contains('[') &&
+        !text.contains('`') &&
+        !text.contains('*') &&
+        !text.contains('~') &&
+        !text.contains('_')) {
+      return text;
+    }
     var out = text;
     out = out.replaceAllMapped(
       _linkRe,
@@ -304,6 +349,9 @@ final class AnsiMarkdown {
 /// building the RegExp there dominated the wrap cost on long histories.
 final _ansiTokenRe = RegExp(r'\x1b\[[0-9;]*m|.', unicode: true);
 
+/// First-byte markers for markdown block candidates (#, >, -, *, +, space).
+const _blockMarkerChars = {0x23, 0x3E, 0x2D, 0x2A, 0x2B, 0x20};
+
 /// Wraps one ANSI-styled line to [width] visible columns WITHOUT cutting
 /// inside SGR escape sequences — dart_tui's viewport wrap slices raw text
 /// and leaks escape tails (e.g. `212m`) as visible text. SGR state carries
@@ -311,7 +359,11 @@ final _ansiTokenRe = RegExp(r'\x1b\[[0-9;]*m|.', unicode: true);
 /// unicode flag makes `.` match whole runes, keeping emoji intact.
 List<String> wrapAnsiLine(String line, int width) {
   if (width <= 0) return [line];
-  final visible = line.replaceAll(AnsiMarkdown.ansiSgrPattern, '').length;
+  // Skip the ANSI strip on plain-text lines (the common case).
+  final hasAnsi = line.codeUnits.any((c) => c == 0x1b);
+  final visible = hasAnsi
+      ? line.replaceAll(AnsiMarkdown.ansiSgrPattern, '').length
+      : line.length;
   if (visible <= width) return [line];
   final rows = <String>[];
   var current = StringBuffer();

@@ -216,4 +216,171 @@ void main() {
       expect(events.whereType<TextEndEvent>().single.content, 'recovered');
     });
   });
+
+  group('request body construction', () {
+    test('serializes assistant messages with text and tool calls', () async {
+      Map<String, dynamic>? sentBody;
+      final client = http_testing.MockClient.streaming((
+        request,
+        requestBody,
+      ) async {
+        sentBody =
+            jsonDecode(await requestBody.bytesToString())
+                as Map<String, dynamic>;
+        return http.StreamedResponse(
+          Stream.value(
+            utf8.encode(
+              sseChunk({
+                'type': 'response.completed',
+                'response': {'id': 'r', 'model': 'gpt-5-codex'},
+              }),
+            ),
+          ),
+          200,
+        );
+      });
+
+      final ctx = Context(
+        messages: [
+          UserMessage.text('hello', timestamp: DateTime.utc(2026)),
+          AssistantMessage(
+            content: [
+              TextContent(text: 'I will use a tool'),
+              ToolCall(id: 'call_42', name: 'bash', arguments: {'cmd': 'ls'}),
+            ],
+            api: 'responses',
+            provider: 'chatgpt',
+            model: 'gpt-5-codex',
+            usage: Usage.zero,
+            stopReason: StopReason.toolUse,
+            timestamp: DateTime.utc(2026),
+          ),
+        ],
+      );
+
+      final stream = streamChatGptCodex(
+        chatGptModel,
+        ctx,
+        credentials: credentials.encode(),
+        client: client,
+      );
+      await stream.toList();
+
+      final input = sentBody!['input'] as List;
+      // User message.
+      expect((input[0] as Map)['role'], 'user');
+      // Assistant message.
+      final assistant = input[1] as Map;
+      expect(assistant['role'], 'assistant');
+      final content = assistant['content'] as List;
+      final textBlock = content[0] as Map;
+      expect(textBlock['type'], 'output_text');
+      expect(textBlock['text'], 'I will use a tool');
+      final toolBlock = content[1] as Map;
+      expect(toolBlock['type'], 'function_call');
+      expect(toolBlock['call_id'], 'call_42');
+      expect(toolBlock['name'], 'bash');
+      expect(jsonDecode(toolBlock['arguments'] as String), {'cmd': 'ls'});
+    });
+
+    test('serializes tool result messages as function_call_output', () async {
+      Map<String, dynamic>? sentBody;
+      final client = http_testing.MockClient.streaming((
+        request,
+        requestBody,
+      ) async {
+        sentBody =
+            jsonDecode(await requestBody.bytesToString())
+                as Map<String, dynamic>;
+        return http.StreamedResponse(
+          Stream.value(
+            utf8.encode(
+              sseChunk({
+                'type': 'response.completed',
+                'response': {'id': 'r', 'model': 'gpt-5-codex'},
+              }),
+            ),
+          ),
+          200,
+        );
+      });
+
+      final ctx = Context(
+        messages: [
+          UserMessage.text('hello', timestamp: DateTime.utc(2026)),
+          AssistantMessage(
+            content: [
+              ToolCall(id: 'call_42', name: 'bash', arguments: {'cmd': 'ls'}),
+            ],
+            api: 'responses',
+            provider: 'chatgpt',
+            model: 'gpt-5-codex',
+            usage: Usage.zero,
+            stopReason: StopReason.toolUse,
+            timestamp: DateTime.utc(2026),
+          ),
+          ToolResultMessage(
+            toolCallId: 'call_42',
+            toolName: 'bash',
+            content: [const TextContent(text: 'file1\nfile2')],
+            isError: false,
+            timestamp: DateTime.utc(2026),
+          ),
+        ],
+      );
+
+      final stream = streamChatGptCodex(
+        chatGptModel,
+        ctx,
+        credentials: credentials.encode(),
+        client: client,
+      );
+      await stream.toList();
+
+      final input = sentBody!['input'] as List;
+      // The tool result message is a top-level function_call_output item.
+      final toolResult = input[2] as Map;
+      expect(toolResult['type'], 'function_call_output');
+      expect(toolResult['call_id'], 'call_42');
+      final output = toolResult['output'] as List;
+      expect((output[0] as Map)['type'], 'input_text');
+      expect((output[0] as Map)['text'], 'file1\nfile2');
+    });
+  });
+
+  group('error handling', () {
+    test(
+      'response.failed pushes an ErrorEvent with the error message',
+      () async {
+        final body = sseChunk({
+          'type': 'response.failed',
+          'response': {
+            'error': {'message': 'rate limited'},
+          },
+        });
+        final stream = streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: credentials.encode(),
+          client: sseClient(body),
+        );
+        final events = await stream.toList();
+        final error = events.whereType<ErrorEvent>().single;
+        expect(error.error.errorMessage, contains('rate limited'));
+      },
+    );
+
+    test('response.failed with no error message uses default', () async {
+      final body = sseChunk({'type': 'response.failed', 'response': {}});
+      final stream = streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: sseClient(body),
+      );
+      final events = await stream.toList();
+      final error = events.whereType<ErrorEvent>().single;
+      expect(error.error.errorMessage, contains('ChatGPT response failed'));
+    });
+  });
 }

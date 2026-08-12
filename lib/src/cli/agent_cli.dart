@@ -574,7 +574,7 @@ class AgentCli {
   List<ProjectContextFile> _contextFiles = const [];
 
   /// The MCP wiring (manager + re-registration) — see agent_cli_mcp.dart.
-  late final AgentCliMcpWiring _mcp;
+  late AgentCliMcpWiring _mcp;
 
   /// Re-registers the MCP tool surface and rebuilds the prompt whenever a
   /// server connects, fails, or drops.
@@ -786,6 +786,7 @@ class AgentCli {
         onSteer: _steerTuiMessages,
       ),
       isExited: () => _exited,
+      programHooks: config.tuiProgramHooks,
     );
     return controller;
   }
@@ -2057,25 +2058,57 @@ class AgentCli {
   Future<ApprovalDecision> _promptForApproval(ApprovalRequest request) async {
     // TUI mode: prompt through the on-screen approval zone (y/a/n keys).
     final tui = _tuiController;
-    if (_useTui && tui != null) {
-      final spec = ApprovalPromptSpec(request: request);
-      final result = await tui.openPrompt(spec);
-      if (result == null || result is TuiPromptCancelled) {
-        return ApprovalDecision.deny;
-      }
-      if (result is ApprovalPromptAnswer) {
-        if (result.value == ApprovalDecision.approveAlways) {
-          config.onApprovalChanged?.call();
-        }
-        return result.value;
-      }
-      return ApprovalDecision.deny;
+    if (_useTui && tui != null) return _promptForApprovalTui(tui, request);
+    return _promptForApprovalLine(request);
+  }
+
+  /// The TUI branch of [_promptForApproval]: the on-screen approval zone;
+  /// a cancel (Esc) or an unexpected answer type denies.
+  Future<ApprovalDecision> _promptForApprovalTui(
+    FaTuiController tui,
+    ApprovalRequest request,
+  ) async {
+    final result = await tui.openPrompt(ApprovalPromptSpec(request: request));
+    if (result is! ApprovalPromptAnswer) return ApprovalDecision.deny;
+    _noteApproveAlwaysAnswer(result.value);
+    return result.value;
+  }
+
+  /// Persists the "always" preference change when [decision] is
+  /// [ApprovalDecision.approveAlways] (both prompt surfaces).
+  void _noteApproveAlwaysAnswer(ApprovalDecision decision) {
+    if (decision == ApprovalDecision.approveAlways) {
+      config.onApprovalChanged?.call();
     }
+  }
+
+  /// The line-mode branch of [_promptForApproval]: prints the prompt lines
+  /// and waits for [_handleLine] to route the answer line (or an interrupt
+  /// to answer "no").
+  Future<ApprovalDecision> _promptForApprovalLine(
+    ApprovalRequest request,
+  ) async {
     // Tool calls prepare sequentially (even in parallel batches), so at most
     // one prompt is pending; complete a stray one defensively.
     _pendingApprovalAnswer?.complete('n');
     final pending = Completer<String>();
     _pendingApprovalAnswer = pending;
+    _writeApprovalPromptLines(request);
+    final interruptSub = io.interrupts.listen((_) {
+      if (!pending.isCompleted) pending.complete('n');
+    });
+    final answer = await pending.future;
+    await interruptSub.cancel();
+    if (identical(_pendingApprovalAnswer, pending)) {
+      _pendingApprovalAnswer = null;
+    }
+    final decision = _approvalDecisionFor(answer);
+    _noteApproveAlwaysAnswer(decision);
+    return decision;
+  }
+
+  /// The three `[approval]` prompt lines (reason, tool + args, choices).
+  void _writeApprovalPromptLines(ApprovalRequest request) {
     io.writeln('[approval] ${request.reason}');
     io.writeln(
       '[approval] tool: ${request.toolName} (${request.tier.name} tier) — '
@@ -2085,24 +2118,16 @@ class AgentCli {
       '[approval] allow? [y]es once / [n]o / [a]lways for '
       '"${request.toolName}"',
     );
-    final interruptSub = io.interrupts.listen((_) {
-      if (!pending.isCompleted) pending.complete('n');
-    });
-    final answer = await pending.future;
-    await interruptSub.cancel();
-    if (identical(_pendingApprovalAnswer, pending)) {
-      _pendingApprovalAnswer = null;
-    }
-    final decision = switch (answer.toLowerCase()) {
-      'y' || 'yes' => ApprovalDecision.approveOnce,
-      'a' || 'always' => ApprovalDecision.approveAlways,
-      _ => ApprovalDecision.deny,
-    };
-    if (decision == ApprovalDecision.approveAlways) {
-      config.onApprovalChanged?.call();
-    }
-    return decision;
   }
+
+  /// Maps the typed approval answer to a decision; anything unrecognized
+  /// denies (safe default).
+  ApprovalDecision _approvalDecisionFor(String answer) =>
+      switch (answer.toLowerCase()) {
+        'y' || 'yes' => ApprovalDecision.approveOnce,
+        'a' || 'always' => ApprovalDecision.approveAlways,
+        _ => ApprovalDecision.deny,
+      };
 
   /// Reads one input line for the ask menu. Resolves to `null` on cancel
   /// (Ctrl-C interrupt or input shutdown), which the menu maps to "ask
@@ -2147,32 +2172,9 @@ class AgentCli {
   Future<List<AskAnswer>?> _answerAskQuestions(
     List<AskQuestion> questions,
   ) async {
-    // TUI mode: each question runs through the on-screen prompt zone. Any
-    // cancel (Esc on the zone) aborts the whole batch, matching line mode.
+    // TUI mode: each question runs through the on-screen prompt zone.
     final tui = _tuiController;
-    if (_useTui && tui != null) {
-      final answers = <AskAnswer>[];
-      for (var i = 0; i < questions.length; i++) {
-        final q = questions[i];
-        final spec = AskPromptSpec(
-          header: 'Ask',
-          question: q.question,
-          index: i,
-          total: questions.length,
-          options: q.options,
-          multiSelect: q.multiSelect,
-          recommended: q.recommended,
-        );
-        final result = await tui.openPrompt(spec);
-        if (result == null || result is TuiPromptCancelled) return null;
-        if (result is AskPromptAnswer) {
-          answers.add(result.value);
-        } else {
-          return null; // unexpected type, bail
-        }
-      }
-      return answers;
-    }
+    if (_useTui && tui != null) return _answerAskQuestionsTui(tui, questions);
     final answers = <AskAnswer>[];
     for (var i = 0; i < questions.length; i++) {
       final answer = await _askOneQuestion(questions[i], i, questions.length);
@@ -2180,6 +2182,49 @@ class AgentCli {
       answers.add(answer);
     }
     return answers;
+  }
+
+  /// The TUI branch of [_answerAskQuestions]: walks [questions] through the
+  /// on-screen prompt zone; any cancel (Esc on the zone) or unexpected
+  /// answer type aborts the whole batch, matching line mode.
+  Future<List<AskAnswer>?> _answerAskQuestionsTui(
+    FaTuiController tui,
+    List<AskQuestion> questions,
+  ) async {
+    final answers = <AskAnswer>[];
+    for (var i = 0; i < questions.length; i++) {
+      final answer = await _answerOneAskQuestionTui(
+        tui,
+        questions[i],
+        i,
+        questions.length,
+      );
+      if (answer == null) return null;
+      answers.add(answer);
+    }
+    return answers;
+  }
+
+  /// One TUI ask question: the prompt-zone answer, or null when cancelled
+  /// (or the zone resolved with an unexpected type).
+  Future<AskAnswer?> _answerOneAskQuestionTui(
+    FaTuiController tui,
+    AskQuestion question,
+    int index,
+    int total,
+  ) async {
+    final result = await tui.openPrompt(
+      AskPromptSpec(
+        header: 'Ask',
+        question: question.question,
+        index: index,
+        total: total,
+        options: question.options,
+        multiSelect: question.multiSelect,
+        recommended: question.recommended,
+      ),
+    );
+    return result is AskPromptAnswer ? result.value : null;
   }
 
   /// Answers a `request_secret` call: prompts the user for the credential
@@ -2191,28 +2236,37 @@ class AgentCli {
     String name,
     String reason,
   ) async {
-    // TUI mode: prompt through the on-screen secret zone; the value stays
-    // hidden behind dots like the line mode.
     final tui = _tuiController;
-    if (_useTui && tui != null) {
-      final spec = SecretPromptSpec(name: name, reason: reason);
-      final result = await tui.openPrompt(spec);
-      if (result == null || result is TuiPromptCancelled) return null;
-      if (result is SecretPromptAnswer) {
-        _runtimeSecrets[name] = result.value.value;
-        config.onSecretGranted?.call(name, result.value.value);
-        return result.value;
-      }
-      return null; // unexpected type, treat as declined
-    }
+    if (_useTui && tui != null) return _answerSecretTui(tui, name, reason);
+    return _answerSecretLineMode(name, reason);
+  }
+
+  /// The TUI branch of [_answerSecretRequest].
+  Future<RequestSecretResult?> _answerSecretTui(
+    FaTuiController tui,
+    String name,
+    String reason,
+  ) async {
+    final result = await tui.openPrompt(
+      SecretPromptSpec(name: name, reason: reason),
+    );
+    if (result is! SecretPromptAnswer) return null;
+    _runtimeSecrets[name] = result.value.value;
+    config.onSecretGranted?.call(name, result.value.value);
+    return result.value;
+  }
+
+  /// The line-mode branch of [_answerSecretRequest].
+  Future<RequestSecretResult?> _answerSecretLineMode(
+    String name,
+    String reason,
+  ) async {
     io.writeln('[secret] $name needed: $reason');
     io.write('[secret] Enter value for $name (empty = decline): ');
     final line = await _nextAskLine();
     if (line == null || line.trim().isEmpty) return null;
     final value = line.trim();
-    // Inject into the live session env so `$NAME` works in bash.
     _runtimeSecrets[name] = value;
-    // Register with the redactor so the value is masked in output.
     config.onSecretGranted?.call(name, value);
     return RequestSecretResult(name: name, value: value, persisted: false);
   }

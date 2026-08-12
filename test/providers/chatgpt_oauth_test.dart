@@ -186,5 +186,48 @@ void main() {
         ),
       );
     });
+
+    test('a network failure wraps into ConfigException', () async {
+      final client = http_testing.MockClient(
+        (request) async => throw http.ClientException('network down'),
+      );
+      expect(
+        () => exchangeChatGptAuthorizationCode(
+          code: 'x',
+          redirectUri: 'y',
+          codeVerifier: 'z',
+          client: client,
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('ChatGPT OAuth token request failed'),
+          ),
+        ),
+      );
+    });
+
+    test('a missing access_token raises ConfigException', () async {
+      final client = http_testing.MockClient(
+        (request) async =>
+            http.Response(jsonEncode({'refresh_token': 'rt'}), 200),
+      );
+      expect(
+        () => exchangeChatGptAuthorizationCode(
+          code: 'x',
+          redirectUri: 'y',
+          codeVerifier: 'z',
+          client: client,
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('no access_token'),
+          ),
+        ),
+      );
+    });
   });
 }

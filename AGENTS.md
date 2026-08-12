@@ -129,7 +129,11 @@ factual: paths, commands, invariants — no essays.
   `/settings` is the interactive settings hub: a TUI picker whose entries
   (Provider, Edit/delete provider, Chat model, Model parameters, Approval
   mode, Agent mode, API keys, MCP servers) launch the same flows the
-  dedicated slash commands open; line mode prints a summary.
+  dedicated slash commands open; line mode prints a summary. The
+  provider→model pick flows live in `lib/src/cli/settings_flow.dart` in the
+  NAMED `SettingsFlow` extension (public `runProviderModelFlow`/
+  `startChatModelFlow`/`startMediaSlotFlow`), so tests can drive them
+  line-mode (see `test/cli/settings_flow_test.dart`).
 - `lib/src/prompts/prompt_overrides.dart` — `prompts:` config section maps
   prompt names to file path or inline text; strict validation; flags
   `--system-prompt(-file)` > config > built-in.

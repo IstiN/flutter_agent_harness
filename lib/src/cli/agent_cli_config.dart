@@ -43,6 +43,7 @@ final class AgentCliConfig {
     this.onApprovalChanged,
     this.isShiftPressed,
     this.homeDir,
+    this.tuiProgramHooks,
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
     this.codeMieSsoAuthenticateFn,
@@ -164,6 +165,11 @@ final class AgentCliConfig {
   /// Host-provided Shift modifier check (e.g. macOS Core Graphics via FFI).
   /// When null, Shift+Enter is not specially handled.
   final bool Function()? isShiftPressed;
+
+  /// Headless TUI test hooks (scripted key bytes, captured frames) handed to
+  /// the TUI controller — null in production, where the dart_tui program
+  /// reads stdin and renders to the real terminal.
+  final TuiProgramHooks? tuiProgramHooks;
 
   /// The model to run. `/model <id>` swaps the id at runtime.
   final Model model;

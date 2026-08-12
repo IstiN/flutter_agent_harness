@@ -78,35 +78,34 @@ Future<void> _reloadMcpConfig(AgentCli cli) async {
   }
   final newMcp = await _readMcpConfigFromFile(cli, '$home/.fah/config.yaml');
   final oldWiring = cli._mcp;
-  final oldManager = oldWiring.manager;
-  if (newMcp == null && oldManager == null) {
+  if (newMcp == null && oldWiring.manager == null) {
     cli.io.writeln('No MCP section in config — nothing to reload');
     return;
   }
-  // Compare the serialized sections so ANY server change (url, args, env,
-  // tool timeout) counts as a change — not just a shape change.
-  final unchanged =
-      oldManager != null &&
-      newMcp != null &&
-      newMcp.toYaml() == oldManager.config.toYaml();
-  if (unchanged) {
+  if (_mcpConfigUnchanged(newMcp, oldWiring.manager)) {
     cli.io.writeln('MCP config unchanged');
     return;
   }
-  await oldManager?.dispose();
-  // Transport plumbing comes from the config's existing McpToolConfig (the
-  // IO/native transport factory is only reachable from lib/io.dart).
-  final transport = cli.config.mcpConfig;
-  final wiring = AgentCliMcpWiring(
-    config: newMcp == null
-        ? null
-        : McpToolConfig(
-            config: newMcp,
-            transportFactory: transport?.transportFactory,
-            httpClient: transport?.httpClient,
-          ),
-    cwd: cli.config.env.cwd,
-  );
+  await _swapMcpWiring(cli, oldWiring, newMcp);
+}
+
+/// Whether the freshly read [newMcp] matches the live manager's config.
+/// Compares the serialized sections so ANY server change (url, args, env,
+/// tool timeout) counts as a change — not just a shape change.
+bool _mcpConfigUnchanged(McpConfig? newMcp, McpManager? oldManager) =>
+    oldManager != null &&
+    newMcp != null &&
+    newMcp.toYaml() == oldManager.config.toYaml();
+
+/// The change branch of [_reloadMcpConfig]: disposes the old manager, swaps
+/// in a fresh wiring for [newMcp], and re-registers the tool surface.
+Future<void> _swapMcpWiring(
+  AgentCli cli,
+  AgentCliMcpWiring oldWiring,
+  McpConfig? newMcp,
+) async {
+  await oldWiring.manager?.dispose();
+  final wiring = _reloadedMcpWiring(cli, newMcp);
   cli._mcp = wiring;
   // The fresh wiring starts with no registered names, so drop the previous
   // MCP tool surface before registering the (re)loaded manager's tools.
@@ -117,6 +116,23 @@ Future<void> _reloadMcpConfig(AgentCli cli) async {
   cli.io.writeln(
     'MCP config reloaded: ${newMcp?.servers.length ?? 0} server(s)'
     '${wiring.manager != null ? ' (connecting)' : ''}',
+  );
+}
+
+/// Builds the replacement wiring for [newMcp]. Transport plumbing comes from
+/// the config's existing McpToolConfig (the IO/native transport factory is
+/// only reachable from lib/io.dart).
+AgentCliMcpWiring _reloadedMcpWiring(AgentCli cli, McpConfig? newMcp) {
+  final transport = cli.config.mcpConfig;
+  return AgentCliMcpWiring(
+    config: newMcp == null
+        ? null
+        : McpToolConfig(
+            config: newMcp,
+            transportFactory: transport?.transportFactory,
+            httpClient: transport?.httpClient,
+          ),
+    cwd: cli.config.env.cwd,
   );
 }
 

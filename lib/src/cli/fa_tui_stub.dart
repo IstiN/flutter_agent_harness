@@ -16,7 +16,7 @@
 library;
 
 import 'tui_prompt.dart';
-import 'tui_repl.dart' show MenuItem;
+import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
 
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL. See
 /// `fa_tui.dart` for field docs.
@@ -52,7 +52,13 @@ final class FaTuiCallbacks {
 
 /// No-op stand-in for the real TUI controller (never run on web).
 final class FaTuiController {
-  FaTuiController({required this.callbacks, required this.isExited});
+  FaTuiController({
+    required this.callbacks,
+    required this.isExited,
+    // Ignored on web (the TUI never runs there); kept for signature parity
+    // with the dart_tui controller in fa_tui.dart.
+    TuiProgramHooks? programHooks,
+  });
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;

@@ -239,6 +239,10 @@ List<String> renderTuiPrompt(TuiPromptState state, int width) {
   return _frameRows(state, width);
 }
 
+/// The result of handling one prompt key: the next state plus an optional
+/// resolved answer.
+typedef _PromptKeyResult = ({TuiPromptState state, TuiPromptAnswer? resolved});
+
 /// Pure key handler: returns the next state and optionally a resolved answer.
 ({TuiPromptState state, TuiPromptAnswer? resolved}) handleTuiPromptKey(
   TuiPromptState state,
@@ -250,6 +254,111 @@ List<String> renderTuiPrompt(TuiPromptState state, int width) {
     ApprovalPromptSpec() => _handleApprovalKey(state, key),
     TextPromptSpec() => _handleTextKey(state, key),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Shared key clusters (buffer editing, cancel)
+// ---------------------------------------------------------------------------
+
+/// Escape cancels the prompt; null when [key] belongs to another cluster.
+_PromptKeyResult? _handleEscapeKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptEscape) return null;
+  return (state: state, resolved: const TuiPromptCancelled());
+}
+
+/// The state with the edited buffer/cursor written into the field pair the
+/// prompt uses (ask free text edits `askCursor`, the text prompt edits
+/// `secretCursor`; both share `secretValue` as the buffer).
+TuiPromptState _withBufferEdit(
+  TuiPromptState state,
+  String buffer,
+  int cursor, {
+  required bool useAskCursor,
+}) {
+  return useAskCursor
+      ? state.copyWith(secretValue: buffer, askCursor: cursor)
+      : state.copyWith(secretValue: buffer, secretCursor: cursor);
+}
+
+/// Left/right cursor motion inside the edited buffer; null when [key]
+/// belongs to another cluster.
+_PromptKeyResult? _handleBufferArrowKey(
+  TuiPromptState state,
+  PromptKey key, {
+  required bool useAskCursor,
+}) {
+  if (key is! PromptArrowLeft && key is! PromptArrowRight) return null;
+  final buffer = state.secretValue;
+  final cursor = useAskCursor ? state.askCursor : state.secretCursor;
+  final next = _movedBufferCursor(key, cursor, buffer.length);
+  return (
+    state: _withBufferEdit(state, buffer, next, useAskCursor: useAskCursor),
+    resolved: null,
+  );
+}
+
+/// The cursor position after a left/right arrow inside a buffer of [length]
+/// characters (clamped at both ends).
+int _movedBufferCursor(PromptKey key, int cursor, int length) {
+  if (key is PromptArrowLeft && cursor > 0) return cursor - 1;
+  if (key is PromptArrowRight && cursor < length) return cursor + 1;
+  return cursor;
+}
+
+/// Backspace deletes the char before the cursor (a no-op at position 0 or
+/// on an empty buffer); null when [key] belongs to another cluster.
+_PromptKeyResult? _handleBufferBackspaceKey(
+  TuiPromptState state,
+  PromptKey key, {
+  required bool useAskCursor,
+}) {
+  if (key is! PromptBackspace) return null;
+  final buffer = state.secretValue;
+  final cursor = useAskCursor ? state.askCursor : state.secretCursor;
+  final deleted = _backspacedBuffer(buffer, cursor);
+  if (deleted == null) {
+    return (
+      state: _withBufferEdit(state, buffer, cursor, useAskCursor: useAskCursor),
+      resolved: null,
+    );
+  }
+  return (
+    state: _withBufferEdit(
+      state,
+      deleted.$1,
+      deleted.$2,
+      useAskCursor: useAskCursor,
+    ),
+    resolved: null,
+  );
+}
+
+/// The buffer and cursor after a backspace at [cursor], or null when the
+/// backspace is a no-op (empty buffer or cursor at the start).
+(String, int)? _backspacedBuffer(String buffer, int cursor) {
+  if (cursor == 0 || buffer.isEmpty) return null;
+  return (
+    buffer.substring(0, cursor - 1) + buffer.substring(cursor),
+    cursor - 1,
+  );
+}
+
+/// A typed char is inserted at the cursor; null when [key] belongs to
+/// another cluster.
+_PromptKeyResult? _handleBufferCharKey(
+  TuiPromptState state,
+  PromptKey key, {
+  required bool useAskCursor,
+}) {
+  if (key is! PromptChar) return null;
+  final buffer = state.secretValue;
+  final cursor = useAskCursor ? state.askCursor : state.secretCursor;
+  final next =
+      buffer.substring(0, cursor) + key.text + buffer.substring(cursor);
+  return (
+    state: _withBufferEdit(state, next, cursor + 1, useAskCursor: useAskCursor),
+    resolved: null,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -271,10 +380,31 @@ List<String> renderTuiPrompt(TuiPromptState state, int width) {
   };
 }
 
-({TuiPromptState state, TuiPromptAnswer? resolved}) _handleAskSingleKey(
-  TuiPromptState state,
-  PromptKey key,
-) {
+final RegExp _digitPattern = RegExp(r'^\d$');
+
+/// Single-select ask: nav → digit pick → char (space/mode/free text) →
+/// accept/cancel; anything else leaves the state untouched.
+_PromptKeyResult _handleAskSingleKey(TuiPromptState state, PromptKey key) {
+  return _handleAskNavKey(state, key) ??
+      _handleAskSingleDigitKey(state, key) ??
+      _handleAskSingleCharKey(state, key) ??
+      _handleAskSingleAcceptKey(state, key) ??
+      (state: state, resolved: null);
+}
+
+/// Multi-select ask: nav → digit toggle → char (done/free text) →
+/// accept/cancel; anything else leaves the state untouched.
+_PromptKeyResult _handleAskMultiKey(TuiPromptState state, PromptKey key) {
+  return _handleAskNavKey(state, key) ??
+      _handleAskMultiDigitKey(state, key) ??
+      _handleAskMultiCharKey(state, key) ??
+      _handleAskMultiAcceptKey(state, key) ??
+      (state: state, resolved: null);
+}
+
+/// Option-list navigation (↑/↓), shared by the single- and multi-select
+/// modes; null when the key belongs to another cluster.
+_PromptKeyResult? _handleAskNavKey(TuiPromptState state, PromptKey key) {
   final spec = state.askSpec;
   switch (key) {
     case PromptArrowUp():
@@ -284,186 +414,160 @@ List<String> renderTuiPrompt(TuiPromptState state, int width) {
       final max = spec.options.length - 1;
       final next = state.askCursor < max ? state.askCursor + 1 : max;
       return (state: state.copyWith(askCursor: next), resolved: null);
-    case PromptChar():
-      final ch = (key).text;
-      if (ch == ' ') {
-        return _enterAskFreeText(state);
-      }
-      if (ch == 'm' && spec.multiSelect) {
-        return (
-          state: state.copyWith(askMode: AskInputMode.multiSelect),
-          resolved: null,
-        );
-      }
-      if (RegExp(r'^\d$').hasMatch(ch)) {
-        final number = int.parse(ch);
-        if (number >= 1 && number <= spec.options.length) {
-          final pick = spec.options[number - 1].label;
-          return (
-            state: state,
-            resolved: AskPromptAnswer(AskAnswer.selection([pick])),
-          );
-        }
-        return (state: state, resolved: null);
-      }
-      return _enterAskFreeText(state, prepend: ch);
+    default:
+      return null;
+  }
+}
+
+/// Single-select digit keys pick the numbered option outright; null when the
+/// key is not a digit char.
+_PromptKeyResult? _handleAskSingleDigitKey(
+  TuiPromptState state,
+  PromptKey key,
+) {
+  if (key is! PromptChar || !_digitPattern.hasMatch(key.text)) return null;
+  final spec = state.askSpec;
+  final number = int.parse(key.text);
+  if (number < 1 || number > spec.options.length) {
+    return (state: state, resolved: null);
+  }
+  final pick = spec.options[number - 1].label;
+  return (state: state, resolved: AskPromptAnswer(AskAnswer.selection([pick])));
+}
+
+/// Single-select char keys: space enters free text, `m` switches to
+/// multi-select when available, anything else starts free text with the
+/// char. Null when the key is not a char.
+_PromptKeyResult? _handleAskSingleCharKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptChar) return null;
+  final ch = key.text;
+  if (ch == ' ') return _enterAskFreeText(state);
+  if (ch == 'm' && state.askSpec.multiSelect) {
+    return (
+      state: state.copyWith(askMode: AskInputMode.multiSelect),
+      resolved: null,
+    );
+  }
+  return _enterAskFreeText(state, prepend: ch);
+}
+
+/// Single-select accept keys (enter/tab pick the cursor option, esc
+/// cancels); null when the key belongs to another cluster.
+_PromptKeyResult? _handleAskSingleAcceptKey(
+  TuiPromptState state,
+  PromptKey key,
+) {
+  final spec = state.askSpec;
+  switch (key) {
     case PromptEnter():
+    case PromptTab():
       if (spec.options.isEmpty) return (state: state, resolved: null);
       final pick = spec.options[state.askCursor].label;
       return (
         state: state,
         resolved: AskPromptAnswer(AskAnswer.selection([pick])),
       );
-    case PromptTab():
-      if (spec.options.isEmpty) return (state: state, resolved: null);
-      final pick = spec.options[state.askCursor].label;
-      return (
-        state: state,
-        resolved: AskPromptAnswer(AskAnswer.selection([pick])),
-      );
     case PromptEscape():
       return (state: state, resolved: const TuiPromptCancelled());
-    case PromptBackspace():
-    case PromptArrowLeft():
-    case PromptArrowRight():
-      return (state: state, resolved: null);
+    default:
+      return null;
   }
 }
 
-({TuiPromptState state, TuiPromptAnswer? resolved}) _handleAskMultiKey(
+/// Multi-select digit keys toggle the numbered option; null when the key is
+/// not a digit char.
+_PromptKeyResult? _handleAskMultiDigitKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptChar || !_digitPattern.hasMatch(key.text)) return null;
+  final spec = state.askSpec;
+  final number = int.parse(key.text);
+  if (number < 1 || number > spec.options.length) {
+    return (state: state, resolved: null);
+  }
+  final i = number - 1;
+  final selected = Set<int>.from(state.askSelected);
+  if (!selected.remove(i)) selected.add(i);
+  return (state: state.copyWith(askSelected: selected), resolved: null);
+}
+
+/// Multi-select char keys: `d` finishes with the current selection (or
+/// enters free text when empty), space enters free text, anything else is
+/// ignored. Null when the key is not a char.
+_PromptKeyResult? _handleAskMultiCharKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptChar) return null;
+  final ch = key.text;
+  if (ch.toLowerCase() == 'd') return _resolveAskMultiSelection(state);
+  if (ch == ' ') return _enterAskFreeText(state);
+  return (state: state, resolved: null);
+}
+
+/// Multi-select accept keys: enter finishes with the current selection, tab
+/// enters free text, esc cancels; null for other clusters.
+_PromptKeyResult? _handleAskMultiAcceptKey(
   TuiPromptState state,
   PromptKey key,
 ) {
-  final spec = state.askSpec;
   switch (key) {
-    case PromptArrowUp():
-      final next = state.askCursor > 0 ? state.askCursor - 1 : 0;
-      return (state: state.copyWith(askCursor: next), resolved: null);
-    case PromptArrowDown():
-      final max = spec.options.length - 1;
-      final next = state.askCursor < max ? state.askCursor + 1 : max;
-      return (state: state.copyWith(askCursor: next), resolved: null);
-    case PromptChar():
-      final ch = (key).text;
-      if (RegExp(r'^\d$').hasMatch(ch)) {
-        final number = int.parse(ch);
-        if (number >= 1 && number <= spec.options.length) {
-          final i = number - 1;
-          final selected = Set<int>.from(state.askSelected);
-          if (!selected.remove(i)) selected.add(i);
-          return (state: state.copyWith(askSelected: selected), resolved: null);
-        }
-        return (state: state, resolved: null);
-      }
-      if (ch.toLowerCase() == 'd') {
-        if (state.askSelected.isNotEmpty) {
-          final picked = [
-            for (final i in state.askSelected.toList()..sort())
-              spec.options[i].label,
-          ];
-          return (
-            state: state,
-            resolved: AskPromptAnswer(AskAnswer.selection(picked)),
-          );
-        }
-        return _enterAskFreeText(state);
-      }
-      if (ch == ' ') {
-        return _enterAskFreeText(state);
-      }
-      return (state: state, resolved: null);
     case PromptEnter():
-      if (state.askSelected.isNotEmpty) {
-        final picked = [
-          for (final i in state.askSelected.toList()..sort())
-            spec.options[i].label,
-        ];
-        return (
-          state: state,
-          resolved: AskPromptAnswer(AskAnswer.selection(picked)),
-        );
-      }
-      return _enterAskFreeText(state);
+      return _resolveAskMultiSelection(state);
     case PromptTab():
       return _enterAskFreeText(state);
     case PromptEscape():
       return (state: state, resolved: const TuiPromptCancelled());
-    case PromptBackspace():
-    case PromptArrowLeft():
-    case PromptArrowRight():
-      return (state: state, resolved: null);
+    default:
+      return null;
   }
 }
 
-({TuiPromptState state, TuiPromptAnswer? resolved}) _handleAskFreeTextKey(
+/// Resolves the multi-select selection as the answer, or enters free text
+/// when nothing is selected.
+_PromptKeyResult _resolveAskMultiSelection(TuiPromptState state) {
+  if (state.askSelected.isEmpty) return _enterAskFreeText(state);
+  final spec = state.askSpec;
+  final picked = [
+    for (final i in state.askSelected.toList()..sort()) spec.options[i].label,
+  ];
+  return (state: state, resolved: AskPromptAnswer(AskAnswer.selection(picked)));
+}
+
+/// Free-text ask: buffer edit keys → enter → esc; tab/↑/↓ are ignored.
+_PromptKeyResult _handleAskFreeTextKey(TuiPromptState state, PromptKey key) {
+  return _handleBufferArrowKey(state, key, useAskCursor: true) ??
+      _handleBufferBackspaceKey(state, key, useAskCursor: true) ??
+      _handleBufferCharKey(state, key, useAskCursor: true) ??
+      _handleAskFreeTextEnterKey(state, key) ??
+      _handleEscapeKey(state, key) ??
+      (state: state, resolved: null);
+}
+
+/// Free-text enter: an empty buffer with options reverts to option
+/// selection (the user entered free text accidentally via space), an
+/// empty/`!` text cancels, otherwise the trimmed text is the answer.
+_PromptKeyResult? _handleAskFreeTextEnterKey(
   TuiPromptState state,
   PromptKey key,
 ) {
+  if (key is! PromptEnter) return null;
   final spec = state.askSpec;
-  var buffer = state.secretValue;
-  var cursor = state.askCursor;
-
-  switch (key) {
-    case PromptArrowLeft():
-      if (cursor > 0) cursor--;
-      return (
-        state: state.copyWith(secretValue: buffer, askCursor: cursor),
-        resolved: null,
-      );
-    case PromptArrowRight():
-      if (cursor < buffer.length) cursor++;
-      return (
-        state: state.copyWith(secretValue: buffer, askCursor: cursor),
-        resolved: null,
-      );
-    case PromptBackspace():
-      if (cursor == 0 || buffer.isEmpty) {
-        return (
-          state: state.copyWith(secretValue: buffer, askCursor: cursor),
-          resolved: null,
-        );
-      }
-      final next = buffer.substring(0, cursor - 1) + buffer.substring(cursor);
-      return (
-        state: state.copyWith(secretValue: next, askCursor: cursor - 1),
-        resolved: null,
-      );
-    case PromptChar():
-      final ch = (key).text;
-      final next = buffer.substring(0, cursor) + ch + buffer.substring(cursor);
-      return (
-        state: state.copyWith(secretValue: next, askCursor: cursor + 1),
-        resolved: null,
-      );
-    case PromptEnter():
-      // Empty buffer with options → revert to option selection instead of
-      // cancelling (user entered free-text accidentally via space).
-      if (buffer.isEmpty && spec.options.isNotEmpty) {
-        final revertedMode = spec.multiSelect
-            ? AskInputMode.multiSelect
-            : AskInputMode.singleSelect;
-        final reverted = state.copyWith(
-          secretValue: '',
-          askCursor: 0,
-          askMode: revertedMode,
-        );
-        return (state: reverted, resolved: null);
-      }
-      final text = buffer.trim();
-      if (text.isEmpty) {
-        return (state: state, resolved: const TuiPromptCancelled());
-      }
-      if (text == '!') {
-        return (state: state, resolved: const TuiPromptCancelled());
-      }
-      return (state: state, resolved: AskPromptAnswer(AskAnswer.text(text)));
-    case PromptEscape():
-      return (state: state, resolved: const TuiPromptCancelled());
-    case PromptTab():
-    case PromptArrowUp():
-    case PromptArrowDown():
-      return (state: state, resolved: null);
+  final buffer = state.secretValue;
+  if (buffer.isEmpty && spec.options.isNotEmpty) {
+    return (state: _revertAskToOptions(state, spec), resolved: null);
   }
+  final text = buffer.trim();
+  if (text.isEmpty || text == '!') {
+    return (state: state, resolved: const TuiPromptCancelled());
+  }
+  return (state: state, resolved: AskPromptAnswer(AskAnswer.text(text)));
+}
+
+/// Reverts an accidentally-entered free-text ask back to option selection.
+TuiPromptState _revertAskToOptions(TuiPromptState state, AskPromptSpec spec) {
+  return state.copyWith(
+    secretValue: '',
+    askCursor: 0,
+    askMode: spec.multiSelect
+        ? AskInputMode.multiSelect
+        : AskInputMode.singleSelect,
+  );
 }
 
 ({TuiPromptState state, TuiPromptAnswer? resolved}) _enterAskFreeText(
@@ -491,149 +595,166 @@ bool _secretSubmittable(TuiPromptState state) {
   return true;
 }
 
-({TuiPromptState state, TuiPromptAnswer? resolved}) _handleSecretKey(
+/// Secret prompt: value-cursor arrows → backspace → char → enter → tab →
+/// esc; ↑/↓ are ignored.
+_PromptKeyResult _handleSecretKey(TuiPromptState state, PromptKey key) {
+  return _handleSecretArrowKey(state, key) ??
+      _handleSecretBackspaceKey(state, key) ??
+      _handleSecretCharKey(state, key) ??
+      _handleSecretEnterKey(state, key) ??
+      _handleSecretTabKey(state, key) ??
+      _handleEscapeKey(state, key) ??
+      (state: state, resolved: null);
+}
+
+/// Left/right move the value cursor; the name field (-1) has no cursor
+/// motion. Null when the key belongs to another cluster.
+_PromptKeyResult? _handleSecretArrowKey(TuiPromptState state, PromptKey key) {
+  switch (key) {
+    case PromptArrowLeft():
+      if (state.secretCursor <= 0) return (state: state, resolved: null);
+      return (
+        state: state.copyWith(secretCursor: state.secretCursor - 1),
+        resolved: null,
+      );
+    case PromptArrowRight():
+      if (state.secretCursor < 0 ||
+          state.secretCursor >= state.secretValue.length) {
+        return (state: state, resolved: null);
+      }
+      return (
+        state: state.copyWith(secretCursor: state.secretCursor + 1),
+        resolved: null,
+      );
+    default:
+      return null;
+  }
+}
+
+/// Backspace trims the name on name focus, deletes before the cursor on
+/// value focus. Null when the key belongs to another cluster.
+_PromptKeyResult? _handleSecretBackspaceKey(
   TuiPromptState state,
   PromptKey key,
 ) {
-  switch (key) {
-    case PromptArrowLeft():
-      // -1 = name focus (no cursor motion in name field).
-      if (state.secretCursor < 0) return (state: state, resolved: null);
-      if (state.secretCursor > 0) {
-        return (
-          state: state.copyWith(secretCursor: state.secretCursor - 1),
-          resolved: null,
-        );
-      }
-      return (state: state, resolved: null);
-    case PromptArrowRight():
-      if (state.secretCursor < 0) return (state: state, resolved: null);
-      if (state.secretCursor < state.secretValue.length) {
-        return (
-          state: state.copyWith(secretCursor: state.secretCursor + 1),
-          resolved: null,
-        );
-      }
-      return (state: state, resolved: null);
-    case PromptBackspace():
-      if (state.secretCursor < 0) {
-        // Name focus: trim the last char from the name, if any.
-        if (state.secretName.isEmpty) return (state: state, resolved: null);
-        return (
-          state: state.copyWith(
-            secretName: state.secretName.substring(
-              0,
-              state.secretName.length - 1,
-            ),
-          ),
-          resolved: null,
-        );
-      }
-      if (state.secretCursor == 0 || state.secretValue.isEmpty) {
-        return (state: state, resolved: null);
-      }
-      final next =
-          state.secretValue.substring(0, state.secretCursor - 1) +
-          state.secretValue.substring(state.secretCursor);
-      return (
-        state: state.copyWith(
-          secretValue: next,
-          secretCursor: state.secretCursor - 1,
-        ),
-        resolved: null,
-      );
-    case PromptChar():
-      final ch = (key).text;
-      if (state.secretCursor < 0) {
-        // Name focus: append to the name.
-        final next = state.secretName + ch;
-        return (state: state.copyWith(secretName: next), resolved: null);
-      }
-      final next =
-          state.secretValue.substring(0, state.secretCursor) +
-          ch +
-          state.secretValue.substring(state.secretCursor);
-      return (
-        state: state.copyWith(
-          secretValue: next,
-          secretCursor: state.secretCursor + 1,
-        ),
-        resolved: null,
-      );
-    case PromptEnter():
-      if (!_secretSubmittable(state)) return (state: state, resolved: null);
-      return (
-        state: state,
-        resolved: SecretPromptAnswer(
-          RequestSecretResult(
-            name: state.secretName,
-            value: state.secretValue,
-            persisted: false,
-          ),
-        ),
-      );
-    case PromptTab():
-      // Tab moves from name (-1) to value (0) focus.
-      if (state.secretCursor < 0) {
-        return (state: state.copyWith(secretCursor: 0), resolved: null);
-      }
-      return (state: state, resolved: null);
-    case PromptEscape():
-      return (state: state, resolved: const TuiPromptCancelled());
-    case PromptArrowUp():
-    case PromptArrowDown():
-      return (state: state, resolved: null);
+  if (key is! PromptBackspace) return null;
+  if (state.secretCursor < 0) return _backspaceSecretName(state);
+  final deleted = _backspacedBuffer(state.secretValue, state.secretCursor);
+  if (deleted == null) return (state: state, resolved: null);
+  return (
+    state: state.copyWith(secretValue: deleted.$1, secretCursor: deleted.$2),
+    resolved: null,
+  );
+}
+
+/// Backspace on name focus: trims the last char of the name, if any.
+_PromptKeyResult _backspaceSecretName(TuiPromptState state) {
+  if (state.secretName.isEmpty) return (state: state, resolved: null);
+  return (
+    state: state.copyWith(
+      secretName: state.secretName.substring(0, state.secretName.length - 1),
+    ),
+    resolved: null,
+  );
+}
+
+/// A typed char appends to the name on name focus, inserts at the cursor on
+/// value focus. Null when the key belongs to another cluster.
+_PromptKeyResult? _handleSecretCharKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptChar) return null;
+  if (state.secretCursor < 0) {
+    return (
+      state: state.copyWith(secretName: state.secretName + key.text),
+      resolved: null,
+    );
   }
+  final next =
+      state.secretValue.substring(0, state.secretCursor) +
+      key.text +
+      state.secretValue.substring(state.secretCursor);
+  return (
+    state: state.copyWith(
+      secretValue: next,
+      secretCursor: state.secretCursor + 1,
+    ),
+    resolved: null,
+  );
+}
+
+/// Enter submits the secret once the name matches and the value is
+/// non-empty. Null when the key belongs to another cluster.
+_PromptKeyResult? _handleSecretEnterKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptEnter) return null;
+  if (!_secretSubmittable(state)) return (state: state, resolved: null);
+  return (
+    state: state,
+    resolved: SecretPromptAnswer(
+      RequestSecretResult(
+        name: state.secretName,
+        value: state.secretValue,
+        persisted: false,
+      ),
+    ),
+  );
+}
+
+/// Tab moves from name (-1) to value (0) focus. Null when the key belongs
+/// to another cluster.
+_PromptKeyResult? _handleSecretTabKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptTab) return null;
+  if (state.secretCursor < 0) {
+    return (state: state.copyWith(secretCursor: 0), resolved: null);
+  }
+  return (state: state, resolved: null);
 }
 
 // ---------------------------------------------------------------------------
 // Approval
 // ---------------------------------------------------------------------------
 
-({TuiPromptState state, TuiPromptAnswer? resolved}) _handleApprovalKey(
+/// Approval prompt: y/a/n answer keys → enter/esc deny; anything else
+/// leaves the state untouched.
+_PromptKeyResult _handleApprovalKey(TuiPromptState state, PromptKey key) {
+  return _handleApprovalAnswerKey(state, key) ??
+      _handleApprovalDenyKey(state, key) ??
+      (state: state, resolved: null);
+}
+
+/// The y/a/n answer keys (any other char is ignored); null when the key is
+/// not a char.
+_PromptKeyResult? _handleApprovalAnswerKey(
   TuiPromptState state,
   PromptKey key,
 ) {
+  if (key is! PromptChar) return null;
+  return switch (key.text.toLowerCase()) {
+    'y' => (
+      state: state,
+      resolved: const ApprovalPromptAnswer(ApprovalDecision.approveOnce),
+    ),
+    'a' => (
+      state: state,
+      resolved: const ApprovalPromptAnswer(ApprovalDecision.approveAlways),
+    ),
+    'n' => (
+      state: state,
+      resolved: const ApprovalPromptAnswer(ApprovalDecision.deny),
+    ),
+    _ => (state: state, resolved: null),
+  };
+}
+
+/// Enter and Esc both deny; null when the key belongs to another cluster.
+_PromptKeyResult? _handleApprovalDenyKey(TuiPromptState state, PromptKey key) {
   switch (key) {
-    case PromptChar():
-      final ch = (key).text.toLowerCase();
-      switch (ch) {
-        case 'y':
-          return (
-            state: state,
-            resolved: const ApprovalPromptAnswer(ApprovalDecision.approveOnce),
-          );
-        case 'a':
-          return (
-            state: state,
-            resolved: const ApprovalPromptAnswer(
-              ApprovalDecision.approveAlways,
-            ),
-          );
-        case 'n':
-          return (
-            state: state,
-            resolved: const ApprovalPromptAnswer(ApprovalDecision.deny),
-          );
-      }
-      return (state: state, resolved: null);
     case PromptEnter():
-      return (
-        state: state,
-        resolved: const ApprovalPromptAnswer(ApprovalDecision.deny),
-      );
     case PromptEscape():
       return (
         state: state,
         resolved: const ApprovalPromptAnswer(ApprovalDecision.deny),
       );
-    case PromptTab():
-    case PromptArrowUp():
-    case PromptArrowDown():
-    case PromptArrowLeft():
-    case PromptArrowRight():
-    case PromptBackspace():
-      return (state: state, resolved: null);
+    default:
+      return null;
   }
 }
 
@@ -641,60 +762,29 @@ bool _secretSubmittable(TuiPromptState state) {
 // Text
 // ---------------------------------------------------------------------------
 
-({TuiPromptState state, TuiPromptAnswer? resolved}) _handleTextKey(
-  TuiPromptState state,
-  PromptKey key,
-) {
-  final spec = state.textSpec;
-  var buffer = state.secretValue;
-  var cursor = state.secretCursor;
+/// Text prompt: buffer edit keys → enter → esc; tab/↑/↓ are ignored.
+_PromptKeyResult _handleTextKey(TuiPromptState state, PromptKey key) {
+  return _handleBufferArrowKey(state, key, useAskCursor: false) ??
+      _handleBufferBackspaceKey(state, key, useAskCursor: false) ??
+      _handleBufferCharKey(state, key, useAskCursor: false) ??
+      _handleTextEnterKey(state, key) ??
+      _handleEscapeKey(state, key) ??
+      (state: state, resolved: null);
+}
 
-  switch (key) {
-    case PromptArrowLeft():
-      if (cursor > 0) cursor--;
-      return (
-        state: state.copyWith(secretValue: buffer, secretCursor: cursor),
-        resolved: null,
-      );
-    case PromptArrowRight():
-      if (cursor < buffer.length) cursor++;
-      return (
-        state: state.copyWith(secretValue: buffer, secretCursor: cursor),
-        resolved: null,
-      );
-    case PromptBackspace():
-      if (cursor == 0 || buffer.isEmpty) {
-        return (
-          state: state.copyWith(secretValue: buffer, secretCursor: cursor),
-          resolved: null,
-        );
-      }
-      final next = buffer.substring(0, cursor - 1) + buffer.substring(cursor);
-      return (
-        state: state.copyWith(secretValue: next, secretCursor: cursor - 1),
-        resolved: null,
-      );
-    case PromptChar():
-      final ch = (key).text;
-      final next = buffer.substring(0, cursor) + ch + buffer.substring(cursor);
-      return (
-        state: state.copyWith(secretValue: next, secretCursor: cursor + 1),
-        resolved: null,
-      );
-    case PromptEnter():
-      final text = buffer.trim();
-      if (text.isEmpty) {
-        final def = spec.defaultValue;
-        return (state: state, resolved: TextPromptAnswer(def ?? ''));
-      }
-      return (state: state, resolved: TextPromptAnswer(text));
-    case PromptEscape():
-      return (state: state, resolved: const TuiPromptCancelled());
-    case PromptTab():
-    case PromptArrowUp():
-    case PromptArrowDown():
-      return (state: state, resolved: null);
+/// Text enter answers with the trimmed buffer, falling back to the spec's
+/// default value (or an empty string) when blank. Null when the key belongs
+/// to another cluster.
+_PromptKeyResult? _handleTextEnterKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptEnter) return null;
+  final text = state.secretValue.trim();
+  if (text.isNotEmpty) {
+    return (state: state, resolved: TextPromptAnswer(text));
   }
+  return (
+    state: state,
+    resolved: TextPromptAnswer(state.textSpec.defaultValue ?? ''),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -734,46 +824,56 @@ List<String> _frameRows(TuiPromptState state, int width) {
 }
 
 List<String> _bodyRows(TuiPromptState state, int inner) {
-  final spec = state.spec;
-  final rows = <String>[];
-  switch (spec) {
-    case AskPromptSpec():
-      final header =
-          'Question ${spec.index + 1} of ${spec.total}'
-          '${spec.options.isEmpty ? ' (free text)' : ''}';
-      rows.add(_wrapBodyLine(header, inner, bold: true));
-      for (final line in _wrapText(spec.question, inner)) {
-        rows.add(_wrapBodyLine(line, inner));
-      }
-      rows.addAll(_askOptionRows(state, inner));
-    case SecretPromptSpec():
-      rows.add(_wrapBodyLine('Credential request', inner, bold: true));
-      for (final line in _wrapText(spec.reason, inner)) {
-        rows.add(_wrapBodyLine(line, inner));
-      }
-    case ApprovalPromptSpec():
-      final req = spec.request;
-      rows.add(_wrapBodyLine('Tool: ${req.toolName}', inner, bold: true));
-      rows.add(_wrapBodyLine('Tier: ${req.tier.name}', inner));
-      for (final line in _wrapText(req.reason, inner)) {
-        rows.add(_wrapBodyLine(line, inner, dim: true));
-      }
-      final args = req.arguments.entries
-          .map((entry) => '${entry.key}=${entry.value}')
-          .join(', ');
-      final argLine = args.isEmpty ? '(no arguments)' : args;
-      rows.add(_wrapBodyLine('Args: ${_fitWidth(argLine, inner - 6)}', inner));
-    case TextPromptSpec():
-      rows.add(_wrapBodyLine(spec.question, inner, bold: true));
-      if (spec.defaultValue != null && spec.defaultValue!.isNotEmpty) {
-        rows.add(
-          _wrapBodyLine(
-            _dim('(default: ${spec.defaultValue})'),
-            inner,
-            dim: true,
-          ),
-        );
-      }
+  return switch (state.spec) {
+    AskPromptSpec spec => _askBodyRows(state, spec, inner),
+    SecretPromptSpec spec => _secretBodyRows(spec, inner),
+    ApprovalPromptSpec spec => _approvalBodyRows(spec, inner),
+    TextPromptSpec spec => _textBodyRows(spec, inner),
+  };
+}
+
+List<String> _askBodyRows(TuiPromptState state, AskPromptSpec spec, int inner) {
+  final header =
+      'Question ${spec.index + 1} of ${spec.total}'
+      '${spec.options.isEmpty ? ' (free text)' : ''}';
+  final rows = <String>[_wrapBodyLine(header, inner, bold: true)];
+  for (final line in _wrapText(spec.question, inner)) {
+    rows.add(_wrapBodyLine(line, inner));
+  }
+  rows.addAll(_askOptionRows(state, inner));
+  return rows;
+}
+
+List<String> _secretBodyRows(SecretPromptSpec spec, int inner) {
+  final rows = <String>[_wrapBodyLine('Credential request', inner, bold: true)];
+  for (final line in _wrapText(spec.reason, inner)) {
+    rows.add(_wrapBodyLine(line, inner));
+  }
+  return rows;
+}
+
+List<String> _approvalBodyRows(ApprovalPromptSpec spec, int inner) {
+  final req = spec.request;
+  final rows = <String>[
+    _wrapBodyLine('Tool: ${req.toolName}', inner, bold: true),
+    _wrapBodyLine('Tier: ${req.tier.name}', inner),
+  ];
+  for (final line in _wrapText(req.reason, inner)) {
+    rows.add(_wrapBodyLine(line, inner, dim: true));
+  }
+  final args = req.arguments.entries
+      .map((entry) => '${entry.key}=${entry.value}')
+      .join(', ');
+  final argLine = args.isEmpty ? '(no arguments)' : args;
+  rows.add(_wrapBodyLine('Args: ${_fitWidth(argLine, inner - 6)}', inner));
+  return rows;
+}
+
+List<String> _textBodyRows(TextPromptSpec spec, int inner) {
+  final rows = <String>[_wrapBodyLine(spec.question, inner, bold: true)];
+  final defaultValue = spec.defaultValue;
+  if (defaultValue != null && defaultValue.isNotEmpty) {
+    rows.add(_wrapBodyLine(_dim('(default: $defaultValue)'), inner, dim: true));
   }
   return rows;
 }
@@ -824,32 +924,65 @@ List<String> _askOptionRows(TuiPromptState state, int inner) {
   if (spec.options.isEmpty) return const [];
   final rows = <String>[];
   for (var i = 0; i < spec.options.length; i++) {
-    final option = spec.options[i];
-    final selected =
-        i == state.askCursor && state.askMode != AskInputMode.freeText;
-    final multiToggled = state.askSelected.contains(i);
-    final marker = switch (state.askMode) {
-      AskInputMode.multiSelect => multiToggled ? '◉' : '○',
-      _ => selected ? '▸' : ' ',
-    };
-    final recommended = spec.recommended == i ? ' ★' : '';
-    final labelLine = '${i + 1}. $marker ${option.label}$recommended';
-    final description = option.description;
-    if (description != null && description.isNotEmpty) {
-      rows.add(
-        _wrapBodyLine(_fitWidth(labelLine, inner), inner, dim: !selected),
-      );
-      for (final line in _wrapText('     $description', inner)) {
-        rows.add(_wrapBodyLine(line, inner, dim: true));
-      }
-    } else {
-      final styled = selected
-          ? _accent(labelLine)
-          : _fitWidth(labelLine, inner);
-      rows.add('│ $styled${' ' * (inner - labelLine.length - 1)}│');
-    }
+    rows.addAll(_askOptionRowLines(state, i, inner));
   }
   return rows;
+}
+
+/// The rendered lines for option [i]: the label row plus, when the option
+/// has a description, the dimmed wrapped description lines under it.
+List<String> _askOptionRowLines(TuiPromptState state, int i, int inner) {
+  final spec = state.askSpec;
+  final option = spec.options[i];
+  final selected =
+      i == state.askCursor && state.askMode != AskInputMode.freeText;
+  final marker = _askOptionMarker(state, i, selected: selected);
+  final recommended = spec.recommended == i ? ' ★' : '';
+  final labelLine = '${i + 1}. $marker ${option.label}$recommended';
+  final description = option.description;
+  if (description != null && description.isNotEmpty) {
+    return _askOptionDescriptionRows(
+      labelLine,
+      description,
+      inner,
+      selected: selected,
+    );
+  }
+  return [_askOptionLabelRow(labelLine, inner, selected: selected)];
+}
+
+/// The selection marker for option [i]: a toggle dot in multi-select mode,
+/// a cursor arrow otherwise.
+String _askOptionMarker(TuiPromptState state, int i, {required bool selected}) {
+  return switch (state.askMode) {
+    AskInputMode.multiSelect => state.askSelected.contains(i) ? '◉' : '○',
+    _ => selected ? '▸' : ' ',
+  };
+}
+
+/// The label row plus the dimmed wrapped description lines under it.
+List<String> _askOptionDescriptionRows(
+  String labelLine,
+  String description,
+  int inner, {
+  required bool selected,
+}) {
+  return [
+    _wrapBodyLine(_fitWidth(labelLine, inner), inner, dim: !selected),
+    for (final line in _wrapText('     $description', inner))
+      _wrapBodyLine(line, inner, dim: true),
+  ];
+}
+
+/// The one-line label row for an option without a description (accented
+/// when the cursor is on it).
+String _askOptionLabelRow(
+  String labelLine,
+  int inner, {
+  required bool selected,
+}) {
+  final styled = selected ? _accent(labelLine) : _fitWidth(labelLine, inner);
+  return '│ $styled${' ' * (inner - labelLine.length - 1)}│';
 }
 
 List<String> _inputRows(TuiPromptState state, int inner, int width) {

@@ -46,11 +46,12 @@ final class CodeMieSsoCallbackServer {
       '<h1>${success ? 'Authorized' : 'Authorization failed'}</h1>'
       '<p>${success ? 'You can close this tab and return to Fa.' : 'No token parameter in the callback.'}</p>',
     );
-    unawaited(request.response.close());
-    if (success) {
-      _complete(token);
-    }
-    // A tokenless hit (favicon, probe) keeps the server waiting.
+    request.response.close().then((_) {
+      if (success) {
+        _complete(token);
+      }
+      // A tokenless hit (favicon, probe) keeps the server waiting.
+    });
   }
 
   void _complete(String? value) {

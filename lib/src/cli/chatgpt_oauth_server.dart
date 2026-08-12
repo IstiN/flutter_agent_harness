@@ -59,34 +59,21 @@ final class ChatGptOAuthLocalCallbackServer {
   Future<ChatGptOAuthCallback?> waitForCallback() =>
       _result?.future ?? Future.value();
 
-  void _handle(HttpRequest request) {
+  Future<void> _handle(HttpRequest request) async {
     if (request.method != 'GET' || request.uri.path != '/auth/callback') {
       request.response.statusCode = HttpStatus.notFound;
       unawaited(request.response.close());
       return;
     }
-    final parameters = request.uri.queryParameters;
-    final callback = ChatGptOAuthCallback(
-      code: parameters['code'],
-      state: parameters['state'],
-      error: parameters['error'],
-      errorDescription: parameters['error_description'],
-    );
-    final success =
-        callback.code != null &&
-        callback.code!.isNotEmpty &&
-        callback.error == null;
+    final callback = _callbackFromQuery(request.uri.queryParameters);
     request.response.headers.contentType = ContentType.html;
-    request.response.statusCode = success
+    request.response.statusCode = _callbackSucceeded(callback)
         ? HttpStatus.ok
         : HttpStatus.badRequest;
-    request.response.write(
-      '<!doctype html><title>${success ? 'Authorized' : 'Authorization failed'}</title>'
-      '<style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:5rem auto;text-align:center}</style>'
-      '<h1>${success ? 'Authorized' : 'Authorization failed'}</h1>'
-      '<p>${success ? 'You can close this tab and return to Fa.' : const HtmlEscape().convert(callback.errorDescription ?? callback.error ?? 'No authorization code received.')}</p>',
-    );
-    unawaited(request.response.close());
+    request.response.write(_callbackPage(callback));
+    // Flush the page before _complete force-closes the server, or the
+    // browser may see a truncated response.
+    await request.response.close();
     _complete(callback);
   }
 
@@ -105,6 +92,37 @@ final class ChatGptOAuthLocalCallbackServer {
   }
 }
 
+/// Builds the callback record from the redirect query parameters.
+ChatGptOAuthCallback _callbackFromQuery(Map<String, String> parameters) =>
+    ChatGptOAuthCallback(
+      code: parameters['code'],
+      state: parameters['state'],
+      error: parameters['error'],
+      errorDescription: parameters['error_description'],
+    );
+
+/// Whether the callback carries a usable authorization code.
+bool _callbackSucceeded(ChatGptOAuthCallback callback) =>
+    callback.code != null &&
+    callback.code!.isNotEmpty &&
+    callback.error == null;
+
+/// Renders the HTML page shown in the browser after the redirect.
+String _callbackPage(ChatGptOAuthCallback callback) {
+  final success = _callbackSucceeded(callback);
+  final title = success ? 'Authorized' : 'Authorization failed';
+  final message = success
+      ? 'You can close this tab and return to Fa.'
+      : const HtmlEscape().convert(
+          callback.errorDescription ??
+              callback.error ??
+              'No authorization code received.',
+        );
+  return '<!doctype html><title>$title</title>'
+      '<style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:5rem auto;text-align:center}</style>'
+      '<h1>$title</h1><p>$message</p>';
+}
+
 Future<ChatGptOAuthCredentials?> runChatGptOAuthCliFlow({
   required void Function(String) onStatus,
   Future<bool> Function(String) openBrowserFn = openBrowser,
@@ -115,11 +133,12 @@ Future<ChatGptOAuthCredentials?> runChatGptOAuthCliFlow({
       })
       exchangeFn =
       _defaultExchange,
+  Duration timeout = const Duration(minutes: 5),
 }) async {
   final server = ChatGptOAuthLocalCallbackServer();
   final verifier = generateChatGptPkceVerifier();
   final state = generateChatGptState();
-  final redirectUri = await server.start();
+  final redirectUri = await server.start(timeout: timeout);
   final authUrl = buildChatGptAuthorizeUrl(
     redirectUri: redirectUri,
     codeChallenge: generateChatGptPkceChallenge(verifier),

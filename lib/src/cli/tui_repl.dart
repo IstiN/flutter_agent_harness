@@ -30,6 +30,24 @@ abstract interface class TuiStyle {
   String magenta(String text);
 }
 
+/// Headless test hooks for the dart_tui program behind `FaTuiController`.
+///
+/// Kept in this pure-Dart file (no `dart:io`, no dart_tui) so the web stub
+/// and the CLI config can reference the type; `fa_tui.dart` translates the
+/// hooks into program options. With [input] scripting key presses and
+/// [output] receiving the rendered frames, the full TUI runs in-process
+/// without a real terminal. Production leaves both null.
+final class TuiProgramHooks {
+  /// Creates the hooks; both fields null means "real terminal" (default).
+  const TuiProgramHooks({this.input, this.output});
+
+  /// Raw terminal input bytes (key presses), replacing stdin.
+  final Stream<List<int>>? input;
+
+  /// Receives the rendered frame bytes (wrapped into an IOSink by the host).
+  final StreamConsumer<List<int>>? output;
+}
+
 /// A raw-mode terminal REPL with an inline slash-command menu and model picker.
 ///
 /// Uses the terminal's alternate screen buffer so the frame never pollutes

@@ -31,8 +31,9 @@ final class ProviderModelChoice {
   final CustomProviderEntry? savedEntry;
 }
 
-/// Implementation members of [AgentCli] for the settings-hub flows.
-extension on AgentCli {
+/// Implementation members of [AgentCli] for the settings-hub flows. Named
+/// (not anonymous) so hosts and tests can drive the flows directly.
+extension SettingsFlow on AgentCli {
   /// The two-level "provider → model" pick: step 1 picks the provider
   /// (saved custom entries first, then the catalog), step 2 fetches that
   /// endpoint's `/models` (openai-like endpoints; manual entry otherwise or
@@ -44,9 +45,58 @@ extension on AgentCli {
     bool openAiCompatibleOnly = false,
     required Future<void> Function(ProviderModelChoice choice) apply,
   }) async {
-    // Step 1 — provider.
+    final provider = await _pickProviderStep(
+      title,
+      openAiCompatibleOnly: openAiCompatibleOnly,
+    );
+    if (provider == null) return;
+    final (entry, spec, baseUrl) = provider;
+    final modelId = await _pickModelStep(
+      title,
+      spec,
+      baseUrl,
+      entry?.modelId ?? _agent.state.model.id,
+    );
+    if (modelId == null) return;
+    await apply(
+      ProviderModelChoice(
+        spec: spec,
+        baseUrl: baseUrl,
+        modelId: modelId,
+        savedEntry: entry,
+      ),
+    );
+  }
+
+  /// Step 1 of [runProviderModelFlow]: pick the provider (saved custom
+  /// entries first, then the catalog). Returns null when the pick is
+  /// cancelled.
+  Future<(CustomProviderEntry?, ProviderSpec, String)?> _pickProviderStep(
+    String title, {
+    required bool openAiCompatibleOnly,
+  }) async {
     final saved = config.customProviders?.entries ?? const [];
-    final options = <FlowOption>[
+    final picked = await _pickOption(
+      '$title — provider',
+      _providerFlowOptions(saved, openAiCompatibleOnly: openAiCompatibleOnly),
+    );
+    if (picked == null) return null;
+    if (picked.startsWith('saved:')) {
+      final entry = saved.firstWhere((e) => e.name == picked.substring(6));
+      return (entry, entry.spec, entry.baseUrl);
+    }
+    final spec = providerCatalog[picked.substring(8)]!;
+    return (null, spec, spec.defaultBaseUrl);
+  }
+
+  /// The provider list of [_pickProviderStep]: saved custom entries first
+  /// (`saved:<name>` keys), then the catalog (`catalog:<name>` keys),
+  /// optionally restricted to the wire format the media tools speak.
+  List<FlowOption> _providerFlowOptions(
+    List<CustomProviderEntry> saved, {
+    required bool openAiCompatibleOnly,
+  }) {
+    return [
       for (final entry in saved)
         if (!openAiCompatibleOnly || entry.spec.kind == 'openai-completions')
           (
@@ -58,59 +108,53 @@ extension on AgentCli {
         if (!openAiCompatibleOnly || spec.kind == 'openai-completions')
           ('catalog:${spec.name}', spec.name, spec.defaultBaseUrl),
     ];
-    final picked = await _pickOption('$title — provider', options);
-    if (picked == null) return;
+  }
 
-    final CustomProviderEntry? entry;
-    final ProviderSpec spec;
-    final String baseUrl;
-    if (picked.startsWith('saved:')) {
-      entry = saved.firstWhere((e) => e.name == picked.substring(6));
-      spec = entry.spec;
-      baseUrl = entry.baseUrl;
-    } else {
-      entry = null;
-      spec = providerCatalog[picked.substring(8)]!;
-      baseUrl = spec.defaultBaseUrl;
-    }
-
-    // Step 2 — model from that provider's endpoint.
-    final currentModelId = entry?.modelId ?? _agent.state.model.id;
-    String? modelId;
+  /// Step 2 of [runProviderModelFlow]: pick a model from the provider's
+  /// endpoint. OpenAI-like endpoints offer their `/models` list (with a
+  /// "+ enter manually" escape); anything else — an empty list included —
+  /// falls back to manual entry. Returns null when any prompt is cancelled.
+  Future<String?> _pickModelStep(
+    String title,
+    ProviderSpec spec,
+    String baseUrl,
+    String currentModelId,
+  ) async {
     if (spec.kind == 'openai-completions') {
       io.writeln('fetching models from $baseUrl/models ...');
       final models = await _fetchModelsForFlow(spec, baseUrl);
       if (models.isNotEmpty) {
-        final pickedModel = await _pickOption(
-          '$title — model',
-          [
-            for (final id in models) (id, id, visionMarker(id)),
-            ('', '+ enter manually', ''),
-          ],
-          initialKey: models.contains(currentModelId) ? currentModelId : null,
-        );
-        if (pickedModel == null) return;
-        if (pickedModel.isNotEmpty) modelId = pickedModel;
+        final picked = await _pickFromModelList(title, models, currentModelId);
+        if (picked == null) return null;
+        if (picked.isNotEmpty) return picked;
       }
     }
-    // Manual entry: non-openai endpoints, an empty /models list, or the
-    // "+ enter manually" pick; empty keeps the current/default model.
-    if (modelId == null) {
-      final manual = await _askLine(
-        "model id (empty keeps '$currentModelId'): ",
-      );
-      if (manual == null) return;
-      modelId = manual.trim().isEmpty ? currentModelId : manual.trim();
-    }
+    return _askModelIdManually(currentModelId);
+  }
 
-    await apply(
-      ProviderModelChoice(
-        spec: spec,
-        baseUrl: baseUrl,
-        modelId: modelId,
-        savedEntry: entry,
-      ),
+  /// The endpoint-list pick of [_pickModelStep]: the fetched ids plus the
+  /// "+ enter manually" escape (empty key). Null = cancelled.
+  Future<String?> _pickFromModelList(
+    String title,
+    List<String> models,
+    String currentModelId,
+  ) {
+    return _pickOption(
+      '$title — model',
+      [
+        for (final id in models) (id, id, visionMarker(id)),
+        ('', '+ enter manually', ''),
+      ],
+      initialKey: models.contains(currentModelId) ? currentModelId : null,
     );
+  }
+
+  /// The manual-entry fallback of [_pickModelStep]: an empty answer keeps
+  /// [currentModelId]; null = cancelled.
+  Future<String?> _askModelIdManually(String currentModelId) async {
+    final manual = await _askLine("model id (empty keeps '$currentModelId'): ");
+    if (manual == null) return null;
+    return manual.trim().isEmpty ? currentModelId : manual.trim();
   }
 
   /// Settings → Chat model: provider → model, then switch the connection.
@@ -246,27 +290,21 @@ extension on AgentCli {
   /// A settings-hub selection launches the same flow its dedicated slash
   /// command would open.
   Future<void> _tuiPickSetting(String key) async {
-    switch (key) {
-      case 'provider':
-        _openProviderPicker();
-      case 'provider-edit':
-        _startProviderEditFlow();
-      case 'model':
-        await startChatModelFlow();
-      case 'model-edit':
-        await _handleModelEdit('');
-      case 'media':
-        await startMediaSlotFlow();
-      case 'approval':
-        _openApprovalPicker();
-      case 'mode':
-        _openModePicker();
-      case 'keys':
-        await _handleKeyCommand('');
-      case 'mcp':
-        _printMcpStatus();
-    }
+    await _settingsPickerHandlers[key]?.call();
   }
+
+  /// Settings-hub key → the flow its dedicated slash command would open.
+  Map<String, Future<void> Function()> get _settingsPickerHandlers => {
+    'provider': () async => _openProviderPicker(),
+    'provider-edit': () async => _startProviderEditFlow(),
+    'model': startChatModelFlow,
+    'model-edit': () => _handleModelEdit(''),
+    'media': startMediaSlotFlow,
+    'approval': () async => _openApprovalPicker(),
+    'mode': () async => _openModePicker(),
+    'keys': () => _handleKeyCommand(''),
+    'mcp': () async => _printMcpStatus(),
+  };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
   void _printSettingsSummary() {

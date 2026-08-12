@@ -398,6 +398,69 @@ void main() {
     });
   });
 
+  group('extractArchive', () {
+    test('extracts a zip with nested directories', () async {
+      final tmp = await Directory.systemTemp.createTemp('fa_extract_zip');
+      try {
+        final archive = Archive()
+          ..addFile(ArchiveFile.bytes('bundle/bin/fa', utf8.encode('exe')))
+          ..addFile(
+            ArchiveFile.bytes('bundle/lib/libfa.dylib', utf8.encode('lib')),
+          );
+        final zipBytes = ZipEncoder().encode(archive);
+
+        final error = await extractArchive(
+          zipBytes,
+          'fa-test.zip',
+          tmp,
+          (_, _) async => ProcessResult(0, 0, '', ''),
+        );
+        expect(error, isNull);
+        expect(File('${tmp.path}/bundle/bin/fa').readAsStringSync(), 'exe');
+        expect(
+          File('${tmp.path}/bundle/lib/libfa.dylib').readAsStringSync(),
+          'lib',
+        );
+      } finally {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      }
+    });
+
+    test('skips directory entries in a zip', () async {
+      final tmp = await Directory.systemTemp.createTemp('fa_extract_zip_dir');
+      try {
+        // Archive with only directory entries (isFile = false).
+        final archive = Archive()..addFile(ArchiveFile('dir/', 0, []));
+        final zipBytes = ZipEncoder().encode(archive);
+
+        final error = await extractArchive(
+          zipBytes,
+          'test.zip',
+          tmp,
+          (_, _) async => ProcessResult(0, 0, '', ''),
+        );
+        expect(error, isNull);
+      } finally {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      }
+    });
+
+    test('returns error for unknown archive format', () async {
+      final tmp = await Directory.systemTemp.createTemp('fa_extract_unknown');
+      try {
+        final error = await extractArchive(
+          [0, 1, 2],
+          'archive.rar',
+          tmp,
+          (_, _) async => ProcessResult(0, 0, '', ''),
+        );
+        expect(error, 'unknown archive format: archive.rar');
+      } finally {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      }
+    });
+  });
+
   group('fallbackZipUpdate', () {
     List<int> zipWithBinary(List<int> binary) {
       final archive = Archive()

@@ -187,33 +187,69 @@ final class _ChatGptCodexSession {
 
   void _handleEvent(String? event, String data) {
     if (data == '[DONE]') return;
+    final value = _decodeEvent(data);
+    if (value == null) return;
+    _dispatchEvent(event ?? value['type'] as String?, value);
+  }
+
+  /// Decodes the SSE data into a typed map; null when not a JSON object.
+  Map<String, dynamic>? _decodeEvent(String data) {
     final decoded = jsonDecode(data);
-    if (decoded is! Map) return;
-    final value = decoded.cast<String, dynamic>();
-    final type = event ?? value['type'] as String?;
+    if (decoded is! Map) return null;
+    return decoded.cast<String, dynamic>();
+  }
+
+  /// Routes the event type to the streaming handler.
+  void _dispatchEvent(String? type, Map<String, dynamic> value) {
+    if (_handleTextEvent(type, value)) return;
+    if (_handleToolEvent(type, value)) return;
+    _handleLifecycleEvent(type, value);
+  }
+
+  bool _handleTextEvent(String? type, Map<String, dynamic> value) {
     switch (type) {
-      case 'response.created':
-      case 'response.in_progress':
-        _setResponse(value['response']);
       case 'response.output_text.delta':
         _textDelta(value['delta'] as String? ?? '');
       case 'response.output_text.done':
         _endText();
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  bool _handleToolEvent(String? type, Map<String, dynamic> value) {
+    switch (type) {
       case 'response.function_call_arguments.delta':
         _toolDelta(value);
       case 'response.function_call_arguments.done':
         _endTool();
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  void _handleLifecycleEvent(String? type, Map<String, dynamic> value) {
+    switch (type) {
+      case 'response.created':
+      case 'response.in_progress':
       case 'response.completed':
         _setResponse(value['response']);
       case 'response.failed':
-        final response = value['response'];
-        final error = response is Map ? response['error'] : null;
-        throw StateError(
-          error is Map
-              ? error['message'] ?? 'ChatGPT response failed'
-              : 'ChatGPT response failed',
-        );
+        _handleFailed(value);
     }
+  }
+
+  /// Extracts the error message from a `response.failed` payload and throws.
+  Never _handleFailed(Map<String, dynamic> value) {
+    final response = value['response'];
+    final error = response is Map ? response['error'] : null;
+    throw StateError(
+      error is Map
+          ? error['message'] ?? 'ChatGPT response failed'
+          : 'ChatGPT response failed',
+    );
   }
 
   void _setResponse(Object? raw) {
