@@ -298,6 +298,7 @@ REPL COMMANDS
   /stats             show token and cost totals
   /tasks [cancel <id>] list (or cancel) background agents
   /skills            list discovered skills; /skill:<name> [args] invokes one
+  /agents             list available agent types (built-in + .fah/agents/*.md)
 
 SKILLS AND CONTEXT FILES
   Skills are SKILL.md files with YAML frontmatter (name, description),

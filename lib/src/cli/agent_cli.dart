@@ -26,6 +26,7 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/tool_registry.dart';
 import '../task/task.dart';
+import '../task/agent_discovery.dart';
 import '../task/subagent_manager.dart';
 import '../task/subagent_tools.dart';
 import '../skills/skills.dart';
@@ -371,6 +372,13 @@ class AgentCli {
     // core tool surface (never `task` itself), completions are injected back
     // into the parent conversation as async-result messages.
     _subagentManager = SubagentManager(parentSessionId: '');
+    // Discover agent types from .fah/agents/ and .agents/agents/ (fire-and-forget;
+    // the registry starts with built-ins and merges discovered types when they arrive).
+    final agentRoots = defaultAgentRoots(
+      cwd: config.env.cwd,
+      homeDir: config.homeDir,
+    );
+    unawaited(_discoverAgents(agentRoots));
     _taskConfig = TaskToolConfig(
       childTools: coreTools,
       streamFunction: _streamFunction,
@@ -536,6 +544,25 @@ class AgentCli {
   /// Retained-subagent registry (Phase 3a): tracks every spawned child so
   /// `task_status`/`task_observe`/`task_send` work after completion.
   late final SubagentManager _subagentManager;
+
+  /// Agent types discovered from `.fah/agents/` + `.agents/agents/`.
+  List<TaskAgentDefinition> _discoveredAgents = const [];
+
+  /// Fire-and-forget discovery: scans project + user roots for agent .md files.
+  Future<void> _discoverAgents(
+    ({List<String> projectRoots, List<String> userRoots}) roots,
+  ) async {
+    final result = await discoverTaskAgents(
+      config.env,
+      projectRoots: roots.projectRoots,
+      userRoots: roots.userRoots,
+    );
+    _discoveredAgents = result.agents;
+    for (final note in result.notes) {
+      io.writeln('  agent discovery: $note');
+    }
+  }
+
   late final Agent _agent;
   late final ApprovalManager _approval;
   late final ToolRegistry _toolRegistry;
@@ -1767,6 +1794,23 @@ class AgentCli {
     }
   }
 
+  /// `/agents`: lists all available agent types (built-in + discovered).
+  void _listAgents() {
+    final builtins = ['task', 'explore', 'review'];
+    io.writeln('agent types:');
+    for (final name in builtins) {
+      io.writeln('  $name (built-in)');
+    }
+    for (final agent in _discoveredAgents) {
+      io.writeln('  ${agent.name} — ${agent.description}');
+    }
+    if (_discoveredAgents.isEmpty) {
+      io.writeln(
+        '  (no discovered types — add .fah/agents/<name>.md to extend)',
+      );
+    }
+  }
+
   /// `/mcp`: prints the configured MCP servers and their live connection
   /// status, or a guidance line when none are configured.
   void _printMcpStatus() {
@@ -1968,6 +2012,8 @@ class AgentCli {
         _printStats();
       case '/tasks':
         _listTaskJobs(rest);
+      case '/agents':
+        _listAgents();
       case '/skills':
         _listSkills();
       default:
