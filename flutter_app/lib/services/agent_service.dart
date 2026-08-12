@@ -399,7 +399,7 @@ class AgentService extends ChangeNotifier
       ),
       ...memoryTools(_memoryController),
       ...subagentMonitoringTools(manager: _subagentManager),
-      taskTool(config: _taskConfig!),
+      // taskTool is registered AFTER the child surface is built (below).
       askTool(callback: _answerAskQuestions),
       // Secret requests: the agent asks the user for a missing credential
       // through the chat screen's bottom sheet; a grant is persisted into
