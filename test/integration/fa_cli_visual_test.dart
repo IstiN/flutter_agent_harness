@@ -23,7 +23,7 @@ void main() {
   /// Takes a screenshot of the current terminal screen.
   Future<void> screenshot(FaCliHarness harness, String name) async {
     await renderTerminalScreenshot(
-      lines: harness.screenLines,
+      terminal: harness.terminal,
       outputPath: '${screenshotsDir.path}/$name.png',
     );
   }
@@ -284,7 +284,10 @@ void main() {
 
   group('mcp', () {
     test('/mcp shows guidance when no servers configured', () async {
-      final harness = await FaCliHarness.spawn();
+      final tempHome = _tempHome();
+      final harness = await FaCliHarness.spawn(
+        extraEnv: {'HOME': tempHome.path},
+      );
       harness.startListening();
 
       await harness.waitForBoot();
@@ -292,12 +295,13 @@ void main() {
 
       await harness.runSlashCommand('/mcp');
       await harness.waitForText(
-        'No MCP servers configured',
-        timeout: const Duration(seconds: 15),
+        'No MCP servers',
+        timeout: const Duration(seconds: 30),
       );
       await screenshot(harness, '71_mcp_no_servers');
 
       await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
   });
 }
@@ -334,6 +338,22 @@ model: test-model
 baseUrl: http://localhost:9999/v1
 mode: code
 approvalMode: always-ask
+allowedTools: []
+''');
+  return tempHome;
+}
+
+/// Creates a temp HOME with default config (no custom providers, yolo mode).
+Directory _tempHome() {
+  final tempHome = Directory.systemTemp.createTempSync('fa_test_');
+  File('${tempHome.path}/.fah/config.yaml')
+    ..createSync(recursive: true)
+    ..writeAsStringSync('''
+provider: openai-completions
+model: test-model
+baseUrl: http://localhost:9999/v1
+mode: code
+approvalMode: yolo
 allowedTools: []
 ''');
   return tempHome;

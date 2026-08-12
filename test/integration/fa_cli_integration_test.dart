@@ -32,7 +32,7 @@ void main() {
 
       // Screenshot for vision verification.
       final screenshot = await renderTerminalScreenshot(
-        lines: harness.viewportLines,
+        terminal: harness.terminal,
         outputPath: '/tmp/fa_boot.png',
       );
       expect(screenshot.existsSync(), isTrue);
@@ -171,7 +171,7 @@ void main() {
       );
 
       final screenshot = await renderTerminalScreenshot(
-        lines: harness.viewportLines,
+        terminal: harness.terminal,
         outputPath: '/tmp/fa_prompt_frame.png',
       );
       expect(screenshot.existsSync(), isTrue);
