@@ -378,12 +378,28 @@ class AgentService extends ChangeNotifier
     // the bash tool, resolved live per exec; sits OUTSIDE the secrets
     // wrapper so neither layer can shadow the other (disjoint FAH_ names).
     final toolEnv = SessionVarsExecutionEnv(env, _sessionEnvVars);
+    // Subagent + memory infrastructure (Phase 3a-3c): the task tool spawns
+    // children, monitoring tools let the model query/steer them, memory tools
+    // persist facts across sessions.
+    _subagentManager = SubagentManager(parentSessionId: '');
+    _memoryController = MemoryController(env: env);
+    // Task tool config: childTools is set after the full registry is built
+    // (children inherit the core surface minus `task` itself).
+    _taskConfig = TaskToolConfig(
+      childTools: const [],
+      streamFunction: streamFunction ?? _streamFunctionFor(config),
+      model: config.toModel(),
+      subagentManager: _subagentManager,
+    );
     final registry = ToolRegistry([
       ...builtinTools(
         toolEnv,
         webSearch: isOnDevice ? null : webSearchConfig,
         model: () => _agent.state.model,
       ),
+      ...memoryTools(_memoryController),
+      ...subagentMonitoringTools(manager: _subagentManager),
+      taskTool(config: _taskConfig!),
       askTool(callback: _answerAskQuestions),
       // Secret requests: the agent asks the user for a missing credential
       // through the chat screen's bottom sheet; a grant is persisted into
@@ -458,6 +474,19 @@ class AgentService extends ChangeNotifier
       ],
     ]);
     _toolRegistry = registry;
+    // Wire the task tool's child surface: all tools except `task` itself.
+    final childSurface = registry.tools
+        .where((t) => t.name != taskToolName)
+        .cast<AgentTool>()
+        .toList();
+    _taskConfig = TaskToolConfig(
+      childTools: childSurface,
+      streamFunction: streamFunction ?? _streamFunctionFor(config),
+      model: config.toModel(),
+      subagentManager: _subagentManager,
+    );
+    // Re-register the task tool with the real child surface.
+    registry.register(taskTool(config: _taskConfig!));
     _agent = Agent(
       model: config.toModel(),
       systemPrompt: _composeSystemPrompt(config),
@@ -492,8 +521,7 @@ class AgentService extends ChangeNotifier
     }
     // CodeMie: the cookie rides in model.headers (set by toModel); pass an
     // empty key so the adapter skips `Authorization: Bearer`.
-    final apiKey =
-        isCodeMieProvider(config.baseUrl) ? '' : config.apiKey;
+    final apiKey = isCodeMieProvider(config.baseUrl) ? '' : config.apiKey;
     return providerStreamFunction(
       config.providerKind,
       apiKey,
@@ -630,6 +658,15 @@ class AgentService extends ChangeNotifier
   /// around a pre-constructed [Agent] (tests), where the registry is owned
   /// by the caller.
   ToolRegistry? _toolRegistry;
+
+  /// Subagent manager (Phase 3a): tracks spawned children for the task tool.
+  SubagentManager? _subagentManager;
+
+  /// Task tool config (child surface set after registry is built).
+  TaskToolConfig? _taskConfig;
+
+  /// Memory controller (Phase 1): durable cross-session memory.
+  MemoryController? _memoryController;
 
   /// UI hook that opens a JS app for the user — the chat screen installs it
   /// and pushes the app's `JsAppView`. Setting a non-null launcher registers

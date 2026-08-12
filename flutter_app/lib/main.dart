@@ -304,10 +304,7 @@ class MyApp extends StatelessWidget {
             }
             return Column(
               children: [
-                Container(
-                  height: 28,
-                  color: FahColors.of(context).bg,
-                ),
+                Container(height: 28, color: FahColors.of(context).bg),
                 Expanded(child: navigatorChild ?? const SizedBox.shrink()),
               ],
             );

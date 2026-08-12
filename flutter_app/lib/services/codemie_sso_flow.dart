@@ -50,9 +50,7 @@ Future<bool> runCodemieSsoFlow({
   } else {
     // iOS and others: in-app WebView.
     credentials = await Navigator.of(context).push<CodeMieSsoCredentials?>(
-      MaterialPageRoute(
-        builder: (_) => CodeMieSsoWebViewPage(orgUrl: orgUrl),
-      ),
+      MaterialPageRoute(builder: (_) => CodeMieSsoWebViewPage(orgUrl: orgUrl)),
     );
   }
   if (credentials == null) return false; // cancelled / timed out
@@ -97,11 +95,7 @@ Future<bool> runCodemieSsoFlow({
   if (!context.mounted) return false;
 
   if (modelId == null || modelId.isEmpty) {
-    modelId = await _pickModel(
-      context,
-      models,
-      preselected: modelId,
-    );
+    modelId = await _pickModel(context, models, preselected: modelId);
     if (modelId == null || modelId.isEmpty) return false;
   } else {
     // Re-login: briefly show the fetched models so the user can switch
@@ -158,9 +152,7 @@ String _hostFromUrl(String url) {
   if (uri != null && uri.host.isNotEmpty) {
     final port = uri.port;
     final defaultPort = uri.scheme == 'https' ? 443 : 80;
-    return port != 0 && port != defaultPort
-        ? '${uri.host}:$port'
-        : uri.host;
+    return port != 0 && port != defaultPort ? '${uri.host}:$port' : uri.host;
   }
   return 'codemie';
 }
@@ -362,9 +354,7 @@ class _ModelPickerDialogState extends State<_ModelPickerDialog> {
         FilledButton(
           onPressed: () {
             final manual = _manualController.text.trim();
-            Navigator.of(context).pop(
-              manual.isNotEmpty ? manual : _selected,
-            );
+            Navigator.of(context).pop(manual.isNotEmpty ? manual : _selected);
           },
           child: const Text('Connect'),
         ),

@@ -83,8 +83,7 @@ class _CodeMieSsoWebViewPageState extends State<CodeMieSsoWebViewPage> {
 
   NavigationDecision _onNavigationRequest(NavigationRequest request) {
     final uri = Uri.tryParse(request.url);
-    if (uri != null &&
-        (uri.host == 'localhost' || uri.host == '127.0.0.1')) {
+    if (uri != null && (uri.host == 'localhost' || uri.host == '127.0.0.1')) {
       // This is the callback redirect — extract the token and finish.
       final token = uri.queryParameters['token'];
       if (token != null && token.isNotEmpty) {
@@ -159,9 +158,7 @@ class _CodeMieSsoWebViewPageState extends State<CodeMieSsoWebViewPage> {
                   padding: const EdgeInsets.all(16),
                   child: Text(
                     _errorMessage,
-                    style: TextStyle(
-                      color: theme.colorScheme.onErrorContainer,
-                    ),
+                    style: TextStyle(color: theme.colorScheme.onErrorContainer),
                   ),
                 ),
               ),
