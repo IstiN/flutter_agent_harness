@@ -921,6 +921,16 @@ class AgentCli {
       _startProviderFlow();
       return;
     }
+    // Provider types that require interactive auth get their flow launched
+    // instead of a plain catalog switch (codemie → SSO, chatgpt → OAuth).
+    if (key == 'codemie') {
+      await _handleCodeMieSsoCommand(defaultCodeMieBaseUrl);
+      return;
+    }
+    if (key == 'chatgpt') {
+      await _handleChatGptOAuthCommand(headless: false);
+      return;
+    }
     await _tuiPickCatalogOrSaved(key);
   }
 
