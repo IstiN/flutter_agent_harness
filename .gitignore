@@ -36,3 +36,6 @@ google-services.json
 GoogleService-Info.plist
 # firebase_options.dart is checked in for CI builds (public API keys only).
 
+
+# Visual-test screen-text twins (contain timestamps, regenerated each run).
+test/integration/screenshots/*.txt

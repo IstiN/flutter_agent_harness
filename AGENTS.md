@@ -287,6 +287,17 @@ factual: paths, commands, invariants — no essays.
   `// l10n:ignore`, per file with `// l10n:ignore-file` (agent-facing/log
   strings stay literal).
 - `flutter_app/test/golden/` — golden tests (see MANDATORY section below).
+- `flutter_app/test/cli_visual/` — CLI visual integration tests
+  (integration-tagged, excluded from the pre-commit `flutter test`): the
+  real `dart bin/fah.dart` runs in a PTY (package:pty2) and every step is
+  screenshotted through the real Flutter `TerminalView` (JetBrainsMono +
+  Fa palette, `RepaintBoundary.toImage` at 2x) into the repo-root
+  `test/integration/screenshots/NN_name.png` + a `.txt` twin with the exact
+  xterm screen text. Run: `flutter test test/cli_visual --tags
+  integration`. The pure-Dart counterpart harness lives in
+  `test/integration/pty_harness.dart` (see its README for the PTY/pty2
+  pitfalls: spawn `dart bin/fah.dart` NOT `dart run`, always cancel the
+  output subscription in `close()`).
 - `flutter_app/lib/ui/screens/model_presets.dart` — settings "Model presets"
   section: a swipeable `PageView` of `kModelPresets` cards applying a whole
   model combo in one tap (`applyModelPreset` — per-slot `MediaModelsStore`
@@ -585,8 +596,9 @@ tests are done right:
   standalone video workspace with its own toolchain); example app also
   `flutter analyze --no-fatal-infos --no-fatal-warnings`.
 - `dart test` green (integration-tagged excluded — they run in CI).
-- `cd flutter_app && flutter test` green (includes golden suite) +
-  `scripts/check_goldens.py --quick`.
+- `cd flutter_app && flutter test --exclude-tags integration` green
+  (includes golden suite; integration-tagged `test/cli_visual` runs on
+  demand) + `scripts/check_goldens.py --quick`.
 - Line coverage of `lib/` ≥ 80%; jscpd duplication < 1% core `lib/`,
   < 2.2% `flutter_app/lib/` (ratchet — only tighten).
 - CRAP ratchet (`crap4dart analyze`, config `crap4dart.yaml`, tool pinned

@@ -1,0 +1,5 @@
+tags:
+  integration:
+    # Integration tests spawn real processes (test/cli_visual runs the real
+    # Fa CLI in a PTY) and are excluded from the pre-commit gate. Run them
+    # manually with: flutter test test/cli_visual --tags integration

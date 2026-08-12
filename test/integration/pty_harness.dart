@@ -1,6 +1,6 @@
 /// PTY-based integration test harness for the Fa CLI.
 ///
-/// Spawns `dart run bin/fah.dart` as a real subprocess attached to a
+/// Spawns `dart bin/fah.dart` as a real subprocess attached to a
 /// pseudo-terminal (via package:pty2), feeds every output byte into an xterm
 /// terminal emulator (the vendored package:xterm), and exposes keystroke
 /// sending plus quiescent-poll output capture.
@@ -67,7 +67,11 @@ final class FaCliHarness {
     };
     final pty = PseudoTerminal.start(
       'dart',
-      ['run', 'bin/fah.dart', ...args],
+      // `dart bin/fah.dart`, NOT `dart run ...`: `dart run` spawns a
+      // separate child VM that escapes pty.kill() and keeps the PTY (and
+      // the whole test run) alive. Direct execution runs in-process, so
+      // kill() in close() actually terminates the CLI.
+      ['bin/fah.dart', ...args],
       workingDirectory: workingDirectory ?? Directory.current.path,
       environment: env,
       raw: true,
@@ -106,13 +110,14 @@ final class FaCliHarness {
   final _rawBuffer = StringBuffer();
 
   var _listening = false;
+  StreamSubscription<String>? _outputSub;
 
   /// Starts listening to PTY output, feeding both [_rawBuffer] and
   /// [terminal]. Called automatically by [spawn]; idempotent.
   void startListening() {
     if (_listening) return;
     _listening = true;
-    pty.out.listen((text) {
+    _outputSub = pty.out.listen((text) {
       _rawBuffer.write(text);
       terminal.write(text);
     });
@@ -242,9 +247,12 @@ final class FaCliHarness {
   /// The terminal screen as a single string (newline-separated lines).
   String get screenText => screenLines.join('\n');
 
-  /// Kills the CLI process and waits for it to exit.
+  /// Kills the CLI process, cancels the output subscription (otherwise an
+  /// open stream keeps the test runner's event loop alive), and waits for
+  /// the process to exit.
   Future<void> close() async {
     pty.kill();
     await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
+    await _outputSub?.cancel();
   }
 }

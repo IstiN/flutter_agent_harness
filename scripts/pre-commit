@@ -171,7 +171,9 @@ if command -v flutter >/dev/null 2>&1; then
     exit 1
   fi
   echo "🧪 Running flutter_app tests (incl. golden tests)..."
-  if ! (cd flutter_app && flutter test); then
+  # integration-tagged tests (test/cli_visual — real CLI in a PTY) are
+  # excluded; run them manually: flutter test test/cli_visual --tags integration
+  if ! (cd flutter_app && flutter test --exclude-tags integration); then
     echo ""
     echo "╔═══════════════════════════════════════════════════════════════════════════╗"
     echo "║  ❌ QUALITY GATE FAILED — FLUTTER APP TESTS                               ║"
