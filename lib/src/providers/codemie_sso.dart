@@ -113,7 +113,7 @@ int deriveCodeMieExpiresAt(Map<String, String> cookies) {
   return DateTime.now().millisecondsSinceEpoch + 24 * 60 * 60 * 1000;
 }
 
-/// Fetches the user's accessible projects from `<apiBase>/user` — the
+/// Fetches the user's accessible projects from `<apiBase>/v1/user` — the
 /// `applications` + `applications_admin` arrays merged and deduplicated.
 /// Authentication uses the full cookie string as a `Cookie:` header.
 Future<List<String>> fetchCodeMieProjects(
@@ -125,7 +125,7 @@ Future<List<String>> fetchCodeMieProjects(
   final ownsClient = client == null;
   try {
     final response = await httpClient
-        .get(Uri.parse('$apiBase/user'), headers: {'cookie': cookie})
+        .get(Uri.parse('$apiBase/v1/user'), headers: {'cookie': cookie})
         .timeout(const Duration(seconds: 30));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ConfigException(

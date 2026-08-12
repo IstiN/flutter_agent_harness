@@ -149,12 +149,14 @@ void main() {
       expect(models, ['gpt-4o', 'claude']);
     });
 
-    test('fetchCodeMieProjects sends Cookie header, not Authorization', () async {
+    test('fetchCodeMieProjects sends Cookie header to /v1/user', () async {
       String? cookieHeader;
       String? authHeader;
+      String? requestPath;
       final client = http_testing.MockClient((request) async {
         cookieHeader = request.headers['cookie'];
         authHeader = request.headers['authorization'];
+        requestPath = request.url.path;
         return http.Response(
           '{"applications":["proj-a","proj-b"],"applications_admin":["proj-c"]}',
           200,
@@ -170,6 +172,7 @@ void main() {
 
       expect(cookieHeader, cookie);
       expect(authHeader, isNull);
+      expect(requestPath, endsWith('/v1/user'));
       expect(projects, ['proj-a', 'proj-b', 'proj-c']);
     });
 
