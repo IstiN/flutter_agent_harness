@@ -45,6 +45,7 @@ final class AgentCliConfig {
     this.homeDir,
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
+    this.codeMieSsoAuthenticateFn,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -71,6 +72,15 @@ final class AgentCliConfig {
     required String verifier,
   })?
   chatGptOAuthExchangeFn;
+
+  /// Optional override for the CodeMie SSO browser flow
+  /// (`/provider codemie sso`). Tests inject a fake returning canned
+  /// credentials; production runs the localhost-callback browser flow.
+  final Future<CodeMieSsoCredentials?> Function(
+    String codeMieUrl,
+    void Function(String) onStatus,
+  )?
+  codeMieSsoAuthenticateFn;
 
   /// Directories to scan for `/name` prompt templates (`.md` files).
   final List<String> promptTemplateDirs;

@@ -41,6 +41,11 @@ void main() {
       required String verifier,
     })?
     chatGptOAuthExchangeFn,
+    Future<CodeMieSsoCredentials?> Function(
+      String codeMieUrl,
+      void Function(String) onStatus,
+    )?
+    codeMieSsoAuthenticateFn,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -58,6 +63,7 @@ void main() {
         providerKind: providerKind ?? 'openai-completions',
         openRouterOAuthExchangeFn: openRouterOAuthExchangeFn,
         chatGptOAuthExchangeFn: chatGptOAuthExchangeFn,
+        codeMieSsoAuthenticateFn: codeMieSsoAuthenticateFn,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -222,7 +228,7 @@ void main() {
     expect(
       output,
       contains(
-        'supported providers: openrouter, openai, chatgpt, anthropic, google',
+        'supported providers: openrouter, openai, chatgpt, codemie, anthropic, google',
       ),
     );
     expect(cli.agent.state.model.provider, 'test-provider');
@@ -1200,6 +1206,102 @@ void main() {
       io.sendLine('/provider chatgpt oauth too many args');
       await waitForIt(
         () => io.out.toString().contains('usage: /provider chatgpt oauth'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+  });
+
+  group('CodeMie SSO', () {
+    test(
+      '/provider codemie sso saves a custom provider, stores the JWT and switches',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry([]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          codeMieSsoAuthenticateFn: (url, onStatus) async {
+            expect(url, 'https://codemie.lab.epam.com');
+            return const CodeMieSsoCredentials(
+              cookies: {'codemie_access_token': 'jwt-abc'},
+              apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+              expiresAt: 9999999999999,
+            );
+          },
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider codemie sso');
+        await waitForIt(() => io.out.toString().contains('saved provider'));
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('CodeMie session expires'));
+        final entry = registry.find('codemie.lab.epam.com');
+        expect(entry, isNotNull);
+        expect(
+          entry!.baseUrl,
+          'https://codemie.lab.epam.com/code-assistant-api/v1',
+        );
+        expect(store.map[entry.keyName], 'jwt-abc');
+        expect(cli.providerKind, 'openai-completions');
+        expect(
+          cli.agent.state.model.baseUrl,
+          'https://codemie.lab.epam.com/code-assistant-api/v1',
+        );
+      },
+    );
+
+    test('re-login reuses the entry and keeps the last-used model', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'codemie.lab.epam.com',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'codemie-model-1',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+        codeMieSsoAuthenticateFn: (url, onStatus) async {
+          return const CodeMieSsoCredentials(
+            cookies: {'codemie_access_token': 'jwt-new'},
+            apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+            expiresAt: 9999999999999,
+          );
+        },
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider codemie sso');
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      // One entry, last-used model preserved, key refreshed.
+      expect(registry.entries, hasLength(1));
+      expect(registry.entries.single.modelId, 'codemie-model-1');
+      expect(cli.agent.state.model.id, 'codemie-model-1');
+    });
+
+    test('/provider codemie sso rejects a bad org URL', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider codemie sso not-a-url');
+      await waitForIt(
+        () => io.out.toString().contains('usage: /provider codemie sso'),
       );
       io.sendLine('/exit');
       await run;

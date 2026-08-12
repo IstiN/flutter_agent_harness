@@ -34,7 +34,7 @@ final class ChatGptOAuthCredentials {
     'access_token': accessToken,
     'refresh_token': refreshToken,
     'id_token': idToken,
-    if (accountId case final id?) 'chatgpt_account_id': id,
+    if (accountId != null) 'chatgpt_account_id': ?accountId,
   };
 
   String encode() => jsonEncode(toJson());

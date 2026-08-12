@@ -150,6 +150,17 @@ factual: paths, commands, invariants — no essays.
   `lib/src/cli/chatgpt_oauth_server.dart`, exported from `lib/io.dart`);
   the credentials blob lives in the secure store as
   `CHATGPT_OAUTH_CREDENTIALS`.
+  `lib/src/providers/codemie_sso.dart` + `lib/src/cli/codemie_sso_server.dart`
+  (io.dart export) — CodeMie organization sign-in: `/provider codemie sso
+  [orgUrl]` runs the browser SSO (login URL embeds the RANDOM callback port;
+  the base64 `token` callback carries session cookies); the
+  `codemie_access_token` JWT authenticates as Bearer against
+  `<org>/code-assistant-api/v1` — the org is saved as a custom provider
+  entry (re-login refreshes the key, keeps the last-used model). Models come
+  from `/llm_models?include_all=true` (LiteLLM shape), not `/models`;
+  `_refreshModelCache` branches on the `code-assistant-api` marker. The
+  catalog also has a `codemie` entry for the manual
+  `/provider codemie [url] [token]` path (env `CODEMIE_API_KEY`).
   `lib/src/model_roles/vision_models.dart` — the shared vision heuristic
   (`modelIdSuggestsVision`, `visionMarker` picker checkmark,
   `inputModalitiesFor`): CLI model switches recompute `Model.input` from it

@@ -16,6 +16,7 @@ import '../model.dart';
 import '../providers/anthropic.dart';
 import '../providers/chatgpt_codex.dart';
 import '../providers/chatgpt_oauth.dart';
+import '../providers/codemie_sso.dart';
 import '../providers/google.dart';
 import '../providers/openai_completions.dart';
 
@@ -92,6 +93,15 @@ const providerCatalog = <String, ProviderSpec>{
     defaultBaseUrl: chatGptCodexBaseUrl,
     apiKeyEnvNames: ['CHATGPT_OAUTH_CREDENTIALS'],
     contextWindow: 128000,
+    maxTokens: 16384,
+  ),
+  'codemie': ProviderSpec(
+    name: 'codemie',
+    kind: 'openai-completions',
+    api: 'openai-completions',
+    defaultBaseUrl: '$defaultCodeMieBaseUrl/code-assistant-api/v1',
+    apiKeyEnvNames: ['CODEMIE_API_KEY'],
+    contextWindow: 200000,
     maxTokens: 16384,
   ),
   'anthropic': ProviderSpec(

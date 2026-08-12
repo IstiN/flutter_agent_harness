@@ -136,6 +136,7 @@ void main() {
       '/model-edit',
       '/provider',
       'openrouter oauth',
+      'codemie sso',
       '/provider-edit',
       '/key',
       '/mode',

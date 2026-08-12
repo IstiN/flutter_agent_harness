@@ -480,6 +480,7 @@ extension on AgentCli {
     if (_startCustomProviderArg(args)) return;
     if (_startOpenRouterOAuthArg(args)) return;
     if (_startChatGptOAuthArg(args)) return;
+    if (_startCodeMieSsoArg(args)) return;
     if (args.length > 3) {
       io.writeln('usage: /provider <name> [baseUrl] [token]');
       return;
@@ -821,6 +822,113 @@ extension on AgentCli {
             ? _persistChatGptCredentials
             : null,
       );
+
+  /// The `/provider codemie sso [url]` branch: browser SSO against a
+  /// CodeMie organization (localhost callback), then the session JWT rides
+  /// the standard openai-completions adapter as a Bearer token. The org is
+  /// saved as a custom provider entry (host-derived name) so it shows up in
+  /// the /provider picker and re-login just refreshes its key. Returns true
+  /// when the command targeted the SSO flow.
+  bool _startCodeMieSsoArg(List<String> args) {
+    if (args.first != 'codemie') return false;
+    if (args.length < 2 || args[1] != 'sso') return false;
+    final url = args.length > 2 ? args[2] : defaultCodeMieBaseUrl;
+    if (args.length > 3 ||
+        (!url.startsWith('http://') && !url.startsWith('https://'))) {
+      io.writeln('usage: /provider codemie sso [orgUrl]');
+      return true;
+    }
+    unawaited(_handleCodeMieSsoCommand(url));
+    return true;
+  }
+
+  /// Runs the CodeMie SSO flow and applies the resulting credentials.
+  Future<void> _handleCodeMieSsoCommand(String codeMieUrl) async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      final authenticate =
+          config.codeMieSsoAuthenticateFn ??
+          (url, onStatus) =>
+              runCodeMieSsoCliFlow(codeMieUrl: url, onStatus: onStatus);
+      final credentials = await authenticate(codeMieUrl, io.writeln);
+      if (credentials != null) {
+        await _applyCodeMieSsoCredentials(credentials);
+      }
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
+  /// Saves the SSO session: the `codemie_access_token` JWT becomes the
+  /// Bearer key of a saved custom provider pointing at
+  /// `<apiUrl>/v1` (re-login replaces the key, keeps the last-used model).
+  Future<void> _applyCodeMieSsoCredentials(
+    CodeMieSsoCredentials credentials,
+  ) async {
+    final token = credentials.accessToken;
+    if (token == null) {
+      io.writeln('CodeMie SSO carried no codemie_access_token — aborted');
+      return;
+    }
+    final baseUrl = '${credentials.apiUrl}/v1';
+    final registry = config.customProviders;
+    // The raw host-derived name (no dedupe): a re-login must land on the
+    // EXISTING entry, not spawn `host-2`.
+    final candidate = _codeMieHostName(baseUrl);
+    final existing = registry?.find(candidate);
+    final name = existing?.name ?? registry?.deriveName(baseUrl) ?? 'codemie';
+    final keyName = CustomProviderRegistry.keyNameFor(
+      baseUrl,
+      providerName: name,
+    );
+    final spec = providerCatalog['openai']!;
+    await _storeProviderToken(spec, baseUrl, token, keyName: keyName);
+    final modelId = existing?.modelId ?? _agent.state.model.id;
+    if (registry != null) {
+      registry.add(
+        CustomProviderEntry(
+          name: name,
+          apiType: 'openai',
+          baseUrl: baseUrl,
+          modelId: modelId,
+          keyName: keyName,
+        ),
+      );
+      _activeCustomName = name;
+      io.writeln('saved provider $name (listed first in /provider)');
+    }
+    // Switch with the fresh token directly — the secure-store snapshot may
+    // not see the just-written key yet.
+    await _switchProvider(
+      spec,
+      baseUrl,
+      modelId,
+      token: token,
+      tokenKeyName: keyName,
+    );
+    final hours =
+        (credentials.expiresAt - DateTime.now().millisecondsSinceEpoch) ~/
+        3600000;
+    io.writeln(
+      'CodeMie session expires in ~${hours}h — re-run '
+      '/provider codemie sso to renew',
+    );
+  }
+
+  /// The host-derived provider name for a CodeMie API base URL (the same
+  /// candidate `CustomProviderRegistry.deriveName` builds, WITHOUT the
+  /// dedupe suffix — re-login lookups need the plain name).
+  String _codeMieHostName(String baseUrl) {
+    final uri = Uri.tryParse(baseUrl);
+    var host = uri?.host ?? baseUrl;
+    if (host.isEmpty) return 'codemie';
+    final port = uri?.port;
+    final defaultPort = uri?.scheme == 'https' ? 443 : 80;
+    if (port != null && port != defaultPort) host = '$host:$port';
+    return host;
+  }
 
   /// The catalog-switch branch of [_handleProviderCommand]: resolves the
   /// provider name against the catalog and switches with the optional
@@ -1444,8 +1552,14 @@ extension on AgentCli {
     try {
       final model = _agent.state.model;
       if (model.api == 'openai-completions') {
-        final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-        final ids = await fetch(model.baseUrl, apiKey: _apiKey);
+        // CodeMie exposes its model list at /llm_models (LiteLLM-shaped),
+        // not the OpenAI /models.
+        final ids = model.baseUrl.contains('/code-assistant-api/')
+            ? await fetchCodeMieModels(model.baseUrl, _apiKey)
+            : await (config.modelsFetcher ?? _fetchOpenAiCompatibleModels)(
+                model.baseUrl,
+                apiKey: _apiKey,
+              );
         if (ids.isNotEmpty) {
           _modelCache = ids;
           _tuiController?.sendModelsRefresh();

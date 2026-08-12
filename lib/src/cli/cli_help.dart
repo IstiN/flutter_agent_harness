@@ -326,7 +326,7 @@ SKILLS AND CONTEXT FILES
                      wins over the 200k catalog default; persist per chain
                      via roles yaml contextWindow:/maxTokens:)
   /provider [name] [baseUrl] [token] | custom | openrouter oauth [headless]
-                     | chatgpt oauth [headless]
+                     | chatgpt oauth [headless] | codemie sso [orgUrl]
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
                      a guided setup that saves the provider (api type, url,
@@ -335,7 +335,11 @@ SKILLS AND CONTEXT FILES
                      chatgpt oauth signs in with a ChatGPT account (Codex
                      backend) and stores the OAuth credentials blob as
                      CHATGPT_OAUTH_CREDENTIALS — access tokens refresh
-                     automatically and the rotated blob is re-persisted
+                     automatically and the rotated blob is re-persisted;
+                     codemie sso [orgUrl] signs in to a CodeMie organization
+                     via browser SSO (localhost callback) and saves it as a
+                     custom provider — the session JWT rides the standard
+                     OpenAI-compatible adapter
   /provider-edit     edit the active provider via the guided setup
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
