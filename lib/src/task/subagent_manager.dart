@@ -19,7 +19,6 @@ final class SubagentEvent {
   final String? message;
 }
 
-/// Creates or resumes a child session. Returns the session id.
 typedef ChildSessionFactory =
     Future<String> Function(String parentSessionId, String childId);
 
