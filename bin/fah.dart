@@ -967,25 +967,20 @@ Future<void> main(List<String> args) async {
   // background color and sync-update support at startup, and the replies
   // arrive as ordinary stdin bytes. If they land after the program stopped
   // listening, the shell echoes them as garbage characters at the prompt.
-  // Drain stdin briefly in raw mode before handing the terminal back.
+  // Drain stdin briefly WITHOUT re-entering raw mode — the terminal is
+  // already restored by dart_tui's shutdown, and re-entering raw mode
+  // risks leaving the shell broken (no echo, no Ctrl-C) if the drain or
+  // its cleanup throws.
   if (stdin.hasTerminal) {
     try {
-      stdin.echoMode = false;
-      stdin.lineMode = false;
+      // A brief non-blocking read in canonical mode: any pending query
+      // responses are consumed by the listen; 150 ms is enough for the
+      // last reply to arrive.
       final drain = stdin.listen((_) {});
       await Future<void>.delayed(const Duration(milliseconds: 150));
       await drain.cancel();
-      try {
-        stdin.echoMode = true;
-        stdin.lineMode = true;
-      } on Exception {
-        // Best effort.
-      }
     } on Object {
-      // Nothing to drain: on Windows a cancelled stdin subscription keeps
-      // the underlying console read alive, so re-listening throws "Stream
-      // has already been listened to" — skipping the drain only means the
-      // late query replies may echo once in the shell.
+      // Nothing to drain: stdin may already be listened to or unavailable.
     }
   }
 }
