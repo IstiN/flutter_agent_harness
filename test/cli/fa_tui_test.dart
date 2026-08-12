@@ -5,6 +5,7 @@ import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
+import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -1262,6 +1263,47 @@ void main() {
       expect(updated.prompt, isNull);
       expect(completer.isCompleted, isTrue);
       expect(completer.future, completion(isA<TuiPromptCancelled>()));
+    });
+
+    test('prompt mode hides the physical cursor (inline caret only)', () {
+      FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      // Text prompt — the input row carries its own reverse-video caret, so
+      // the physical cursor must not sit on the status line.
+      final textPrompt = send(
+        model,
+        OpenPromptMsg(
+          TextPromptSpec(question: 'Enter value:'),
+          Completer<TuiPromptAnswer?>(),
+        ),
+      );
+      final textView = textPrompt.view();
+      expect(textView.content, contains('\x1b[?25l'));
+      expect(textView.content, isNot(contains('\x1b[?25h')));
+      expect(textView.cursor, isNull);
+
+      // Picker prompt — no text input at all, cursor must stay hidden too.
+      final pickerPrompt = send(
+        model,
+        OpenPromptMsg(
+          const AskPromptSpec(
+            header: 'Ask',
+            question: 'Pick one:',
+            index: 0,
+            total: 1,
+            options: [
+              AskOption(label: 'a'),
+              AskOption(label: 'b'),
+            ],
+          ),
+          Completer<TuiPromptAnswer?>(),
+        ),
+      );
+      final pickerView = pickerPrompt.view();
+      expect(pickerView.content, contains('\x1b[?25l'));
+      expect(pickerView.content, isNot(contains('\x1b[?25h')));
+      expect(pickerView.cursor, isNull);
     });
   });
 }

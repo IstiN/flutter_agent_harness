@@ -1462,19 +1462,21 @@ final class FaTuiModel extends Model {
     _writeBusyAndQueue(b);
 
     // Prompt mode: the prompt zone replaces the entire input zone below it,
-    // including the status line. The cursor is homed to the bottom of the
-    // frame so typed characters land inside the prompt's input field.
+    // including the status line. The physical cursor stays HIDDEN the whole
+    // time: text inputs render their own inline reverse-video caret
+    // (_cursorInputRow), pickers and approvals need no caret at all — the
+    // old "home to the bottom of the frame" behavior left a stray bar
+    // sitting on the status line while the dialog had focus.
     if (prompt != null) {
       for (final line in renderTuiPrompt(prompt!, termWidth)) {
         b.writeln(line);
       }
       b.writeln(); // spacer
       b.write(_dim(_fitWidth(callbacks.statusLine())));
-      final lines = b.toString().split('\n');
-      final cursorLine = '\x1b[?25h\x1b[${lines.length};1H';
+      const cursorLine = '\x1b[?25l';
       return View(
         content: b.toString() + cursorLine,
-        cursor: Cursor(x: 0, y: lines.length - 1, shape: CursorShape.bar),
+        cursor: null,
         mouseMode: MouseMode.cellMotion,
       );
     }
