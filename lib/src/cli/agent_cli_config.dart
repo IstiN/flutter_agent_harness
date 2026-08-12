@@ -47,6 +47,7 @@ final class AgentCliConfig {
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
     this.codeMieSsoAuthenticateFn,
+    this.codeMieGuidedSetupFn,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -82,6 +83,21 @@ final class AgentCliConfig {
     void Function(String) onStatus,
   )?
   codeMieSsoAuthenticateFn;
+
+  /// Optional override for the post-SSO guided project/model selection.
+  /// Tests inject a fake returning a canned model id; production runs the
+  /// real guided flow (fetch projects, fetch models, pickers).
+  final Future<String?> Function(
+    String apiBase,
+    String token,
+    Future<String?> Function(
+      String title,
+      List<(String, String, String)> options,
+    )
+    pickOption,
+    Future<String?> Function(String question, {bool secret}) askLine,
+  )?
+  codeMieGuidedSetupFn;
 
   /// Directories to scan for `/name` prompt templates (`.md` files).
   final List<String> promptTemplateDirs;

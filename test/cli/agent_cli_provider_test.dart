@@ -46,6 +46,17 @@ void main() {
       void Function(String) onStatus,
     )?
     codeMieSsoAuthenticateFn,
+    Future<String?> Function(
+      String apiBase,
+      String token,
+      Future<String?> Function(
+        String title,
+        List<(String, String, String)> options,
+      )
+      pickOption,
+      Future<String?> Function(String question, {bool secret}) askLine,
+    )?
+    codeMieGuidedSetupFn,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -64,6 +75,7 @@ void main() {
         openRouterOAuthExchangeFn: openRouterOAuthExchangeFn,
         chatGptOAuthExchangeFn: chatGptOAuthExchangeFn,
         codeMieSsoAuthenticateFn: codeMieSsoAuthenticateFn,
+        codeMieGuidedSetupFn: codeMieGuidedSetupFn,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -1233,6 +1245,9 @@ void main() {
               apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
               expiresAt: 9999999999999,
             );
+          },
+          codeMieGuidedSetupFn: (apiBase, token, pickOption, askLine) async {
+            return 'codemie-model-1';
           },
         );
         final run = cli.run();

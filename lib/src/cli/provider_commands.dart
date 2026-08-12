@@ -862,6 +862,8 @@ extension on AgentCli {
       if (credentials != null) {
         await _applyCodeMieSsoCredentials(credentials);
       }
+    } catch (e) {
+      io.writeln('CodeMie SSO failed: $e');
     } finally {
       _providerFlowActive = false;
       _promptLineBuffer.clear();
@@ -897,7 +899,7 @@ extension on AgentCli {
     // the existing model choice).
     final modelId =
         existing?.modelId ??
-        await _codemiePickProjectAndModel(credentials.apiUrl, token) ??
+        await _codemieGuidedSetup(credentials.apiUrl, token) ??
         _agent.state.model.id;
 
     if (registry != null) {
@@ -931,16 +933,24 @@ extension on AgentCli {
 
   /// Post-SSO guided setup: fetch projects, let the user pick one, then
   /// fetch and pick a model. Returns the chosen model id, or null on cancel.
+  /// Dispatches to the config-injected guided setup, or the real flow.
+  Future<String?> _codemieGuidedSetup(String apiBase, String token) {
+    final override = config.codeMieGuidedSetupFn;
+    if (override != null) {
+      return override(apiBase, token, _pickOption, _askLine);
+    }
+    return _codemiePickProjectAndModel(apiBase, token);
+  }
+
   Future<String?> _codemiePickProjectAndModel(
     String apiBase,
     String token,
   ) async {
     // Step 1: projects.
     io.writeln('fetching CodeMie projects...');
-    final projects = await fetchCodeMieProjects(
-      apiBase,
-      token,
-    ).catchError((_) => const <String>[]);
+    final projects = await fetchCodeMieProjects(apiBase, token).catchError((e) {
+      return const <String>[];
+    });
     if (projects.isNotEmpty) {
       final projectPick = await _pickOption('CodeMie project', [
         for (final p in projects) (p, p, ''),
@@ -952,10 +962,11 @@ extension on AgentCli {
 
     // Step 2: models.
     io.writeln('fetching CodeMie models...');
-    final models = await fetchCodeMieModels(
-      '$apiBase/v1',
-      token,
-    ).catchError((_) => const <String>[]);
+    final models = await fetchCodeMieModels('$apiBase/v1', token).catchError((
+      e,
+    ) {
+      return const <String>[];
+    });
     if (models.isEmpty) {
       io.writeln('no models available — set one with /model <id>');
       return null;
@@ -968,7 +979,8 @@ extension on AgentCli {
     if (modelPick.isNotEmpty) return modelPick;
     // Manual entry.
     final manual = await _askLine("model id: ");
-    return manual?.trim().isEmpty == false ? manual!.trim() : null;
+    final result = manual?.trim().isEmpty == false ? manual!.trim() : null;
+    return result;
   }
 
   /// The host-derived provider name for a CodeMie API base URL (the same
