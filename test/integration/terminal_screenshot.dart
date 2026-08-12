@@ -61,7 +61,19 @@ Future<File> renderTerminalScreenshot({
     for (var col = 0; col < columns && col < line.length; col++) {
       line.getCellData(col, cellData);
       final content = cellData.content & CellContent.codepointMask;
-      if (content == 0) continue;
+      if (content == 0) {
+        // Empty cell — still render a space to fill the column so the
+        // right border lands at the correct column.
+        img.fillRect(
+          image,
+          x1: col * cellW,
+          y1: y,
+          x2: (col + 1) * cellW,
+          y2: y + cellH,
+          color: img.ColorRgb8(_bg.$1, _bg.$2, _bg.$3),
+        );
+        continue;
+      }
       final color = _resolveColor(cellData);
       final x = col * cellW;
       _drawCell(image, content, x, y, cellW, cellH, color, font);

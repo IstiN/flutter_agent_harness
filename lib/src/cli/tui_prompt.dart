@@ -785,12 +785,20 @@ String _wrapBodyLine(
   bool dim = false,
 }) {
   final content = _fitWidth(text, inner);
+  // Padding must be based on the VISIBLE length — strip ANSI escape codes
+  // so pre-styled strings (dim/red/yellow hints) don't skew the frame.
+  final visibleLength = _stripAnsi(content).length;
   final styled = bold
       ? _bold(content)
       : dim
       ? _dim(content)
       : content;
-  return '│ $styled${' ' * (inner - content.length - 1)}│';
+  return '│ $styled${' ' * (inner - visibleLength - 1)}│';
+}
+
+/// Strips ANSI escape sequences for visible-length computation.
+String _stripAnsi(String text) {
+  return text.replaceAll(RegExp(r'\x1b\[[0-9;]*[a-zA-Z]'), '');
 }
 
 List<String> _wrapText(String text, int width) {
