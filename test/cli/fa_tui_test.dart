@@ -1305,5 +1305,33 @@ void main() {
       expect(pickerView.content, isNot(contains('\x1b[?25h')));
       expect(pickerView.cursor, isNull);
     });
+
+    test('generic picker hides the cursor; slash menu keeps it', () {
+      FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+
+      // Generic selection-only picker (approval/settings/wizard steps):
+      // typing goes nowhere, so the physical cursor must not sit stranded
+      // in the input zone.
+      final picker = send(
+        model,
+        OpenPickerMsg('approval', 'Approval mode', [
+          const MenuItem(key: 'yolo', label: 'yolo'),
+        ]),
+      );
+      final pickerView = picker.view();
+      expect(pickerView.content, contains('\x1b[?25l'));
+      expect(pickerView.content, isNot(contains('\x1b[?25h')));
+      expect(pickerView.cursor, isNull);
+
+      // Slash menu: typing edits the filter, so the cursor stays visible.
+      final slashMenu = send(
+        model,
+        KeyPressMsg(const TeaKey(code: KeyCode.rune, text: '/')),
+      );
+      expect(slashMenu.menuOpen, isTrue);
+      expect(slashMenu.view().content, contains('\x1b[?25h'));
+    });
   });
 }

@@ -1492,6 +1492,14 @@ final class FaTuiModel extends Model {
     final inputStartRow = lines.length - 2 - _inputLineCount;
     final cursorRow = inputStartRow + cursorInputLine;
     final cursorX = cursorScreenCol;
+    // Pickers (models, sessions, mode, approval, provider, settings, wizard
+    // steps) never show the physical cursor: generic pickers ignore typing
+    // entirely, and the models picker's type-to-filter echoes into the
+    // picker title ([Select model: …]), not the input line — a caret in the
+    // empty input zone would blink nowhere near the text it "edits". The
+    // slash menu DOES edit the input line, so it keeps the cursor.
+    final pickerOpen = menuOpen && menuModelMode;
+    final hideCursor = busy || pickerOpen;
     // Cursor management: while a run streams, HIDE the physical cursor —
     // the renderer's cell diff re-homes it only when the last frame line
     // changes (a spinner tick), so between ticks it was left sitting inside
@@ -1501,12 +1509,14 @@ final class FaTuiModel extends Model {
     // even when the only changed row is mid-history (a lone output append
     // while idle used to strand the cursor inside the transcript).
     final idleSuffix = '\x1b[0m' * (frameNonce % 4);
-    final cursorLine = busy
+    final cursorLine = hideCursor
         ? '\x1b[?25l'
         : '\x1b[?25h$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';
     return View(
       content: b.toString() + cursorLine,
-      cursor: Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
+      cursor: hideCursor
+          ? null
+          : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
       mouseMode: MouseMode.cellMotion,
     );
   }
