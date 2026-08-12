@@ -294,6 +294,19 @@ void main() {
     });
   });
 
+  group('agents', () {
+    testWidgets('/agents lists available agent types', (tester) async {
+      final harness = await boot(tester);
+      await harness.runSlashCommand('/agents');
+      await harness.liveWaitForText(
+        'agent types:',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '90_agents_list');
+      await harness.close();
+    });
+  });
+
   group('settings', () {
     testWidgets('/settings hub → chat model: provider → model', (tester) async {
       final tempHome = _tempHomeWithProvider();
