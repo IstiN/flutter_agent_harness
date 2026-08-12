@@ -340,6 +340,8 @@ SKILLS AND CONTEXT FILES
   /resume            switch to the most recent session
   /rename-session <n> rename the current session
   /approval [mode]   show or set tool approval (always-ask|write|yolo)
+  /settings          settings hub: provider, model, approval, keys, MCP
+                     (interactive picker in the TUI, summary in line mode)
   /allow [tool]      always-allow a tool (or list them)
   /mcp [list|reload] show MCP servers or reload the config
   /code              switch to coding mode

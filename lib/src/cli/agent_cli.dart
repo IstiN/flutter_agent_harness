@@ -777,6 +777,7 @@ class AgentCli {
           '/mode',
           '/approval',
           '/provider',
+          '/settings',
         }.contains(key),
         onPickerSelected: _tuiPickerSelected,
         onPickerCancelled: _tuiPickerCancelled,
@@ -869,6 +870,7 @@ class AgentCli {
     'mode': _switchMode,
     'approval': (key) async => _handleApprovalMode(key),
     'provider': _tuiPickProvider,
+    'settings': _tuiPickSetting,
   };
 
   /// Completes the pending wizard-picker answer for [pickerId] (null [key]
@@ -1966,6 +1968,8 @@ class AgentCli {
         await _modeSlash(rest);
       case '/approval':
         _approvalSlash(rest);
+      case '/settings':
+        await _settingsSlash(rest);
       case '/code' || '/architect' || '/review':
         await _switchMode(command.substring(1));
       default:
@@ -1992,6 +1996,90 @@ class AgentCli {
     } else {
       _handleApprovalMode(rest);
     }
+  }
+
+  /// `/settings`: a bare command opens the TUI settings hub; anything else
+  /// (and line mode) prints the current settings summary.
+  Future<void> _settingsSlash(String rest) async {
+    if (rest.isEmpty && _useTui && _tuiController != null) {
+      _openSettingsPicker();
+    } else {
+      _printSettingsSummary();
+    }
+  }
+
+  /// The settings hub picker: one entry per configurable area, each
+  /// launching the same interactive flow its dedicated slash command would.
+  void _openSettingsPicker() {
+    final model = _agent.state.model;
+    final items = [
+      MenuItem(key: 'provider', label: 'Provider', description: model.provider),
+      const MenuItem(
+        key: 'provider-edit',
+        label: 'Edit / delete provider',
+        description: 'guided setup: api type, url, key, model',
+      ),
+      MenuItem(key: 'model', label: 'Chat model', description: model.id),
+      const MenuItem(
+        key: 'model-edit',
+        label: 'Model parameters',
+        description: 'context window, token limits',
+      ),
+      MenuItem(
+        key: 'approval',
+        label: 'Approval mode',
+        description: _approval.mode.label,
+      ),
+      MenuItem(
+        key: 'mode',
+        label: 'Agent mode',
+        description: _currentMode.name,
+      ),
+      const MenuItem(
+        key: 'keys',
+        label: 'API keys',
+        description: 'set or inspect stored keys',
+      ),
+      const MenuItem(
+        key: 'mcp',
+        label: 'MCP servers',
+        description: 'status and config reload',
+      ),
+    ];
+    _tuiController?.openPicker('settings', 'Settings', items);
+  }
+
+  /// A settings-hub selection launches the same flow its dedicated slash
+  /// command would open.
+  Future<void> _tuiPickSetting(String key) async {
+    switch (key) {
+      case 'provider':
+        _openProviderPicker();
+      case 'provider-edit':
+        _startProviderEditFlow();
+      case 'model':
+        await _handleModelCommand('');
+      case 'model-edit':
+        await _handleModelEdit('');
+      case 'approval':
+        _openApprovalPicker();
+      case 'mode':
+        _openModePicker();
+      case 'keys':
+        await _handleKeyCommand('');
+      case 'mcp':
+        _printMcpStatus();
+    }
+  }
+
+  /// The line-mode `/settings` summary (the TUI opens the hub instead).
+  void _printSettingsSummary() {
+    final model = _agent.state.model;
+    io.writeln('provider: ${model.provider}');
+    io.writeln('model: ${model.id}');
+    io.writeln('approval: ${_approval.mode.label}');
+    io.writeln('mode: ${_currentMode.name}');
+    io.writeln('change via /provider, /model, /approval, /mode, /key, /mcp');
   }
 
   /// Anything that is not a builtin command: a plugin slash command, a

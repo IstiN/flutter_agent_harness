@@ -57,6 +57,7 @@ const builtinSlashCommands = <String, String>{
   '/resume': 'switch to the most recent session',
   '/rename-session': '<name> — rename the current session',
   '/approval': '[mode] — show or set tool approval',
+  '/settings': '— settings hub: provider, model, approval, keys, MCP',
   '/allow': '[tool] — always-allow a tool (or list them)',
   '/mcp': '[list|reload] — show MCP servers or reload config',
   '/code': 'switch to coding mode',

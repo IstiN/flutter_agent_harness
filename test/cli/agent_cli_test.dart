@@ -531,6 +531,23 @@ void main() {
     }
   });
 
+  test('/settings prints the current settings summary in line mode', () async {
+    final fake = FakeStreamFunction([]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('/settings');
+    await waitForIt(() => io.out.toString().contains('provider:'));
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    expect(output, contains('model:'));
+    expect(output, contains('approval:'));
+    expect(output, contains('mode:'));
+    expect(output, contains('/provider'));
+  });
+
   test('unknown slash commands show a filtered command menu', () async {
     final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);

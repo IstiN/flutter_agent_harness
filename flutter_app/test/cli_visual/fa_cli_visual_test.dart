@@ -294,6 +294,35 @@ void main() {
     });
   });
 
+  group('settings', () {
+    testWidgets('/settings hub → chat model flow', (tester) async {
+      final harness = await boot(tester);
+      await harness.screenshot(shotsDir, '80_boot_settings');
+
+      await harness.runSlashCommand('/settings');
+      await harness.liveWaitForText(
+        'Chat model',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '81_settings_hub');
+
+      // Navigate to "Chat model" (third entry) and open it.
+      harness.sendArrowDown();
+      harness.sendArrowDown();
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '82_settings_model_highlight');
+
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'Select model',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '83_settings_model_picker');
+
+      await harness.close();
+    });
+  });
+
   group('mcp', () {
     testWidgets('/mcp shows guidance when no servers configured', (
       tester,

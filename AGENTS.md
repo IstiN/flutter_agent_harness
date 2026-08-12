@@ -126,6 +126,10 @@ factual: paths, commands, invariants — no essays.
   gets env → `FA_KEY_<HOST>` → `FA_KEY_<HOST>_<NAME>` → legacy; any other
   endpoint resolves ONLY its scoped store keys (env names never hijack a
   custom endpoint); `/key set` writes store-only, never config.
+  `/settings` is the interactive settings hub: a TUI picker whose entries
+  (Provider, Edit/delete provider, Chat model, Model parameters, Approval
+  mode, Agent mode, API keys, MCP servers) launch the same flows the
+  dedicated slash commands open; line mode prints a summary.
 - `lib/src/prompts/prompt_overrides.dart` — `prompts:` config section maps
   prompt names to file path or inline text; strict validation; flags
   `--system-prompt(-file)` > config > built-in.

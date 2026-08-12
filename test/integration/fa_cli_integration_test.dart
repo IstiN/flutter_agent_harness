@@ -8,7 +8,6 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
-import 'terminal_screenshot.dart';
 
 void main() {
   group('Fa CLI integration', () {
@@ -29,13 +28,6 @@ void main() {
       expect(screen, contains('test-model'));
       // The TUI status line (the input zone has no `fa>` prefix in TUI mode).
       expect(screen, contains('ctx'));
-
-      // Screenshot for vision verification.
-      final screenshot = await renderTerminalScreenshot(
-        terminal: harness.terminal,
-        outputPath: '/tmp/fa_boot.png',
-      );
-      expect(screenshot.existsSync(), isTrue);
     });
 
     test(
@@ -169,12 +161,6 @@ void main() {
         1,
         reason: 'Border rows have different widths: $borderWidths',
       );
-
-      final screenshot = await renderTerminalScreenshot(
-        terminal: harness.terminal,
-        outputPath: '/tmp/fa_prompt_frame.png',
-      );
-      expect(screenshot.existsSync(), isTrue);
 
       // Cancel the prompt and the wizard.
       harness.sendEscape();

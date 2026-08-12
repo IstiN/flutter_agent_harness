@@ -96,6 +96,7 @@ void main() {
       'always-ask',
       'yolo',
       '/approval',
+      '/settings',
       '/allow',
       // Sessions and compaction.
       '~/.fah/sessions',
