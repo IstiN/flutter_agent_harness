@@ -33,6 +33,8 @@ import '../types.dart';
 import 'agent_registry.dart';
 import 'output_manager.dart';
 import 'parallel.dart';
+import 'subagent.dart';
+import 'subagent_manager.dart';
 import 'task_types.dart';
 
 /// Lifecycle phases reported through [TaskSpawnProgressCallback].
@@ -63,6 +65,7 @@ final class TaskExecutor {
     required this.semaphore,
     required this.store,
     this.rolesResolver,
+    this.subagentManager,
   });
 
   /// The parent tool pool (already minus any host-hidden tools).
@@ -85,6 +88,10 @@ final class TaskExecutor {
 
   /// Optional role resolver supplying cheap models per role (omp's `@smol`).
   final ModelRolesResolver? rolesResolver;
+
+  /// Optional retained-subagent registry (Phase 3a). When present, every
+  /// spawn registers/updates a [SubagentHandle].
+  final SubagentManager? subagentManager;
 
   /// Runs one batch item to completion. Never throws: cancellation and
   /// failure are reported as [TaskSingleResult] error entries.
@@ -126,6 +133,11 @@ final class TaskExecutor {
       );
     } on CancelledException catch (error) {
       onProgress?.call(index, id, TaskSpawnPhase.aborted);
+      await _updateSubagentStatus(
+        id,
+        SubagentStatus.aborted,
+        error: 'aborted: ${error.reason ?? 'cancelled'}',
+      );
       return _failure(
         index,
         id,
@@ -137,6 +149,7 @@ final class TaskExecutor {
       );
     } on Object catch (error) {
       onProgress?.call(index, id, TaskSpawnPhase.failed);
+      await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
       return _failure(index, id, agentName, item, stopwatch, '$error');
     } finally {
       stopwatch.stop();
@@ -156,6 +169,17 @@ final class TaskExecutor {
   ) async {
     final definition = _resolveDefinition(agentName);
     onProgress?.call(index, id, TaskSpawnPhase.running);
+
+    // Register in the retained-subagent manager (Phase 3a).
+    if (subagentManager != null) {
+      await subagentManager!.register(
+        id: id,
+        name: taskItemNameBase(item),
+        agentType: agentName,
+        task: item.task,
+      );
+      await subagentManager!.update(id, status: SubagentStatus.running);
+    }
 
     final toolRegistry = ToolRegistry(
       registry.toolSurfaceFor(definition, childTools),
@@ -198,6 +222,19 @@ final class TaskExecutor {
       id,
       failed ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
     );
+
+    // Update the retained-subagent handle with final status + usage.
+    if (subagentManager != null) {
+      await subagentManager!.update(
+        id,
+        status: failed ? SubagentStatus.failed : SubagentStatus.completed,
+        tokens: usage.tokens,
+        requests: usage.requests,
+        modelId: wiring.model.id,
+        error: failed ? 'schema_violation: ${structured!.error}' : null,
+      );
+    }
+
     return TaskSingleResult(
       index: index,
       id: id,
@@ -515,6 +552,17 @@ final class TaskExecutor {
       return parseJsonWithRepair(text);
     } on FormatException {
       return null;
+    }
+  }
+
+  /// Best-effort subagent status update (no-op when no manager).
+  Future<void> _updateSubagentStatus(
+    String id,
+    SubagentStatus status, {
+    String? error,
+  }) async {
+    if (subagentManager != null) {
+      await subagentManager!.update(id, status: status, error: error);
     }
   }
 }

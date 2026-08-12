@@ -26,6 +26,8 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/tool_registry.dart';
 import '../task/task.dart';
+import '../task/subagent_manager.dart';
+import '../task/subagent_tools.dart';
 import '../skills/skills.dart';
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
@@ -368,13 +370,20 @@ class AgentCli {
     // The `task` tool (omp's background subagents): children draw from the
     // core tool surface (never `task` itself), completions are injected back
     // into the parent conversation as async-result messages.
+    _subagentManager = SubagentManager(parentSessionId: '');
     _taskConfig = TaskToolConfig(
       childTools: coreTools,
       streamFunction: _streamFunction,
       model: config.model,
       rolesResolver: config.modelRolesResolver,
+      subagentManager: _subagentManager,
     );
-    _toolRegistry = ToolRegistry([...coreTools, taskTool(config: _taskConfig)]);
+    final monitoringTools = subagentMonitoringTools(manager: _subagentManager);
+    _toolRegistry = ToolRegistry([
+      ...coreTools,
+      ...monitoringTools,
+      taskTool(config: _taskConfig),
+    ]);
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
@@ -523,6 +532,10 @@ class AgentCli {
   /// and the background [TaskJobManager] whose completions are injected
   /// back into the parent conversation (omp's async-result flow).
   late final TaskToolConfig _taskConfig;
+
+  /// Retained-subagent registry (Phase 3a): tracks every spawned child so
+  /// `task_status`/`task_observe`/`task_send` work after completion.
+  late final SubagentManager _subagentManager;
   late final Agent _agent;
   late final ApprovalManager _approval;
   late final ToolRegistry _toolRegistry;

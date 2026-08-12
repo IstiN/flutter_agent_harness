@@ -35,6 +35,8 @@ import '../prompts/prompts.g.dart';
 import 'agent_registry.dart';
 import 'output_manager.dart';
 import 'parallel.dart';
+import 'subagent.dart';
+import 'subagent_manager.dart';
 import 'task_executor.dart';
 import 'task_types.dart';
 
@@ -152,6 +154,7 @@ final class TaskToolConfig {
     this.defaultBackground = false,
     AgentOutputStore? outputs,
     TaskJobManager? jobManager,
+    this.subagentManager,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
        jobManager = jobManager ?? TaskJobManager();
@@ -191,6 +194,11 @@ final class TaskToolConfig {
 
   /// The session background job registry.
   final TaskJobManager jobManager;
+
+  /// Optional retained-subagent registry (Phase 3a). When present, every
+  /// spawn registers a [SubagentHandle] so the child is addressable and
+  /// observable after completion.
+  final SubagentManager? subagentManager;
 }
 
 /// Creates the `task` tool bound to [config] (omp's `TaskTool`).
@@ -204,6 +212,7 @@ AgentTool taskTool({required TaskToolConfig config}) {
     semaphore: config.semaphore,
     store: config.outputs,
     rolesResolver: config.rolesResolver,
+    subagentManager: config.subagentManager,
   );
 
   final description = taskToolDescriptionPrompt
