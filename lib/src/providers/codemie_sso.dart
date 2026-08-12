@@ -107,6 +107,50 @@ int deriveCodeMieExpiresAt(Map<String, String> cookies) {
   return DateTime.now().millisecondsSinceEpoch + 24 * 60 * 60 * 1000;
 }
 
+/// Fetches the user's accessible projects from `<apiBase>/user` — the
+/// `applications` + `applications_admin` arrays merged and deduplicated.
+Future<List<String>> fetchCodeMieProjects(
+  String apiBase,
+  String token, {
+  http.Client? client,
+}) async {
+  final httpClient = client ?? http.Client();
+  final ownsClient = client == null;
+  try {
+    final response = await httpClient
+        .get(
+          Uri.parse('$apiBase/user'),
+          headers: {'authorization': 'Bearer $token'},
+        )
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ConfigException(
+        'CodeMie user info failed (${response.statusCode})',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) return const [];
+    final apps = <String>{};
+    for (final field in const [
+      'applications',
+      'applications_admin',
+      'applicationsAdmin',
+    ]) {
+      final value = decoded[field];
+      if (value is List) {
+        for (final item in value) {
+          if (item is String && item.trim().isNotEmpty) apps.add(item.trim());
+        }
+      }
+    }
+    final sorted = apps.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return sorted;
+  } finally {
+    if (ownsClient) httpClient.close();
+  }
+}
+
 /// Fetches the model ids from `<apiBase>/llm_models?include_all=true`
 /// ([apiBase] is `<org>/code-assistant-api/v1`), authenticating with the
 /// SSO JWT as a Bearer token. The response is a list of descriptors whose

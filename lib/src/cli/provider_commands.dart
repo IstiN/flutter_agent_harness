@@ -871,6 +871,8 @@ extension on AgentCli {
   /// Saves the SSO session: the `codemie_access_token` JWT becomes the
   /// Bearer key of a saved custom provider pointing at
   /// `<apiUrl>/v1` (re-login replaces the key, keeps the last-used model).
+  /// After saving, runs the guided project → model selection (matching the
+  /// CodeMie CLI's setup flow) so the user lands on a working connection.
   Future<void> _applyCodeMieSsoCredentials(
     CodeMieSsoCredentials credentials,
   ) async {
@@ -881,8 +883,6 @@ extension on AgentCli {
     }
     final baseUrl = '${credentials.apiUrl}/v1';
     final registry = config.customProviders;
-    // The raw host-derived name (no dedupe): a re-login must land on the
-    // EXISTING entry, not spawn `host-2`.
     final candidate = _codeMieHostName(baseUrl);
     final existing = registry?.find(candidate);
     final name = existing?.name ?? registry?.deriveName(baseUrl) ?? 'codemie';
@@ -892,7 +892,14 @@ extension on AgentCli {
     );
     final spec = providerCatalog['openai']!;
     await _storeProviderToken(spec, baseUrl, token, keyName: keyName);
-    final modelId = existing?.modelId ?? _agent.state.model.id;
+
+    // Guided project → model selection (first login only; re-login keeps
+    // the existing model choice).
+    final modelId =
+        existing?.modelId ??
+        await _codemiePickProjectAndModel(credentials.apiUrl, token) ??
+        _agent.state.model.id;
+
     if (registry != null) {
       registry.add(
         CustomProviderEntry(
@@ -906,8 +913,6 @@ extension on AgentCli {
       _activeCustomName = name;
       io.writeln('saved provider $name (listed first in /provider)');
     }
-    // Switch with the fresh token directly — the secure-store snapshot may
-    // not see the just-written key yet.
     await _switchProvider(
       spec,
       baseUrl,
@@ -922,6 +927,48 @@ extension on AgentCli {
       'CodeMie session expires in ~${hours}h — re-run '
       '/provider codemie sso to renew',
     );
+  }
+
+  /// Post-SSO guided setup: fetch projects, let the user pick one, then
+  /// fetch and pick a model. Returns the chosen model id, or null on cancel.
+  Future<String?> _codemiePickProjectAndModel(
+    String apiBase,
+    String token,
+  ) async {
+    // Step 1: projects.
+    io.writeln('fetching CodeMie projects...');
+    final projects = await fetchCodeMieProjects(
+      apiBase,
+      token,
+    ).catchError((_) => const <String>[]);
+    if (projects.isNotEmpty) {
+      final projectPick = await _pickOption('CodeMie project', [
+        for (final p in projects) (p, p, ''),
+      ]);
+      if (projectPick != null) {
+        io.writeln('selected project: $projectPick');
+      }
+    }
+
+    // Step 2: models.
+    io.writeln('fetching CodeMie models...');
+    final models = await fetchCodeMieModels(
+      '$apiBase/v1',
+      token,
+    ).catchError((_) => const <String>[]);
+    if (models.isEmpty) {
+      io.writeln('no models available — set one with /model <id>');
+      return null;
+    }
+    final modelPick = await _pickOption('CodeMie model', [
+      for (final id in models) (id, id, visionMarker(id)),
+      ('', '+ enter manually', ''),
+    ]);
+    if (modelPick == null) return null;
+    if (modelPick.isNotEmpty) return modelPick;
+    // Manual entry.
+    final manual = await _askLine("model id: ");
+    return manual?.trim().isEmpty == false ? manual!.trim() : null;
   }
 
   /// The host-derived provider name for a CodeMie API base URL (the same
