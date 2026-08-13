@@ -299,14 +299,22 @@ class ChatMessageTile extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '[ $toolName ]',
+                    // Prototype style: "Checked Calendar" not "[ calendar ]".
+                    // Capitalize the tool name and prefix with a verb.
+                    _toolDisplayName(toolName),
                     overflow: TextOverflow.ellipsis,
-                    style: palette.mono(
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: isError ? palette.error : palette.indigo,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
                     ),
                   ),
+                ),
+                // Dropdown arrow like the prototype's tool rows.
+                Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 16,
+                  color: palette.dim.withValues(alpha: 0.5),
                 ),
               ],
             ),
@@ -416,6 +424,41 @@ String? _generatedAudioPath(String toolName, String content) {
     return (kind: SandboxMediaKind.video, path: videoPath);
   }
   return null;
+}
+
+/// Converts a tool name to a prototype-style display string:
+/// "calendar_events" → "Checked Calendar", "read" → "Read file", etc.
+String _toolDisplayName(String toolName) {
+  const verbMap = {
+    'read': 'Read',
+    'write': 'Wrote',
+    'edit': 'Patched',
+    'bash': 'Ran',
+    'calendar_events': 'Checked Calendar',
+    'calendar_calendars': 'Checked Calendar',
+    'calendar_add': 'Added to Calendar',
+    'calendar_update': 'Updated Calendar',
+    'calendar_delete': 'Deleted from Calendar',
+    'home_devices': 'Listed Devices',
+    'home_turn_on': 'Turned On',
+    'home_turn_off': 'Turned Off',
+    'home_set': 'Set',
+    'generate_image': 'Generated Image',
+    'speak': 'Generated Speech',
+    'generate_music': 'Generated Music',
+    'generate_video': 'Generated Video',
+    'open_app': 'Opened App',
+    'search': 'Searched',
+    'web_search': 'Searched',
+    'web_fetch': 'Fetched',
+  };
+  final verb = verbMap[toolName];
+  if (verb != null) return verb;
+  // Fallback: capitalize each word.
+  return toolName
+      .split('_')
+      .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
+      .join(' ');
 }
 
 /// Whether a tool error is a permission/access denial (calendar, contacts,

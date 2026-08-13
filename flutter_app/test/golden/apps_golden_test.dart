@@ -906,7 +906,7 @@ void main() {
     // One shared tile per transcript message — the same widget the full
     // chat screen builds (tool tiles, thinking bubble, markdown bubbles).
     expect(find.byType(ChatMessageTile), findsNWidgets(5));
-    expect(find.text('[ edit ]'), findsOneWidget);
+    expect(find.text('Patched'), findsOneWidget);
   });
 
   testWidgets('Fa chat overlay while streaming: the status row is INSIDE the '
@@ -1102,7 +1102,7 @@ void main() {
     // the two expand toggles render next to the header's collapse arrow.
     expect(find.textContaining('reasoning line 14'), findsOneWidget);
     expect(find.textContaining('reasoning line 1 —'), findsNothing);
-    expect(find.byIcon(Icons.keyboard_arrow_down), findsNWidgets(3));
+    expect(find.byIcon(Icons.keyboard_arrow_down), findsNWidgets(6));
     await expectGolden(tester, golden);
   }
 
