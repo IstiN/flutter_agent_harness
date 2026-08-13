@@ -32,7 +32,9 @@ dependencies:
   crypto: ^3.0.3
   dart_tui: ^2.0.0
   flutter_agent_memory:
-    path: ../flutter_agent_memory
+    git:
+      url: https://github.com/IstiN/flutter_agent_memory.git
+      ref: main
   http: ^1.6.0
   image: ^4.9.1
   meta: ^1.18.0
