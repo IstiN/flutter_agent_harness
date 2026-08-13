@@ -696,12 +696,9 @@ class _FaChatScreenState extends State<FaChatScreen>
                     tooltip: strings.chatCopySessionTooltip,
                     onPressed: _copySession,
                   ),
-                if (widget.settingsBuilder != null)
-                  IconButton(
-                    icon: const Icon(Icons.settings_outlined),
-                    tooltip: strings.chatSettingsTooltip,
-                    onPressed: _openSettings,
-                  ),
+                // Settings icon removed — settings are accessible from the
+                // sidebar nav and the apps panel (prototype has no settings
+                // in the chat tab).
               ],
             )
           : null,

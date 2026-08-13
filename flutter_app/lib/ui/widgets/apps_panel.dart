@@ -4,6 +4,7 @@ import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
@@ -46,6 +47,7 @@ class _AppsPanelState extends State<AppsPanel> {
     _appsStore = widget.appsStore ?? AppsStore(widget.manager.env);
     _searchController.addListener(_onSearchChanged);
     _reloadApps();
+    unawaited(_loadCalendar());
     widget.manager.active?.service.fsRevision.addListener(_onFsRevision);
   }
 
@@ -76,6 +78,31 @@ class _AppsPanelState extends State<AppsPanel> {
       }
     } on Object {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Today's remaining calendar events for the "Up next" widget.
+  List<CalendarEvent> _upcomingEvents = const [];
+  var _calendarLoaded = false;
+
+  Future<void> _loadCalendar() async {
+    try {
+      final calendar = createCalendarService();
+      if (!await calendar.isAvailable) {
+        if (mounted) setState(() => _calendarLoaded = true);
+        return;
+      }
+      final now = DateTime.now();
+      final endOfDay = DateTime(now.year, now.month, now.day, 23, 59, 59);
+      final events = await calendar.events(start: now, end: endOfDay);
+      if (mounted) {
+        setState(() {
+          _upcomingEvents = events.take(3).toList();
+          _calendarLoaded = true;
+        });
+      }
+    } on Object {
+      if (mounted) setState(() => _calendarLoaded = true);
     }
   }
 
@@ -187,31 +214,23 @@ class _AppsPanelState extends State<AppsPanel> {
               ),
             ),
           ),
-          // ── Filter chips ─────────────────────────────────────────
+          // ── Filter tabs (prototype style: pill highlight, no borders) ──
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
                   for (final filter in _AppFilter.values)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: FilterChip(
-                        label: Text(filter.label),
-                        selected: _filter == filter,
-                        onSelected: (_) => setState(() => _filter = filter),
-                        showCheckmark: false,
-                        padding: EdgeInsets.zero,
-                        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                        visualDensity: VisualDensity.compact,
-                      ),
+                    _FilterTab(
+                      label: filter.label,
+                      selected: _filter == filter,
+                      onTap: () => setState(() => _filter = filter),
                     ),
                 ],
               ),
             ),
           ),
-          const Divider(height: 1),
           // ── Content ──────────────────────────────────────────────
           Expanded(
             child: _loading
@@ -250,9 +269,16 @@ class _AppsPanelState extends State<AppsPanel> {
         // ── Weather placeholder ──────────────────────────────────
         _WeatherWidget(colors: colors, theme: theme, isLight: isLight),
         const SizedBox(height: 12),
-        // ── Up next placeholder ──────────────────────────────────
-        _UpNextWidget(colors: colors, theme: theme, isLight: isLight),
-        const SizedBox(height: 12),
+        // ── Up next (real calendar events) ───────────────────────
+        if (_calendarLoaded && _upcomingEvents.isNotEmpty) ...[
+          _UpNextWidget(
+            colors: colors,
+            theme: theme,
+            isLight: isLight,
+            events: _upcomingEvents,
+          ),
+          const SizedBox(height: 12),
+        ],
         // ── Focus Timer placeholder ──────────────────────────────
         _FocusTimerWidget(colors: colors, theme: theme, isLight: isLight),
         const SizedBox(height: 16),
@@ -315,6 +341,52 @@ enum _AppFilter {
   };
 }
 
+/// A text filter tab matching the prototype: selected gets a light indigo
+/// pill background with dark text; unselected is plain gray text.
+class _FilterTab extends StatelessWidget {
+  const _FilterTab({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected
+                ? (theme.brightness == Brightness.light
+                    ? const Color(0xFFEEF2FF)
+                    : colors.panelAlt)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: selected ? colors.text : colors.dim,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// The weather widget placeholder (will be replaced with a real weather app
 /// tile when one is installed).
 class _WeatherWidget extends StatelessWidget {
@@ -369,17 +441,20 @@ class _WeatherWidget extends StatelessWidget {
   }
 }
 
-/// "Up next" section — upcoming calendar events (placeholder for now).
+/// "Up next" section — today's remaining events from the real system
+/// calendar (EventKit via [CalendarApi]). Hidden when no events remain.
 class _UpNextWidget extends StatelessWidget {
   const _UpNextWidget({
     required this.colors,
     required this.theme,
     required this.isLight,
+    required this.events,
   });
 
   final FahColors colors;
   final ThemeData theme;
   final bool isLight;
+  final List<CalendarEvent> events;
 
   @override
   Widget build(BuildContext context) {
@@ -402,24 +477,37 @@ class _UpNextWidget extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          _EventRow(
-            time: '1:00 PM',
-            title: 'Project sync',
-            subtitle: 'Today, 1:00 - 2:00 PM',
-            colors: colors,
-            theme: theme,
-          ),
-          const SizedBox(height: 6),
-          _EventRow(
-            time: '3:30 PM',
-            title: 'Design review',
-            subtitle: 'Today, 3:30 - 4:30 PM',
-            colors: colors,
-            theme: theme,
-          ),
+          for (var i = 0; i < events.length; i++) ...[
+            _EventRow(
+              time: _formatTime(events[i].start),
+              title: events[i].title,
+              subtitle: _formatEventTime(events[i]),
+              colors: colors,
+              theme: theme,
+            ),
+            if (i < events.length - 1) const SizedBox(height: 6),
+          ],
         ],
       ),
     );
+  }
+
+  static String _formatTime(DateTime dt) {
+    final h = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
+    final m = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m $ampm';
+  }
+
+  static String _formatEventTime(CalendarEvent event) {
+    final start = _formatTime(event.start);
+    final end = _formatTime(event.end);
+    final now = DateTime.now();
+    final isToday = event.start.year == now.year &&
+        event.start.month == now.month &&
+        event.start.day == now.day;
+    final dayLabel = isToday ? 'Today' : '${event.start.month}/${event.start.day}';
+    return '$dayLabel, $start - $end';
   }
 }
 
@@ -476,8 +564,8 @@ class _EventRow extends StatelessWidget {
   }
 }
 
-/// Focus Timer placeholder — 25:00 pomodoro widget.
-class _FocusTimerWidget extends StatelessWidget {
+/// Interactive Focus Timer — a real 25-minute pomodoro with start/pause/reset.
+class _FocusTimerWidget extends StatefulWidget {
   const _FocusTimerWidget({
     required this.colors,
     required this.theme,
@@ -489,7 +577,60 @@ class _FocusTimerWidget extends StatelessWidget {
   final bool isLight;
 
   @override
+  State<_FocusTimerWidget> createState() => _FocusTimerWidgetState();
+}
+
+class _FocusTimerWidgetState extends State<_FocusTimerWidget> {
+  static const _totalSeconds = 25 * 60; // 25:00
+  var _remainingSeconds = _totalSeconds;
+  Timer? _timer;
+  var _running = false;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _toggle() {
+    if (_running) {
+      _timer?.cancel();
+      setState(() => _running = false);
+    } else {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (_remainingSeconds <= 0) {
+          _timer?.cancel();
+          setState(() {
+            _running = false;
+            _remainingSeconds = _totalSeconds;
+          });
+          return;
+        }
+        setState(() => _remainingSeconds--);
+      });
+      setState(() => _running = true);
+    }
+  }
+
+  void _reset() {
+    _timer?.cancel();
+    setState(() {
+      _running = false;
+      _remainingSeconds = _totalSeconds;
+    });
+  }
+
+  String get _display {
+    final m = (_remainingSeconds ~/ 60).toString().padLeft(2, '0');
+    final s = (_remainingSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final colors = widget.colors;
+    final theme = widget.theme;
+    final isLight = widget.isLight;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -511,12 +652,70 @@ class _FocusTimerWidget extends StatelessWidget {
           const SizedBox(height: 8),
           Center(
             child: Text(
-              '25:00',
+              _display,
               style: theme.textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.bold,
-                color: colors.pending,
+                color: _running ? colors.indigo : colors.pending,
               ),
             ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Start/Pause button.
+              InkWell(
+                onTap: _toggle,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _running
+                        ? colors.pending.withValues(alpha: 0.15)
+                        : colors.indigo.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _running ? Icons.pause : Icons.play_arrow,
+                        size: 16,
+                        color: _running ? colors.pending : colors.indigo,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _running ? 'Pause' : 'Start',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: _running ? colors.pending : colors.indigo,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Reset button.
+              InkWell(
+                onTap: _reset,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: Icon(
+                    Icons.replay,
+                    size: 16,
+                    color: colors.dim,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

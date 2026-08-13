@@ -13,6 +13,7 @@ import 'package:fa/services/upload.dart';
 
 import 'package:fa/ui/widgets/apps_panel.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/screens/providers_section.dart' show agentConfigFrom;
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
@@ -142,7 +143,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         child: Column(
           children: [
             _buildBrandHeader(colors),
-            Divider(height: 1, thickness: 1, color: colors.border),
             Expanded(
               child: SidebarSessionsList(
                 manager: widget.manager,
@@ -155,8 +155,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             Divider(height: 1, thickness: 1, color: colors.border),
             _buildNavItems(colors),
             _buildModelFooter(colors),
-            Divider(height: 1, thickness: 1, color: colors.border),
-            _buildUserProfile(colors),
           ],
         ),
       ),
@@ -311,68 +309,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     );
   }
 
-  /// User profile section at the bottom of the sidebar (matching the
-  /// prototype's "Alexander" row with avatar and chevron).
-  Widget _buildUserProfile(FahColors colors) {
-    if (_sidebarCollapsed) {
-      return Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Center(
-          child: CircleAvatar(
-            radius: 14,
-            backgroundColor: colors.indigo,
-            child: const Icon(
-              Icons.person,
-              size: 16,
-              color: Colors.white,
-            ),
-          ),
-        ),
-      );
-    }
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-      child: InkWell(
-        onTap: () {}, // Profile page placeholder
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 14,
-                backgroundColor: colors.indigo,
-                child: const Icon(
-                  Icons.person,
-                  size: 16,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Alexander',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              Icon(
-                Icons.chevron_right,
-                size: 18,
-                color: colors.dim,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   // ---------------------------------------------------------------------------
   // Chat (center)
   // ---------------------------------------------------------------------------
@@ -387,11 +323,11 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     return Column(
       children: [
         // Workspace header matching the prototype: name + dropdown arrow + edit icon.
+        // No bottom border — the vertical dividers between panels run full height.
         Container(
           padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
           decoration: BoxDecoration(
             color: isLight ? colors.panel : colors.panel,
-            border: Border(bottom: BorderSide(color: colors.border)),
           ),
           child: Row(
             children: [
@@ -412,6 +348,36 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                         Icons.keyboard_arrow_down,
                         size: 16,
                         color: colors.dim,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // Quick model switch: current model name → tap opens the
+              // unified model picker (all providers, filter).
+              InkWell(
+                onTap: () => _openModelPicker(active),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.memory,
+                        size: 14,
+                        color: colors.indigo,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        active.service.modelId,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.dim,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -489,6 +455,28 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       widget.manager.createSession(
         config: config,
         serviceFactory: () async => service.clone(),
+      ),
+    );
+  }
+
+  /// Opens the unified model picker so the user can quickly switch models
+  /// across all configured providers without leaving the chat.
+  Future<void> _openModelPicker(FlutterManagedSession session) async {
+    final service = session.service;
+    final registry = widget.registry;
+    final lastConnectionStore = widget.lastConnectionStore;
+    if (registry == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => UnifiedModelPickerPage(
+          connection: service,
+          onApply: (config) async {
+            final agentConfig = agentConfigFrom(config);
+            await service.reconfigure(agentConfig);
+            await lastConnectionStore?.saveFromConfig(agentConfig);
+          },
+          registry: registry,
+        ),
       ),
     );
   }
