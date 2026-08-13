@@ -12,6 +12,7 @@ import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
 import 'package:fa/ui/widgets/apps_panel.dart';
+import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/providers_section.dart' show agentConfigFrom;
 import 'package:fa/ui/screens/settings.dart';
@@ -165,41 +166,16 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   Widget _buildBrandHeader(FahColors colors) {
+    // The Fa brand mark: sparkle SVG without any background (matching the
+    // prototype's clean icon style).
     const brandIcon = SizedBox(
       width: 28,
       height: 28,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Color(0xFF4F46E5),
-          borderRadius: BorderRadius.all(Radius.circular(7)),
-        ),
-        child: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.all(Radius.circular(6)),
-              ),
-              child: Center(
-                child: Text(
-                  '>_',
-                  style: TextStyle(
-                    color: Color(0xFFFFFFFF),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 9,
-                    letterSpacing: -0.5,
-                    height: 1.0,
-                  ),
-                ),
-              ),
-            ),
-          ),
+      child: Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: FaMark(size: 24),
         ),
       ),
     );
