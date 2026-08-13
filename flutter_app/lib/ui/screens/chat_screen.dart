@@ -3,9 +3,11 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
@@ -207,8 +209,48 @@ class _ChatScreenState extends State<ChatScreen> {
         asr: widget.asr,
         asrTranscriber: widget.asrTranscriber,
       ),
+      onPermissionAction: (permission, action) {
+        if (action == 'openSettings') {
+          _openSystemSettings(permission);
+        } else if (action == 'tryAgain') {
+          unawaited(
+            service.sendText('Please try again — I just granted access.'),
+          );
+        }
+      },
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
     );
   }
+}
+
+/// Opens the system settings page for the given [permission] (calendar,
+/// contacts, home, health, microphone, notifications).
+///
+/// macOS uses `x-apple.systempreferences:` deep links to the specific
+/// Privacy & Security pane; iOS opens the app's settings page.
+void _openSystemSettings(String permission) {
+  final String url;
+  if (Platform.isMacOS) {
+    final pane = switch (permission.toLowerCase()) {
+      'calendar' => 'Privacy_Calendars',
+      'contacts' => 'Privacy_Contacts',
+      'home' || 'homekit' => 'Privacy_HomeKit',
+      'microphone' => 'Privacy_Microphone',
+      'notification' || 'notifications' => null, // notifications pane
+      _ => 'Privacy_Calendars', // fallback
+    };
+    url = pane != null
+        ? 'x-apple.systempreferences:com.apple.preference.security?$pane'
+        : 'x-apple.systempreferences:com.apple.preference.notifications';
+  } else {
+    // iOS: open the app's settings page (user navigates to the permission).
+    url = 'app-settings:';
+  }
+  unawaited(
+    url_launcher.launchUrl(
+      Uri.parse(url),
+      mode: url_launcher.LaunchMode.externalApplication,
+    ),
+  );
 }

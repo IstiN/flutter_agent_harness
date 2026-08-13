@@ -68,6 +68,7 @@ class FaChatScreen extends StatefulWidget {
     this.fileBrowserBuilder,
     this.composerBuilder,
     this.avatarBuilder,
+    this.onPermissionAction,
     this.audioControllerFactory,
     this.videoControllerFactory,
   });
@@ -104,6 +105,11 @@ class FaChatScreen extends StatefulWidget {
   /// [ChatMessageTile.avatarBuilder]); null renders no avatars — the stock
   /// look.
   final FaChatAvatarBuilder? avatarBuilder;
+
+  /// Called when the user taps a permission card action button ("Open
+  /// Settings" or "Try again"). The host should open system settings or
+  /// retry the permission request.
+  final FaPermissionActionCallback? onPermissionAction;
 
   /// Playback engine factory for inline audio players; null uses the real
   /// `audioplayers`-backed controller. Tests/goldens inject fakes.
@@ -518,6 +524,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       ),
       images: _images,
       avatarBuilder: widget.avatarBuilder,
+      onPermissionAction: widget.onPermissionAction,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
     );
@@ -606,6 +613,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       ),
       images: _images,
       avatarBuilder: widget.avatarBuilder,
+      onPermissionAction: widget.onPermissionAction,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
     );

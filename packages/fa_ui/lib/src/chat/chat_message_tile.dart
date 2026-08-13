@@ -17,6 +17,12 @@ import 'media_tool_names.dart';
 typedef FaChatAvatarBuilder =
     Widget? Function(BuildContext context, String role);
 
+/// Called when the user taps an action button on a permission-denied card.
+/// [permission] is the service name (e.g. 'calendar', 'contacts', 'home').
+/// [action] is 'openSettings' or 'tryAgain'.
+typedef FaPermissionActionCallback =
+    void Function(String permission, String action);
+
 /// One transcript message, rendered the same way on every chat surface: the
 /// full chat screen (through its `flutter_chat_ui` builders) and the in-app
 /// Fa chat overlay both delegate to this widget, so user bubbles, assistant
@@ -34,6 +40,7 @@ class ChatMessageTile extends StatelessWidget {
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.avatarBuilder,
+    this.onPermissionAction,
     this.compact = false,
   });
 
@@ -57,6 +64,11 @@ class ChatMessageTile extends StatelessWidget {
   /// avatar for `assistant`); a null return (or a null builder) renders no
   /// leading widget — the stock look.
   final FaChatAvatarBuilder? avatarBuilder;
+
+  /// Called when the user taps a permission card action button ("Open
+  /// Settings" or "Try again"). The host should open system settings or
+  /// retry the permission request.
+  final FaPermissionActionCallback? onPermissionAction;
 
   /// Tighter outer spacing for the in-app Fa overlay, whose panel already
   /// pads the transcript list.
@@ -259,7 +271,9 @@ class ChatMessageTile extends StatelessWidget {
     // Permission-denied tool results get a special card: orange badge +
     // action buttons (Open Settings / Try again) matching the prototype.
     if (isError && _isPermissionError(content)) {
-      return _permissionCard(context, palette, content, isLight);
+      return _permissionCard(
+        context, palette, content, isLight, onPermissionAction,
+      );
     }
 
     return Container(
@@ -473,12 +487,13 @@ bool _isPermissionError(String content) {
 }
 
 /// A permission-denied card matching the prototype: orange badge +
-/// explanatory text + action buttons.
+/// explanatory text + action buttons that actually work.
 Widget _permissionCard(
   BuildContext context,
   FahColors palette,
   String content,
   bool isLight,
+  FaPermissionActionCallback? onAction,
 ) {
   final theme = Theme.of(context);
   // Extract the permission name from the error message.
@@ -551,7 +566,7 @@ Widget _permissionCard(
         Row(
           children: [
             FilledButton.icon(
-              onPressed: () {},
+              onPressed: () => onAction?.call(permName, 'openSettings'),
               icon: const Icon(Icons.lock_open, size: 16),
               label: const Text('Open Settings'),
               style: FilledButton.styleFrom(
@@ -561,7 +576,7 @@ Widget _permissionCard(
             ),
             const SizedBox(width: 8),
             OutlinedButton.icon(
-              onPressed: () {},
+              onPressed: () => onAction?.call(permName, 'tryAgain'),
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text('Try again'),
               style: OutlinedButton.styleFrom(
