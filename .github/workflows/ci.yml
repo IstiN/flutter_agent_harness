@@ -224,7 +224,7 @@ jobs:
           archive_name="fa-${{ matrix.os }}-${{ matrix.arch }}"
           if [ "${{ matrix.archive }}" = "zip" ]; then
             asset="${archive_name}.zip"
-            cd build/out && zip -r "../../$asset" bundle && cd -
+            cd build/out && 7z a -tzip "../../$asset" bundle && cd -
           else
             asset="${archive_name}.tar.gz"
             tar -czf "$asset" -C build/out bundle
