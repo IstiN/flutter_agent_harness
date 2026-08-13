@@ -114,6 +114,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
 
   Widget _buildExpanded(FahColors colors) {
     final sessions = widget.manager.sessions;
+    final grouped = _groupSessionsByDate(sessions);
     return Column(
       children: [
         Padding(
@@ -143,28 +144,73 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
           ),
         ),
         Expanded(
-          child: sessions.isEmpty
+          child: grouped.isEmpty
               ? const SizedBox.shrink()
-              : ListView.builder(
+              : ListView(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
-                  itemCount: sessions.length,
-                  itemBuilder: (context, index) {
-                    final session = sessions[index];
-                    final isActive = widget.manager.active?.id == session.id;
-                    return _SessionTile(
-                      title: _titleFor(session),
-                      subtitle: _subtitleFor(session),
-                      isActive: isActive,
-                      onTap: () {
-                        widget.manager.switchTo(session.id);
-                        widget.onSessionTap?.call();
-                      },
-                    );
-                  },
+                  children: [
+                    for (final group in grouped) ...[
+                      _DateHeader(label: group.label, colors: colors),
+                      for (final session in group.sessions)
+                        _SessionTile(
+                          title: _titleFor(session),
+                          subtitle: _subtitleFor(session),
+                          isActive:
+                              widget.manager.active?.id == session.id,
+                          onTap: () {
+                            widget.manager.switchTo(session.id);
+                            widget.onSessionTap?.call();
+                          },
+                          onMenu: () => _showSessionMenu(session),
+                        ),
+                    ],
+                  ],
                 ),
         ),
       ],
     );
+  }
+
+  /// Groups sessions by date headers (Today, Yesterday, May 7, ...).
+  List<_SessionGroup> _groupSessionsByDate(
+    List<FlutterManagedSession> sessions,
+  ) {
+    if (sessions.isEmpty) return const [];
+    final groups = <String, List<FlutterManagedSession>>{};
+    final order = <String>[];
+    for (final session in sessions) {
+      final label = _groupLabel(session);
+      if (!groups.containsKey(label)) {
+        groups[label] = [];
+        order.add(label);
+      }
+      groups[label]!.add(session);
+    }
+    return [
+      for (final label in order)
+        _SessionGroup(label: label, sessions: groups[label]!),
+    ];
+  }
+
+  /// Date group label for a session: "Today", "Yesterday", or a date.
+  String _groupLabel(FlutterManagedSession session) {
+    final created = session.createdAt;
+    if (created == null) return 'Earlier';
+    final now = DateTime.now();
+    final diff = now.difference(created);
+    if (diff.inDays == 0) return 'Today';
+    if (diff.inDays == 1) return 'Yesterday';
+    if (diff.inDays < 7) {
+      final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return weekdays[created.weekday - 1];
+    }
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${months[created.month - 1]} ${created.day}';
+  }
+
+  void _showSessionMenu(FlutterManagedSession session) {
+    // Placeholder: rename/delete menu.
+    // Will be wired to the real session manager actions.
   }
 
   // ---------------------------------------------------------------------------
@@ -225,18 +271,53 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   }
 }
 
+/// A group of sessions under one date header.
+final class _SessionGroup {
+  const _SessionGroup({required this.label, required this.sessions});
+
+  final String label;
+  final List<FlutterManagedSession> sessions;
+}
+
+/// A small date header label (Today, Yesterday, May 7, ...).
+class _DateHeader extends StatelessWidget {
+  const _DateHeader({required this.label, required this.colors});
+
+  final String label;
+  final FahColors colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: colors.dim,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
 class _SessionTile extends StatelessWidget {
   const _SessionTile({
     required this.title,
     required this.subtitle,
     required this.isActive,
     required this.onTap,
+    this.onMenu,
   });
 
   final String title;
   final String subtitle;
   final bool isActive;
   final VoidCallback onTap;
+
+  /// Called when the 3-dot menu button is tapped. When null, the menu is hidden.
+  final VoidCallback? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -300,6 +381,20 @@ class _SessionTile extends StatelessWidget {
                     ],
                   ),
                 ),
+                // 3-dot menu button (visible on the active tile or on hover).
+                if (onMenu != null)
+                  InkWell(
+                    onTap: onMenu,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(
+                        Icons.more_horiz,
+                        size: 14,
+                        color: colors.dim.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
