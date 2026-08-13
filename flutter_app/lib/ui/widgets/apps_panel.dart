@@ -3,19 +3,17 @@ import 'dart:async';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
-
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
-/// A compact apps panel for the right side of the [WideLayoutShell].
+/// The right-side "My Apps" panel for the [WideLayoutShell].
 ///
-/// Features a search bar, filter chips (All / Demo / Custom), and a 4-column
-/// grid of app tiles (icon + name). This is NOT the full iOS-style launcher
-/// — it's a simpler, filterable grid designed for the side panel, matching
-/// the prototype's "My Apps" section.
+/// Structured like the prototype: a header with count, a search bar,
+/// filter chips (All/Recent/Created/Pinned), optional weather/timer widget,
+/// then a 4-column grid of app tiles grouped into sections, and a
+/// "Recent activity" footer.
 class AppsPanel extends StatefulWidget {
   const AppsPanel({
     super.key,
@@ -26,7 +24,7 @@ class AppsPanel extends StatefulWidget {
 
   final FlutterSessionManager manager;
 
-  /// App discovery/seeding; tests inject one with canned assets.
+  /// App discovery/seeding; null → creates one from the manager's env.
   final AppsStore? appsStore;
 
   final dynamic sessionNamesStore;
@@ -37,6 +35,7 @@ class AppsPanel extends StatefulWidget {
 
 class _AppsPanelState extends State<AppsPanel> {
   final _searchController = TextEditingController();
+  late final AppsStore _appsStore;
   List<JsAppInfo> _apps = const [];
   var _loading = true;
   var _filter = _AppFilter.all;
@@ -44,9 +43,9 @@ class _AppsPanelState extends State<AppsPanel> {
   @override
   void initState() {
     super.initState();
+    _appsStore = widget.appsStore ?? AppsStore(widget.manager.env);
     _searchController.addListener(_onSearchChanged);
     _reloadApps();
-    // Listen for fsRevision bumps so agent-created apps appear live.
     widget.manager.active?.service.fsRevision.addListener(_onFsRevision);
   }
 
@@ -67,42 +66,54 @@ class _AppsPanelState extends State<AppsPanel> {
   }
 
   Future<void> _reloadApps() async {
-    final store = widget.appsStore;
-    if (store == null) {
-      if (mounted) setState(() => _loading = false);
-      return;
-    }
     try {
-      final apps = await store.listApps();
-      if (mounted)
+      final apps = await _appsStore.listApps();
+      if (mounted) {
         setState(() {
           _apps = apps;
           _loading = false;
         });
+      }
     } on Object {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  List<JsAppInfo> get _demoApps =>
+      _apps.where((a) => a.bundled).toList();
+  List<JsAppInfo> get _customApps =>
+      _apps.where((a) => !a.bundled).toList();
+
   List<JsAppInfo> get _filteredApps {
     final query = _searchController.text.trim().toLowerCase();
-    return _apps.where((app) {
-      if (_filter == _AppFilter.demo && !app.bundled) return false;
-      if (_filter == _AppFilter.custom && app.bundled) return false;
-      if (query.isEmpty) return true;
-      return app.name.toLowerCase().contains(query) ||
-          app.id.toLowerCase().contains(query) ||
-          app.description.toLowerCase().contains(query);
-    }).toList();
+    final source = switch (_filter) {
+      _AppFilter.all => _apps,
+      _AppFilter.recent => _apps,
+      _AppFilter.created => _customApps,
+      _AppFilter.pinned => _apps,
+    };
+    if (query.isEmpty) return source.toList();
+    return source
+        .where(
+          (a) =>
+              a.name.toLowerCase().contains(query) ||
+              a.id.toLowerCase().contains(query) ||
+              a.description.toLowerCase().contains(query),
+        )
+        .toList();
   }
 
   void _openApp(JsAppInfo app) {
-    final manager = widget.manager;
     AppAnalytics.instance.jsAppOpened(
       isDemo: AppsStore.demoAppIds.contains(app.id),
       source: 'apps_panel',
     );
-    pushJsApp(context, manager: manager, app: app, source: 'apps_panel');
+    pushJsApp(
+      context,
+      manager: widget.manager,
+      app: app,
+      source: 'apps_panel',
+    );
   }
 
   @override
@@ -110,11 +121,12 @@ class _AppsPanelState extends State<AppsPanel> {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
     final isLight = theme.brightness == Brightness.light;
+    final bg = isLight ? colors.bg : colors.panel;
     return Container(
-      color: isLight ? colors.bg : colors.panel,
+      color: bg,
       child: Column(
         children: [
-          // Header.
+          // ── Header ───────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Row(
@@ -128,19 +140,23 @@ class _AppsPanelState extends State<AppsPanel> {
                 const Spacer(),
                 Text(
                   '${_apps.length}',
-                  style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.dim,
+                  ),
                 ),
+                const SizedBox(width: 4),
+                Icon(Icons.tune, size: 16, color: colors.dim),
               ],
             ),
           ),
-          // Search bar.
+          // ── Search bar ───────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search, size: 18),
-                hintText: 'Search apps…',
+                hintText: 'Search apps, files, and more…',
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -163,107 +179,397 @@ class _AppsPanelState extends State<AppsPanel> {
               ),
             ),
           ),
-          // Filter chips.
+          // ── Filter chips ─────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: Row(
-              children: [
-                for (final filter in _AppFilter.values)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: FilterChip(
-                      label: Text(filter.label),
-                      selected: _filter == filter,
-                      onSelected: (_) => setState(() => _filter = filter),
-                      showCheckmark: false,
-                      padding: EdgeInsets.zero,
-                      labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                      visualDensity: VisualDensity.compact,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final filter in _AppFilter.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: FilterChip(
+                        label: Text(filter.label),
+                        selected: _filter == filter,
+                        onSelected: (_) => setState(() => _filter = filter),
+                        showCheckmark: false,
+                        padding: EdgeInsets.zero,
+                        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                        visualDensity: VisualDensity.compact,
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
           const Divider(height: 1),
-          // App grid.
+          // ── Content ──────────────────────────────────────────────
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-                : _filteredApps.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        _searchController.text.isEmpty
-                            ? 'No apps yet.\nAsk Fa to build one!'
-                            : 'No apps match your search.',
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.dim,
-                        ),
-                      ),
-                    ),
-                  )
-                : GridView.builder(
-                    padding: const EdgeInsets.all(12),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 4,
-                          childAspectRatio: 0.82,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 12,
-                        ),
-                    itemCount: _filteredApps.length,
-                    itemBuilder: (context, index) {
-                      final app = _filteredApps[index];
-                      return _AppTile(app: app, onTap: () => _openApp(app));
-                    },
-                  ),
-          ),
-          // System tiles (Settings, Files) at the bottom.
-          const Divider(height: 1),
-          _SystemTile(
-            icon: Icons.settings_outlined,
-            label: 'Settings',
-            onTap: () => _openSettings(),
-          ),
-          _SystemTile(
-            icon: Icons.folder_outlined,
-            label: 'Files',
-            onTap: () => _openFiles(),
+                : _buildContent(colors, theme, isLight),
           ),
         ],
       ),
     );
   }
 
-  void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const _PlaceholderPage(title: 'Settings'),
-      ),
-    );
-  }
+  Widget _buildContent(FahColors colors, ThemeData theme, bool isLight) {
+    final filtered = _filteredApps;
+    final query = _searchController.text.trim();
 
-  void _openFiles() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const _PlaceholderPage(title: 'Files')),
+    if (query.isNotEmpty) {
+      // Search mode: flat grid of matches.
+      return GridView.builder(
+        padding: const EdgeInsets.all(12),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 4,
+          childAspectRatio: 0.82,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 12,
+        ),
+        itemCount: filtered.length,
+        itemBuilder: (context, index) =>
+            _AppTile(app: filtered[index], onTap: () => _openApp(filtered[index])),
+      );
+    }
+
+    // Sectioned view matching the prototype.
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        // ── Weather placeholder ──────────────────────────────────
+        _WeatherWidget(colors: colors, theme: theme, isLight: isLight),
+        const SizedBox(height: 12),
+        // ── Up next placeholder ──────────────────────────────────
+        _UpNextWidget(colors: colors, theme: theme, isLight: isLight),
+        const SizedBox(height: 12),
+        // ── Focus Timer placeholder ──────────────────────────────
+        _FocusTimerWidget(colors: colors, theme: theme, isLight: isLight),
+        const SizedBox(height: 16),
+
+        // ── Custom apps section ──────────────────────────────────
+        if (_customApps.isNotEmpty) ...[
+          _SectionHeader(title: 'Created by you', count: _customApps.length),
+          const SizedBox(height: 8),
+          _AppGrid(apps: _customApps, onTap: _openApp),
+          const SizedBox(height: 16),
+        ],
+
+        // ── Demo apps section ────────────────────────────────────
+        if (_demoApps.isNotEmpty) ...[
+          _SectionHeader(title: 'Demo apps', count: _demoApps.length),
+          const SizedBox(height: 8),
+          _AppGrid(apps: _demoApps, onTap: _openApp),
+          const SizedBox(height: 16),
+        ],
+
+        // ── All apps fallback ────────────────────────────────────
+        if (_customApps.isEmpty && _demoApps.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'No apps yet.\nAsk Fa to build one!',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.dim,
+                ),
+              ),
+            ),
+          ),
+
+        // ── Recent activity ──────────────────────────────────────
+        const Divider(height: 1),
+        const SizedBox(height: 8),
+        _RecentActivity(colors: colors, theme: theme),
+      ],
     );
   }
 }
 
 enum _AppFilter {
   all,
-  demo,
-  custom;
+  recent,
+  created,
+  pinned;
 
   String get label => switch (this) {
     all => 'All',
-    demo => 'Demo',
-    custom => 'Custom',
+    recent => 'Recent',
+    created => 'Created with ★',
+    pinned => 'Pinned',
   };
 }
 
+/// The weather widget placeholder (will be replaced with a real weather app
+/// tile when one is installed).
+class _WeatherWidget extends StatelessWidget {
+  const _WeatherWidget({
+    required this.colors,
+    required this.theme,
+    required this.isLight,
+  });
+
+  final FahColors colors;
+  final ThemeData theme;
+  final bool isLight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF60A5FA), Color(0xFF3B82F6)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.wb_sunny, color: Colors.white, size: 24),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '25°',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                'Sunny',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white.withValues(alpha: 0.85),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Up next" section — upcoming calendar events (placeholder for now).
+class _UpNextWidget extends StatelessWidget {
+  const _UpNextWidget({
+    required this.colors,
+    required this.theme,
+    required this.isLight,
+  });
+
+  final FahColors colors;
+  final ThemeData theme;
+  final bool isLight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isLight ? colors.panel : colors.panelAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Up next',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.dim,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          _EventRow(
+            time: '1:00 PM',
+            title: 'Project sync',
+            subtitle: 'Today, 1:00 - 2:00 PM',
+            colors: colors,
+            theme: theme,
+          ),
+          const SizedBox(height: 6),
+          _EventRow(
+            time: '3:30 PM',
+            title: 'Design review',
+            subtitle: 'Today, 3:30 - 4:30 PM',
+            colors: colors,
+            theme: theme,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EventRow extends StatelessWidget {
+  const _EventRow({
+    required this.time,
+    required this.title,
+    required this.subtitle,
+    required this.colors,
+    required this.theme,
+  });
+
+  final String time;
+  final String title;
+  final String subtitle;
+  final FahColors colors;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          time,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.dim,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.dim,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Focus Timer placeholder — 25:00 pomodoro widget.
+class _FocusTimerWidget extends StatelessWidget {
+  const _FocusTimerWidget({
+    required this.colors,
+    required this.theme,
+    required this.isLight,
+  });
+
+  final FahColors colors;
+  final ThemeData theme;
+  final bool isLight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isLight ? colors.panel : colors.panelAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Focus Timer',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.dim,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Center(
+            child: Text(
+              '25:00',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: colors.pending,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Section header with count.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.count});
+
+  final String title;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Text(
+          title,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: colors.dim,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          '$count',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.dim,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 4-column grid of app tiles.
+class _AppGrid extends StatelessWidget {
+  const _AppGrid({required this.apps, required this.onTap});
+
+  final List<JsAppInfo> apps;
+  final ValueChanged<JsAppInfo> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        childAspectRatio: 0.82,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 12,
+      ),
+      itemCount: apps.length,
+      itemBuilder: (context, index) =>
+          _AppTile(app: apps[index], onTap: () => onTap(apps[index])),
+    );
+  }
+}
+
+/// One app tile: rounded-square icon + label.
 class _AppTile extends StatelessWidget {
   const _AppTile({required this.app, required this.onTap});
 
@@ -316,37 +622,85 @@ class _AppTile extends StatelessWidget {
   }
 }
 
-class _SystemTile extends StatelessWidget {
-  const _SystemTile({
+/// Recent activity footer.
+class _RecentActivity extends StatelessWidget {
+  const _RecentActivity({required this.colors, required this.theme});
+
+  final FahColors colors;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Recent activity',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: colors.dim,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _ActivityRow(
+          icon: Icons.check_circle_outline,
+          label: 'Checked Calendar',
+          time: 'Just now',
+          colors: colors,
+          theme: theme,
+        ),
+        _ActivityRow(
+          icon: Icons.folder_open,
+          label: 'Opened Files',
+          time: '10m ago',
+          colors: colors,
+          theme: theme,
+        ),
+      ],
+    );
+  }
+}
+
+class _ActivityRow extends StatelessWidget {
+  const _ActivityRow({
     required this.icon,
     required this.label,
-    required this.onTap,
+    required this.time,
+    required this.colors,
+    required this.theme,
   });
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final String time;
+  final FahColors colors;
+  final ThemeData theme;
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: colors.dim),
-            const SizedBox(width: 12),
-            Text(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: colors.dim),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
               label,
-              style: theme.textTheme.bodyMedium?.copyWith(color: colors.dim),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.dim,
+              ),
             ),
-            const Spacer(),
-            Icon(Icons.chevron_right, size: 18, color: colors.borderBright),
-          ],
-        ),
+          ),
+          Text(
+            time,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.dim.withValues(alpha: 0.6),
+              fontSize: 10,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -354,7 +708,11 @@ class _SystemTile extends StatelessWidget {
 
 /// Inherited widget so [_AppTile] can access the session manager for AppIcon.
 class ManagerScope extends InheritedWidget {
-  const ManagerScope({super.key, required this.manager, required super.child});
+  const ManagerScope({
+    super.key,
+    required this.manager,
+    required super.child,
+  });
 
   final FlutterSessionManager manager;
 
@@ -364,19 +722,4 @@ class ManagerScope extends InheritedWidget {
   @override
   bool updateShouldNotify(ManagerScope oldWidget) =>
       manager != oldWidget.manager;
-}
-
-/// Simple placeholder for Settings/Files routes pushed within the apps panel.
-class _PlaceholderPage extends StatelessWidget {
-  const _PlaceholderPage({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: Center(child: Text(title)),
-    );
-  }
 }
