@@ -172,7 +172,9 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     // Always include the active model even if the fetch failed.
     final activeModel = widget.connection.modelId;
     final activeBase = widget.connection.activeBaseUrl;
-    if (!entries.any((e) => e.modelId == activeModel && e.baseUrl == activeBase)) {
+    if (!entries.any(
+      (e) => e.modelId == activeModel && e.baseUrl == activeBase,
+    )) {
       entries.insert(0, _entryFromActive());
     }
 
@@ -185,14 +187,14 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   }
 
   _ModelEntry _entryFromActive() => _ModelEntry(
-        provider: _activeProviderLabel(),
-        providerId: widget.connection.activeProviderId,
-        baseUrl: widget.connection.activeBaseUrl,
-        apiKey: '',
-        modelId: widget.connection.modelId,
-        contextWindow: fallbackContextWindow,
-        maxTokens: fallbackMaxTokens,
-      );
+    provider: _activeProviderLabel(),
+    providerId: widget.connection.activeProviderId,
+    baseUrl: widget.connection.activeBaseUrl,
+    apiKey: '',
+    modelId: widget.connection.modelId,
+    contextWindow: fallbackContextWindow,
+    maxTokens: fallbackMaxTokens,
+  );
 
   String _activeProviderLabel() {
     final kindLabel = widget.providerKindLabels[widget.connection.providerKind];
@@ -201,7 +203,8 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     final registry = widget.registry;
     if (registry != null) {
       final match = providerForBaseUrl(base, registry);
-      if (match != null) return match is CustomProvider ? match.name : match.toString();
+      if (match != null)
+        return match is CustomProvider ? match.name : match.toString();
     }
     return providerHostOf(base);
   }
@@ -396,7 +399,8 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
                             if (widget.addProviderPage != null) {
                               await Navigator.of(context).push(
                                 MaterialPageRoute(
-                                  builder: (_) => widget.addProviderPage!(context),
+                                  builder: (_) =>
+                                      widget.addProviderPage!(context),
                                 ),
                               );
                               if (mounted) _fetchAllModels();
@@ -430,11 +434,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     );
   }
 
-  Widget _modelTile(
-    BuildContext context,
-    ThemeData theme,
-    _ModelEntry entry,
-  ) {
+  Widget _modelTile(BuildContext context, ThemeData theme, _ModelEntry entry) {
     final isActive =
         entry.modelId == widget.connection.modelId &&
         entry.baseUrl == widget.connection.activeBaseUrl;
