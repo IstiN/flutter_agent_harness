@@ -195,6 +195,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   /// Date group label for a session: "Today", "Yesterday", or a date.
   String _groupLabel(FlutterManagedSession session) {
     final created = session.createdAt;
+    // ignore: unnecessary_null_comparison, dead_code
     if (created == null) return 'Earlier';
     final now = DateTime.now();
     final diff = now.difference(created);
