@@ -155,6 +155,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             Divider(height: 1, thickness: 1, color: colors.border),
             _buildNavItems(colors),
             _buildModelFooter(colors),
+            Divider(height: 1, thickness: 1, color: colors.border),
+            _buildUserProfile(colors),
           ],
         ),
       ),
@@ -305,6 +307,68 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// User profile section at the bottom of the sidebar (matching the
+  /// prototype's "Alexander" row with avatar and chevron).
+  Widget _buildUserProfile(FahColors colors) {
+    if (_sidebarCollapsed) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: CircleAvatar(
+            radius: 14,
+            backgroundColor: colors.indigo,
+            child: const Icon(
+              Icons.person,
+              size: 16,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+      child: InkWell(
+        onTap: () {}, // Profile page placeholder
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 14,
+                backgroundColor: colors.indigo,
+                child: const Icon(
+                  Icons.person,
+                  size: 16,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Alexander',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: colors.dim,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
