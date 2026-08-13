@@ -915,4 +915,21 @@
 - fix: remove unused test class + imports causing CI analyze warning
 - fix(crap): decompose + cover all new methods to pass CRAP ratchet (12.0)
 
+## 0.1.168
+
+- fix(pages): web demo build is optional (dart:ffi from sqlite3 breaks it)
+- fix(installer): $zip_asset… unbound variable — brace the var before ellipsis
+- feat(ui): 'Add app' tile in Created-by-you section (prototype style)
+- feat(ui): system app tiles grid in AppsPanel (Calendar/Files/Notes/Maps/…)
+- feat(ui): tool tiles show display names + dropdown arrows (prototype style)
+- feat(ui): user profile section in sidebar bottom (matching prototype)
+- fix: suppress dead-code warning on new sidebar null check (line 198)
+- feat(ui): permission-denied card for tool errors (prototype style)
+- fix: pub.dev publish_to removed, Windows zip uses 7z instead of zip
+- feat(ui): Customize label in AppsPanel header (matching prototype)
+- feat(ui): composer matches prototype — star icon, Ask anything, up-arrow send
+- test(goldens): AppsPanel golden coverage — dark + light variants
+- feat(ui): session date grouping + 3-dot menu + subtitle timestamps
+- feat(ui): workspace header in wide layout + session tile 3-dot menu
+
 ## Unreleased
