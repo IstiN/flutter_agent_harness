@@ -105,9 +105,9 @@ final class GitSandboxCommands {
         case 'remote':
           return _gitRemote(repo, subArgs);
         case 'fetch':
-          return _gitFetch(repo, subArgs, options?.env);
+          return await _gitFetch(repo, subArgs, options?.env);
         case 'push':
-          return _gitPush(repo, subArgs, options?.env);
+          return await _gitPush(repo, subArgs, options?.env);
         case 'show':
           return _gitShow(repo, subArgs);
         case 'cat-file':
