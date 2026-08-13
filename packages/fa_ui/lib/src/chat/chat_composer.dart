@@ -537,7 +537,9 @@ class _ChatComposerState extends State<ChatComposer>
                 children: [
                   if (showAttach)
                     IconButton(
-                      icon: const Icon(Icons.add),
+                      // Prototype shows a star/sparkle icon (auto_awesome)
+                      // on the left of the input field.
+                      icon: const Icon(Icons.auto_awesome),
                       tooltip: strings.chatAttachTooltip,
                       onPressed: _showAttachmentSheet,
                     ),
@@ -545,7 +547,7 @@ class _ChatComposerState extends State<ChatComposer>
                     child: TextField(
                       controller: _textController,
                       decoration: InputDecoration(
-                        hintText: strings.chatInputHint,
+                        hintText: 'Ask anything…',
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 12,
@@ -592,7 +594,8 @@ class _ChatComposerState extends State<ChatComposer>
                             _isStreaming && _textController.text.trim().isEmpty;
                         return IconButton(
                           icon: Icon(
-                            showStop ? Icons.stop : Icons.send,
+                            // Prototype uses an up-arrow (send-up) icon.
+                            showStop ? Icons.stop : Icons.arrow_upward,
                             size: 20,
                           ),
                           color: palette.onAccent,
