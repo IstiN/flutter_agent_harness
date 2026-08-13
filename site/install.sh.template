@@ -140,6 +140,7 @@ if [ "$dl_ok" = true ]; then
   tmp_extract="$(mktemp -d 2>/dev/null || mktemp -d -t fa-extract)"
   if tar -xzf "$tmp_archive" -C "$tmp_extract" 2>/dev/null; then
     mkdir -p "$install_dir/lib"
+    rm -f "$target"  # break any pre-existing symlink so cp writes the real file
     cp "$tmp_extract/bundle/bin/fa" "$target"
     chmod +x "$target"
     # Copy version.txt so the binary can report its version.
