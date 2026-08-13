@@ -265,7 +265,7 @@ class _AppsPanelState extends State<AppsPanel> {
         if (_customApps.isNotEmpty) ...[
           _SectionHeader(title: 'Created by you', count: _customApps.length),
           const SizedBox(height: 8),
-          _AppGrid(apps: _customApps, onTap: _openApp),
+          _AppGrid(apps: _customApps, onTap: _openApp, showAddTile: true),
           const SizedBox(height: 16),
         ],
 
@@ -556,15 +556,25 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// 4-column grid of app tiles.
+/// 4-column grid of app tiles. When [showAddTile] is true, an "Add app"
+/// tile is appended (matching the prototype's "+" tile in the "Created by
+/// you" section).
 class _AppGrid extends StatelessWidget {
-  const _AppGrid({required this.apps, required this.onTap});
+  const _AppGrid({
+    required this.apps,
+    required this.onTap,
+    this.showAddTile = false,
+  });
 
   final List<JsAppInfo> apps;
   final ValueChanged<JsAppInfo> onTap;
+  final bool showAddTile;
 
   @override
   Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -574,9 +584,59 @@ class _AppGrid extends StatelessWidget {
         crossAxisSpacing: 8,
         mainAxisSpacing: 12,
       ),
-      itemCount: apps.length,
-      itemBuilder: (context, index) =>
-          _AppTile(app: apps[index], onTap: () => onTap(apps[index])),
+      itemCount: apps.length + (showAddTile ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (showAddTile && index == apps.length) {
+          return _AddAppTile(colors: colors, theme: theme, isLight: isLight);
+        }
+        return _AppTile(app: apps[index], onTap: () => onTap(apps[index]));
+      },
+    );
+  }
+}
+
+/// The "Add app" tile at the end of the custom apps grid.
+class _AddAppTile extends StatelessWidget {
+  const _AddAppTile({
+    required this.colors,
+    required this.theme,
+    required this.isLight,
+  });
+
+  final FahColors colors;
+  final ThemeData theme;
+  final bool isLight;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () {}, // Placeholder — will open app creation flow
+      borderRadius: BorderRadius.circular(12),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: isLight ? colors.panel : colors.panelAlt,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: colors.border),
+            ),
+            child: Icon(Icons.add, size: 22, color: colors.indigo),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Add app',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 11,
+              color: colors.indigo,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
