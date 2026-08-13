@@ -207,5 +207,37 @@ void main() {
       expect(authHeader, 'Bearer my-token');
       a2a.close();
     });
+
+    test('streamMessage yields task updates from SSE lines', () async {
+      final client = http_testing.MockClient.streaming((request, bodyStream) {
+        expect(request.headers['accept'], 'text/event-stream');
+        expect(request.method, 'POST');
+        return Future.value(
+          http.StreamedResponse(
+            _sseLines([
+              'data: {"jsonrpc":"2.0","result":{"id":"t1","status":{"state":"working"}}}',
+              ': comment',
+              'data: [DONE]',
+              '',
+              'data: {"jsonrpc":"2.0","result":{"id":"t1","status":{"state":"completed"}}}',
+              'garbage-line',
+            ]),
+            200,
+          ),
+        );
+      });
+      final a2a = A2aClient(baseUrl: 'https://a.test', client: client);
+      final tasks = await a2a.streamMessage('hello').toList();
+      expect(tasks, hasLength(2));
+      expect(tasks[0].state, A2aTaskState.working);
+      expect(tasks[1].state, A2aTaskState.completed);
+      a2a.close();
+    });
   });
+}
+
+/// Builds a UTF-8 byte stream from SSE [lines].
+Stream<List<int>> _sseLines(List<String> lines) {
+  final encoded = lines.map((l) => utf8.encode('$l\n')).expand((b) => b);
+  return Stream.value(encoded.toList());
 }

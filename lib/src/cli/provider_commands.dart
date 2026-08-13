@@ -86,17 +86,16 @@ extension on AgentCli {
       ('y', 'Yes, delete', 'remove from the registry'),
       ('n', 'No, cancel', 'keep the provider'),
     ]);
-    if (answer != 'y') {
-      io.writeln('delete cancelled');
-      return;
-    }
+    if (answer != 'y') return io.writeln('delete cancelled');
+    _removeProviderFromRegistry(entry);
+  }
+
+  /// Removes [entry] from the registry, clearing the active name if needed.
+  void _removeProviderFromRegistry(CustomProviderEntry entry) {
     final registry = config.customProviders;
     if (registry == null) return;
     registry.entries.removeWhere((e) => e.name == entry.name);
-    // Clear the active custom name if the deleted provider was active.
-    if (_activeCustomName == entry.name) {
-      _activeCustomName = null;
-    }
+    if (_activeCustomName == entry.name) _activeCustomName = null;
     io.writeln('deleted provider ${entry.name}');
   }
 
@@ -966,23 +965,27 @@ extension on AgentCli {
     String apiBase,
     String cookie,
   ) async {
-    // Step 1: projects.
+    await _codemiePickProject(apiBase, cookie);
+    return _codemiePickModel(apiBase, cookie);
+  }
+
+  /// Step 1: fetch and optionally pick a CodeMie project.
+  Future<void> _codemiePickProject(String apiBase, String cookie) async {
     io.writeln('fetching CodeMie projects...');
     final projects = await fetchCodeMieProjects(apiBase, cookie).catchError((
       e,
     ) {
       return const <String>[];
     });
-    if (projects.isNotEmpty) {
-      final projectPick = await _pickOption('CodeMie project', [
-        for (final p in projects) (p, p, ''),
-      ]);
-      if (projectPick != null) {
-        io.writeln('selected project: $projectPick');
-      }
-    }
+    if (projects.isEmpty) return;
+    final projectPick = await _pickOption('CodeMie project', [
+      for (final p in projects) (p, p, ''),
+    ]);
+    if (projectPick != null) io.writeln('selected project: $projectPick');
+  }
 
-    // Step 2: models.
+  /// Step 2: fetch and pick a CodeMie model (or manual entry).
+  Future<String?> _codemiePickModel(String apiBase, String cookie) async {
     io.writeln('fetching CodeMie models...');
     final models = await fetchCodeMieModels('$apiBase/v1', cookie).catchError((
       e,
@@ -993,16 +996,24 @@ extension on AgentCli {
       io.writeln('no models available — set one with /model <id>');
       return null;
     }
+    return _pickModelFromList(models);
+  }
+
+  /// Picks a model from the fetched list, falling back to manual entry.
+  Future<String?> _pickModelFromList(List<String> models) async {
     final modelPick = await _pickOption('CodeMie model', [
       for (final id in models) (id, id, visionMarker(id)),
       ('', '+ enter manually', ''),
     ]);
     if (modelPick == null) return null;
     if (modelPick.isNotEmpty) return modelPick;
-    // Manual entry.
+    return _manualModelId();
+  }
+
+  /// Reads a manually entered model id from the user.
+  Future<String?> _manualModelId() async {
     final manual = await _askLine("model id: ");
-    final result = manual?.trim().isEmpty == false ? manual!.trim() : null;
-    return result;
+    return manual?.trim().isEmpty == false ? manual!.trim() : null;
   }
 
   /// The host-derived provider name for a CodeMie API base URL (the same
@@ -1598,34 +1609,39 @@ extension on AgentCli {
     final currentModel = _agent.state.model;
     return [
       for (var i = 0; i < entries.length; i++)
-        () {
-          final (provider, modelId) = entries[i];
-          final isCurrent =
-              provider == currentModel.provider && modelId == currentModel.id;
-          return MenuItem(
-            key: '$provider|$modelId',
-            label:
-                '${i + 1}) $provider/$modelId'
-                '${isCurrent ? ' (current)' : ''}',
-            description: visionMarker(modelId),
-          );
-        }(),
+        _crossProviderMenuItem(entries[i], i, currentModel),
     ];
   }
 
+  /// One cross-provider model row.
+  MenuItem _crossProviderMenuItem(
+    (String, String) entry,
+    int index,
+    dynamic currentModel,
+  ) {
+    final (provider, modelId) = entry;
+    final isCurrent =
+        provider == currentModel.provider && modelId == currentModel.id;
+    return MenuItem(
+      key: '$provider|$modelId',
+      label:
+          '${index + 1}) $provider/$modelId'
+          '${isCurrent ? ' (current)' : ''}',
+      description: visionMarker(modelId),
+    );
+  }
+
   Future<void> _tuiSelectModel(String key) async {
-    // Cross-provider model picker encodes the selection as
-    // `providerName|modelId`. If the active provider matches, it's a plain
-    // model switch; otherwise switch provider first, then model.
     final pipe = key.indexOf('|');
-    if (pipe < 0) {
-      await _handleModelCommand(key);
-      return;
-    }
+    if (pipe < 0) return _handleModelCommand(key);
+    await _switchCrossProviderModel(key, pipe);
+  }
+
+  /// Switches to the provider/model encoded as `provider|model`.
+  Future<void> _switchCrossProviderModel(String key, int pipe) async {
     final providerName = key.substring(0, pipe);
     final modelId = key.substring(pipe + 1);
-    final registry = config.customProviders;
-    final entry = registry?.find(providerName);
+    final entry = config.customProviders?.find(providerName);
     if (entry != null && entry.name != _activeCustomName) {
       await _switchToSavedProvider(entry);
     }
@@ -1665,56 +1681,78 @@ extension on AgentCli {
   /// Fetches models for one saved provider entry and caches them.
   Future<void> _fetchProviderModels(CustomProviderEntry entry) async {
     try {
-      final spec = entry.spec;
-      final keyName = entry.keyName;
-      final token = keyName != null ? config.secureKeys?.read(keyName) : null;
-      final cookieOrKey = token ?? '';
-
-      List<String> ids;
-      if (entry.baseUrl.contains('/code-assistant-api/')) {
-        ids = await fetchCodeMieModels(entry.baseUrl, cookieOrKey);
-      } else if (spec.kind == 'openai-completions') {
-        final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-        ids = await fetch(entry.baseUrl, apiKey: cookieOrKey);
-      } else {
-        ids = const [];
-      }
-      if (ids.isEmpty) ids = [entry.modelId];
-      _allProvidersModelCache[entry.name] = ids;
+      final cookieOrKey = _providerEntryToken(entry);
+      final ids = await _fetchIdsForProvider(entry, cookieOrKey);
+      _allProvidersModelCache[entry.name] = ids.isEmpty ? [entry.modelId] : ids;
     } on Object {
       // Dead endpoint — use the entry's last-known model.
       _allProvidersModelCache[entry.name] = [entry.modelId];
     }
   }
 
+  /// Resolves the API token for a saved provider entry.
+  String _providerEntryToken(CustomProviderEntry entry) {
+    final keyName = entry.keyName;
+    final token = keyName != null ? config.secureKeys?.read(keyName) : null;
+    return token ?? '';
+  }
+
+  /// Fetches model ids for a provider entry, dispatching on endpoint kind.
+  Future<List<String>> _fetchIdsForProvider(
+    CustomProviderEntry entry,
+    String cookieOrKey,
+  ) async {
+    final spec = entry.spec;
+    if (entry.baseUrl.contains('/code-assistant-api/')) {
+      return fetchCodeMieModels(entry.baseUrl, cookieOrKey);
+    }
+    if (spec.kind == 'openai-completions') {
+      final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
+      return fetch(entry.baseUrl, apiKey: cookieOrKey);
+    }
+    return const [];
+  }
+
   /// Returns cross-provider model candidates as `(providerName, modelId)`
   /// pairs, optionally filtered by a lowercase substring match on either
   /// the provider name or the model id.
   List<(String, String)> _crossProviderCandidates([String filter = '']) {
+    final registryEntries = _collectRegistryCandidates();
+    final entries = registryEntries.isEmpty
+        ? _activeProviderFallback()
+        : registryEntries;
+    return _filterCandidates(entries, filter);
+  }
+
+  /// Collects `(provider, model)` pairs from all saved custom providers.
+  List<(String, String)> _collectRegistryCandidates() {
     final registry = config.customProviders;
-    final entries = <(String, String)>[];
-    if (registry != null) {
-      for (final entry in registry.entries) {
-        final models = _allProvidersModelCache[entry.name] ?? [entry.modelId];
-        for (final modelId in models) {
-          entries.add((entry.name, modelId));
-        }
-      }
-    }
-    // Always include the active provider's known models (catalog fallback
-    // when there are no saved entries or the cache hasn't populated yet).
+    if (registry == null) return const [];
+    return [
+      for (final entry in registry.entries)
+        for (final modelId
+            in _allProvidersModelCache[entry.name] ?? [entry.modelId])
+          (entry.name, modelId),
+    ];
+  }
+
+  /// Fallback candidates from the active provider's known models.
+  List<(String, String)> _activeProviderFallback() {
     final activeProvider = _agent.state.model.provider;
     final activeName = _activeCustomName ?? activeProvider;
-    if (entries.isEmpty || registry == null || registry.entries.isEmpty) {
-      final known =
-          _allProvidersModelCache[activeName] ??
-          (_modelCache.isNotEmpty
-              ? _modelCache
-              : (_knownModels[activeProvider] ?? [_agent.state.model.id]));
-      for (final modelId in known) {
-        entries.add((activeProvider, modelId));
-      }
-    }
+    final known =
+        _allProvidersModelCache[activeName] ??
+        (_modelCache.isNotEmpty
+            ? _modelCache
+            : (_knownModels[activeProvider] ?? [_agent.state.model.id]));
+    return [for (final modelId in known) (activeProvider, modelId)];
+  }
+
+  /// Filters candidates by a lowercase substring, or returns all if empty.
+  List<(String, String)> _filterCandidates(
+    List<(String, String)> entries,
+    String filter,
+  ) {
     if (filter.isEmpty) return entries;
     final lower = filter.toLowerCase();
     return entries

@@ -1082,25 +1082,38 @@ final class CompactionManager {
     );
     final record = await session.getEntry(recordId);
     final compactionRecord = record is CompactionRecord ? record : null;
-
-    // Phase 2: extract durable facts from the summarized span into memory.
-    // Fire-and-forget — never blocks or fails the compaction.
-    if (compactionRecord != null && memoryExtractionHook != null) {
-      final summarizedText = preparation.messagesToSummarize
-          .map(
-            (m) => m is UserMessage
-                ? m.content.toString()
-                : m is AssistantMessage
-                ? m.content.whereType<TextContent>().map((t) => t.text).join()
-                : '',
-          )
-          .where((t) => t.isNotEmpty)
-          .join('\n');
-      if (summarizedText.isNotEmpty) {
-        unawaited(memoryExtractionHook!(summarizedText).catchError((_) {}));
-      }
-    }
-
+    _maybeExtractMemory(compactionRecord, preparation, memoryExtractionHook);
     return compactionRecord;
+  }
+
+  /// Phase 2: extract durable facts from the summarized span into memory.
+  /// Fire-and-forget — never blocks or fails the compaction.
+  void _maybeExtractMemory(
+    CompactionRecord? record,
+    CompactionPreparation preparation,
+    Future<void> Function(String)? hook,
+  ) {
+    if (record == null || hook == null) return;
+    final summarizedText = _collectSummarizedText(preparation);
+    if (summarizedText.isNotEmpty) {
+      unawaited(hook(summarizedText).catchError((_) {}));
+    }
+  }
+
+  /// Flattens the messages-to-summarize into a single text block.
+  String _collectSummarizedText(CompactionPreparation preparation) {
+    return preparation.messagesToSummarize
+        .map(_messageToText)
+        .where((t) => t.isNotEmpty)
+        .join('\n');
+  }
+
+  /// Extracts plain text from a message for memory extraction.
+  String _messageToText(dynamic m) {
+    if (m is UserMessage) return m.content.toString();
+    if (m is AssistantMessage) {
+      return m.content.whereType<TextContent>().map((t) => t.text).join();
+    }
+    return '';
   }
 }

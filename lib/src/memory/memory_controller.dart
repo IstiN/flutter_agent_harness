@@ -121,28 +121,37 @@ final class MemoryController {
   Future<List<MemoryEntry>> search(String query, {int limit = 10}) async {
     final results = <MemoryEntry>[];
     await projectStore; // ensure initialized
-    if (_projectSearch != null && _projectStorage != null) {
-      try {
-        final found = await _projectSearch!.searchByText(query);
-        for (final r in found.results.take(limit)) {
-          results.add(_fromSearchResult(r, 'project'));
-        }
-      } on StateError {
-        // No LLM provider — keyword-only search not available.
-      }
-    }
+    await _searchScope(_projectSearch, query, limit, 'project', results);
     await userStore;
-    if (_userSearch != null && _userStorage != null && results.length < limit) {
-      try {
-        final found = await _userSearch!.searchByText(query);
-        for (final r in found.results.take(limit - results.length)) {
-          results.add(_fromSearchResult(r, 'user'));
-        }
-      } on StateError {
-        // No LLM provider.
-      }
+    if (results.length < limit) {
+      await _searchScope(
+        _userSearch,
+        query,
+        limit - results.length,
+        'user',
+        results,
+      );
     }
     return results;
+  }
+
+  /// Searches one scope and appends matching results to [results].
+  Future<void> _searchScope(
+    KBSearchEngine? engine,
+    String query,
+    int limit,
+    String scope,
+    List<MemoryEntry> results,
+  ) async {
+    if (engine == null) return;
+    try {
+      final found = await engine.searchByText(query);
+      results.addAll(
+        found.results.take(limit).map((r) => _fromSearchResult(r, scope)),
+      );
+    } on StateError {
+      // No LLM provider — keyword-only search not available.
+    }
   }
 
   /// Lists recent entries from both scopes.
@@ -152,20 +161,23 @@ final class MemoryController {
     if (_projectStorage == null) return results;
     final noteIds = await _projectStorage!.listEntityIds('note');
     for (final id in noteIds.take(limit)) {
-      final raw = await _projectStorage!.readEntity('note', id);
-      if (raw != null) {
-        results.add(
-          MemoryEntry(
-            id: id,
-            type: 'note',
-            text: _firstLine(raw),
-            scope: 'project',
-          ),
-        );
-      }
       if (results.length >= limit) break;
+      final entry = await _readNoteEntry(id, 'project');
+      if (entry != null) results.add(entry);
     }
     return results;
+  }
+
+  /// Reads one entity as a [MemoryEntry], or null if the entity is absent.
+  Future<MemoryEntry?> _readNoteEntry(String id, String scope) async {
+    final raw = await _projectStorage?.readEntity('note', id);
+    if (raw == null) return null;
+    return MemoryEntry(
+      id: id,
+      type: 'note',
+      text: _firstLine(raw),
+      scope: scope,
+    );
   }
 
   /// Formats a ≤2 KiB `<memory>` block for the system prompt.

@@ -113,6 +113,31 @@ int deriveCodeMieExpiresAt(Map<String, String> cookies) {
   return DateTime.now().millisecondsSinceEpoch + 24 * 60 * 60 * 1000;
 }
 
+/// Collects application names from the three known fields of the `/v1/user`
+/// response, trimming and deduplicating into a sorted list.
+List<String> _collectAppNames(Map decoded) {
+  final apps = <String>{};
+  for (final field in const [
+    'applications',
+    'applications_admin',
+    'applicationsAdmin',
+  ]) {
+    final value = decoded[field];
+    if (value is List) {
+      apps.addAll(_filterAppNames(value));
+    }
+  }
+  return apps.toList()
+    ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+}
+
+/// Filters a raw list down to non-blank, trimmed strings.
+Iterable<String> _filterAppNames(List value) sync* {
+  for (final item in value) {
+    if (item is String && item.trim().isNotEmpty) yield item.trim();
+  }
+}
+
 /// Fetches the user's accessible projects from `<apiBase>/v1/user` — the
 /// `applications` + `applications_admin` arrays merged and deduplicated.
 /// Authentication uses the full cookie string as a `Cookie:` header.
@@ -134,22 +159,7 @@ Future<List<String>> fetchCodeMieProjects(
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map) return const [];
-    final apps = <String>{};
-    for (final field in const [
-      'applications',
-      'applications_admin',
-      'applicationsAdmin',
-    ]) {
-      final value = decoded[field];
-      if (value is List) {
-        for (final item in value) {
-          if (item is String && item.trim().isNotEmpty) apps.add(item.trim());
-        }
-      }
-    }
-    final sorted = apps.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return sorted;
+    return _collectAppNames(decoded);
   } finally {
     if (ownsClient) httpClient.close();
   }

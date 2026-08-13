@@ -141,4 +141,51 @@ void main() {
       );
     });
   });
+
+  group('fetchCodeMieProjects', () {
+    test('merges and deduplicates application fields', () async {
+      final client = http_testing.MockClient((request) async {
+        expect(request.url.path, endsWith('/v1/user'));
+        expect(request.headers['cookie'], 'k=v');
+        return http.Response(
+          jsonEncode({
+            'applications': ['app-a', 'app-b', ' app-a '],
+            'applications_admin': ['app-c'],
+            'applicationsAdmin': ['app-d'],
+            'other': 42,
+          }),
+          200,
+        );
+      });
+      final projects = await fetchCodeMieProjects(
+        'https://org/code-assistant-api',
+        'k=v',
+        client: client,
+      );
+      // Deduplicated, trimmed, sorted.
+      expect(projects, ['app-a', 'app-b', 'app-c', 'app-d']);
+    });
+
+    test('non-2xx throws ConfigException', () async {
+      final client = http_testing.MockClient(
+        (request) async => http.Response('', 500),
+      );
+      expect(
+        () => fetchCodeMieProjects('https://x', 'k=v', client: client),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+
+    test('non-object response returns empty list', () async {
+      final client = http_testing.MockClient(
+        (request) async => http.Response('[]', 200),
+      );
+      final projects = await fetchCodeMieProjects(
+        'https://x',
+        'k=v',
+        client: client,
+      );
+      expect(projects, isEmpty);
+    });
+  });
 }

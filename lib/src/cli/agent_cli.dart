@@ -965,19 +965,17 @@ class AgentCli {
   /// `saved:<name>` switches to a saved custom provider, anything else is a
   /// catalog provider name.
   Future<void> _tuiPickProvider(String key) async {
-    if (key == 'add') {
-      _openAddProviderPicker();
-      return;
-    }
-    if (key.startsWith('saved:')) {
-      // Selecting a saved provider opens its Edit/Delete sub-picker.
-      final name = key.substring('saved:'.length);
-      final entry = config.customProviders?.find(name);
-      if (entry != null) _providerEditOrDelete(entry);
-      return;
-    }
-    // Fallback: a bare catalog name typed in line mode.
+    if (key == 'add') return _openAddProviderPicker();
+    if (key.startsWith('saved:')) return _tuiPickSavedProviderEdit(key);
     await _tuiPickCatalogOrSaved(key);
+  }
+
+  /// A `saved:<name>` selection from the provider picker opens the edit/delete
+  /// sub-picker for the matching saved provider.
+  Future<void> _tuiPickSavedProviderEdit(String key) async {
+    final name = key.substring('saved:'.length);
+    final entry = config.customProviders?.find(name);
+    if (entry != null) _providerEditOrDelete(entry);
   }
 
   /// The preset picker for adding a new provider: catalog presets each
@@ -1025,26 +1023,20 @@ class AgentCli {
 
   /// Routes a preset-picker selection to the matching setup flow.
   Future<void> _tuiPickAddProvider(String key) async {
-    if (key == 'custom') {
-      _startProviderFlow();
-      return;
-    }
-    if (key.startsWith('preset:')) {
-      final preset = key.substring('preset:'.length);
-      switch (preset) {
-        case 'openrouter':
-          await _handleOpenRouterOAuthCommand(headless: false);
-        case 'chatgpt':
-          await _handleChatGptOAuthCommand(headless: false);
-        case 'codemie':
-          await _handleCodeMieSsoCommand(defaultCodeMieBaseUrl);
-        case 'openai' || 'anthropic' || 'google':
-          _startProviderFlow(initialType: preset);
-        default:
-          io.writeln('unknown preset: $preset');
-      }
-    }
+    if (key == 'custom') return _startProviderFlow();
+    if (!key.startsWith('preset:')) return;
+    await _addProviderHandlers[key.substring('preset:'.length)]?.call();
   }
+
+  /// Preset name → the setup flow it launches.
+  late final Map<String, Future<void> Function()> _addProviderHandlers = {
+    'openrouter': () => _handleOpenRouterOAuthCommand(headless: false),
+    'chatgpt': () => _handleChatGptOAuthCommand(headless: false),
+    'codemie': () => _handleCodeMieSsoCommand(defaultCodeMieBaseUrl),
+    'openai': () async => _startProviderFlow(initialType: 'openai'),
+    'anthropic': () async => _startProviderFlow(initialType: 'anthropic'),
+    'google': () async => _startProviderFlow(initialType: 'google'),
+  };
 
   /// A non-`custom` provider-picker selection: a saved entry or a catalog
   /// provider name.

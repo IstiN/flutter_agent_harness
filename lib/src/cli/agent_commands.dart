@@ -22,11 +22,18 @@ extension AgentCliAgentExt on AgentCli {
 
   /// `/agents`: lists all available agent types (built-in + discovered).
   void listAgentTypes() {
-    final builtins = ['task', 'explore', 'review'];
     io.writeln('agent types:');
-    for (final name in builtins) {
+    _listBuiltinAgentTypes();
+    _listDiscoveredAgentTypes();
+  }
+
+  void _listBuiltinAgentTypes() {
+    for (final name in ['task', 'explore', 'review']) {
       io.writeln('  $name (built-in)');
     }
+  }
+
+  void _listDiscoveredAgentTypes() {
     for (final agent in _discoveredAgents) {
       io.writeln('  ${agent.name} — ${agent.description}');
     }

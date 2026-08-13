@@ -295,6 +295,13 @@ final class A2aClient {
 
   /// Streams a message via SSE. Yields task state updates as they arrive.
   Stream<A2aTask> streamMessage(String text) async* {
+    final request = _buildStreamRequest(text);
+    final response = await _client.send(request);
+    yield* _parseSseStream(response.stream);
+  }
+
+  /// Builds the SSE POST request for [message/stream].
+  http.Request _buildStreamRequest(String text) {
     final request = http.Request('POST', Uri.parse(baseUrl))
       ..headers.addAll(_headers(accept: 'text/event-stream'))
       ..body = jsonEncode(
@@ -307,26 +314,35 @@ final class A2aClient {
           },
         }),
       );
-    final response = await _client.send(request);
+    return request;
+  }
+
+  /// Parses SSE lines into [A2aTask] updates, skipping non-data and malformed
+  /// lines.
+  Stream<A2aTask> _parseSseStream(http.ByteStream byteStream) async* {
     await for (final chunk
-        in response.stream
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())) {
+        in byteStream.transform(utf8.decoder).transform(const LineSplitter())) {
       if (!chunk.startsWith('data: ')) continue;
       final data = chunk.substring(6).trim();
       if (data.isEmpty || data == '[DONE]') continue;
-      try {
-        final decoded = jsonDecode(data);
-        if (decoded is Map<String, dynamic>) {
-          final result = decoded['result'] as Map<String, dynamic>?;
-          if (result != null) {
-            yield A2aTask.fromJson(result);
-          }
-        }
-      } on Object {
-        // Skip malformed SSE lines.
-      }
+      final task = _tryParseSseTask(data);
+      if (task != null) yield task;
     }
+  }
+
+  /// Attempts to parse one SSE `data:` payload as an [A2aTask]; returns null
+  /// on malformed JSON or missing `result`.
+  A2aTask? _tryParseSseTask(String data) {
+    try {
+      final decoded = jsonDecode(data);
+      if (decoded is Map<String, dynamic>) {
+        final result = decoded['result'] as Map<String, dynamic>?;
+        if (result != null) return A2aTask.fromJson(result);
+      }
+    } on Object {
+      // Skip malformed SSE lines.
+    }
+    return null;
   }
 
   /// Gets the current state of a task.

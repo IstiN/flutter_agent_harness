@@ -36,135 +36,147 @@ List<AgentTool> subagentMonitoringTools({
 }) {
   if (manager == null) return const [];
   return [
-    AgentTool(
-      name: 'task_status',
-      description:
-          'Check the status of spawned subagents. Without an id, '
-          'lists ALL subagents with their current state, token usage, and '
-          'last activity. With an id, shows that subagent in detail.',
-      parameters: {
-        'type': 'object',
-        'properties': {
-          'id': {
-            'type': 'string',
-            'description':
-                'Optional: a specific subagent id. Omit to list all.',
-          },
-        },
-      },
-      tier: ApprovalTier.read,
-      execute: (args, cancelToken, onUpdate) async {
-        final id = args['id'] as String?;
-        if (id != null) {
-          final handle = manager[id];
-          if (handle == null) {
-            return ToolExecutionResult.text('no subagent with id "$id"');
-          }
-          return ToolExecutionResult.text(_formatHandleDetail(handle));
-        }
-        final handles = manager.handles;
-        if (handles.isEmpty) {
-          return ToolExecutionResult.text('no subagents spawned');
-        }
-        final lines = [for (final h in handles) h.statusLine];
-        return ToolExecutionResult.text(
-          '${handles.length} subagent${handles.length == 1 ? '' : 's'}:\n'
-          '${lines.join('\n')}',
-        );
-      },
-    ),
-    AgentTool(
-      name: 'task_observe',
-      description:
-          'Read the recent message history of a subagent. Useful to '
-          'inspect what a child discovered or decided before following up.',
-      parameters: {
-        'type': 'object',
-        'properties': {
-          'id': {
-            'type': 'string',
-            'description': 'The subagent id to observe.',
-          },
-          'tail': {
-            'type': 'integer',
-            'description': 'Number of recent messages to read (default 10).',
-          },
-        },
-        'required': ['id'],
-      },
-      tier: ApprovalTier.read,
-      execute: (args, cancelToken, onUpdate) async {
-        final id = args['id'] as String;
-        final tail = args['tail'] as int? ?? 10;
-        final handle = manager[id];
-        if (handle == null) {
-          return ToolExecutionResult.text('no subagent with id "$id"');
-        }
-        if (readMessages == null) {
-          return ToolExecutionResult.text(
-            'session reading not available on this host — '
-            'status: ${handle.status.name}',
-          );
-        }
-        final messages = await readMessages(handle.sessionId, tail: tail);
-        if (messages.isEmpty) {
-          return ToolExecutionResult.text('no messages in session for "$id"');
-        }
-        final lines = [for (final m in messages) '${m.$1}: ${m.$2}'];
-        return ToolExecutionResult.text(lines.join('\n'));
-      },
-    ),
-    AgentTool(
-      name: 'task_send',
-      description:
-          'Send a follow-up message to a subagent. Works with idle '
-          '(waiting for input) and completed children — a completed child is '
-          'resumed with the new message. Failed/aborted children cannot '
-          'receive messages.',
-      parameters: {
-        'type': 'object',
-        'properties': {
-          'id': {
-            'type': 'string',
-            'description': 'The subagent id to message.',
-          },
-          'message': {
-            'type': 'string',
-            'description': 'The follow-up instruction or question.',
-          },
-        },
-        'required': ['id', 'message'],
-      },
-      tier: ApprovalTier.write,
-      execute: (args, cancelToken, onUpdate) async {
-        final id = args['id'] as String;
-        final message = args['message'] as String? ?? '';
-        if (message.trim().isEmpty) {
-          return ToolExecutionResult.text('error: message is required');
-        }
-        final handle = manager[id];
-        if (handle == null) {
-          return ToolExecutionResult.text('no subagent with id "$id"');
-        }
-        if (handle.status == SubagentStatus.failed ||
-            handle.status == SubagentStatus.aborted) {
-          return ToolExecutionResult.text(
-            'cannot send to ${handle.status.name} subagent "$id"',
-          );
-        }
-        if (sendToChild == null) {
-          return ToolExecutionResult.text(
-            'child messaging not available on this host',
-          );
-        }
-        await sendToChild(handle.sessionId, message);
-        await manager.update(id, status: SubagentStatus.running);
-        return ToolExecutionResult.text(
-          'sent message to "$id" — child resumed',
-        );
-      },
-    ),
+    _taskStatusTool(manager),
+    _taskObserveTool(manager, readMessages),
+    _taskSendTool(manager, sendToChild),
   ];
+}
+
+/// `task_status` — query one or all retained subagents.
+AgentTool _taskStatusTool(SubagentManager manager) {
+  return AgentTool(
+    name: 'task_status',
+    description:
+        'Check the status of spawned subagents. Without an id, '
+        'lists ALL subagents with their current state, token usage, and '
+        'last activity. With an id, shows that subagent in detail.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'id': {
+          'type': 'string',
+          'description': 'Optional: a specific subagent id. Omit to list all.',
+        },
+      },
+    },
+    tier: ApprovalTier.read,
+    execute: (args, cancelToken, onUpdate) async {
+      final id = args['id'] as String?;
+      if (id != null) {
+        final handle = manager[id];
+        if (handle == null) {
+          return ToolExecutionResult.text('no subagent with id "$id"');
+        }
+        return ToolExecutionResult.text(_formatHandleDetail(handle));
+      }
+      final handles = manager.handles;
+      if (handles.isEmpty) {
+        return ToolExecutionResult.text('no subagents spawned');
+      }
+      final lines = [for (final h in handles) h.statusLine];
+      return ToolExecutionResult.text(
+        '${handles.length} subagent${handles.length == 1 ? '' : 's'}:\n'
+        '${lines.join('\n')}',
+      );
+    },
+  );
+}
+
+/// `task_observe` — read the recent message history of a subagent.
+AgentTool _taskObserveTool(
+  SubagentManager manager,
+  ChildMessageReader? readMessages,
+) {
+  return AgentTool(
+    name: 'task_observe',
+    description:
+        'Read the recent message history of a subagent. Useful to '
+        'inspect what a child discovered or decided before following up.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'id': {'type': 'string', 'description': 'The subagent id to observe.'},
+        'tail': {
+          'type': 'integer',
+          'description': 'Number of recent messages to read (default 10).',
+        },
+      },
+      'required': ['id'],
+    },
+    tier: ApprovalTier.read,
+    execute: (args, cancelToken, onUpdate) async {
+      final id = args['id'] as String;
+      final tail = args['tail'] as int? ?? 10;
+      final handle = manager[id];
+      if (handle == null) {
+        return ToolExecutionResult.text('no subagent with id "$id"');
+      }
+      if (readMessages == null) {
+        return ToolExecutionResult.text(
+          'session reading not available on this host — '
+          'status: ${handle.status.name}',
+        );
+      }
+      final messages = await readMessages(handle.sessionId, tail: tail);
+      if (messages.isEmpty) {
+        return ToolExecutionResult.text('no messages in session for "$id"');
+      }
+      final lines = [for (final m in messages) '${m.$1}: ${m.$2}'];
+      return ToolExecutionResult.text(lines.join('\n'));
+    },
+  );
+}
+
+/// `task_send` — send a follow-up message to a subagent.
+AgentTool _taskSendTool(
+  SubagentManager manager,
+  ChildMessageSender? sendToChild,
+) {
+  return AgentTool(
+    name: 'task_send',
+    description:
+        'Send a follow-up message to a subagent. Works with idle '
+        '(waiting for input) and completed children — a completed child is '
+        'resumed with the new message. Failed/aborted children cannot '
+        'receive messages.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'id': {'type': 'string', 'description': 'The subagent id to message.'},
+        'message': {
+          'type': 'string',
+          'description': 'The follow-up instruction or question.',
+        },
+      },
+      'required': ['id', 'message'],
+    },
+    tier: ApprovalTier.write,
+    execute: (args, cancelToken, onUpdate) async {
+      final id = args['id'] as String;
+      final message = args['message'] as String? ?? '';
+      if (message.trim().isEmpty) {
+        return ToolExecutionResult.text('error: message is required');
+      }
+      final handle = manager[id];
+      if (handle == null) {
+        return ToolExecutionResult.text('no subagent with id "$id"');
+      }
+      if (handle.status == SubagentStatus.failed ||
+          handle.status == SubagentStatus.aborted) {
+        return ToolExecutionResult.text(
+          'cannot send to ${handle.status.name} subagent "$id"',
+        );
+      }
+      if (sendToChild == null) {
+        return ToolExecutionResult.text(
+          'child messaging not available on this host',
+        );
+      }
+      await sendToChild(handle.sessionId, message);
+      await manager.update(id, status: SubagentStatus.running);
+      return ToolExecutionResult.text('sent message to "$id" — child resumed');
+    },
+  );
 }
 
 /// Formats a detailed view of one handle for `task_status`.
