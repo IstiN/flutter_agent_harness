@@ -954,4 +954,8 @@
 - fix(ci): keep publish_to: none for analyzer; strip it only in the publish job
 - fix(installer): rm -f target before cp — break symlinks so version.txt lives next to the binary
 
+## 0.1.172
+
+- fix(version): use Platform.resolvedExecutable so version works regardless of invocation path
+
 ## Unreleased
