@@ -46,10 +46,19 @@ String _packageVersion() {
   try {
     final scriptPath = Platform.script.toFilePath();
     // dart build cli bundle layout: <root>/bin/<exe> + <root>/version.txt
-    final bundleRoot = File(scriptPath).parent.parent;
+    // Installer layout: <install_dir>/<exe> + <install_dir>/version.txt
+    final exeDir = File(scriptPath).parent;
+    final bundleRoot = exeDir.parent;
+    // Try bundle/version.txt first (dart build cli layout).
     final versionFile = File('${bundleRoot.path}/version.txt');
     if (versionFile.existsSync()) {
       final v = versionFile.readAsStringSync().trim();
+      if (v.isNotEmpty) return v;
+    }
+    // Try <exe_dir>/version.txt (installer layout: version.txt next to fa).
+    final dirVersionFile = File('${exeDir.path}/version.txt');
+    if (dirVersionFile.existsSync()) {
+      final v = dirVersionFile.readAsStringSync().trim();
       if (v.isNotEmpty) return v;
     }
     // Source run: pubspec.yaml sits two levels up from bin/.

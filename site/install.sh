@@ -155,6 +155,10 @@ if [ "$dl_ok" = true ]; then
     mkdir -p "$install_dir/lib"
     cp "$tmp_extract/bundle/bin/fa" "$target"
     chmod +x "$target"
+    # Copy version.txt so the binary can report its version.
+    if [ -f "$tmp_extract/bundle/version.txt" ]; then
+      cp "$tmp_extract/bundle/version.txt" "$install_dir/version.txt"
+    fi
     if [ -d "$tmp_extract/bundle/lib" ]; then
       cp -r "$tmp_extract/bundle/lib/"* "$install_dir/lib/" 2>/dev/null || true
     fi
