@@ -459,17 +459,16 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final registry = widget.registry;
     final lastConnectionStore = widget.lastConnectionStore;
     if (registry == null) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => UnifiedModelPickerPage(
-          connection: service,
-          onApply: (config) async {
-            final agentConfig = agentConfigFrom(config);
-            await service.reconfigure(agentConfig);
-            await lastConnectionStore?.saveFromConfig(agentConfig);
-          },
-          registry: registry,
-        ),
+    await pushFaPage<void>(
+      context,
+      UnifiedModelPickerPage(
+        connection: service,
+        onApply: (config) async {
+          final agentConfig = agentConfigFrom(config);
+          await service.reconfigure(agentConfig);
+          await lastConnectionStore?.saveFromConfig(agentConfig);
+        },
+        registry: registry,
       ),
     );
   }
@@ -479,14 +478,15 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (service == null) return;
     AppAnalytics.instance.settingsOpened();
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => SettingsScreen(
-          service: service,
-          registry: widget.registry,
-          lastConnectionStore: widget.lastConnectionStore,
-          layoutStore: widget.layoutStore,
-        ),
+    // pushFaPage shows a dialog (maxWidth 560) on wide screens, a full-page
+    // route on narrow — matches the prototype's popup style.
+    await pushFaPage<void>(
+      context,
+      SettingsScreen(
+        service: service,
+        registry: widget.registry,
+        lastConnectionStore: widget.lastConnectionStore,
+        layoutStore: widget.layoutStore,
       ),
     );
   }
@@ -496,16 +496,15 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (service == null) return;
     AppAnalytics.instance.filesOpened('sidebar');
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          appBar: AppBar(title: Text(context.l10n.chatFilesTooltip)),
-          body: FileBrowser(
-            env: service.env,
-            inlinePreview: false,
-            fsRevision: service.fsRevision,
-            onProjectMountChanged: service.refreshProjectMountPrompt,
-          ),
+    await pushFaPage<void>(
+      context,
+      Scaffold(
+        appBar: AppBar(title: Text(context.l10n.chatFilesTooltip)),
+        body: FileBrowser(
+          env: service.env,
+          inlinePreview: false,
+          fsRevision: service.fsRevision,
+          onProjectMountChanged: service.refreshProjectMountPrompt,
         ),
       ),
     );
