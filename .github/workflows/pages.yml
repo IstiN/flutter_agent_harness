@@ -55,6 +55,8 @@ jobs:
 
       - name: Build web demo
         working-directory: flutter_app
+        continue-on-error: true
+        id: web_build
         run: >-
           flutter build web --release
           --base-href /app/
@@ -64,9 +66,13 @@ jobs:
         run: |
           mkdir -p build/pages/root
           cp -R site/. build/pages/root/
-          cp -R build/pages/app build/pages/root/app
+          # Only copy the web app if it built successfully.
+          if [ -d build/pages/app ]; then
+            cp -R build/pages/app build/pages/root/app
+          fi
 
       - name: Cache-bust static assets
+        if: steps.web_build.outcome == 'success'
         env:
           BUILD_ID: ${{ github.sha }}
         run: |
