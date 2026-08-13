@@ -318,15 +318,65 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (active == null) {
       return _buildPlaceholder(colors);
     }
-    return ChatScreen(
-      manager: widget.manager,
-      registry: widget.registry,
-      lastConnectionStore: widget.lastConnectionStore,
-      uploadPicker: widget.uploadPicker,
-      asr: widget.asr,
-      asrTranscriber: widget.asrTranscriber,
-      audioControllerFactory: widget.audioControllerFactory,
-      videoControllerFactory: widget.videoControllerFactory,
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+    return Column(
+      children: [
+        // Workspace header matching the prototype: name + dropdown arrow + edit icon.
+        Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+          decoration: BoxDecoration(
+            color: isLight ? colors.panel : colors.panel,
+            border: Border(bottom: BorderSide(color: colors.border)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () {}, // Workspace picker placeholder
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Personal Workspace',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: colors.dim,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: () {}, // Edit workspace placeholder
+                iconSize: 18,
+                color: colors.dim,
+                tooltip: 'Edit workspace',
+              ),
+            ],
+          ),
+        ),
+        // Chat area (fills the rest).
+        Expanded(
+          child: ChatScreen(
+            manager: widget.manager,
+            registry: widget.registry,
+            lastConnectionStore: widget.lastConnectionStore,
+            uploadPicker: widget.uploadPicker,
+            asr: widget.asr,
+            asrTranscriber: widget.asrTranscriber,
+            audioControllerFactory: widget.audioControllerFactory,
+            videoControllerFactory: widget.videoControllerFactory,
+          ),
+        ),
+      ],
     );
   }
 
