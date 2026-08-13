@@ -37,6 +37,20 @@ void main() {
 
     setUpAll(() async {
       cliSource = await File('lib/src/cli/agent_cli.dart').readAsString();
+      // Also read part files (approval, provider, etc.) since methods
+      // are split across them to keep agent_cli.dart under the size gate.
+      for (final part in [
+        'lib/src/cli/approval_commands.dart',
+        'lib/src/cli/provider_commands.dart',
+        'lib/src/cli/agent_commands.dart',
+        'lib/src/cli/settings_flow.dart',
+      ]) {
+        try {
+          cliSource += await File(part).readAsString();
+        } on Object {
+          // Part file may not exist in all branches.
+        }
+      }
       appSource = await File(
         'flutter_app/lib/services/agent_service.dart',
       ).readAsString();

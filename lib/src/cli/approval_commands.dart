@@ -2,6 +2,8 @@
 /// agent_cli.dart under the repo's 2800-line size gate.
 part of 'agent_cli.dart';
 
+/// Implementation members of [AgentCli] for approval prompts.
+extension on AgentCli {
   Future<ApprovalDecision> _promptForApproval(ApprovalRequest request) async {
     // TUI mode: prompt through the on-screen approval zone (y/a/n keys).
     final tui = _tuiController;
@@ -97,23 +99,10 @@ part of 'agent_cli.dart';
     return line;
   }
 
-  /// Whether a guided custom-provider setup is between prompts (guards
   /// against a second `/provider custom` while one is running). While true,
   /// input lines buffer here instead of steering or starting runs.
-  var _providerFlowActive = false;
 
-  /// Answers that arrived while no flow prompt was pending (piped input
   /// outruns the flow); consumed by the next `_promptLine` call.
-  final _promptLineBuffer = <String>[];
-
-  /// The registry entry name of the active custom provider, if one is
-  /// (drives the per-provider model memory and the picker's `(current)`).
-  String? _activeCustomName;
-
-  /// The pending wizard-menu answer, if a guided flow's multiple-choice
-  /// question is on screen (TUI). Completed by `_tuiPickerSelected` (or
-  /// `_tuiPickerCancelled` on Esc).
-  Completer<String?>? _wizardPickerAnswer;
 
   /// Answers an `ask` question set by walking [questions] one at a time.
   Future<List<AskAnswer>?> _answerAskQuestions(
@@ -218,9 +207,7 @@ part of 'agent_cli.dart';
     return RequestSecretResult(name: name, value: value, persisted: false);
   }
 
-  /// Runtime secrets granted via `request_secret` — merged into the session
   /// env vars so `$NAME` works in bash tool executions.
-  final Map<String, String> _runtimeSecrets = {};
 
   /// Renders one question as a numbered menu (+ "(Recommended)" marker) and
   /// reads the answer: a number selects an option, `m` opens the
@@ -787,4 +774,3 @@ part of 'agent_cli.dart';
     _assistantPrefixPrinted = true;
   }
 }
-
