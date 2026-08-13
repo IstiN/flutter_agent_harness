@@ -152,7 +152,7 @@ jobs:
       # can run; the analyzer warning is exactly why the CI quality job keeps
       # it in the committed file.
       - name: Enable publishing for this run
-        run: sed -i '/^publish_to: none/d' pubspec.yaml
+        run: "sed -i '/^publish_to: none/d' pubspec.yaml"
 
       - name: Publish (automated publishing via OIDC)
         run: dart pub publish --force
