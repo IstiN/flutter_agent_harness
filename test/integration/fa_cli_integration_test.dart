@@ -31,7 +31,7 @@ void main() {
     });
 
     test(
-      '/provider-edit shows Edit/Delete picker for saved provider',
+      '/settings > provider shows Edit/Delete picker for saved provider',
       () async {
         final tempHome = _tempHomeWithProvider();
         final harness = await FaCliHarness.spawn(
@@ -43,15 +43,26 @@ void main() {
         });
         await harness.waitForBoot();
 
-        await harness.runSlashCommand('/provider-edit');
+        // /settings opens the settings hub; the first entry is "Provider".
+        await harness.runSlashCommand('/settings');
         await harness.waitForText(
-          'Delete provider',
+          'Provider',
           timeout: const Duration(seconds: 20),
         );
+        harness.sendEnter();
+        // The provider picker lists saved providers first.
+        await harness.waitForText(
+          'test-provider',
+          timeout: const Duration(seconds: 20),
+        );
+        harness.sendEnter();
 
-        // The wizard's Edit/Delete picker is on screen.
+        // Selecting the saved provider opens its Edit/Delete picker.
+        await harness.waitForText(
+          'Edit provider',
+          timeout: const Duration(seconds: 20),
+        );
         final screen = harness.screenText;
-        expect(screen, contains('[action]'));
         expect(screen, contains('Edit provider'));
         expect(screen, contains('Delete provider'));
 
@@ -61,7 +72,8 @@ void main() {
       },
     );
 
-    test('/provider-edit delete removes provider with confirmation', () async {
+    test('/settings > provider delete removes provider with confirmation',
+        () async {
       final tempHome = _tempHomeWithProvider();
       final harness = await FaCliHarness.spawn(
         extraEnv: {'HOME': tempHome.path},
@@ -72,9 +84,19 @@ void main() {
       });
       await harness.waitForBoot();
 
-      await harness.runSlashCommand('/provider-edit');
+      await harness.runSlashCommand('/settings');
       await harness.waitForText(
-        'Delete provider',
+        'Provider',
+        timeout: const Duration(seconds: 20),
+      );
+      harness.sendEnter();
+      await harness.waitForText(
+        'test-provider',
+        timeout: const Duration(seconds: 20),
+      );
+      harness.sendEnter();
+      await harness.waitForText(
+        'Edit provider',
         timeout: const Duration(seconds: 20),
       );
 

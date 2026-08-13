@@ -109,7 +109,8 @@ PROVIDERS AND API KEYS
   model — from the endpoint's /models list when it has one, typed manually
   otherwise. The provider is saved (customProviders: in ~/.fah/config.yaml)
   and listed first in the /provider picker, remembering its last-used
-  model; /provider-edit re-runs the wizard for the active provider.
+  model; selecting a saved provider in /provider opens its Edit/Delete
+  picker.
   /provider openrouter oauth opens a browser PKCE flow that mints a user-
   controlled OpenRouter API key and stores it as OPENROUTER_API_KEY; add
   `headless` for terminals without a browser (copy the URL, paste the code).
@@ -341,7 +342,6 @@ SKILLS AND CONTEXT FILES
                      via browser SSO (localhost callback) and saves it as a
                      custom provider — the session JWT rides the standard
                      OpenAI-compatible adapter
-  /provider-edit     edit the active provider via the guided setup
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
   /session [name]    show current or switch/create a named session
