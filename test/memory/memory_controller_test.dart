@@ -1,56 +1,11 @@
 @TestOn('vm')
 library;
 
-import 'dart:async';
 
-import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 /// Minimal fake KBStorage so we don't need the full memory backend in tests.
-class _FakeKbStorage implements KbStorage {
-  final Map<String, String> _entities = {};
-
-  @override
-  FutureOr<void> initialize({bool clean = false}) {}
-
-  @override
-  FutureOr<KBContext> loadContext() => KBContext();
-
-  @override
-  FutureOr<String?> readEntity(String type, String id) =>
-      _entities['$type/$id'];
-
-  @override
-  FutureOr<void> writeEntity(String type, String id, String content) {
-    _entities['$type/$id'] = content;
-  }
-
-  @override
-  FutureOr<void> deleteEntity(String type, String id) {
-    _entities.remove('$type/$id');
-  }
-
-  @override
-  FutureOr<List<String>> listEntityIds(String type) {
-    return [
-      for (final key in _entities.keys)
-        if (key.startsWith('$type/')) key.split('/').last,
-    ];
-  }
-
-  @override
-  FutureOr<String?> readFile(String path) => null;
-
-  @override
-  FutureOr<void> writeFile(String path, String content) {}
-
-  @override
-  FutureOr<List<String>> listFilePaths(String prefix) => const [];
-
-  @override
-  String describeLocation(String type, String id) => '$type/$id';
-}
 
 void main() {
   group('MemoryController', () {
