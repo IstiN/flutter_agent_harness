@@ -24,13 +24,20 @@ class SidebarNavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    final fg = selected ? colors.teal : colors.dim;
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    // Light theme: indigo for selected; dark theme: teal.
+    final fg = selected
+        ? (isLight ? colors.indigo : colors.teal)
+        : colors.dim;
+    final selectedBg = isLight
+        ? const Color(0xFFEEF2FF)
+        : colors.panelAlt;
 
     if (collapsed) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         child: Material(
-          color: selected ? colors.panelAlt : Colors.transparent,
+          color: selected ? selectedBg : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
           child: InkWell(
             onTap: onTap,
@@ -50,7 +57,7 @@ class SidebarNavItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Material(
-        color: selected ? colors.panelAlt : Colors.transparent,
+        color: selected ? selectedBg : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           onTap: onTap,

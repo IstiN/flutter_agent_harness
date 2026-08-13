@@ -574,7 +574,13 @@ class _ChatComposerState extends State<ChatComposer>
                   const SizedBox(width: 4),
                   Container(
                     decoration: BoxDecoration(
-                      gradient: palette.brandGradient,
+                      // Light theme: solid indigo circle; dark theme: brand gradient.
+                      color: Theme.of(context).brightness == Brightness.light
+                          ? palette.indigo
+                          : null,
+                      gradient: Theme.of(context).brightness == Brightness.dark
+                          ? palette.brandGradient
+                          : null,
                       shape: BoxShape.circle,
                     ),
                     child: Builder(

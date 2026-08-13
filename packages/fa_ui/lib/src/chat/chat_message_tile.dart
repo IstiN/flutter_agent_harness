@@ -100,11 +100,33 @@ class ChatMessageTile extends StatelessWidget {
 
     final bubble = Container(
       constraints: const BoxConstraints(maxWidth: 560),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: isUser ? palette.userBubble : palette.panel,
-        border: Border.all(color: isUser ? palette.userBubbleBorder : border),
-        borderRadius: BorderRadius.circular(14),
+        // Light theme: AI bubbles use subtle shadow instead of border,
+        // matching the prototype's card style. Dark theme keeps the border.
+        border: Theme.of(context).brightness == Brightness.light && !isUser
+            ? null
+            : Border.all(
+                color: isUser
+                    ? palette.userBubbleBorder
+                    : border,
+              ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: Theme.of(context).brightness == Brightness.light && !isUser
+            ? [
+                BoxShadow(
+                  color: const Color(0xFF000000).withValues(alpha: 0.04),
+                  blurRadius: 8,
+                  offset: const Offset(0, 1),
+                ),
+                BoxShadow(
+                  color: const Color(0xFF000000).withValues(alpha: 0.06),
+                  blurRadius: 2,
+                  offset: const Offset(0, 1),
+                ),
+              ]
+            : null,
       ),
       child: MarkdownBody(
         data: message.content,
@@ -120,7 +142,10 @@ class ChatMessageTile extends StatelessWidget {
             _onMarkdownLink(context, text, href, title),
       ),
     );
-    final avatar = isUser ? null : avatarBuilder?.call(context, message.role);
+    final avatar = isUser
+        ? null
+        : (avatarBuilder?.call(context, message.role) ??
+            _defaultAiAvatar(context));
     if (avatar == null) return bubble;
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -130,6 +155,26 @@ class ChatMessageTile extends StatelessWidget {
         const SizedBox(width: 8),
         Flexible(child: bubble),
       ],
+    );
+  }
+
+  /// The default AI avatar: a small indigo circle with a white sparkle/star
+  /// icon, matching the prototype design. Shown when no [avatarBuilder]
+  /// is provided.
+  Widget _defaultAiAvatar(BuildContext context) {
+    final palette = fahChatColorsOf(context);
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: palette.indigo,
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(
+        Icons.auto_awesome,
+        size: 14,
+        color: Colors.white,
+      ),
     );
   }
 
@@ -156,17 +201,22 @@ class ChatMessageTile extends StatelessWidget {
 
   Widget _thinkingTile(BuildContext context) {
     final palette = fahChatColorsOf(context);
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return Container(
       margin: compact
           ? EdgeInsets.zero
           : const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: palette.panelAlt.withValues(alpha: 0.5),
+        color: isLight
+            ? const Color(0xFFF9FAFB)
+            : palette.panelAlt.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
-        ),
+        border: isLight
+            ? null
+            : Border.all(
+                color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
+              ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -205,19 +255,27 @@ class ChatMessageTile extends StatelessWidget {
     // media path) get an inline audio/video player under the tile.
     final toolMedia = _toolMedia(toolName, content, isError);
 
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return Container(
       margin: compact
           ? EdgeInsets.zero
           : const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: palette.panelAlt,
+        // Light theme: very subtle gray bg without border; dark theme: bordered.
+        color: isLight
+            ? const Color(0xFFF9FAFB)
+            : palette.panelAlt,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isError
-              ? palette.error.withValues(alpha: 0.45)
-              : Theme.of(context).dividerColor,
-        ),
+        border: isLight
+            ? (isError
+                ? Border.all(color: palette.error.withValues(alpha: 0.3))
+                : null)
+            : Border.all(
+                color: isError
+                    ? palette.error.withValues(alpha: 0.45)
+                    : Theme.of(context).dividerColor,
+              ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -228,7 +286,9 @@ class ChatMessageTile extends StatelessWidget {
                 Icon(
                   isError ? Icons.close : Icons.check,
                   size: 14,
-                  color: isError ? palette.error : palette.teal,
+                  color: isError
+                      ? palette.error
+                      : (isLight ? palette.indigo : palette.teal),
                 ),
                 const SizedBox(width: 6),
                 Expanded(

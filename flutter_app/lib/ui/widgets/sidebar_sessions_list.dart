@@ -200,10 +200,17 @@ class _SessionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       child: Material(
-        color: isActive ? colors.panelAlt : Colors.transparent,
+        // Light theme: active session gets a light indigo tint background
+        // (like the prototype's "Today" item); dark theme keeps panelAlt.
+        color: isActive
+            ? (isLight
+                ? const Color(0xFFEEF2FF)
+                : colors.panelAlt)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           onTap: onTap,
@@ -217,7 +224,8 @@ class _SessionTile extends StatelessWidget {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: colors.teal,
+                      // Light theme: indigo dot; dark theme: teal dot.
+                      color: isLight ? colors.indigo : colors.teal,
                       shape: BoxShape.circle,
                     ),
                   )
@@ -232,6 +240,7 @@ class _SessionTile extends StatelessWidget {
                     style: TextStyle(
                       color: isActive ? colors.text : colors.dim,
                       fontSize: 13,
+                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
                     ),
                   ),
                 ),
