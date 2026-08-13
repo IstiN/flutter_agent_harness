@@ -254,8 +254,14 @@ class ChatMessageTile extends StatelessWidget {
     // speak/generate_music (and any non-read tool result mentioning a
     // media path) get an inline audio/video player under the tile.
     final toolMedia = _toolMedia(toolName, content, isError);
-
     final isLight = Theme.of(context).brightness == Brightness.light;
+
+    // Permission-denied tool results get a special card: orange badge +
+    // action buttons (Open Settings / Try again) matching the prototype.
+    if (isError && _isPermissionError(content)) {
+      return _permissionCard(context, palette, content, isLight);
+    }
+
     return Container(
       margin: compact
           ? EdgeInsets.zero
@@ -410,6 +416,120 @@ String? _generatedAudioPath(String toolName, String content) {
     return (kind: SandboxMediaKind.video, path: videoPath);
   }
   return null;
+}
+
+/// Whether a tool error is a permission/access denial (calendar, contacts,
+/// home, health, etc.) that should render as a permission card with action
+/// buttons instead of a plain error tile.
+bool _isPermissionError(String content) {
+  final lower = content.toLowerCase();
+  return lower.contains('access') &&
+      (lower.contains('required') ||
+          lower.contains('denied') ||
+          lower.contains('permission'));
+}
+
+/// A permission-denied card matching the prototype: orange badge +
+/// explanatory text + action buttons.
+Widget _permissionCard(
+  BuildContext context,
+  FahColors palette,
+  String content,
+  bool isLight,
+) {
+  final theme = Theme.of(context);
+  // Extract the permission name from the error message.
+  final match = RegExp(r'(\w+)\s+access', caseSensitive: false)
+      .firstMatch(content);
+  final permName = match?.group(1) ?? 'Calendar';
+  return Container(
+    margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: isLight ? Colors.white : palette.panelAlt,
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.04),
+          blurRadius: 8,
+          offset: const Offset(0, 1),
+        ),
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Orange badge.
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.lock_outline,
+                size: 14,
+                color: palette.pending,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '$permName access required',
+                style: TextStyle(
+                  color: palette.pending,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Title.
+        Text(
+          "I can't access your $permName yet.",
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Body text.
+        Text(
+          content,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: palette.dim,
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Action buttons.
+        Row(
+          children: [
+            FilledButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.lock_open, size: 16),
+              label: const Text('Open Settings'),
+              style: FilledButton.styleFrom(
+                backgroundColor: palette.indigo,
+                foregroundColor: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Try again'),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: palette.borderBright),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
 /// Tool-output block that caps long dumps (file reads, big writes) at a few
