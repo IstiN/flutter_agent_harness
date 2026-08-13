@@ -947,4 +947,11 @@
 - fix(ui): address prototype feedback — tabs, calendar, timer, model switch
 - Create SECURITY.md for security policy
 
+## 0.1.171
+
+- chore: trigger CI + auto-release for v0.1.171
+- fix(ci): quote sed command to fix YAML syntax
+- fix(ci): keep publish_to: none for analyzer; strip it only in the publish job
+- fix(installer): rm -f target before cp — break symlinks so version.txt lives next to the binary
+
 ## Unreleased
