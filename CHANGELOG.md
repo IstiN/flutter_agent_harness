@@ -908,4 +908,11 @@
 - ci: pin crap4dart to 0.2.1 to match pre-commit ratchet
 - fix(installer): fallback to .zip extraction when raw binary not in release
 
+## 0.1.167
+
+- chore: trigger auto-release for CLI binaries + subagents 2.0
+- feat(ui): AppsPanel with search/filters/sections for wide-layout right panel
+- fix: remove unused test class + imports causing CI analyze warning
+- fix(crap): decompose + cover all new methods to pass CRAP ratchet (12.0)
+
 ## Unreleased
