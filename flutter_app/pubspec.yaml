@@ -153,7 +153,7 @@ dependency_overrides:
       url: https://github.com/IstiN/flutter_agent_memory.git
       ref: main
   fa_llm:
-    path: ../../flutter_agent/packages/fa_llm
+    path: ../packages/fa_llm
   wasm_run:
     path: ../vendor/wasm_run
   wasm_run_flutter:
