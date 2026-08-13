@@ -95,39 +95,38 @@ abstract final class FahPalette {
   }
 }
 
-/// The light counterpart of [FahPalette]: soft gray page, white panels with
-/// subtle borders, the same indigo → teal brand accents darkened to keep AA
-/// contrast on light surfaces.
+/// The light counterpart of [FahPalette]: clean white surfaces, very light
+/// gray sidebar, indigo (#4F46E5) accent — matching the prototype design.
 abstract final class FahLightPalette {
-  /// Page background.
-  static const Color bg = Color(0xFFF2F5FA);
+  /// Page background — very light gray (#F8F9FC), like the prototype sidebar.
+  static const Color bg = Color(0xFFF8F9FC);
 
-  /// Secondary background (drawers, sunken areas).
+  /// Secondary background (drawers, sunken areas) — slightly off-white.
   static const Color bgAlt = Color(0xFFFAFBFD);
 
-  /// Panel/card background.
+  /// Panel/card background — pure white.
   static const Color panel = Color(0xFFFFFFFF);
 
-  /// Raised panel / input fill.
-  static const Color panelAlt = Color(0xFFEEF1F7);
+  /// Raised panel / input fill — very light gray for subtle elevation.
+  static const Color panelAlt = Color(0xFFF3F4F6);
 
-  /// Card borders.
-  static const Color border = Color(0xFFDCE2EC);
+  /// Card borders — light gray (#E5E7EB), matching the prototype.
+  static const Color border = Color(0xFFE5E7EB);
 
   /// Hover/bright borders.
-  static const Color borderBright = Color(0xFFC2CDDD);
+  static const Color borderBright = Color(0xFFD1D5DB);
 
-  /// Primary text.
-  static const Color text = Color(0xFF18202E);
+  /// Primary text — near-black (#111827), like the prototype.
+  static const Color text = Color(0xFF111827);
 
-  /// Dimmed text.
-  static const Color dim = Color(0xFF5B6676);
+  /// Dimmed text — medium gray (#6B7280), matching the prototype.
+  static const Color dim = Color(0xFF6B7280);
 
   /// Teal accent, darkened for AA contrast on white.
   static const Color teal = Color(0xFF0F766E);
 
-  /// Indigo accent, darkened for AA contrast on white.
-  static const Color indigo = Color(0xFF4F5BC0);
+  /// Indigo accent — vibrant (#4F46E5), matching the prototype exactly.
+  static const Color indigo = Color(0xFF4F46E5);
 
   /// Text/icons on top of the brand gradient.
   static const Color onAccent = Color(0xFFFFFFFF);
@@ -138,14 +137,14 @@ abstract final class FahLightPalette {
   /// Error banner/snackbar background.
   static const Color errorContainer = Color(0xFFF9DEDC);
 
-  /// Pending/warning states.
-  static const Color pending = Color(0xFF9A6E00);
+  /// Pending/warning states — warm amber.
+  static const Color pending = Color(0xFFF59E0B);
 
-  /// User chat bubble: indigo tint.
-  static const Color userBubble = Color(0x1F4F5BC0);
+  /// User chat bubble — light indigo tint (#EEF2FF), like the prototype.
+  static const Color userBubble = Color(0xFFEEF2FF);
 
-  /// User chat bubble border.
-  static const Color userBubbleBorder = Color(0x664F5BC0);
+  /// User chat bubble border — subtle indigo.
+  static const Color userBubbleBorder = Color(0xFFC7D2FE);
 
   /// Inline-code background.
   static const Color codeBg = Color(0x145B6676);
@@ -308,19 +307,19 @@ const _lightColors = _FahThemeColors(
   onAccent: FahLightPalette.onAccent,
   error: FahLightPalette.error,
   errorContainer: FahLightPalette.errorContainer,
-  primaryContainer: Color(0xFFE0E4FF),
-  onPrimaryContainer: Color(0xFF232B47),
+  primaryContainer: Color(0xFFEEF2FF),
+  onPrimaryContainer: Color(0xFF312E81),
   secondaryContainer: Color(0xFFCCF2E9),
   onSecondaryContainer: Color(0xFF14332D),
   onError: Color(0xFFFFFFFF),
   onErrorContainer: Color(0xFF5F1410),
   surfaceLow: FahLightPalette.bgAlt,
   surfaceHighest: Color(0xFFE6EAF2),
-  outlineVariant: Color(0xFFE8ECF3),
+  outlineVariant: Color(0xFFE5E7EB),
   onInverseSurface: FahLightPalette.bg,
   inversePrimary: Color(0xFFA5B4FC),
-  selection: Color(0x554F5BC0),
-  segmentedSelected: Color(0x334F5BC0),
+  selection: Color(0x554F46E5),
+  segmentedSelected: Color(0x334F46E5),
   elevatedBg: FahLightPalette.panel,
   // Snackbars and tooltips stay dark on the light theme (standard M3
   // inverse-surface look).
@@ -481,9 +480,9 @@ ThemeData _buildFahTheme(
     iconTheme: IconThemeData(color: c.dim),
     listTileTheme: ListTileThemeData(iconColor: c.dim, textColor: c.text),
     textSelectionTheme: TextSelectionThemeData(
-      cursorColor: teal,
+      cursorColor: indigo,
       selectionColor: selection,
-      selectionHandleColor: teal,
+      selectionHandleColor: indigo,
     ),
     inputDecorationTheme: InputDecorationThemeData(
       filled: true,
@@ -500,7 +499,7 @@ ThemeData _buildFahTheme(
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.all(Radius.circular(inputRadius)),
-        borderSide: BorderSide(color: teal, width: 1.2),
+        borderSide: BorderSide(color: indigo, width: 1.2),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.all(Radius.circular(inputRadius)),
@@ -545,7 +544,7 @@ ThemeData _buildFahTheme(
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: teal),
+      style: TextButton.styleFrom(foregroundColor: indigo),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
@@ -567,7 +566,7 @@ ThemeData _buildFahTheme(
       ),
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(
-      color: teal,
+      color: indigo,
       linearTrackColor: c.border,
       circularTrackColor: c.border,
     ),

@@ -80,6 +80,10 @@ const _exempt = <String, String>{
       'sidebar sessions list; rendered inside wide_layout_shell (covered indirectly)',
   'lib/ui/widgets/code_viewer.dart':
       'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
+  'lib/ui/screens/codemie_sso_webview.dart':
+      'WebView SSO page; needs a real webview plugin (not available in tests)',
+  'lib/services/codemie_sso_flow.dart':
+      'service flow orchestrator; coordinates SSO + model picker dialogs (no widget of its own)',
 };
 
 final _widgetPattern = RegExp(
