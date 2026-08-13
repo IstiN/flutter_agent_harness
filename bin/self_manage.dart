@@ -173,14 +173,14 @@ Future<int> runSelfUpdate({
     }
 
     if (install.kind == InstallKind.pubGlobal) {
-      return _pubGlobalUpdate(
+      return await _pubGlobalUpdate(
         currentVersion: currentVersion,
         latest: latest,
         runProcess: runProcess,
       );
     }
 
-    return _binaryUpdate(client, install, tag, latest, runProcess);
+    return await _binaryUpdate(client, install, tag, latest, runProcess);
   } finally {
     client.close();
   }

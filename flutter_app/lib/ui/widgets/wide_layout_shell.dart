@@ -10,7 +10,7 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
-import 'package:fa/ui/screens/app_launcher_screen.dart';
+
 import 'package:fa/ui/widgets/apps_panel.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/settings.dart';

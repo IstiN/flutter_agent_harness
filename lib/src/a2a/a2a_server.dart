@@ -123,7 +123,7 @@ final class A2aRequestHandler {
         ),
       );
       task.artifacts.add(A2aArtifact(parts: [A2aPart(text: response)]));
-    } on Object catch (e, st) {
+    } on Object catch (e) {
       task.state = A2aTaskState.failed;
       task.messages.add(
         A2aMessage(

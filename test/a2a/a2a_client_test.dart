@@ -105,7 +105,6 @@ void main() {
       });
       final a2a = A2aClient(baseUrl: 'https://a.test', client: client);
       final card1 = await a2a.card;
-      final card2 = await a2a.card;
       expect(card1.name, 'test-agent');
       expect(fetchCount, 1); // cached
       a2a.close();

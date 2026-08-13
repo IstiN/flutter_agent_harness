@@ -66,12 +66,15 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   /// Short timestamp for the session subtitle (e.g. "12:34 PM" or "May 7").
   String _subtitleFor(FlutterManagedSession session) {
     final created = session.createdAt;
+    // ignore: unnecessary_null_comparison, dead_code
     if (created == null) return '';
     final now = DateTime.now();
     final diff = now.difference(created);
     if (diff.inDays == 0) {
       // Today: show time.
-      final h = created.hour == 0 ? 12 : (created.hour > 12 ? created.hour - 12 : created.hour);
+      final h = created.hour == 0
+          ? 12
+          : (created.hour > 12 ? created.hour - 12 : created.hour);
       final m = created.minute.toString().padLeft(2, '0');
       final ampm = created.hour >= 12 ? 'PM' : 'AM';
       return '$h:$m $ampm';
@@ -81,7 +84,20 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       return weekdays[created.weekday - 1];
     }
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     return '${months[created.month - 1]} ${created.day}';
   }
 
@@ -230,9 +246,7 @@ class _SessionTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       child: Material(
         color: isActive
-            ? (isLight
-                ? const Color(0xFFEEF2FF)
-                : colors.panelAlt)
+            ? (isLight ? const Color(0xFFEEF2FF) : colors.panelAlt)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
@@ -266,8 +280,9 @@ class _SessionTile extends StatelessWidget {
                         style: TextStyle(
                           color: isActive ? colors.text : colors.dim,
                           fontSize: 13,
-                          fontWeight:
-                              isActive ? FontWeight.w600 : FontWeight.w400,
+                          fontWeight: isActive
+                              ? FontWeight.w600
+                              : FontWeight.w400,
                         ),
                       ),
                       if (subtitle.isNotEmpty) ...[

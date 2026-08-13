@@ -26,12 +26,8 @@ class SidebarNavItem extends StatelessWidget {
     final colors = FahColors.of(context);
     final isLight = Theme.of(context).brightness == Brightness.light;
     // Light theme: indigo for selected; dark theme: teal.
-    final fg = selected
-        ? (isLight ? colors.indigo : colors.teal)
-        : colors.dim;
-    final selectedBg = isLight
-        ? const Color(0xFFEEF2FF)
-        : colors.panelAlt;
+    final fg = selected ? (isLight ? colors.indigo : colors.teal) : colors.dim;
+    final selectedBg = isLight ? const Color(0xFFEEF2FF) : colors.panelAlt;
 
     if (collapsed) {
       return Padding(

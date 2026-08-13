@@ -3,14 +3,12 @@ import 'dart:async';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
-import 'package:fa/services/agent_service.dart';
+
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/ui/screens/app_launcher_screen.dart';
-import 'package:fa/ui/widgets/fa_mark.dart';
+
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// A compact apps panel for the right side of the [WideLayoutShell].
 ///
@@ -76,10 +74,11 @@ class _AppsPanelState extends State<AppsPanel> {
     }
     try {
       final apps = await store.listApps();
-      if (mounted) setState(() {
-        _apps = apps;
-        _loading = false;
-      });
+      if (mounted)
+        setState(() {
+          _apps = apps;
+          _loading = false;
+        });
     } on Object {
       if (mounted) setState(() => _loading = false);
     }
@@ -103,12 +102,7 @@ class _AppsPanelState extends State<AppsPanel> {
       isDemo: AppsStore.demoAppIds.contains(app.id),
       source: 'apps_panel',
     );
-    pushJsApp(
-      context,
-      manager: manager,
-      app: app,
-      source: 'apps_panel',
-    );
+    pushJsApp(context, manager: manager, app: app, source: 'apps_panel');
   }
 
   @override
@@ -134,9 +128,7 @@ class _AppsPanelState extends State<AppsPanel> {
                 const Spacer(),
                 Text(
                   '${_apps.length}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.dim,
-                  ),
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
                 ),
               ],
             ),
@@ -198,38 +190,35 @@ class _AppsPanelState extends State<AppsPanel> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
                 : _filteredApps.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            _searchController.text.isEmpty
-                                ? 'No apps yet.\nAsk Fa to build one!'
-                                : 'No apps match your search.',
-                            textAlign: TextAlign.center,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colors.dim,
-                            ),
-                          ),
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        _searchController.text.isEmpty
+                            ? 'No apps yet.\nAsk Fa to build one!'
+                            : 'No apps match your search.',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.dim,
                         ),
-                      )
-                    : GridView.builder(
-                        padding: const EdgeInsets.all(12),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
+                      ),
+                    ),
+                  )
+                : GridView.builder(
+                    padding: const EdgeInsets.all(12),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 4,
                           childAspectRatio: 0.82,
                           crossAxisSpacing: 8,
                           mainAxisSpacing: 12,
                         ),
-                        itemCount: _filteredApps.length,
-                        itemBuilder: (context, index) {
-                          final app = _filteredApps[index];
-                          return _AppTile(
-                            app: app,
-                            onTap: () => _openApp(app),
-                          );
-                        },
-                      ),
+                    itemCount: _filteredApps.length,
+                    itemBuilder: (context, index) {
+                      final app = _filteredApps[index];
+                      return _AppTile(app: app, onTap: () => _openApp(app));
+                    },
+                  ),
           ),
           // System tiles (Settings, Files) at the bottom.
           const Divider(height: 1),
@@ -258,9 +247,7 @@ class _AppsPanelState extends State<AppsPanel> {
 
   void _openFiles() {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const _PlaceholderPage(title: 'Files'),
-      ),
+      MaterialPageRoute(builder: (_) => const _PlaceholderPage(title: 'Files')),
     );
   }
 }
@@ -271,10 +258,10 @@ enum _AppFilter {
   custom;
 
   String get label => switch (this) {
-        all => 'All',
-        demo => 'Demo',
-        custom => 'Custom',
-      };
+    all => 'All',
+    demo => 'Demo',
+    custom => 'Custom',
+  };
 }
 
 class _AppTile extends StatelessWidget {
@@ -309,11 +296,7 @@ class _AppTile extends StatelessWidget {
             ),
             child: Center(
               child: service != null
-                  ? AppIcon(
-                      app: app,
-                      env: service.env,
-                      size: 24,
-                    )
+                  ? AppIcon(app: app, env: service.env, size: 24)
                   : const Icon(Icons.apps, size: 22),
             ),
           ),
@@ -358,16 +341,10 @@ class _SystemTile extends StatelessWidget {
             const SizedBox(width: 12),
             Text(
               label,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: colors.dim,
-              ),
+              style: theme.textTheme.bodyMedium?.copyWith(color: colors.dim),
             ),
             const Spacer(),
-            Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: colors.borderBright,
-            ),
+            Icon(Icons.chevron_right, size: 18, color: colors.borderBright),
           ],
         ),
       ),
@@ -377,11 +354,7 @@ class _SystemTile extends StatelessWidget {
 
 /// Inherited widget so [_AppTile] can access the session manager for AppIcon.
 class ManagerScope extends InheritedWidget {
-  const ManagerScope({
-    super.key,
-    required this.manager,
-    required super.child,
-  });
+  const ManagerScope({super.key, required this.manager, required super.child});
 
   final FlutterSessionManager manager;
 

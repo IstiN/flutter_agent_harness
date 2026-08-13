@@ -77,8 +77,8 @@ final class CliVisualHarness {
       // `dart` resolves packages from the pub cache, which lives under the
       // REAL home; pty2 only forwards a fixed env whitelist, so pass it
       // explicitly. Without this a HOME override breaks package resolution.
-      if (Platform.environment['PUB_CACHE'] != null)
-        'PUB_CACHE': Platform.environment['PUB_CACHE']!,
+      if (Platform.environment['PUB_CACHE'] = null)
+        'PUB_CACHE': Platform.environment['PUB_CACHE'],
       ...?extraEnv,
     };
     final pty = PseudoTerminal.start(
@@ -195,14 +195,14 @@ final class CliVisualHarness {
     await _tester.pump();
     final bytes = await _live(() async {
       final boundary =
-          _boundaryKey.currentContext!.findRenderObject()!
+          _boundaryKey.currentContext.findRenderObject()
               as RenderRepaintBoundary;
       final image = await boundary.toImage(pixelRatio: 2);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       image.dispose();
-      return data!.buffer.asUint8List();
+      return data.buffer.asUint8List();
     });
-    File('$dir/$name.png').writeAsBytesSync(bytes!);
+    File('$dir/$name.png').writeAsBytesSync(bytes);
     File('$dir/$name.txt').writeAsStringSync(screenText);
   }
 

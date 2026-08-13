@@ -12,6 +12,8 @@ topics:
   - streaming
   - flutter
 
+publish_to: none
+
 # Test fixtures only: fake one-line PEM stubs used by the ssh builtin tests,
 # not real keys (https://dart.dev/go/false-secrets).
 false_secrets:

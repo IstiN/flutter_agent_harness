@@ -1,7 +1,6 @@
 @TestOn('vm')
 library;
 
-import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/task/subagent.dart';
 import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
 import 'package:flutter_agent_harness/src/task/subagent_tools.dart';
