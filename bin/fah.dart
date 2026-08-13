@@ -44,10 +44,12 @@ String _packageVersion() {
   const fromEnv = String.fromEnvironment('FA_VERSION');
   if (fromEnv.isNotEmpty) return fromEnv;
   try {
-    final scriptPath = Platform.script.toFilePath();
-    // dart build cli bundle layout: <root>/bin/<exe> + <root>/version.txt
-    // Installer layout: <install_dir>/<exe> + <install_dir>/version.txt
-    final exeDir = File(scriptPath).parent;
+    // Platform.resolvedExecutable always returns the full canonical path,
+    // even when the binary was invoked via a bare name or relative path.
+    // Platform.script may return a relative path on some platforms, which
+    // makes exeDir = cwd instead of the binary's real directory.
+    final exePath = Platform.resolvedExecutable;
+    final exeDir = File(exePath).parent;
     final bundleRoot = exeDir.parent;
     // Try bundle/version.txt first (dart build cli layout).
     final versionFile = File('${bundleRoot.path}/version.txt');
