@@ -16,7 +16,7 @@
     try {
       var url = new URL(href, window.location.origin);
       var h = url.hostname;
-      if (h.indexOf('testflight.apple.com') !== -1) return 'testflight_click';
+      if (h === 'testflight.apple.com') return 'testflight_click';
       if (h === 'github.com' && url.pathname.indexOf('/IstiN') === 0) return 'github_click';
       if (h === 'pub.dev') return 'pubdev_click';
     } catch (e) {
