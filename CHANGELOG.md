@@ -932,4 +932,19 @@
 - feat(ui): session date grouping + 3-dot menu + subtitle timestamps
 - feat(ui): workspace header in wide layout + session tile 3-dot menu
 
+## 0.1.169
+
+- fix: fa update now copies version.txt alongside the new binary
+- feat(ui): permission cards with working action buttons
+- ci: CodeQL workflow — Dart + JS only (no Java/Kotlin, no Gradle in root)
+- fix(security): exact hostname match for testflight.apple.com (CodeQL #7)
+- fix(ui): settings/files/model picker as popup dialogs on wide screens
+- fix: disable Impeller on macOS to prevent resize crash
+- fix(installer): copy version.txt next to binary + fix version lookup path
+- feat(ui): FaMark sparkle brand icon (no background) + files goldens update
+- fix(security): URL sanitization in analytics.js + workflow permissions
+- fix(ui): full-height dividers — panels extend to window top on macOS
+- fix(ui): address prototype feedback — tabs, calendar, timer, model switch
+- Create SECURITY.md for security policy
+
 ## Unreleased
