@@ -146,6 +146,14 @@ jobs:
 
       - run: dart pub get
 
+      # The repo is a private-to-publish package (git dep on
+      # flutter_agent_memory, not yet on pub.dev) so `publish_to: none` lives
+      # in the pubspec for the analyzer. Strip it here so `dart pub publish`
+      # can run; the analyzer warning is exactly why the CI quality job keeps
+      # it in the committed file.
+      - name: Enable publishing for this run
+        run: sed -i '/^publish_to: none/d' pubspec.yaml
+
       - name: Publish (automated publishing via OIDC)
         run: dart pub publish --force
 

@@ -12,6 +12,11 @@ topics:
   - streaming
   - flutter
 
+# The package depends on flutter_agent_memory via git (not yet on pub.dev);
+# publish_to: none keeps `dart analyze` from flagging invalid_dependency.
+# The CI publish job strips this line just before `dart pub publish`.
+publish_to: none
+
 # Test fixtures only: fake one-line PEM stubs used by the ssh builtin tests,
 # not real keys (https://dart.dev/go/false-secrets).
 false_secrets:
