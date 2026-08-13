@@ -12,10 +12,16 @@
   }
 
   function linkEvent(href) {
-    if (!href) return null;
-    if (href.indexOf('testflight.apple.com') !== -1) return 'testflight_click';
-    if (href.indexOf('github.com/IstiN') !== -1) return 'github_click';
-    if (href.indexOf('pub.dev') !== -1) return 'pubdev_click';
+    if (!href || typeof href !== 'string') return null;
+    try {
+      var url = new URL(href, window.location.origin);
+      var h = url.hostname;
+      if (h.indexOf('testflight.apple.com') !== -1) return 'testflight_click';
+      if (h === 'github.com' && url.pathname.indexOf('/IstiN') === 0) return 'github_click';
+      if (h === 'pub.dev') return 'pubdev_click';
+    } catch (e) {
+      // href is a relative path or anchor — not an external link.
+    }
     return null;
   }
 
