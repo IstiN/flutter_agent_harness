@@ -11,6 +11,7 @@ import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/apps_panel.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
@@ -344,24 +345,17 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Widget _buildAppsArea() {
     // The nested Navigator ensures that calls to Navigator.of(context) from
-    // within AppLauncherScreen (app launches via pushJsApp, Settings/Files
+    // within the apps panel (app launches via pushJsApp, Settings/Files
     // tiles) push within this panel rather than replacing the whole shell.
     return Navigator(
       onGenerateRoute: (settings) => MaterialPageRoute(
-        builder: (context) => AppLauncherScreen(
+        builder: (context) => ManagerScope(
           manager: widget.manager,
-          registry: widget.registry,
-          lastConnectionStore: widget.lastConnectionStore,
-          layoutStore: widget.layoutStore,
-          appsStore: widget.appsStore,
-          sessionNamesStore: widget.sessionNamesStore,
-          uploadPicker: widget.uploadPicker,
-          asr: widget.asr,
-          asrTranscriber: widget.asrTranscriber,
-          audioControllerFactory: widget.audioControllerFactory,
-          videoControllerFactory: widget.videoControllerFactory,
-          tileEngineFactory: widget.tileEngineFactory,
-          hideChatSheet: true,
+          child: AppsPanel(
+            manager: widget.manager,
+            appsStore: widget.appsStore,
+            sessionNamesStore: widget.sessionNamesStore,
+          ),
         ),
       ),
     );

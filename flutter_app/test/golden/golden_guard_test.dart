@@ -84,6 +84,10 @@ const _exempt = <String, String>{
       'WebView SSO page; needs a real webview plugin (not available in tests)',
   'lib/services/codemie_sso_flow.dart':
       'service flow orchestrator; coordinates SSO + model picker dialogs (no widget of its own)',
+  'lib/ui/widgets/apps_panel.dart':
+      'compact apps panel for the wide-layout right sidebar; rendered inside wide_layout_shell (covered indirectly)',
+  'lib/services/chatgpt_oauth_flow.dart':
+      'OAuth flow orchestrator; no widget of its own',
 };
 
 final _widgetPattern = RegExp(

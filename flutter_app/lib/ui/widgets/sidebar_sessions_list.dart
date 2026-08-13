@@ -63,6 +63,28 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
         );
   }
 
+  /// Short timestamp for the session subtitle (e.g. "12:34 PM" or "May 7").
+  String _subtitleFor(FlutterManagedSession session) {
+    final created = session.createdAt;
+    if (created == null) return '';
+    final now = DateTime.now();
+    final diff = now.difference(created);
+    if (diff.inDays == 0) {
+      // Today: show time.
+      final h = created.hour == 0 ? 12 : (created.hour > 12 ? created.hour - 12 : created.hour);
+      final m = created.minute.toString().padLeft(2, '0');
+      final ampm = created.hour >= 12 ? 'PM' : 'AM';
+      return '$h:$m $ampm';
+    }
+    if (diff.inDays == 1) return 'Yesterday';
+    if (diff.inDays < 7) {
+      final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return weekdays[created.weekday - 1];
+    }
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${months[created.month - 1]} ${created.day}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -115,6 +137,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                     final isActive = widget.manager.active?.id == session.id;
                     return _SessionTile(
                       title: _titleFor(session),
+                      subtitle: _subtitleFor(session),
                       isActive: isActive,
                       onTap: () {
                         widget.manager.switchTo(session.id);
@@ -189,11 +212,13 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
 class _SessionTile extends StatelessWidget {
   const _SessionTile({
     required this.title,
+    required this.subtitle,
     required this.isActive,
     required this.onTap,
   });
 
   final String title;
+  final String subtitle;
   final bool isActive;
   final VoidCallback onTap;
 
@@ -204,8 +229,6 @@ class _SessionTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       child: Material(
-        // Light theme: active session gets a light indigo tint background
-        // (like the prototype's "Today" item); dark theme keeps panelAlt.
         color: isActive
             ? (isLight
                 ? const Color(0xFFEEF2FF)
@@ -224,7 +247,6 @@ class _SessionTile extends StatelessWidget {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      // Light theme: indigo dot; dark theme: teal dot.
                       color: isLight ? colors.indigo : colors.teal,
                       shape: BoxShape.circle,
                     ),
@@ -233,15 +255,34 @@ class _SessionTile extends StatelessWidget {
                   const SizedBox(width: 8),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: isActive ? colors.text : colors.dim,
-                      fontSize: 13,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isActive ? colors.text : colors.dim,
+                          fontSize: 13,
+                          fontWeight:
+                              isActive ? FontWeight.w600 : FontWeight.w400,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.dim.withValues(alpha: 0.7),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],
