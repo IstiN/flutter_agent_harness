@@ -257,6 +257,10 @@ class _AppsPanelState extends State<AppsPanel> {
         _FocusTimerWidget(colors: colors, theme: theme, isLight: isLight),
         const SizedBox(height: 16),
 
+        // ── System tiles (Calendar, Files, Notes, Maps, etc.) ────
+        _SystemAppsGrid(colors: colors, theme: theme, isLight: isLight),
+        const SizedBox(height: 16),
+
         // ── Custom apps section ──────────────────────────────────
         if (_customApps.isNotEmpty) ...[
           _SectionHeader(title: 'Created by you', count: _customApps.length),
@@ -624,6 +628,102 @@ class _AppTile extends StatelessWidget {
               color: colors.dim,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// System-level app tiles matching the prototype: Calendar, Files, Notes,
+/// Maps, Calculator, Settings, Utilities, Travel. These are placeholders
+/// that open the corresponding system feature or do nothing yet.
+class _SystemAppsGrid extends StatelessWidget {
+  const _SystemAppsGrid({
+    required this.colors,
+    required this.theme,
+    required this.isLight,
+  });
+
+  final FahColors colors;
+  final ThemeData theme;
+  final bool isLight;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisCount: 4,
+      childAspectRatio: 0.82,
+      crossAxisSpacing: 8,
+      mainAxisSpacing: 12,
+      children: [
+        _SystemAppTile(icon: Icons.calendar_today, label: 'Calendar', colors: colors, theme: theme, isLight: isLight),
+        _SystemAppTile(icon: Icons.folder_outlined, label: 'Files', colors: colors, theme: theme, isLight: isLight),
+        _SystemAppTile(icon: Icons.note_outlined, label: 'Notes', colors: colors, theme: theme, isLight: isLight),
+        _SystemAppTile(icon: Icons.map_outlined, label: 'Maps', colors: colors, theme: theme, isLight: isLight),
+        _SystemAppTile(icon: Icons.calculate_outlined, label: 'Calculator', colors: colors, theme: theme, isLight: isLight),
+        _SystemAppTile(icon: Icons.settings_outlined, label: 'Settings', colors: colors, theme: theme, isLight: isLight),
+        _SystemAppTile(icon: Icons.build_outlined, label: 'Utilities', colors: colors, theme: theme, isLight: isLight, subtitle: '4 apps'),
+        _SystemAppTile(icon: Icons.flight_outlined, label: 'Travel', colors: colors, theme: theme, isLight: isLight, subtitle: '3 apps'),
+      ],
+    );
+  }
+}
+
+class _SystemAppTile extends StatelessWidget {
+  const _SystemAppTile({
+    required this.icon,
+    required this.label,
+    required this.colors,
+    required this.theme,
+    required this.isLight,
+    this.subtitle,
+  });
+
+  final IconData icon;
+  final String label;
+  final FahColors colors;
+  final ThemeData theme;
+  final bool isLight;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () {}, // Placeholder — will open the system feature
+      borderRadius: BorderRadius.circular(12),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: isLight ? colors.panelAlt : colors.panel,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: colors.border),
+            ),
+            child: Icon(icon, size: 22, color: colors.dim),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 11,
+              color: colors.dim,
+            ),
+          ),
+          if (subtitle != null)
+            Text(
+              subtitle!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 9,
+                color: colors.dim.withValues(alpha: 0.6),
+              ),
+            ),
         ],
       ),
     );
