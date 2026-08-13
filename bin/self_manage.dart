@@ -435,6 +435,12 @@ Future<int> _extractAndSwap(
     await File(staging).writeAsBytes(srcExe.readAsBytesSync());
     await _atomicSwap(staging, target, runProcess);
     await _copyBundleLibs(bundleDir, installDir);
+    // Copy version.txt so the new binary reports its version correctly.
+    final srcVersion = File('${bundleDir.path}/version.txt');
+    if (srcVersion.existsSync()) {
+      await File('${installDir.path}/version.txt')
+          .writeAsBytes(srcVersion.readAsBytesSync());
+    }
     _say('updated to $latest — restart fa to use it.');
     return 0;
   } finally {
