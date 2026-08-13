@@ -144,6 +144,14 @@ class _AppsPanelState extends State<AppsPanel> {
                     color: colors.dim,
                   ),
                 ),
+                const SizedBox(width: 8),
+                // "Customize" label like the prototype.
+                Text(
+                  'Customize',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.dim,
+                  ),
+                ),
                 const SizedBox(width: 4),
                 Icon(Icons.tune, size: 16, color: colors.dim),
               ],
