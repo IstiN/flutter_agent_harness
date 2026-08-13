@@ -170,7 +170,7 @@ fi
 if [ "$dl_ok" = false ] && [ "$os" = "macos" ]; then
   zip_asset="fa-${os}-${arch}-mac.zip"
   zip_url="https://github.com/$REPO/releases/latest/download/$zip_asset"
-  info "archive not found — trying $zip_asset…"
+  info "archive not found — trying ${zip_asset}…"
   zip_tmp="$(mktemp 2>/dev/null || mktemp -t fa-zip)"
   if command -v curl >/dev/null 2>&1; then
     curl -fSL --progress-bar "$zip_url" -o "$zip_tmp" 2>/dev/null
