@@ -7,6 +7,7 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// The right-side "My Apps" panel for the [WideLayoutShell].
@@ -40,6 +41,10 @@ class _AppsPanelState extends State<AppsPanel> {
   List<JsAppInfo> _apps = const [];
   var _loading = true;
   var _filter = _AppFilter.all;
+
+  /// Whether we're on macOS desktop (traffic lights float over content).
+  static bool get _isMacOS =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
   @override
   void initState() {
@@ -155,7 +160,14 @@ class _AppsPanelState extends State<AppsPanel> {
         children: [
           // ── Header ───────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: EdgeInsets.fromLTRB(
+              16,
+              // macOS: extra top padding to clear traffic lights (content
+              // extends to the window top — no global 28px strip).
+              _isMacOS ? 28 : 16,
+              16,
+              8,
+            ),
             child: Row(
               children: [
                 Text(

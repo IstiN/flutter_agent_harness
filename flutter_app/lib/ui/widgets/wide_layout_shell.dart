@@ -19,6 +19,7 @@ import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// The wide-screen adaptive shell: a 3-pane layout with a collapsible
@@ -70,7 +71,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   static const double _appsPanelMinWidth = 240;
   static const double _appsPanelMaxWidth = 640;
 
-  /// Minimum/maximum width for the sidebar drag handle.
+  /// Whether we're on macOS desktop (traffic lights float over content).
+  static bool get _isMacOS =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
   void _onManagerChanged() {
     if (mounted) setState(() {});
@@ -203,7 +206,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
     if (_sidebarCollapsed) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: EdgeInsets.symmetric(
+          vertical: _isMacOS ? 28 : 16,
+        ),
         child: Column(
           children: [
             brandIcon,
@@ -223,7 +228,14 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 8, 12),
+      // macOS: extra top padding to clear the floating traffic lights
+      // (the content now extends to the window top — no global 28px strip).
+      padding: EdgeInsets.fromLTRB(
+        16,
+        _isMacOS ? 28 : 16,
+        8,
+        12,
+      ),
       child: Row(
         children: [
           brandIcon,
@@ -325,7 +337,12 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         // Workspace header matching the prototype: name + dropdown arrow + edit icon.
         // No bottom border — the vertical dividers between panels run full height.
         Container(
-          padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+          padding: EdgeInsets.fromLTRB(
+            20,
+            _isMacOS ? 28 : 12,
+            12,
+            8,
+          ),
           decoration: BoxDecoration(
             color: isLight ? colors.panel : colors.panel,
           ),

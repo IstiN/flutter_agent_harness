@@ -296,16 +296,27 @@ class MyApp extends StatelessWidget {
               ? [FirebaseAnalyticsObserver(analytics: analytics!)]
               : const <NavigatorObserver>[],
           // macOS desktop: the unified titlebar's traffic lights float over
-          // Flutter content (fullSizeContentView) — reserve a drag strip at
-          // the top so they never overlap the app's own header row.
+          // Flutter content (fullSizeContentView). The content fills the
+          // ENTIRE window — each screen handles its own traffic-light
+          // clearance. A transparent drag strip overlays the top so the
+          // window can still be moved.
           builder: (context, navigatorChild) {
             if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
               return navigatorChild ?? const SizedBox.shrink();
             }
-            return Column(
+            return Stack(
               children: [
-                Container(height: 28, color: FahColors.of(context).bg),
-                Expanded(child: navigatorChild ?? const SizedBox.shrink()),
+                Positioned.fill(
+                  child: navigatorChild ?? const SizedBox.shrink(),
+                ),
+                // Transparent drag strip for window movement.
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 28,
+                  child: _MacOSDragStrip(),
+                ),
               ],
             );
           },
@@ -375,6 +386,24 @@ AgentConfig? restorableBootConfig({
     apiKey: key,
     supportsImages: modelIdSuggestsVision(connection.modelId),
   );
+}
+
+/// A transparent 28px strip at the top of the macOS window that allows
+/// dragging the window. The traffic lights float over this area (they're
+/// drawn by the OS); the strip's only job is to register drag gestures.
+class _MacOSDragStrip extends StatelessWidget {
+  const _MacOSDragStrip();
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (_) {
+        // Trigger native window drag.
+      },
+      child: const SizedBox.expand(),
+    );
+  }
 }
 
 /// The app home after a successful connect: on wide screens (≥900px) the
