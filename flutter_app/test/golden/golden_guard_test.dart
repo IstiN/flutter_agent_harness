@@ -80,12 +80,12 @@ const _exempt = <String, String>{
       'sidebar sessions list; rendered inside wide_layout_shell (covered indirectly)',
   'lib/ui/widgets/code_viewer.dart':
       'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
+  'lib/ui/widgets/apps_panel.dart':
+      'test/golden/apps_panel_golden_test.dart',
   'lib/ui/screens/codemie_sso_webview.dart':
       'WebView SSO page; needs a real webview plugin (not available in tests)',
   'lib/services/codemie_sso_flow.dart':
       'service flow orchestrator; coordinates SSO + model picker dialogs (no widget of its own)',
-  'lib/ui/widgets/apps_panel.dart':
-      'compact apps panel for the wide-layout right sidebar; rendered inside wide_layout_shell (covered indirectly)',
   'lib/services/chatgpt_oauth_flow.dart':
       'OAuth flow orchestrator; no widget of its own',
 };

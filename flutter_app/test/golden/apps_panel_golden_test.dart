@@ -1,0 +1,230 @@
+/// Golden (screenshot) tests for the wide-layout right-side apps panel:
+/// `lib/ui/widgets/apps_panel.dart` — the "My Apps" panel with search bar,
+/// filter chips, weather/up-next/focus-timer widgets, sectioned app grid,
+/// and recent-activity footer.
+///
+/// Apps are seeded into a `MemoryExecutionEnv` with inline-SVG manifest
+/// icons (the golden font sandbox renders no emoji glyphs).
+library;
+
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/widgets/apps_panel.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'golden_test_helper.dart';
+
+StreamFunction _singleTextResponse(String text) {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final message = AssistantMessage(
+      content: [TextContent(text: text)],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.now(),
+    );
+    stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    stream.end();
+    return stream;
+  };
+}
+
+AgentService _fakeService(ExecutionEnv env) {
+  return AgentService(
+    agent: Agent(
+      model: Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test',
+        baseUrl: 'https://example.com',
+        contextWindow: 100000,
+        maxTokens: 4096,
+      ),
+      systemPrompt: 'You are Fa.',
+      streamFunction: _singleTextResponse('ok'),
+      toolRegistry: ToolRegistry(const []),
+    ),
+    env: env,
+    sessionsRoot: '/sessions',
+    config: AgentConfig(
+      providerKind: 'test',
+      modelId: 'test-model',
+      baseUrl: 'https://example.com',
+      apiKey: '',
+    ),
+  );
+}
+
+/// A rounded-square badge icon with a white glyph shape (renders with the
+/// golden fonts — no emoji).
+String _badgeIcon(String bg, String shape) =>
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
+    "<rect x='1' y='1' width='22' height='22' rx='6' fill='$bg'/>"
+    '$shape</svg>';
+
+const _fg = '#f8fafc';
+
+/// id → [display name, inline SVG icon, bundled flag].
+Map<String, List<Object>> get _apps => {
+  'weather': [
+    'Weather',
+    _badgeIcon(
+      '#0ea5e9',
+      "<circle cx='12' cy='12' r='5' fill='$_fg'/>"
+          "<rect x='11' y='2' width='2' height='4' rx='1' fill='$_fg'/>"
+          "<rect x='11' y='18' width='2' height='4' rx='1' fill='$_fg'/>"
+          "<rect x='2' y='11' width='4' height='2' rx='1' fill='$_fg'/>"
+          "<rect x='18' y='11' width='4' height='2' rx='1' fill='$_fg'/>",
+    ),
+    true,
+  ],
+  'notes': [
+    'Notes',
+    _badgeIcon(
+      '#6366f1',
+      "<rect x='7' y='7' width='10' height='2' rx='1' fill='$_fg'/>"
+          "<rect x='7' y='11' width='10' height='2' rx='1' fill='$_fg'/>"
+          "<rect x='7' y='15' width='6' height='2' rx='1' fill='$_fg'/>",
+    ),
+    true,
+  ],
+  'pomodoro': [
+    'Pomodoro',
+    _badgeIcon(
+      '#f43f5e',
+      "<circle cx='12' cy='13' r='6' fill='none' stroke='$_fg' "
+          "stroke-width='2'/><rect x='10' y='4' width='4' height='2' rx='1' "
+          "fill='$_fg'/><path d='M12 13 L12 9.5' stroke='$_fg' "
+          "stroke-width='2' stroke-linecap='round'/>",
+    ),
+    true,
+  ],
+  'habits': [
+    'Habit Tracker',
+    _badgeIcon(
+      '#22c55e',
+      "<path d='M7 12.5 L10.5 16 L17 8.5' stroke='$_fg' stroke-width='2.5' "
+          "fill='none' stroke-linecap='round' stroke-linejoin='round'/>",
+    ),
+    true,
+  ],
+  'dice': [
+    'Dice Roller',
+    _badgeIcon(
+      '#8b5cf6',
+      "<circle cx='8.5' cy='8.5' r='1.8' fill='$_fg'/>"
+          "<circle cx='15.5' cy='8.5' r='1.8' fill='$_fg'/>"
+          "<circle cx='8.5' cy='15.5' r='1.8' fill='$_fg'/>"
+          "<circle cx='15.5' cy='15.5' r='1.8' fill='$_fg'/>",
+    ),
+    true,
+  ],
+  'expense': [
+    'Expense Tracker',
+    _badgeIcon(
+      '#059669',
+      "<circle cx='12' cy='12' r='7' fill='none' stroke='$_fg' "
+          "stroke-width='2'/><path d='M12 7v5l3 3' stroke='$_fg' "
+          "stroke-width='2' fill='none' stroke-linecap='round'/>",
+    ),
+    false,
+  ],
+  'workout': [
+    'Workout Planner',
+    _badgeIcon(
+      '#dc2626',
+      "<rect x='5' y='9' width='14' height='6' rx='2' fill='none' "
+          "stroke='$_fg' stroke-width='2'/><rect x='8' y='12' "
+          "width='8' height='2' fill='$_fg'/>",
+    ),
+    false,
+  ],
+  'focus': [
+    'Focus Timer',
+    _badgeIcon(
+      '#f59e0b',
+      "<circle cx='12' cy='12' r='7' fill='none' stroke='$_fg' "
+          "stroke-width='2'/><path d='M12 7v5' stroke='$_fg' "
+          "stroke-width='2' stroke-linecap='round'/><circle cx='12' "
+          "cy='12' r='1.5' fill='$_fg'/>",
+    ),
+    false,
+  ],
+};
+
+Future<MemoryExecutionEnv> _seededEnv() async {
+  final env = MemoryExecutionEnv();
+  for (final entry in _apps.entries) {
+    await env.writeFile(
+      'apps/${entry.key}/manifest.json',
+      '{"id": "${entry.key}", "name": "${entry.value[0]}", '
+          '"description": "${entry.value[0]} app", '
+          '"icon": ${_jsonString(entry.value[1] as String)}, '
+          '"bundled": ${entry.value[2]}}',
+    );
+    await env.writeFile('apps/${entry.key}/widget.js', '(function(){})();');
+  }
+  return env;
+}
+
+/// JSON-encodes [value] as a string literal (double quotes, escaped).
+String _jsonString(String value) {
+  final buffer = StringBuffer('"');
+  for (final unit in value.codeUnits) {
+    final char = String.fromCharCode(unit);
+    if (char == '"' || char == '\\') buffer.write('\\');
+    buffer.write(char);
+  }
+  buffer.write('"');
+  return buffer.toString();
+}
+
+Future<void> _pumpAppsPanel(
+  WidgetTester tester, {
+  ThemeData? theme,
+}) async {
+  final env = await _seededEnv();
+  final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+  final service = _fakeService(env);
+  manager.addSession('test-session', service);
+  final appsStore = AppsStore(
+    env,
+    readAsset: (path) async =>
+        throw StateError('no bundled assets in this test'),
+    seedDemoIds: const [],
+  );
+  await pumpGolden(
+    tester,
+    ManagerScope(
+      manager: manager,
+      child: AppsPanel(manager: manager, appsStore: appsStore),
+    ),
+    // Right panel width (~380px) on a desktop-height surface.
+    size: const Size(380, 800),
+    theme: theme,
+    wrap: (child) => Scaffold(body: child),
+  );
+}
+
+void main() {
+  setUpAll(ensureGoldenFonts);
+
+  group('AppsPanel goldens (apps_panel/)', () {
+    testWidgets('apps panel — dark', (tester) async {
+      await _pumpAppsPanel(tester);
+      await expectGolden(tester, 'apps_panel/panel_dark');
+    });
+
+    testWidgets('apps panel — light', (tester) async {
+      await _pumpAppsPanel(tester, theme: buildFahThemeLight());
+      await expectGolden(tester, 'apps_panel/panel_light');
+    });
+  });
+}
