@@ -137,7 +137,7 @@ void main() {
       '/provider',
       'openrouter oauth',
       'codemie sso',
-      '/provider-edit',
+      '/key',
       '/key',
       '/mode',
       '/session',
