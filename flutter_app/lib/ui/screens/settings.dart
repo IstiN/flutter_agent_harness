@@ -197,6 +197,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   late Object _selection;
   late String _lastDefaultModel;
 
+  /// Provider-first flow: the user picks a provider from the list, then the
+  /// configuration fields appear. Starts as `true` (list only) when no
+  /// provider is pre-selected; `false` when restoring a connection or a
+  /// preset is forced.
+  var _showProviderListOnly = true;
+
   late final ProviderRegistry _registry;
   late final TextEditingController _keyController;
   late final TextEditingController _modelController;
@@ -294,6 +300,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (forcedProvider != null) _applyPreset(forcedProvider);
     final connection = widget.initialConnection;
     if (connection != null) _applyLastConnection(connection);
+    // When restoring a connection, skip the provider-only step — the
+    // provider is already known, show the config fields directly.
+    if (connection != null || forcedProvider != null) {
+      _showProviderListOnly = false;
+    }
     // Fill the key field according to the final selection (hosted preset →
     // env/saved-keys; custom provider → registry).
     if (_selection is ProviderPreset) {
@@ -648,6 +659,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         case CustomProvider provider:
           _applyCustomProvider(provider);
       }
+      // Provider-first flow: selecting a provider reveals the config fields.
+      _showProviderListOnly = false;
     });
   }
 
@@ -983,8 +996,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Provider selection as a list (same style as the settings
-        // ProvidersSection) — replaces the old dropdown.
+        // Provider-first flow: the list is always visible; config fields
+        // appear only after a provider is selected.
         ProviderSelectionList(
           selected: _selection,
           onSelect: (value) => _selectProvider(value),
@@ -993,8 +1006,27 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           onEdit: (provider) => _editProvider(provider),
           isWeb: _isWeb,
         ),
-        const SizedBox(height: 12),
-        if (_isOnDevice)
+        if (!_showProviderListOnly) ...[
+          const SizedBox(height: 12),
+          // "Back to providers" link.
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () =>
+                  setState(() => _showProviderListOnly = true),
+              icon: const Icon(Icons.arrow_back, size: 16),
+              label: const Text('Change provider'),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+        if (!_showProviderListOnly) ...[
+          if (_isOnDevice)
           _buildWebLlmFields(theme)
         else if (_isGemma)
           _buildGemmaFields(theme)
@@ -1114,6 +1146,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               ),
             ],
           ),
+        ],
         ],
         const SizedBox(height: 16),
         if (_error != null)

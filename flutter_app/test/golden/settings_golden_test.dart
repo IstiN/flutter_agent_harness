@@ -170,7 +170,8 @@ Widget _wrapPage(Widget child) => Builder(
 );
 
 /// Selects the provider row labelled [label] from the list-based picker
-/// (replaces the old dropdown-tap flow).
+/// (replaces the old dropdown-tap flow). The provider-first flow hides the
+/// config fields until a provider is tapped.
 Future<void> _selectProvider(WidgetTester tester, String label) async {
   await tester.tap(find.text(label).last);
   await tester.pumpAndSettle();
@@ -185,6 +186,7 @@ void main() {
   group('settings goldens', () {
     testWidgets('hosted provider form (OpenRouter)', (tester) async {
       await _pumpSettingsFrame(tester);
+      await _selectProvider(tester, 'OpenRouter');
       await tester.enterText(
         find.widgetWithText(TextField, 'API key'),
         'sk-or-test-key',
@@ -198,6 +200,7 @@ void main() {
 
     testWidgets('hosted provider form on a portrait frame', (tester) async {
       await _pumpSettingsFrame(tester, size: goldenSizeTall);
+      await _selectProvider(tester, 'OpenRouter');
       await tester.enterText(
         find.widgetWithText(TextField, 'API key'),
         'sk-or-test-key',
@@ -267,6 +270,7 @@ void main() {
 
     testWidgets('hosted provider form — light theme', (tester) async {
       await _pumpSettingsFrame(tester, theme: buildFahThemeLight());
+      await _selectProvider(tester, 'OpenRouter');
       await tester.enterText(
         find.widgetWithText(TextField, 'API key'),
         'sk-or-test-key',
