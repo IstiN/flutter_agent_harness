@@ -64,6 +64,7 @@ class ChatComposer extends StatefulWidget {
 class _ChatComposerState extends State<ChatComposer>
     with SingleTickerProviderStateMixin {
   final _textController = TextEditingController();
+  final _focusNode = FocusNode();
 
   /// Files attached in the composer but not sent yet. They are staged into
   /// the sandbox `uploads/` folder at PICK time (see
@@ -110,6 +111,10 @@ class _ChatComposerState extends State<ChatComposer>
     widget.service.addListener(_onServiceChanged);
     // The send/stop button's look depends on the field being non-empty.
     _textController.addListener(_onTextChanged);
+    // Auto-focus the input when a session opens (first mount or switch).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   @override
@@ -119,11 +124,16 @@ class _ChatComposerState extends State<ChatComposer>
       oldWidget.service.removeListener(_onServiceChanged);
       _isStreaming = widget.service.isStreaming;
       widget.service.addListener(_onServiceChanged);
+      // Session switched — focus the input so the user can type immediately.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
     }
   }
 
   @override
   void dispose() {
+    _focusNode.dispose();
     widget.service.removeListener(_onServiceChanged);
     _textController.removeListener(_onTextChanged);
     _micPulse.dispose();
@@ -546,6 +556,7 @@ class _ChatComposerState extends State<ChatComposer>
                   Expanded(
                     child: TextField(
                       controller: _textController,
+                      focusNode: _focusNode,
                       decoration: InputDecoration(
                         hintText: 'Ask anything…',
                         contentPadding: const EdgeInsets.symmetric(
