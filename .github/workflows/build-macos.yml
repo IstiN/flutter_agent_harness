@@ -510,6 +510,35 @@ jobs:
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
           echo "manifest_name=$MANIFEST_NAME" >> $GITHUB_OUTPUT
 
+      # Apple rejects underscores in framework bundle identifiers
+      # (e.g. LiteRtMetalAccelerator.framework from flutter_gemma).
+      # Patch them before the PKG is created and re-sign.
+      - name: Fix framework bundle identifiers for TestFlight (arm64)
+        if: matrix.arch == 'arm64'
+        env:
+          MACOS_CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+        run: |
+          set -euo pipefail
+          APP_PATH="flutter_app/build/macos/Build/Products/Release/Fa.app"
+          for framework in "$APP_PATH"/Contents/Frameworks/*.framework; do
+            [ -d "$framework" ] || continue
+            PLIST="$framework/Info.plist"
+            [ -f "$PLIST" ] || continue
+            BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$PLIST" 2>/dev/null || true)
+            [ -z "$BUNDLE_ID" ] && continue
+            if echo "$BUNDLE_ID" | grep -q '_'; then
+              FIXED_ID=$(echo "$BUNDLE_ID" | tr '_' '-')
+              echo "Fixing bundle ID: $BUNDLE_ID → $FIXED_ID"
+              plutil -replace CFBundleIdentifier -string "$FIXED_ID" "$PLIST"
+              # Re-sign after modifying the plist (invalidates the old signature).
+              if [ -n "${MACOS_CERTIFICATE_ID:-}" ]; then
+                codesign --force --sign "$MACOS_CERTIFICATE_ID" \
+                  --options runtime --timestamp \
+                  "$framework"
+              fi
+            fi
+          done
+
       - name: Package TestFlight PKG (arm64)
         if: matrix.arch == 'arm64'
         id: testflight_pkg
@@ -550,7 +579,6 @@ jobs:
 
       - name: Submit PKG to TestFlight
         if: steps.testflight_pkg.outputs.pkg_name != ''
-        continue-on-error: true
         working-directory: flutter_app
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
