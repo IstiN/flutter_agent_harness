@@ -520,8 +520,9 @@ jobs:
         run: |
           set -euo pipefail
           APP_PATH="flutter_app/build/macos/Build/Products/Release/Fa.app"
-          for framework in "$APP_PATH"/Contents/Frameworks/*.framework; do
-            [ -d "$framework" ] || continue
+          # Search the ENTIRE app bundle, not just top-level Frameworks/ —
+          # build hooks may nest frameworks deeper.
+          find "$APP_PATH" -name "*.framework" -type d | while read -r framework; do
             PLIST="$framework/Info.plist"
             [ -f "$PLIST" ] || continue
             BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$PLIST" 2>/dev/null || true)
@@ -538,6 +539,7 @@ jobs:
               fi
             fi
           done
+          echo "Framework bundle ID check complete."
 
       - name: Package TestFlight PKG (arm64)
         if: matrix.arch == 'arm64'
