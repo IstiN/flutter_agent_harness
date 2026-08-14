@@ -12,13 +12,20 @@ import 'package:flutter/material.dart';
 /// The result contract is identical in both modes: the page pops its
 /// navigator with the result, which is returned to the caller.
 Future<T?> pushFaPage<T>(BuildContext context, Widget page) {
-  if (MediaQuery.sizeOf(context).width >= 840) {
+  final size = MediaQuery.sizeOf(context);
+  if (size.width >= 840) {
+    // Desktop/tablet: a centered dialog, constrained so it doesn't stretch
+    // into an unreadable full-height strip. Height caps at 80% of the
+    // window so it never feels like a mobile full-screen page.
     return showDialog<T>(
       context: context,
       builder: (_) => Dialog(
         clipBehavior: Clip.antiAlias,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+          constraints: BoxConstraints(
+            maxWidth: 560,
+            maxHeight: size.height * 0.8,
+          ),
           child: page,
         ),
       ),

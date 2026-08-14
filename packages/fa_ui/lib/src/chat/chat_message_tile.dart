@@ -259,7 +259,9 @@ class ChatMessageTile extends StatelessWidget {
 
     // Permission-denied tool results get a special card: orange badge +
     // action buttons (Open Settings / Try again) matching the prototype.
-    if (isError && _isPermissionError(content)) {
+    // We check the CONTENT, not just isError — some tools return the denial
+    // as a plain text result, not an error.
+    if (_isPermissionError(content)) {
       return _permissionCard(
         context,
         palette,

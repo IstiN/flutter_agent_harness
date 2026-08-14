@@ -1702,17 +1702,15 @@ extension on AgentCli {
   /// (local servers may legitimately run without a key).
   String _customEndpointKeyLine(String baseUrl) {
     final keys = config.secureKeys;
-    if (keys != null) {
-      final entryKey = _activeCustomKeyName();
-      if (entryKey != null && keys.read(entryKey) != null) {
-        return 'key: $entryKey (${keys.label ?? 'secure store'})';
-      }
-      final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
-      if (keys.read(scopedName) != null) {
-        return 'key: $scopedName (${keys.label ?? 'secure store'})';
-      }
-    }
-    return 'key: none (keyless endpoint)';
+    if (keys == null) return 'key: none (keyless endpoint)';
+    final entryKey = _activeCustomKeyName();
+    final entryHit = entryKey != null && keys.read(entryKey) != null
+        ? entryKey
+        : null;
+    final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
+    final hit = entryHit ?? (keys.read(scopedName) != null ? scopedName : null);
+    if (hit == null) return 'key: none (keyless endpoint)';
+    return 'key: $hit (${keys.label ?? 'secure store'})';
   }
 
   // ------------------------------------------------------------- models
@@ -1791,13 +1789,7 @@ extension on AgentCli {
     final completer = Completer<void>();
     _modelCacheFuture = completer.future;
     try {
-      final registry = config.customProviders;
-      if (registry != null && registry.entries.isNotEmpty) {
-        // Fetch all providers in parallel.
-        await Future.wait(
-          registry.entries.map((entry) => _fetchProviderModels(entry)),
-        );
-      }
+      await _fetchAllSavedProviderModels();
       // Always include the active provider's fallback list.
       final activeProvider = _agent.state.model.provider;
       if (!_allProvidersModelCache.containsKey(activeProvider)) {
@@ -1810,6 +1802,14 @@ extension on AgentCli {
       _modelCacheFuture = null;
       completer.complete();
     }
+  }
+
+  /// Fetches every saved provider's model list in parallel (no-op without a
+  /// registry or entries).
+  Future<void> _fetchAllSavedProviderModels() async {
+    final registry = config.customProviders;
+    if (registry == null || registry.entries.isEmpty) return;
+    await Future.wait(registry.entries.map(_fetchProviderModels));
   }
 
   /// Fetches models for one saved provider entry and caches them.
