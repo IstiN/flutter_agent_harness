@@ -341,12 +341,14 @@ class AgentService extends ChangeNotifier
     _activeBaseUrl = config.baseUrl;
     _activeApiKey = config.apiKey;
     _redactor = redactor;
+    // CodeMie can be slow to start (long first-token latency); give it
+    // more room than the standard 90s. On-device gets 10 min for shader
+    // compilation / weight loading.
     _responseTimeout = _isOnDeviceKind(config.providerKind)
-        // First on-device generation compiles WebGPU shaders (WebLLM,
-        // transformers.js) or loads multi-GB weights into memory (Gemma),
-        // which can take minutes; hosted providers keep the tight timeout.
         ? const Duration(minutes: 10)
-        : const Duration(seconds: 90);
+        : isCodeMieProvider(config.baseUrl)
+            ? const Duration(minutes: 5)
+            : const Duration(seconds: 90);
     // On-device backends have small context windows; keep only the core
     // coding tools so the tool-instruction block stays small.
     final isOnDevice = _isOnDeviceKind(config.providerKind);
@@ -1408,7 +1410,9 @@ class AgentService extends ChangeNotifier
     _activeApiKey = config.apiKey;
     _responseTimeout = _isOnDeviceKind(config.providerKind)
         ? const Duration(minutes: 10)
-        : const Duration(seconds: 90);
+        : isCodeMieProvider(config.baseUrl)
+            ? const Duration(minutes: 5)
+            : const Duration(seconds: 90);
     error = null;
     notifyListeners();
     // Best effort: a failed marker write must not break the switch.

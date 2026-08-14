@@ -7,6 +7,7 @@ import HealthKit
 import HomeKit
 import UIKit
 import UserNotifications
+import WebKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -14,6 +15,7 @@ import UserNotifications
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    WKWebView.faEnableWebAuthentication()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -2219,4 +2221,36 @@ private func notifyCancel(id: String) {
   let center = UNUserNotificationCenter.current()
   center.removePendingNotificationRequests(withIdentifiers: [id])
   center.removeDeliveredNotifications(withIdentifiers: [id])
+}
+
+/// WebAuthn / passkeys (Face ID, Touch ID) inside embedded WKWebViews.
+///
+/// WKWebView refuses `navigator.credentials` calls by default; the site only
+/// offers biometric sign-in when `WKPreferences.webAuthenticationSupportEnabled`
+/// is true (iOS 16.4+). `webview_flutter` does not expose that preference, so
+/// we swizzle `WKWebView.init(frame:configuration:)` and force-enable it on
+/// every configuration. This is what makes the CodeMie SSO page offer its
+/// passkey login inside the in-app WebView.
+extension WKWebView {
+  static func faEnableWebAuthentication() {
+    guard
+      let original = class_getInstanceMethod(
+        WKWebView.self,
+        #selector(WKWebView.init(frame:configuration:)),
+      ),
+      let swizzled = class_getInstanceMethod(
+        WKWebView.self,
+        #selector(WKWebView.init(fa_initFrame:configuration:)),
+      )
+    else { return }
+    method_exchangeImplementations(original, swizzled)
+  }
+
+  /// After the swizzle this calls the original `init(frame:configuration:)`.
+  @objc dynamic convenience init(fa_initFrame frame: CGRect, configuration: WKWebViewConfiguration) {
+    if #available(iOS 16.4, *) {
+      configuration.preferences.webAuthenticationSupportEnabled = true
+    }
+    self.init(fa_initFrame: frame, configuration: configuration)
+  }
 }
