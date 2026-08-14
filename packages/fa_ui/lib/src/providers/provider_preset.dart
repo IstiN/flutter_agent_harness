@@ -33,6 +33,10 @@ enum ProviderPreset {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     defaultModel: 'gemini-2.5-flash',
   ),
+  dial(
+    baseUrl: 'https://ai-proxy.lab.epam.com',
+    defaultModel: 'anthropic.claude-sonnet-4-5-20250929-v1:0',
+  ),
   custom(baseUrl: null, defaultModel: ''),
   webllm(baseUrl: null, defaultModel: ''),
   gemma(baseUrl: null, defaultModel: ''),
@@ -65,6 +69,7 @@ enum ProviderPreset {
     ProviderPreset.openrouter => strings.settingsPresetOpenrouter,
     ProviderPreset.ollamaCloud => strings.settingsPresetOllama,
     ProviderPreset.gemini => strings.settingsPresetGemini,
+    ProviderPreset.dial => strings.settingsPresetDial,
     ProviderPreset.custom => strings.settingsPresetCustom,
     ProviderPreset.webllm => strings.settingsPresetWebllm,
     ProviderPreset.gemma => strings.settingsPresetGemma,
@@ -80,6 +85,7 @@ enum ProviderPreset {
   String? cors(FaUiStrings strings) => switch (this) {
     ProviderPreset.openrouter || ProviderPreset.gemini => null,
     ProviderPreset.ollamaCloud => strings.settingsCorsNoteOllama,
+    ProviderPreset.dial => strings.settingsCorsNoteCustom,
     ProviderPreset.custom => strings.settingsCorsNoteCustom,
     ProviderPreset.webllm ||
     ProviderPreset.gemma ||
@@ -93,6 +99,7 @@ enum ProviderPreset {
     if (url.contains('generativelanguage.googleapis.com')) {
       return ProviderPreset.gemini;
     }
+    if (_isDialBaseUrl(url)) return ProviderPreset.dial;
     return ProviderPreset.custom;
   }
 }
@@ -103,8 +110,13 @@ String? hostedProviderKeyName(ProviderPreset preset) => switch (preset) {
   ProviderPreset.openrouter => 'OPENROUTER_API_KEY',
   ProviderPreset.ollamaCloud => 'OLLAMA_API_KEY',
   ProviderPreset.gemini => 'GEMINI_API_KEY',
+  ProviderPreset.dial => 'DIAL_API_KEY',
   _ => null,
 };
+
+/// Whether [baseUrl] addresses a DIAL Core endpoint (the chat path is
+/// `/openai/deployments/...`, not `/chat/completions`).
+bool _isDialBaseUrl(String url) => url.contains('ai-proxy.lab.epam.com');
 
 /// The hosted endpoint presets listed by the Providers section, the
 /// default-chat-model picker, and the media slot editor (the ad-hoc
@@ -114,6 +126,7 @@ const hostedProviderPresets = [
   ProviderPreset.openrouter,
   ProviderPreset.ollamaCloud,
   ProviderPreset.gemini,
+  ProviderPreset.dial,
 ];
 
 /// The display name of a provider entry (a [ProviderPreset] or a

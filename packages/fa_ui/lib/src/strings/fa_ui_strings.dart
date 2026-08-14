@@ -148,6 +148,7 @@ abstract class FaUiStrings {
 
   /// Label of the Google Gemini preset.
   String get settingsPresetGemini;
+  String get settingsPresetDial;
 
   /// Label of the ad-hoc custom preset.
   String get settingsPresetCustom;
@@ -325,6 +326,8 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsPresetGemini => 'Google Gemini';
   @override
+  String get settingsPresetDial => 'DIAL';
+  @override
   String get settingsPresetCustom => 'Custom';
   @override
   String get settingsPresetWebllm => 'On-device (WebLLM)';
@@ -486,6 +489,8 @@ class FaUiStringsRu extends FaUiStrings {
   String get settingsPresetOllama => 'Ollama';
   @override
   String get settingsPresetGemini => 'Google Gemini';
+  @override
+  String get settingsPresetDial => 'DIAL';
   @override
   String get settingsPresetCustom => 'Пользовательский';
   @override

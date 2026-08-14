@@ -437,7 +437,11 @@ class _DefaultModelPickerPageState extends State<DefaultModelPickerPage> {
     try {
       await widget.onApply(
         FaChatModelConfig(
-          providerKind: 'openai-completions',
+          // DIAL Core speaks an OpenAI-shaped payload but its own URL/auth
+          // dialect — the preset pins the dial adapter kind.
+          providerKind: widget.provider == ProviderPreset.dial
+              ? 'dial'
+              : 'openai-completions',
           modelId: model,
           baseUrl: _baseUrl,
           apiKey: key,

@@ -305,7 +305,12 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     try {
       await widget.onApply(
         FaChatModelConfig(
-          providerKind: 'openai-completions',
+          // DIAL deployments live on a dial adapter kind (URL/auth dialect),
+          // everything else is plain openai-completions.
+          providerKind:
+              ProviderPreset.fromBaseUrl(entry.baseUrl) == ProviderPreset.dial
+              ? 'dial'
+              : 'openai-completions',
           modelId: entry.modelId,
           baseUrl: entry.baseUrl,
           apiKey: entry.apiKey,
