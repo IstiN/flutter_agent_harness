@@ -1326,6 +1326,7 @@ class AgentService extends ChangeNotifier
     _idleWatchdog?.cancel();
     _idleWatchdog = Timer(_responseTimeout, () {
       if (_activeToolCalls > 0) return; // a long tool is still running
+      if (!isStreaming) return; // run already completed — no false positive
       abort();
       isStreaming = false;
       error =
