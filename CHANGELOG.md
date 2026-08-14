@@ -958,4 +958,8 @@
 
 - fix(version): use Platform.resolvedExecutable so version works regardless of invocation path
 
+## fa_llm-v0.1.1
+
+- feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
+
 ## Unreleased
