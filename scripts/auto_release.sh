@@ -20,7 +20,7 @@ git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 # Coalescing guards: pub.dev rate-limits publishes (~12/day), so releases are
 # capped at one per 2h; runs with nothing new since the last tag are skipped.
 git fetch origin main --tags --quiet
-last_tag=$(git describe --tags --abbrev=0 origin/main 2>/dev/null || true)
+last_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
 if [ -n "$last_tag" ]; then
   pending=$(git rev-list --count "$last_tag..origin/main")
   if [ "$pending" -eq 0 ]; then
@@ -42,7 +42,7 @@ for attempt in 1 2 3; do
   # Other workflows (iOS/macOS CI) tag releases without bumping pubspec —
   # when tags raced ahead, bump from the latest tag instead, or every run
   # dies on "tag already exists".
-  latest_tag=$(git describe --tags --abbrev=0 origin/main 2>/dev/null || true)
+  latest_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
   if [ -n "$latest_tag" ]; then
     tag_version="${latest_tag#v}"
     if [ "$(printf '%s\n%s\n' "$current" "$tag_version" | sort -V | tail -1)" = "$tag_version" ]; then
@@ -53,7 +53,7 @@ for attempt in 1 2 3; do
   next="$major.$minor.$((patch + 1))"
   echo "Auto-release: v$current -> v$next (attempt $attempt)"
 
-  last_tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
+  last_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
   if [ -n "$last_tag" ]; then range="$last_tag..HEAD"; else range="HEAD"; fi
   bullets=$(git log "$range" --pretty='- %s' --no-merges | grep -v '^- chore(release):' || true)
   [ -z "$bullets" ] && bullets="- Maintenance release."
