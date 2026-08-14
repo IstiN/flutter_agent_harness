@@ -4,7 +4,8 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/io.dart'
+    if (dart.library.html) 'package:fa/services/oauth_cli_flow_stubs.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/agent_service.dart';

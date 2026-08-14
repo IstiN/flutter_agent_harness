@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/task_models_store.dart';
+import 'package:fa_ui/src/utils/page_presentation.dart';
 
 /// The settings "Task models" section: one row per [TaskRole.all] entry
 /// showing the effective endpoint — the role's override (`modelId`) or the
@@ -113,14 +114,15 @@ class TaskModelsSection extends StatelessWidget {
     TaskModelsStore store,
     String role,
   ) async {
-    final result = await Navigator.of(context).push<_TaskRoleEditResult>(
-      MaterialPageRoute(
-        builder: (_) => TaskRoleConfigPage(
-          role: role,
-          initial: store.overrideFor(role),
-          mainBaseUrl: mainBaseUrl,
-          mainModelId: mainModelId,
-        ),
+    // pushFaPage shows a dialog on wide screens (matching the settings
+    // style) and a full page on narrow.
+    final result = await pushFaPage<_TaskRoleEditResult>(
+      context,
+      TaskRoleConfigPage(
+        role: role,
+        initial: store.overrideFor(role),
+        mainBaseUrl: mainBaseUrl,
+        mainModelId: mainModelId,
       ),
     );
     if (result == null) return;
