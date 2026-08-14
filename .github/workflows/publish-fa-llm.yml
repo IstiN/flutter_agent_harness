@@ -1,0 +1,27 @@
+name: Publish fa_llm
+
+on:
+  push:
+    tags: ['fa_llm-v*']
+
+permissions:
+  id-token: write # OIDC — pub.dev verifies the GitHub identity, no secrets
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/fa_llm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      - name: Publish to pub.dev
+        run: dart pub publish --force
