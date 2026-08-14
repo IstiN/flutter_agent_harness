@@ -13,10 +13,6 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
-import 'package:fa/services/session_keys_store.dart';
-import 'package:fa/ui/screens/model_presets.dart';
-import 'package:fa/ui/screens/provider_editor_page.dart';
-import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 
 /// The first-launch onboarding flow, shown once by `BootstrapScreen` when
@@ -66,7 +62,7 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  static const _pageCount = 4;
+  static const _pageCount = 3;
 
   /// The published privacy policy (site/privacy.html, deployed to GitHub
   /// Pages by pages.yml; the source of truth lives in PRIVACY.md).
@@ -75,13 +71,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   late final PageController _pageController = PageController(
     initialPage: widget.initialPage,
   );
-  final PageController _presetPageController = PageController(
-    viewportFraction: 0.9,
-  );
   late var _page = widget.initialPage;
-  var _presetPage = 0;
-  String? _appliedPresetId;
-  SessionKeysStore? _keysStore;
 
   @override
   void initState() {
@@ -91,15 +81,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _keysStore = SessionKeysScope.maybeOf(context);
-  }
-
-  @override
   void dispose() {
     _pageController.dispose();
-    _presetPageController.dispose();
     super.dispose();
   }
 
@@ -123,43 +106,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Future<void> _applyPreset(ModelPreset preset) async {
-    final store = widget.mediaModelsStore ?? MediaModelsScope.maybeOf(context);
-    if (store == null) return;
-    await applyModelPreset(
-      preset: preset,
-      // Pre-connection: only the slot overrides + last connection persist;
-      // the boot auto-connect builds the real service from them.
-      service: null,
-      store: store,
-      keysStore: _keysStore,
-      lastConnectionStore: widget.lastConnectionStore,
-    );
-    if (mounted) setState(() => _appliedPresetId = preset.id);
-  }
-
-  /// The missing-key jump, mirroring the settings preset card: open the
-  /// provider editor, save the returned key under the preset's key name.
-  Future<void> _setupPresetKey(ModelPreset preset) async {
-    final target = preset.target;
-    if (target is! HostedModelPresetTarget) return;
-    final provider = target.provider;
-    final keyName = hostedProviderKeyName(provider);
-    AppAnalytics.instance.screenOpened('provider_editor');
-    final result = await Navigator.of(context).push<ProviderEditorResult>(
-      MaterialPageRoute(
-        builder: (_) => ProviderEditorPage(
-          title: provider.labelFor(context),
-          preset: provider,
-          hasSavedKey:
-              keyName != null && settingsKeyEnv(keyName, _keysStore).isNotEmpty,
-        ),
-      ),
-    );
-    if (result == null || result.apiKey.isEmpty || keyName == null) return;
-    await _keysStore?.set(keyName, result.apiKey);
-  }
-
   Future<void> _openPrivacyPolicy() async {
     try {
       await launchUrl(
@@ -176,61 +122,71 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final isLast = _page == _pageCount - 1;
+    // On wide screens the content centers with a max width (not squeezed
+    // to the top); on phones it fills the width as before.
+    final isWide = MediaQuery.sizeOf(context).width >= 600;
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => _finish(skipped: true),
-                child: Text(l10n.onboardingSkip),
-              ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: isWide ? 480 : double.infinity,
             ),
-            Expanded(
-              child: PageView(
-                controller: _pageController,
-                onPageChanged: (page) => setState(() => _page = page),
-                children: [
-                  _buildWelcomePage(theme, l10n),
-                  _buildPermissionsPage(theme, l10n),
-                  _buildModelsPage(theme, l10n),
-                  _buildPrivacyPage(theme, l10n),
-                ],
-              ),
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Column(
               children: [
-                for (var i = 0; i < _pageCount; i++)
-                  Container(
-                    width: 8,
-                    height: 8,
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: i == _page
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.3,
-                            ),
-                    ),
-                  ),
-              ],
-            ),
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: isLast ? () => _finish(skipped: false) : _nextPage,
-                  child: Text(
-                    isLast ? l10n.onboardingGetStarted : l10n.onboardingNext,
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => _finish(skipped: true),
+                    child: Text(l10n.onboardingSkip),
                   ),
                 ),
-              ),
+                Expanded(
+                  child: PageView(
+                    controller: _pageController,
+                    onPageChanged: (page) => setState(() => _page = page),
+                    children: [
+                      _buildWelcomePage(theme, l10n),
+                      _buildPermissionsPage(theme, l10n),
+                      _buildPrivacyPage(theme, l10n),
+                    ],
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (var i = 0; i < _pageCount; i++)
+                      Container(
+                        width: 8,
+                        height: 8,
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: i == _page
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onSurfaceVariant.withValues(
+                                  alpha: 0.3,
+                                ),
+                        ),
+                      ),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed:
+                          isLast ? () => _finish(skipped: false) : _nextPage,
+                      child: Text(
+                        isLast ? l10n.onboardingGetStarted : l10n.onboardingNext,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -432,72 +388,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   // ---------------------------------------------------------------- page 3
 
-  Widget _buildModelsPage(ThemeData theme, AppLocalizations l10n) {
-    final store = widget.mediaModelsStore ?? MediaModelsScope.maybeOf(context);
-    return _pageScroll([
-      const SizedBox(height: 24),
-      _pageTitle(theme, l10n.onboardingModelsTitle),
-      const SizedBox(height: 8),
-      _pageBody(theme, l10n.onboardingModelsBody),
-      const SizedBox(height: 16),
-      if (store != null) ...[
-        SizedBox(
-          height: 260,
-          child: PageView.builder(
-            controller: _presetPageController,
-            itemCount: kModelPresets.length,
-            onPageChanged: (page) => setState(() => _presetPage = page),
-            itemBuilder: (context, index) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: _OnboardingPresetCard(
-                preset: kModelPresets[index],
-                keyAvailable: modelPresetKeyAvailable(
-                  kModelPresets[index],
-                  _keysStore,
-                ),
-                applied: _appliedPresetId == kModelPresets[index].id,
-                onApply: () => _applyPreset(kModelPresets[index]),
-                onSetKey: () => _setupPresetKey(kModelPresets[index]),
-              ),
-            ),
-          ),
-        ),
-        if (kModelPresets.length > 1)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (var i = 0; i < kModelPresets.length; i++)
-                  Container(
-                    width: 6,
-                    height: 6,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: i == _presetPage
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.3,
-                            ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-      ],
-      Center(
-        child: TextButton(
-          onPressed: _nextPage,
-          child: Text(l10n.onboardingModelsSetUpLater),
-        ),
-      ),
-      const SizedBox(height: 8),
-    ]);
-  }
-
-  // ---------------------------------------------------------------- page 4
-
   Widget _buildPrivacyPage(ThemeData theme, AppLocalizations l10n) {
     final entries = <(IconData, String, String)>[
       (
@@ -583,130 +473,5 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       ),
       const SizedBox(height: 24),
     ]);
-  }
-}
-
-/// One swipeable preset card of the onboarding model page: a light version
-/// of the settings `_PresetCard` — name, description, the chat model, the
-/// missing-key hint with a jump to the provider editor, and Apply (a check
-/// once applied). Applying rides [applyModelPreset] with a null service:
-/// the combo persists as the last connection the boot auto-connect restores.
-class _OnboardingPresetCard extends StatelessWidget {
-  const _OnboardingPresetCard({
-    required this.preset,
-    required this.keyAvailable,
-    required this.applied,
-    required this.onApply,
-    required this.onSetKey,
-  });
-
-  final ModelPreset preset;
-  final bool keyAvailable;
-  final bool applied;
-  final VoidCallback onApply;
-  final VoidCallback onSetKey;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final l10n = context.l10n;
-    final providerLabel = switch (preset.target) {
-      HostedModelPresetTarget(:final provider) => provider.labelFor(context),
-    };
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(preset.nameFor(l10n), style: theme.textTheme.titleMedium),
-            const SizedBox(height: 2),
-            Text(
-              preset.descriptionFor(l10n),
-              style: theme.textTheme.bodySmall,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(
-                  Icons.chat_bubble_outline,
-                  size: 16,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  l10n.modelPresetsChatLabel,
-                  style: theme.textTheme.bodySmall,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    preset.chatModelId,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    textAlign: TextAlign.end,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const Spacer(),
-            if (!keyAvailable)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.key_outlined,
-                      size: 16,
-                      color: theme.colorScheme.error,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        l10n.modelPresetsKeyMissing(providerLabel),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.error,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: onSetKey,
-                      child: Text(l10n.modelPresetsSetKey),
-                    ),
-                  ],
-                ),
-              ),
-            if (applied)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.check_circle_outline,
-                    size: 18,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    l10n.modelPresetsApplied,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                ],
-              )
-            else
-              FilledButton(
-                onPressed: keyAvailable ? onApply : null,
-                child: Text(l10n.settingsApplyButton),
-              ),
-          ],
-        ),
-      ),
-    );
   }
 }
