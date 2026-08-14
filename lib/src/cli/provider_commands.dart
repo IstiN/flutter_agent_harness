@@ -1102,13 +1102,30 @@ extension on AgentCli {
     if (key == null) return io.writeln('dial setup cancelled');
     final deployment = await _dialAskDeployment(baseUrl, key);
     if (deployment == null) return io.writeln('dial setup cancelled');
-    _dialSaveRegistryEntry(baseUrl, key, deployment);
+    final name = await _dialAskName(baseUrl);
+    if (name == null) return io.writeln('dial setup cancelled');
+    _dialSaveRegistryEntry(baseUrl, key, deployment, name);
     await _switchProvider(
       spec,
       baseUrl,
       deployment,
       token: key.isEmpty ? null : key,
     );
+  }
+
+  /// The provider-name step: typed value, else the endpoint host (the
+  /// `/provider` picker label); null cancels. Kept unique vs other entries.
+  Future<String?> _dialAskName(String baseUrl) async {
+    final fallback = _codeMieHostName(baseUrl);
+    final typed = await _askLine('provider name [$fallback]: ');
+    if (typed == null) return null;
+    final name = typed.trim().isEmpty ? fallback : typed.trim();
+    final clash = config.customProviders?.find(name);
+    if (clash != null && clash.baseUrl != baseUrl) {
+      io.writeln('name "$name" is already used by ${clash.baseUrl} — retry');
+      return _dialAskName(baseUrl);
+    }
+    return name;
   }
 
   /// The base-URL step: typed value or the spec default; null cancels.
@@ -1155,11 +1172,14 @@ extension on AgentCli {
 
   /// Saves the dial org as a registry entry so it shows in the /provider
   /// picker and survives restarts (re-running setup just updates the model).
-  void _dialSaveRegistryEntry(String baseUrl, String key, String deployment) {
+  void _dialSaveRegistryEntry(
+    String baseUrl,
+    String key,
+    String deployment,
+    String name,
+  ) {
     final registry = config.customProviders;
     if (registry == null) return;
-    final candidate = _codeMieHostName(baseUrl);
-    final name = registry.find(candidate)?.name ?? candidate;
     registry.add(
       CustomProviderEntry(
         name: name,
@@ -1414,46 +1434,42 @@ extension on AgentCli {
   /// a fire-and-forget flow so the REPL keeps reading lines.
   Future<void> _handleKeySetLineMode(String? name) async {
     final keys = config.secureKeys;
-    final storeAvailable = keys != null && keys.available;
-    if (name == null) {
-      io.writeln('usage: /key set <NAME> [<value>]');
-      return;
-    }
+    if (name == null) return io.writeln('usage: /key set <NAME> [<value>]');
     if (!_keyNamePattern.hasMatch(name)) {
-      io.writeln('invalid key name: $name (use [A-Za-z0-9_]+)');
-      return;
+      return io.writeln('invalid key name: $name (use [A-Za-z0-9_]+)');
     }
-    if (!storeAvailable) {
-      io.writeln(
+    if (keys == null || !keys.available) {
+      return io.writeln(
         'secure storage unavailable on this host — '
         'set $name in the environment instead',
       );
-      return;
     }
     _providerFlowActive = true;
-    unawaited(() async {
-      try {
-        final value = await _promptLine('value for $name: ');
-        if (value == null || value.isEmpty) {
-          io.writeln('cancelled');
-          return;
-        }
-        if (!await keys.save(name, value)) {
-          io.writeln(
-            'could not save $name to ${keys.label}: the write failed '
-            '(locked or managed keychain?) — '
-            'set $name in the environment instead',
-          );
-          return;
-        }
-        config.onSecretStored?.call(name, value);
-        io.writeln('saved $name to ${keys.label}');
-        _applySavedKeyToActiveProvider(name, value);
-      } finally {
-        _providerFlowActive = false;
-        _promptLineBuffer.clear();
+    unawaited(_promptAndSaveKey(keys, name));
+  }
+
+  /// The line-mode value prompt + store write behind `/key set` (runs after
+  /// the command handler returns; resets the flow gate in `finally`).
+  Future<void> _promptAndSaveKey(SecureKeyCache keys, String name) async {
+    try {
+      final value = await _promptLine('value for $name: ');
+      if (value == null || value.isEmpty) {
+        return io.writeln('cancelled');
       }
-    }());
+      if (!await keys.save(name, value)) {
+        return io.writeln(
+          'could not save $name to ${keys.label}: the write failed '
+          '(locked or managed keychain?) — '
+          'set $name in the environment instead',
+        );
+      }
+      config.onSecretStored?.call(name, value);
+      io.writeln('saved $name to ${keys.label}');
+      _applySavedKeyToActiveProvider(name, value);
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
   }
 
   /// The TUI interactive variant of [_handleKeySet]: prompts for the key
@@ -1703,14 +1719,22 @@ extension on AgentCli {
   String _customEndpointKeyLine(String baseUrl) {
     final keys = config.secureKeys;
     if (keys == null) return 'key: none (keyless endpoint)';
-    final entryKey = _activeCustomKeyName();
-    final entryHit = entryKey != null && keys.read(entryKey) != null
-        ? entryKey
-        : null;
-    final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
-    final hit = entryHit ?? (keys.read(scopedName) != null ? scopedName : null);
+    final hit = _activeCustomKeyEntry(keys) ?? _scopedKeyEntry(keys, baseUrl);
     if (hit == null) return 'key: none (keyless endpoint)';
     return 'key: $hit (${keys.label ?? 'secure store'})';
+  }
+
+  /// The active saved entry's key name when the store holds it, else null.
+  String? _activeCustomKeyEntry(SecureKeyCache keys) {
+    final entryKey = _activeCustomKeyName();
+    if (entryKey != null && keys.read(entryKey) != null) return entryKey;
+    return null;
+  }
+
+  /// The endpoint-scoped `FA_KEY_<HOST>` name when the store holds it.
+  String? _scopedKeyEntry(SecureKeyCache keys, String baseUrl) {
+    final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
+    return keys.read(scopedName) != null ? scopedName : null;
   }
 
   // ------------------------------------------------------------- models
@@ -1836,14 +1860,22 @@ extension on AgentCli {
     CustomProviderEntry entry,
     String cookieOrKey,
   ) async {
-    final spec = entry.spec;
     if (entry.baseUrl.contains('/code-assistant-api/')) {
       return fetchCodeMieModels(entry.baseUrl, cookieOrKey);
     }
-    if (spec.kind == 'dial') {
+    if (entry.spec.kind == 'dial') {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
     }
-    if (spec.kind != 'openai-completions') return const [];
+    return _fetchOpenAiShapeIds(entry, cookieOrKey);
+  }
+
+  /// The openai-completions branch of [_fetchIdsForProvider] (other kinds
+  /// answer an empty list — their endpoints have no /models dialect here).
+  Future<List<String>> _fetchOpenAiShapeIds(
+    CustomProviderEntry entry,
+    String cookieOrKey,
+  ) async {
+    if (entry.spec.kind != 'openai-completions') return const [];
     final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
     return fetch(entry.baseUrl, apiKey: cookieOrKey);
   }
@@ -1910,17 +1942,7 @@ extension on AgentCli {
     try {
       final model = _agent.state.model;
       if (model.api == 'openai-completions') {
-        // CodeMie exposes its model list at /llm_models (LiteLLM-shaped),
-        // not the OpenAI /models; DIAL serves deployments at
-        // /openai/models with Api-Key auth.
-        final ids = model.baseUrl.contains('/code-assistant-api/')
-            ? await fetchCodeMieModels(model.baseUrl, _apiKey)
-            : model.provider == 'dial'
-            ? await _fetchDialModelsAndFeatures(model.baseUrl)
-            : await (config.modelsFetcher ?? _fetchOpenAiCompatibleModels)(
-                model.baseUrl,
-                apiKey: _apiKey,
-              );
+        final ids = await _fetchActiveProviderModels(model);
         if (ids.isNotEmpty) {
           _modelCache = ids;
           _tuiController?.sendModelsRefresh();
@@ -1938,6 +1960,20 @@ extension on AgentCli {
       _modelCacheFuture = null;
       completer.complete();
     }
+  }
+
+  /// Fetches the active provider's model ids: CodeMie exposes its list at
+  /// /llm_models (LiteLLM-shaped), DIAL serves deployments at /openai/models
+  /// (recording features/limits), everything else uses the OpenAI /models.
+  Future<List<String>> _fetchActiveProviderModels(Model model) async {
+    if (model.baseUrl.contains('/code-assistant-api/')) {
+      return fetchCodeMieModels(model.baseUrl, _apiKey);
+    }
+    if (model.provider == 'dial') {
+      return _fetchDialModelsAndFeatures(model.baseUrl);
+    }
+    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
+    return fetch(model.baseUrl, apiKey: _apiKey);
   }
 
   /// Applies the endpoint-reported context window for [model] when it
@@ -2208,13 +2244,17 @@ extension on AgentCli {
   Future<bool> _switchModelByNumber(String trimmed) async {
     final number = int.tryParse(trimmed);
     if (number == null) return false;
-    final lastList = _lastModelList ?? _listModelsForMenu();
-    if (number < 1 || number > lastList.length) {
-      io.writeln('invalid selection: $number (1-${lastList.length})');
-      return true;
-    }
-    await _switchModel(lastList[number - 1]);
+    await _switchModelOrReport(number, _lastModelList ?? _listModelsForMenu());
     return true;
+  }
+
+  /// Switches to list entry [number] (1-based) or reports the range error.
+  Future<void> _switchModelOrReport(int number, List<String> list) async {
+    if (number >= 1 && number <= list.length) {
+      await _switchModel(list[number - 1]);
+    } else {
+      io.writeln('invalid selection: $number (1-${list.length})');
+    }
   }
 
   /// `/model <name>` where [name] is a custom model definition from the
@@ -2357,21 +2397,26 @@ extension on AgentCli {
   /// roles yaml `contextWindow:`/`maxTokens:`). Bare in TUI mode opens an
   /// interactive two-step picker (field → preset/custom value).
   Future<void> _handleModelEdit(String rest) async {
-    final args = rest
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (args.isEmpty) {
-      if (_useTui && _tuiController != null) {
-        await _modelEditInteractive();
-      } else {
-        _printModelLimits();
-      }
-      return;
-    }
-    _applyModelEditArg(args);
+    final args = _splitCommandArgs(rest);
+    if (args.isNotEmpty) return _applyModelEditArg(args);
+    await _showModelEditDefault();
   }
+
+  /// Bare `/model-edit`: the TUI two-step picker, or the line-mode limits.
+  Future<void> _showModelEditDefault() async {
+    if (_useTui && _tuiController != null) {
+      await _modelEditInteractive();
+    } else {
+      _printModelLimits();
+    }
+  }
+
+  /// Splits a command's rest into non-empty whitespace-separated tokens.
+  List<String> _splitCommandArgs(String rest) => rest
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty)
+      .toList();
 
   /// Bare `/model-edit`: the active model's token limits and the setter
   /// usage hint.

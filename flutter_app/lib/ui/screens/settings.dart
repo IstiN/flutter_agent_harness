@@ -2272,8 +2272,6 @@ class OnboardingReplaySection extends StatelessWidget {
               builder: (context) => OnboardingScreen(
                 // No seen-flag store: a replay never changes first-launch
                 // state — finishing just pops back to settings.
-                mediaModelsStore: mediaModelsStore,
-                lastConnectionStore: lastConnectionStore,
                 onFinished: ({required bool skipped}) =>
                     Navigator.of(context).pop(),
               ),

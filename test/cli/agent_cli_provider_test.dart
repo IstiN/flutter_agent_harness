@@ -1176,13 +1176,15 @@ void main() {
           () => io.out.toString().contains('deployment (model id)'),
         );
         io.sendLine('anthropic.claude-sonnet-4-5-v1:0');
+        await waitForIt(() => io.out.toString().contains('provider name'));
+        io.sendLine('my-dial');
         await waitForIt(
           () => io.out.toString().contains('switched provider to dial'),
         );
         io.sendLine('/exit');
         await run;
 
-        final entry = registry.find('ai-proxy.lab.epam.com');
+        final entry = registry.find('my-dial');
         expect(entry, isNotNull, reason: 'dial org saved as registry entry');
         expect(entry!.apiType, 'dial');
         expect(entry.modelId, 'anthropic.claude-sonnet-4-5-v1:0');
@@ -1224,6 +1226,8 @@ void main() {
           () => io.out.toString().contains('deployment (model id)'),
         );
         io.sendLine('new-model');
+        await waitForIt(() => io.out.toString().contains('provider name'));
+        io.sendLine('');
         await waitForIt(
           () => io.out.toString().contains('switched provider to dial'),
         );

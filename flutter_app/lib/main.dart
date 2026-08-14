@@ -613,7 +613,6 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   Widget _buildOnboardingScreen() {
     return OnboardingScreen(
       onboardingStore: widget.onboardingStore,
-      lastConnectionStore: widget.lastConnectionStore,
       onFinished: ({required bool skipped}) => _onboardingFinished(),
     );
   }

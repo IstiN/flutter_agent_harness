@@ -1,15 +1,10 @@
 /// Golden (screenshot) tests for `lib/ui/screens/onboarding_screen.dart` —
-/// the first-launch onboarding flow: welcome + AI disclaimer, permissions
-/// explainer, model preset wizard, privacy. All four pages at phone size in
-/// the dark theme, plus light-theme variants of the welcome and model pages
-/// (both brightnesses must read well). The preset wizard renders with a
-/// saved OpenRouter key so Apply is enabled (no missing-key warning).
+/// the first-launch onboarding flow matching the reference design: welcome
+/// with chat/app mockups, provider selection, permission cards, and the
+/// ready page with app grid. Dark + light variants at phone and desktop sizes.
 library;
 
-import 'package:fa/services/last_connection.dart';
-import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
-import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:flutter/material.dart';
@@ -17,25 +12,20 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
 
-/// Pumps one onboarding page full-screen (the screen is itself a Scaffold)
-/// with the stores a first launch would have.
+/// Pumps one onboarding page full-screen (the screen is itself a Scaffold).
 Future<void> _pumpOnboardingPage(
   WidgetTester tester, {
   required int page,
   ThemeData? theme,
+  Size? size,
 }) {
   return pumpGolden(
     tester,
-    SessionKeysScope(
-      store: SessionKeysStore.inMemory({'OPENROUTER_API_KEY': 'sk-or-saved'}),
-      child: OnboardingScreen(
-        onboardingStore: OnboardingStore.inMemory(),
-        mediaModelsStore: MediaModelsStore.inMemory(),
-        lastConnectionStore: LastConnectionStore.inMemory(),
-        initialPage: page,
-      ),
+    OnboardingScreen(
+      onboardingStore: OnboardingStore.inMemory(),
+      initialPage: page,
     ),
-    size: goldenSizePhone,
+    size: size ?? goldenSizePhone,
     theme: theme,
     wrap: (child) => child,
   );
@@ -44,48 +34,60 @@ Future<void> _pumpOnboardingPage(
 void main() {
   setUpAll(ensureGoldenFonts);
 
-  group('onboarding goldens', () {
-    testWidgets('page 1 — welcome + AI disclaimer (dark)', (tester) async {
+  group('onboarding goldens (new design)', () {
+    testWidgets('page 1 — Start with an idea (dark, phone)', (tester) async {
       await _pumpOnboardingPage(tester, page: 0);
-
-      // Fa mark, feature rows, and the mandatory AI disclaimer box; the
-      // first dot is active, Skip sits top-right.
-      await expectGolden(tester, 'onboarding_welcome');
+      await expectGolden(tester, 'onboarding_p1_dark_phone');
     });
 
-    testWidgets('page 2 — permissions explainer (dark)', (tester) async {
-      await _pumpOnboardingPage(tester, page: 1);
-
-      // The six optional permission rows with icon chips.
-      await expectGolden(tester, 'onboarding_permissions');
-    });
-
-    testWidgets('page 3 — model preset wizard (dark)', (tester) async {
-      await _pumpOnboardingPage(tester, page: 2);
-
-      // The budget preset card with an enabled Apply (key saved), the
-      // quality card peeking in, and "Set up later".
-      await expectGolden(tester, 'onboarding_models');
-    });
-
-    testWidgets('page 4 — privacy (dark)', (tester) async {
-      await _pumpOnboardingPage(tester, page: 3);
-
-      // The three privacy rows, the privacy-policy link, and the primary
-      // button reading "Get started".
-      await expectGolden(tester, 'onboarding_privacy');
-    });
-
-    testWidgets('page 1 — welcome + AI disclaimer (light)', (tester) async {
+    testWidgets('page 1 — Start with an idea (light, phone)', (tester) async {
       await _pumpOnboardingPage(tester, page: 0, theme: buildFahThemeLight());
-
-      await expectGolden(tester, 'onboarding_welcome_light');
+      await expectGolden(tester, 'onboarding_p1_light_phone');
     });
 
-    testWidgets('page 3 — model preset wizard (light)', (tester) async {
-      await _pumpOnboardingPage(tester, page: 2, theme: buildFahThemeLight());
+    testWidgets('page 2 — Choose provider (dark, phone)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 1);
+      await expectGolden(tester, 'onboarding_p2_dark_phone');
+    });
 
-      await expectGolden(tester, 'onboarding_models_light');
+    testWidgets('page 3 — Permissions (dark, phone)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 2);
+      await expectGolden(tester, 'onboarding_p3_dark_phone');
+    });
+
+    testWidgets('page 4 — Sandbox ready (dark, phone)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 3);
+      await expectGolden(tester, 'onboarding_p4_dark_phone');
+    });
+
+    testWidgets('page 1 — Start with an idea (dark, desktop)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 0, size: goldenSizeDesktop);
+      await expectGolden(tester, 'onboarding_p1_dark_desktop');
+    });
+
+    testWidgets('page 1 — Start with an idea (light, desktop)', (tester) async {
+      await _pumpOnboardingPage(
+        tester,
+        page: 0,
+        theme: buildFahThemeLight(),
+        size: goldenSizeDesktop,
+      );
+      await expectGolden(tester, 'onboarding_p1_light_desktop');
+    });
+
+    testWidgets('page 2 — Choose provider (dark, desktop)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 1, size: goldenSizeDesktop);
+      await expectGolden(tester, 'onboarding_p2_dark_desktop');
+    });
+
+    testWidgets('page 3 — Permissions (dark, desktop)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 2, size: goldenSizeDesktop);
+      await expectGolden(tester, 'onboarding_p3_dark_desktop');
+    });
+
+    testWidgets('page 4 — Sandbox ready (dark, desktop)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 3, size: goldenSizeDesktop);
+      await expectGolden(tester, 'onboarding_p4_dark_desktop');
     });
   });
 }
