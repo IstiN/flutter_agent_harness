@@ -180,8 +180,10 @@ String _hostFromUrl(String url) {
 /// CLI flow) — the selection does not affect auth headers.
 Future<void> _pickProject(BuildContext context, List<String> projects) async {
   String? selected;
+  // Use root navigator so the dialog survives a parent dialog being popped.
   await showDialog<void>(
     context: context,
+    useRootNavigator: true,
     builder: (dialogContext) => AlertDialog(
       title: const Text('CodeMie Project'),
       content: SizedBox(
@@ -283,12 +285,18 @@ Future<CodeMieSsoCredentials?> _desktopSso(
   BuildContext context,
   String orgUrl,
 ) async {
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text('Opening browser for CodeMie sign-in…'),
-      duration: Duration(seconds: 3),
-    ),
-  );
+  // The context might come from a dialog that was popped (the preset
+  // picker) — wrap the snackbar so a missing Scaffold doesn't crash.
+  try {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Opening browser for CodeMie sign-in…'),
+        duration: Duration(seconds: 3),
+      ),
+    );
+  } on Object {
+    // No Scaffold ancestor — the snackbar is cosmetic, not critical.
+  }
   return runCodeMieSsoCliFlow(
     codeMieUrl: orgUrl,
     onStatus: (msg) => debugPrint('[CodeMie SSO] $msg'),
@@ -317,6 +325,7 @@ Future<String?> _pickModel(
 }) async {
   return showDialog<String>(
     context: context,
+    useRootNavigator: true,
     barrierDismissible: allowCancel,
     builder: (dialogContext) => _ModelPickerDialog(
       models: models,
