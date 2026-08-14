@@ -962,4 +962,13 @@
 
 - feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
 
+## 0.1.173
+
+- fix(ci): restrict auto-release tag matching to v*.*.*; fix pubspec version
+- feat(ui): auto-focus composer input on session open/switch
+- fix(testflight): fail on submit errors; fix framework bundle IDs; cleanup publish job
+- feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
+- chore: add LICENSE to fa_llm for pub.dev
+- feat: prepare fa_llm for pub.dev publishing
+
 ## Unreleased
