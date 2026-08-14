@@ -312,6 +312,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
 
   void _onModelIdChanged() {
     if (_visionOverridden) return;
+    // Only auto-check vision for hosted presets (OpenRouter, Ollama, Gemini)
+    // — custom providers like CodeMie have their own models that may not
+    // support vision, and the heuristic would falsely enable it.
+    if (_selection is! ProviderPreset) return;
     final suggested = modelIdSuggestsVision(_modelController.text);
     if (suggested != _vision) setState(() => _vision = suggested);
   }

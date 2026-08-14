@@ -11,6 +11,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/ui/screens/codemie_sso_webview.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa_ui/fa_ui.dart' show pushFaPage;
 
 /// Runs the full CodeMie SSO flow:
 ///
@@ -176,43 +177,16 @@ String _hostFromUrl(String url) {
   return 'codemie';
 }
 
-/// Shows a simple project picker dialog. Purely informational (like the
-/// CLI flow) — the selection does not affect auth headers.
+/// Shows a simple project picker page (dialog on wide, full page on narrow).
+/// Purely informational (like the CLI flow) — the selection does not affect
+/// auth headers.
 Future<void> _pickProject(BuildContext context, List<String> projects) async {
   String? selected;
-  // Use root navigator so the dialog survives a parent dialog being popped.
-  await showDialog<void>(
-    context: context,
-    useRootNavigator: true,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('CodeMie Project'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: StatefulBuilder(
-          builder: (context, setState) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final project in projects)
-                ListTile(
-                  title: Text(project),
-                  dense: true,
-                  trailing: selected == project
-                      ? const Icon(Icons.check_circle, size: 20)
-                      : const Icon(Icons.radio_button_unchecked, size: 20),
-                  onTap: () {
-                    setState(() => selected = project);
-                  },
-                ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        FilledButton(
-          onPressed: () => Navigator.of(dialogContext).pop(),
-          child: const Text('Continue'),
-        ),
-      ],
+  await pushFaPage<void>(
+    context,
+    _ProjectPickerPage(
+      projects: projects,
+      onSelected: (p) => selected = p,
     ),
   );
 }
@@ -309,25 +283,24 @@ Future<CodeMieSsoCredentials?> _desktopSso(
   );
 }
 
-/// Shows a model picker dialog and returns the chosen model id.
+/// Shows a model picker page (dialog on wide, full page on narrow) and
+/// returns the chosen model id.
 ///
 /// When [models] is non-empty, a list of radio tiles is shown with a manual
 /// entry field at the bottom. When [models] is empty, only the manual entry
 /// field is shown.
 ///
 /// [preselected] highlights the current model. When [allowCancel] is true,
-/// the user can dismiss the dialog without picking (returns null).
+/// the user can dismiss the page without picking (returns null).
 Future<String?> _pickModel(
   BuildContext context,
   List<String> models, {
   String? preselected,
   bool allowCancel = false,
 }) async {
-  return showDialog<String>(
-    context: context,
-    useRootNavigator: true,
-    barrierDismissible: allowCancel,
-    builder: (dialogContext) => _ModelPickerDialog(
+  return pushFaPage<String>(
+    context,
+    _ModelPickerPage(
       models: models,
       preselected: preselected,
       allowCancel: allowCancel,
@@ -335,8 +308,64 @@ Future<String?> _pickModel(
   );
 }
 
-class _ModelPickerDialog extends StatefulWidget {
-  const _ModelPickerDialog({
+class _ProjectPickerPage extends StatefulWidget {
+  const _ProjectPickerPage({
+    required this.projects,
+    required this.onSelected,
+  });
+
+  final List<String> projects;
+  final ValueChanged<String> onSelected;
+
+  @override
+  State<_ProjectPickerPage> createState() => _ProjectPickerPageState();
+}
+
+class _ProjectPickerPageState extends State<_ProjectPickerPage> {
+  String? _selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('CodeMie Project')),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                itemCount: widget.projects.length,
+                itemBuilder: (context, index) {
+                  final project = widget.projects[index];
+                  return ListTile(
+                    title: Text(project),
+                    dense: true,
+                    trailing: _selected == project
+                        ? const Icon(Icons.check_circle, size: 20)
+                        : const Icon(Icons.radio_button_unchecked, size: 20),
+                    onTap: () => setState(() => _selected = project),
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: FilledButton(
+                onPressed: () {
+                  widget.onSelected(_selected ?? widget.projects.first);
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Continue'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelPickerPage extends StatefulWidget {
+  const _ModelPickerPage({
     required this.models,
     this.preselected,
     this.allowCancel = false,
@@ -347,10 +376,10 @@ class _ModelPickerDialog extends StatefulWidget {
   final bool allowCancel;
 
   @override
-  State<_ModelPickerDialog> createState() => _ModelPickerDialogState();
+  State<_ModelPickerPage> createState() => _ModelPickerPageState();
 }
 
-class _ModelPickerDialogState extends State<_ModelPickerDialog> {
+class _ModelPickerPageState extends State<_ModelPickerPage> {
   late final TextEditingController _manualController;
   String? _selected;
 
@@ -370,80 +399,86 @@ class _ModelPickerDialogState extends State<_ModelPickerDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return AlertDialog(
-      title: const Text('Select Model'),
-      content: SizedBox(
-        width: double.maxFinite,
+    return Scaffold(
+      appBar: AppBar(title: const Text('Select Model')),
+      body: SafeArea(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            if (widget.models.isEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text(
-                  'Could not fetch the model list. Enter a model id manually.',
-                  style: theme.textTheme.bodySmall,
-                ),
-              )
-            else
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: widget.models.length,
-                  itemBuilder: (context, index) {
-                    final model = widget.models[index];
-                    return ListTile(
-                      title: Text(model),
-                      dense: true,
-                      trailing: _selected == model
-                          ? Icon(
-                              Icons.check_circle,
-                              size: 20,
-                              color: theme.colorScheme.primary,
-                            )
-                          : Icon(
-                              Icons.radio_button_unchecked,
-                              size: 20,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                      onTap: () {
-                        setState(() => _selected = model);
-                      },
-                    );
-                  },
-                ),
+            Expanded(
+              child: ListView(
+                children: [
+                  if (widget.models.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        'Could not fetch the model list. Enter a model id manually.',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    )
+                  else
+                    for (final model in widget.models)
+                      ListTile(
+                        title: Text(model),
+                        dense: true,
+                        trailing: _selected == model
+                            ? Icon(
+                                Icons.check_circle,
+                                size: 20,
+                                color: theme.colorScheme.primary,
+                              )
+                            : Icon(
+                                Icons.radio_button_unchecked,
+                                size: 20,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                        onTap: () => setState(() => _selected = model),
+                      ),
+                ],
               ),
-            const Divider(),
-            TextField(
-              controller: _manualController,
-              decoration: const InputDecoration(
-                labelText: 'Or enter model id',
-                isDense: true,
-                border: OutlineInputBorder(),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _manualController,
+                    decoration: const InputDecoration(
+                      labelText: 'Or enter model id',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      if (value.trim().isNotEmpty) {
+                        setState(() => _selected = value.trim());
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      if (widget.allowCancel)
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Cancel'),
+                        ),
+                      FilledButton(
+                        onPressed: () {
+                          final manual = _manualController.text.trim();
+                          Navigator.of(context).pop(
+                            manual.isNotEmpty ? manual : _selected,
+                          );
+                        },
+                        child: const Text('Connect'),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              onChanged: (value) {
-                if (value.trim().isNotEmpty) {
-                  setState(() => _selected = value.trim());
-                }
-              },
             ),
           ],
         ),
       ),
-      actions: [
-        if (widget.allowCancel)
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-        FilledButton(
-          onPressed: () {
-            final manual = _manualController.text.trim();
-            Navigator.of(context).pop(manual.isNotEmpty ? manual : _selected);
-          },
-          child: const Text('Connect'),
-        ),
-      ],
     );
   }
 }
