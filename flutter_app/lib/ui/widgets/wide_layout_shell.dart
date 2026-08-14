@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -77,18 +78,37 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
   void _onManagerChanged() {
+    _subscribeToActiveService();
     if (mounted) setState(() {});
+  }
+
+  /// Rebuilds when the active service notifies (model change, reconfigure).
+  void _onServiceChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The service we're currently listening to (for model-change rebuilds).
+  AgentService? _listenedService;
+
+  void _subscribeToActiveService() {
+    final active = widget.manager.active?.service;
+    if (active == _listenedService) return;
+    _listenedService?.removeListener(_onServiceChanged);
+    _listenedService = active;
+    active?.addListener(_onServiceChanged);
   }
 
   @override
   void initState() {
     super.initState();
     widget.manager.addListener(_onManagerChanged);
+    _subscribeToActiveService();
   }
 
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
+    _listenedService?.removeListener(_onServiceChanged);
     super.dispose();
   }
 
