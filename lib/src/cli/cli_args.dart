@@ -13,7 +13,7 @@
 library;
 
 /// The provider kinds accepted by `--provider`.
-const cliProviderKinds = {'openai-completions', 'anthropic', 'google'};
+const cliProviderKinds = {'openai-completions', 'anthropic', 'google', 'dial'};
 
 /// Invalid command line: the executable prints [message] plus a usage hint
 /// to stderr and exits with code 64 (EX_USAGE).
@@ -51,6 +51,7 @@ final class CliArgs extends CliArgsResult {
   const CliArgs({
     this.model,
     this.provider = 'openai-completions',
+    this.providerExplicit = false,
     this.baseUrl,
     this.systemPrompt,
     this.systemPromptFile,
@@ -73,6 +74,11 @@ final class CliArgs extends CliArgsResult {
 
   /// `--provider <kind>` (default: openai-completions, via OpenRouter).
   final String provider;
+
+  /// Whether `--provider` was passed explicitly. When false, the executable
+  /// prefers the saved `provider:` from `~/.fah/config.yaml` (the persisted
+  /// `/provider` switch) over the openai-completions default.
+  final bool providerExplicit;
 
   /// `--base-url <url>`.
   final String? baseUrl;
@@ -191,7 +197,11 @@ const _valueFlags = <String, _ValueFlag>{
 };
 
 void _setModel(_CliArgValues v, String value) => v.model = value;
-void _setProvider(_CliArgValues v, String value) => v.provider = value;
+void _setProvider(_CliArgValues v, String value) {
+  v.provider = value;
+  v.providerExplicit = true;
+}
+
 void _setBaseUrl(_CliArgValues v, String value) => v.baseUrl = value;
 void _setSystemPrompt(_CliArgValues v, String value) => v.systemPrompt = value;
 void _setSystemPromptFile(_CliArgValues v, String value) =>
@@ -217,6 +227,7 @@ void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
 final class _CliArgValues {
   String? model;
   String provider = 'openai-completions';
+  bool providerExplicit = false;
   String? baseUrl;
   String? systemPrompt;
   String? systemPromptFile;
@@ -251,6 +262,7 @@ final class _CliArgValues {
     return CliArgs(
       model: model,
       provider: provider,
+      providerExplicit: providerExplicit,
       baseUrl: baseUrl,
       systemPrompt: systemPrompt,
       systemPromptFile: systemPromptFile,

@@ -11,6 +11,13 @@ void main() {
       expect(args.prompt, isNull);
       expect(args.positionals, isEmpty);
       expect(args.provider, 'openai-completions');
+      expect(args.providerExplicit, isFalse);
+    });
+
+    test('--provider marks the provider explicit', () {
+      final args = parseCliArgs(const ['--provider', 'dial']) as CliArgs;
+      expect(args.provider, 'dial');
+      expect(args.providerExplicit, isTrue);
     });
 
     test('a single positional is the headless prompt source', () {

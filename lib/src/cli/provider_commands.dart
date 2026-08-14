@@ -87,16 +87,7 @@ extension on AgentCli {
       ('n', 'No, cancel', 'keep the provider'),
     ]);
     if (answer != 'y') return io.writeln('delete cancelled');
-    _removeProviderFromRegistry(entry);
-  }
-
-  /// Removes [entry] from the registry, clearing the active name if needed.
-  void _removeProviderFromRegistry(CustomProviderEntry entry) {
-    final registry = config.customProviders;
-    if (registry == null) return;
-    registry.entries.removeWhere((e) => e.name == entry.name);
-    if (_activeCustomName == entry.name) _activeCustomName = null;
-    io.writeln('deleted provider ${entry.name}');
+    removeProvider(entry);
   }
 
   /// The flow's free-form questions: a TUI text prompt when the controller
@@ -389,6 +380,7 @@ extension on AgentCli {
     final active = _activeCustomName;
     if (active == null) return;
     config.customProviders?.updateModel(active, modelId);
+    config.onModelChanged?.call(_agent.state.model);
   }
 
   /// The TUI provider picker (bare `/provider`): saved custom providers
@@ -464,13 +456,30 @@ extension on AgentCli {
   }
 
   /// Dispatches the subcommand forms of `/provider` (custom, openrouter
-  /// oauth, chatgpt oauth, codemie sso). Returns true when one handled it.
+  /// oauth, chatgpt oauth, codemie sso, dial setup). Returns true when one
+  /// handled it.
   bool _dispatchProviderSubcommand(List<String> args) {
     if (_startCustomProviderArg(args)) return true;
     if (_startOpenRouterOAuthArg(args)) return true;
     if (_startChatGptOAuthArg(args)) return true;
     if (_startCodeMieSsoArg(args)) return true;
+    if (_startDialSetupArg(args)) return true;
     return false;
+  }
+
+  /// The `/provider dial setup [baseUrl]` branch: the guided DIAL flow (the
+  /// same one the `+ Add provider → DIAL` preset opens). Returns true when
+  /// the command targeted the flow.
+  bool _startDialSetupArg(List<String> args) {
+    if (args.length < 2 || args[0] != 'dial' || args[1] != 'setup') {
+      return false;
+    }
+    if (args.length > 2) {
+      io.writeln('usage: /provider dial setup');
+      return true;
+    }
+    unawaited(_startDialProviderSetup());
+    return true;
   }
 
   /// The `/provider custom` branch of [_handleProviderCommand]: starts the
@@ -788,16 +797,31 @@ extension on AgentCli {
   }
 
   /// [providerStreamFunction] with the CLI's session id and — for the
-  /// ChatGPT Codex provider — the credentials-persist callback wired.
+  /// ChatGPT Codex provider — the credentials-persist callback wired. The
+  /// DIAL kind additionally picks up the optional `DIAL_API_VERSION`
+  /// environment value as its `api-version` query parameter and gates the
+  /// manual cache markers on the endpoint-reported `features.cache` set
+  /// (unknown models keep the optimistic marker + fallback).
   StreamFunction _catalogStreamFunction(String kind, String key) =>
       providerStreamFunction(
         kind,
         key,
         sessionId: () => _session?.cachedId,
+        dialApiVersion: kind == 'dial'
+            ? config.envVarValue?.call('DIAL_API_VERSION')
+            : null,
+        dialCacheMarkersSupported: kind == 'dial' ? _dialCacheFlag : null,
         onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
             ? _persistChatGptCredentials
             : null,
       );
+
+  /// The active model's manual-cache support for the dial adapter: true /
+  /// false when the models fetch reported the flag, null while unknown.
+  bool? get _dialCacheFlag {
+    if (_dialCacheModels.isEmpty) return null;
+    return _dialCacheModels.contains(_agent.state.model.id);
+  }
 
   /// The `/provider codemie sso [url]` branch: browser SSO against a
   /// CodeMie organization (localhost callback), then the full cookie string
@@ -1045,6 +1069,98 @@ extension on AgentCli {
     final baseUrl = args.length > 1 ? args[1] : spec.defaultBaseUrl;
     final token = args.length > 2 ? args[2] : null;
     await _switchProvider(spec, baseUrl, _agent.state.model.id, token: token);
+  }
+
+  /// The `preset:dial` guided setup: base URL (Enter applies the EPAM
+  /// default) → DIAL API key (or DIAL_API_KEY from the environment) →
+  /// deployment picked from `{baseUrl}/openai/models` (or typed manually).
+  /// Switches to the dial provider with Api-Key auth; the key persists in
+  /// the secure store under the endpoint-scoped name like every provider.
+  Future<void> _startDialProviderSetup() async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      final spec = providerCatalog['dial']!;
+      final typedBase = await _askLine('base URL [${spec.defaultBaseUrl}]: ');
+      if (typedBase == null) {
+        io.writeln('dial setup cancelled');
+        return;
+      }
+      final baseUrl = typedBase.trim().isEmpty
+          ? spec.defaultBaseUrl
+          : typedBase.trim();
+      var key = await _askLine('DIAL API key: ', secret: true);
+      if (key == null) {
+        io.writeln('dial setup cancelled');
+        return;
+      }
+      key = key.trim();
+      if (key.isEmpty) {
+        final envKey = _providerKeyFor(spec, baseUrl) ?? '';
+        if (envKey.isEmpty) {
+          io.writeln(
+            'no key given and DIAL_API_KEY is not set — switch will be '
+            'keyless',
+          );
+        }
+        key = envKey;
+      }
+      // Fetch the deployment list; failures fall through to manual entry.
+      List<String> deployments = const [];
+      try {
+        deployments = await fetchDialModels(baseUrl, key);
+      } on Object {
+        // Dead endpoint / bad key — the user can still type a deployment.
+      }
+      String? modelId;
+      if (deployments.isNotEmpty) {
+        modelId = await _pickOption('DIAL deployment', [
+          for (final id in deployments)
+            (id, id, 'deployment ${_dialDeploymentLabel(id)}'),
+        ]);
+      }
+      modelId ??= await _askLine('deployment (model id): ');
+      if (modelId == null || modelId.trim().isEmpty) {
+        io.writeln('dial setup cancelled');
+        return;
+      }
+      final deployment = modelId.trim();
+      // Save the org as a registry entry so it shows in the /provider picker
+      // and survives restarts (re-login/switch just updates the model).
+      final registry = config.customProviders;
+      if (registry != null) {
+        final candidate = _codeMieHostName(baseUrl);
+        final existing = registry.find(candidate);
+        final name = existing?.name ?? candidate;
+        final keyName = CustomProviderRegistry.keyNameFor(baseUrl);
+        registry.add(
+          CustomProviderEntry(
+            name: name,
+            apiType: 'dial',
+            baseUrl: baseUrl,
+            modelId: deployment,
+            keyName: key.isEmpty ? null : keyName,
+          ),
+        );
+        _activeCustomName = name;
+        io.writeln('saved provider $name (listed in /provider)');
+      }
+      await _switchProvider(
+        spec,
+        baseUrl,
+        deployment,
+        token: key.isEmpty ? null : key,
+      );
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
+  /// Short human label for a deployment id in the picker descriptions.
+  String _dialDeploymentLabel(String id) {
+    final dot = id.indexOf('.');
+    return dot > 0 && dot < id.length - 1 ? id.substring(0, dot) : id;
   }
 
   /// Applies a provider/endpoint switch: rebuilds the model and stream
@@ -1706,6 +1822,9 @@ extension on AgentCli {
     if (entry.baseUrl.contains('/code-assistant-api/')) {
       return fetchCodeMieModels(entry.baseUrl, cookieOrKey);
     }
+    if (spec.kind == 'dial') {
+      return fetchDialModels(entry.baseUrl, cookieOrKey);
+    }
     if (spec.kind == 'openai-completions') {
       final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
       return fetch(entry.baseUrl, apiKey: cookieOrKey);
@@ -1776,9 +1895,12 @@ extension on AgentCli {
       final model = _agent.state.model;
       if (model.api == 'openai-completions') {
         // CodeMie exposes its model list at /llm_models (LiteLLM-shaped),
-        // not the OpenAI /models.
+        // not the OpenAI /models; DIAL serves deployments at
+        // /openai/models with Api-Key auth.
         final ids = model.baseUrl.contains('/code-assistant-api/')
             ? await fetchCodeMieModels(model.baseUrl, _apiKey)
+            : model.provider == 'dial'
+            ? await _fetchDialModelsAndFeatures(model.baseUrl)
             : await (config.modelsFetcher ?? _fetchOpenAiCompatibleModels)(
                 model.baseUrl,
                 apiKey: _apiKey,
@@ -1822,6 +1944,20 @@ extension on AgentCli {
       _replaceModelLimits(maxTokens: detectedCap);
       io.writeln(_style.dim('model max tokens: $detectedCap (from endpoint)'));
     }
+  }
+
+  /// [fetchDialModelsInfo] wrapper for [_refreshModelCache]: records the
+  /// `features.cache` deployment set (drives [DialOptions.cacheMarkersSupported])
+  /// and the endpoint-reported limits (context window / max output from
+  /// `limits`, the MAXIMUM values — never the `defaults`), and answers the
+  /// plain id list.
+  Future<List<String>> _fetchDialModelsAndFeatures(String baseUrl) async {
+    final (ids, cacheSupported, windows, maxTokens) =
+        await fetchDialModelsInfo(baseUrl, _apiKey);
+    if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
+    if (windows.isNotEmpty) _modelContextWindows = windows;
+    if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
+    return ids;
   }
 
   Future<List<String>> _fetchOpenAiCompatibleModels(
@@ -2162,8 +2298,10 @@ extension on AgentCli {
         modelId: modelId,
       );
       io.writeln('switched model to $modelId');
+      // _recordCustomModel persists via its own onModelChanged (the
+      // per-provider model memory write must survive restarts even when
+      // nothing else changed).
       _recordCustomModel(modelId);
-      config.onModelChanged?.call(_agent.state.model);
       return;
     }
     _agent.state.model = Model(

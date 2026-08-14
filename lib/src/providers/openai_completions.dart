@@ -52,6 +52,7 @@ final class OpenAICompletionsOptions {
     this.toolChoice,
     this.sessionId,
     this.cacheRetention,
+    this.urlBuilder,
     this.onPayload,
     this.onResponse,
   });
@@ -99,6 +100,11 @@ final class OpenAICompletionsOptions {
   /// markers), or `none` (no cache key, no cache markers, no affinity
   /// header). pi's `PI_CACHE_RETENTION` env lookup is not ported.
   final String? cacheRetention;
+
+  /// Builds the request URL; defaults to `{model.baseUrl}/chat/completions`.
+  /// Dialects with a different path layout plug in here (DIAL's
+  /// `/openai/deployments/{model}/chat/completions`, see `dial.dart`).
+  final Uri Function(Model model)? urlBuilder;
 
   /// Inspect or replace the request payload before it is sent. Return `null`
   /// to keep the payload unchanged.
@@ -223,10 +229,12 @@ final class _OpenAICompletionsSession {
 
     cancelToken?.throwIfCancelled();
 
-    final request =
-        http.Request('POST', Uri.parse('${model.baseUrl}/chat/completions'))
-          ..headers.addAll(_buildHeaders(model, options))
-          ..body = jsonEncode(params);
+    final url =
+        options?.urlBuilder?.call(model) ??
+        Uri.parse('${model.baseUrl}/chat/completions');
+    final request = http.Request('POST', url)
+      ..headers.addAll(_buildHeaders(model, options))
+      ..body = jsonEncode(params);
 
     return startProviderResponse(
       eventStream,
@@ -678,6 +686,7 @@ final class _ResolvedCompat {
     required this.requiresToolResultName,
     required this.cacheControlFormat,
     required this.supportsLongCacheRetention,
+    required this.sendsToolStrict,
   });
 
   final String maxTokensField;
@@ -694,6 +703,11 @@ final class _ResolvedCompat {
   /// (pi's `supportsLongCacheRetention`; the non-supporting providers of
   /// pi's matrix are not detected here, so the default is true).
   final bool supportsLongCacheRetention;
+
+  /// Whether the top-level tool entry carries a `strict` field. DIAL Core's
+  /// strict request schema rejects it (`400 … strict … Extra inputs are not
+  /// permitted`).
+  final bool sendsToolStrict;
 }
 
 bool _isOpenRouterModel(Model model) {
@@ -701,8 +715,13 @@ bool _isOpenRouterModel(Model model) {
       model.baseUrl.contains('openrouter.ai');
 }
 
+bool _isDialModel(Model model) {
+  return model.provider == 'dial';
+}
+
 _ResolvedCompat _getCompat(Model model) {
   final isOpenRouter = _isOpenRouterModel(model);
+  final isDial = _isDialModel(model);
   final compat = model.compat;
   return _ResolvedCompat(
     maxTokensField: compat?.maxTokensField ?? 'max_completion_tokens',
@@ -715,6 +734,7 @@ _ResolvedCompat _getCompat(Model model) {
         ? 'anthropic'
         : null,
     supportsLongCacheRetention: true,
+    sendsToolStrict: compat?.sendsToolStrict ?? !isDial,
   );
 }
 
@@ -741,13 +761,17 @@ Map<String, dynamic> _buildParams(
 
   if (options?.maxTokens != null) {
     params[compat.maxTokensField] = options!.maxTokens;
+  } else if (model.maxTokens > 0) {
+    // The model's carried cap (catalog default or endpoint-detected via
+    // /models limits) — same fallback semantics as the Anthropic adapter.
+    params[compat.maxTokensField] = model.maxTokens;
   }
 
   if (options?.temperature != null) {
     params['temperature'] = options!.temperature;
   }
 
-  _applyToolsParam(params, context);
+  _applyToolsParam(params, context, compat);
 
   if (options?.toolChoice != null) {
     params['tool_choice'] = options!.toolChoice;
@@ -901,9 +925,13 @@ bool _addCacheControlToTextContent(
   return false;
 }
 
-void _applyToolsParam(Map<String, dynamic> params, Context context) {
+void _applyToolsParam(
+  Map<String, dynamic> params,
+  Context context,
+  _ResolvedCompat compat,
+) {
   if (context.tools != null && context.tools!.isNotEmpty) {
-    params['tools'] = _convertTools(context.tools!);
+    params['tools'] = _convertTools(context.tools!, compat);
   } else if (_hasToolHistory(context.messages)) {
     // Anthropic (via LiteLLM/proxy) requires tools param when conversation
     // has tool_calls/tool_results.
@@ -1171,7 +1199,10 @@ List<Map<String, dynamic>> _toolResultImageParts(
   ];
 }
 
-List<Map<String, dynamic>> _convertTools(List<Tool> tools) {
+List<Map<String, dynamic>> _convertTools(
+  List<Tool> tools,
+  _ResolvedCompat compat,
+) {
   return [
     for (final tool in tools)
       {
@@ -1181,9 +1212,9 @@ List<Map<String, dynamic>> _convertTools(List<Tool> tools) {
           'description': tool.description,
           'parameters': tool.parameters,
         },
-        // pi only includes `strict` when the provider supports it; the
-        // auto-detected default is to include it.
-        'strict': false,
+        // pi only includes `strict` when the provider supports it; strict
+        // request schemas (DIAL Core) reject unknown fields outright.
+        if (compat.sendsToolStrict) 'strict': false,
       },
   ];
 }

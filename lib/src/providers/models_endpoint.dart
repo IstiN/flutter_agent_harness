@@ -72,20 +72,33 @@ void _collectModelEntry(
 }
 
 /// The reported context window (`context_length` for OpenRouter,
-/// `context_window`, `max_context_length` for LM Studio and friends), or
-/// null when the entry reports none.
+/// `context_window`, `max_context_length` for LM Studio and friends, or the
+/// max of `limits.max_total_tokens`/`limits.max_prompt_tokens` for DIAL),
+/// or null when the entry reports none.
 int? _reportedWindow(Map<dynamic, dynamic> entry) {
   final window =
       entry['context_length'] ??
       entry['context_window'] ??
       entry['max_context_length'];
   if (window is num && window > 0) return window.round();
+  // DIAL: `limits` carries the endpoint's ceilings; the usable context is
+  // the larger of the total and the prompt-only cap.
+  final limits = entry['limits'];
+  if (limits is Map) {
+    final total = limits['max_total_tokens'];
+    final prompt = limits['max_prompt_tokens'];
+    final candidates = [
+      if (total is num && total > 0) total,
+      if (prompt is num && prompt > 0) prompt,
+    ];
+    if (candidates.isNotEmpty) return candidates.reduce((a, b) => a > b ? a : b).round();
+  }
   return null;
 }
 
 /// The reported max output tokens (`max_completion_tokens` for OpenRouter,
-/// then its `top_provider` nested form, `max_output_tokens`), or null when
-/// the entry reports none.
+/// then its `top_provider` nested form, `max_output_tokens`, or DIAL's
+/// `limits.max_completion_tokens`), or null when the entry reports none.
 int? _reportedMaxTokens(Map<dynamic, dynamic> entry) {
   final topProvider = entry['top_provider'];
   final cap =
@@ -93,5 +106,10 @@ int? _reportedMaxTokens(Map<dynamic, dynamic> entry) {
       (topProvider is Map ? topProvider['max_completion_tokens'] : null) ??
       entry['max_output_tokens'];
   if (cap is num && cap > 0) return cap.round();
+  final limits = entry['limits'];
+  if (limits is Map) {
+    final dialCap = limits['max_completion_tokens'];
+    if (dialCap is num && dialCap > 0) return dialCap.round();
+  }
   return null;
 }

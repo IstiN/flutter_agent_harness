@@ -46,7 +46,7 @@ INVOCATION
 OPTIONS
   -p, --prompt <text>          Run a single headless prompt and exit
   --model <id>                 Model id (default per provider, see PROVIDERS)
-  --provider <kind>            openai-completions | anthropic | google
+  --provider <kind>            openai-completions | anthropic | google | dial
                                (default: openai-completions, via OpenRouter)
   --base-url <url>             Override the provider API base URL
   --mode <name>                Initial mode: code | architect | review
@@ -90,6 +90,12 @@ PROVIDERS AND API KEYS
       Key: GOOGLE_API_KEY
       Default model: gemini-2.5-pro @
       https://generativelanguage.googleapis.com/v1beta
+  dial
+      Key: DIAL_API_KEY (sent as the Api-Key header, not Bearer)
+      EPAM DIAL Core: chat at {baseUrl}/openai/deployments/<model>/chat/
+      completions; --model names the deployment (required, no default).
+      Default endpoint https://ai-proxy.lab.epam.com; override with
+      --base-url. DIAL_API_VERSION optionally appends ?api-version=<value>.
 
   Custom endpoints: --provider openai-completions --base-url <url> talks to
   any OpenAI-compatible server — a local Ollama (http://localhost:11434/v1),
@@ -329,6 +335,7 @@ SKILLS AND CONTEXT FILES
                      via roles yaml contextWindow:/maxTokens:)
   /provider [name] [baseUrl] [token] | custom | openrouter oauth [headless]
                      | chatgpt oauth [headless] | codemie sso [orgUrl]
+                     | dial setup
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
                      a guided setup that saves the provider (api type, url,
@@ -341,7 +348,9 @@ SKILLS AND CONTEXT FILES
                      codemie sso [orgUrl] signs in to a CodeMie organization
                      via browser SSO (localhost callback) and saves it as a
                      custom provider — the session JWT rides the standard
-                     OpenAI-compatible adapter
+                     OpenAI-compatible adapter; dial setup runs the guided
+                     DIAL Core flow (base URL, Api key, deployment) and
+                     saves the org as a dial custom provider
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
   /session [name]    show current or switch/create a named session

@@ -656,6 +656,18 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handlePaste(PasteMsg msg) {
+    // Prompt mode: pastes go into the open prompt's buffer (e.g. an API key
+    // pasted into the dial/secret prompts), like typed characters do.
+    if (prompt != null) {
+      final key = PromptPaste(msg.content);
+      final (state: next, resolved: answer) = handleTuiPromptKey(prompt!, key);
+      if (answer != null) {
+        _promptCompleter?.complete(answer);
+        _promptCompleter = null;
+        return (copyWith(clearPrompt: true), null);
+      }
+      return (copyWith(prompt: next), null);
+    }
     final before = inputText.substring(0, cursor);
     final after = inputText.substring(cursor);
     return (

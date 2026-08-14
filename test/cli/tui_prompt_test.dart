@@ -769,4 +769,50 @@ void main() {
       expect(rows.first.startsWith('┌'), isTrue);
     });
   });
+
+  group('Paste into prompts', () {
+    test('PromptPaste inserts the whole clipboard at the cursor', () {
+      final spec = TextPromptSpec(question: 'DIAL API key: ', secret: true);
+      var state = TuiPromptState(spec);
+      state = handleTuiPromptKey(state, const PromptPaste('sk-dial-123')).state;
+      expect(state.secretValue, 'sk-dial-123');
+      expect(state.secretCursor, 'sk-dial-123'.length);
+      // Enter resolves the answer with the pasted value.
+      final done = handleTuiPromptKey(state, const PromptEnter());
+      expect(done.resolved, isA<TextPromptAnswer>());
+      expect((done.resolved as TextPromptAnswer).value, 'sk-dial-123');
+    });
+
+    test('PromptPaste between typed characters', () {
+      final spec = TextPromptSpec(question: 'base URL: ');
+      var state = TuiPromptState(spec);
+      state = handleTuiPromptKey(state, const PromptChar('a')).state;
+      state = handleTuiPromptKey(state, const PromptChar('c')).state;
+      state = handleTuiPromptKey(state, const PromptArrowLeft()).state;
+      state = handleTuiPromptKey(state, const PromptPaste('b')).state;
+      expect(state.secretValue, 'abc');
+      expect(state.secretCursor, 2);
+    });
+
+    test('PromptPaste into ask free text', () {
+      final spec = AskPromptSpec(
+        header: 'Ask',
+        question: 'Q?',
+        index: 0,
+        total: 1,
+        options: [AskOption(label: 'A')],
+        multiSelect: true,
+      );
+      // Tab toggles to free text but the spec still HAS options — paste
+      // reaches the free-text buffer only in free-text mode.
+      var state = handleTuiPromptKey(
+        TuiPromptState(spec),
+        const PromptTab(),
+      ).state;
+      expect(state.askMode, AskInputMode.freeText);
+      state = handleTuiPromptKey(state, const PromptPaste('hello')).state;
+      expect(state.secretValue, 'hello');
+      expect(state.askCursor, 'hello'.length);
+    });
+  });
 }

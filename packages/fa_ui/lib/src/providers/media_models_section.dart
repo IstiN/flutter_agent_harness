@@ -10,6 +10,7 @@ import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/media_models_store.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
+import 'package:fa_ui/src/utils/page_presentation.dart';
 
 /// The settings "Media models" section: one row per [MediaSlot] showing the
 /// effective endpoint — the slot's override (`model · provider`) or the main
@@ -171,16 +172,16 @@ class MediaModelsSection extends StatelessWidget {
   ) async {
     onSlotEditorOpened?.call(slot);
     final strings = FaUiStrings.of(context);
-    final result = await Navigator.of(context).push<MediaSlotEditorResult>(
-      MaterialPageRoute(
-        builder: (_) => MediaSlotProviderPickerPage(
-          slot: slot,
-          title: strings.mediaModelsEditTitle(slotLabelFor(strings, slot)),
-          initial: store.overrideFor(slot),
-          mainBaseUrl: mainBaseUrl,
-          registry: registry,
-          modelsFetcher: modelsFetcher,
-        ),
+    // pushFaPage shows a dialog on wide screens, a full page on narrow.
+    final result = await pushFaPage<MediaSlotEditorResult>(
+      context,
+      MediaSlotProviderPickerPage(
+        slot: slot,
+        title: strings.mediaModelsEditTitle(slotLabelFor(strings, slot)),
+        initial: store.overrideFor(slot),
+        mainBaseUrl: mainBaseUrl,
+        registry: registry,
+        modelsFetcher: modelsFetcher,
       ),
     );
     if (result == null) return;

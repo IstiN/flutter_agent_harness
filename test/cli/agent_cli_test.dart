@@ -580,7 +580,7 @@ void main() {
   });
 
   test('providerStreamFunction builds adapters and rejects unknown kinds', () {
-    for (final kind in ['openai-completions', 'anthropic', 'google']) {
+    for (final kind in ['openai-completions', 'anthropic', 'google', 'dial']) {
       expect(providerStreamFunction(kind, 'k'), isA<StreamFunction>());
     }
     expect(

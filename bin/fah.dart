@@ -147,6 +147,7 @@ String? _optionalApiKey(
   final names = switch (provider) {
     'anthropic' => const ['ANTHROPIC_API_KEY'],
     'google' => const ['GOOGLE_API_KEY'],
+    'dial' => const ['DIAL_API_KEY'],
     'vision' => const ['VISION_API_KEY'],
     'transcribe' => const ['TRANSCRIBE_API_KEY'],
     _ => const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
@@ -195,6 +196,7 @@ String _resolveApiKey(
     final name = switch (provider) {
       'anthropic' => 'ANTHROPIC_API_KEY',
       'google' => 'GOOGLE_API_KEY',
+      'dial' => 'DIAL_API_KEY',
       'vision' => 'VISION_API_KEY',
       'transcribe' => 'TRANSCRIBE_API_KEY',
       _ => 'OPENROUTER_API_KEY',
@@ -574,7 +576,18 @@ Future<void> main(List<String> args) async {
     _fail('invalid ~/.fah/config.yaml: ${error.message}');
   }
 
-  final provider = parsed.provider;
+  // An explicit --provider wins; without it the saved `provider:` (the
+  // persisted /provider switch) restores the last provider kind — model and
+  // baseUrl already restore from the config, losing only the kind would
+  // rebuild e.g. dial as a plain openai endpoint. Only kinds the legacy
+  // single-model path can build are restored (chatgpt-codex keeps the
+  // openai-completions default; its OAuth flow re-establishes on demand).
+  const restorableKinds = {'openai-completions', 'anthropic', 'google', 'dial'};
+  final provider = parsed.providerExplicit
+      ? parsed.provider
+      : (restorableKinds.contains(saved.providerKind)
+            ? saved.providerKind
+            : parsed.provider);
   final modelId = parsed.model ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? saved.baseUrl;
   final mode = parsed.mode ?? saved.mode;

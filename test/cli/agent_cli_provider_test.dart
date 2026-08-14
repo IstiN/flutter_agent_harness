@@ -240,7 +240,7 @@ void main() {
     expect(
       output,
       contains(
-        'supported providers: openrouter, openai, chatgpt, codemie, anthropic, google',
+        'supported providers: openrouter, openai, chatgpt, codemie, dial, anthropic, google',
       ),
     );
     expect(cli.agent.state.model.provider, 'test-provider');
@@ -909,6 +909,39 @@ void main() {
   // (select a saved provider → Edit/Delete sub-picker). Line mode no longer
   // has a dedicated edit command.
 
+  test('deleting a saved provider notifies the host so it persists', () async {
+    // Regression: _removeProviderFromRegistry mutated the registry but
+    // never called onProviderChanged — the host never re-saved the config,
+    // so deleted providers reappeared after restart.
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final changes = <(String, String)>[];
+    final registry = CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'my-ollama',
+        apiType: 'openai',
+        baseUrl: 'http://localhost:11434/v1',
+        modelId: 'm2',
+      ),
+    ]);
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      customProviders: registry,
+      onProviderChanged: (kind, key) => changes.add((kind, key)),
+    );
+    final run = cli.run();
+    io.sendLine('/exit');
+    await run;
+
+    // The picker delete path resolves here; the public regression is the
+    // persistence notification, exercised through the same entry object.
+    final entry = registry.entries.single;
+    cli.removeProvider(entry);
+
+    expect(registry.entries, isEmpty, reason: 'entry removed');
+    expect(changes, isNotEmpty, reason: 'host notified to persist config');
+  });
+
   test(
     '/provider-edit line-mode is gone — typed command falls through',
     () async {
@@ -1106,6 +1139,110 @@ void main() {
       io.sendLine('/provider chatgpt oauth too many args');
       await waitForIt(
         () => io.out.toString().contains('usage: /provider chatgpt oauth'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+  });
+
+  group('DIAL setup', () {
+    test(
+      '/provider dial setup saves a registry entry, stores the key and switches',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry([]);
+        final changes = <(String, String)>[];
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          onProviderChanged: (kind, key) => changes.add((kind, key)),
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider dial setup');
+        // Line-mode answers: default base URL (empty), the API key, then the
+        // deployment id (the models fetch fails against the default host —
+        // no fetcher injected here, the network error is swallowed).
+        await waitForIt(() => io.out.toString().contains('base URL [https://'));
+        io.sendLine('');
+        await waitForIt(() => io.out.toString().contains('DIAL API key'));
+        io.sendLine('dial-key-1');
+        await waitForIt(
+          () => io.out.toString().contains('deployment (model id)'),
+        );
+        io.sendLine('anthropic.claude-sonnet-4-5-v1:0');
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to dial'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final entry = registry.find('ai-proxy.lab.epam.com');
+        expect(entry, isNotNull, reason: 'dial org saved as registry entry');
+        expect(entry!.apiType, 'dial');
+        expect(entry.modelId, 'anthropic.claude-sonnet-4-5-v1:0');
+        expect(store.map[entry.keyName], 'dial-key-1');
+        expect(cli.providerKind, 'dial');
+        expect(cli.agent.state.model.provider, 'dial');
+        expect(cli.agent.state.model.baseUrl, 'https://ai-proxy.lab.epam.com');
+        // The switch persisted (host notified).
+        expect(changes, isNotEmpty);
+        expect(changes.last.$1, 'dial');
+      },
+    );
+
+    test(
+      're-running setup reuses the entry name and updates the model',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'ai-proxy.lab.epam.com',
+            apiType: 'dial',
+            baseUrl: 'https://ai-proxy.lab.epam.com',
+            modelId: 'old-model',
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          customProviders: registry,
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider dial setup');
+        await waitForIt(() => io.out.toString().contains('base URL [https://'));
+        io.sendLine('');
+        await waitForIt(() => io.out.toString().contains('DIAL API key'));
+        io.sendLine('');
+        await waitForIt(
+          () => io.out.toString().contains('deployment (model id)'),
+        );
+        io.sendLine('new-model');
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to dial'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(registry.entries, hasLength(1), reason: 'no duplicate entry');
+        expect(registry.find('ai-proxy.lab.epam.com')!.modelId, 'new-model');
+      },
+    );
+
+    test('/provider dial setup rejects extra args', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider dial setup extra');
+      await waitForIt(
+        () => io.out.toString().contains('usage: /provider dial setup'),
       );
       io.sendLine('/exit');
       await run;

@@ -17,6 +17,7 @@ import '../providers/anthropic.dart';
 import '../providers/chatgpt_codex.dart';
 import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
+import '../providers/dial.dart';
 import '../providers/google.dart';
 import '../providers/openai_completions.dart';
 
@@ -39,7 +40,8 @@ final class ProviderSpec {
   final String name;
 
   /// Adapter kind consumed by [providerStreamFunction]:
-  /// `openai-completions`, `anthropic`, or `google`.
+  /// `openai-completions`, `anthropic`, `google`, `dial`, or
+  /// `chatgpt-codex`.
   final String kind;
 
   /// The API dialect recorded on built models (e.g. `anthropic-messages`).
@@ -101,6 +103,15 @@ const providerCatalog = <String, ProviderSpec>{
     api: 'openai-completions',
     defaultBaseUrl: '$defaultCodeMieBaseUrl/code-assistant-api/v1',
     apiKeyEnvNames: ['CODEMIE_API_KEY'],
+    contextWindow: 200000,
+    maxTokens: 16384,
+  ),
+  'dial': ProviderSpec(
+    name: 'dial',
+    kind: 'dial',
+    api: 'openai-completions',
+    defaultBaseUrl: 'https://ai-proxy.lab.epam.com',
+    apiKeyEnvNames: ['DIAL_API_KEY'],
     contextWindow: 200000,
     maxTokens: 16384,
   ),
@@ -178,6 +189,7 @@ Model buildCliDefaultModel(
   final spec = switch (providerKind) {
     'anthropic' => providerCatalog['anthropic']!,
     'google' => providerCatalog['google']!,
+    'dial' => providerCatalog['dial']!,
     'openai-completions' || 'openrouter' =>
       baseUrl == null
           ? providerCatalog['openrouter']!
@@ -189,7 +201,12 @@ Model buildCliDefaultModel(
     'google': 'gemini-2.5-pro',
     'openai-completions': 'anthropic/claude-sonnet-4',
   };
-  final id = modelId ?? defaultIds[spec.kind]!;
+  final id = modelId ?? defaultIds[spec.kind];
+  if (id == null) {
+    // Providers without a sane universal default (DIAL deployment names are
+    // per-deployment) must name the model explicitly.
+    throw ConfigException('provider "$providerKind" requires --model <id>');
+  }
   return Model(
     id: id,
     name: id,
@@ -204,25 +221,29 @@ Model buildCliDefaultModel(
 }
 
 /// Builds the [StreamFunction] for a provider adapter [kind]
-/// (`openai-completions`, `anthropic`, `google`) with a static [apiKey].
-/// Throws [ConfigException] for unknown kinds.
+/// (`openai-completions`, `anthropic`, `google`, `dial`, `chatgpt-codex`)
+/// with a static [apiKey]. Throws [ConfigException] for unknown kinds.
 ///
 /// [sessionId] (resolved lazily per call) is the prompt-cache affinity key
 /// threaded to adapters that support one (OpenAI `prompt_cache_key`,
 /// OpenRouter `x-session-id`); [cacheRetention] sets the adapters' cache
 /// retention (`short`/`long`/`none`, adapter default when null). Both are
 /// defaults: an active [StreamCacheRouting] override (the compaction
-/// bypass) wins per call.
+/// bypass) wins per call. [dialApiVersion] is the DIAL `api-version` query
+/// parameter (the `dial` kind only; omitted when null).
 StreamFunction providerStreamFunction(
   String kind,
   String apiKey, {
   String? Function()? sessionId,
   String? cacheRetention,
+  String? dialApiVersion,
+  bool? dialCacheMarkersSupported,
   ChatGptCredentialsPersist? onChatGptCredentialsRefreshed,
 }) {
   if (kind != 'openai-completions' &&
       kind != 'anthropic' &&
       kind != 'google' &&
+      kind != 'dial' &&
       kind != 'chatgpt-codex') {
     throw ConfigException('Unknown provider kind: $kind');
   }
@@ -232,6 +253,8 @@ StreamFunction providerStreamFunction(
     apiKey,
     sessionId,
     cacheRetention,
+    dialApiVersion,
+    dialCacheMarkersSupported,
     onChatGptCredentialsRefreshed,
   );
 }
@@ -245,6 +268,8 @@ final class _CatalogStreamFunction {
     this._apiKey,
     this._sessionId,
     this._cacheRetention,
+    this._dialApiVersion,
+    this._dialCacheMarkersSupported,
     this._onChatGptCredentialsRefreshed,
   );
 
@@ -252,6 +277,8 @@ final class _CatalogStreamFunction {
   final String _apiKey;
   final String? Function()? _sessionId;
   final String? _cacheRetention;
+  final String? _dialApiVersion;
+  final bool? _dialCacheMarkersSupported;
   final ChatGptCredentialsPersist? _onChatGptCredentialsRefreshed;
 
   /// The [StreamFunction] entry point.
@@ -287,6 +314,18 @@ final class _CatalogStreamFunction {
         model,
         context,
         GoogleOptions(apiKey: _apiKey, cancelToken: cancelToken),
+      ),
+      'dial' => streamDial(
+        model,
+        context,
+        DialOptions(
+          apiKey: _apiKey,
+          apiVersion: _dialApiVersion,
+          cancelToken: cancelToken,
+          sessionId: effectiveSessionId,
+          cacheRetention: effectiveRetention,
+          cacheMarkersSupported: _dialCacheMarkersSupported,
+        ),
       ),
       'chatgpt-codex' => streamChatGptCodex(
         model,

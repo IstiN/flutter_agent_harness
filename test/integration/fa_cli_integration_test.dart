@@ -72,53 +72,55 @@ void main() {
       },
     );
 
-    test('/settings > provider delete removes provider with confirmation',
-        () async {
-      final tempHome = _tempHomeWithProvider();
-      final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': tempHome.path},
-      );
-      addTearDown(() async {
-        await harness.close();
-        tempHome.deleteSync(recursive: true);
-      });
-      await harness.waitForBoot();
+    test(
+      '/settings > provider delete removes provider with confirmation',
+      () async {
+        final tempHome = _tempHomeWithProvider();
+        final harness = await FaCliHarness.spawn(
+          extraEnv: {'HOME': tempHome.path},
+        );
+        addTearDown(() async {
+          await harness.close();
+          tempHome.deleteSync(recursive: true);
+        });
+        await harness.waitForBoot();
 
-      await harness.runSlashCommand('/settings');
-      await harness.waitForText(
-        'Provider',
-        timeout: const Duration(seconds: 20),
-      );
-      harness.sendEnter();
-      await harness.waitForText(
-        'test-provider',
-        timeout: const Duration(seconds: 20),
-      );
-      harness.sendEnter();
-      await harness.waitForText(
-        'Edit provider',
-        timeout: const Duration(seconds: 20),
-      );
+        await harness.runSlashCommand('/settings');
+        await harness.waitForText(
+          'Provider',
+          timeout: const Duration(seconds: 20),
+        );
+        harness.sendEnter();
+        await harness.waitForText(
+          'test-provider',
+          timeout: const Duration(seconds: 20),
+        );
+        harness.sendEnter();
+        await harness.waitForText(
+          'Edit provider',
+          timeout: const Duration(seconds: 20),
+        );
 
-      // TUI picker: arrows navigate, Enter selects. 'delete' is item 2.
-      harness.sendArrowDown();
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      harness.sendEnter();
-      await harness.waitForText(
-        'Yes, delete',
-        timeout: const Duration(seconds: 20),
-      );
+        // TUI picker: arrows navigate, Enter selects. 'delete' is item 2.
+        harness.sendArrowDown();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        harness.sendEnter();
+        await harness.waitForText(
+          'Yes, delete',
+          timeout: const Duration(seconds: 20),
+        );
 
-      // The confirmation picker starts on 'Yes, delete'.
-      harness.sendEnter();
-      await harness.waitForText(
-        'deleted provider test-provider',
-        timeout: const Duration(seconds: 20),
-      );
+        // The confirmation picker starts on 'Yes, delete'.
+        harness.sendEnter();
+        await harness.waitForText(
+          'deleted provider test-provider',
+          timeout: const Duration(seconds: 20),
+        );
 
-      await harness.runSlashCommand('/exit');
-      await harness.waitForOutput();
-    });
+        await harness.runSlashCommand('/exit');
+        await harness.waitForOutput();
+      },
+    );
 
     test('/approval always-ask switches the approval mode', () async {
       final tempHome = _tempHomeWithApproval();

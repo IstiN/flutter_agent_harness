@@ -438,8 +438,9 @@ Future<int> _extractAndSwap(
     // Copy version.txt so the new binary reports its version correctly.
     final srcVersion = File('${bundleDir.path}/version.txt');
     if (srcVersion.existsSync()) {
-      await File('${installDir.path}/version.txt')
-          .writeAsBytes(srcVersion.readAsBytesSync());
+      await File(
+        '${installDir.path}/version.txt',
+      ).writeAsBytes(srcVersion.readAsBytesSync());
     }
     _say('updated to $latest — restart fa to use it.');
     return 0;

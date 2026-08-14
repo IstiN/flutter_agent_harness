@@ -13,7 +13,7 @@ import '../model_roles/provider_catalog.dart';
 
 /// The api types a custom provider can take (the adapter dialect), mapping
 /// one-to-one to catalog specs.
-const customProviderApiTypes = ['openai', 'anthropic', 'google'];
+const customProviderApiTypes = ['openai', 'anthropic', 'google', 'dial'];
 
 /// One saved custom provider.
 final class CustomProviderEntry {

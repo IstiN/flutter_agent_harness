@@ -60,6 +60,14 @@ final class PromptChar extends PromptKey {
   final String text;
 }
 
+/// A clipboard paste (bracketed paste): inserted at the cursor like typing,
+/// but as one unit (newlines allowed — the buffer keeps them until Enter
+/// resolves the answer).
+final class PromptPaste extends PromptKey {
+  const PromptPaste(this.text);
+  final String text;
+}
+
 /// The spec the host pushes into the TUI to ask the user for one decision.
 /// Sealed so the renderer can switch on it cleanly.
 sealed class TuiPromptSpec {
@@ -350,13 +358,26 @@ _PromptKeyResult? _handleBufferCharKey(
   PromptKey key, {
   required bool useAskCursor,
 }) {
-  if (key is! PromptChar) return null;
+  if (key is! PromptChar && key is! PromptPaste) return null;
+  final String text;
+  if (key is PromptChar) {
+    text = key.text;
+  } else if (key is PromptPaste) {
+    text = key.text;
+  } else {
+    return null;
+  }
+  if (text.isEmpty) return null;
   final buffer = state.secretValue;
   final cursor = useAskCursor ? state.askCursor : state.secretCursor;
-  final next =
-      buffer.substring(0, cursor) + key.text + buffer.substring(cursor);
+  final next = buffer.substring(0, cursor) + text + buffer.substring(cursor);
   return (
-    state: _withBufferEdit(state, next, cursor + 1, useAskCursor: useAskCursor),
+    state: _withBufferEdit(
+      state,
+      next,
+      cursor + text.length,
+      useAskCursor: useAskCursor,
+    ),
     resolved: null,
   );
 }

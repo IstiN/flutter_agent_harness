@@ -57,6 +57,7 @@ final class OpenAICompletionsCompat {
     this.supportsUsageInStreaming,
     this.thinkingFormat,
     this.requiresToolResultName,
+    this.sendsToolStrict = true,
   });
 
   /// Which field carries the output-token cap: `max_tokens` or
@@ -74,6 +75,12 @@ final class OpenAICompletionsCompat {
 
   /// Whether tool results must carry the tool `name` field. Default: false.
   final bool? requiresToolResultName;
+
+  /// Whether the top-level tool entry carries a `strict` field. Strict
+  /// schemas (DIAL Core's pydantic validation) reject unknown fields with
+  /// `400 Extra inputs are not permitted`. Default: true (OpenAI accepts
+  /// `strict`).
+  final bool sendsToolStrict;
 }
 
 /// A model the harness can call.

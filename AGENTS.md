@@ -165,6 +165,17 @@ factual: paths, commands, invariants — no essays.
   `_refreshModelCache` branches on the `code-assistant-api` marker. The
   catalog also has a `codemie` entry for the manual
   `/provider codemie [url] [token]` path (env `CODEMIE_API_KEY`).
+  `lib/src/providers/dial.dart` — the `dial` catalog entry (EPAM DIAL Core):
+  OpenAI-completions payload, but chat at `{baseUrl}/openai/deployments/
+  {model}/chat/completions` (the deployment name lives in the PATH — via the
+  `OpenAICompletionsOptions.urlBuilder` extension point) with `Api-Key`
+  header auth (the adapter gets a null key so no `Authorization: Bearer` is
+  sent); optional `?api-version=` from the `DIAL_API_VERSION` env
+  (`_catalogStreamFunction` reads it via `config.envVarValue`). Models come
+  from `{baseUrl}/openai/models` (`fetchDialModels`, the
+  `_refreshModelCache` `provider == 'dial'` branch). Headless:
+  `--provider dial --model <deployment> [--base-url …]` (dial has no
+  default model id — `buildCliDefaultModel` throws without `--model`).
   `lib/src/model_roles/vision_models.dart` — the shared vision heuristic
   (`modelIdSuggestsVision`, `visionMarker` picker checkmark,
   `inputModalitiesFor`): CLI model switches recompute `Model.input` from it

@@ -48,6 +48,7 @@ import '../model_roles/model_roles.dart';
 import '../model_roles/vision_models.dart';
 import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
+import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../prompts/prompt_overrides.dart';
@@ -522,6 +523,20 @@ class AgentCli {
   /// The live provider adapter kind (see [_providerKind]).
   String get providerKind => _providerKind;
 
+  /// Removes a saved custom provider from the registry (the `/provider`
+  /// picker's Delete action). Clears the active-entry marker when needed and
+  /// notifies [AgentCliConfig.onProviderChanged] so the host persists the
+  /// registry — deletion never switches the active model, so without the
+  /// notification the deletion silently vanished on restart.
+  void removeProvider(CustomProviderEntry entry) {
+    final registry = config.customProviders;
+    if (registry == null) return;
+    registry.entries.removeWhere((e) => e.name == entry.name);
+    if (_activeCustomName == entry.name) _activeCustomName = null;
+    io.writeln('deleted provider ${entry.name}');
+    config.onProviderChanged?.call(_providerKind, _apiKey);
+  }
+
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in
@@ -646,6 +661,12 @@ class AgentCli {
   /// plus the in-flight refresh future so concurrent callers coalesce.
   List<String> _modelCache = const [];
   Future<void>? _modelCacheFuture;
+
+  /// DIAL deployments whose `features.cache` flag the `/openai/models`
+  /// payload reports on (manual `cache_breakpoint` markers honored). Empty
+  /// until the first models fetch — unknown models keep the optimistic
+  /// marker + fallback behavior (see [streamDial]).
+  Set<String> _dialCacheModels = const {};
 
   /// Per-provider cached model lists: entry name → model ids. Refreshed
   /// lazily for ALL saved providers so `/model` can switch across
@@ -999,6 +1020,11 @@ class AgentCli {
         description: 'organization SSO sign-in',
       ),
       const MenuItem(
+        key: 'preset:dial',
+        label: 'DIAL',
+        description: 'EPAM DIAL Core — Api key + deployment',
+      ),
+      const MenuItem(
         key: 'preset:openai',
         label: 'OpenAI',
         description: 'api.openai.com — API key',
@@ -1033,6 +1059,7 @@ class AgentCli {
     'openrouter': () => _handleOpenRouterOAuthCommand(headless: false),
     'chatgpt': () => _handleChatGptOAuthCommand(headless: false),
     'codemie': () => _handleCodeMieSsoCommand(defaultCodeMieBaseUrl),
+    'dial': () => _startDialProviderSetup(),
     'openai': () async => _startProviderFlow(initialType: 'openai'),
     'anthropic': () async => _startProviderFlow(initialType: 'anthropic'),
     'google': () async => _startProviderFlow(initialType: 'google'),
@@ -1332,6 +1359,15 @@ class AgentCli {
   /// so [CliIO.write] (the assistant text) is the only stdout content.
   Future<int> runHeadless(String prompt) async {
     _session = await _initializeSession();
+    // Warm the endpoint metadata (model list, dial cache features, reported
+    // limits) BEFORE the first turn: the request then already carries the
+    // detected max token caps and the dial marker gating. Failures are
+    // silent — the catalog defaults keep applying.
+    try {
+      await _refreshModelCache();
+    } on Object {
+      // Swallowed: see _refreshModelCache.
+    }
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
     });

@@ -113,6 +113,14 @@ void main() {
       );
       expect(custom.provider, 'openai');
       expect(custom.baseUrl, 'https://proxy.example/v1');
+      final dial = buildCliDefaultModel('dial', modelId: 'gpt-4o');
+      expect(dial.provider, 'dial');
+      expect(dial.baseUrl, 'https://ai-proxy.lab.epam.com');
+      // DIAL deployment names are per-deployment: no universal default.
+      expect(
+        () => buildCliDefaultModel('dial'),
+        throwsA(isA<ConfigException>()),
+      );
       expect(
         () => buildCliDefaultModel('bogus'),
         throwsA(isA<ConfigException>()),
@@ -126,6 +134,7 @@ void main() {
           'openai-completions',
           'anthropic',
           'google',
+          'dial',
         ]) {
           expect(providerStreamFunction(kind, 'k'), isA<StreamFunction>());
         }
