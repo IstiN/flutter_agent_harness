@@ -510,39 +510,6 @@ jobs:
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
           echo "manifest_name=$MANIFEST_NAME" >> $GITHUB_OUTPUT
 
-      # Apple rejects underscores in framework bundle identifiers
-      # (e.g. LiteRtMetalAccelerator.framework from flutter_gemma).
-      # Patch them before the PKG is created and re-sign.
-      - name: Fix framework bundle identifiers for TestFlight (arm64)
-        if: matrix.arch == 'arm64'
-        env:
-          MACOS_CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
-        run: |
-          set -euo pipefail
-          APP_PATH="flutter_app/build/macos/Build/Products/Release/Fa.app"
-          # Known flutter_gemma frameworks with invalid bundle IDs.
-          # Patch ALL .framework dirs that contain "flutter_gemma" or "_"
-          # in their bundle identifier.
-          find "$APP_PATH" -name "*.framework" -type d | while read -r framework; do
-            PLIST="$framework/Info.plist"
-            [ -f "$PLIST" ] || continue
-            # Read the raw bundle ID; fall back to the framework name if plutil fails.
-            BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST" 2>/dev/null || true)
-            [ -z "$BUNDLE_ID" ] && continue
-            if echo "$BUNDLE_ID" | grep -q '_'; then
-              FIXED_ID=$(echo "$BUNDLE_ID" | tr '_' '-')
-              echo "Fixing bundle ID: $BUNDLE_ID → $FIXED_ID"
-              /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $FIXED_ID" "$PLIST"
-              # Re-sign after modifying the plist (invalidates the old signature).
-              if [ -n "${MACOS_CERTIFICATE_ID:-}" ]; then
-                codesign --force --sign "$MACOS_CERTIFICATE_ID" \
-                  --options runtime --timestamp \
-                  "$framework"
-              fi
-            fi
-          done
-          echo "Framework bundle ID check complete."
-
       - name: Package TestFlight PKG (arm64)
         if: matrix.arch == 'arm64'
         id: testflight_pkg
