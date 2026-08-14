@@ -136,15 +136,55 @@ class _AppsPanelState extends State<AppsPanel> {
   }
 
   void _openApp(JsAppInfo app) {
+    final manager = widget.manager;
+    if (manager.active?.service == null) {
+      // No active session — can't open an app. Show a hint instead of
+      // silently doing nothing.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Connect to a provider first to open apps.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
     AppAnalytics.instance.jsAppOpened(
       isDemo: AppsStore.demoAppIds.contains(app.id),
       source: 'apps_panel',
     );
     pushJsApp(
       context,
-      manager: widget.manager,
+      manager: manager,
       app: app,
       source: 'apps_panel',
+    );
+  }
+
+  /// Opens the file browser within the apps panel's nested navigator.
+  void _openFiles(BuildContext context) {
+    final service = widget.manager.active?.service;
+    if (service == null) return;
+    AppAnalytics.instance.filesOpened('apps_panel');
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Files')),
+          body: const Center(child: Text('Files')),
+        ),
+      ),
+    );
+  }
+
+  /// Opens the settings screen within the apps panel's nested navigator.
+  void _openSettings(BuildContext context) {
+    AppAnalytics.instance.settingsOpened();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Settings')),
+          body: const Center(child: Text('Settings')),
+        ),
+      ),
     );
   }
 
@@ -296,7 +336,13 @@ class _AppsPanelState extends State<AppsPanel> {
         const SizedBox(height: 16),
 
         // ── System tiles (Calendar, Files, Notes, Maps, etc.) ────
-        _SystemAppsGrid(colors: colors, theme: theme, isLight: isLight),
+        _SystemAppsGrid(
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+          onOpenFiles: () => _openFiles(context),
+          onOpenSettings: () => _openSettings(context),
+        ),
         const SizedBox(height: 16),
 
         // ── Custom apps section ──────────────────────────────────
@@ -913,11 +959,15 @@ class _SystemAppsGrid extends StatelessWidget {
     required this.colors,
     required this.theme,
     required this.isLight,
+    required this.onOpenFiles,
+    required this.onOpenSettings,
   });
 
   final FahColors colors;
   final ThemeData theme;
   final bool isLight;
+  final VoidCallback onOpenFiles;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -930,11 +980,11 @@ class _SystemAppsGrid extends StatelessWidget {
       mainAxisSpacing: 12,
       children: [
         _SystemAppTile(icon: Icons.calendar_today, label: 'Calendar', colors: colors, theme: theme, isLight: isLight),
-        _SystemAppTile(icon: Icons.folder_outlined, label: 'Files', colors: colors, theme: theme, isLight: isLight),
+        _SystemAppTile(icon: Icons.folder_outlined, label: 'Files', colors: colors, theme: theme, isLight: isLight, onTap: onOpenFiles),
         _SystemAppTile(icon: Icons.note_outlined, label: 'Notes', colors: colors, theme: theme, isLight: isLight),
         _SystemAppTile(icon: Icons.map_outlined, label: 'Maps', colors: colors, theme: theme, isLight: isLight),
         _SystemAppTile(icon: Icons.calculate_outlined, label: 'Calculator', colors: colors, theme: theme, isLight: isLight),
-        _SystemAppTile(icon: Icons.settings_outlined, label: 'Settings', colors: colors, theme: theme, isLight: isLight),
+        _SystemAppTile(icon: Icons.settings_outlined, label: 'Settings', colors: colors, theme: theme, isLight: isLight, onTap: onOpenSettings),
         _SystemAppTile(icon: Icons.build_outlined, label: 'Utilities', colors: colors, theme: theme, isLight: isLight, subtitle: '4 apps'),
         _SystemAppTile(icon: Icons.flight_outlined, label: 'Travel', colors: colors, theme: theme, isLight: isLight, subtitle: '3 apps'),
       ],
@@ -950,6 +1000,7 @@ class _SystemAppTile extends StatelessWidget {
     required this.theme,
     required this.isLight,
     this.subtitle,
+    this.onTap,
   });
 
   final IconData icon;
@@ -958,11 +1009,12 @@ class _SystemAppTile extends StatelessWidget {
   final ThemeData theme;
   final bool isLight;
   final String? subtitle;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () {}, // Placeholder — will open the system feature
+      onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
