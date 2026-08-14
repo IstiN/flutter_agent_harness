@@ -155,8 +155,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                         _SessionTile(
                           title: _titleFor(session),
                           subtitle: _subtitleFor(session),
-                          isActive:
-                              widget.manager.active?.id == session.id,
+                          isActive: widget.manager.active?.id == session.id,
                           onTap: () {
                             widget.manager.switchTo(session.id);
                             widget.onSessionTap?.call();
@@ -205,7 +204,20 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       return weekdays[created.weekday - 1];
     }
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     return '${months[created.month - 1]} ${created.day}';
   }
 

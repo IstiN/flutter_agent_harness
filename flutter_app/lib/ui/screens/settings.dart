@@ -1012,8 +1012,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              onPressed: () =>
-                  setState(() => _showProviderListOnly = true),
+              onPressed: () => setState(() => _showProviderListOnly = true),
               icon: const Icon(Icons.arrow_back, size: 16),
               label: const Text('Change provider'),
               style: TextButton.styleFrom(
@@ -1027,126 +1026,131 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         ],
         if (!_showProviderListOnly) ...[
           if (_isOnDevice)
-          _buildWebLlmFields(theme)
-        else if (_isGemma)
-          _buildGemmaFields(theme)
-        else if (_isTransformersJs)
-          _buildTransformersJsFields(theme)
-        else ...[
-          TextField(
-            controller: _keyController,
-            decoration: InputDecoration(
-              labelText: keyOptional
-                  ? context.l10n.settingsApiKeyOptionalLabel
-                  : context.l10n.settingsApiKeyLabel,
-              hintText: keyOptional ? null : context.l10n.settingsApiKeyHint,
-              helperText: keyOptional
-                  ? context.l10n.settingsApiKeyLocalHelper
-                  : null,
+            _buildWebLlmFields(theme)
+          else if (_isGemma)
+            _buildGemmaFields(theme)
+          else if (_isTransformersJs)
+            _buildTransformersJsFields(theme)
+          else ...[
+            TextField(
+              controller: _keyController,
+              decoration: InputDecoration(
+                labelText: keyOptional
+                    ? context.l10n.settingsApiKeyOptionalLabel
+                    : context.l10n.settingsApiKeyLabel,
+                hintText: keyOptional ? null : context.l10n.settingsApiKeyHint,
+                helperText: keyOptional
+                    ? context.l10n.settingsApiKeyLocalHelper
+                    : null,
+              ),
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
             ),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-          ),
-          if (selection == ProviderPreset.openrouter) ...[
+            if (selection == ProviderPreset.openrouter) ...[
+              const SizedBox(height: 12),
+              faui.OpenRouterOAuthButton(
+                callbackUrl: _oauthCallbackUrl,
+                onCapture: _captureOAuthCallback,
+                onStoreVerifier: storeOpenRouterOAuthVerifier,
+                onSuccess: (key) {
+                  _keyController.text = key;
+                  final keyName = faui.hostedProviderKeyName(
+                    ProviderPreset.openrouter,
+                  );
+                  if (keyName != null) {
+                    widget.keysStore?.set(keyName, key);
+                  }
+                },
+              ),
+            ],
             const SizedBox(height: 12),
-            faui.OpenRouterOAuthButton(
-              callbackUrl: _oauthCallbackUrl,
-              onCapture: _captureOAuthCallback,
-              onStoreVerifier: storeOpenRouterOAuthVerifier,
-              onSuccess: (key) {
-                _keyController.text = key;
-                final keyName = faui.hostedProviderKeyName(
-                  ProviderPreset.openrouter,
-                );
-                if (keyName != null) {
-                  widget.keysStore?.set(keyName, key);
-                }
-              },
+            ModelIdAutocompleteField(
+              controller: _modelController,
+              focusNode: _modelFocusNode,
+              models: _endpointModels,
+              loading: _modelsLoading,
+            ),
+            CheckboxListTile(
+              value: _vision,
+              onChanged: (value) => setState(() {
+                _vision = value ?? false;
+                _visionOverridden = true;
+              }),
+              title: Text(context.l10n.settingsVisionLabel),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _urlController,
+              enabled: _hasEditableBaseUrl,
+              decoration: InputDecoration(
+                labelText: context.l10n.settingsBaseUrlLabel,
+                helperText: _hasEditableBaseUrl
+                    ? context.l10n.settingsBaseUrlHelper
+                    : null,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.lock_outline,
+                  size: 16,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    selection is CustomProvider
+                        ? settingsKeyNoteCustomFor(context.l10n)
+                        : settingsKeyNoteHostedFor(context.l10n),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ],
             ),
           ],
-          const SizedBox(height: 12),
-          ModelIdAutocompleteField(
-            controller: _modelController,
-            focusNode: _modelFocusNode,
-            models: _endpointModels,
-            loading: _modelsLoading,
-          ),
-          CheckboxListTile(
-            value: _vision,
-            onChanged: (value) => setState(() {
-              _vision = value ?? false;
-              _visionOverridden = true;
-            }),
-            title: Text(context.l10n.settingsVisionLabel),
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _urlController,
-            enabled: _hasEditableBaseUrl,
-            decoration: InputDecoration(
-              labelText: context.l10n.settingsBaseUrlLabel,
-              helperText: _hasEditableBaseUrl
-                  ? context.l10n.settingsBaseUrlHelper
-                  : null,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.lock_outline,
-                size: 16,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  selection is CustomProvider
-                      ? settingsKeyNoteCustomFor(context.l10n)
-                      : settingsKeyNoteHostedFor(context.l10n),
-                  style: theme.textTheme.bodySmall,
+          if (corsNote != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: theme.colorScheme.tertiary,
                 ),
-              ),
-            ],
-          ),
-        ],
-        if (corsNote != null) ...[
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: 16,
-                color: theme.colorScheme.tertiary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: Text(corsNote, style: theme.textTheme.bodySmall)),
-            ],
-          ),
-        ],
-        if (_staleModelNote != null) ...[
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: 16,
-                color: theme.colorScheme.tertiary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(_staleModelNote!, style: theme.textTheme.bodySmall),
-              ),
-            ],
-          ),
-        ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(corsNote, style: theme.textTheme.bodySmall),
+                ),
+              ],
+            ),
+          ],
+          if (_staleModelNote != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: theme.colorScheme.tertiary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _staleModelNote!,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
         const SizedBox(height: 16),
         if (_error != null)

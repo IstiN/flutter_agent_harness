@@ -119,11 +119,7 @@ class ChatMessageTile extends StatelessWidget {
         // matching the prototype's card style. Dark theme keeps the border.
         border: Theme.of(context).brightness == Brightness.light && !isUser
             ? null
-            : Border.all(
-                color: isUser
-                    ? palette.userBubbleBorder
-                    : border,
-              ),
+            : Border.all(color: isUser ? palette.userBubbleBorder : border),
         borderRadius: BorderRadius.circular(12),
         boxShadow: Theme.of(context).brightness == Brightness.light && !isUser
             ? [
@@ -157,7 +153,7 @@ class ChatMessageTile extends StatelessWidget {
     final avatar = isUser
         ? null
         : (avatarBuilder?.call(context, message.role) ??
-            _defaultAiAvatar(context));
+              _defaultAiAvatar(context));
     if (avatar == null) return bubble;
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -178,15 +174,8 @@ class ChatMessageTile extends StatelessWidget {
     return Container(
       width: 28,
       height: 28,
-      decoration: BoxDecoration(
-        color: palette.indigo,
-        shape: BoxShape.circle,
-      ),
-      child: const Icon(
-        Icons.auto_awesome,
-        size: 14,
-        color: Colors.white,
-      ),
+      decoration: BoxDecoration(color: palette.indigo, shape: BoxShape.circle),
+      child: const Icon(Icons.auto_awesome, size: 14, color: Colors.white),
     );
   }
 
@@ -272,7 +261,11 @@ class ChatMessageTile extends StatelessWidget {
     // action buttons (Open Settings / Try again) matching the prototype.
     if (isError && _isPermissionError(content)) {
       return _permissionCard(
-        context, palette, content, isLight, onPermissionAction,
+        context,
+        palette,
+        content,
+        isLight,
+        onPermissionAction,
       );
     }
 
@@ -283,14 +276,12 @@ class ChatMessageTile extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         // Light theme: very subtle gray bg without border; dark theme: bordered.
-        color: isLight
-            ? const Color(0xFFF9FAFB)
-            : palette.panelAlt,
+        color: isLight ? const Color(0xFFF9FAFB) : palette.panelAlt,
         borderRadius: BorderRadius.circular(10),
         border: isLight
             ? (isError
-                ? Border.all(color: palette.error.withValues(alpha: 0.3))
-                : null)
+                  ? Border.all(color: palette.error.withValues(alpha: 0.3))
+                  : null)
             : Border.all(
                 color: isError
                     ? palette.error.withValues(alpha: 0.45)
@@ -497,8 +488,10 @@ Widget _permissionCard(
 ) {
   final theme = Theme.of(context);
   // Extract the permission name from the error message.
-  final match = RegExp(r'(\w+)\s+access', caseSensitive: false)
-      .firstMatch(content);
+  final match = RegExp(
+    r'(\w+)\s+access',
+    caseSensitive: false,
+  ).firstMatch(content);
   final permName = match?.group(1) ?? 'Calendar';
   return Container(
     margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
@@ -528,11 +521,7 @@ Widget _permissionCard(
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.lock_outline,
-                size: 14,
-                color: palette.pending,
-              ),
+              Icon(Icons.lock_outline, size: 14, color: palette.pending),
               const SizedBox(width: 4),
               Text(
                 '$permName access required',
@@ -557,9 +546,7 @@ Widget _permissionCard(
         // Body text.
         Text(
           content,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: palette.dim,
-          ),
+          style: theme.textTheme.bodySmall?.copyWith(color: palette.dim),
         ),
         const SizedBox(height: 16),
         // Action buttons.

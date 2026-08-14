@@ -186,10 +186,7 @@ String _jsonString(String value) {
   return buffer.toString();
 }
 
-Future<void> _pumpAppsPanel(
-  WidgetTester tester, {
-  ThemeData? theme,
-}) async {
+Future<void> _pumpAppsPanel(WidgetTester tester, {ThemeData? theme}) async {
   final env = await _seededEnv();
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   final service = _fakeService(env);

@@ -182,13 +182,9 @@ String _hostFromUrl(String url) {
 /// Purely informational (like the CLI flow) — the selection does not affect
 /// auth headers.
 Future<void> _pickProject(BuildContext context, List<String> projects) async {
-  String? selected;
   await pushFaPage<void>(
     context,
-    _ProjectPickerPage(
-      projects: projects,
-      onSelected: (p) => selected = p,
-    ),
+    _ProjectPickerPage(projects: projects, onSelected: (_) {}),
   );
 }
 
@@ -310,10 +306,7 @@ Future<String?> _pickModel(
 }
 
 class _ProjectPickerPage extends StatefulWidget {
-  const _ProjectPickerPage({
-    required this.projects,
-    required this.onSelected,
-  });
+  const _ProjectPickerPage({required this.projects, required this.onSelected});
 
   final List<String> projects;
   final ValueChanged<String> onSelected;
@@ -466,9 +459,9 @@ class _ModelPickerPageState extends State<_ModelPickerPage> {
                       FilledButton(
                         onPressed: () {
                           final manual = _manualController.text.trim();
-                          Navigator.of(context).pop(
-                            manual.isNotEmpty ? manual : _selected,
-                          );
+                          Navigator.of(
+                            context,
+                          ).pop(manual.isNotEmpty ? manual : _selected);
                         },
                         child: const Text('Connect'),
                       ),

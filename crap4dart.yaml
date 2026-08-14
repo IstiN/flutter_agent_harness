@@ -22,6 +22,9 @@ crap:
   # at CC 3 / 0% cov land at CRAP 12 — they need a real PTY to test). Only
   # down from here.
   threshold: 12.0
+# NOTE: _listModels (provider_commands.dart) hits 20 with 0% coverage
+# because it is line-mode-only output; it pre-dates the dial work. Fix
+# separately — do not ratchet up for it.
 
 coverage:
   # scripts/pre-commit regenerates this (dart test --coverage) right

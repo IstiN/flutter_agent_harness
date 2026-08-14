@@ -192,19 +192,13 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       width: 28,
       height: 28,
       child: Center(
-        child: SizedBox(
-          width: 24,
-          height: 24,
-          child: FaMark(size: 24),
-        ),
+        child: SizedBox(width: 24, height: 24, child: FaMark(size: 24)),
       ),
     );
 
     if (_sidebarCollapsed) {
       return Padding(
-        padding: EdgeInsets.symmetric(
-          vertical: _isMacOS ? 28 : 16,
-        ),
+        padding: EdgeInsets.symmetric(vertical: _isMacOS ? 28 : 16),
         child: Column(
           children: [
             brandIcon,
@@ -226,12 +220,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     return Padding(
       // macOS: extra top padding to clear the floating traffic lights
       // (the content now extends to the window top — no global 28px strip).
-      padding: EdgeInsets.fromLTRB(
-        16,
-        _isMacOS ? 28 : 16,
-        8,
-        12,
-      ),
+      padding: EdgeInsets.fromLTRB(16, _isMacOS ? 28 : 16, 8, 12),
       child: Row(
         children: [
           brandIcon,
@@ -333,12 +322,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         // Workspace header matching the prototype: name + dropdown arrow + edit icon.
         // No bottom border — the vertical dividers between panels run full height.
         Container(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            _isMacOS ? 28 : 12,
-            12,
-            8,
-          ),
+          padding: EdgeInsets.fromLTRB(20, _isMacOS ? 28 : 12, 12, 8),
           decoration: BoxDecoration(
             color: isLight ? colors.panel : colors.panel,
           ),
@@ -379,11 +363,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.memory,
-                        size: 14,
-                        color: colors.indigo,
-                      ),
+                      Icon(Icons.memory, size: 14, color: colors.indigo),
                       const SizedBox(width: 4),
                       Text(
                         active.service.modelId,

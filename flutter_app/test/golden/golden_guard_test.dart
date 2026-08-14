@@ -80,8 +80,7 @@ const _exempt = <String, String>{
       'sidebar sessions list; rendered inside wide_layout_shell (covered indirectly)',
   'lib/ui/widgets/code_viewer.dart':
       'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
-  'lib/ui/widgets/apps_panel.dart':
-      'test/golden/apps_panel_golden_test.dart',
+  'lib/ui/widgets/apps_panel.dart': 'test/golden/apps_panel_golden_test.dart',
   'lib/ui/widgets/provider_selection_list.dart':
       'list-based provider picker; rendered inside AgentSettingsForm (covered by settings goldens)',
   'lib/ui/screens/codemie_sso_webview.dart':

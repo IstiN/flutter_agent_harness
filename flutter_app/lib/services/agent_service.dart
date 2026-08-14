@@ -347,8 +347,8 @@ class AgentService extends ChangeNotifier
     _responseTimeout = _isOnDeviceKind(config.providerKind)
         ? const Duration(minutes: 10)
         : isCodeMieProvider(config.baseUrl)
-            ? const Duration(minutes: 5)
-            : const Duration(seconds: 90);
+        ? const Duration(minutes: 5)
+        : const Duration(seconds: 90);
     // On-device backends have small context windows; keep only the core
     // coding tools so the tool-instruction block stays small.
     final isOnDevice = _isOnDeviceKind(config.providerKind);
@@ -1412,8 +1412,8 @@ class AgentService extends ChangeNotifier
     _responseTimeout = _isOnDeviceKind(config.providerKind)
         ? const Duration(minutes: 10)
         : isCodeMieProvider(config.baseUrl)
-            ? const Duration(minutes: 5)
-            : const Duration(seconds: 90);
+        ? const Duration(minutes: 5)
+        : const Duration(seconds: 90);
     error = null;
     notifyListeners();
     // Best effort: a failed marker write must not break the switch.

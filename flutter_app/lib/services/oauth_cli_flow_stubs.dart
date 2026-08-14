@@ -12,10 +12,9 @@ Never runCodeMieSsoCliFlow({
   required String codeMieUrl,
   required void Function(String) onStatus,
   Future<bool> Function(String)? openBrowserFn,
-}) =>
-    throw UnsupportedError(
-      'CodeMie SSO sign-in is not supported on the web platform.',
-    );
+}) => throw UnsupportedError(
+  'CodeMie SSO sign-in is not supported on the web platform.',
+);
 
 /// Always throws on the web — the desktop CLI flow needs a local server.
 Never runChatGptOAuthCliFlow({
@@ -25,9 +24,9 @@ Never runChatGptOAuthCliFlow({
     required String code,
     required String redirectUri,
     required String verifier,
-  })? exchangeFn,
+  })?
+  exchangeFn,
   Duration? timeout,
-}) =>
-    throw UnsupportedError(
-      'ChatGPT sign-in is not supported on the web platform.',
-    );
+}) => throw UnsupportedError(
+  'ChatGPT sign-in is not supported on the web platform.',
+);

@@ -147,8 +147,8 @@ class ProviderSelectionList extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected
               ? (theme.brightness == Brightness.light
-                  ? const Color(0xFFEEF2FF)
-                  : colors.panelAlt)
+                    ? const Color(0xFFEEF2FF)
+                    : colors.panelAlt)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
         ),
@@ -165,8 +165,7 @@ class ProviderSelectionList extends StatelessWidget {
                     style: TextStyle(
                       color: selected ? colors.text : colors.dim,
                       fontSize: 13,
-                      fontWeight:
-                          selected ? FontWeight.w600 : FontWeight.w400,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                     ),
                   ),
                   if (subtitle != null)
@@ -187,21 +186,13 @@ class ProviderSelectionList extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
                 child: Padding(
                   padding: const EdgeInsets.all(4),
-                  child: Icon(
-                    Icons.edit_outlined,
-                    size: 16,
-                    color: colors.dim,
-                  ),
+                  child: Icon(Icons.edit_outlined, size: 16, color: colors.dim),
                 ),
               )
             else if (selected)
               Icon(Icons.check, size: 20, color: colors.indigo)
             else
-              Icon(
-                Icons.chevron_right,
-                size: 18,
-                color: colors.borderBright,
-              ),
+              Icon(Icons.chevron_right, size: 18, color: colors.borderBright),
           ],
         ),
       ),

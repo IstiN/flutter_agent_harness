@@ -176,10 +176,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   child: SizedBox(
                     width: double.infinity,
                     child: FilledButton(
-                      onPressed:
-                          isLast ? () => _finish(skipped: false) : _nextPage,
+                      onPressed: isLast
+                          ? () => _finish(skipped: false)
+                          : _nextPage,
                       child: Text(
-                        isLast ? l10n.onboardingGetStarted : l10n.onboardingNext,
+                        isLast
+                            ? l10n.onboardingGetStarted
+                            : l10n.onboardingNext,
                       ),
                     ),
                   ),

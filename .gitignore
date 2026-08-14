@@ -83,3 +83,4 @@ test/integration/screenshots/*.txt
 # crap4dart profiling
 profile-reports/
 .crap_profile_temp/
+fa-local/

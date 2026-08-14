@@ -111,10 +111,8 @@ class _AppsPanelState extends State<AppsPanel> {
     }
   }
 
-  List<JsAppInfo> get _demoApps =>
-      _apps.where((a) => a.bundled).toList();
-  List<JsAppInfo> get _customApps =>
-      _apps.where((a) => !a.bundled).toList();
+  List<JsAppInfo> get _demoApps => _apps.where((a) => a.bundled).toList();
+  List<JsAppInfo> get _customApps => _apps.where((a) => !a.bundled).toList();
 
   List<JsAppInfo> get _filteredApps {
     final query = _searchController.text.trim().toLowerCase();
@@ -152,12 +150,7 @@ class _AppsPanelState extends State<AppsPanel> {
       isDemo: AppsStore.demoAppIds.contains(app.id),
       source: 'apps_panel',
     );
-    pushJsApp(
-      context,
-      manager: manager,
-      app: app,
-      source: 'apps_panel',
-    );
+    pushJsApp(context, manager: manager, app: app, source: 'apps_panel');
   }
 
   /// Opens the file browser within the apps panel's nested navigator.
@@ -219,17 +212,13 @@ class _AppsPanelState extends State<AppsPanel> {
                 const Spacer(),
                 Text(
                   '${_apps.length}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.dim,
-                  ),
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
                 ),
                 const SizedBox(width: 8),
                 // "Customize" label like the prototype.
                 Text(
                   'Customize',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.dim,
-                  ),
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
                 ),
                 const SizedBox(width: 4),
                 Icon(Icons.tune, size: 16, color: colors.dim),
@@ -309,8 +298,10 @@ class _AppsPanelState extends State<AppsPanel> {
           mainAxisSpacing: 12,
         ),
         itemCount: filtered.length,
-        itemBuilder: (context, index) =>
-            _AppTile(app: filtered[index], onTap: () => _openApp(filtered[index])),
+        itemBuilder: (context, index) => _AppTile(
+          app: filtered[index],
+          onTap: () => _openApp(filtered[index]),
+        ),
       );
     }
 
@@ -369,9 +360,7 @@ class _AppsPanelState extends State<AppsPanel> {
               child: Text(
                 'No apps yet.\nAsk Fa to build one!',
                 textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colors.dim,
-                ),
+                style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
               ),
             ),
           ),
@@ -426,8 +415,8 @@ class _FilterTab extends StatelessWidget {
           decoration: BoxDecoration(
             color: selected
                 ? (theme.brightness == Brightness.light
-                    ? const Color(0xFFEEF2FF)
-                    : colors.panelAlt)
+                      ? const Color(0xFFEEF2FF)
+                      : colors.panelAlt)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
@@ -561,10 +550,13 @@ class _UpNextWidget extends StatelessWidget {
     final start = _formatTime(event.start);
     final end = _formatTime(event.end);
     final now = DateTime.now();
-    final isToday = event.start.year == now.year &&
+    final isToday =
+        event.start.year == now.year &&
         event.start.month == now.month &&
         event.start.day == now.day;
-    final dayLabel = isToday ? 'Today' : '${event.start.month}/${event.start.day}';
+    final dayLabel = isToday
+        ? 'Today'
+        : '${event.start.month}/${event.start.day}';
     return '$dayLabel, $start - $end';
   }
 }
@@ -766,11 +758,7 @@ class _FocusTimerWidgetState extends State<_FocusTimerWidget> {
                     horizontal: 12,
                     vertical: 6,
                   ),
-                  child: Icon(
-                    Icons.replay,
-                    size: 16,
-                    color: colors.dim,
-                  ),
+                  child: Icon(Icons.replay, size: 16, color: colors.dim),
                 ),
               ),
             ],
@@ -804,9 +792,7 @@ class _SectionHeader extends StatelessWidget {
         const Spacer(),
         Text(
           '$count',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: colors.dim,
-          ),
+          style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
         ),
       ],
     );
@@ -979,14 +965,66 @@ class _SystemAppsGrid extends StatelessWidget {
       crossAxisSpacing: 8,
       mainAxisSpacing: 12,
       children: [
-        _SystemAppTile(icon: Icons.calendar_today, label: 'Calendar', colors: colors, theme: theme, isLight: isLight),
-        _SystemAppTile(icon: Icons.folder_outlined, label: 'Files', colors: colors, theme: theme, isLight: isLight, onTap: onOpenFiles),
-        _SystemAppTile(icon: Icons.note_outlined, label: 'Notes', colors: colors, theme: theme, isLight: isLight),
-        _SystemAppTile(icon: Icons.map_outlined, label: 'Maps', colors: colors, theme: theme, isLight: isLight),
-        _SystemAppTile(icon: Icons.calculate_outlined, label: 'Calculator', colors: colors, theme: theme, isLight: isLight),
-        _SystemAppTile(icon: Icons.settings_outlined, label: 'Settings', colors: colors, theme: theme, isLight: isLight, onTap: onOpenSettings),
-        _SystemAppTile(icon: Icons.build_outlined, label: 'Utilities', colors: colors, theme: theme, isLight: isLight, subtitle: '4 apps'),
-        _SystemAppTile(icon: Icons.flight_outlined, label: 'Travel', colors: colors, theme: theme, isLight: isLight, subtitle: '3 apps'),
+        _SystemAppTile(
+          icon: Icons.calendar_today,
+          label: 'Calendar',
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+        ),
+        _SystemAppTile(
+          icon: Icons.folder_outlined,
+          label: 'Files',
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+          onTap: onOpenFiles,
+        ),
+        _SystemAppTile(
+          icon: Icons.note_outlined,
+          label: 'Notes',
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+        ),
+        _SystemAppTile(
+          icon: Icons.map_outlined,
+          label: 'Maps',
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+        ),
+        _SystemAppTile(
+          icon: Icons.calculate_outlined,
+          label: 'Calculator',
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+        ),
+        _SystemAppTile(
+          icon: Icons.settings_outlined,
+          label: 'Settings',
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+          onTap: onOpenSettings,
+        ),
+        _SystemAppTile(
+          icon: Icons.build_outlined,
+          label: 'Utilities',
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+          subtitle: '4 apps',
+        ),
+        _SystemAppTile(
+          icon: Icons.flight_outlined,
+          label: 'Travel',
+          colors: colors,
+          theme: theme,
+          isLight: isLight,
+          subtitle: '3 apps',
+        ),
       ],
     );
   }
@@ -1119,9 +1157,7 @@ class _ActivityRow extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.dim,
-              ),
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
             ),
           ),
           Text(
@@ -1139,11 +1175,7 @@ class _ActivityRow extends StatelessWidget {
 
 /// Inherited widget so [_AppTile] can access the session manager for AppIcon.
 class ManagerScope extends InheritedWidget {
-  const ManagerScope({
-    super.key,
-    required this.manager,
-    required super.child,
-  });
+  const ManagerScope({super.key, required this.manager, required super.child});
 
   final FlutterSessionManager manager;
 

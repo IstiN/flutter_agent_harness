@@ -1076,85 +1076,103 @@ extension on AgentCli {
   /// deployment picked from `{baseUrl}/openai/models` (or typed manually).
   /// Switches to the dial provider with Api-Key auth; the key persists in
   /// the secure store under the endpoint-scoped name like every provider.
+  /// The `preset:dial` / `/provider dial setup` guided flow: base URL (Enter
+  /// applies the EPAM default) → DIAL API key (or DIAL_API_KEY from the
+  /// environment) → deployment picked from `{baseUrl}/openai/models` (or
+  /// typed manually). Switches to the dial provider with Api-Key auth; the
+  /// key persists in the secure store under the endpoint-scoped name.
   Future<void> _startDialProviderSetup() async {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     try {
-      final spec = providerCatalog['dial']!;
-      final typedBase = await _askLine('base URL [${spec.defaultBaseUrl}]: ');
-      if (typedBase == null) {
-        io.writeln('dial setup cancelled');
-        return;
-      }
-      final baseUrl = typedBase.trim().isEmpty
-          ? spec.defaultBaseUrl
-          : typedBase.trim();
-      var key = await _askLine('DIAL API key: ', secret: true);
-      if (key == null) {
-        io.writeln('dial setup cancelled');
-        return;
-      }
-      key = key.trim();
-      if (key.isEmpty) {
-        final envKey = _providerKeyFor(spec, baseUrl) ?? '';
-        if (envKey.isEmpty) {
-          io.writeln(
-            'no key given and DIAL_API_KEY is not set — switch will be '
-            'keyless',
-          );
-        }
-        key = envKey;
-      }
-      // Fetch the deployment list; failures fall through to manual entry.
-      List<String> deployments = const [];
-      try {
-        deployments = await fetchDialModels(baseUrl, key);
-      } on Object {
-        // Dead endpoint / bad key — the user can still type a deployment.
-      }
-      String? modelId;
-      if (deployments.isNotEmpty) {
-        modelId = await _pickOption('DIAL deployment', [
-          for (final id in deployments)
-            (id, id, 'deployment ${_dialDeploymentLabel(id)}'),
-        ]);
-      }
-      modelId ??= await _askLine('deployment (model id): ');
-      if (modelId == null || modelId.trim().isEmpty) {
-        io.writeln('dial setup cancelled');
-        return;
-      }
-      final deployment = modelId.trim();
-      // Save the org as a registry entry so it shows in the /provider picker
-      // and survives restarts (re-login/switch just updates the model).
-      final registry = config.customProviders;
-      if (registry != null) {
-        final candidate = _codeMieHostName(baseUrl);
-        final existing = registry.find(candidate);
-        final name = existing?.name ?? candidate;
-        final keyName = CustomProviderRegistry.keyNameFor(baseUrl);
-        registry.add(
-          CustomProviderEntry(
-            name: name,
-            apiType: 'dial',
-            baseUrl: baseUrl,
-            modelId: deployment,
-            keyName: key.isEmpty ? null : keyName,
-          ),
-        );
-        _activeCustomName = name;
-        io.writeln('saved provider $name (listed in /provider)');
-      }
-      await _switchProvider(
-        spec,
-        baseUrl,
-        deployment,
-        token: key.isEmpty ? null : key,
-      );
+      await _runDialProviderSetup();
     } finally {
       _providerFlowActive = false;
       _promptLineBuffer.clear();
     }
+  }
+
+  /// The dial setup steps (see [_startDialProviderSetup] for the contract).
+  /// Every `null` answer cancels the flow.
+  Future<void> _runDialProviderSetup() async {
+    final spec = providerCatalog['dial']!;
+    final baseUrl = await _dialAskBaseUrl(spec);
+    if (baseUrl == null) return io.writeln('dial setup cancelled');
+    final key = await _dialAskKey(spec, baseUrl);
+    if (key == null) return io.writeln('dial setup cancelled');
+    final deployment = await _dialAskDeployment(baseUrl, key);
+    if (deployment == null) return io.writeln('dial setup cancelled');
+    _dialSaveRegistryEntry(baseUrl, key, deployment);
+    await _switchProvider(
+      spec,
+      baseUrl,
+      deployment,
+      token: key.isEmpty ? null : key,
+    );
+  }
+
+  /// The base-URL step: typed value or the spec default; null cancels.
+  Future<String?> _dialAskBaseUrl(ProviderSpec spec) async {
+    final typed = await _askLine('base URL [${spec.defaultBaseUrl}]: ');
+    if (typed == null) return null;
+    return typed.trim().isEmpty ? spec.defaultBaseUrl : typed.trim();
+  }
+
+  /// The API-key step: typed value, else the env/keystore resolution (may
+  /// be empty — a keyless switch); null cancels.
+  Future<String?> _dialAskKey(ProviderSpec spec, String baseUrl) async {
+    final typed = await _askLine('DIAL API key: ', secret: true);
+    if (typed == null) return null;
+    final key = typed.trim();
+    if (key.isNotEmpty) return key;
+    final envKey = _providerKeyFor(spec, baseUrl) ?? '';
+    if (envKey.isEmpty) {
+      io.writeln('no key given and DIAL_API_KEY is not set — keyless switch');
+    }
+    return envKey;
+  }
+
+  /// The deployment step: picked from `{baseUrl}/openai/models` when the
+  /// endpoint answers, typed manually otherwise; null cancels.
+  Future<String?> _dialAskDeployment(String baseUrl, String key) async {
+    List<String> deployments = const [];
+    try {
+      deployments = await fetchDialModels(baseUrl, key);
+    } on Object {
+      // Dead endpoint / bad key — the user can still type a deployment.
+    }
+    String? modelId;
+    if (deployments.isNotEmpty) {
+      modelId = await _pickOption('DIAL deployment', [
+        for (final id in deployments)
+          (id, id, 'deployment ${_dialDeploymentLabel(id)}'),
+      ]);
+    }
+    modelId ??= await _askLine('deployment (model id): ');
+    final trimmed = modelId?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// Saves the dial org as a registry entry so it shows in the /provider
+  /// picker and survives restarts (re-running setup just updates the model).
+  void _dialSaveRegistryEntry(String baseUrl, String key, String deployment) {
+    final registry = config.customProviders;
+    if (registry == null) return;
+    final candidate = _codeMieHostName(baseUrl);
+    final name = registry.find(candidate)?.name ?? candidate;
+    registry.add(
+      CustomProviderEntry(
+        name: name,
+        apiType: 'dial',
+        baseUrl: baseUrl,
+        modelId: deployment,
+        keyName: key.isEmpty
+            ? null
+            : CustomProviderRegistry.keyNameFor(baseUrl),
+      ),
+    );
+    _activeCustomName = name;
+    io.writeln('saved provider $name (listed in /provider)');
   }
 
   /// Short human label for a deployment id in the picker descriptions.
@@ -1825,11 +1843,9 @@ extension on AgentCli {
     if (spec.kind == 'dial') {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
     }
-    if (spec.kind == 'openai-completions') {
-      final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-      return fetch(entry.baseUrl, apiKey: cookieOrKey);
-    }
-    return const [];
+    if (spec.kind != 'openai-completions') return const [];
+    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
+    return fetch(entry.baseUrl, apiKey: cookieOrKey);
   }
 
   /// Returns cross-provider model candidates as `(providerName, modelId)`
@@ -1952,8 +1968,10 @@ extension on AgentCli {
   /// `limits`, the MAXIMUM values — never the `defaults`), and answers the
   /// plain id list.
   Future<List<String>> _fetchDialModelsAndFeatures(String baseUrl) async {
-    final (ids, cacheSupported, windows, maxTokens) =
-        await fetchDialModelsInfo(baseUrl, _apiKey);
+    final (ids, cacheSupported, windows, maxTokens) = await fetchDialModelsInfo(
+      baseUrl,
+      _apiKey,
+    );
     if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
@@ -1991,16 +2009,19 @@ extension on AgentCli {
       await _refreshAllProvidersModelCache();
     }
     final entries = _crossProviderCandidates(filter);
-    if (entries.isEmpty) {
-      io.writeln('no models available');
-      return;
-    }
+    if (entries.isEmpty) return io.writeln('no models available');
     io.writeln('models (provider/model):');
+    _printNumberedModels(entries);
+    io.writeln('use /model <n> or /model <provider>/<id> to switch');
+  }
+
+  /// The numbered `(provider, model)` rows of the `/models` listing plus the
+  /// `_lastModelList` snapshot powering `/model <n>`.
+  void _printNumberedModels(List<(String, String)> entries) {
     for (var i = 0; i < entries.length; i++) {
       io.writeln('  ${i + 1}) ${entries[i].$1}/${entries[i].$2}');
     }
     _lastModelList = [for (final e in entries) '${e.$1}/${e.$2}'];
-    io.writeln('use /model <n> or /model <provider>/<id> to switch');
   }
 
   /// Returns the full list of known model ids for the active provider.

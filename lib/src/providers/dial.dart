@@ -233,54 +233,70 @@ Future<Map<String, dynamic>?> _addDialCacheBreakpoints(
   Map<String, dynamic> payload,
   Model model,
 ) async {
-  final messages = payload['messages'];
-  final hasSystemBreakpoint =
-      messages is List &&
-      messages.any(
-        (m) =>
-            m is Map &&
-            m['role'] == 'system' &&
-            (m['custom_fields'] as Map?)?['cache_breakpoint'] != null,
-      );
   final next = Map<String, dynamic>.of(payload);
-  if (!hasSystemBreakpoint && messages is List && messages.isNotEmpty) {
-    final marked = <Object>[];
-    var systemMarked = false;
-    for (final m in messages) {
-      if (!systemMarked && m is Map && m['role'] == 'system') {
-        final copy = Map<String, dynamic>.from(m);
-        copy['custom_fields'] = <String, dynamic>{
-          ...((m['custom_fields'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{}),
-          'cache_breakpoint': const <String, dynamic>{},
-        };
-        marked.add(copy);
-        systemMarked = true;
-      } else {
-        marked.add(m);
-      }
-    }
-    next['messages'] = marked;
+  final messages = payload['messages'];
+  if (messages is List && !_hasSystemBreakpoint(messages)) {
+    next['messages'] = _markedSystemMessage(messages);
   }
   // The tools prefix is stable across turns: a breakpoint on the LAST tool
   // definition makes the whole tool block cacheable.
   final tools = next['tools'];
   if (tools is List && tools.isNotEmpty) {
-    final last = tools.last;
-    if (last is Map &&
-        (last['custom_fields'] as Map?)?['cache_breakpoint'] == null) {
-      final markedTools = <Object>[...tools];
-      final copy = Map<String, dynamic>.from(last);
-      copy['custom_fields'] = <String, dynamic>{
-        ...((last['custom_fields'] as Map?)?.cast<String, dynamic>() ??
-            const <String, dynamic>{}),
-        'cache_breakpoint': const <String, dynamic>{},
-      };
-      markedTools[markedTools.length - 1] = copy;
-      next['tools'] = markedTools;
-    }
+    next['tools'] = _markedLastTool(tools);
   }
   return next;
+}
+
+/// Whether any system message already carries a breakpoint.
+bool _hasSystemBreakpoint(List<Object?> messages) {
+  return messages.any(
+    (m) =>
+        m is Map &&
+        m['role'] == 'system' &&
+        (m['custom_fields'] as Map?)?['cache_breakpoint'] != null,
+  );
+}
+
+/// The message list with a breakpoint on the first system message.
+List<Object> _markedSystemMessage(List<Object?> messages) {
+  final marked = <Object>[];
+  var systemMarked = false;
+  for (final m in messages) {
+    if (!systemMarked && m is Map && m['role'] == 'system') {
+      marked.add(_withBreakpoint(m));
+      systemMarked = true;
+    } else {
+      marked.add(m as Object);
+    }
+  }
+  return marked;
+}
+
+/// The tool list with a breakpoint on its last definition (no-op copy of
+/// the same list when there is nothing to mark).
+List<Object> _markedLastTool(List<Object?> tools) {
+  final last = tools.last;
+  final alreadyMarked =
+      last is Map &&
+      (last['custom_fields'] as Map?)?['cache_breakpoint'] != null;
+  if (alreadyMarked || last is! Map) {
+    return [for (final t in tools) t as Object];
+  }
+  final markedTools = <Object>[for (final t in tools) t as Object];
+  markedTools[markedTools.length - 1] = _withBreakpoint(last);
+  return markedTools;
+}
+
+/// A shallow copy of [entry] carrying `custom_fields.cache_breakpoint`
+/// (existing custom_fields are preserved).
+Map<String, dynamic> _withBreakpoint(Map<dynamic, dynamic> entry) {
+  final copy = Map<String, dynamic>.from(entry);
+  copy['custom_fields'] = <String, dynamic>{
+    ...((entry['custom_fields'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{}),
+    'cache_breakpoint': const <String, dynamic>{},
+  };
+  return copy;
 }
 
 /// Fetches the deployment ids from `{baseUrl}/openai/models` (OpenAI-shaped
