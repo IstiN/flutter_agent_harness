@@ -7,7 +7,7 @@ import HealthKit
 import HomeKit
 import UIKit
 import UserNotifications
-import WebKit
+import AuthenticationServices
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -15,7 +15,6 @@ import WebKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    WKWebView.faEnableWebAuthentication()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -32,6 +31,7 @@ import WebKit
     registerMicChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerNotifyChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerVideoChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerWebAuthSessionChannel(messenger: engineBridge.applicationRegistrar.messenger())
   }
 }
 
@@ -2223,34 +2223,99 @@ private func notifyCancel(id: String) {
   center.removeDeliveredNotifications(withIdentifiers: [id])
 }
 
-/// WebAuthn / passkeys (Face ID, Touch ID) inside embedded WKWebViews.
-///
-/// WKWebView refuses `navigator.credentials` calls by default; the site only
-/// offers biometric sign-in when `WKPreferences.webAuthenticationSupportEnabled`
-/// is true (iOS 16.4+). `webview_flutter` does not expose that preference, so
-/// we swizzle `WKWebView.init(frame:configuration:)` and force-enable it on
-/// every configuration. This is what makes the CodeMie SSO page offer its
-/// passkey login inside the in-app WebView.
-extension WKWebView {
-  static func faEnableWebAuthentication() {
-    guard
-      let original = class_getInstanceMethod(
-        WKWebView.self,
-        #selector(WKWebView.init(frame:configuration:)),
-      ),
-      let swizzled = class_getInstanceMethod(
-        WKWebView.self,
-        #selector(WKWebView.init(fa_initFrame:configuration:)),
-      )
-    else { return }
-    method_exchangeImplementations(original, swizzled)
-  }
-
-  /// After the swizzle this calls the original `init(frame:configuration:)`.
-  @objc dynamic convenience init(fa_initFrame frame: CGRect, configuration: WKWebViewConfiguration) {
-    if #available(iOS 16.4, *) {
-      configuration.preferences.webAuthenticationSupportEnabled = true
+/// Presentation anchor for ASWebAuthenticationSession: the key window of any
+/// active window scene (falls back to the first window of any scene).
+private final class FaWebAuthPresentationContext: NSObject,
+  ASWebAuthenticationPresentationContextProviding
+{
+  func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+    for scene in UIApplication.shared.connectedScenes {
+      guard let windowScene = scene as? UIWindowScene else { continue }
+      if let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }) {
+        return keyWindow
+      }
     }
-    self.init(fa_initFrame: frame, configuration: configuration)
+    for scene in UIApplication.shared.connectedScenes {
+      guard let windowScene = scene as? UIWindowScene else { continue }
+      if let window = windowScene.windows.first { return window }
+    }
+    return ASPresentationAnchor()
+  }
+}
+
+private let faWebAuthPresentationContext = FaWebAuthPresentationContext()
+private var faActiveWebAuthSession: ASWebAuthenticationSession?
+
+/// The `fah/web_auth_session` method channel: a system-browser auth session
+/// (ASWebAuthenticationSession) for SSO flows that need Safari-grade web
+/// capabilities — most notably WebAuthn/passkeys (Face ID), which embedded
+/// WKWebViews cannot use without a `webcredentials` associated-domain
+/// relationship with the relying party (impossible for arbitrary IdPs like
+/// the CodeMie SSO page). `authenticate {url, callbackScheme}` presents the
+/// session and answers the intercepted callback URL (or nil when the user
+/// cancels); a start failure answers an `auth_session_unavailable`
+/// FlutterError so the Dart side can fall back to the in-app WebView.
+private func registerWebAuthSessionChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fah/web_auth_session",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "authenticate":
+      let args = call.arguments as? [String: Any] ?? [:]
+      guard let urlString = args["url"] as? String, let url = URL(string: urlString)
+      else {
+        result(
+          FlutterError(code: "bad_args", message: "url is required", details: nil)
+        )
+        return
+      }
+      faActiveWebAuthSession?.cancel()
+      let session = ASWebAuthenticationSession(
+        url: url,
+        callbackURLScheme: args["callbackScheme"] as? String,
+      ) { callbackURL, error in
+        faActiveWebAuthSession = nil
+        if let authError = error as? ASWebAuthenticationSessionError,
+          authError.code == .canceledLogin
+        {
+          result(nil)
+          return
+        }
+        if let error = error {
+          result(
+            FlutterError(
+              code: "auth_session_failed",
+              message: error.localizedDescription,
+              details: nil,
+            )
+          )
+          return
+        }
+        result(callbackURL?.absoluteString)
+      }
+      session.presentationContextProvider = faWebAuthPresentationContext
+      // Share the Safari cookie store — the user may already have a session
+      // with the IdP, and passkeys require the non-ephemeral context.
+      session.prefersEphemeralWebBrowserSession = false
+      faActiveWebAuthSession = session
+      if !session.start() {
+        faActiveWebAuthSession = nil
+        result(
+          FlutterError(
+            code: "auth_session_unavailable",
+            message: "ASWebAuthenticationSession could not start",
+            details: nil,
+          )
+        )
+      }
+    case "cancel":
+      faActiveWebAuthSession?.cancel()
+      faActiveWebAuthSession = nil
+      result(nil)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
   }
 }

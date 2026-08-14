@@ -16,6 +16,7 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
+import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/gemma/gemma_cache_section.dart';
@@ -677,28 +678,28 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     AppAnalytics.instance.providerSaved('add');
   }
 
-  Future<void> _editProvider() async {
-    final selection = _selection;
-    if (selection is! CustomProvider) return;
+  Future<void> _editProvider([CustomProvider? provider]) async {
+    final target = provider ?? _selection;
+    if (target is! CustomProvider) return;
     AppAnalytics.instance.screenOpened('provider_editor');
     final result = await Navigator.of(context).push<ProviderEditorResult>(
       MaterialPageRoute(
         builder: (_) => ProviderEditorPage(
           title: context.l10n.settingsEditProviderTitle,
-          initial: selection,
-          hasSavedKey: (_registry.keyFor(selection.id) ?? '').isNotEmpty,
+          initial: target,
+          hasSavedKey: (_registry.keyFor(target.id) ?? '').isNotEmpty,
         ),
       ),
     );
     if (result == null) return;
     if (result.deleted) {
       // _onRegistryChanged resets the selection to OpenRouter.
-      await _registry.remove(selection.id);
+      await _registry.remove(target.id);
       AppAnalytics.instance.providerSaved('delete');
       return;
     }
     final updated = CustomProvider(
-      id: selection.id,
+      id: target.id,
       name: result.name,
       baseUrl: result.baseUrl,
       modelId: result.modelId,
@@ -978,59 +979,15 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        DropdownButtonFormField<Object>(
-          // The key forces the FormField to re-seed when the selection is
-          // changed programmatically (provider added/selected/deleted).
-          key: ValueKey<Object>(_selection),
-          initialValue: _selection,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: context.l10n.settingsProviderLabel,
-          ),
-          items: [
-            for (final preset in ProviderPreset.values)
-              // Gemma runs on iOS/Android/macOS; WebLLM and transformers.js
-              // are web-only. Hide any on-device preset the current platform
-              // does not support so the dropdown never contains a dead row.
-              if ((preset != ProviderPreset.webllm ||
-                      webLlmProviderVisible(isWeb: _isWeb)) &&
-                  (preset != ProviderPreset.gemma ||
-                      gemmaProviderVisible(
-                        isWeb: _isWeb,
-                        platform: defaultTargetPlatform,
-                      )) &&
-                  (preset != ProviderPreset.transformersJs ||
-                      transformersJsProviderVisible(isWeb: _isWeb)))
-                DropdownMenuItem(
-                  value: preset,
-                  child: Text(preset.labelFor(context)),
-                ),
-            for (final provider in _registry.providers)
-              DropdownMenuItem(
-                value: provider,
-                child: Text(provider.name, overflow: TextOverflow.ellipsis),
-              ),
-          ],
-          onChanged: _loading
-              ? null
-              : (value) {
-                  if (value != null) _selectProvider(value);
-                },
-        ),
-        Row(
-          children: [
-            TextButton.icon(
-              onPressed: _loading ? null : _addProvider,
-              icon: const Icon(Icons.add, size: 18),
-              label: Text(context.l10n.settingsAddProvider),
-            ),
-            if (selection is CustomProvider) ...[
-              TextButton(
-                onPressed: _loading ? null : _editProvider,
-                child: Text(context.l10n.settingsEditButton),
-              ),
-            ],
-          ],
+        // Provider selection as a list (same style as the settings
+        // ProvidersSection) — replaces the old dropdown.
+        ProviderSelectionList(
+          selected: _selection,
+          onSelect: (value) => _selectProvider(value),
+          onAdd: _addProvider,
+          registry: _registry,
+          onEdit: (provider) => _editProvider(provider),
+          isWeb: _isWeb,
         ),
         const SizedBox(height: 12),
         if (_isOnDevice)

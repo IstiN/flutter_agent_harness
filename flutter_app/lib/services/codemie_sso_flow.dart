@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
@@ -20,10 +21,14 @@ import 'package:fa/services/provider_registry.dart';
 /// mirrors the CLI flow and gives the best UX (password manager, saved
 /// sessions). The macOS sandbox's `network.server` entitlement covers it.
 ///
-/// **iOS** — a local server is not viable (Safari won't redirect to
-/// `http://localhost`, background networking is restricted). An in-app
-/// WebView ([CodeMieSsoWebViewPage]) intercepts the localhost redirect via
-/// its `NavigationDelegate` — the redirect never leaves the app.
+/// **iOS** — a system-browser auth session (`ASWebAuthenticationSession`
+/// via the `fah/web_auth_session` channel): it shares Safari's WebAuthn /
+/// passkey support (Face ID), which an embedded WKWebView cannot offer
+/// without a `webcredentials` associated-domain relationship with the IdP.
+/// The session intercepts the `http://localhost:<port>/?token=...` redirect
+/// by its `http` scheme. When the session cannot start, the flow falls back
+/// to the in-app WebView ([CodeMieSsoWebViewPage]), which intercepts the
+/// same redirect via its `NavigationDelegate`.
 ///
 /// After SSO completes on either platform, the flow continues with model
 /// selection and provider/connection setup:
@@ -47,8 +52,22 @@ Future<bool> runCodemieSsoFlow({
   if (Platform.isMacOS) {
     // macOS: local server + system browser (real cookies, password manager).
     credentials = await _desktopSso(context, orgUrl);
+  } else if (Platform.isIOS) {
+    // iOS: system auth session (Safari-grade WebAuthn/passkey support).
+    final session = await _systemAuthSessionSso(orgUrl);
+    if (session.sessionUnavailable) {
+      if (!context.mounted) return false;
+      // Fallback: in-app WebView (no passkeys, but password login works).
+      credentials = await Navigator.of(context).push<CodeMieSsoCredentials?>(
+        MaterialPageRoute(
+          builder: (_) => CodeMieSsoWebViewPage(orgUrl: orgUrl),
+        ),
+      );
+    } else {
+      credentials = session.credentials;
+    }
   } else {
-    // iOS and others: in-app WebView.
+    // Other platforms: in-app WebView.
     credentials = await Navigator.of(context).push<CodeMieSsoCredentials?>(
       MaterialPageRoute(builder: (_) => CodeMieSsoWebViewPage(orgUrl: orgUrl)),
     );
@@ -194,6 +213,63 @@ Future<void> _pickProject(BuildContext context, List<String> projects) async {
       ],
     ),
   );
+}
+
+/// The method channel driving `ASWebAuthenticationSession` on iOS (implemented
+/// in `ios/Runner/AppDelegate.swift`).
+const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
+
+/// iOS SSO via a system-browser auth session. Unlike the embedded WKWebView,
+/// `ASWebAuthenticationSession` runs the page in a Safari-grade context, so
+/// the IdP can offer WebAuthn / passkey (Face ID) sign-in.
+///
+/// The session intercepts the CodeMie callback by its scheme: every page in
+/// the flow is `https`, the final `http://localhost:<port>/?token=...`
+/// redirect is the only `http` navigation, so `callbackScheme: 'http'`
+/// catches exactly the token hand-off (the redirect never leaves the OS
+/// browser context).
+///
+/// Returns the decoded credentials, or a record with [sessionUnavailable]
+/// set when the session could not even start (the caller falls back to the
+/// in-app WebView). `null` credentials with `sessionUnavailable == false`
+/// means the user cancelled or the callback carried no usable token.
+Future<({CodeMieSsoCredentials? credentials, bool sessionUnavailable})>
+_systemAuthSessionSso(String orgUrl) async {
+  // Same dummy-port convention as the WebView page: the port is baked into
+  // the login URL but never bound — the session intercepts the redirect.
+  const dummyPort = 48127;
+  final ssoUrl = buildCodeMieSsoUrl(orgUrl, dummyPort);
+  final String? callbackUrl;
+  try {
+    callbackUrl = await _webAuthSessionChannel.invokeMethod<String>(
+      'authenticate',
+      {'url': ssoUrl, 'callbackScheme': 'http'},
+    );
+  } on PlatformException {
+    return (credentials: null, sessionUnavailable: true);
+  } on MissingPluginException {
+    return (credentials: null, sessionUnavailable: true);
+  }
+  if (callbackUrl == null) {
+    return (credentials: null, sessionUnavailable: false); // cancelled
+  }
+  final token = Uri.tryParse(callbackUrl)?.queryParameters['token'];
+  if (token == null || token.isEmpty) {
+    return (credentials: null, sessionUnavailable: false);
+  }
+  try {
+    final cookies = decodeCodeMieSsoToken(token);
+    return (
+      credentials: CodeMieSsoCredentials(
+        cookies: cookies,
+        apiUrl: codeMieApiBase(orgUrl),
+        expiresAt: deriveCodeMieExpiresAt(cookies),
+      ),
+      sessionUnavailable: false,
+    );
+  } on Object {
+    return (credentials: null, sessionUnavailable: false);
+  }
 }
 
 /// macOS desktop SSO: starts a local callback server, opens the system

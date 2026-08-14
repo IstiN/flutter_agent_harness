@@ -82,6 +82,8 @@ const _exempt = <String, String>{
       'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
   'lib/ui/widgets/apps_panel.dart':
       'test/golden/apps_panel_golden_test.dart',
+  'lib/ui/widgets/provider_selection_list.dart':
+      'list-based provider picker; rendered inside AgentSettingsForm (covered by settings goldens)',
   'lib/ui/screens/codemie_sso_webview.dart':
       'WebView SSO page; needs a real webview plugin (not available in tests)',
   'lib/services/codemie_sso_flow.dart':

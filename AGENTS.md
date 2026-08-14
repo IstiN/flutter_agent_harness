@@ -483,6 +483,17 @@ factual: paths, commands, invariants — no essays.
   compact traffic lights float over Flutter content; `MaterialApp.builder`
   in `main.dart` reserves a 28px top strip on macOS so they never overlap
   the app header.
+- CodeMie SSO in the app: `lib/services/codemie_sso_flow.dart` — macOS uses
+  the CLI flow (local callback server + system browser), iOS drives
+  `ASWebAuthenticationSession` through the `fah/web_auth_session` channel in
+  `ios/Runner/AppDelegate.swift` (Safari-grade WebAuthn/passkey sign-in —
+  an embedded WKWebView cannot offer Face ID without a `webcredentials`
+  associated-domain relationship with the IdP; the session intercepts the
+  `http://localhost:<port>/?token=` redirect by its `http` scheme, every
+  flow page being https). When the session cannot start, the flow falls back
+  to `ui/screens/codemie_sso_webview.dart` (in-app `webview_flutter` page
+  intercepting the same redirect via its `NavigationDelegate`, password
+  login only).
 - `flutter_app/lib/services/theme_controller.dart` — ThemeMode
   (system/light/dark) persisted as `theme.json`; the theme itself lives in
   `packages/fa_ui` (`buildFahTheme()` dark + `buildFahThemeLight()`,

@@ -169,11 +169,9 @@ Widget _wrapPage(Widget child) => Builder(
   },
 );
 
-/// Opens the provider dropdown and picks the entry labelled [label]
-/// (verbatim from `test/settings_test.dart`).
+/// Selects the provider row labelled [label] from the list-based picker
+/// (replaces the old dropdown-tap flow).
 Future<void> _selectProvider(WidgetTester tester, String label) async {
-  await tester.tap(find.byType(DropdownButtonFormField<Object>));
-  await tester.pumpAndSettle();
   await tester.tap(find.text(label).last);
   await tester.pumpAndSettle();
 }
