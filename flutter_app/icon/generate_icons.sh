@@ -3,7 +3,11 @@
 # Requires: rsvg-convert (brew install librsvg) and ImageMagick (brew install imagemagick).
 #
 # Variants:
-#   icon.svg            master — dark rounded square + gradient tile + dark ">_" glyph
+#   icon.svg            master (dark form) — dark rounded square + gradient tile + dark ">_" glyph
+#   icon_light.svg      light form — light rounded square + gradient tile + dark ">_" glyph
+#                       (macOS has no per-appearance app icons, so the default
+#                       macOS icon is the light form: it reads on BOTH light
+#                       and dark Docks; the dark form ships as PNGs for reference)
 #   icon_ios.svg        full-bleed opaque square (Apple applies the rounded mask; no alpha)
 #   icon_maskable.svg   full-bleed dark bg, composition fits the maskable safe zone
 #   icon_foreground.svg Android adaptive-icon foreground (glyph only, safe-zone padding)
@@ -51,10 +55,14 @@ render icon_maskable.svg 512 "$WEB/icons/Icon-maskable-512.png"
 render icon.svg 64 "$WEB/favicon.png"
 
 # --- macOS -------------------------------------------------------------------
+# Default app icon = light form (visible on dark Docks too); the dark form is
+# rendered into this directory for reference / manual swap.
 MAC="$ROOT/macos/Runner/Assets.xcassets/AppIcon.appiconset"
 for size in 16 32 64 128 256 512 1024; do
-  render icon.svg "$size" "$MAC/app_icon_$size.png"
+  render icon_light.svg "$size" "$MAC/app_icon_$size.png"
+  render icon.svg "$size" "icon_dark_$size.png"
 done
+render icon_light.svg 1024 icon_light_1024.png
 
 # --- Windows (multi-size ICO) -------------------------------------------------
 WIN="$ROOT/windows/runner/resources"

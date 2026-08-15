@@ -7,6 +7,7 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/onboarding_store.dart';
@@ -147,7 +148,7 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final steps = _Steps(page: page, labels: labels);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 12, 0),
+      padding: const EdgeInsets.fromLTRB(20, 26, 12, 0),
       child: wide
           ? Row(
               children: [
@@ -318,6 +319,7 @@ class _Footer extends StatelessWidget {
       child: const Text('Back', style: TextStyle(
         fontSize: 13.5, color: _kGray, fontWeight: FontWeight.w500)),
     );
+    const privacy = _PrivacyLink();
     if (wide) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(28, 10, 28, 22),
@@ -326,6 +328,8 @@ class _Footer extends StatelessWidget {
             counter,
             const SizedBox(width: 14),
             _ProgressBar(fraction: (page + 1) / 4, width: 200),
+            const Spacer(),
+            privacy,
             const Spacer(),
             if (onBack != null) ...[back, const SizedBox(width: 16)],
             SizedBox(
@@ -337,7 +341,7 @@ class _Footer extends StatelessWidget {
       );
     }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
       child: Column(
         children: [
           Text(
@@ -355,8 +359,33 @@ class _Footer extends StatelessWidget {
               ),
             ],
           ),
+          privacy,
         ],
       ),
+    );
+  }
+}
+
+/// Link to the published privacy policy (fa1.dev/privacy.html).
+class _PrivacyLink extends StatelessWidget {
+  const _PrivacyLink();
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: () => url_launcher.launchUrl(
+        Uri.parse('https://fa1.dev/privacy.html'),
+        mode: url_launcher.LaunchMode.externalApplication,
+      ),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: const Text('Privacy Policy', style: TextStyle(
+        fontSize: 11, color: _kGrayLight,
+        decoration: TextDecoration.underline,
+        decorationColor: _kGrayLight)),
     );
   }
 }
@@ -469,6 +498,36 @@ Widget _card({required Widget child, EdgeInsets padding = const EdgeInsets.all(1
     ),
     child: child,
   );
+}
+
+/// Wide-viewport wrapper: centers the page content vertically (and caps its
+/// width) so large screens don't leave the content glued to the top.
+class _WideFit extends StatelessWidget {
+  const _WideFit({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1060),
+                  child: child,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 /// Narrow-viewport wrapper: scales the whole page content down uniformly so
@@ -917,15 +976,7 @@ class _P1 extends StatelessWidget {
       ],
     );
     if (!wide) return _NarrowFit(child: body);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1060),
-          child: body,
-        ),
-      ),
-    );
+    return _WideFit(child: body);
   }
 
   Widget _wideBody() {
@@ -1380,15 +1431,7 @@ class _P2State extends State<_P2> {
       ],
     );
     if (!widget.wide) return _NarrowFit(child: body);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1060),
-          child: body,
-        ),
-      ),
-    );
+    return _WideFit(child: body);
   }
 
   Widget _cards() {
@@ -1761,15 +1804,7 @@ class _P3 extends StatelessWidget {
       ],
     );
     if (!wide) return _NarrowFit(child: body);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1060),
-          child: body,
-        ),
-      ),
-    );
+    return _WideFit(child: body);
   }
 }
 
@@ -2138,15 +2173,7 @@ class _P4 extends StatelessWidget {
       ],
     );
     if (!wide) return _NarrowFit(child: body);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1060),
-          child: body,
-        ),
-      ),
-    );
+    return _WideFit(child: body);
   }
 }
 
