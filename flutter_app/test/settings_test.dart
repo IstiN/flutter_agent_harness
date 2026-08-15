@@ -792,13 +792,23 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.pumpWidget(
-        MaterialApp(home: SettingsScreen(service: service)),
+        MaterialApp(
+          home: SettingsScreen(
+            service: service,
+            registry: registry,
+            lastConnectionStore: store,
+          ),
+        ),
       );
       await tester.pumpAndSettle();
 
       // Add a keyless local provider through the Providers section.
-      await tester.tap(find.text('Add provider'));
+      await tester.ensureVisible(find.text('Add provider'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Add provider'));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
       await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Local');
       await tester.enterText(
         find.widgetWithText(TextField, 'Base URL'),

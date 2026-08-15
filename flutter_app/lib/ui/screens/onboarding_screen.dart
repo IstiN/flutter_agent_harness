@@ -733,7 +733,7 @@ class _Page2State extends State<_Page2> {
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Center(
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: widget.isWide ? 480 : double.infinity),
+          constraints: BoxConstraints(maxWidth: widget.isWide ? 720 : double.infinity),
           child: Column(
             children: [
               const SizedBox(height: 16),
@@ -753,40 +753,64 @@ class _Page2State extends State<_Page2> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
-              _ProviderCard(
-                icon: Icons.cloud_outlined,
-                name: 'OpenRouter',
-                badge: 'Recommended',
-                description: 'Access leading AI models with one connection.',
-                detail: 'Default model: Auto — Fa chooses the best available model for each task.',
-                selected: _selected == 'openrouter',
-                onTap: () => setState(() => _selected = 'openrouter'),
-              ),
-              const SizedBox(height: 8),
-              _ProviderCard(
-                icon: Icons.computer,
-                name: 'Ollama',
-                badge: 'Local',
-                description: 'Run compatible models on your device.',
-                selected: _selected == 'ollama',
-                onTap: () => setState(() => _selected = 'ollama'),
-              ),
-              const SizedBox(height: 8),
-              _ProviderCard(
-                icon: Icons.auto_awesome,
-                name: 'Google Gemini',
-                description: 'Connect your Gemini API key.',
-                selected: _selected == 'gemini',
-                onTap: () => setState(() => _selected = 'gemini'),
-              ),
-              const SizedBox(height: 8),
-              _ProviderCard(
-                icon: Icons.dns_outlined,
-                name: 'Custom provider',
-                description: 'Use your own compatible endpoint.',
-                selected: _selected == 'custom',
-                onTap: () => setState(() => _selected = 'custom'),
-              ),
+              // Wide: floating request card on the left + provider cards.
+              if (widget.isWide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Floating "Your request" card.
+                    SizedBox(
+                      width: 200,
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE5E7EB)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.06),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'Your request',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF6B7280),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Row(
+                              children: [
+                                Icon(Icons.auto_awesome, size: 14, color: Color(0xFF4F46E5)),
+                                SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    'Build a focus timer with work and break sessions.',
+                                    style: TextStyle(fontSize: 11, color: Color(0xFF111827)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    // Provider cards.
+                    Expanded(child: _buildProviderCards()),
+                  ],
+                )
+              else
+                _buildProviderCards(),
               const SizedBox(height: 16),
               const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -809,6 +833,48 @@ class _Page2State extends State<_Page2> {
       ),
     );
   }
+
+  Widget _buildProviderCards() {
+    return Column(
+      children: [
+        _ProviderCard(
+          icon: Icons.cloud_outlined,
+          name: 'OpenRouter',
+          badge: 'Recommended',
+          description: 'Access leading AI models with one connection.',
+          detail: 'Default model: Auto — Fa chooses the best available model for each task.',
+          link: 'Choose a model manually',
+          selected: _selected == 'openrouter',
+          onTap: () => setState(() => _selected = 'openrouter'),
+        ),
+        const SizedBox(height: 8),
+        _ProviderCard(
+          icon: Icons.computer,
+          name: 'Ollama',
+          badge: 'Local',
+          description: 'Run compatible models on your device.',
+          selected: _selected == 'ollama',
+          onTap: () => setState(() => _selected = 'ollama'),
+        ),
+        const SizedBox(height: 8),
+        _ProviderCard(
+          icon: Icons.auto_awesome,
+          name: 'Google Gemini',
+          description: 'Connect your Gemini API key.',
+          selected: _selected == 'gemini',
+          onTap: () => setState(() => _selected = 'gemini'),
+        ),
+        const SizedBox(height: 8),
+        _ProviderCard(
+          icon: Icons.dns_outlined,
+          name: 'Custom provider',
+          description: 'Use your own compatible endpoint.',
+          selected: _selected == 'custom',
+          onTap: () => setState(() => _selected = 'custom'),
+        ),
+      ],
+    );
+  }
 }
 
 class _ProviderCard extends StatelessWidget {
@@ -820,6 +886,7 @@ class _ProviderCard extends StatelessWidget {
     required this.onTap,
     this.badge,
     this.detail,
+    this.link,
   });
 
   final IconData icon;
@@ -827,6 +894,7 @@ class _ProviderCard extends StatelessWidget {
   final String? badge;
   final String description;
   final String? detail;
+  final String? link;
   final bool selected;
   final VoidCallback onTap;
 
@@ -898,6 +966,17 @@ class _ProviderCard extends StatelessWidget {
                       style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
                     ),
                   ],
+                  if (link != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      link!,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF4F46E5),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -938,7 +1017,7 @@ class _Page3 extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Center(
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: isWide ? 640 : double.infinity),
+          constraints: BoxConstraints(maxWidth: isWide ? 900 : double.infinity),
           child: Column(
             children: [
               const SizedBox(height: 16),
@@ -958,31 +1037,54 @@ class _Page3 extends StatelessWidget {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
-              // Permission cards in a row on wide, stacked on narrow.
+              // Flow diagram + permission cards + right preview.
               if (isWide)
-                const Row(
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: _PermissionCard(
-                      icon: Icons.calendar_today,
-                      title: 'Calendar & Reminders',
-                      description: 'Check your schedule and create events.',
-                    )),
-                    SizedBox(width: 12),
-                    Expanded(child: _PermissionCard(
-                      icon: Icons.notifications_outlined,
-                      title: 'Notifications',
-                      description: 'Send reminders and task updates.',
-                    )),
-                    SizedBox(width: 12),
-                    Expanded(child: _PermissionCard(
-                      icon: Icons.mic_outlined,
-                      title: 'Microphone',
-                      description: 'Talk to Fa with your voice.',
-                    )),
+                    // Left: flow diagram + permission cards.
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        children: [
+                          _buildFlowDiagram(),
+                          const SizedBox(height: 16),
+                          const Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: _PermissionCard(
+                                icon: Icons.calendar_today,
+                                title: 'Calendar & Reminders',
+                                description: 'Check your schedule and create events.',
+                              )),
+                              SizedBox(width: 12),
+                              Expanded(child: _PermissionCard(
+                                icon: Icons.notifications_outlined,
+                                title: 'Notifications',
+                                description: 'Send reminders and task updates.',
+                              )),
+                              SizedBox(width: 12),
+                              Expanded(child: _PermissionCard(
+                                icon: Icons.mic_outlined,
+                                title: 'Microphone',
+                                description: 'Talk to Fa with your voice.',
+                              )),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    // Right: "What you'll get" preview.
+                    Expanded(
+                      flex: 2,
+                      child: _buildPreviewPanel(),
+                    ),
                   ],
                 )
               else ...[
+                _buildFlowDiagram(),
+                const SizedBox(height: 16),
                 const _PermissionCard(
                   icon: Icons.calendar_today,
                   title: 'Calendar & Reminders',
@@ -1032,6 +1134,122 @@ class _Page3 extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildFlowDiagram() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.auto_awesome, size: 16, color: Color(0xFF4F46E5)),
+          SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'Build a focus timer with work and break sessions.',
+              style: TextStyle(fontSize: 11, color: Color(0xFF111827)),
+            ),
+          ),
+          SizedBox(width: 8),
+          Icon(Icons.arrow_forward, size: 14, color: Color(0xFF6B7280)),
+          SizedBox(width: 8),
+          Icon(Icons.timer_outlined, size: 16, color: Color(0xFF4F46E5)),
+          SizedBox(width: 8),
+          Text(
+            'Focus Timer',
+            style: TextStyle(fontSize: 11, color: Color(0xFF111827), fontWeight: FontWeight.w600),
+          ),
+          SizedBox(width: 4),
+          Text(
+            'no access needed',
+            style: TextStyle(fontSize: 10, color: Color(0xFF10B981)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPreviewPanel() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'What you\'ll get',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF6B7280),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Focus Timer widget preview.
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF60A5FA), Color(0xFF3B82F6)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.timer_outlined, size: 20, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  '25:00',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Mini app grid.
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _miniIcon(Icons.calendar_today, const Color(0xFF3B82F6)),
+              _miniIcon(Icons.note_outlined, const Color(0xFFF59E0B)),
+              _miniIcon(Icons.folder_outlined, const Color(0xFF3B82F6)),
+              _miniIcon(Icons.calculate_outlined, const Color(0xFF111827)),
+              _miniIcon(Icons.map_outlined, const Color(0xFF10B981)),
+              _miniIcon(Icons.timer_outlined, const Color(0xFF4F46E5)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniIcon(IconData icon, Color bg) {
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Icon(icon, size: 14, color: Colors.white),
+    );
+  }
 }
 
 class _PermissionCard extends StatelessWidget {
@@ -1077,6 +1295,40 @@ class _PermissionCard extends StatelessWidget {
               color: Color(0xFF4F46E5),
               fontWeight: FontWeight.w500,
             ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {},
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF4F46E5)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                  ),
+                  child: const Text(
+                    'Allow',
+                    style: TextStyle(fontSize: 11, color: Color(0xFF4F46E5)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextButton(
+                  onPressed: () {},
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                  ),
+                  child: const Text(
+                    'Later',
+                    style: TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
