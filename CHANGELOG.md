@@ -1016,4 +1016,14 @@
 
 - feat(app): live agents badge in FaWorkBar (CLI bg: parity) + fix cli_visual tests for new settings hub order and /agents tree
 
+## 0.1.179
+
+- fix(crap): simplify pickAgentAction dispatch; broaden badge visual soft-skip catch
+- chore: drop unused session_repo imports
+- feat(cli): extract active-agents badge to pure helper + unit tests; soft-skip live badge visual test
+- fix(tui): soft-wrap long input lines instead of horizontal clipping
+- feat(subagents): real JSONL child sessions at completion + /agents open <id> (race-free register)
+- feat(providers): list-first model pickers everywhere — quick search, manual escape, agent models flow
+- feat(cli): /agents child → Open session action — switch into the subagent's session
+
 ## Unreleased
