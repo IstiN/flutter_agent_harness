@@ -872,6 +872,37 @@ void main() {
       },
     );
 
+    test('durable memory facts join the composed system prompt', () async {
+      final env = MemoryExecutionEnv(cwd: '/');
+      // Seed a fact through the same store the service's controller reads
+      // (project scope = <cwd>/.fah/memory).
+      await MemoryController(
+        env: env,
+      ).add(text: 'the user prefers ADHD-style short answers');
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: 'test-key',
+        ),
+        env: env,
+        streamFunction: _singleTextResponse('ok'),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      // The memory section refreshes asynchronously after create.
+      var prompt = '';
+      for (var i = 0; i < 100; i++) {
+        prompt = service.systemPromptForTest;
+        if (prompt.contains('ADHD-style short answers')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(prompt, contains('<memory>'));
+      expect(prompt, contains('ADHD-style short answers'));
+    });
+
     test('reset clears messages and starts a new session', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(

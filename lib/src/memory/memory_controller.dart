@@ -180,37 +180,61 @@ final class MemoryController {
     }
   }
 
-  /// Lists recent entries from both scopes.
+  /// Lists recent entries from both scopes (project first, then user).
   Future<List<MemoryEntry>> list({int limit = 20}) async {
     final results = <MemoryEntry>[];
     await projectStore;
-    if (_projectStorage == null) return results;
-    final noteIds = await _projectStorage!.listEntityIds('note');
-    for (final id in noteIds.take(limit)) {
-      if (results.length >= limit) break;
-      final entry = await _readNoteEntry(id, 'project');
-      if (entry != null) results.add(entry);
+    await _listScope(_projectStorage, 'project', limit, results);
+    if (results.length < limit) {
+      await userStore;
+      await _listScope(_userStorage, 'user', limit - results.length, results);
     }
     return results;
   }
 
+  /// Appends up to [limit] note entries of one scope's storage.
+  Future<void> _listScope(
+    KbStorage? storage,
+    String scope,
+    int limit,
+    List<MemoryEntry> results,
+  ) async {
+    if (storage == null) return;
+    final noteIds = await storage.listEntityIds('note');
+    for (final id in noteIds.take(limit)) {
+      if (results.length >= limit) break;
+      final entry = await _readNoteEntry(storage, id, scope);
+      if (entry != null) results.add(entry);
+    }
+  }
+
   /// Reads one entity as a [MemoryEntry], or null if the entity is absent.
-  Future<MemoryEntry?> _readNoteEntry(String id, String scope) async {
-    final raw = await _projectStorage?.readEntity('note', id);
+  /// The raw file is frontmatter + body markdown — parse it properly
+  /// (the naive first line is the `---` delimiter, not the fact).
+  Future<MemoryEntry?> _readNoteEntry(
+    KbStorage? storage,
+    String id,
+    String scope,
+  ) async {
+    final raw = await storage?.readEntity('note', id);
     if (raw == null) return null;
-    return MemoryEntry(
-      id: id,
-      type: 'note',
-      text: _firstLine(raw),
-      scope: scope,
-    );
+    String text;
+    try {
+      text = KBFileParser().parseNote(raw).text;
+    } on Object {
+      text = _firstLine(raw);
+    }
+    return MemoryEntry(id: id, type: 'note', text: text, scope: scope);
   }
 
   /// Formats a ≤2 KiB `<memory>` block for the system prompt.
   Future<String> formatPromptSection() async {
     final entries = await list(limit: 15);
     if (entries.isEmpty) return '';
-    final lines = <String>['<memory>'];
+    final lines = <String>[
+      '<memory>',
+      'Durable facts from past sessions (memory_search finds more):',
+    ];
     for (final entry in entries) {
       final line = '  ${entry.displayLine}';
       if (lines.join('\n').length + line.length + 10 > 2000) break;

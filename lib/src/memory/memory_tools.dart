@@ -9,17 +9,25 @@ import 'memory_controller.dart';
 
 /// Returns the three memory tools backed by [controller].
 /// `memory_add` is write-tier; `memory_search` and `memory_list` are read-tier.
-List<AgentTool> memoryTools(MemoryController? controller) {
+/// [onChanged] fires after every successful `memory_add` — hosts use it to
+/// refresh the prompt's cached `<memory>` section.
+List<AgentTool> memoryTools(
+  MemoryController? controller, {
+  void Function()? onChanged,
+}) {
   if (controller == null) return const [];
   return [
-    _memoryAddTool(controller),
+    _memoryAddTool(controller, onChanged),
     _memorySearchTool(controller),
     _memoryListTool(controller),
   ];
 }
 
 /// `memory_add` — store a durable fact in long-term memory.
-AgentTool _memoryAddTool(MemoryController controller) {
+AgentTool _memoryAddTool(
+  MemoryController controller,
+  void Function()? onChanged,
+) {
   return AgentTool(
     name: 'memory_add',
     description:
@@ -60,6 +68,7 @@ AgentTool _memoryAddTool(MemoryController controller) {
         tags: tags,
         scope: scope,
       );
+      onChanged?.call();
       return ToolExecutionResult.text(
         'saved memory (${entry.scope}): ${entry.displayLine}',
       );

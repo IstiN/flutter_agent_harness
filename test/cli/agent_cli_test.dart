@@ -318,6 +318,25 @@ void main() {
     },
   );
 
+  test('durable memory facts join the system prompt after startup', () async {
+    // Seed a fact through the same store the CLI's controller will read
+    // (project scope = <cwd>/.fah/memory).
+    final seed = MemoryController(env: env);
+    await seed.add(text: 'the user prefers ADHD-style short answers');
+
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForIt(
+      () =>
+          cli.systemPrompt.contains('<memory>') &&
+          cli.systemPrompt.contains('ADHD-style short answers'),
+    );
+    io.sendLine('/exit');
+    await run;
+    expect(fake.calls, 0);
+  });
+
   test('renders tool start/end one-liners and stores tool results', () async {
     await env.writeFile('notes.txt', 'data');
     final fake = FakeStreamFunction([

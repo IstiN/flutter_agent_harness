@@ -112,7 +112,13 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/memory/` — long-term memory: `MemoryController` over the
   `flutter_agent_memory` package (hosted pub.dev dep),
   `execution_env_kb_storage` (KbStorage → ExecutionEnv), `memory_add`/
-  `memory_search`/`memory_list` tools, `<memory>` prompt section; phase 2:
+  `memory_search`/`memory_list` tools (`memoryTools(controller, onChanged:)`),
+  and the `<memory>` prompt section: `formatPromptSection()` (BOTH scopes,
+  entities parsed via `KBFileParser` — the raw file's first line is the
+  `---` delimiter, not the fact) is cached by the host and recomposed into
+  the system prompt asynchronously after startup + on every `memory_add`
+  (CLI `_refreshMemorySection` in agent_cli.dart, app in AgentService);
+  phase 2:
   `compaction_memory_hook` (compaction-time durable-fact extraction on the
   smol role, non-blocking), `maintain()` (levels + consolidate, running
   guard, 24h stamp), triggers on session start + `/memory maintain`;

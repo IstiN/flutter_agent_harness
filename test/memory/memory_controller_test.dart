@@ -85,5 +85,26 @@ void main() {
       const entry = MemoryEntry(id: 'x', type: 'note', text: 'hello');
       expect(entry.displayLine, '(note) hello');
     });
+
+    test('list and the prompt section include the USER scope', () async {
+      final env = MemoryExecutionEnv();
+      final controller = MemoryController(env: env, userRoot: '/user');
+      await controller.add(text: 'project fact');
+      await controller.add(text: 'global user fact', scope: 'user');
+
+      final entries = await controller.list(limit: 10);
+      expect(entries, hasLength(2));
+      expect(entries.map((e) => e.scope), containsAll(['project', 'user']));
+      expect(
+        entries.map((e) => e.text),
+        containsAll(['project fact', 'global user fact']),
+      );
+
+      // The prompt section carries both scopes plus the search hint.
+      final section = await controller.formatPromptSection();
+      expect(section, contains('global user fact'));
+      expect(section, contains('project fact'));
+      expect(section, contains('memory_search'));
+    });
   });
 }

@@ -387,10 +387,7 @@ class AgentService extends ChangeNotifier
     _subagentManager = SubagentManager(parentSessionId: '');
     // Real JSONL child sessions at completion (fast register keeps the
     // steering race away; transcript lands when the child finishes).
-    Future<Session> childSessionFactory(
-      String parentId,
-      String childId,
-    ) async {
+    Future<Session> childSessionFactory(String parentId, String childId) async {
       return _repo.create(
         JsonlSessionCreateOptions(
           cwd: env.cwd,
@@ -403,6 +400,7 @@ class AgentService extends ChangeNotifier
         ),
       );
     }
+
     _childSessionFactory = childSessionFactory;
     _memoryController = MemoryController(env: env);
     // Model-roles resolver backed by the TaskModelsStore: `smol` (compaction
@@ -412,9 +410,7 @@ class AgentService extends ChangeNotifier
     final taskModelsStore = _taskModelsStore;
     if (taskModelsStore != null) {
       _taskRolesResolver = ModelRolesResolver(
-        config: ModelRolesConfig(
-          roles: _StoreBackedRolesMap(taskModelsStore),
-        ),
+        config: ModelRolesConfig(roles: _StoreBackedRolesMap(taskModelsStore)),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
     }
@@ -432,7 +428,10 @@ class AgentService extends ChangeNotifier
         webSearch: isOnDevice ? null : webSearchConfig,
         model: () => _agent.state.model,
       ),
-      ...memoryTools(_memoryController),
+      ...memoryTools(
+        _memoryController,
+        onChanged: () => unawaited(_refreshMemorySection()),
+      ),
       ...subagentMonitoringTools(manager: _subagentManager),
       // taskTool is registered AFTER the child surface is built (below).
       askTool(callback: _answerAskQuestions),
@@ -533,6 +532,9 @@ class AgentService extends ChangeNotifier
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
+    // Durable facts from past sessions join the prompt asynchronously
+    // (memory stores initialize lazily; recompose on arrival).
+    unawaited(_refreshMemorySection());
   }
 
   /// Whether [providerKind] is an on-device backend (WebLLM, Gemma, or
@@ -806,6 +808,10 @@ class AgentService extends ChangeNotifier
   @visibleForTesting
   List<Tool> get toolsForTest => _agent.state.tools;
 
+  /// Exposes the live system prompt to tests (memory-section checks).
+  @visibleForTesting
+  String get systemPromptForTest => _agent.state.systemPrompt;
+
   /// Exposes the live secrets env to tests (`request_secret` grant checks).
   @visibleForTesting
   SecretsExecutionEnv? get secretsEnvForTest => _secretsEnv;
@@ -893,9 +899,7 @@ class AgentService extends ChangeNotifier
     }
     if (handle.status == SubagentStatus.failed ||
         handle.status == SubagentStatus.aborted) {
-      throw StateError(
-        'cannot send to ${handle.status.name} subagent "$id"',
-      );
+      throw StateError('cannot send to ${handle.status.name} subagent "$id"');
     }
     try {
       final metadata = SessionMetadata(
@@ -924,10 +928,8 @@ class AgentService extends ChangeNotifier
   static String _previewMessageText(Message message) {
     final Object raw = switch (message) {
       UserMessage(:final content) => content,
-      AssistantMessage(:final content) => content
-          .whereType<TextContent>()
-          .map((b) => b.text)
-          .join('\n'),
+      AssistantMessage(:final content) =>
+        content.whereType<TextContent>().map((b) => b.text).join('\n'),
       _ => '',
     };
     return raw is String ? raw.trim() : '$raw';
@@ -982,8 +984,26 @@ class AgentService extends ChangeNotifier
       base,
       if (_projectMountNote() case final note?) note,
       if (_promptSuffix.isNotEmpty) _promptSuffix,
+      if (_memorySection.isNotEmpty) _memorySection,
     ];
     return parts.join('\n\n');
+  }
+
+  /// The cached `<memory>` prompt section (durable facts from past
+  /// sessions), refreshed asynchronously after create and on every
+  /// `memory_add` — the prompt composition itself stays synchronous.
+  String _memorySection = '';
+
+  /// Re-reads the `<memory>` section from the memory stores and recomposes
+  /// the prompt when it changed.
+  Future<void> _refreshMemorySection() async {
+    final controller = _memoryController;
+    final config = _config;
+    if (controller == null || config == null) return;
+    final section = await controller.formatPromptSection();
+    if (section == _memorySection) return;
+    _memorySection = section;
+    _agent.state.systemPrompt = _composeSystemPrompt(config);
   }
 
   /// The project-folder mount note for the system prompt (macOS): tells the
@@ -2050,8 +2070,7 @@ final class _StoreBackedRolesMap
   }
 
   @override
-  Iterable<String> get keys =>
-      _store.configuredRoles.toList(growable: false);
+  Iterable<String> get keys => _store.configuredRoles.toList(growable: false);
 
   @override
   void operator []=(String key, List<ModelRef> value) =>
@@ -2061,6 +2080,5 @@ final class _StoreBackedRolesMap
   void clear() => throw UnsupportedError('read-only');
 
   @override
-  List<ModelRef>? remove(Object? key) =>
-      throw UnsupportedError('read-only');
+  List<ModelRef>? remove(Object? key) => throw UnsupportedError('read-only');
 }

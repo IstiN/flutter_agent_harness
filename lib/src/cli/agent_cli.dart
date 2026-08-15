@@ -359,7 +359,10 @@ class AgentCli {
         lsp: config.lspConfig,
         mcp: _mcp.manager,
       ),
-      ...memoryTools(_memory),
+      ...memoryTools(
+        _memory,
+        onChanged: () => unawaited(_refreshMemorySection()),
+      ),
       // Non-interactive input (piped) gets a null ask callback: ask calls
       // then fail with a "host cannot answer" error result (safe default).
       askTool(callback: io.isInteractive ? _answerAskQuestions : null),
@@ -681,7 +684,22 @@ class AgentCli {
       config.systemPrompt ?? _currentMode.systemPrompt,
       contextSection: formatProjectContext(_contextFiles),
       skillsSection: formatSkillsForPrompt(_skills),
+      memorySection: _memorySection,
     );
+  }
+
+  /// The cached `<memory>` prompt section (durable facts from past
+  /// sessions). Loaded asynchronously after startup and refreshed on every
+  /// `memory_add` — the prompt composition itself stays synchronous.
+  var _memorySection = '';
+
+  /// Re-reads the `<memory>` section from the memory stores and recomposes
+  /// the prompt when it changed.
+  Future<void> _refreshMemorySection() async {
+    final section = await _memory.formatPromptSection();
+    if (section == _memorySection) return;
+    _memorySection = section;
+    _applyPromptComposition();
   }
 
   /// Reference to the active TUI controller so asynchronous model-list updates
@@ -790,6 +808,9 @@ class AgentCli {
           : '${config.homeDir}/.fah/AGENTS.md',
     );
     _applyPromptComposition();
+    // Durable facts from past sessions join the prompt asynchronously
+    // (memory stores initialize lazily; recompose on arrival).
+    unawaited(_refreshMemorySection());
   }
 
   /// Answers any pending approval/ask prompt defensively so a tool call
