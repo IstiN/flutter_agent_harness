@@ -18,28 +18,33 @@ class ProviderMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (svg, color) = _mark(presetKey);
-    return SizedBox(
+    final mark = _mark(presetKey);
+    return Container(
       width: size,
       height: size,
+      decoration: BoxDecoration(
+        color: mark.$3,
+        borderRadius: BorderRadius.circular(size * 0.28),
+      ),
+      padding: EdgeInsets.all(size * 0.24),
       child: SvgPicture.string(
-        svg,
-        colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+        mark.$1,
+        colorFilter: ColorFilter.mode(mark.$2, BlendMode.srcIn),
       ),
     );
   }
 
-  static (String, Color) _mark(String key) => switch (key) {
-    'openrouter' => (_openrouter, const Color(0xFF5B61F6)),
-    'chatgpt' || 'openai' => (_openai, const Color(0xFF172033)),
-    'codemie' => (_codemie, const Color(0xFF3566FF)),
-    'anthropic' => (_anthropic, const Color(0xFFD97757)),
-    'google' => (_gemini, const Color(0xFF8E75B2)),
-    'dial' => (_dial, const Color(0xFF6B768B)),
-    'kimi' => (_kimi, const Color(0xFF172033)),
-    'zai' => (_zai, const Color(0xFF3566FF)),
-    'ollama' => (_ollama, const Color(0xFF172033)),
-    _ => (_custom, const Color(0xFF6B768B)),
+  static (String, Color, Color) _mark(String key) => switch (key) {
+    'openrouter' => (_openrouter, const Color(0xFF5B61F6), const Color(0xFFEEF1FE)),
+    'chatgpt' || 'openai' => (_openai, Colors.white, const Color(0xFF172033)),
+    'codemie' => (_codemie, const Color(0xFF3566FF), const Color(0xFFEAF1FF)),
+    'anthropic' => (_anthropic, const Color(0xFFD97757), const Color(0xFFF7EEE8)),
+    'google' => (_gemini, const Color(0xFF8E75B2), const Color(0xFFF3EEF9)),
+    'dial' => (_dial, const Color(0xFF47506B), const Color(0xFFECEFF5)),
+    'kimi' => (_kimi, const Color(0xFF172033), const Color(0xFFEEF0F4)),
+    'zai' => (_zai, const Color(0xFF3566FF), const Color(0xFFE8EDFF)),
+    'ollama' => (_ollama, const Color(0xFF172033), const Color(0xFFF0F0F2)),
+    _ => (_custom, const Color(0xFF6B768B), const Color(0xFFECEFF5)),
   };
 }
 
@@ -85,9 +90,9 @@ final String _dial = _svg24(
   '<path fill-rule="evenodd" d="M12 3a9 9 0 1 0 9 9h-2.2A6.8 6.8 0 0 1 12 18.8 6.8 6.8 0 0 1 5.2 12 6.8 6.8 0 0 1 12 5.2Zm0 3a3.8 3.8 0 0 0-.5.05L13.4 12l-1.9 1.1A3.8 3.8 0 1 0 15.8 12a3.8 3.8 0 0 0-.4-1.7l-1.9 1.1L12.4 6.3A3.8 3.8 0 0 0 12 6Z"/>',
 );
 
-/// Hand-drawn Z.AI lettermark.
+/// simple-icons Z.AI mark (CC0).
 final String _zai = _svg24(
-  '<path d="M5 4h14v2.6L10.6 17.4H19V20H5v-2.6l8.4-10.8H5Z"/>',
+  '<path d="M12.606 1.806l-1.677 2.388c-0.258 0.374-0.697 0.606-1.161 0.606h-9.162V1.794C0.594 1.806 12.606 1.806 12.606 1.806zM24 1.806L9.6 22.206 0 22.206 14.4 1.806zM11.394 22.206l1.69-2.4c0.258-0.374 0.697-0.606 1.161-0.606h9.149v3.006H11.394z"/>',
 );
 
 /// Hand-drawn Custom mark: a server stack.

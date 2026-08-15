@@ -4,7 +4,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'dart:async' show unawaited;
+import 'dart:async' show Timer, unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
@@ -79,6 +79,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   /// provider step is mandatory: Continue/Skip stay locked until then.
   var _providerConfigured = false;
 
+  /// Which preset completed its flow (the card check). Tracked here, not
+  /// in the page, so it survives the PageView recycling the page state.
+  String? _configuredProviderKey;
+
   /// The provider gate applies only in the real app (a registry is wired);
   /// tests pumping the bare screen keep the walkthrough skippable.
   bool get _providerGateActive =>
@@ -117,8 +121,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   );
 
   /// A provider flow completed on page 2: unlock the step and slide on.
-  void _providerDone() {
-    setState(() => _providerConfigured = true);
+  void _providerDone(String presetKey) {
+    setState(() {
+      _providerConfigured = true;
+      _configuredProviderKey = presetKey;
+    });
     if (_page == 1) _next();
   }
 
@@ -154,6 +161,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     wide: wide,
                     registry: widget.registry,
                     lastConnectionStore: widget.lastConnectionStore,
+                    configuredKey: _configuredProviderKey,
                     onConfigured: _providerDone,
                   ),
                   _P3(wide: wide),
@@ -1196,6 +1204,7 @@ class _P2 extends StatefulWidget {
     required this.wide,
     this.registry,
     this.lastConnectionStore,
+    this.configuredKey,
     this.onConfigured,
   });
 
@@ -1207,17 +1216,25 @@ class _P2 extends StatefulWidget {
   /// Persists the configured provider as the restorable last connection.
   final LastConnectionStore? lastConnectionStore;
 
-  /// Fired once a provider config flow completes successfully.
-  final VoidCallback? onConfigured;
+  /// The preset that completed its flow (its card gets the check).
+  final String? configuredKey;
+
+  /// Fired with the preset key once a config flow completes successfully.
+  final ValueChanged<String>? onConfigured;
 
   @override
   State<_P2> createState() => _P2State();
 }
 
 class _P2State extends State<_P2> {
-  /// The preset key that completed its config flow (gets the check).
-  String? _configuredKey;
   var _busy = false;
+  Timer? _busyTimer;
+
+  @override
+  void dispose() {
+    _busyTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1302,7 +1319,7 @@ class _P2State extends State<_P2> {
         for (final preset in faui.defaultAddProviderPresets) ...[
           _ProviderCard(
             preset: preset,
-            configured: _configuredKey == preset.key,
+            configured: widget.configuredKey == preset.key,
             onTap: _busy ? null : () => _configure(preset),
           ),
           const SizedBox(height: 10),
@@ -1316,8 +1333,16 @@ class _P2State extends State<_P2> {
   /// CodeMie/ChatGPT, the editor for key-based presets and Custom.
   Future<void> _configure(faui.AddProviderPreset preset) async {
     final registry = widget.registry;
-    if (registry == null) return;
+    if (registry == null || _busy) return;
     setState(() => _busy = true);
+    // The busy flag is double-tap protection, NOT a flow-long lock: an SSO
+    // flow waits on the system browser and may hang for minutes when the
+    // user abandons it — it must never lock the whole list. The flows are
+    // modal anyway, so a short window is all the protection needed.
+    _busyTimer?.cancel();
+    _busyTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _busy = false);
+    });
     var ok = false;
     try {
       switch (preset.key) {
@@ -1360,11 +1385,11 @@ class _P2State extends State<_P2> {
         );
       }
     } finally {
+      _busyTimer?.cancel();
       if (mounted) setState(() => _busy = false);
     }
     if (ok && mounted) {
-      setState(() => _configuredKey = preset.key);
-      widget.onConfigured?.call();
+      widget.onConfigured?.call(preset.key);
     }
   }
 
@@ -1456,15 +1481,7 @@ class _ProviderCard extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: configured ? Colors.white : const Color(0xFFF3F4F8),
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: ProviderMark(preset.key, size: 20),
-              ),
+              ProviderMark(preset.key, size: 40),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(

@@ -6,9 +6,12 @@
 /// and `provider_marks` (the brand icons in the page-2 provider cards).
 library;
 
+import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
+import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
+import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -20,12 +23,16 @@ Future<void> _pumpOnboardingPage(
   required int page,
   ThemeData? theme,
   Size? size,
+  ProviderRegistry? registry,
+  LastConnectionStore? lastConnectionStore,
 }) {
   return pumpGolden(
     tester,
     OnboardingScreen(
       onboardingStore: OnboardingStore.inMemory(),
       initialPage: page,
+      registry: registry,
+      lastConnectionStore: lastConnectionStore,
     ),
     size: size ?? goldenSizePhone,
     theme: theme,
@@ -90,6 +97,58 @@ void main() {
     testWidgets('page 4 — Sandbox ready (dark, desktop)', (tester) async {
       await _pumpOnboardingPage(tester, page: 3, size: goldenSizeDesktop);
       await expectGolden(tester, 'onboarding_p4_dark_desktop');
+    });
+
+    testWidgets('page 2 — mandatory gate: locked Continue, no Skip (phone)',
+        (tester) async {
+      await _pumpOnboardingPage(
+        tester,
+        page: 1,
+        registry: ProviderRegistry.inMemory(),
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+      await expectGolden(tester, 'onboarding_p2_gated_phone');
+    });
+
+    testWidgets('page 2 — mandatory gate: locked Continue, no Skip (desktop)',
+        (tester) async {
+      await _pumpOnboardingPage(
+        tester,
+        page: 1,
+        size: goldenSizeDesktop,
+        registry: ProviderRegistry.inMemory(),
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+      await expectGolden(tester, 'onboarding_p2_gated_desktop');
+    });
+
+    testWidgets('page 2 — provider configured: checked card, unlocked '
+        'Continue (phone)', (tester) async {
+      await _pumpOnboardingPage(
+        tester,
+        page: 1,
+        registry: ProviderRegistry.inMemory(),
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+
+      // Drive the real flow: OpenAI (an above-the-fold card) → editor →
+      // save. The configured card gets the check and the flow auto-advances
+      // to page 3.
+      await tester.tap(find.text('OpenAI'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key (optional)'),
+        'sk-golden',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      // Back to page 2: the configured card shows the check, Continue is
+      // unlocked.
+      await tester.tap(find.text('Back'));
+      await tester.pumpAndSettle();
+      await expectGolden(tester, 'onboarding_p2_configured_phone');
     });
   });
 }
