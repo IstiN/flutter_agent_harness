@@ -53,12 +53,12 @@ const String kFaBrandTileDarkSvg = '''
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="chev" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#8191f6"/>
-      <stop offset="1" stop-color="#75abec"/>
+      <stop offset="0" stop-color="#5B61F6"/>
+      <stop offset="1" stop-color="#3566FF"/>
     </linearGradient>
     <linearGradient id="under" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#67d1de"/>
-      <stop offset="1" stop-color="#60e5d6"/>
+      <stop offset="0" stop-color="#2EBD9E"/>
+      <stop offset="1" stop-color="#48C7E8"/>
     </linearGradient>
   </defs>
   <rect width="1024" height="1024" rx="224" fill="#0b0f16"/>
@@ -75,12 +75,12 @@ const String kFaBrandTileLightSvg = '''
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="chev" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#8191f6"/>
-      <stop offset="1" stop-color="#75abec"/>
+      <stop offset="0" stop-color="#5B61F6"/>
+      <stop offset="1" stop-color="#3566FF"/>
     </linearGradient>
     <linearGradient id="under" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#67d1de"/>
-      <stop offset="1" stop-color="#60e5d6"/>
+      <stop offset="0" stop-color="#2EBD9E"/>
+      <stop offset="1" stop-color="#48C7E8"/>
     </linearGradient>
   </defs>
   <rect width="1024" height="1024" rx="224" fill="#fafbfe"/>
