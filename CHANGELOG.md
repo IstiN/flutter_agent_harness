@@ -971,7 +971,9 @@
 - chore: add LICENSE to fa_llm for pub.dev
 - feat: prepare fa_llm for pub.dev publishing
 
-## Unreleased
+## 0.1.175
+
 
 - feat(providers): DIAL provider kind — `{baseUrl}/openai/deployments/{model}/chat/completions` with `Api-Key` auth, optional `DIAL_API_VERSION` query, `/openai/models` listing; `--provider dial --model <deployment>` headless
 
+## Unreleased
