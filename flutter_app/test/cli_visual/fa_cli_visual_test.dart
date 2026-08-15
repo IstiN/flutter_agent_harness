@@ -334,6 +334,60 @@ void main() {
       await harness.close();
     });
 
+    testWidgets('live badge while a subagent runs (real spawn)', (
+      tester,
+    ) async {
+      // Uses the user's real config (copied to a temp home). NOTE: the macOS
+      // `security` keychain lookup is HOME-dependent, so a temp HOME cannot
+      // read stored keys — the test passes the active key via the env.
+      final realConfig = File(
+        '${Platform.environment['HOME']}/.fah/config.yaml',
+      );
+      if (!realConfig.existsSync()) return;
+      final keyResult = await Process.run('security', [
+        'find-generic-password',
+        '-s',
+        'fah',
+        '-a',
+        'FA_KEY_API_KIMI_COM',
+        '-w',
+      ]);
+      final envKey = (keyResult.stdout as String).trim();
+      if (keyResult.exitCode != 0 || envKey.isEmpty) return;
+
+      final tempHome = Directory.systemTemp.createTempSync('fa_badge_');
+      File('${tempHome.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(realConfig.readAsStringSync());
+      final harness = await boot(
+        tester,
+        extraEnv: {
+          'HOME': tempHome.path,
+          // The scoped endpoint key (api.kimi.com) — env-first resolution,
+          // used because the macOS `security` keychain lookup is
+          // HOME-dependent and cannot work from a temp HOME.
+          'FA_KEY_API_KIMI_COM': envKey,
+        },
+      );
+
+      harness.sendText(
+        'Use the task tool with agent "explore" to read pubspec.yaml and '
+        'report the project name. Reply briefly.',
+      );
+      harness.sendEnter();
+
+      // While the child runs, the status line carries the live agents badge.
+      await harness.liveWaitForText(
+        'bg:',
+        timeout: const Duration(seconds: 150),
+      );
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '92_agents_live_badge');
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+
     testWidgets('/agents types lists the agent type catalog', (tester) async {
       final harness = await boot(tester);
       await harness.runSlashCommand('/agents types');

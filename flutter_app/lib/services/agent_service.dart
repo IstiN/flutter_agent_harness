@@ -385,6 +385,25 @@ class AgentService extends ChangeNotifier
     // children, monitoring tools let the model query/steer them, memory tools
     // persist facts across sessions.
     _subagentManager = SubagentManager(parentSessionId: '');
+    // Real JSONL child sessions at completion (fast register keeps the
+    // steering race away; transcript lands when the child finishes).
+    Future<Session> childSessionFactory(
+      String parentId,
+      String childId,
+    ) async {
+      return _repo.create(
+        JsonlSessionCreateOptions(
+          cwd: env.cwd,
+          metadata: {
+            'agent': 'subagent',
+            'id': childId,
+            'parent': parentId,
+            'model': config.toModel().id,
+          },
+        ),
+      );
+    }
+    _childSessionFactory = childSessionFactory;
     _memoryController = MemoryController(env: env);
     // Model-roles resolver backed by the TaskModelsStore: `smol` (compaction
     // + explore) and `subagent` (delegation) overrides resolve through it;
@@ -501,6 +520,7 @@ class AgentService extends ChangeNotifier
       model: config.toModel(),
       rolesResolver: _taskRolesResolver,
       subagentManager: _subagentManager,
+      childSessionFactory: _childSessionFactory,
     );
     // Re-register the task tool with the real child surface.
     registry.register(taskTool(config: _taskConfig!));
@@ -689,6 +709,10 @@ class AgentService extends ChangeNotifier
   /// Model-roles resolver over the [TaskModelsStore] (`smol` + `subagent`
   /// overrides), lazily reflecting settings edits (Phase 3d).
   ModelRolesResolver? _taskRolesResolver;
+
+  /// The completion-time child-session factory wired into the task tool
+  /// (real JSONL sessions for `/agents open <id>` and the Agents panel).
+  late Future<Session> Function(String, String) _childSessionFactory;
 
   /// Memory controller (Phase 1): durable cross-session memory.
   MemoryController? _memoryController;

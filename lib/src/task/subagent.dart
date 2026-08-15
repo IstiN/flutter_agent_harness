@@ -75,7 +75,9 @@ final class SubagentHandle {
   final String agentType;
 
   /// The child session id (JSONL path in the parent's session repo).
-  final String sessionId;
+  /// Placeholder `<parentId>/<id>` until the executor attaches the real
+  /// session at child completion ([SubagentManager.attachSession]).
+  String sessionId;
 
   /// Creation timestamp (ISO 8601).
   final String createdAt;

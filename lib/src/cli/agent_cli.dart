@@ -378,7 +378,11 @@ class AgentCli {
     ];
     // The `task` tool (omp's background subagents): children draw from the
     // core tool surface (never `task` itself), completions are injected back
-    // into the parent conversation as async-result messages.
+    // into the parent conversation as async-result messages. Child sessions
+    // are REAL JSONL sessions in the same repo, created at child COMPLETION
+    // (not at register — creating a session mid-spawn loses the steering
+    // race), so `/agents open <id>` can switch into them with the full
+    // transcript.
     _subagentManager = SubagentManager(parentSessionId: '');
     // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
     // lazily per server (never blocks boot).
@@ -397,6 +401,23 @@ class AgentCli {
       rolesResolver: config.modelRolesResolver,
       subagentManager: _subagentManager,
       a2aManager: _a2aManager,
+      // Real JSONL child sessions, created at child completion (fast
+      // register keeps the steering race away; the transcript lands when
+      // the child finishes).
+      childSessionFactory: (parentId, childId) async {
+        final session = await _repo.create(
+          JsonlSessionCreateOptions(
+            cwd: config.env.cwd,
+            metadata: {
+              'agent': 'subagent',
+              'id': childId,
+              'parent': parentId,
+              'model': _agent.state.model.id,
+            },
+          ),
+        );
+        return session;
+      },
     );
     final monitoringTools = subagentMonitoringTools(manager: _subagentManager);
     _toolRegistry = ToolRegistry([

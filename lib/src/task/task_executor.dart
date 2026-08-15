@@ -32,6 +32,8 @@ import '../model.dart';
 import '../model_roles/model_resolver.dart';
 import '../model_roles/roles_config.dart';
 import '../prompts/prompts.g.dart';
+import '../session/session_repo.dart';
+import '../session/session_tree.dart';
 import '../types.dart';
 import 'agent_registry.dart';
 import 'output_manager.dart';
@@ -71,6 +73,7 @@ final class TaskExecutor {
     this.rolesResolver,
     this.subagentManager,
     this.a2aManager,
+    this.childSessionFactory,
   });
 
   /// The parent tool pool (already minus any host-hidden tools).
@@ -102,6 +105,12 @@ final class TaskExecutor {
   /// whose agent type is `a2a:<name>` run against the remote agent instead
   /// of a local child.
   final A2aManager? a2aManager;
+
+  /// Optional child-session factory (Phase 3a+): when present,
+  /// [_persistChildSession] creates a real JSONL session for each completed
+  /// child and writes its transcript into it.
+  final Future<Session> Function(String parentSessionId, String childId)?
+  childSessionFactory;
 
   /// Runs one batch item to completion. Never throws: cancellation and
   /// failure are reported as [TaskSingleResult] error entries.
@@ -260,6 +269,9 @@ final class TaskExecutor {
     // Phase 3b: the child's explicit reply (if any) rides the result; a
     // missing reply is surfaced via completedWithoutReply.
     final reply = subagentManager?[id]?.lastReply;
+
+    // Persist the child's transcript into its real session (Phase 3a+).
+    await _persistChildSession(id, child);
 
     // Update the retained-subagent handle with final status + usage.
     if (subagentManager != null) {
@@ -772,6 +784,26 @@ final class TaskExecutor {
   }) async {
     if (subagentManager != null) {
       await subagentManager!.update(id, status: status, error: error);
+    }
+  }
+
+  /// Creates the child's real JSONL session (when a factory is wired) and
+  /// appends its full transcript, then attaches it to the retained handle so
+  /// `/agents open <id>` and `task_observe` read the real session file.
+  /// Runs at child completion — never mid-spawn (steering-race safe).
+  Future<void> _persistChildSession(String id, Agent child) async {
+    final factory = childSessionFactory;
+    final manager = subagentManager;
+    if (factory == null || manager == null) return;
+    try {
+      final session = await factory(manager.parentSessionId, id);
+      for (final message in child.state.messages) {
+        await session.appendMessage(message);
+      }
+      manager.attachSession(id, (await session.getMetadata()).path);
+    } on Object {
+      // Transcript persistence is best-effort; a failed write must not turn
+      // the child's result into an error entry.
     }
   }
 }

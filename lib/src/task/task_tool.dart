@@ -32,6 +32,8 @@ import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../model.dart';
 import '../model_roles/model_resolver.dart';
+import '../session/session_repo.dart';
+import '../session/session_tree.dart';
 import '../prompts/prompts.g.dart';
 import 'agent_registry.dart';
 import 'output_manager.dart';
@@ -156,6 +158,7 @@ final class TaskToolConfig {
     AgentOutputStore? outputs,
     TaskJobManager? jobManager,
     this.subagentManager,
+    this.childSessionFactory,
     this.a2aManager,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
@@ -202,6 +205,14 @@ final class TaskToolConfig {
   /// observable after completion.
   final SubagentManager? subagentManager;
 
+  /// Optional child-session factory (Phase 3a+): when present, the executor
+  /// creates a real JSONL session for each completed child and writes its
+  /// transcript into it, so `/agents open <id>` can switch into the child
+  /// session afterwards. Created at COMPLETION (not at register) — creating
+  /// a session mid-spawn would lose the completion-delivery steering race.
+  final Future<Session> Function(String parentSessionId, String childId)?
+  childSessionFactory;
+
   /// Optional A2A remote-agent manager (Phase 5a). When present, the agent
   /// type `a2a:<name>` runs items against the configured remote agent.
   final A2aManager? a2aManager;
@@ -220,6 +231,7 @@ AgentTool taskTool({required TaskToolConfig config}) {
     rolesResolver: config.rolesResolver,
     subagentManager: config.subagentManager,
     a2aManager: config.a2aManager,
+    childSessionFactory: config.childSessionFactory,
   );
 
   final a2aNames = [

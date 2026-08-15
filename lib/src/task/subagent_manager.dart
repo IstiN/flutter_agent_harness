@@ -193,6 +193,19 @@ final class SubagentManager {
     await _persist();
   }
 
+  /// Attaches the child's real session file to its handle (called by the
+  /// executor at child completion when a session factory is wired). The
+  /// handle's placeholder id becomes the real JSONL path used by
+  /// `/agents open <id>` and `task_observe`.
+  Future<void> attachSession(String id, String sessionPath) async {
+    final handle = _handles[id];
+    if (handle == null) return;
+    handle.sessionId = sessionPath;
+    handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+    _events.add(SubagentEvent(handle: handle));
+    await _persist();
+  }
+
   /// Closes the event stream.
   Future<void> close() => _events.close();
 

@@ -44,18 +44,24 @@ extension AgentCliAgentExt on AgentCli {
     }
   }
 
-  /// `/agents [types|<id>]` — the agents tree panel (Variant B):
+  /// `/agents [types|<id>|open <id>]` — the agents tree panel (Variant B):
   /// - bare: the live tree — main + retained children with statuses; a TUI
   ///   picker when interactive, a text tree in line mode;
   /// - `types`: the agent-type catalog (built-in + discovered);
-  /// - `<id>`: observe one child's session tail directly.
+  /// - `<id>`: observe one child's session tail directly;
+  /// - `open <id>`: switch the CLI session into the child's session.
   Future<void> handleAgentsCommand(String rest) async {
-    final arg = rest.split(RegExp(r'\s+')).first.trim();
+    final parts = rest.split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
+    final arg = parts.isEmpty ? '' : parts.first;
     if (arg == 'types') {
       listAgentTypes();
       return;
     }
-    if (arg.isNotEmpty && arg != 'types') {
+    if (arg == 'open' && parts.length > 1) {
+      await _openSubagentSession(parts.elementAt(1));
+      return;
+    }
+    if (arg.isNotEmpty) {
       await _observeSubagent(arg);
       return;
     }

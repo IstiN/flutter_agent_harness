@@ -140,4 +140,46 @@ void main() {
       expect(io.out.toString(), contains('(session transcript unavailable)'));
     });
   });
+
+    test('/agents open <id> switches into the child session', () async {
+      final cli = cliFor();
+      await registerHandles(cli, [handle()]);
+      // Give the child a real session file (the completion-time factory
+      // path) so the open action has something to switch into.
+      final childRepo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      );
+      final childSession = await childRepo.create(
+        JsonlSessionCreateOptions(
+          cwd: '/work',
+          metadata: {'agent': 'subagent', 'id': 'a1'},
+        ),
+      );
+      await childSession.appendMessage(UserMessage.text('child transcript'));
+      final childPath = (await childSession.getMetadata()).path;
+      await cli.subagentManager.attachSession('a1', childPath);
+
+      final run = cli.run();
+      await sendAndWait('/agents open a1');
+      await sendAndWait('/exit');
+      await run;
+      final output = io.out.toString();
+      expect(output, contains("switched to session 'subagent explore:a1'"));
+      expect(output, contains('child transcript'));
+    });
+
+    test('/agents open <id> without a session file reports unavailability',
+        () async {
+      final cli = cliFor();
+      await registerHandles(cli, [handle()]);
+      final run = cli.run();
+      await sendAndWait('/agents open a1');
+      await sendAndWait('/exit');
+      await run;
+      expect(
+        io.out.toString(),
+        contains('cannot open session for "a1" (unavailable)'),
+      );
+    });
 }
