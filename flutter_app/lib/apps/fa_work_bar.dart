@@ -11,6 +11,8 @@ import 'package:flutter/material.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show SubagentEvent, SubagentStatus;
 
 /// Compact "Fa is working" bar shown at the bottom of a JS app view while
 /// the agent runs: an orbiting comet indicator around the Fa mark, a live
@@ -74,6 +76,7 @@ class _FaWorkBarState extends State<FaWorkBar>
   bool _sending = false;
   double _dragOffset = 0;
   bool _dragging = false;
+  StreamSubscription<SubagentEvent>? _agentsSub;
 
   @override
   void initState() {
@@ -84,6 +87,7 @@ class _FaWorkBarState extends State<FaWorkBar>
     );
     widget.service.addListener(_syncOrbit);
     _syncOrbit();
+    _subscribeAgents();
   }
 
   @override
@@ -93,15 +97,26 @@ class _FaWorkBarState extends State<FaWorkBar>
       oldWidget.service.removeListener(_syncOrbit);
       widget.service.addListener(_syncOrbit);
       _syncOrbit();
+      _subscribeAgents();
     }
   }
 
   @override
   void dispose() {
     widget.service.removeListener(_syncOrbit);
+    unawaited(_agentsSub?.cancel());
     _orbit.dispose();
     _inputController.dispose();
     super.dispose();
+  }
+
+  /// Rebuilds the bar when the subagent registry changes (spawn/status
+  /// transitions), so the live agents badge tracks children in real time.
+  void _subscribeAgents() {
+    unawaited(_agentsSub?.cancel());
+    _agentsSub = widget.service.subagentManager?.events.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   /// The comet orbits only while the agent streams; idle frames are static
@@ -121,19 +136,43 @@ class _FaWorkBarState extends State<FaWorkBar>
   AnimationController get debugOrbitController => _orbit;
 
   String _statusText() {
+    final agents = _activeAgentsBadge();
     for (final message in widget.service.messages.reversed) {
-      switch (message.role) {
-        case 'system':
-          return message.content.split('\n').first;
-        case 'tool':
-          return '[${message.toolName}] ✓';
-        case 'thinking':
-          return context.l10n.appsFaStatusThinking;
-        case 'assistant':
-          return context.l10n.appsFaStatusWriting;
-      }
+      final base = switch (message.role) {
+        'system' => message.content.split('\n').first,
+        'tool' => '[${message.toolName}] ✓',
+        'thinking' => context.l10n.appsFaStatusThinking,
+        'assistant' => context.l10n.appsFaStatusWriting,
+        _ => null,
+      };
+      if (base != null) return agents.isEmpty ? base : '$agents · $base';
     }
-    return context.l10n.appsFaStatusWorking;
+    final base = context.l10n.appsFaStatusWorking;
+    return agents.isEmpty ? base : '$agents · $base';
+  }
+
+  /// Live agents badge (CLI `bg:` parity): up to 2 active children with
+  /// elapsed seconds, plus a +N overflow counter; empty when none.
+  String _activeAgentsBadge() {
+    final manager = widget.service.subagentManager;
+    if (manager == null) return '';
+    final active = manager.handles
+        .where(
+          (h) =>
+              h.status == SubagentStatus.queued ||
+              h.status == SubagentStatus.running ||
+              h.status == SubagentStatus.idle,
+        )
+        .toList();
+    if (active.isEmpty) return '';
+    final now = DateTime.now();
+    final shown = active.take(2).map((h) {
+      final created = DateTime.tryParse(h.createdAt);
+      final elapsed = created == null ? 0 : now.difference(created).inSeconds;
+      return '${h.agentType}:${h.id}(${elapsed}s)';
+    }).join(',');
+    final overflow = active.length > 2 ? ',+${active.length - 2}' : '';
+    return 'agents:$shown$overflow';
   }
 
   Future<void> _send() async {

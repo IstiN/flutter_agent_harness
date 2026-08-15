@@ -97,12 +97,30 @@ void main() {
   });
 
   group('provider edit and delete', () {
-    testWidgets('/provider-edit → Edit picker → wizard steps', (tester) async {
+    testWidgets('/settings → provider → Edit picker → wizard steps', (
+      tester,
+    ) async {
       final tempHome = _tempHomeWithProvider();
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '20_boot_provider');
 
-      await harness.runSlashCommand('/provider-edit');
+      await harness.runSlashCommand('/settings');
+      await harness.liveWaitForText(
+        'Chat model',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '20_settings_hub');
+
+      // "Provider" is the first settings entry — open the provider picker.
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'test-provider',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '21_provider_picker');
+
+      // The saved provider is first — its selection opens Edit/Delete.
+      harness.sendEnter();
       await harness.liveWaitForText(
         'Delete provider',
         timeout: const Duration(seconds: 15),
@@ -158,14 +176,24 @@ void main() {
       tempHome.deleteSync(recursive: true);
     });
 
-    testWidgets('/provider-edit → Delete picker → confirm → deleted', (
+    testWidgets('/settings → provider → Delete picker → confirm → deleted', (
       tester,
     ) async {
       final tempHome = _tempHomeWithProvider();
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '30_boot_delete');
 
-      await harness.runSlashCommand('/provider-edit');
+      await harness.runSlashCommand('/settings');
+      await harness.liveWaitForText(
+        'Chat model',
+        timeout: const Duration(seconds: 15),
+      );
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'test-provider',
+        timeout: const Duration(seconds: 15),
+      );
+      harness.sendEnter();
       await harness.liveWaitForText(
         'Delete provider',
         timeout: const Duration(seconds: 15),
@@ -295,14 +323,25 @@ void main() {
   });
 
   group('agents', () {
-    testWidgets('/agents lists available agent types', (tester) async {
+    testWidgets('/agents shows the live agents tree', (tester) async {
       final harness = await boot(tester);
       await harness.runSlashCommand('/agents');
+      await harness.liveWaitForText(
+        'main (orchestrator)',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '90_agents_tree');
+      await harness.close();
+    });
+
+    testWidgets('/agents types lists the agent type catalog', (tester) async {
+      final harness = await boot(tester);
+      await harness.runSlashCommand('/agents types');
       await harness.liveWaitForText(
         'agent types:',
         timeout: const Duration(seconds: 15),
       );
-      await harness.screenshot(shotsDir, '90_agents_list');
+      await harness.screenshot(shotsDir, '91_agents_types');
       await harness.close();
     });
   });
@@ -320,8 +359,7 @@ void main() {
       );
       await harness.screenshot(shotsDir, '81_settings_hub');
 
-      // Navigate to "Chat model" (third entry) and open it.
-      harness.sendArrowDown();
+      // Navigate to "Chat model" (second entry) and open it.
       harness.sendArrowDown();
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '82_settings_model_highlight');
@@ -368,8 +406,8 @@ void main() {
         timeout: const Duration(seconds: 15),
       );
 
-      // Navigate to "Media models" (fifth entry) and open it.
-      for (var i = 0; i < 4; i++) {
+      // Navigate to "Media models" (fourth entry) and open it.
+      for (var i = 0; i < 3; i++) {
         harness.sendArrowDown();
       }
       harness.sendEnter();
