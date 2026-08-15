@@ -43,6 +43,7 @@ const builtinSlashCommands = <String, String>{
   '/compact': 'summarize history to free context',
   '/stats': 'show token and cost totals',
   '/tasks': '[cancel <id>] — list background agents',
+  '/memory': '[maintain] — memory stats or run consolidation',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
   '/agents': 'list available agent types for the task tool',
   '/model': '<provider/model> — select model (opens selector)',

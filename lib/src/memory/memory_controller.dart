@@ -194,6 +194,74 @@ final class MemoryController {
     return lines.join('\n');
   }
 
+  /// Phase 2: runs `maintainMemoryLevels()` + `consolidate()` on both
+  /// scopes sequentially (smol-role cost class). Guarded: a second call
+  /// while one runs is a no-op returning `false`. Consolidation needs an
+  /// LLM provider — without one only level maintenance runs.
+  Future<bool> maintain() async {
+    if (_maintaining) return false;
+    _maintaining = true;
+    try {
+      for (final store in [await projectStore, await userStore]) {
+        if (store == null) continue;
+        await store.maintainMemoryLevels();
+        if (_llmProvider != null) {
+          try {
+            await store.consolidate();
+          } on Object {
+            // Consolidation is best-effort: stale summary, LLM hiccup, or
+            // a concurrent write all skip this cycle (phase 2 spec).
+          }
+        }
+      }
+      await _writeMaintenanceStamp();
+      return true;
+    } finally {
+      _maintaining = false;
+    }
+  }
+
+  bool _maintaining = false;
+
+  /// True while a [maintain] run is in flight (the phase 2 running guard).
+  bool get isMaintaining => _maintaining;
+
+  /// Reads the last-maintenance timestamp (null when never maintained).
+  Future<DateTime?> lastMaintenanceAt() async {
+    final info = await _env.fileInfo(_maintenanceStampPath);
+    final mtimeMs = info.valueOrNull?.mtimeMs;
+    if (mtimeMs == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(mtimeMs);
+  }
+
+  /// True when maintenance is due: never run, or > [maxMaintenanceAge] old.
+  Future<bool> maintenanceDue() async {
+    final last = await lastMaintenanceAt();
+    if (last == null) return true;
+    return DateTime.now().difference(last) > maxMaintenanceAge;
+  }
+
+  String get _maintenanceStampPath =>
+      '$_projectRoot/.fah/memory/.last_maintenance';
+
+  /// Maintenance cadence: due when the last run is older than 24 h.
+  static const maxMaintenanceAge = Duration(hours: 24);
+
+  Future<void> _writeMaintenanceStamp() async {
+    await _env.writeFile(_maintenanceStampPath, '');
+  }
+
+  /// Counters backing the add-trigger (phase 2): after
+  /// [addsBeforeMaintenance] `memory_add` calls the next idle moment runs
+  /// [maintain] (debounced by the host).
+  int _addsSinceMaintenance = 0;
+  static const addsBeforeMaintenance = 20;
+
+  /// Records an `add` toward the maintenance counter. Returns true when the
+  /// threshold was just crossed (host should schedule maintenance).
+  bool noteAddForMaintenance() =>
+      ++_addsSinceMaintenance >= addsBeforeMaintenance;
+
   MemoryEntry _fromSearchResult(KBSearchResult r, String scope) {
     final note = r.note;
     return MemoryEntry(

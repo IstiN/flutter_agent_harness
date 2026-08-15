@@ -255,17 +255,11 @@ void main() {
       );
       await small.enqueueMessage('c3', msg);
       await small.enqueueMessage('c3', msg);
-      expect(
-        () => small.enqueueMessage('c3', msg),
-        throwsStateError,
-      );
+      expect(() => small.enqueueMessage('c3', msg), throwsStateError);
     });
 
     test('oversized message bodies are capped', () async {
-      final small = SubagentManager(
-        parentSessionId: 'p',
-        maxReplyChars: 10,
-      );
+      final small = SubagentManager(parentSessionId: 'p', maxReplyChars: 10);
       await small.register(
         id: 'd4',
         name: 'task-4',

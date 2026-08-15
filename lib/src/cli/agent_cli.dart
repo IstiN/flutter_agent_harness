@@ -68,6 +68,7 @@ import '../tools/checkpoint_tool.dart';
 import '../tools/inspect_image.dart';
 import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
+import '../memory/compaction_memory_hook.dart';
 import '../memory/memory_controller.dart';
 import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
@@ -700,6 +701,13 @@ class AgentCli {
   Future<void> run() async {
     await _loadAgentContext();
     _session = await _initializeSession();
+    // Phase 2: session-start maintenance trigger — fire-and-forget when the
+    // last run is >24h old; never blocks the first turn.
+    unawaited(
+      _memory.maintenanceDue().then((due) {
+        if (due) return _memory.maintain();
+      }),
+    );
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
     });
@@ -1954,6 +1962,11 @@ class AgentCli {
           prompts: compactionPrompts,
         ),
         prompts: compactionPrompts,
+        memoryExtractionHook: compactionMemoryHook(
+          memory: _memory,
+          stream: smol?.stream ?? _streamFunction,
+          model: smol?.model ?? _agent.state.model,
+        ),
       );
       final record = await manager.compactSession(session);
       if (record == null) {
@@ -1995,6 +2008,10 @@ class AgentCli {
       return true;
     }
     if (_handleInfoCommandBasic(command, rest)) return true;
+    if (command == '/memory') {
+      await _handleMemoryCommand(rest);
+      return true;
+    }
     return _handleInfoCommandSession(command, rest);
   }
 
@@ -2018,6 +2035,42 @@ class AgentCli {
         return false;
     }
     return true;
+  }
+
+  /// `/memory [maintain]` — Phase 2 memory surface: stats by default,
+  /// `maintain` runs the consolidation pipeline now.
+  Future<void> _handleMemoryCommand(String rest) async {
+    final sub = rest.split(RegExp(r'\s+')).first.trim();
+    if (sub == 'maintain') {
+      io.writeln('maintaining memory (levels + consolidation)…');
+      final started = await _memory.maintain();
+      if (!started) {
+        io.writeln('maintenance already running — skipped');
+        return;
+      }
+      io.writeln('memory maintenance complete');
+      return;
+    }
+    // Stats: entry counts per type + last maintenance.
+    final entries = await _memory.list(limit: 500);
+    final byType = <String, int>{};
+    for (final entry in entries) {
+      byType[entry.type] = (byType[entry.type] ?? 0) + 1;
+    }
+    io.writeln('[Memory]');
+    io.writeln('  entries: ${entries.length}');
+    for (final type in byType.keys.toList()..sort()) {
+      io.writeln('  $type: ${byType[type]}');
+    }
+    final last = await _memory.lastMaintenanceAt();
+    io.writeln(
+      last == null
+          ? '  last maintenance: never (/memory maintain to run)'
+          : '  last maintenance: $last',
+    );
+    if (await _memory.maintenanceDue()) {
+      io.writeln('  maintenance due — /memory maintain');
+    }
   }
 
   /// `/allow`, `/reset`, `/compact`.

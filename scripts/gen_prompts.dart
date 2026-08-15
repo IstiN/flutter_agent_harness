@@ -166,6 +166,15 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{task}}',
   ),
   PromptSpec(
+    source: 'prompts/memory/memory_section.md',
+    constName: 'memorySectionPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/memory/extract_durable.md',
+    constName: 'memoryExtractDurablePrompt',
+    requiredToken: '{{span}}',
+  ),
+  PromptSpec(
     source: 'prompts/task/schema_output.md',
     constName: 'taskSchemaOutputPrompt',
     requiredToken: '{{schema}}',
