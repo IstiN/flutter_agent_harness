@@ -17,6 +17,17 @@ void main() {
       expect(entry.scope, 'project');
     });
 
+    test('sequential adds allocate incrementing note ids', () async {
+      final env = MemoryExecutionEnv();
+      final controller = MemoryController(env: env);
+      final first = await controller.add(text: 'first note');
+      final second = await controller.add(text: 'second note');
+      expect(first.id, 'n_0001');
+      expect(second.id, 'n_0002');
+      final entries = await controller.list(limit: 10);
+      expect(entries.length, 2);
+    });
+
     test(
       'add with user scope and no userRoot returns no-store entry',
       () async {
@@ -61,14 +72,15 @@ void main() {
       expect(section, contains('</memory>'));
     });
 
-    test('search returns empty list without LLM provider', () async {
+    test('search falls back to keywords without LLM provider', () async {
       final env = MemoryExecutionEnv();
       final controller = MemoryController(env: env);
       await controller.add(text: 'test note');
-      // searchByText throws StateError without an LLM provider, which is
-      // caught silently — so search returns an empty list.
+      // searchByText throws StateError without an LLM provider; the
+      // controller falls back to keyword-only search, which finds the note.
       final results = await controller.search('test');
-      expect(results, isEmpty);
+      expect(results, hasLength(1));
+      expect(results.single.text, 'test note');
     });
 
     test('MemoryEntry.displayLine formats tags and text', () {

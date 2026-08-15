@@ -14,7 +14,9 @@ import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import '../env/execution_env.dart';
 
 /// A [KbStorage] backed by an [ExecutionEnv] under [baseDir].
-final class ExecutionEnvKbStorage implements KbStorage {
+final class ExecutionEnvKbStorage
+    with KbStorageContextMixin
+    implements KbStorage {
   ExecutionEnvKbStorage(this._env, this._baseDir);
 
   final ExecutionEnv _env;
@@ -32,9 +34,6 @@ final class ExecutionEnvKbStorage implements KbStorage {
     await _env.createDir('$_baseDir/answer');
     await _env.createDir('$_baseDir/note');
   }
-
-  @override
-  FutureOr<KBContext> loadContext() => KBContext();
 
   @override
   FutureOr<String?> readEntity(String type, String id) async =>

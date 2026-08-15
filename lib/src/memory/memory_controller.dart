@@ -176,7 +176,9 @@ final class MemoryController {
         found.results.take(limit).map((r) => _fromSearchResult(r, scope)),
       );
     } on StateError {
-      // No LLM provider — keyword-only search not available.
+      // No LLM provider — fall back to keyword-only search.
+      final found = await engine.searchByKeywords(query);
+      results.addAll(found.take(limit).map((r) => _fromSearchResult(r, scope)));
     }
   }
 
