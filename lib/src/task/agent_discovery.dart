@@ -17,6 +17,7 @@
 library;
 
 import '../env/execution_env.dart';
+import '../model_roles/roles_config.dart';
 import '../utils/frontmatter_parser.dart';
 import 'agent_registry.dart';
 
@@ -68,10 +69,18 @@ Future<AgentDiscoveryResult> discoverTaskAgents(
   String? homeDir,
 }) {
   return (
-    projectRoots: ['$cwd/.fah/agents', '$cwd/.agents/agents'],
+    projectRoots: [
+      '$cwd/.fah/agents',
+      '$cwd/.agents/agents',
+      '$cwd/.claude/agents', // Claude Code convention (compat)
+    ],
     userRoots: homeDir == null
         ? const <String>[]
-        : ['$homeDir/.fah/agents', '$homeDir/.agents/agents'],
+        : [
+            '$homeDir/.fah/agents',
+            '$homeDir/.agents/agents',
+            '$homeDir/.claude/agents', // Claude Code convention (compat)
+          ],
   );
 }
 
@@ -84,9 +93,27 @@ Future<AgentDiscoveryResult> discoverTaskAgents(
   final description = (frontmatter['description'] ?? '').trim();
   final systemPrompt = body.trim();
 
-  // Validate known keys.
-  final knownKeys = {'name', 'description', 'tools', 'readOnly', 'modelRole'};
-  final unknown = frontmatter.keys.where((k) => !knownKeys.contains(k));
+  // Validate known keys. The Claude Code frontmatter vocabulary
+  // (`.claude/agents/*.md`) is accepted for compatibility: `model` maps onto
+  // our `modelRole` when it names a known role; the rest is ignored.
+  const nativeKeys = {'name', 'description', 'tools', 'readOnly', 'modelRole'};
+  const claudeCompatKeys = {
+    'model', // alias of modelRole when it names a known role
+    'disallowedTools',
+    'permissionMode',
+    'mcpServers',
+    'hooks',
+    'maxTurns',
+    'skills',
+    'initialPrompt',
+    'memory',
+    'effort',
+    'background',
+    'isolation',
+  };
+  final unknown = frontmatter.keys.where(
+    (k) => !nativeKeys.contains(k) && !claudeCompatKeys.contains(k),
+  );
   if (unknown.isNotEmpty) {
     return (
       definition: null,
@@ -112,7 +139,23 @@ Future<AgentDiscoveryResult> discoverTaskAgents(
         .toSet();
   }
 
-  final modelRole = frontmatter['modelRole'];
+  // `modelRole` wins; `model` (Claude Code) acts as its alias when it names
+  // a known role. Anything else is ignored (we cannot map arbitrary model
+  // ids onto roles).
+  var modelRole = frontmatter['modelRole'];
+  String? compatNote;
+  if (modelRole == null) {
+    final model = frontmatter['model']?.trim();
+    if (model != null && model.isNotEmpty) {
+      if (modelRoleIds.contains(model)) {
+        modelRole = model;
+      } else {
+        compatNote =
+            'agent "$name": model "$model" is not a known role '
+            '(${modelRoleIds.join(', ')}) — using the parent model';
+      }
+    }
+  }
 
   return (
     definition: TaskAgentDefinition(
@@ -125,6 +168,6 @@ Future<AgentDiscoveryResult> discoverTaskAgents(
       readOnly: readOnly,
       modelRole: modelRole,
     ),
-    note: null,
+    note: compatNote,
   );
 }

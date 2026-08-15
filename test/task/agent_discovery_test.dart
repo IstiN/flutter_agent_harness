@@ -107,8 +107,16 @@ User.
 
     test('defaultAgentRoots returns expected paths', () {
       final roots = defaultAgentRoots(cwd: '/work', homeDir: '/home');
-      expect(roots.projectRoots, ['/work/.fah/agents', '/work/.agents/agents']);
-      expect(roots.userRoots, ['/home/.fah/agents', '/home/.agents/agents']);
+      expect(roots.projectRoots, [
+        '/work/.fah/agents',
+        '/work/.agents/agents',
+        '/work/.claude/agents',
+      ]);
+      expect(roots.userRoots, [
+        '/home/.fah/agents',
+        '/home/.agents/agents',
+        '/home/.claude/agents',
+      ]);
     });
 
     test('defaultAgentRoots without home returns empty user roots', () {
@@ -143,6 +151,74 @@ User.
       expect(registry.resolve('task'), isNotNull); // built-in
       expect(registry.resolve('explore'), isNotNull); // built-in
       expect(registry.resolve('security-audit'), isNotNull); // discovered
+    });
+
+    test('parses a Claude Code agent file (.claude/agents + model alias)',
+        () async {
+      await writeFile('/work/.claude/agents/docs-writer.md', '''
+---
+name: docs-writer
+description: Writes documentation from code
+model: smol
+disallowedTools: [bash]
+permissionMode: ask
+maxTurns: 10
+---
+You write concise documentation.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: ['/work/.claude/agents'],
+      );
+      expect(result.agents, hasLength(1));
+      final agent = result.agents.single;
+      expect(agent.name, 'docs-writer');
+      expect(agent.modelRole, 'smol');
+      expect(agent.systemPrompt, contains('documentation'));
+      // Claude-only keys are accepted (ignored), not reported as unknown.
+      expect(result.notes, isEmpty);
+    });
+
+    test('an unknown model alias keeps parent wiring with a note', () async {
+      await writeFile('/work/.claude/agents/poet.md', '''
+---
+name: poet
+description: Writes poems
+model: sonnet
+---
+Write poems.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: ['/work/.claude/agents'],
+      );
+      final agent = result.agents.single;
+      expect(agent.modelRole, isNull);
+      expect(result.notes, isNotEmpty);
+      expect(result.notes.single, contains('sonnet'));
+    });
+
+    test('modelRole wins over the model alias', () async {
+      await writeFile('/work/.claude/agents/duo.md', '''
+---
+name: duo
+description: Both keys present
+model: smol
+modelRole: slow
+---
+Do the thing.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: ['/work/.claude/agents'],
+      );
+      expect(result.agents.single.modelRole, 'slow');
+    });
+
+    test('defaultAgentRoots include .claude/agents on both scopes', () {
+      final roots = defaultAgentRoots(cwd: '/work', homeDir: '/home/me');
+      expect(roots.projectRoots, contains('/work/.claude/agents'));
+      expect(roots.userRoots, contains('/home/me/.claude/agents'));
     });
   });
 }
