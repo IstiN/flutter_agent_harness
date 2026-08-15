@@ -1012,4 +1012,8 @@
 - fix(analyze): drop unnecessary non-null assertion
 - feat(task): subagent model role — settings-picked delegation model (TaskModelsStore + roles: config), smol/explore precedence
 
+## 0.1.178
+
+- feat(app): live agents badge in FaWorkBar (CLI bg: parity) + fix cli_visual tests for new settings hub order and /agents tree
+
 ## Unreleased
