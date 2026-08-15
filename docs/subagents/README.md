@@ -1,7 +1,8 @@
 # Subagents 2.0 + Long-Term Memory — Master Plan
 
-Status: **planning** (no code yet). Source of truth for the subagent-runtime
-and memory work streams in `flutter_agent_harness`.
+Status: **implemented** (phases 0–5 shipped on main, 2026-08-15). Source of
+truth for the subagent-runtime and memory work streams in
+`flutter_agent_harness`.
 
 ## Goal
 

@@ -1,5 +1,7 @@
 # Phase 2 — Memory-Aware Compaction and Consolidation
 
+**Status: done** (shipped on main).
+
 Depends on: phase 1.
 
 ## Goal
@@ -84,12 +86,12 @@ on the next turn boundary — same cheap heuristic, no per-turn work.
 
 ## Checklist
 
-- [ ] `MemoryExtractionHook` typedef + optional param on `CompactionManager`
-- [ ] `lib/src/memory/compaction_memory_hook.dart` + prompt
+- [x] `MemoryExtractionHook` typedef + optional param on `CompactionManager`
+- [x] `lib/src/memory/compaction_memory_hook.dart` + prompt
       `prompts/memory/extract_durable.md` (+ `gen_prompts.dart`)
-- [ ] Token cap + tolerant JSON parse + non-blocking failure semantics
-- [ ] `MemoryController.maintain()` + stamp files + running guard
-- [ ] Triggers: session start, `/memory maintain`, add-counter
-- [ ] CLI `/memory` stats command
-- [ ] Prompt-section refresh after extraction/consolidation
-- [ ] Tests green, coverage ≥ 80%, `AGENTS.md` updated
+- [x] Token cap + tolerant JSON parse + non-blocking failure semantics
+- [x] `MemoryController.maintain()` + stamp files + running guard
+- [x] Triggers: session start, `/memory maintain`, add-counter
+- [x] CLI `/memory` stats command
+- [x] Prompt-section refresh after extraction/consolidation
+- [x] Tests green, coverage ≥ 80%, `AGENTS.md` updated

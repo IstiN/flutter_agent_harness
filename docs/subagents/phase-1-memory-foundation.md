@@ -1,5 +1,7 @@
 # Phase 1 — Memory Foundation in `flutter_agent_harness`
 
+**Status: done** (shipped on main).
+
 Depends on: phase 0 (published `flutter_agent_memory`).
 
 ## Goal
@@ -124,16 +126,16 @@ Budget: ≤ 2 KiB total. Empty store → section omitted entirely.
 
 ## Checklist
 
-- [ ] `flutter_agent_memory: ^0.1.0` added to `pubspec.yaml` (hosted dep)
-- [ ] `lib/src/memory/execution_env_kb_storage.dart` + tests
-- [ ] `lib/src/memory/memory_llm_adapter.dart` (smol role → `LlmProvider`) + tests
-- [ ] `lib/src/memory/memory_sink.dart`, `memory_controller.dart` + tests
-- [ ] `lib/src/memory/memory_tools.dart` (`memory_add`/`memory_search`/`memory_list`) + tests
-- [ ] `lib/src/memory/memory_prompt.dart` + tests
-- [ ] Prompts: `prompts/tools/memory_*.md` + `dart run scripts/gen_prompts.dart`
-- [ ] `builtinTools(env, memory:)` seam
-- [ ] CLI wiring in `AgentCli` + `composePrompt` memory section
-- [ ] App wiring in `AgentService` + settings toggle (with golden test for
+- [x] `flutter_agent_memory: ^0.1.0` added to `pubspec.yaml` (hosted dep)
+- [x] `lib/src/memory/execution_env_kb_storage.dart` + tests
+- [x] `lib/src/memory/memory_llm_adapter.dart` (smol role → `LlmProvider`) + tests
+- [x] `lib/src/memory/memory_sink.dart`, `memory_controller.dart` + tests
+- [x] `lib/src/memory/memory_tools.dart` (`memory_add`/`memory_search`/`memory_list`) + tests
+- [x] `lib/src/memory/memory_prompt.dart` + tests
+- [x] Prompts: `prompts/tools/memory_*.md` + `dart run scripts/gen_prompts.dart`
+- [x] `builtinTools(env, memory:)` seam
+- [x] CLI wiring in `AgentCli` + `composePrompt` memory section
+- [x] App wiring in `AgentService` + settings toggle (with golden test for
       the settings row per the golden-test mandate)
-- [ ] `dart analyze`, `dart format`, `dart test` green; coverage ≥ 80%
-- [ ] `AGENTS.md` — new `lib/src/memory/` bullet
+- [x] `dart analyze`, `dart format`, `dart test` green; coverage ≥ 80%
+- [x] `AGENTS.md` — new `lib/src/memory/` bullet

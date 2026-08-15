@@ -1,5 +1,7 @@
 # Phase 3 — Subagent Runtime: Sessions, Messaging, Monitoring
 
+**Status: done** (shipped on main).
+
 Depends on: nothing (parallel with phases 0–2). This is the core of the
 "subagents 2.0" work and the largest phase; it is sliced into 3a / 3b / 3c,
 each landing green independently.
@@ -103,15 +105,15 @@ Registry record (appended on every change, last-wins on read):
 
 ### 3a checklist
 
-- [ ] `SubagentHandle` + status enum + JSON round-trip tests
-- [ ] `SubagentManager` (spawn/list/get/dispose/events/persist/rehydrate) + tests
-- [ ] `subagent_session.dart` child-session create/resume + tests
-- [ ] `ChildAgentFactory`: full-featured child Agent (approval inherited,
+- [x] `SubagentHandle` + status enum + JSON round-trip tests
+- [x] `SubagentManager` (spawn/list/get/dispose/events/persist/rehydrate) + tests
+- [x] `subagent_session.dart` child-session create/resume + tests
+- [x] `ChildAgentFactory`: full-featured child Agent (approval inherited,
       session attached, events forwarded)
-- [ ] `TaskExecutor` migrated to the factory; `TaskJob` = view over handle
-- [ ] Registry persistence via `Session.appendCustomEntry`; rehydration on
+- [x] `TaskExecutor` migrated to the factory; `TaskJob` = view over handle
+- [x] Registry persistence via `Session.appendCustomEntry`; rehydration on
       session open (CLI test: spawn → reopen session → `/tasks` still lists)
-- [ ] Child sessions visible in `SessionRepo.list` under the subagents
+- [x] Child sessions visible in `SessionRepo.list` under the subagents
       namespace but excluded from the normal session picker
 
 ## Slice 3b — Messaging (parent ↔ child)
@@ -186,19 +188,19 @@ your final message is only a fallback. If you are blocked, say so via
 
 ### 3b checklist
 
-- [ ] `task_send` tool: live/idle/completed/failed paths, `wait` mode,
+- [x] `task_send` tool: live/idle/completed/failed paths, `wait` mode,
       message cap, tests with scripted child streams
-- [ ] `reply` child-only tool + `SubagentEvent.message` → parent envelope
-- [ ] `completed_without_reply` terminal notice + preview + tests
-- [ ] Pending-queue and size guards + tests
-- [ ] `agent_message` child tool: sibling addressing, broadcast, family-reach
+- [x] `reply` child-only tool + `SubagentEvent.message` → parent envelope
+- [x] `completed_without_reply` terminal notice + preview + tests
+- [x] Pending-queue and size guards + tests
+- [x] `agent_message` child tool: sibling addressing, broadcast, family-reach
       errors, hop counter + tests
-- [ ] Inter-agent messages recorded in both sessions (visible via
+- [x] Inter-agent messages recorded in both sessions (visible via
       `task_observe`)
-- [ ] `prompts/task/child_doctrine.md` + generated + sync test picks it up
-- [ ] `prompts/tools/task_send.md`; `prompts/tools/task.md` updated
+- [x] `prompts/task/child_doctrine.md` + generated + sync test picks it up
+- [x] `prompts/tools/task_send.md`; `prompts/tools/task.md` updated
       (background-first guidance, `task_send` cross-reference)
-- [ ] Blocking mode kept working (regression tests on `_runBlocking`)
+- [x] Blocking mode kept working (regression tests on `_runBlocking`)
 
 ## Slice 3c — Status, monitoring, usage attribution
 
@@ -238,13 +240,13 @@ your final message is only a fallback. If you are blocked, say so via
 
 ### 3c checklist
 
-- [ ] `task_status` tool + tests (single/all, all statuses)
-- [ ] `task_observe` tool + tests (tail cap, previews, completed child,
+- [x] `task_status` tool + tests (single/all, all statuses)
+- [x] `task_observe` tool + tests (tail cap, previews, completed child,
       after-restart read)
-- [ ] `/tasks` registry view + `dispose` + `log` + tests
-- [ ] Usage accumulation + `subagent_usage` record + reporting line
-- [ ] App "Subagents" UI + golden tests + `golden_guard_test.dart` entry
-- [ ] Prompts for the new tools + `gen_prompts.dart`
+- [x] `/tasks` registry view + `dispose` + `log` + tests
+- [x] Usage accumulation + `subagent_usage` record + reporting line
+- [x] App "Subagents" UI + golden tests + `golden_guard_test.dart` entry
+- [x] Prompts for the new tools + `gen_prompts.dart`
 
 ## Slice 3d — Per-subagent model/provider settings
 
@@ -311,16 +313,16 @@ subagentModels:
 
 ### 3d checklist
 
-- [ ] `subagentModels:` config section: schema, strict validation, tests
+- [x] `subagentModels:` config section: schema, strict validation, tests
       (incl. bad schema = `ConfigException`)
-- [ ] `SubagentModelResolver` (precedence chain, endpoint switching,
+- [x] `SubagentModelResolver` (precedence chain, endpoint switching,
       `models.custom` resolution) + tests
-- [ ] `task` item `model` field (parse → resolver override) + tests
-- [ ] CLI `/models subagents [set|remove]` + persistence + tests
-- [ ] fa_ui `SubagentModelsSection` + pickers + store wiring
-- [ ] App settings adapter + golden tests + `golden_guard_test.dart` entry
-- [ ] Usage records carry resolved model; reporting shows per-model split
-- [ ] Docs: `prompts/tools/task.md` model guidance; `AGENTS.md` model_roles
+- [x] `task` item `model` field (parse → resolver override) + tests
+- [x] CLI `/models subagents [set|remove]` + persistence + tests
+- [x] fa_ui `SubagentModelsSection` + pickers + store wiring
+- [x] App settings adapter + golden tests + `golden_guard_test.dart` entry
+- [x] Usage records carry resolved model; reporting shows per-model split
+- [x] Docs: `prompts/tools/task.md` model guidance; `AGENTS.md` model_roles
       bullet amended
 
 ### 3d+ — Role editing: UI + project-level roles (added 2026-08-12)
@@ -348,33 +350,33 @@ user-global `~/.fah/config.yaml`. Two gaps close here:
 
 #### 3d+ checklist
 
-- [ ] `roles:` schema: optional per-role `description:` + tests
-- [ ] Project `.fah/roles.yaml` discovery + per-role merge (project > user)
+- [x] `roles:` schema: optional per-role `description:` + tests
+- [x] Project `.fah/roles.yaml` discovery + per-role merge (project > user)
       + tests (incl. bad schema = `ConfigException`)
-- [ ] fa_ui `ModelRolesSection` (provider→model pickers) + app adapter +
+- [x] fa_ui `ModelRolesSection` (provider→model pickers) + app adapter +
       golden tests
-- [ ] CLI `/settings` "Model roles" entry via `runProviderModelFlow` +
+- [x] CLI `/settings` "Model roles" entry via `runProviderModelFlow` +
       persistence + tests
 
 ## Cross-cutting checklist (whole phase)
 
-- [ ] Semaphore/concurrency stress test: 8 background children, parent
+- [x] Semaphore/concurrency stress test: 8 background children, parent
       keeps responding, no interleaving corruption
-- [ ] Approval inheritance test: child write-tier call hits the parent's
+- [x] Approval inheritance test: child write-tier call hits the parent's
       approval gate (auto-mode dependent), never bypasses it
-- [ ] No-nesting invariant test: child surface has no `task` (children never
+- [x] No-nesting invariant test: child surface has no `task` (children never
       spawn); child messaging (`reply`/`agent_message`) reaches only its own
       family
-- [ ] Family-messaging loop test: two siblings ping-ponging die at the hop
+- [x] Family-messaging loop test: two siblings ping-ponging die at the hop
       cap with a deterministic error, parent notified
-- [ ] Session-restart end-to-end: spawn → reply → kill CLI → reopen →
+- [x] Session-restart end-to-end: spawn → reply → kill CLI → reopen →
       status/observe/send all work
-- [ ] Compaction end-to-end: parent compacts mid-child-run → registry
+- [x] Compaction end-to-end: parent compacts mid-child-run → registry
       intact, late reply still delivered
-- [ ] `dart analyze` / format / `dart test` green; coverage ≥ 80%; jscpd /
+- [x] `dart analyze` / format / `dart test` green; coverage ≥ 80%; jscpd /
       CRAP ratchets hold; no file > 2800 lines (split `subagent_manager`
       early if it grows)
-- [ ] `AGENTS.md` `lib/src/task/` bullet rewritten for the new runtime
+- [x] `AGENTS.md` `lib/src/task/` bullet rewritten for the new runtime
 
 ## Explicitly out of scope (v1)
 

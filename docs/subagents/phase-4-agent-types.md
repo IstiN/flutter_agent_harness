@@ -1,5 +1,7 @@
 # Phase 4 — Agent-Type Menu: Filesystem Discovery + Memory-Backed Specs
 
+**Status: done** (shipped on main).
+
 Depends on: phase 1 (memory store), phase 3 (subagent runtime).
 
 ## Goal
@@ -86,11 +88,11 @@ rebuilt when discovery roots change (fsRevision in the app; session start +
 
 ## Checklist
 
-- [ ] `lib/src/task/agent_discovery.dart` + roots convention + tests
-- [ ] Merge order: built-ins < user < project < host overrides (+ memory
+- [x] `lib/src/task/agent_discovery.dart` + roots convention + tests
+- [x] Merge order: built-ins < user < project < host overrides (+ memory
       specs at the bottom)
-- [ ] `{{agentMenu}}` in `prompts/tools/task.md` + composition + tests
-- [ ] `MemoryController.agentSpecs()` → definitions (phase 1 dependency)
-- [ ] `/agents` CLI command
-- [ ] Docs: `docs/subagents/` updated, `AGENTS.md` task bullet amended
-- [ ] Gates green (analyze/format/tests/coverage/dup/CRAP)
+- [x] `{{agentMenu}}` in `prompts/tools/task.md` + composition + tests
+- [x] `MemoryController.agentSpecs()` → definitions (phase 1 dependency)
+- [x] `/agents` CLI command
+- [x] Docs: `docs/subagents/` updated, `AGENTS.md` task bullet amended
+- [x] Gates green (analyze/format/tests/coverage/dup/CRAP)

@@ -1,5 +1,7 @@
 # Phase 5 — A2A (Agent2Agent) Protocol Interop
 
+**Status: done** (shipped on main).
+
 Depends on: phase 3 (the subagent runtime it exposes). Independent of
 phases 1–2.
 
@@ -124,25 +126,25 @@ a2a:
 
 ### 5a client
 
-- [ ] `a2a:` config section (schema, strict validation, env-token
+- [x] `a2a:` config section (schema, strict validation, env-token
       resolution) + tests
-- [ ] `A2aClient` (Agent Card fetch/validate/cache, `message/send`,
+- [x] `A2aClient` (Agent Card fetch/validate/cache, `message/send`,
       `message/stream` SSE, `tasks/get/cancel`) over injectable http + tests
-- [ ] `A2aChildAgentFactory` + shadow sessions + lifecycle mapping + tests
-- [ ] `task` tool `agent: a2a:<name>` + `task_send`/`task_status`/
+- [x] `A2aChildAgentFactory` + shadow sessions + lifecycle mapping + tests
+- [x] `task` tool `agent: a2a:<name>` + `task_send`/`task_status`/
       `task_observe` uniformity + shared test suite
-- [ ] Artifact→content mapping under the 100k-char budget + tests
-- [ ] `/a2a` CLI status command (per-server connecting/connected/failed)
-- [ ] Prompts: `prompts/tools/task.md` documents `a2a:` agent types
-- [ ] Check pub.dev for a maintained Dart A2A SDK before writing the codec
+- [x] Artifact→content mapping under the 100k-char budget + tests
+- [x] `/a2a` CLI status command (per-server connecting/connected/failed)
+- [x] Prompts: `prompts/tools/task.md` documents `a2a:` agent types
+- [x] Check pub.dev for a maintained Dart A2A SDK before writing the codec
 
 ### 5b server
 
-- [ ] `A2aRequestHandler` (pure Dart): card, send/stream/get/cancel + tests
-- [ ] `fah serve --a2a` IO mount (`bin/`, `lib/io.dart`), task↔session
+- [x] `A2aRequestHandler` (pure Dart): card, send/stream/get/cancel + tests
+- [x] `fah serve --a2a` IO mount (`bin/`, `lib/io.dart`), task↔session
       persistence, bearer auth, localhost-only default
-- [ ] Integration-tagged smoke test: curl the card, send a message, get SSE
-- [ ] Docs + `AGENTS.md` bullets for `lib/src/a2a/`
+- [x] Integration-tagged smoke test: curl the card, send a message, get SSE
+- [x] Docs + `AGENTS.md` bullets for `lib/src/a2a/`
 
 ## Out of scope (v1)
 

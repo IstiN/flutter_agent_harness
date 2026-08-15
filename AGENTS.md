@@ -105,7 +105,26 @@ factual: paths, commands, invariants — no essays.
   nesting); roles: `explore`→`smol`, `review`→`slow`; `outputSchema` with
   ONE fix retry; child failure = per-item error, never batch failure.
   `/tasks` lists jobs, `/tasks cancel <id>`; completions re-enter the parent
-  as async-result messages (`agent://<id>` refs).
+  as async-result messages (`agent://<id>` refs). Subagents are retained &
+  addressable: real JSONL child sessions, `task_status`/`task_observe`/
+  `task_send`, child-only `reply` + sibling `agent_message` (pending-queue
+  + hop-capped), `completed_without_reply` notice.
+- `lib/src/memory/` — long-term memory: `MemoryController` over the
+  `flutter_agent_memory` package (hosted pub.dev dep),
+  `execution_env_kb_storage` (KbStorage → ExecutionEnv), `memory_add`/
+  `memory_search`/`memory_list` tools, `<memory>` prompt section; phase 2:
+  `compaction_memory_hook` (compaction-time durable-fact extraction on the
+  smol role, non-blocking), `maintain()` (levels + consolidate, running
+  guard, 24h stamp), triggers on session start + `/memory maintain`;
+  `/memory` shows stats.
+- `lib/src/a2a/` — A2A (Agent2Agent) interop: `a2a_client.dart` (Agent Card
+  + JSON-RPC + SSE), `a2a_config.dart` (`a2a:` yaml section, `${NAME}`
+  env tokens), `a2a_manager.dart` (lazy per-server connect, A2A task state
+  → subagent lifecycle mapping), `a2a_server.dart` (request handler).
+  `task` tool agent type `a2a:<name>` runs remote agents as subagents
+  (uniform `task_status`/`task_send`); `/a2a` shows server status;
+  `fa serve --a2a [--port N] [--token T]` mounts this agent as an endpoint
+  (`bin/serve_a2a.dart`).
 - `bin/fah.dart` — the `fah`/`fa` CLI. REPL (no args) or headless
   (`fa "prompt"` / `-p`, mutually exclusive). First positional naming an
   EXISTING file is the prompt source (`.md`/`.txt` inlined, others attached
