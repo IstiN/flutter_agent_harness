@@ -216,19 +216,7 @@ final class TaskExecutor {
       await subagentManager!.update(id, status: SubagentStatus.running);
     }
 
-    final toolRegistry = ToolRegistry(
-      registry.toolSurfaceFor(definition, childTools),
-    );
-    // Phase 3b: child-only reply/agent_message tools when a manager backs
-    // this executor — they resolve the handle through currentSubagentId().
-    if (subagentManager != null) {
-      for (final tool in subagentMonitoringTools(
-        manager: subagentManager,
-        currentSubagentId: currentSubagentId,
-      ).where((t) => t.name == 'reply' || t.name == 'agent_message')) {
-        toolRegistry.register(tool);
-      }
-    }
+    final toolRegistry = _childToolRegistry(definition);
     final wiring = _resolveChildWiring(definition);
 
     final child = Agent(
@@ -302,6 +290,24 @@ final class TaskExecutor {
     );
   }
 
+  /// Builds the child's tool registry from the agent-type surface plus the
+  /// child-only reply/agent_message tools (Phase 3b) when a manager backs
+  /// this executor. Extracted from [_run] to keep its CRAP in budget.
+  ToolRegistry _childToolRegistry(TaskAgentDefinition definition) {
+    final toolRegistry = ToolRegistry(
+      registry.toolSurfaceFor(definition, childTools),
+    );
+    if (subagentManager != null) {
+      for (final tool in subagentMonitoringTools(
+        manager: subagentManager,
+        currentSubagentId: currentSubagentId,
+      ).where((t) => t.name == 'reply' || t.name == 'agent_message')) {
+        toolRegistry.register(tool);
+      }
+    }
+    return toolRegistry;
+  }
+
   /// Runs one `a2a:<name>` item against a remote agent (Phase 5a). Maps the
   /// A2A task lifecycle onto the local result shape; registers the child in
   /// the retained-subagent registry so `task_status`/`task_send` work
@@ -347,48 +353,14 @@ final class TaskExecutor {
         remoteTask.id,
         onUpdate: (task) => cancelToken?.throwIfCancelled(),
       );
-      final output = A2aManager.renderArtifacts(settled);
-      final failed = settled.state == A2aTaskState.failed;
-      final aborted = settled.state == A2aTaskState.canceled;
-      final idle = settled.state == A2aTaskState.inputRequired;
-      final capped = _capOutput(output);
-      store.put(id, capped.$1);
-      onProgress?.call(
+      return _a2aResult(
+        item,
         index,
         id,
-        failed || aborted ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
-      );
-      if (subagentManager != null) {
-        await subagentManager!.update(
-          id,
-          status: idle
-              ? SubagentStatus.idle
-              : aborted
-              ? SubagentStatus.aborted
-              : failed
-              ? SubagentStatus.failed
-              : SubagentStatus.completed,
-          modelId: 'a2a:$serverName',
-          error: failed ? 'remote task failed' : null,
-        );
-      }
-      return TaskSingleResult(
-        index: index,
-        id: id,
-        agent: 'a2a:$serverName',
-        task: item.task,
-        status: aborted
-            ? TaskSpawnStatus.aborted
-            : failed
-            ? TaskSpawnStatus.failed
-            : TaskSpawnStatus.completed,
-        output: capped.$1,
-        truncated: capped.$2,
-        duration: stopwatch.elapsed,
-        tokens: 0,
-        requests: 1,
-        model: 'a2a:$serverName',
-        error: failed ? 'remote task failed' : null,
+        serverName,
+        settled,
+        stopwatch,
+        onProgress,
       );
     } on CancelledException {
       rethrow;
@@ -397,6 +369,67 @@ final class TaskExecutor {
       await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
       return _failure(index, id, 'a2a:$serverName', item, stopwatch, '$error');
     }
+  }
+
+  /// Maps a settled remote task onto the per-item result: stores the
+  /// rendered artifacts, updates the retained-subagent handle, and renders
+  /// the [TaskSingleResult]. Extracted from [_runA2a] to keep its CRAP
+  /// within the ratchet budget.
+  Future<TaskSingleResult> _a2aResult(
+    TaskItem item,
+    int index,
+    String id,
+    String serverName,
+    A2aTask settled,
+    Stopwatch stopwatch,
+    TaskSpawnProgressCallback? onProgress,
+  ) async {
+    final failed = settled.state == A2aTaskState.failed;
+    final aborted = settled.state == A2aTaskState.canceled;
+    final capped = _capOutput(A2aManager.renderArtifacts(settled));
+    store.put(id, capped.$1);
+    onProgress?.call(
+      index,
+      id,
+      failed || aborted ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
+    );
+    if (subagentManager != null) {
+      await subagentManager!.update(
+        id,
+        status: _a2aSubagentStatus(settled.state),
+        modelId: 'a2a:$serverName',
+        error: failed ? 'remote task failed' : null,
+      );
+    }
+    return TaskSingleResult(
+      index: index,
+      id: id,
+      agent: 'a2a:$serverName',
+      task: item.task,
+      status: _a2aSpawnStatus(settled.state),
+      output: capped.$1,
+      truncated: capped.$2,
+      duration: stopwatch.elapsed,
+      tokens: 0,
+      requests: 1,
+      model: 'a2a:$serverName',
+      error: failed ? 'remote task failed' : null,
+    );
+  }
+
+  /// The A2A task state → spawn status mapping (result shape).
+  static TaskSpawnStatus _a2aSpawnStatus(A2aTaskState state) {
+    if (state == A2aTaskState.canceled) return TaskSpawnStatus.aborted;
+    if (state == A2aTaskState.failed) return TaskSpawnStatus.failed;
+    return TaskSpawnStatus.completed;
+  }
+
+  /// The A2A task state → retained-subagent status mapping (registry shape).
+  static SubagentStatus _a2aSubagentStatus(A2aTaskState state) {
+    if (state == A2aTaskState.inputRequired) return SubagentStatus.idle;
+    if (state == A2aTaskState.canceled) return SubagentStatus.aborted;
+    if (state == A2aTaskState.failed) return SubagentStatus.failed;
+    return SubagentStatus.completed;
   }
 
   /// The remote agent's prompt: the item task plus the pending inter-agent

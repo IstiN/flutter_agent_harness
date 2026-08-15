@@ -32,9 +32,9 @@ void main() {
       // Skip without a ZAI key (CI has none; locally the user sets it).
       final hasZaiKey =
           (Platform.environment['ZAI_API_KEY'] ?? '').isNotEmpty ||
-          File('${Platform.environment['HOME']}/.fah/config.yaml')
-              .readAsStringSync()
-              .contains('api.z.ai');
+          File(
+            '${Platform.environment['HOME']}/.fah/config.yaml',
+          ).readAsStringSync().contains('api.z.ai');
       if (!hasZaiKey) {
         return;
       }

@@ -174,4 +174,31 @@ void main() {
       await hook!('summarized span');
     });
   });
+
+  test('hook extracts entries into the memory store', () async {
+    final env = MemoryExecutionEnv();
+    final memory = MemoryController(env: env);
+    final hook = compactionMemoryHook(
+      memory: memory,
+      stream: _streamWith(
+        '[{"text":"the user prefers tabs","tags":["style"]}]',
+      ),
+      model: _model,
+    );
+    await hook!('summarized span');
+    final entries = await memory.list();
+    expect(entries, hasLength(1));
+  });
+
+  test('hook with zero extracted entries adds nothing', () async {
+    final env = MemoryExecutionEnv();
+    final memory = MemoryController(env: env);
+    final hook = compactionMemoryHook(
+      memory: memory,
+      stream: _streamWith('[]'),
+      model: _model,
+    );
+    await hook!('summarized span');
+    expect(await memory.list(), isEmpty);
+  });
 }

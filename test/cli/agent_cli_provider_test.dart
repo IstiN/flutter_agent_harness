@@ -1022,6 +1022,56 @@ void main() {
       },
     );
 
+    test(
+      'openrouter oauth saves a registry entry so it shows in /provider',
+      () async {
+        // Regression: the OAuth flow stored only the key — the provider
+        // never appeared in the saved list (dial/CodeMie entries did).
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry([]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          openRouterOAuthExchangeFn:
+              ({
+                required String code,
+                required String codeVerifier,
+                String? label,
+              }) async => const OpenRouterOAuthKey(
+                key: 'sk-or-9',
+                keyHash: 'h',
+                label: 'Fa',
+              ),
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider openrouter oauth headless');
+        await waitForIt(
+          () => io.out.toString().contains('authorization code:'),
+        );
+        io.sendLine('auth-code-123');
+        await waitForIt(
+          () => io.out.toString().contains('OpenRouter authorized'),
+        );
+        io.sendLine('/provider');
+        await waitForIt(() => io.out.toString().contains('saved providers:'));
+        io.sendLine('/exit');
+        await run;
+
+        final entry = registry.find('openrouter.ai');
+        expect(entry, isNotNull, reason: 'connected provider saved');
+        expect(entry!.apiType, 'openrouter');
+        expect(entry.baseUrl, 'https://openrouter.ai/api/v1');
+        // /provider status lists it among the saved providers.
+        expect(io.out.toString(), contains('openrouter.ai —'));
+      },
+    );
+
     test('/provider openrouter oauth rejects invalid usage', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);

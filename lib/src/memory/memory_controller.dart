@@ -12,6 +12,32 @@ import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import '../env/execution_env.dart';
 import 'execution_env_kb_storage.dart';
 
+/// Formats the `/memory` stats block (pure, testable): counts per type,
+/// last maintenance, and the due hint.
+List<String> formatMemoryStatsLines(
+  List<MemoryEntry> entries,
+  DateTime? lastMaintenance,
+  bool maintenanceDue,
+) {
+  final byType = <String, int>{};
+  for (final entry in entries) {
+    byType[entry.type] = (byType[entry.type] ?? 0) + 1;
+  }
+  final lines = <String>['[Memory]', '  entries: ${entries.length}'];
+  for (final type in byType.keys.toList()..sort()) {
+    lines.add('  $type: ${byType[type]}');
+  }
+  lines.add(
+    lastMaintenance == null
+        ? '  last maintenance: never (/memory maintain to run)'
+        : '  last maintenance: $lastMaintenance',
+  );
+  if (maintenanceDue) {
+    lines.add('  maintenance due — /memory maintain');
+  }
+  return lines;
+}
+
 /// A single memory entry returned by [MemoryController.search] / [list].
 final class MemoryEntry {
   const MemoryEntry({

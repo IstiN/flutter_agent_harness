@@ -30,13 +30,16 @@ a2a:
     });
 
     test('resolves \${NAME} tokens from the environment', () {
-      final config = parseYaml('''
+      final config = parseYaml(
+        '''
 a2a:
   servers:
     translator:
       url: https://x.example.com
       token: \${A2A_KEY}
-''', {'A2A_KEY': 'env-secret'});
+''',
+        {'A2A_KEY': 'env-secret'},
+      );
       expect(config.servers['translator']!.token, 'env-secret');
     });
 
@@ -74,10 +77,7 @@ a2a:
 
   group('mapA2aTaskState', () {
     test('maps the A2A lifecycle onto subagent statuses', () {
-      expect(
-        mapA2aTaskState(A2aTaskState.submitted),
-        SubagentLifecycle.queued,
-      );
+      expect(mapA2aTaskState(A2aTaskState.submitted), SubagentLifecycle.queued);
       expect(mapA2aTaskState(A2aTaskState.working), SubagentLifecycle.running);
       expect(
         mapA2aTaskState(A2aTaskState.inputRequired),
@@ -88,10 +88,7 @@ a2a:
         SubagentLifecycle.completed,
       );
       expect(mapA2aTaskState(A2aTaskState.failed), SubagentLifecycle.failed);
-      expect(
-        mapA2aTaskState(A2aTaskState.canceled),
-        SubagentLifecycle.aborted,
-      );
+      expect(mapA2aTaskState(A2aTaskState.canceled), SubagentLifecycle.aborted);
     });
   });
 
@@ -110,10 +107,7 @@ a2a:
       url: https://x.example.com
 ''');
       final manager = A2aManager(config);
-      expect(
-        () => manager.connect('ghost'),
-        throwsStateError,
-      );
+      expect(() => manager.connect('ghost'), throwsStateError);
     });
 
     test('renderArtifacts joins text parts under the budget', () {
@@ -122,7 +116,10 @@ a2a:
         state: A2aTaskState.completed,
         artifacts: [
           A2aArtifact(
-            parts: [A2aPart(text: 'hello '), A2aPart(text: 'world')],
+            parts: [
+              A2aPart(text: 'hello '),
+              A2aPart(text: 'world'),
+            ],
           ),
         ],
       );
@@ -134,9 +131,7 @@ a2a:
         id: 't1',
         state: A2aTaskState.completed,
         artifacts: [
-          A2aArtifact(
-            parts: [A2aPart(text: 'x' * 200)],
-          ),
+          A2aArtifact(parts: [A2aPart(text: 'x' * 200)]),
         ],
       );
       final rendered = A2aManager.renderArtifacts(task, budget: 100);

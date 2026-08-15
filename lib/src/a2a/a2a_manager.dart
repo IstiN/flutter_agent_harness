@@ -62,7 +62,11 @@ enum SubagentLifecycle { queued, running, idle, completed, failed, aborted }
 /// Session-scoped A2A manager.
 final class A2aManager {
   /// Creates a manager over the configured servers (null config = none).
-  A2aManager(this.config) {
+  /// [clientFactory] is injectable for tests (mock http backends).
+  A2aManager(this.config, {A2aClient Function(A2aServerConfig)? clientFactory})
+    : _clientFactory =
+          clientFactory ??
+          ((config) => A2aClient(baseUrl: config.url, token: config.token)) {
     for (final server in config?.servers.values ?? const <A2aServerConfig>[]) {
       _servers[server.name] = A2aManagedServer(server);
     }
@@ -70,6 +74,8 @@ final class A2aManager {
 
   /// The parsed `a2a:` config (empty when the section is absent).
   final A2aConfig? config;
+
+  final A2aClient Function(A2aServerConfig) _clientFactory;
 
   final _servers = <String, A2aManagedServer>{};
 
@@ -103,10 +109,7 @@ final class A2aManager {
 
   Future<A2aClient> _doConnect(A2aManagedServer server) async {
     try {
-      final client = A2aClient(
-        baseUrl: server.config.url,
-        token: server.config.token,
-      );
+      final client = _clientFactory(server.config);
       server.card = await client.card;
       server.client = client;
       server.status = A2aServerConnectionStatus.connected;
@@ -142,21 +145,21 @@ final class A2aManager {
     while (true) {
       final task = await client.getTask(taskId);
       onUpdate?.call(task);
-      switch (task.state) {
-        case A2aTaskState.completed:
-        case A2aTaskState.failed:
-        case A2aTaskState.canceled:
-        case A2aTaskState.inputRequired:
-          return task;
-        default:
-          break;
-      }
+      if (_isSettledState(task.state)) return task;
       if (DateTime.now().isAfter(deadline)) {
         throw TimeoutException('a2a task "$taskId" did not settle', timeout);
       }
       await Future<void>.delayed(pollInterval);
     }
   }
+
+  /// True when the A2A task state settles the wait loop: terminal states
+  /// plus `input-required` (the parent answers it via task_send).
+  static bool _isSettledState(A2aTaskState state) =>
+      state == A2aTaskState.completed ||
+      state == A2aTaskState.failed ||
+      state == A2aTaskState.canceled ||
+      state == A2aTaskState.inputRequired;
 
   /// Cancels a remote task (dispose semantics).
   Future<void> cancel(String name, String taskId) async {
@@ -191,4 +194,42 @@ final class A2aManager {
       server.client?.close();
     }
   }
+}
+
+/// Formats one `/a2a` status line block for [server] (pure, testable).
+List<String> formatA2aServerStatus(A2aManagedServer server) {
+  final status = switch (server.status) {
+    A2aServerConnectionStatus.connecting => '… connecting',
+    A2aServerConnectionStatus.connected => '✅ connected',
+    A2aServerConnectionStatus.failed => '❌ failed',
+  };
+  final lines = <String>[
+    '  ${server.config.name}: $status',
+    '    url: ${server.config.url}',
+  ];
+  final card = server.card;
+  if (card != null) {
+    lines.add('    agent: ${card.name} v${card.version}');
+  }
+  if (server.error != null) {
+    lines.add('    error: ${server.error}');
+  }
+  return lines;
+}
+
+/// Formats the whole `/a2a` status block for the manager (pure, testable):
+/// the no-servers hint, one block per server, and the usage hint.
+List<String> formatA2aStatusLines(A2aManager manager) {
+  if (!manager.hasServers) {
+    return const [
+      'no a2a servers configured — add an `a2a:` section to '
+          '~/.fah/config.yaml',
+    ];
+  }
+  final lines = <String>['[A2A servers]'];
+  for (final server in manager.servers.values) {
+    lines.addAll(formatA2aServerStatus(server));
+  }
+  lines.add('  use via the task tool: agent "a2a:<name>"');
+  return lines;
 }

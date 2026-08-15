@@ -2050,31 +2050,9 @@ class AgentCli {
 
   /// `/a2a` — Phase 5a status: per-server connecting/connected/failed.
   void _printA2aStatus() {
-    if (!_a2aManager.hasServers) {
-      io.writeln(
-        'no a2a servers configured — add an `a2a:` section to '
-        '~/.fah/config.yaml',
-      );
-      return;
+    for (final line in formatA2aStatusLines(_a2aManager)) {
+      io.writeln(line);
     }
-    io.writeln('[A2A servers]');
-    for (final server in _a2aManager.servers.values) {
-      final status = switch (server.status) {
-        A2aServerConnectionStatus.connecting => '… connecting',
-        A2aServerConnectionStatus.connected => '✅ connected',
-        A2aServerConnectionStatus.failed => '❌ failed',
-      };
-      io.writeln('  ${server.config.name}: $status');
-      io.writeln('    url: ${server.config.url}');
-      final card = server.card;
-      if (card != null) {
-        io.writeln('    agent: ${card.name} v${card.version}');
-      }
-      if (server.error != null) {
-        io.writeln('    error: ${server.error}');
-      }
-    }
-    io.writeln('  use via the task tool: agent "a2a:<name>"');
   }
 
   /// `/memory [maintain]` — Phase 2 memory surface: stats by default,
@@ -2082,34 +2060,32 @@ class AgentCli {
   Future<void> _handleMemoryCommand(String rest) async {
     final sub = rest.split(RegExp(r'\s+')).first.trim();
     if (sub == 'maintain') {
-      io.writeln('maintaining memory (levels + consolidation)…');
-      final started = await _memory.maintain();
-      if (!started) {
-        io.writeln('maintenance already running — skipped');
-        return;
-      }
-      io.writeln('memory maintenance complete');
+      await _runMemoryMaintain();
       return;
     }
-    // Stats: entry counts per type + last maintenance.
-    final entries = await _memory.list(limit: 500);
-    final byType = <String, int>{};
-    for (final entry in entries) {
-      byType[entry.type] = (byType[entry.type] ?? 0) + 1;
+    await _printMemoryStats();
+  }
+
+  /// The `/memory maintain` branch: runs maintenance with the running-guard
+  /// feedback.
+  Future<void> _runMemoryMaintain() async {
+    io.writeln('maintaining memory (levels + consolidation)…');
+    final started = await _memory.maintain();
+    if (!started) {
+      io.writeln('maintenance already running — skipped');
+      return;
     }
-    io.writeln('[Memory]');
-    io.writeln('  entries: ${entries.length}');
-    for (final type in byType.keys.toList()..sort()) {
-      io.writeln('  $type: ${byType[type]}');
-    }
-    final last = await _memory.lastMaintenanceAt();
-    io.writeln(
-      last == null
-          ? '  last maintenance: never (/memory maintain to run)'
-          : '  last maintenance: $last',
-    );
-    if (await _memory.maintenanceDue()) {
-      io.writeln('  maintenance due — /memory maintain');
+    io.writeln('memory maintenance complete');
+  }
+
+  /// The bare `/memory` branch: entry counts per type + last maintenance.
+  Future<void> _printMemoryStats() async {
+    for (final line in formatMemoryStatsLines(
+      await _memory.list(limit: 500),
+      await _memory.lastMaintenanceAt(),
+      await _memory.maintenanceDue(),
+    )) {
+      io.writeln(line);
     }
   }
 
