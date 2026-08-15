@@ -784,11 +784,15 @@ class AgentCli {
   Future<void> run() async {
     await _loadAgentContext();
     _session = await _initializeSession();
+    // Phase 3a: rehydrate the subagent registry from the resumed session's
+    // `subagent_registry` records — agents of this session are visible again
+    // (across restarts AND across instances sharing the session repo).
+    unawaited(_subagentManager.rehydrate());
     // Phase 2: session-start maintenance trigger — fire-and-forget when the
     // last run is >24h old; never blocks the first turn.
     unawaited(
-      _memory.maintenanceDue().then((due) {
-        if (due) return _memory.maintain();
+      _memory.maintenanceDue().then((due) async {
+        if (due) await _memory.maintain();
       }),
     );
     final interruptSub = io.interrupts.listen((_) {
@@ -896,9 +900,11 @@ class AgentCli {
   /// Deletes the active session's file when nothing was ever said in it:
   /// opening the CLI and leaving (or only poking slash commands) must not
   /// litter the sessions list with empty files. Best-effort — exit and
-  /// session switching never fail on it.
+  /// session switching never fail on it. A session that owns subagents is
+  /// NOT empty: its `subagent_registry` record is real content.
   Future<void> deleteSessionIfEmpty() async {
     if (_agent.state.messages.isNotEmpty) return;
+    if (_subagentManager.handles.isNotEmpty) return;
     final session = _session;
     if (session == null) return;
     try {
@@ -1363,6 +1369,7 @@ class AgentCli {
   Future<void> _switchSession(String name) async {
     final trimmed = name.trim();
     await deleteSessionIfEmpty();
+    _subagentManager.reset();
     final metadata = await _findSessionByName(trimmed);
     if (metadata != null) {
       await _switchToMetadata(metadata, trimmed);
@@ -1379,10 +1386,14 @@ class AgentCli {
   /// Switches to an existing session by metadata (picker, /resume).
   Future<void> _switchToMetadata(SessionMetadata metadata, String label) async {
     await deleteSessionIfEmpty();
+    _subagentManager.reset();
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
     _session = await _loadSession(metadata);
+    // Now that `_session` is assigned, the registry source can read the
+    // resumed session's `subagent_registry` records.
+    unawaited(_subagentManager.rehydrate());
     io.writeln("switched to session '$label'");
     _replayRestoredHistory(_agent.state.messages, label);
   }
@@ -1476,6 +1487,7 @@ class AgentCli {
       return;
     }
     await deleteSessionIfEmpty();
+    _subagentManager.reset();
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();

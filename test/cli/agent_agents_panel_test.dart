@@ -141,36 +141,34 @@ void main() {
     });
   });
 
-    test('/agents open <id> switches into the child session', () async {
-      final cli = cliFor();
-      await registerHandles(cli, [handle()]);
-      // Give the child a real session file (the completion-time factory
-      // path) so the open action has something to switch into.
-      final childRepo = JsonlSessionRepo(
-        fs: env,
-        sessionsRoot: '/sessions',
-      );
-      final childSession = await childRepo.create(
-        JsonlSessionCreateOptions(
-          cwd: '/work',
-          metadata: {'agent': 'subagent', 'id': 'a1'},
-        ),
-      );
-      await childSession.appendMessage(UserMessage.text('child transcript'));
-      final childPath = (await childSession.getMetadata()).path;
-      await cli.subagentManager.attachSession('a1', childPath);
+  test('/agents open <id> switches into the child session', () async {
+    final cli = cliFor();
+    await registerHandles(cli, [handle()]);
+    // Give the child a real session file (the completion-time factory
+    // path) so the open action has something to switch into.
+    final childRepo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final childSession = await childRepo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work',
+        metadata: {'agent': 'subagent', 'id': 'a1'},
+      ),
+    );
+    await childSession.appendMessage(UserMessage.text('child transcript'));
+    final childPath = (await childSession.getMetadata()).path;
+    await cli.subagentManager.attachSession('a1', childPath);
 
-      final run = cli.run();
-      await sendAndWait('/agents open a1');
-      await sendAndWait('/exit');
-      await run;
-      final output = io.out.toString();
-      expect(output, contains("switched to session 'subagent explore:a1'"));
-      expect(output, contains('child transcript'));
-    });
+    final run = cli.run();
+    await sendAndWait('/agents open a1');
+    await sendAndWait('/exit');
+    await run;
+    final output = io.out.toString();
+    expect(output, contains("switched to session 'subagent explore:a1'"));
+    expect(output, contains('child transcript'));
+  });
 
-    test('/agents open <id> without a session file reports unavailability',
-        () async {
+  test(
+    '/agents open <id> without a session file reports unavailability',
+    () async {
       final cli = cliFor();
       await registerHandles(cli, [handle()]);
       final run = cli.run();
@@ -181,5 +179,82 @@ void main() {
         io.out.toString(),
         contains('cannot open session for "a1" (unavailable)'),
       );
-    });
+    },
+  );
+
+  AgentCli namedCli(String sessionName, FakeCliIO cliIo) => AgentCli(
+    config: AgentCliConfig(
+      model: testModel,
+      apiKey: 'test-key',
+      env: env,
+      sessionRoot: '/sessions',
+      sessionName: sessionName,
+    ),
+    io: cliIo,
+    streamFunction: FakeStreamFunction([]).call,
+  );
+
+  test(
+    'registry persists into the session and rehydrates in a fresh instance',
+    () async {
+      // Instance 1: register an agent once the session exists (the sink
+      // persists `subagent_registry` custom records into it).
+      final io1 = FakeCliIO();
+      final first = namedCli('one', io1);
+      final run1 = first.run();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await first.subagentManager.register(
+        id: 'a1',
+        name: 'a1',
+        agentType: 'explore',
+        task: 'scout files',
+      );
+      // Registry persistence is fire-and-forget — let the write land.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      io1.sendLine('/exit');
+      await run1;
+      await io1.close();
+
+      // Instance 2: same env + sessions root, resumes the same session —
+      // the agent is visible without any re-registration (a second FakeCliIO:
+      // the line stream is single-subscription).
+      final io2 = FakeCliIO();
+      final second = namedCli('one', io2);
+      final run2 = second.run();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      io2.sendLine('/agents');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      io2.sendLine('/exit');
+      await run2;
+      expect(io2.out.toString(), contains('explore:a1'));
+      await io2.close();
+    },
+  );
+
+  test('switching sessions reloads the target session registry', () async {
+    final cli = namedCli('one', io);
+    final run = cli.run();
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    await cli.subagentManager.register(
+      id: 'a1',
+      name: 'a1',
+      agentType: 'explore',
+      task: 'scout files',
+    );
+    // Registry persistence is fire-and-forget — let the write land.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    // A different session owns no agents…
+    await sendAndWait('/session two');
+    await sendAndWait('/agents');
+    // …and switching back rehydrates the original session's registry.
+    await sendAndWait('/session one');
+    await sendAndWait('/agents');
+    await sendAndWait('/exit');
+    await run;
+    final output = io.out.toString();
+    final emptyIdx = output.indexOf('(no subagents yet)');
+    final backIdx = output.lastIndexOf('explore:a1');
+    expect(emptyIdx, greaterThan(-1));
+    expect(backIdx, greaterThan(emptyIdx));
+  });
 }

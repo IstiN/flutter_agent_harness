@@ -1098,10 +1098,7 @@ void main() {
         secrets: const {'ANTHROPIC_API_KEY': 'test-key'},
         streamFactory: (kind, apiKey) => subagentStream.call,
       );
-      final h = _harness(
-        stream: parentStream,
-        rolesResolver: subagentResolver,
-      );
+      final h = _harness(stream: parentStream, rolesResolver: subagentResolver);
       await h.tool.execute(
         {
           'context': 'ctx',
@@ -1115,10 +1112,7 @@ void main() {
       );
       // Both no-specialist items resolve through the subagent role.
       expect(subagentStream.calls, 2);
-      expect(
-        subagentStream.models.every((m) => m.id == 'test-cheap'),
-        isTrue,
-      );
+      expect(subagentStream.models.every((m) => m.id == 'test-cheap'), isTrue);
       expect(parentStream.calls, 0);
     });
 
@@ -1157,10 +1151,7 @@ void main() {
         streamFactory: (kind, apiKey) =>
             kind == 'anthropic' ? smolStream.call : subagentStream.call,
       );
-      final h = _harness(
-        stream: subagentStream,
-        rolesResolver: dualResolver,
-      );
+      final h = _harness(stream: subagentStream, rolesResolver: dualResolver);
       await h.tool.execute(
         {
           'context': 'ctx',
@@ -1179,29 +1170,31 @@ void main() {
       expect(subagentStream.models.single.id, 'test-cheap');
     });
 
-    test('an unconfigured subagent role falls back to the parent wiring',
-        () async {
-      final parentStream = _ScriptedStream();
-      final emptyResolver = ModelRolesResolver(
-        config: ModelRolesConfig(roles: const {}),
-        secrets: const {},
-        streamFactory: (kind, apiKey) =>
-            throw StateError('no stream without keys'),
-      );
-      final h = _harness(stream: parentStream, rolesResolver: emptyResolver);
-      await h.tool.execute(
-        {
-          'context': 'ctx',
-          'tasks': [
-            {'task': 'delegate it'},
-          ],
-        },
-        null,
-        null,
-      );
-      expect(parentStream.calls, 1);
-      expect(parentStream.models.single.id, _model.id);
-    });
+    test(
+      'an unconfigured subagent role falls back to the parent wiring',
+      () async {
+        final parentStream = _ScriptedStream();
+        final emptyResolver = ModelRolesResolver(
+          config: ModelRolesConfig(roles: const {}),
+          secrets: const {},
+          streamFactory: (kind, apiKey) =>
+              throw StateError('no stream without keys'),
+        );
+        final h = _harness(stream: parentStream, rolesResolver: emptyResolver);
+        await h.tool.execute(
+          {
+            'context': 'ctx',
+            'tasks': [
+              {'task': 'delegate it'},
+            ],
+          },
+          null,
+          null,
+        );
+        expect(parentStream.calls, 1);
+        expect(parentStream.models.single.id, _model.id);
+      },
+    );
   });
 
   group('call validation', () {

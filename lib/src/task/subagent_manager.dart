@@ -84,6 +84,14 @@ final class SubagentManager {
     }
   }
 
+  /// Drops the registry view so the next [rehydrate] loads afresh — used
+  /// when the host switches to a different parent session (each session owns
+  /// its own registry).
+  void reset() {
+    _handles.clear();
+    _rehydrated = false;
+  }
+
   /// Registers a new subagent, optionally creating a child session.
   Future<SubagentHandle> register({
     required String id,
@@ -108,7 +116,7 @@ final class SubagentManager {
     )..lastActivity = now;
     _handles[id] = handle;
     _emit(handle);
-    await _persist();
+    _persist();
     return handle;
   }
 
@@ -130,13 +138,13 @@ final class SubagentManager {
     if (error != null) handle.error = error;
     handle.lastActivity = DateTime.now().toUtc().toIso8601String();
     _emit(handle);
-    await _persist();
+    _persist();
   }
 
   /// Removes a handle (dispose).
   Future<void> dispose(String id) async {
     _handles.remove(id);
-    await _persist();
+    _persist();
   }
 
   /// Queues [message] for [id] (Phase 3b `agent_message` / parent steering).
@@ -169,7 +177,7 @@ final class SubagentManager {
     handle.pendingMessages.add(capped);
     handle.lastActivity = DateTime.now().toUtc().toIso8601String();
     _events.add(SubagentEvent(handle: handle, message: capped));
-    await _persist();
+    _persist();
   }
 
   /// Drains [id]'s pending queue (delivered messages leave the registry).
@@ -190,7 +198,7 @@ final class SubagentManager {
         : text;
     handle.lastActivity = DateTime.now().toUtc().toIso8601String();
     _events.add(SubagentEvent(handle: handle));
-    await _persist();
+    _persist();
   }
 
   /// Attaches the child's real session file to its handle (called by the
@@ -203,7 +211,7 @@ final class SubagentManager {
     handle.sessionId = sessionPath;
     handle.lastActivity = DateTime.now().toUtc().toIso8601String();
     _events.add(SubagentEvent(handle: handle));
-    await _persist();
+    _persist();
   }
 
   /// Closes the event stream.
@@ -213,7 +221,24 @@ final class SubagentManager {
     _events.add(SubagentEvent(handle: handle));
   }
 
-  Future<void> _persist() async {
-    await sink?.call([for (final h in _handles.values) h.toJson()]);
+  var _persistChain = Future<void>.value();
+
+  /// Persists a registry snapshot best-effort: serialized (writes never
+  /// interleave) and fire-and-forget — the spawn path must NEVER wait on
+  /// session I/O (an awaited write breaks the background-task steering
+  /// race), and a failed write must never break a spawn. Every mutation
+  /// writes a full fresh snapshot, so a lost write is healed by the next
+  /// one.
+  void _persist() {
+    final write = sink;
+    if (write == null) return;
+    final snapshot = [for (final h in _handles.values) h.toJson()];
+    _persistChain = _persistChain.then((_) async {
+      try {
+        await write(snapshot);
+      } on Object {
+        // Best-effort — the next mutation rewrites the full snapshot.
+      }
+    });
   }
 }

@@ -89,11 +89,14 @@ String formatActiveAgentsBadge(
       .toList();
   if (active.isEmpty) return '';
   final at = now ?? DateTime.now();
-  final shown = active.take(max).map((h) {
-    final created = DateTime.tryParse(h.createdAt);
-    final elapsed = created == null ? 0 : at.difference(created).inSeconds;
-    return '${h.agentType}:${h.id}(${elapsed}s)';
-  }).join(',');
+  final shown = active
+      .take(max)
+      .map((h) {
+        final created = DateTime.tryParse(h.createdAt);
+        final elapsed = created == null ? 0 : at.difference(created).inSeconds;
+        return '${h.agentType}:${h.id}(${elapsed}s)';
+      })
+      .join(',');
   final overflow = active.length > max ? ',+${active.length - max}' : '';
   return 'bg:$shown$overflow';
 }

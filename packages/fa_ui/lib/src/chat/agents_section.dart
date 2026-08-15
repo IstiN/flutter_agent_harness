@@ -31,8 +31,7 @@ class AgentsSection extends StatelessWidget {
   final String mainDescription;
 
   /// Reads the last messages of a child's session as `(role, text)` pairs.
-  final Future<List<(String, String)>> Function(String id, {int tail})
-  observe;
+  final Future<List<(String, String)>> Function(String id, {int tail}) observe;
 
   /// Delivers a follow-up message to a child.
   final Future<void> Function(String id, String message) send;
@@ -193,8 +192,7 @@ class AgentDetailPage extends StatefulWidget {
   final SubagentHandle handle;
 
   /// Reads the last messages of the child's session.
-  final Future<List<(String, String)>> Function(String id, {int tail})
-  observe;
+  final Future<List<(String, String)>> Function(String id, {int tail}) observe;
 
   /// Delivers a follow-up message to the child.
   final Future<void> Function(String id, String message) send;
@@ -331,8 +329,7 @@ class _AgentDetailPageState extends State<AgentDetailPage> {
                   : _messages!.isEmpty
                   ? Center(
                       child: Text(
-                        _error ??
-                            'No transcript yet', // l10n:ignore
+                        _error ?? 'No transcript yet', // l10n:ignore
                         style: theme.textTheme.bodySmall,
                       ),
                     )

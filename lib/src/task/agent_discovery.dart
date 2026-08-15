@@ -47,8 +47,9 @@ Future<AgentDiscoveryResult> discoverTaskAgents(
       final entries = dirResult.valueOrNull;
       if (entries == null) continue;
       for (final entry in entries) {
-        if (entry.kind != FileKind.file || !entry.name.endsWith('.md'))
+        if (entry.kind != FileKind.file || !entry.name.endsWith('.md')) {
           continue;
+        }
         final name = entry.name.substring(0, entry.name.length - 3);
         if (!seen.add(name.toLowerCase())) continue;
         final textResult = await env.readTextFile(entry.path);

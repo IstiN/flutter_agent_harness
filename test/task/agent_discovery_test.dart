@@ -153,9 +153,10 @@ User.
       expect(registry.resolve('security-audit'), isNotNull); // discovered
     });
 
-    test('parses a Claude Code agent file (.claude/agents + model alias)',
-        () async {
-      await writeFile('/work/.claude/agents/docs-writer.md', '''
+    test(
+      'parses a Claude Code agent file (.claude/agents + model alias)',
+      () async {
+        await writeFile('/work/.claude/agents/docs-writer.md', '''
 ---
 name: docs-writer
 description: Writes documentation from code
@@ -166,18 +167,19 @@ maxTurns: 10
 ---
 You write concise documentation.
 ''');
-      final result = await discoverTaskAgents(
-        env,
-        projectRoots: ['/work/.claude/agents'],
-      );
-      expect(result.agents, hasLength(1));
-      final agent = result.agents.single;
-      expect(agent.name, 'docs-writer');
-      expect(agent.modelRole, 'smol');
-      expect(agent.systemPrompt, contains('documentation'));
-      // Claude-only keys are accepted (ignored), not reported as unknown.
-      expect(result.notes, isEmpty);
-    });
+        final result = await discoverTaskAgents(
+          env,
+          projectRoots: ['/work/.claude/agents'],
+        );
+        expect(result.agents, hasLength(1));
+        final agent = result.agents.single;
+        expect(agent.name, 'docs-writer');
+        expect(agent.modelRole, 'smol');
+        expect(agent.systemPrompt, contains('documentation'));
+        // Claude-only keys are accepted (ignored), not reported as unknown.
+        expect(result.notes, isEmpty);
+      },
+    );
 
     test('an unknown model alias keeps parent wiring with a note', () async {
       await writeFile('/work/.claude/agents/poet.md', '''

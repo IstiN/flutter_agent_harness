@@ -116,6 +116,8 @@ void main() {
       expect(handle.id, 'agent-1');
       expect(handle.status, SubagentStatus.queued);
       expect(mgr.handles, hasLength(1));
+      // Persistence is serialized fire-and-forget — let the chain land.
+      await Future<void>.delayed(Duration.zero);
       expect(persisted, hasLength(1));
       expect(persisted.first.first['id'], 'agent-1');
     });
