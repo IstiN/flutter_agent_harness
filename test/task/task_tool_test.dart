@@ -1074,6 +1074,134 @@ void main() {
       expect(parentStream.calls, 1);
       expect(parentStream.models.single.id, _model.id);
     });
+
+    test('a no-role item runs on the subagent role when configured', () async {
+      final subagentStream = _ScriptedStream([
+        (match: 'delegate it', turns: [_textTurn('delegated')]),
+      ]);
+      final parentStream = _ScriptedStream([
+        (match: 'local it', turns: [_textTurn('local')]),
+      ]);
+      final subagentResolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            subagentModelRole: [
+              ModelRef(
+                provider: 'anthropic',
+                modelId: 'test-cheap',
+                contextWindow: 1000,
+                maxTokens: 128,
+              ),
+            ],
+          },
+        ),
+        secrets: const {'ANTHROPIC_API_KEY': 'test-key'},
+        streamFactory: (kind, apiKey) => subagentStream.call,
+      );
+      final h = _harness(
+        stream: parentStream,
+        rolesResolver: subagentResolver,
+      );
+      await h.tool.execute(
+        {
+          'context': 'ctx',
+          'tasks': [
+            {'task': 'delegate it'},
+            {'name': 'local', 'task': 'local it'},
+          ],
+        },
+        null,
+        null,
+      );
+      // Both no-specialist items resolve through the subagent role.
+      expect(subagentStream.calls, 2);
+      expect(
+        subagentStream.models.every((m) => m.id == 'test-cheap'),
+        isTrue,
+      );
+      expect(parentStream.calls, 0);
+    });
+
+    test('explore keeps smol precedence over the subagent role', () async {
+      final smolStream = _ScriptedStream([
+        (match: 'scout it', turns: [_textTurn('findings')]),
+      ]);
+      final subagentStream = _ScriptedStream([
+        (match: 'delegate it', turns: [_textTurn('delegated')]),
+      ]);
+      final dualResolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            smolModelRole: [
+              ModelRef(
+                provider: 'anthropic',
+                modelId: 'test-haiku',
+                contextWindow: 1000,
+                maxTokens: 128,
+              ),
+            ],
+            subagentModelRole: [
+              ModelRef(
+                provider: 'openrouter',
+                modelId: 'test-cheap',
+                contextWindow: 1000,
+                maxTokens: 128,
+              ),
+            ],
+          },
+        ),
+        secrets: const {
+          'ANTHROPIC_API_KEY': 'test-key',
+          'OPENROUTER_API_KEY': 'test-key-2',
+        },
+        streamFactory: (kind, apiKey) =>
+            kind == 'anthropic' ? smolStream.call : subagentStream.call,
+      );
+      final h = _harness(
+        stream: subagentStream,
+        rolesResolver: dualResolver,
+      );
+      await h.tool.execute(
+        {
+          'context': 'ctx',
+          'tasks': [
+            {'agent': 'explore', 'task': 'scout it'},
+            {'task': 'delegate it'},
+          ],
+        },
+        null,
+        null,
+      );
+      // explore → smol, the no-role item → subagent.
+      expect(smolStream.calls, 1);
+      expect(smolStream.models.single.id, 'test-haiku');
+      expect(subagentStream.calls, 1);
+      expect(subagentStream.models.single.id, 'test-cheap');
+    });
+
+    test('an unconfigured subagent role falls back to the parent wiring',
+        () async {
+      final parentStream = _ScriptedStream();
+      final emptyResolver = ModelRolesResolver(
+        config: ModelRolesConfig(roles: const {}),
+        secrets: const {},
+        streamFactory: (kind, apiKey) =>
+            throw StateError('no stream without keys'),
+      );
+      final h = _harness(stream: parentStream, rolesResolver: emptyResolver);
+      await h.tool.execute(
+        {
+          'context': 'ctx',
+          'tasks': [
+            {'task': 'delegate it'},
+          ],
+        },
+        null,
+        null,
+      );
+      expect(parentStream.calls, 1);
+      expect(parentStream.models.single.id, _model.id);
+    });
   });
 
   group('call validation', () {

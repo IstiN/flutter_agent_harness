@@ -30,6 +30,7 @@ import '../cancel_token.dart';
 import '../json_parse.dart';
 import '../model.dart';
 import '../model_roles/model_resolver.dart';
+import '../model_roles/roles_config.dart';
 import '../prompts/prompts.g.dart';
 import '../types.dart';
 import 'agent_registry.dart';
@@ -460,17 +461,18 @@ final class TaskExecutor {
   }
 
   /// Cheap-role resolution (omp's agent `model` frontmatter): a configured
-  /// role wins; anything else inherits the parent wiring.
+  /// role wins; a definition without a specialist role resolves through the
+  /// `subagent` delegation role when configured; anything else inherits the
+  /// parent wiring.
   ({Model model, StreamFunction stream}) _resolveChildWiring(
     TaskAgentDefinition definition,
   ) {
-    final role = definition.modelRole;
     final rolesResolver = this.rolesResolver;
-    if (role != null && rolesResolver != null) {
-      final resolved = rolesResolver.resolveRole(role);
-      if (resolved != null) {
-        return (model: resolved.model, stream: resolved.stream);
-      }
+    if (rolesResolver == null) return (model: model, stream: streamFunction);
+    final role = definition.modelRole ?? subagentModelRole;
+    final resolved = rolesResolver.resolveRole(role);
+    if (resolved != null) {
+      return (model: resolved.model, stream: resolved.stream);
     }
     return (model: model, stream: streamFunction);
   }

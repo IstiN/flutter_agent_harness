@@ -9,15 +9,19 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The task role ids this store manages. `default` is the main connection
 /// (not stored here); `smol` is the fast/cheap model for compaction and
-/// later subagents.
+/// `explore` subagents; `subagent` is the general-purpose delegation model.
 final class TaskRole {
   TaskRole._();
 
   /// Fast/cheap model for compaction summaries and subagent `explore` role.
   static const smol = 'smol';
 
+  /// Delegation model for subagents: any spawned child without a specialist
+  /// role runs on this model instead of the main connection.
+  static const subagent = 'subagent';
+
   /// Every known role id.
-  static const all = [smol];
+  static const all = [smol, subagent];
 }
 
 /// A per-role endpoint override: which model handles ONE task role when it

@@ -38,6 +38,13 @@ class TaskModelsSection extends StatelessWidget {
   /// The icon each role's row shows.
   static const roleIcons = <String, IconData>{
     TaskRole.smol: Icons.bolt_outlined,
+    TaskRole.subagent: Icons.groups_outlined,
+  };
+
+  /// Display labels for known roles (the rest fall back to the raw id).
+  static const roleTitles = <String, String>{
+    TaskRole.smol: 'Quick model', // l10n:ignore
+    TaskRole.subagent: 'Subagents model', // l10n:ignore
   };
 
   @override
@@ -67,9 +74,7 @@ class TaskModelsSection extends StatelessWidget {
     String role,
   ) {
     final override = store.overrideFor(role);
-    final title = role == TaskRole.smol
-        ? 'Quick model' // l10n:ignore
-        : role;
+    final title = roleTitles[role] ?? role;
     final subtitle = override?.modelId.isNotEmpty == true
         ? override!.modelId
         : 'Same as main'; // l10n:ignore
@@ -235,9 +240,7 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.role == TaskRole.smol
-              ? 'Quick model' // l10n:ignore
-              : widget.role,
+          TaskModelsSection.roleTitles[widget.role] ?? widget.role,
         ),
       ),
       body: SafeArea(

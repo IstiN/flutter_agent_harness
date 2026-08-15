@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -385,6 +386,18 @@ class AgentService extends ChangeNotifier
     // persist facts across sessions.
     _subagentManager = SubagentManager(parentSessionId: '');
     _memoryController = MemoryController(env: env);
+    // Model-roles resolver backed by the TaskModelsStore: `smol` (compaction
+    // + explore) and `subagent` (delegation) overrides resolve through it;
+    // the Map reads the store lazily, so settings changes apply on the next
+    // spawn without rebuilding the agent.
+    if (_taskModelsStore != null) {
+      _taskRolesResolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: _StoreBackedRolesMap(_taskModelsStore!),
+        ),
+        secrets: _secretsEnv?.secretsSnapshot() ?? const {},
+      );
+    }
     // Task tool config: childTools is set after the full registry is built
     // (children inherit the core surface minus `task` itself).
     _taskConfig = TaskToolConfig(
@@ -485,6 +498,7 @@ class AgentService extends ChangeNotifier
       childTools: childSurface,
       streamFunction: streamFunction ?? _streamFunctionFor(config),
       model: config.toModel(),
+      rolesResolver: _taskRolesResolver,
       subagentManager: _subagentManager,
     );
     // Re-register the task tool with the real child surface.
@@ -666,6 +680,10 @@ class AgentService extends ChangeNotifier
 
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
+
+  /// Model-roles resolver over the [TaskModelsStore] (`smol` + `subagent`
+  /// overrides), lazily reflecting settings edits (Phase 3d).
+  ModelRolesResolver? _taskRolesResolver;
 
   /// Memory controller (Phase 1): durable cross-session memory.
   MemoryController? _memoryController;
@@ -1892,4 +1910,46 @@ class AgentService extends ChangeNotifier
       // into the agent's event plumbing; the next turn retries.
     }
   }
+}
+
+/// A live [Map] view of the [TaskModelsStore]'s role overrides in
+/// `roles:` config shape. Reads through on every access, so settings edits
+/// resolve on the next `task` spawn without rebuilding the agent (used by
+/// [_taskRolesResolver]).
+final class _StoreBackedRolesMap
+    with MapMixin<String, List<ModelRef>>
+    implements Map<String, List<ModelRef>> {
+  _StoreBackedRolesMap(this._store);
+
+  final TaskModelsStore _store;
+
+  @override
+  List<ModelRef>? operator [](Object? key) {
+    if (key is! String) return null;
+    final config = _store.overrideFor(key);
+    if (config == null) return null;
+    return [
+      ModelRef(
+        provider: config.providerKind,
+        modelId: config.modelId,
+        apiKeyName: config.apiKeyName,
+        baseUrl: config.baseUrl,
+      ),
+    ];
+  }
+
+  @override
+  Iterable<String> get keys =>
+      _store.configuredRoles.toList(growable: false);
+
+  @override
+  void operator []=(String key, List<ModelRef> value) =>
+      throw UnsupportedError('read-only');
+
+  @override
+  void clear() => throw UnsupportedError('read-only');
+
+  @override
+  List<ModelRef>? remove(Object? key) =>
+      throw UnsupportedError('read-only');
 }

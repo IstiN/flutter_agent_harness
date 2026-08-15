@@ -28,14 +28,20 @@ import '../exceptions.dart';
 
 /// The model roles supported by [ModelRolesConfig], in declaration order.
 ///
-/// Exact omp role names (`default`, `smol`, `slow`, `plan`).
-const modelRoleIds = ['default', 'smol', 'slow', 'plan'];
+/// Exact omp role names (`default`, `smol`, `slow`, `plan`) plus the
+/// harness-local `subagent` delegation role.
+const modelRoleIds = ['default', 'smol', 'slow', 'plan', 'subagent'];
 
 /// The role used for ordinary agent runs.
 const defaultModelRole = 'default';
 
 /// The role compaction summarization resolves through when configured.
 const smolModelRole = 'smol';
+
+/// The role spawned subagents resolve through when configured (items
+/// without a specialist role — `explore` keeps `smol`, `review` keeps
+/// `slow`). Falls back to the parent model when unset.
+const subagentModelRole = 'subagent';
 
 /// One entry of a role's fallback chain: a concrete model plus an optional
 /// API-key base-name override.
