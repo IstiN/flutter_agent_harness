@@ -976,4 +976,24 @@
 
 - feat(providers): DIAL provider kind — `{baseUrl}/openai/deployments/{model}/chat/completions` with `Api-Key` auth, optional `DIAL_API_VERSION` query, `/openai/models` listing; `--provider dial --model <deployment>` headless
 
+## 0.1.176
+
+- fix(analyze): await in try block, drop unused imports
+- test(crap): decompose + cover new subagents/a2a/memory methods (CRAP ≤ 12)
+- feat(ui): brand icon in dark + light forms, styleguide colors in onboarding
+- chore: drop unused imports
+- fix(providers): commit the FA_PROVIDERS filter + enabledProviders definitions unbreaking main
+- style: dart format task_executor
+- docs(subagents): mark all phases done + AGENTS.md bullets for memory/a2a
+- test(subagents): real-model test skips without ZAI key, longer timeout
+- feat(a2a): phase 5b — fah serve --a2a HTTP mount + full client↔server loop verified live
+- feat(ui): onboarding top padding, privacy link, centered wide layout + light macOS icon
+- feat(a2a): phase 5a — a2a: config, A2aManager lazy connect, task tool a2a:<name> remote agents, /a2a status
+- feat(memory): phase 2 — compaction extraction hook, maintain() pipeline, /memory command
+- feat(ui): onboarding redesigned pixel-close to the reference prototype
+- feat(subagents): reply tool, agent_message sibling messaging, completed_without_reply notice + pending-queue guards
+- fix(ci): remove stray file "flutter_app/\" breaking the windows checkout
+- feat(ui): Focus Timer as standalone dark card with circular progress ring
+- feat(ui): onboarding rewritten to match reference — 3-col mockups, circular Focus Timer, colorful icons
+
 ## Unreleased
