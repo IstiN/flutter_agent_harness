@@ -23,6 +23,75 @@ class FaMark extends StatelessWidget {
   }
 }
 
+/// The Fa brand app tile: rounded square with the gradient `>_` glyph —
+/// the same artwork as the platform launcher icons. Light and dark forms
+/// match the brand icons; [dark] defaults to the theme brightness.
+class FaBrandTile extends StatelessWidget {
+  const FaBrandTile({super.key, this.size = 28, this.dark});
+
+  final double size;
+
+  /// Forces the dark/light form; null follows the theme brightness.
+  final bool? dark;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = dark ?? Theme.of(context).brightness == Brightness.dark;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: SvgPicture.string(
+        isDark ? kFaBrandTileDarkSvg : kFaBrandTileLightSvg,
+        fit: BoxFit.contain,
+      ),
+    );
+  }
+}
+
+/// Brand tile artwork (1024 viewBox, same geometry as `icon/icon.svg`).
+const String kFaBrandTileDarkSvg = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="chev" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8191f6"/>
+      <stop offset="1" stop-color="#75abec"/>
+    </linearGradient>
+    <linearGradient id="under" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#67d1de"/>
+      <stop offset="1" stop-color="#60e5d6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="#0b0f16"/>
+  <rect x="16" y="16" width="992" height="992" rx="208" fill="none" stroke="#1c2637" stroke-width="32"/>
+  <g transform="translate(520 512) scale(1.15) translate(-520 -592)">
+    <path d="M 280 434 L 492 541 L 280 648" fill="none" stroke="url(#chev)" stroke-width="48" stroke-linecap="butt" stroke-linejoin="miter"/>
+    <rect x="512" y="712" width="248" height="38" fill="url(#under)"/>
+  </g>
+</svg>
+''';
+
+/// Light form (same geometry as `icon/icon_light.svg`).
+const String kFaBrandTileLightSvg = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="chev" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8191f6"/>
+      <stop offset="1" stop-color="#75abec"/>
+    </linearGradient>
+    <linearGradient id="under" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#67d1de"/>
+      <stop offset="1" stop-color="#60e5d6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="#fafbfe"/>
+  <rect x="16" y="16" width="992" height="992" rx="208" fill="none" stroke="#e5eaf2" stroke-width="32"/>
+  <g transform="translate(520 512) scale(1.15) translate(-520 -592)">
+    <path d="M 280 434 L 492 541 L 280 648" fill="none" stroke="url(#chev)" stroke-width="48" stroke-linecap="butt" stroke-linejoin="miter"/>
+    <rect x="512" y="712" width="248" height="38" fill="url(#under)"/>
+  </g>
+</svg>
+''';
+
 /// Inline markup for the Fa sparkle (24×24).
 const String kFaMarkSvg = '''
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">

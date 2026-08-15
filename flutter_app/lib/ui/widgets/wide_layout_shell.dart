@@ -192,7 +192,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       width: 28,
       height: 28,
       child: Center(
-        child: SizedBox(width: 24, height: 24, child: FaMark(size: 24)),
+        child: SizedBox(width: 24, height: 24, child: FaBrandTile(size: 24)),
       ),
     );
 

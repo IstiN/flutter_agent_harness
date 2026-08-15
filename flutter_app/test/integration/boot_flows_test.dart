@@ -157,7 +157,9 @@ void main() {
         // Four pages, Skip on every one of them.
         for (var page = 0; page < 3; page++) {
           expect(find.text('Skip'), findsOneWidget, reason: 'page ${page + 1}');
-          await tester.tap(find.text('Continue'));
+          await tester.tap(
+            find.text(page == 2 ? 'Continue without access' : 'Continue'),
+          );
           await tester.pumpAndSettle();
         }
         expect(find.text('Open Fa'), findsOneWidget);

@@ -646,7 +646,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            FaMark(size: 48),
+            FaBrandTile(size: 48),
             SizedBox(height: 24),
             CircularProgressIndicator(),
           ],

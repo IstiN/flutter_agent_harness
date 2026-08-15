@@ -10,6 +10,8 @@
     </linearGradient>
   </defs>
   <rect width="1024" height="1024" fill="#0b0f16"/>
+  <g transform="translate(520 512) scale(1.15) translate(-520 -592)">
   <path d="M 280 434 L 492 541 L 280 648" fill="none" stroke="url(#chev)" stroke-width="48" stroke-linecap="butt" stroke-linejoin="miter"/>
   <rect x="512" y="712" width="248" height="38" fill="url(#under)"/>
+  </g>
 </svg>

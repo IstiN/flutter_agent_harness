@@ -102,7 +102,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Give access only when it helps.'), findsOneWidget);
 
-      await tester.tap(find.text('Continue'));
+      await tester.tap(find.text('Continue without access'));
       await tester.pumpAndSettle();
       expect(find.text('Your sandbox is ready.'), findsOneWidget);
       expect(find.text('Open Fa'), findsOneWidget);

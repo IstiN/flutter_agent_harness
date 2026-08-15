@@ -847,7 +847,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
           child: Row(
             children: [
-              const FaMark(size: 28),
+              const FaBrandTile(size: 28),
               const SizedBox(width: 10),
               // The screen title yields to the session chip on narrow frames:
               // it ellipsizes first, the chip keeps a readable width.
