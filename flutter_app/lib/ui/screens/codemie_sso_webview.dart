@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 
 /// A full-screen WebView that walks the user through the CodeMie SSO login
 /// and intercepts the `http://localhost:<port>/?token=...` redirect.
@@ -128,7 +129,7 @@ class _CodeMieSsoWebViewPageState extends State<CodeMieSsoWebViewPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(
+      appBar: faAppBar(
         title: const Text(
           'CodeMie Sign In',
         ), // l10n:ignore — proper noun, fallback-only screen

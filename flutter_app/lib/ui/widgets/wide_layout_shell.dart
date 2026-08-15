@@ -63,6 +63,37 @@ class WideLayoutShell extends StatefulWidget {
   State<WideLayoutShell> createState() => _WideLayoutShellState();
 }
 
+/// Whether we're on macOS desktop (traffic lights float over content).
+bool get faIsMacOSDesktop =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
+/// An [AppBar] with the macOS traffic-light clearance baked in. Pushed
+/// routes (Settings, Files, provider editor, …) otherwise render their
+/// back button/title under the floating traffic lights — the window uses
+/// fullSizeContentView and only the shell screens reserve their own strip.
+PreferredSizeWidget faAppBar({
+  Widget? title,
+  List<Widget>? actions,
+  Widget? leading,
+  bool? centerTitle,
+}) {
+  final bar = AppBar(
+    title: title,
+    actions: actions,
+    leading: leading,
+    centerTitle: centerTitle,
+  );
+  if (!faIsMacOSDesktop) return bar;
+  const inset = 28.0;
+  return PreferredSize(
+    preferredSize: const Size.fromHeight(kToolbarHeight + inset),
+    child: Padding(
+      padding: const EdgeInsets.only(top: inset),
+      child: bar,
+    ),
+  );
+}
+
 class _WideLayoutShellState extends State<WideLayoutShell> {
   bool _sidebarCollapsed = false;
 
@@ -500,7 +531,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     await pushFaPage<void>(
       context,
       Scaffold(
-        appBar: AppBar(title: Text(context.l10n.chatFilesTooltip)),
+        appBar: faAppBar(title: Text(context.l10n.chatFilesTooltip)),
         body: FileBrowser(
           env: service.env,
           inlinePreview: false,

@@ -29,6 +29,7 @@ import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/span_grid_delegate.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 
 /// iOS-home-screen-style apps launcher: the app's home on narrow layouts
 /// (the wide layout keeps the classic chat home). A dynamic square grid of
@@ -687,7 +688,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => Scaffold(
-          appBar: AppBar(title: Text(context.l10n.chatFilesTooltip)),
+          appBar: faAppBar(title: Text(context.l10n.chatFilesTooltip)),
           body: FileBrowser(
             env: service.env,
             inlinePreview: false,

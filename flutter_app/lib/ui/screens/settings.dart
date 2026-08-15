@@ -45,6 +45,7 @@ import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
 import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_types.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 
 export 'package:fa_ui/fa_ui.dart'
     show ProviderPreset, ModelIdAutocompleteField, OpenRouterOAuthButton;
@@ -2018,7 +2019,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final taskModels =
         widget.taskModelsStore ?? TaskModelsScope.maybeOf(context);
     return Scaffold(
-      appBar: AppBar(title: Text(context.l10n.settingsTitle)),
+      appBar: faAppBar(title: Text(context.l10n.settingsTitle)),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),

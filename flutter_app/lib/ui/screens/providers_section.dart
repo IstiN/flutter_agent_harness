@@ -25,6 +25,7 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/webllm/webllm_types.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 
 export 'package:fa_ui/fa_ui.dart'
     show
@@ -211,7 +212,7 @@ class _OnDeviceFormPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(preset.labelFor(context))),
+      appBar: faAppBar(title: Text(preset.labelFor(context))),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
