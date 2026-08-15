@@ -351,25 +351,6 @@ void main() {
       await expectGolden(tester, 'settings_provider_editor');
     });
 
-    testWidgets('default model picker page', (tester) async {
-      await pumpGolden(
-        tester,
-        size: goldenSizeDesktop,
-        wrap: _wrapPage,
-        DefaultModelPickerPage(
-          provider: ProviderPreset.openrouter,
-          onApply: (_) async {},
-          modelsFetcher: _editorModels,
-        ),
-      );
-      // The post-frame /models fetch feeds the quick select.
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pumpAndSettle();
-
-      // The provider header, the prefilled model field and Apply.
-      await expectGolden(tester, 'settings_model_picker');
-    });
-
     testWidgets('media slot provider picker page', (tester) async {
       final registry = ProviderRegistry.inMemory();
       await registry.add(
@@ -418,10 +399,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pumpAndSettle();
 
-      // The provider header, the prefilled model field, the voice preset
-      // picker (Gemini voices, with the sample preview button), the Save
-      // action, and the capability chips derived from the endpoint's
-      // /models list.
+      // The provider header, the model list picker (search field + the
+      // fetched list), the voice preset picker (Gemini voices, with the
+      // sample preview button), the Save action, and the capability chips
+      // derived from the endpoint's /models list.
       await expectGolden(tester, 'settings_media_model_page');
     });
 

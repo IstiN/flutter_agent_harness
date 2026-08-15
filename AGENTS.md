@@ -146,13 +146,27 @@ factual: paths, commands, invariants — no essays.
   endpoint resolves ONLY its scoped store keys (env names never hijack a
   custom endpoint); `/key set` writes store-only, never config.
   `/settings` is the interactive settings hub: a TUI picker whose entries
-  (Provider, Edit/delete provider, Chat model, Model parameters, Approval
-  mode, Agent mode, API keys, MCP servers) launch the same flows the
-  dedicated slash commands open; line mode prints a summary. The
-  provider→model pick flows live in `lib/src/cli/settings_flow.dart` in the
+  (Provider, Edit/delete provider, Chat model, Model parameters, Media
+  models, Agent models, Approval mode, Agent mode, API keys, MCP servers)
+  launch the same flows the dedicated slash commands open; line mode prints
+  a summary. ALL TUI pickers (generic host pickers included) have
+  type-to-filter + backspace (generic ones filter their static item list
+  locally via `menuAllItems`, the models picker rebuilds through
+  `buildModelMenu`; a no-match filter keeps the title + `(no matches)`).
+  The provider→model pick flows live in `lib/src/cli/settings_flow.dart` in the
   NAMED `SettingsFlow` extension (public `runProviderModelFlow`/
-  `startChatModelFlow`/`startMediaSlotFlow`), so tests can drive them
-  line-mode (see `test/cli/settings_flow_test.dart`).
+  `startChatModelFlow`/`startMediaSlotFlow`/`startAgentModelFlow`), so
+  tests can drive them line-mode (see `test/cli/settings_flow_test.dart`).
+  The model-list fetch dispatches per dialect
+  (`_fetchProviderModelIds`: CodeMie `/llm_models` by URL marker, DIAL
+  deployments when the spec is `dial`, else OpenAI `/models`; the saved
+  entry's own key authenticates; failures fall back to manual entry).
+  `startAgentModelFlow` pins the `smol`/`subagent` role chains through
+  `ModelRolesResolver.setRoleChain`/`clearRoleChain` (the resolver is
+  created on demand when the config had no `roles:` section —
+  `AgentCliConfig.modelRolesResolver` is mutable) and persists via
+  `onModelsConfigChanged` (bin/fah.dart's persistConfig reads the live
+  resolver config).
 - `lib/src/prompts/prompt_overrides.dart` — `prompts:` config section maps
   prompt names to file path or inline text; strict validation; flags
   `--system-prompt(-file)` > config > built-in.
@@ -205,6 +219,11 @@ factual: paths, commands, invariants — no essays.
   `inputModalitiesFor`): CLI model switches recompute `Model.input` from it
   and the model pickers show the ✓/✗ marker; `packages/fa_ui` re-exports it
   (one marker list for CLI and app).
+  `lib/src/providers/models_for_endpoint.dart` — the shared "list this
+  endpoint's models" dispatch (`fetchModelsForEndpoint`): CodeMie
+  `/llm_models` by URL marker, DIAL deployments by `provider: 'dial'`,
+  else OpenAI `/models`; every model picker (CLI flows, app pages) routes
+  through it so no dialect silently degrades to manual entry.
 - `packages/fa_ui/` — reusable Flutter package for hosts embedding the Fa
   agent: the Fa theme (`FahPalette`/`FahLightPalette`/`FahColors.of(context)`,
   `buildFahTheme()`/`buildFahThemeLight()` + chat themes) with the
@@ -219,10 +238,21 @@ factual: paths, commands, invariants — no essays.
   `faVoicePresetsFor` (per-(baseUrl, modelId) TTS voice presets — Gemini /
   Kokoro / OpenAI — with inline sample previews), and the stores (`ProviderRegistry`,
   `MediaModelsStore`, `SessionKeysStore`, `KeychainStore`,
-  `modelIdSuggestsVision`). The chat leaf widgets live there too
-  (`lib/src/chat/`): the Markdown style/sandbox image resolver
-  (`markdown_style.dart`), the inline audio/video players
-  (`media_player.dart`), the approval/ask/secret-request sheets, the
+  `modelIdSuggestsVision`). Every post-provider model choice uses ONE
+  pattern: the fetched list renders immediately with the field text as the
+  live quick-search, and a `Use "<query>"` row keeps manual entry —
+  `FaModelListPicker` (`src/widgets/model_list_picker.dart`, the initial /
+  tap-picked value shows the FULL list with a check, only user typing
+  filters) for the form pages (`MediaSlotModelPage`, `TaskRoleConfigPage`),
+  the same `Use "<filter>"` row inside `UnifiedModelPickerPage` (applies on
+  the ACTIVE provider, key resolved via the registry). The endpoint fetch
+  goes through the core `fetchModelsForEndpoint` dispatch (DIAL deployments
+  / CodeMie marker / OpenAI `/models`); the legacy two-step
+  `DefaultModelProviderPickerPage`/`DefaultModelPickerPage` are gone.
+  The chat leaf widgets live there too (`lib/src/chat/`): the Markdown
+  style/sandbox image resolver (`markdown_style.dart`), the inline
+  audio/video players (`media_player.dart`), the approval/ask/
+  secret-request sheets, the
   transcript message tile (`chat_message_tile.dart`), the composer
   (`chat_composer.dart` — file/gallery/camera picking through the
   `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks, voice

@@ -1042,9 +1042,10 @@ Future<void> main(List<String> args) async {
         // Prompt overrides are static per session; keep the loaded raw map
         // so saving doesn't drop the section.
         promptOverrides: saved.promptOverrides,
-        // Roles are static per session except for a `/model` switch, which
-        // re-pins the default chain on the resolver.
-        modelRoles: rolesResolver?.config ?? saved.modelRoles,
+        // Roles: the live resolver's config (a `/model` switch re-pins the
+        // default chain, the settings-hub agent-models flow pins the
+        // smol/subagent chains — possibly creating the resolver on demand).
+        modelRoles: cli.config.modelRolesResolver?.config ?? saved.modelRoles,
         // TTSR rules are static per session; keep the loaded config so
         // saving doesn't drop the section.
         ttsr: saved.ttsr,

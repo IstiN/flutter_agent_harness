@@ -51,11 +51,18 @@ extension SettingsFlow on AgentCli {
     );
     if (provider == null) return;
     final (entry, spec, baseUrl) = provider;
+    // The saved entry's own key authenticates the model-list fetch (the
+    // generic key resolution knows nothing about entry key names).
+    final entryKeyName = entry?.keyName;
+    final entryToken = entryKeyName == null
+        ? null
+        : config.secureKeys?.read(entryKeyName);
     final modelId = await _pickModelStep(
       title,
       spec,
       baseUrl,
       entry?.modelId ?? _agent.state.model.id,
+      token: entryToken,
     );
     if (modelId == null) return;
     await apply(
@@ -111,18 +118,21 @@ extension SettingsFlow on AgentCli {
   }
 
   /// Step 2 of [runProviderModelFlow]: pick a model from the provider's
-  /// endpoint. OpenAI-like endpoints offer their `/models` list (with a
-  /// "+ enter manually" escape); anything else — an empty list included —
-  /// falls back to manual entry. Returns null when any prompt is cancelled.
+  /// endpoint. Model-listing endpoints (OpenAI-compatible, DIAL
+  /// deployments, CodeMie `/llm_models` — the dispatch lives in
+  /// `_fetchModelsForFlow`) offer their list with a "+ enter manually"
+  /// escape; anything else — an empty list included — falls back to manual
+  /// entry. Returns null when any prompt is cancelled.
   Future<String?> _pickModelStep(
     String title,
     ProviderSpec spec,
     String baseUrl,
-    String currentModelId,
-  ) async {
-    if (spec.kind == 'openai-completions') {
-      io.writeln('fetching models from $baseUrl/models ...');
-      final models = await _fetchModelsForFlow(spec, baseUrl);
+    String currentModelId, {
+    String? token,
+  }) async {
+    if (spec.kind == 'openai-completions' || spec.name == 'dial') {
+      io.writeln('fetching models from $baseUrl ...');
+      final models = await _fetchModelsForFlow(spec, baseUrl, token: token);
       if (models.isNotEmpty) {
         final picked = await _pickFromModelList(title, models, currentModelId);
         if (picked == null) return null;
@@ -223,6 +233,95 @@ extension SettingsFlow on AgentCli {
     );
   }
 
+  /// Settings → Agent models: pick the task role (Quick model / Subagents
+  /// model), then provider → model through the shared two-level flow, and
+  /// the role's chain is pinned — live on the resolver from the next spawn
+  /// and persisted into the config's `roles:` section. A role can also be
+  /// cleared back to the main model (the chain is dropped, the role
+  /// inherits `default`).
+  Future<void> startAgentModelFlow() async {
+    final role = await _pickOption('agent models — role', [
+      for (final roleId in const [smolModelRole, subagentModelRole])
+        (
+          'role:$roleId',
+          _agentRoleLabel(roleId),
+          _agentRoleChainSummary(roleId),
+        ),
+    ]);
+    if (role == null) return;
+    final roleId = role.substring(5);
+    final action =
+        await _pickOption('agent models — ${_agentRoleLabel(roleId)}', [
+          ('set', 'Pick a model', 'provider → model list'),
+          ('clear', 'Use the main model', 'drop the override'),
+        ]);
+    if (action == null) return;
+    if (action == 'clear') {
+      final resolver = config.modelRolesResolver;
+      if (resolver != null) {
+        resolver.clearRoleChain(roleId);
+        config.onModelsConfigChanged?.call();
+      }
+      io.writeln('role $roleId → main model');
+      return;
+    }
+    await runProviderModelFlow(
+      title: 'agent ${_agentRoleLabel(roleId)}',
+      apply: (choice) async {
+        final entry = choice.savedEntry;
+        final ref = ModelRef(
+          provider: choice.spec.name,
+          modelId: choice.modelId,
+          // The catalog default URL is implicit; a saved custom entry (or a
+          // non-default endpoint) pins its URL explicitly.
+          baseUrl: entry != null || choice.baseUrl != choice.spec.defaultBaseUrl
+              ? choice.baseUrl
+              : null,
+          apiKeyName: entry?.keyName,
+        );
+        _ensureRolesResolver().setRoleChain(roleId, [ref]);
+        config.onModelsConfigChanged?.call();
+        io.writeln('role $roleId → ${choice.modelId} @ ${choice.baseUrl}');
+      },
+    );
+  }
+
+  /// The display label of an agent-model role (mirrors the app's
+  /// TaskModelsSection titles).
+  String _agentRoleLabel(String roleId) => switch (roleId) {
+    smolModelRole => 'Quick model (smol)',
+    subagentModelRole => 'Subagents model (subagent)',
+    _ => roleId,
+  };
+
+  /// The role picker's description: the pinned chain head, or the
+  /// main-connection fallback when the role carries no chain.
+  String _agentRoleChainSummary(String roleId) {
+    final chain = config.modelRolesResolver?.config.roles[roleId];
+    if (chain == null || chain.isEmpty) return 'main connection';
+    final head = chain.first;
+    return '${head.provider}/${head.modelId}';
+  }
+
+  /// The roles resolver, created on demand when the session started without
+  /// a `roles:` config section. Auxiliary roles (smol/subagent) resolve
+  /// lazily through it; the untouched `default` role keeps the legacy
+  /// single-provider wiring. Secrets come from the secure-key snapshot so
+  /// `apiKeyName` chain entries authenticate like startup-built ones.
+  ModelRolesResolver _ensureRolesResolver() {
+    final existing = config.modelRolesResolver;
+    if (existing != null) return existing;
+    final keys = config.secureKeys;
+    final resolver = ModelRolesResolver(
+      config: ModelRolesConfig(roles: const {}),
+      secrets: keys == null
+          ? const {}
+          : {for (final name in keys.names) name: keys.read(name)!},
+    );
+    config.modelRolesResolver = resolver;
+    return resolver;
+  }
+
   /// The media-slot picker's description: the current override or the
   /// main-connection fallback.
   String _mediaSlotDescription(ModelsConfig models, String slot) {
@@ -257,6 +356,11 @@ extension SettingsFlow on AgentCli {
         key: 'media',
         label: 'Media models',
         description: 'image, speech, music, video slots',
+      ),
+      const MenuItem(
+        key: 'agent-models',
+        label: 'Agent models',
+        description: 'quick + subagent model overrides',
       ),
       MenuItem(
         key: 'approval',
@@ -294,6 +398,7 @@ extension SettingsFlow on AgentCli {
     'model': startChatModelFlow,
     'model-edit': () => _handleModelEdit(''),
     'media': startMediaSlotFlow,
+    'agent-models': startAgentModelFlow,
     'approval': () async => _openApprovalPicker(),
     'mode': () async => _openModePicker(),
     'keys': () => _handleKeyCommand(''),
@@ -307,6 +412,9 @@ extension SettingsFlow on AgentCli {
     io.writeln('model: ${model.id}');
     io.writeln('approval: ${_approval.mode.label}');
     io.writeln('mode: ${_currentMode.name}');
-    io.writeln('change via /provider, /model, /approval, /mode, /key, /mcp');
+    io.writeln(
+      'change via /provider, /model, /approval, /mode, /key, /mcp '
+      '(agent models: the /settings hub)',
+    );
   }
 }

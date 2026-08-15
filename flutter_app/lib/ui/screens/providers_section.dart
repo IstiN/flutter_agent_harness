@@ -30,8 +30,6 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart';
 export 'package:fa_ui/fa_ui.dart'
     show
         ProvidersSection,
-        DefaultModelProviderPickerPage,
-        DefaultModelPickerPage,
         FaOnDeviceRoute,
         FaChatConnection,
         FaChatModelConfig,

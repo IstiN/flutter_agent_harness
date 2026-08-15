@@ -216,8 +216,19 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     try {
       final key = widget.registry?.keyFor(provider.id) ?? '';
 
-      // Try the standard OpenAI-compatible /models first.
-      var (ids, windows, caps) = await fetch(provider.baseUrl, apiKey: key);
+      // The host/test override wins; production goes through the core
+      // dispatch (DIAL deployments + the CodeMie marker included).
+      var (ids, windows, caps) = widget.modelsFetcher != null
+          ? await fetch(provider.baseUrl, apiKey: key)
+          : await fetchModelsForEndpoint(
+              provider.baseUrl,
+              apiKey: key,
+              provider:
+                  ProviderPreset.fromBaseUrl(provider.baseUrl) ==
+                      ProviderPreset.dial
+                  ? 'dial'
+                  : null,
+            );
 
       // CodeMie (and other non-standard endpoints): fall back to the
       // provider-specific fetcher when the standard one returns empty.
@@ -300,6 +311,33 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     return _entries.where((e) => e.matches(_filter)).toList();
   }
 
+  /// The manual escape's target: the typed id applied on the ACTIVE
+  /// provider's endpoint, its key resolved through the registry like any
+  /// listed entry's.
+  _ModelEntry _manualEntry(String typedId) {
+    final base = _entryFromActive();
+    final registry = widget.registry;
+    var key = '';
+    if (registry != null) {
+      final activeId = widget.connection.activeProviderId;
+      if (activeId != null) {
+        key = registry.keyFor(activeId) ?? '';
+      } else {
+        final match = providerForBaseUrl(base.baseUrl, registry);
+        if (match is CustomProvider) key = registry.keyFor(match.id) ?? '';
+      }
+    }
+    return _ModelEntry(
+      provider: base.provider,
+      providerId: base.providerId,
+      baseUrl: base.baseUrl,
+      apiKey: key,
+      modelId: typedId,
+      contextWindow: fallbackContextWindow,
+      maxTokens: fallbackMaxTokens,
+    );
+  }
+
   Future<void> _selectModel(_ModelEntry entry) async {
     setState(() => _error = null);
     try {
@@ -375,6 +413,26 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
                   : ListView(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       children: [
+                        // The manual escape: the typed id is always
+                        // applicable on the active provider's endpoint.
+                        if (_filter.isNotEmpty &&
+                            !_entries.any((e) => e.modelId == _filter))
+                          ListTile(
+                            leading: Icon(
+                              Icons.edit_outlined,
+                              size: 20,
+                              color: theme.colorScheme.primary,
+                            ),
+                            title: Text(
+                              strings.modelPickerUseManual(_filter),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              _activeProviderLabel(),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => _selectModel(_manualEntry(_filter)),
+                          ),
                         for (final entry in entries)
                           _modelTile(context, theme, entry),
                         // On-device routes.

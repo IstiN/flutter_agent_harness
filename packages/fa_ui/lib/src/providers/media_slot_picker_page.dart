@@ -6,7 +6,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:http/http.dart' as http;
 
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
@@ -17,36 +16,17 @@ import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/vision_models.dart';
-import 'package:fa_ui/src/widgets/model_id_field.dart';
+import 'package:fa_ui/src/widgets/model_list_picker.dart';
 
 /// The production [ModelsEndpointFetcher] shared by the settings form and
-/// the media slot picker: GETs `<baseUrl>/models` (OpenAI shape, bearer key
-/// when present) and parses it with the shared harness parser (ids, context
-/// windows, output caps). Failures return empty info — free-text model entry
-/// keeps working.
+/// the media slot picker: the openai-compatible branch of the core
+/// [fetchModelsForEndpoint] dispatch (GETs `<baseUrl>/models`, bearer key
+/// when present, shared parser for ids/windows/caps). Failures return empty
+/// info — free-text model entry keeps working.
 Future<ModelsEndpointInfo> defaultModelsEndpointFetcher(
   String baseUrl, {
   required String apiKey,
-}) async {
-  try {
-    final uri = Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models');
-    final response = await http
-        .get(
-          uri,
-          headers: {
-            'Accept': 'application/json',
-            if (apiKey.isNotEmpty) 'authorization': 'Bearer $apiKey',
-          },
-        )
-        .timeout(const Duration(seconds: 15));
-    if (response.statusCode != 200) {
-      return (const <String>[], const <String, int>{}, const <String, int>{});
-    }
-    return parseModelsResponse(response.body);
-  } on Object {
-    return (const <String>[], const <String, int>{}, const <String, int>{});
-  }
-}
+}) => fetchModelsForEndpoint(baseUrl, apiKey: apiKey);
 
 /// The outcome of the media slot flow ([MediaSlotProviderPickerPage] →
 /// [MediaSlotModelPage]): either a [override] to save or [cleared] (remove
@@ -313,9 +293,6 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   List<String> _endpointModels = const [];
   var _modelsLoading = false;
 
-  /// The model field's focus node (drives the quick-select overlay).
-  final FocusNode _modelFocusNode = FocusNode();
-
   String? _error;
 
   /// Id fragments suggesting a media capability, matched case-insensitively
@@ -369,27 +346,38 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
 
   @override
   void dispose() {
-    _modelFocusNode.dispose();
     _modelController.dispose();
     _voiceController.dispose();
     super.dispose();
   }
 
-  /// Fetches `<baseUrl>/models` (OpenAI shape) for the model field's quick
-  /// select and the capability hints. Silent on failure — free-text entry
-  /// always works, the field just loses its suggestions.
+  /// Fetches the endpoint's model list for the picker: the injected
+  /// [MediaSlotModelPage.modelsFetcher] override (tests, host codemie
+  /// wiring) wins; otherwise the core [fetchModelsForEndpoint] dispatch
+  /// handles the DIAL deployments endpoint and CodeMie marker itself.
+  /// Silent on failure — free-text entry always works, the picker just
+  /// shows the manual-entry note.
   Future<void> _fetchEndpointModels() async {
     final baseUrl = _baseUrl;
     if (baseUrl.isEmpty) return;
     setState(() => _modelsLoading = true);
     try {
-      final fetch = widget.modelsFetcher ?? defaultModelsEndpointFetcher;
       final key = resolveProviderKey(
         widget.provider,
         registry: widget.registry,
         keysStore: SessionKeysScope.maybeOf(context),
       );
-      final (ids, _, _) = await fetch(baseUrl, apiKey: key);
+      final override = widget.modelsFetcher;
+      final (ids, _, _) = override != null
+          ? await override(baseUrl, apiKey: key)
+          : await fetchModelsForEndpoint(
+              baseUrl,
+              apiKey: key,
+              provider:
+                  ProviderPreset.fromBaseUrl(baseUrl) == ProviderPreset.dial
+                  ? 'dial'
+                  : null,
+            );
       if (!mounted) return;
       setState(() => _endpointModels = ids);
     } on Object {
@@ -476,9 +464,8 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              ModelIdAutocompleteField(
+              FaModelListPicker(
                 controller: _modelController,
-                focusNode: _modelFocusNode,
                 models: _endpointModels,
                 loading: _modelsLoading,
               ),

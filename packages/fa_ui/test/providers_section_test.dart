@@ -433,6 +433,52 @@ void main() {
       expect(find.textContaining('Local', findRichText: true), findsWidgets);
     });
 
+    testWidgets('an unlisted id offers the manual "Use" row on the active '
+        'provider', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      registry.rememberKey(provider.id, 'sk-acme');
+      final connection = _FakeConnection(
+        baseUrl: 'https://acme.example/v1',
+        kind: 'openai-completions',
+      )..providerId = provider.id;
+      await _pump(
+        tester,
+        DefaultChatModelSection(
+          connection: connection,
+          onApply: connection.apply,
+          registry: registry,
+          modelsFetcher: _someModels,
+        ),
+      );
+
+      await tester.tap(find.text('test-model · Acme'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
+
+      // An id the endpoint does not list: the manual row shows and applies
+      // it with the active provider's endpoint + resolved key.
+      await tester.enterText(find.byType(TextField), 'my-custom');
+      await tester.pumpAndSettle();
+      expect(find.text('Use "my-custom"'), findsOneWidget);
+      expect(find.textContaining('acme-1', findRichText: true), findsNothing);
+      await tester.tap(find.text('Use "my-custom"'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(UnifiedModelPickerPage), findsNothing);
+      expect(connection.applied, isNotNull);
+      expect(connection.applied!.modelId, 'my-custom');
+      expect(connection.applied!.baseUrl, 'https://acme.example/v1');
+      expect(connection.applied!.apiKey, 'sk-acme');
+      expect(connection.applied!.providerId, provider.id);
+    });
+
     testWidgets('on-device routes render and their page unwinds the flow', (
       tester,
     ) async {
@@ -479,7 +525,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // The page popped true: the whole flow unwound and onApply ran.
-      expect(find.byType(DefaultModelProviderPickerPage), findsNothing);
+      expect(find.byType(UnifiedModelPickerPage), findsNothing);
       expect(connection.applied!.providerKind, 'webllm');
       expect(connection.model, 'local-model');
     });

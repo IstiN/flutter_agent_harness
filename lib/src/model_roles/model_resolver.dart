@@ -235,19 +235,41 @@ final class ModelRolesResolver {
   /// Replaces the `default` role's chain (runtime `/model <id>` switch);
   /// the new chain takes effect on the next run.
   void setDefaultChain(List<ModelRef> chain) {
+    setRoleChain(defaultModelRole, chain);
+  }
+
+  /// Replaces [role]'s chain (the settings-hub agent-models flow); the new
+  /// chain takes effect on the next run.
+  void setRoleChain(String role, List<ModelRef> chain) {
     if (chain.isEmpty) {
       throw ArgumentError.value(
         chain,
         'chain',
-        'the default role needs at least one chain entry',
+        'a role needs at least one chain entry',
       );
     }
     config = ModelRolesConfig(
-      roles: {...config.roles, defaultModelRole: chain},
+      roles: {...config.roles, role: chain},
       pathOverrides: config.pathOverrides,
       retry: config.retry,
     );
-    _wrappers.remove(defaultModelRole);
+    _wrappers.remove(role);
+  }
+
+  /// Drops [role]'s chain (the role falls back to the `default` chain — the
+  /// "use the main model" escape of the settings-hub agent-models flow).
+  void clearRoleChain(String role) {
+    if (role == defaultModelRole) {
+      throw ArgumentError.value(role, 'role', 'the default role is required');
+    }
+    if (!config.roles.containsKey(role)) return;
+    final roles = {...config.roles}..remove(role);
+    config = ModelRolesConfig(
+      roles: roles,
+      pathOverrides: config.pathOverrides,
+      retry: config.retry,
+    );
+    _wrappers.remove(role);
   }
 
   /// Renders the roles overview for `/model`: each configured role with its

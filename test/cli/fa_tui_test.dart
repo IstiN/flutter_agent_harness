@@ -308,16 +308,6 @@ void main() {
       expect(model.menuModelMode, isTrue);
       expect(model.view().content, contains('[Sessions]'));
 
-      // Typing does NOT filter a generic picker (static items).
-      model =
-          model
-                  .update(
-                    KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'w')),
-                  )
-                  .$1
-              as FaTuiModel;
-      expect(model.menuItems, hasLength(2));
-
       // Down + enter selects the second item; the picker closes.
       model =
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.down))).$1
@@ -330,6 +320,86 @@ void main() {
       expect((result.$1 as FaTuiModel).menuOpen, isFalse);
     },
   );
+
+  test('generic picker type-to-filter narrows the static items', () async {
+    final picked = <String, String>{};
+    var model = FaTuiModel(
+      callbacks: callbacks(picked: picked),
+      isExited: () => false,
+    );
+    model =
+        model
+                .update(
+                  OpenPickerMsg('m', 'chat model — model', const [
+                    MenuItem(key: 'gpt-4o', label: 'gpt-4o'),
+                    MenuItem(key: 'claude-sonnet', label: 'claude-sonnet'),
+                    MenuItem(
+                      key: 'kimi-k3',
+                      label: 'kimi-k3',
+                      description: 'fast',
+                    ),
+                  ]),
+                )
+                .$1
+            as FaTuiModel;
+
+    // Typing filters locally (label + description, case-insensitive).
+    for (final rune in 'KIMI'.split('')) {
+      model =
+          model.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: rune))).$1
+              as FaTuiModel;
+    }
+    expect(model.modelFilter, 'KIMI');
+    expect(model.menuItems.map((i) => i.key), ['kimi-k3']);
+    expect(model.view().content, contains('[chat model — model: KIMI]'));
+
+    // Backspace restores the full list; the filter echo disappears.
+    for (var i = 0; i < 4; i++) {
+      model =
+          model.update(KeyPressMsg(const TeaKey(code: KeyCode.backspace))).$1
+              as FaTuiModel;
+    }
+    expect(model.modelFilter, isEmpty);
+    expect(model.menuItems, hasLength(3));
+
+    // Enter on the filtered list resolves the visible item.
+    for (final rune in 'sonnet'.split('')) {
+      model =
+          model.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: rune))).$1
+              as FaTuiModel;
+    }
+    final result = model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+    await result.$2?.call();
+    expect(picked, {'m': 'claude-sonnet'});
+    final closed = result.$1 as FaTuiModel;
+    expect(closed.menuOpen, isFalse);
+    expect(closed.menuAllItems, isEmpty);
+  });
+
+  test('generic picker filter with no matches keeps the title row', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model =
+        model
+                .update(
+                  OpenPickerMsg('m', 'Models', const [
+                    MenuItem(key: 'a', label: 'alpha'),
+                  ]),
+                )
+                .$1
+            as FaTuiModel;
+    for (final rune in 'zzz'.split('')) {
+      model =
+          model.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: rune))).$1
+              as FaTuiModel;
+    }
+    expect(model.menuItems, isEmpty);
+    final frame = model.view().content;
+    expect(frame, contains('[Models: zzz]'));
+    expect(frame, contains('(no matches)'));
+    // Enter on an empty filtered list is a no-op (picker stays open).
+    final result = model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+    expect((result.$1 as FaTuiModel).menuOpen, isTrue);
+  });
 
   test('accepting a picker command from the slash menu submits it', () async {
     final submitted = <String>[];

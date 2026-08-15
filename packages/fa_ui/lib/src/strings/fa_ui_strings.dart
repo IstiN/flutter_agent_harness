@@ -165,6 +165,13 @@ abstract class FaUiStrings {
   /// Helper shown while the `/models` fetch is in flight.
   String get settingsModelsFetching;
 
+  /// The model picker's manual-entry escape row (the typed id stays valid
+  /// even when the endpoint's list lacks it).
+  String modelPickerUseManual(String query);
+
+  /// The model picker's note when the endpoint listed no models.
+  String get modelPickerNoEndpointModels;
+
   /// The "Same as main connection" media slot row.
   String get mediaModelsMainConnection;
 
@@ -339,6 +346,11 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsModelsFetching => 'Fetching models from the endpoint…';
   @override
+  String modelPickerUseManual(String query) => 'Use "$query"';
+  @override
+  String get modelPickerNoEndpointModels =>
+      'The endpoint listed no models — type the id manually';
+  @override
   String get mediaModelsMainConnection => 'Main connection';
   @override
   String get mediaModelsCapabilitiesNote =>
@@ -502,6 +514,11 @@ class FaUiStringsRu extends FaUiStrings {
       'На устройстве (Gemma, transformers.js)';
   @override
   String get settingsModelsFetching => 'Загрузка списка моделей с эндпоинта…';
+  @override
+  String modelPickerUseManual(String query) => 'Использовать «$query»';
+  @override
+  String get modelPickerNoEndpointModels =>
+      'Эндпоинт не вернул модели — введите ID вручную';
   @override
   String get mediaModelsMainConnection => 'Основное подключение';
   @override

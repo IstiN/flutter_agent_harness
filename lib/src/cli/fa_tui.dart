@@ -180,6 +180,7 @@ final class FaTuiModel extends Model {
     this.menuSelected = 0,
     this.modelFilter = '',
     this.menuItems = const [],
+    this.menuAllItems = const [],
     this.pickerId = '',
     this.pickerTitle = '',
     this.termWidth = 80,
@@ -225,6 +226,11 @@ final class FaTuiModel extends Model {
   final int menuSelected;
   final String modelFilter;
   final List<MenuItem> menuItems;
+
+  /// The picker's full unfiltered item list — the local type-to-filter base
+  /// for generic pickers (the `models` picker rebuilds via
+  /// [FaTuiCallbacks.buildModelMenu] instead). Empty outside picker mode.
+  final List<MenuItem> menuAllItems;
 
   /// Identifies the active picker: 'models' for the model picker (typing
   /// filters via [FaTuiCallbacks.buildModelMenu]), anything else for a
@@ -412,6 +418,7 @@ final class FaTuiModel extends Model {
     int? menuSelected,
     String? modelFilter,
     List<MenuItem>? menuItems,
+    List<MenuItem>? menuAllItems,
     String? pickerId,
     String? pickerTitle,
     int? termWidth,
@@ -437,6 +444,7 @@ final class FaTuiModel extends Model {
       menuSelected: menuSelected ?? this.menuSelected,
       modelFilter: modelFilter ?? this.modelFilter,
       menuItems: menuItems ?? this.menuItems,
+      menuAllItems: menuAllItems ?? this.menuAllItems,
       pickerId: pickerId ?? this.pickerId,
       pickerTitle: pickerTitle ?? this.pickerTitle,
       termWidth: termWidth ?? this.termWidth,
@@ -601,6 +609,9 @@ final class FaTuiModel extends Model {
         menuModelMode: true,
         modelFilter: '',
         menuItems: items,
+        // The models picker rebuilds via buildModelMenu — the generic
+        // pickers' local-filter base does not apply here.
+        menuAllItems: const [],
         menuSelected: 0,
         pickerId: 'models',
         pickerTitle: '',
@@ -616,6 +627,7 @@ final class FaTuiModel extends Model {
         menuModelMode: true,
         modelFilter: '',
         menuItems: msg.items,
+        menuAllItems: msg.items,
         menuSelected: msg.initialIndex.clamp(
           0,
           msg.items.isEmpty ? 0 : msg.items.length - 1,
@@ -1101,9 +1113,10 @@ final class FaTuiModel extends Model {
     );
   }
 
-  /// Picker mode: arrows navigate, enter/tab select, esc closes. Only the
-  /// models picker has a type-to-filter input; generic pickers (sessions,
-  /// mode, approval, ...) navigate a static item list.
+  /// Picker mode: arrows navigate, enter/tab select, esc closes. Every
+  /// picker has a type-to-filter input — the models picker rebuilds through
+  /// the host callback, generic pickers (sessions, settings, agents, ...)
+  /// filter their static item list locally.
   (Model, Cmd?) _handlePickerKey(KeyMsg msg) {
     return _handlePickerNavKey(msg) ?? _handlePickerSelectKey(msg);
   }
@@ -1126,7 +1139,10 @@ final class FaTuiModel extends Model {
         if (!isModelsPicker && pickerId.isNotEmpty) {
           callbacks.onPickerCancelled?.call(pickerId);
         }
-        return (copyWith(menuOpen: false, modelFilter: ''), null);
+        return (
+          copyWith(menuOpen: false, modelFilter: '', menuAllItems: const []),
+          null,
+        );
       default:
         return null;
     }
@@ -1177,28 +1193,42 @@ final class FaTuiModel extends Model {
         _pickerTypeFilter(msg);
   }
 
-  /// Picker backspace: the models picker trims the filter and rebuilds the
-  /// item list; every other picker ignores it. Null when the key belongs to
-  /// another cluster.
+  /// Picker backspace: trims the filter and rebuilds the item list (the
+  /// models picker via [FaTuiCallbacks.buildModelMenu], generic pickers by
+  /// locally filtering [menuAllItems]). Null when the key belongs to another
+  /// cluster.
   (Model, Cmd?)? _handlePickerBackspaceKey(KeyMsg msg) {
-    final isModelsPicker = pickerId == 'models';
     switch (msg.key) {
       case 'backspace':
-        if (isModelsPicker && modelFilter.isNotEmpty) {
-          final nextFilter = modelFilter.substring(0, modelFilter.length - 1);
-          return (
-            copyWith(
-              modelFilter: nextFilter,
-              menuItems: callbacks.buildModelMenu(nextFilter),
-              menuSelected: 0,
-            ),
-            null,
-          );
-        }
-        return (this, null);
+        if (modelFilter.isEmpty) return (this, null);
+        final nextFilter = modelFilter.substring(0, modelFilter.length - 1);
+        return (_filteredPicker(nextFilter), null);
       default:
         return null;
     }
+  }
+
+  /// The picker state with [filter] applied: the models picker rebuilds via
+  /// the host callback, generic pickers filter [menuAllItems] locally
+  /// (case-insensitive contains over label + description).
+  FaTuiModel _filteredPicker(String filter) {
+    final isModelsPicker = pickerId == 'models';
+    final items = isModelsPicker
+        ? callbacks.buildModelMenu(filter)
+        : _filterItems(menuAllItems, filter);
+    return copyWith(modelFilter: filter, menuItems: items, menuSelected: 0);
+  }
+
+  /// The local generic-picker filter: [items] whose label or description
+  /// contains [filter] (case-insensitive); an empty filter keeps everything.
+  static List<MenuItem> _filterItems(List<MenuItem> items, String filter) {
+    final query = filter.trim().toLowerCase();
+    if (query.isEmpty) return items;
+    return [
+      for (final item in items)
+        if ('${item.label} ${item.description}'.toLowerCase().contains(query))
+          item,
+    ];
   }
 
   /// Picker accept (enter/tab): closes the picker and resolves the
@@ -1214,7 +1244,13 @@ final class FaTuiModel extends Model {
         final item = menuItems[menuSelected];
         if (item.key.isEmpty) return (this, null);
         return (
-          copyWith(menuOpen: false, modelFilter: '', inputText: '', cursor: 0),
+          copyWith(
+            menuOpen: false,
+            modelFilter: '',
+            menuAllItems: const [],
+            inputText: '',
+            cursor: 0,
+          ),
           () async {
             if (isModelsPicker) {
               await callbacks.onModelSelected(item.key);
@@ -1229,23 +1265,14 @@ final class FaTuiModel extends Model {
     }
   }
 
-  /// Models-picker type-to-filter: each printable character extends the
-  /// filter and rebuilds the item list.
+  /// Picker type-to-filter: each printable character extends the filter and
+  /// rebuilds the item list (host callback for the models picker, a local
+  /// [menuAllItems] filter for generic pickers).
   (Model, Cmd?) _pickerTypeFilter(KeyMsg msg) {
-    final isModelsPicker = pickerId == 'models';
-    if (!isModelsPicker) return (this, null);
     final text = msg.keyEvent.text;
     if (text.isNotEmpty && text.length == 1) {
       if (text == ' ' && modelFilter.isEmpty) return (this, null);
-      final nextFilter = modelFilter + text;
-      return (
-        copyWith(
-          modelFilter: nextFilter,
-          menuItems: callbacks.buildModelMenu(nextFilter),
-          menuSelected: 0,
-        ),
-        null,
-      );
+      return (_filteredPicker(modelFilter + text), null);
     }
     return (this, null);
   }
@@ -1594,22 +1621,28 @@ final class FaTuiModel extends Model {
     }
   }
 
-  /// The slash/model/picker menu block above the input zone.
-  void _writeMenu(StringBuffer b) {
-    if (!menuOpen || menuItems.isEmpty) return;
-    b.writeln(_accent2(_menuTitle()));
-    _writeMenuItems(b);
+  /// The menu header row: pickers echo their type-to-filter query
+  /// (`[title: query]`), the slash menu is plain '[Commands]'.
+  String _menuTitle() {
+    if (!menuModelMode) return '[Commands]';
+    final title = pickerId == 'models' ? 'Select model' : pickerTitle;
+    return modelFilter.isNotEmpty ? '[$title: $modelFilter]' : '[$title]';
   }
 
-  /// The menu header row: the models picker echoes its filter, generic
-  /// pickers show the host title, the slash menu is plain '[Commands]'.
-  String _menuTitle() {
-    return menuModelMode
-        ? pickerId == 'models'
-              ? '[Select model'
-                    '${modelFilter.isNotEmpty ? ': $modelFilter' : ''}]'
-              : '[$pickerTitle]'
-        : '[Commands]';
+  /// The slash/model/picker menu block above the input zone. A picker whose
+  /// filter matched nothing keeps its title row plus a dim '(no matches)'
+  /// hint — vanishing entirely would hide the query being edited.
+  void _writeMenu(StringBuffer b) {
+    if (!menuOpen) return;
+    if (menuItems.isEmpty) {
+      if (menuModelMode) {
+        b.writeln(_accent2(_menuTitle()));
+        b.writeln(_dim('  (no matches)'));
+      }
+      return;
+    }
+    b.writeln(_accent2(_menuTitle()));
+    _writeMenuItems(b);
   }
 
   /// The visible window of menu items, with the scroll-more hint rows when

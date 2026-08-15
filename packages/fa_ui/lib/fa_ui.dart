@@ -47,3 +47,4 @@ export 'src/theme/fa_ui_theme.dart';
 export 'src/utils/page_presentation.dart';
 export 'src/utils/vision_models.dart';
 export 'src/widgets/model_id_field.dart';
+export 'src/widgets/model_list_picker.dart';

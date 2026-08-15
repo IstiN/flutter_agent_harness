@@ -185,6 +185,8 @@ void main() {
         find.widgetWithText(TextField, 'Model id'),
         'gpt-image-1',
       );
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -244,6 +246,8 @@ void main() {
         find.widgetWithText(TextField, 'Model id'),
         'tts-1',
       );
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -278,6 +282,8 @@ void main() {
 
       // The provider header + prefilled model; save directly.
       expect(find.text('Acme'), findsWidgets);
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -301,6 +307,8 @@ void main() {
       );
       await _open(tester);
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -330,6 +338,8 @@ void main() {
       expect(tester.widget<TextField>(voiceField).controller!.text, 'af_heart');
 
       await tester.enterText(voiceField, 'nova');
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -365,6 +375,8 @@ void main() {
       await tester.tap(find.text('Puck — Upbeat').last);
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -394,6 +406,8 @@ void main() {
       expect(find.byType(FaVoicePresetPicker), findsOneWidget);
       expect(find.text('my-custom-voice'), findsOneWidget);
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -429,6 +443,8 @@ void main() {
       );
       await _open(tester);
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 

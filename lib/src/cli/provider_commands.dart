@@ -233,12 +233,36 @@ extension on AgentCli {
 
   /// The flow's `/models` fetch with the same key resolution the provider
   /// switch uses (explicit token, else env → endpoint-scoped → legacy store).
+  /// Failures answer an empty list: the flow falls back to manual entry.
   Future<List<String>> _fetchModelsForFlow(
     ProviderSpec spec,
     String baseUrl, {
     String? token,
-  }) {
+  }) async {
     final key = token ?? _providerKeyFor(spec, baseUrl) ?? '';
+    try {
+      return await _fetchProviderModelIds(spec.name, baseUrl, key);
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// The shared model-list dispatch for the settings flows and the cache
+  /// refresh: CodeMie endpoints list `/llm_models`, DIAL serves deployments
+  /// (recording the reported limits), everything else is an OpenAI-compatible
+  /// `/models` ([AgentCliConfig.modelsFetcher] override included). Without
+  /// this a DIAL/CodeMie pick dropped the user into manual model entry.
+  Future<List<String>> _fetchProviderModelIds(
+    String providerName,
+    String baseUrl,
+    String key,
+  ) async {
+    if (baseUrl.contains('/code-assistant-api/')) {
+      return fetchCodeMieModels(baseUrl, key, client: config.modelsHttpClient);
+    }
+    if (providerName == 'dial') {
+      return _fetchDialModelsAndFeatures(baseUrl, apiKey: key);
+    }
     final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
     return fetch(baseUrl, apiKey: key);
   }
@@ -1988,18 +2012,11 @@ extension on AgentCli {
     }
   }
 
-  /// Fetches the active provider's model ids: CodeMie exposes its list at
-  /// /llm_models (LiteLLM-shaped), DIAL serves deployments at /openai/models
-  /// (recording features/limits), everything else uses the OpenAI /models.
-  Future<List<String>> _fetchActiveProviderModels(Model model) async {
-    if (model.baseUrl.contains('/code-assistant-api/')) {
-      return fetchCodeMieModels(model.baseUrl, _apiKey);
-    }
-    if (model.provider == 'dial') {
-      return _fetchDialModelsAndFeatures(model.baseUrl);
-    }
-    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-    return fetch(model.baseUrl, apiKey: _apiKey);
+  /// Fetches the active provider's model ids through the shared dispatch
+  /// ([_fetchProviderModelIds]): CodeMie `/llm_models`, DIAL deployments,
+  /// everything else OpenAI `/models`.
+  Future<List<String>> _fetchActiveProviderModels(Model model) {
+    return _fetchProviderModelIds(model.provider, model.baseUrl, _apiKey);
   }
 
   /// Applies the endpoint-reported context window for [model] when it
@@ -2028,11 +2045,16 @@ extension on AgentCli {
   /// `features.cache` deployment set (drives [DialOptions.cacheMarkersSupported])
   /// and the endpoint-reported limits (context window / max output from
   /// `limits`, the MAXIMUM values — never the `defaults`), and answers the
-  /// plain id list.
-  Future<List<String>> _fetchDialModelsAndFeatures(String baseUrl) async {
+  /// plain id list. [apiKey] overrides the session key (the settings flows
+  /// resolve the TARGET provider's key, not the active connection's).
+  Future<List<String>> _fetchDialModelsAndFeatures(
+    String baseUrl, {
+    String? apiKey,
+  }) async {
     final (ids, cacheSupported, windows, maxTokens) = await fetchDialModelsInfo(
       baseUrl,
-      _apiKey,
+      apiKey ?? _apiKey,
+      client: config.modelsHttpClient,
     );
     if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
     if (windows.isNotEmpty) _modelContextWindows = windows;

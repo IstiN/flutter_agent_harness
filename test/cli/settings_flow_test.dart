@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -26,6 +28,8 @@ void main() {
     String? Function(String name)? envVarValue,
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
+    http.Client? modelsHttpClient,
+    ModelRolesResolver? modelRolesResolver,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -39,6 +43,8 @@ void main() {
         secureKeys: secureKeys,
         envVarValue: envVarValue,
         modelsFetcher: modelsFetcher,
+        modelsHttpClient: modelsHttpClient,
+        modelRolesResolver: modelRolesResolver,
         providerKind: 'openai-completions',
       ),
       io: io,
@@ -117,7 +123,7 @@ void main() {
       expect(output, contains('my-ollama — http://localhost:11434/v1 · m2'));
       expect(
         output,
-        contains('fetching models from http://localhost:11434/v1/models'),
+        contains('fetching models from http://localhost:11434/v1'),
       );
       final model = cli.agent.state.model;
       expect(model.id, 'llama3.2');
@@ -390,6 +396,167 @@ void main() {
 
     expect(models.slots, isEmpty);
     expect(persisted, 0);
+    expect(fake.calls, 0);
+  });
+
+  /// A saved DIAL provider on the secure store + a mock `/openai/models`.
+  Future<(AgentCli, CustomProviderRegistry)> dialCli(
+    FakeStreamFunction fake, {
+    void Function()? onModelsConfigChanged,
+    ModelRolesResolver? modelRolesResolver,
+  }) async {
+    final registry = CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'my-dial',
+        apiType: 'dial',
+        baseUrl: 'https://dial.example.com',
+        modelId: 'gpt-terra',
+        keyName: 'MY_DIAL_KEY',
+      ),
+    ]);
+    final store = FakeSecureKeyStore()..map['MY_DIAL_KEY'] = 'sk-dial-key';
+    final cache = SecureKeyCache(store);
+    await cache.preload(const ['MY_DIAL_KEY']);
+    final cli = cliFor(
+      fake.call,
+      customProviders: registry,
+      secureKeys: cache,
+      envVarValue: (_) => null,
+      onModelsConfigChanged: onModelsConfigChanged,
+      modelRolesResolver: modelRolesResolver,
+      modelsHttpClient: http_testing.MockClient((request) async {
+        expect(
+          request.url.toString(),
+          'https://dial.example.com/openai/models',
+        );
+        expect(request.headers['Api-Key'], 'sk-dial-key');
+        return http.Response(
+          '{"data":[{"id":"terra-1"},{"id":"terra-2"}]}',
+          200,
+        );
+      }),
+    );
+    return (cli, registry);
+  }
+
+  test('chat-model flow lists DIAL deployments for a dial provider', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final (cli, _) = await dialCli(fake);
+    final run = cli.run();
+
+    final flow = cli.startChatModelFlow();
+    await waitForIt(() => io.out.toString().contains('chat model — provider'));
+    io.sendLine('1'); // the saved my-dial entry
+    await waitForIt(
+      () => io.out.toString().contains(
+        'fetching models from https://dial.example.com',
+      ),
+    );
+    await waitForIt(() => io.out.toString().contains('2) terra-2'));
+    io.sendLine('2'); // terra-2
+    await waitForIt(
+      () => io.out.toString().contains('switched provider to dial'),
+    );
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    final model = cli.agent.state.model;
+    expect(model.id, 'terra-2');
+    expect(model.provider, 'dial');
+    expect(model.baseUrl, 'https://dial.example.com');
+    expect(io.out.toString(), isNot(contains('sk-dial-key')));
+    expect(fake.calls, 0);
+  });
+
+  test(
+    'agent-models flow pins the subagent role to a listed DIAL deployment',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      var persisted = 0;
+      final (cli, _) = await dialCli(
+        fake,
+        onModelsConfigChanged: () => persisted++,
+      );
+      final run = cli.run();
+
+      final flow = cli.startAgentModelFlow();
+      await waitForIt(
+        () => io.out.toString().contains('2) Subagents model (subagent)'),
+      );
+      io.sendLine('2'); // the subagent role
+      await waitForIt(() => io.out.toString().contains('1) Pick a model'));
+      io.sendLine('1'); // set (not clear)
+      await waitForIt(
+        () => io.out.toString().contains(
+          'agent Subagents model (subagent) — provider',
+        ),
+      );
+      io.sendLine('1'); // the saved my-dial entry
+      await waitForIt(() => io.out.toString().contains('1) terra-1'));
+      io.sendLine('1'); // terra-1
+      await waitForIt(
+        () => io.out.toString().contains(
+          'role subagent → terra-1 @ https://dial.example.com',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      // The resolver was created on demand and the chain pinned + persisted.
+      final resolver = cli.config.modelRolesResolver;
+      expect(resolver, isNotNull);
+      final chain = resolver!.config.roles['subagent'];
+      expect(chain, hasLength(1));
+      expect(chain!.first.provider, 'dial');
+      expect(chain.first.modelId, 'terra-1');
+      expect(chain.first.baseUrl, 'https://dial.example.com');
+      expect(chain.first.apiKeyName, 'MY_DIAL_KEY');
+      expect(persisted, 1);
+      // And it resolves end-to-end (the key snapshot feeds the ring).
+      expect(resolver.resolveRole('subagent')?.model.id, 'terra-1');
+      // The default role stays unconfigured — legacy wiring untouched.
+      expect(resolver.resolveRole('default'), isNull);
+      expect(fake.calls, 0);
+    },
+  );
+
+  test('agent-models flow: clear drops the role chain', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final resolver = ModelRolesResolver(
+      config: ModelRolesConfig(
+        roles: const {
+          'smol': [ModelRef(provider: 'openrouter', modelId: 'm-fast')],
+        },
+      ),
+      secrets: const {'OPENROUTER_API_KEY': 'sk-or'},
+    );
+    var persisted = 0;
+    final cli = cliFor(
+      fake.call,
+      modelRolesResolver: resolver,
+      onModelsConfigChanged: () => persisted++,
+      envVarValue: (_) => null,
+    );
+    final run = cli.run();
+
+    final flow = cli.startAgentModelFlow();
+    await waitForIt(
+      () => io.out.toString().contains(
+        '1) Quick model (smol) — openrouter/m-fast',
+      ),
+    );
+    io.sendLine('1'); // the smol role
+    await waitForIt(() => io.out.toString().contains('2) Use the main model'));
+    io.sendLine('2'); // clear
+    await waitForIt(() => io.out.toString().contains('role smol → main model'));
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    expect(resolver.config.roles, isEmpty);
+    expect(persisted, 1);
     expect(fake.calls, 0);
   });
 }

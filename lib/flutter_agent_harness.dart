@@ -49,6 +49,7 @@ export 'src/providers/codemie_sso.dart';
 export 'src/providers/dial.dart';
 export 'src/providers/google.dart';
 export 'src/providers/models_endpoint.dart';
+export 'src/providers/models_for_endpoint.dart';
 export 'src/providers/openai_completions.dart';
 export 'src/providers/openrouter_oauth.dart';
 export 'src/secrets/secret_redactor.dart';

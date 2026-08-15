@@ -2,11 +2,17 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+
+import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
+import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/stores/task_models_store.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/model_list_picker.dart';
 
 /// The settings "Task models" section: one row per [TaskRole.all] entry
 /// showing the effective endpoint — the role's override (`modelId`) or the
@@ -146,9 +152,10 @@ class _TaskRoleEditResult {
   final bool cleared;
 }
 
-/// A simple editor page for one task role's model config: two text fields
-/// (base URL, model id) plus an optional API key name. No provider picker —
-/// just text. Save writes the override; "Use main model" clears it.
+/// A simple editor page for one task role's model config: provider preset,
+/// base URL, the shared model list picker (fetched live from the endpoint,
+/// manual entry always valid), plus an optional API key name. Save writes
+/// the override; "Use main model" clears it.
 class TaskRoleConfigPage extends StatefulWidget {
   const TaskRoleConfigPage({
     super.key,
@@ -156,6 +163,7 @@ class TaskRoleConfigPage extends StatefulWidget {
     this.initial,
     this.mainBaseUrl = '',
     this.mainModelId = '',
+    this.modelsFetcher,
   });
 
   /// The role being edited.
@@ -170,6 +178,10 @@ class TaskRoleConfigPage extends StatefulWidget {
   /// The main connection's model id (placeholder hint).
   final String mainModelId;
 
+  /// `/models` fetch override (tests); defaults to the shared
+  /// [fetchModelsForEndpoint] dispatch.
+  final ModelsEndpointFetcher? modelsFetcher;
+
   @override
   State<TaskRoleConfigPage> createState() => _TaskRoleConfigPageState();
 }
@@ -179,6 +191,13 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
   late final TextEditingController _modelIdCtrl;
   late final TextEditingController _apiKeyCtrl;
   late ProviderPreset _selectedPreset;
+
+  /// The endpoint's fetched model ids feeding the list picker.
+  List<String> _endpointModels = const [];
+  var _modelsLoading = false;
+
+  /// Debounce for the custom base-URL field (refetch once typing settles).
+  Timer? _fetchDebounce;
 
   @override
   void initState() {
@@ -190,14 +209,27 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
     _selectedPreset = _baseUrlCtrl.text.isEmpty
         ? ProviderPreset.custom
         : ProviderPreset.fromBaseUrl(_baseUrlCtrl.text);
+    _baseUrlCtrl.addListener(_scheduleFetch);
+    // The key lookup needs the inherited stores — fetch after the frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_fetchModels());
+    });
   }
 
   @override
   void dispose() {
+    _fetchDebounce?.cancel();
     _baseUrlCtrl.dispose();
     _modelIdCtrl.dispose();
     _apiKeyCtrl.dispose();
     super.dispose();
+  }
+
+  void _scheduleFetch() {
+    _fetchDebounce?.cancel();
+    _fetchDebounce = Timer(const Duration(milliseconds: 600), () {
+      if (mounted) unawaited(_fetchModels());
+    });
   }
 
   void _onPresetChanged(ProviderPreset? preset) {
@@ -208,6 +240,45 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
         _baseUrlCtrl.text = preset.baseUrl!;
       }
     });
+    unawaited(_fetchModels());
+  }
+
+  /// The API key for the model-list fetch: the hosted preset's well-known
+  /// key, or the custom endpoint's named key — resolved through the host
+  /// chain (env / secure store / saved keys).
+  String _resolveFetchKey() {
+    final keysStore = SessionKeysScope.maybeOf(context);
+    if (_selectedPreset != ProviderPreset.custom) {
+      return resolveProviderKey(_selectedPreset, keysStore: keysStore);
+    }
+    final name = _apiKeyCtrl.text.trim();
+    if (name.isEmpty) return '';
+    return FaUiHost.resolveKey(name, () => keysStore?.valueOf(name) ?? '');
+  }
+
+  /// Fetches the endpoint's model list through the shared dispatch (DIAL
+  /// deployments included); silent on failure — the picker then shows the
+  /// manual-entry note.
+  Future<void> _fetchModels() async {
+    final baseUrl = _baseUrlCtrl.text.trim();
+    if (baseUrl.isEmpty) return;
+    setState(() => _modelsLoading = true);
+    try {
+      final override = widget.modelsFetcher;
+      final (ids, _, _) = override != null
+          ? await override(baseUrl, apiKey: _resolveFetchKey())
+          : await fetchModelsForEndpoint(
+              baseUrl,
+              apiKey: _resolveFetchKey(),
+              provider: _selectedPreset == ProviderPreset.dial ? 'dial' : null,
+            );
+      if (!mounted) return;
+      setState(() => _endpointModels = ids);
+    } on Object {
+      if (mounted) setState(() => _endpointModels = const []);
+    } finally {
+      if (mounted) setState(() => _modelsLoading = false);
+    }
   }
 
   void _save() {
@@ -277,17 +348,10 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
                 ),
               ),
               const SizedBox(height: 16),
-              TextField(
+              FaModelListPicker(
                 controller: _modelIdCtrl,
-                decoration: InputDecoration(
-                  labelText: 'Model id', // l10n:ignore
-                  hintText: widget.mainModelId.isEmpty
-                      ? null
-                      : widget.mainModelId,
-                  helperText:
-                      'Available models: GET {baseUrl}/models', // l10n:ignore
-                  border: const OutlineInputBorder(),
-                ),
+                models: _endpointModels,
+                loading: _modelsLoading,
               ),
               const SizedBox(height: 16),
               TextField(

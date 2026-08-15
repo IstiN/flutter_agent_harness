@@ -181,6 +181,8 @@ void main() {
         find.widgetWithText(TextField, 'Model id'),
         'gpt-image-1',
       );
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -193,6 +195,86 @@ void main() {
   });
 
   group('MediaSlotModelPage', () {
+    testWidgets('the fetched list renders immediately and narrows as you '
+        'type', (tester) async {
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotModelPage(
+          slot: MediaSlot.imageGeneration,
+          provider: ProviderPreset.openrouter,
+          modelsFetcher: _someModels,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      // No field tap needed — the list is right there.
+      expect(find.text('gpt-image-1'), findsOneWidget);
+      expect(find.text('dall-e-3'), findsOneWidget);
+      expect(find.text('gpt-4o'), findsOneWidget);
+
+      // Quick search narrows it live.
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'dall',
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('dall-e-3'), findsOneWidget);
+      expect(find.text('gpt-image-1'), findsNothing);
+      expect(find.text('gpt-4o'), findsNothing);
+    });
+
+    testWidgets('an unlisted id gets the manual row and still saves', (
+      tester,
+    ) async {
+      MediaSlotEditorResult? result;
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotModelPage(
+          slot: MediaSlot.imageGeneration,
+          provider: ProviderPreset.openrouter,
+          modelsFetcher: _someModels,
+        ),
+        (value) => result = value,
+      );
+      await _open(tester);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'flux-pro',
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Use "flux-pro"'), findsOneWidget);
+      expect(find.text('dall-e-3'), findsNothing);
+
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(result!.override!.modelId, 'flux-pro');
+    });
+
+    testWidgets('an endpoint without models shows the manual-entry note', (
+      tester,
+    ) async {
+      await _pumpWithOpener(
+        tester,
+        MediaSlotModelPage(
+          slot: MediaSlot.imageGeneration,
+          provider: ProviderPreset.openrouter,
+          modelsFetcher: (baseUrl, {required apiKey}) async =>
+              (const <String>[], const <String, int>{}, const <String, int>{}),
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      expect(
+        find.text('The endpoint listed no models — type the id manually'),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('the /models fetch feeds the quick select', (tester) async {
       await _pumpWithOpener(
         tester,
@@ -240,6 +322,8 @@ void main() {
         find.widgetWithText(TextField, 'Model id'),
         'tts-1',
       );
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -274,6 +358,8 @@ void main() {
 
       // The provider header + prefilled model; save directly.
       expect(find.text('Acme'), findsWidgets);
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -297,6 +383,8 @@ void main() {
       );
       await _open(tester);
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -326,6 +414,8 @@ void main() {
       expect(tester.widget<TextField>(voiceField).controller!.text, 'af_heart');
 
       await tester.enterText(voiceField, 'nova');
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -361,6 +451,8 @@ void main() {
       await tester.tap(find.text('Puck — Upbeat').last);
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -390,6 +482,8 @@ void main() {
       expect(find.byType(FaVoicePresetPicker), findsOneWidget);
       expect(find.text('my-custom-voice'), findsOneWidget);
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -456,6 +550,8 @@ void main() {
       );
       await _open(tester);
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 

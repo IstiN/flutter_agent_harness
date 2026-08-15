@@ -4,8 +4,9 @@ part of 'agent_cli.dart';
 
 /// Static configuration for an [AgentCli] session.
 final class AgentCliConfig {
-  /// Creates an [AgentCliConfig].
-  const AgentCliConfig({
+  /// Creates an [AgentCliConfig]. Not const: [modelRolesResolver] is
+  /// mutable (the settings-hub agent-models flow creates one on demand).
+  AgentCliConfig({
     required this.model,
     required this.apiKey,
     required this.env,
@@ -15,6 +16,7 @@ final class AgentCliConfig {
     this.envVarIsSet,
     this.envVarValue,
     this.modelsFetcher,
+    this.modelsHttpClient,
     this.systemPrompt,
     this.promptOverrides,
     this.visionConfig,
@@ -119,8 +121,11 @@ final class AgentCliConfig {
   /// the CLI config). When set and its `default` role resolves, the agent
   /// runs through the resolver's fallback stream instead of the plain
   /// [providerKind]/[apiKey] wiring, compaction summarizes through the
-  /// `smol` role, and `/model` renders the roles overview.
-  final ModelRolesResolver? modelRolesResolver;
+  /// `smol` role, and `/model` renders the roles overview. Mutable: the
+  /// settings-hub agent-models flow creates one on demand when the config
+  /// had no `roles:` section (auxiliary roles resolve lazily; the default
+  /// chain stays untouched).
+  ModelRolesResolver? modelRolesResolver;
 
   /// Optional TTSR configuration (stream rules from the CLI config and the
   /// project rules file). When set and enabled, a [TtsrController] watches
@@ -225,6 +230,12 @@ final class AgentCliConfig {
   /// HTTP implementation; tests inject a fake.
   final Future<List<String>> Function(String baseUrl, {required String apiKey})?
   modelsFetcher;
+
+  /// HTTP client override for the non-OpenAI model-list dialects the
+  /// settings flows dispatch to (DIAL deployments, CodeMie `/llm_models`) —
+  /// [modelsFetcher] only covers the OpenAI shape. Null (production) lets
+  /// the fetchers create their own client; tests inject a `MockClient`.
+  final http.Client? modelsHttpClient;
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].
   ///
