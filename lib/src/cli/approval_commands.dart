@@ -431,19 +431,43 @@ extension on AgentCli {
     final contextTokens = lastAssistant?.usage.input ?? 0;
     final window = model.contextWindow;
     final pct = window > 0 ? (contextTokens / window * 100).round() : 0;
-    // kimi's toolbar badge: active background agents, when any.
-    final activeJobs = _taskConfig.jobManager.jobs
-        .where(
-          (job) =>
-              job.status == TaskJobStatus.queued ||
-              job.status == TaskJobStatus.running,
-        )
-        .length;
-    final badge = activeJobs > 0 ? ' · bg:$activeJobs' : '';
+    // kimi's toolbar badge: active background agents, when any. Variant A
+    // (agents visualization): named live badges — up to 3 active children
+    // with type and elapsed seconds, then a +N overflow counter.
+    final badge = _agentsBadge();
     return '$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${total.totalTokens}tok · \$$cost · turn ${_usage.turns}$badge · '
         '${model.id}';
+  }
+
+  /// Live agents badge for the status line: active subagent handles with
+  /// their type and elapsed time (e.g. `bg:explore:A1(12s),+2`), or empty.
+  String _agentsBadge() {
+    final active = _subagentManager.handles
+        .where(
+          (h) =>
+              h.status == SubagentStatus.queued ||
+              h.status == SubagentStatus.running ||
+              h.status == SubagentStatus.idle,
+        )
+        .toList();
+    if (active.isEmpty) {
+      final queuedJobs = _taskConfig.jobManager.jobs
+          .where((job) => job.status == TaskJobStatus.queued)
+          .length;
+      return queuedJobs > 0 ? ' · bg:$queuedJobs' : '';
+    }
+    final now = DateTime.now();
+    final shown = active.take(3).map((h) {
+      final created = DateTime.tryParse(h.createdAt);
+      final elapsed = created == null
+          ? 0
+          : now.difference(created).inSeconds;
+      return '${h.agentType}:${h.id}(${elapsed}s)';
+    }).join(',');
+    final overflow = active.length > 3 ? ',+${active.length - 3}' : '';
+    return ' · bg:$shown$overflow';
   }
 
   /// Compact token counts like pi's `275k` / `1M`.

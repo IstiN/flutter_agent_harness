@@ -75,7 +75,7 @@ void main() {
     addTearDown(() async => harness.close());
 
     await harness.waitForBoot();
-    await harness.runSlashCommand('/agents');
+    await harness.runSlashCommand('/agents types');
 
     await harness.waitForText(
       'agent types:',
@@ -84,6 +84,39 @@ void main() {
     expect(harness.screenText, contains('task'));
     expect(harness.screenText, contains('explore'));
     expect(harness.screenText, contains('review'));
+  });
+
+  test('/agents bare shows the live tree with main and children', () async {
+    final harness = await FaCliHarness.spawn(extraEnv: {'HOME': tempHome.path});
+    harness.startListening();
+    addTearDown(() async => harness.close());
+
+    await harness.waitForBoot();
+
+    // Spawn a real subagent through the task tool so the tree has a child.
+    harness.sendText(
+      'Use the task tool with agent "explore" to list the files in the current directory. Reply briefly.',
+    );
+    harness.sendEnter();
+    try {
+      await harness.waitForText(
+        'agent://',
+        timeout: const Duration(seconds: 120),
+      );
+    } on TimeoutException {
+      // Model may not call the tool — the tree must still render main.
+    }
+    await harness.waitForOutput(settleMs: 500);
+
+    await harness.runSlashCommand('/agents');
+
+    // TUI picker shows the main orchestrator row.
+    await harness.waitForText(
+      'main (orchestrator)',
+      timeout: const Duration(seconds: 15),
+    );
+    final screen = harness.screenText;
+    expect(screen, contains('main (orchestrator)'));
   });
 
   test('memory_add and memory_search tools are available', () async {

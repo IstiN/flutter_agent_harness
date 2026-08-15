@@ -46,7 +46,7 @@ const builtinSlashCommands = <String, String>{
   '/memory': '[maintain] — memory stats or run consolidation',
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
-  '/agents': 'list available agent types for the task tool',
+  '/agents': '[types|<id>] — live agents tree (observe/send) or type catalog',
   '/model': '<provider/model> — select model (opens selector)',
   '/models': '[filter] | config | set <slot> <model> [baseUrl] | remove <slot>',
   '/model-edit':

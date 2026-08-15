@@ -29,6 +29,7 @@ import '../a2a/a2a_config.dart';
 import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import '../task/agent_discovery.dart';
+import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
 import '../task/subagent_tools.dart';
 import '../skills/skills.dart';
@@ -958,6 +959,8 @@ class AgentCli {
     'provider': _tuiPickProvider,
     'addProvider': _tuiPickAddProvider,
     'settings': _tuiPickSetting,
+    'agents': pickAgentFromTree,
+    'agentAction': pickAgentAction,
   };
 
   /// Completes the pending wizard-picker answer for [pickerId] (null [key]
@@ -1040,6 +1043,16 @@ class AgentCli {
         description: 'EPAM DIAL Core — Api key + deployment',
       ),
       const MenuItem(
+        key: 'preset:kimi',
+        label: 'Kimi Code',
+        description: 'api.kimi.com — key: kimi.com/code/console',
+      ),
+      const MenuItem(
+        key: 'preset:zai',
+        label: 'Z.AI',
+        description: 'GLM models — key: z.ai/manage-apikey/apikey-list',
+      ),
+      const MenuItem(
         key: 'preset:openai',
         label: 'OpenAI',
         description: 'api.openai.com — API key',
@@ -1078,6 +1091,18 @@ class AgentCli {
     'openai': () async => _startProviderFlow(initialType: 'openai'),
     'anthropic': () async => _startProviderFlow(initialType: 'anthropic'),
     'google': () async => _startProviderFlow(initialType: 'google'),
+    'kimi': () async => _startProviderFlow(
+      initialType: 'openai',
+      initialBaseUrl: 'https://api.kimi.com/coding/v1',
+      initialName: 'kimi',
+      initialModelId: 'k3',
+    ),
+    'zai': () async => _startProviderFlow(
+      initialType: 'openai',
+      initialBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+      initialName: 'z.ai',
+      initialModelId: 'glm-4.5',
+    ),
   };
 
   /// A non-`custom` provider-picker selection: a saved entry or a catalog
@@ -2019,6 +2044,10 @@ class AgentCli {
       await _handleMemoryCommand(rest);
       return true;
     }
+    if (command == '/agents') {
+      await handleAgentsCommand(rest);
+      return true;
+    }
     if (command == '/a2a') {
       _printA2aStatus();
       return true;
@@ -2038,8 +2067,6 @@ class AgentCli {
         _printStats();
       case '/tasks':
         _listTaskJobs(rest);
-      case '/agents':
-        listAgentTypes();
       case '/skills':
         _listSkills();
       default:
