@@ -33,18 +33,18 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 // Design tokens sampled from the reference prototype.
-const _kBg = Color(0xFFFBFAFC);
-const _kInk = Color(0xFF10132B);
-const _kPrimary = Color(0xFF293FF2);
-const _kGray = Color(0xFF6E7386);
+const _kBg = Color(0xFFF7F8FC);
+const _kInk = Color(0xFF172033);
+const _kPrimary = Color(0xFF3566FF);
+const _kGray = Color(0xFF6B768B);
 const _kGrayLight = Color(0xFF9AA0B4);
-const _kBorder = Color(0xFFE9EAF1);
+const _kBorder = Color(0xFFE5EAF2);
 const _kBubble = Color(0xFFE9EBFC);
 const _kSelBg = Color(0xFFEEF1FE);
 const _kNavy = Color(0xFF191B2E);
 const _kGreen = Color(0xFF10B981);
 const _kCardShadow = [
-  BoxShadow(color: Color(0x0A10132B), blurRadius: 10, offset: Offset(0, 3)),
+  BoxShadow(color: Color(0x0A172033), blurRadius: 10, offset: Offset(0, 3)),
 ];
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
