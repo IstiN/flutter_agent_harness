@@ -2101,8 +2101,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
               // The live subagent tree (CLI `/agents` panel parity): main +
               // retained children with observe/send.
-              if (widget.service.subagentManager case final manager?
-                  when manager != null) ...[
+              if (widget.service.subagentManager case final manager?) ...[
                 Text(
                   'Agents', // l10n:ignore
                   style: Theme.of(context).textTheme.titleSmall,
