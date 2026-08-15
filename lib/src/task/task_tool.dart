@@ -32,7 +32,6 @@ import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../model.dart';
 import '../model_roles/model_resolver.dart';
-import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../prompts/prompts.g.dart';
 import 'agent_registry.dart';

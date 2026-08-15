@@ -32,7 +32,6 @@ import '../model.dart';
 import '../model_roles/model_resolver.dart';
 import '../model_roles/roles_config.dart';
 import '../prompts/prompts.g.dart';
-import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../types.dart';
 import 'agent_registry.dart';
