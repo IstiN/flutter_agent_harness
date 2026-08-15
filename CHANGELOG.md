@@ -1026,4 +1026,17 @@
 - feat(providers): list-first model pickers everywhere — quick search, manual escape, agent models flow
 - feat(cli): /agents child → Open session action — switch into the subagent's session
 
+## 0.1.180
+
+- feat(memory): keyword-only search fallback without an LLM provider
+- fix(subagents): fire-and-forget registry persistence + per-session rehydrate
+- fix(providers): connect + idle watchdogs on provider streams
+- feat(ui): brand provider icons in onboarding, file split, iOS icon sync
+- feat(session): never keep an untouched session file
+- chore: drop unused import
+- fix(cli): provider wizard asks for the key in roles mode; switches accept it
+- feat(subagents): crash-resilient child sessions — spawn-time async creation + incremental turn flush (serialized, fire-and-forget)
+- fix(memory): inject the <memory> section into the system prompt (CLI + app)
+- test(cli): drop flaky real-model live badge visual test (unit-covered badge logic); document why
+
 ## Unreleased
