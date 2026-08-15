@@ -199,13 +199,21 @@ class _P1 extends StatelessWidget {
                   children: [
                     Expanded(flex: 3, child: _ChatMockup()),
                     const SizedBox(width: 16),
-                    Expanded(flex: 4, child: _AppGridMockup()),
+                    Expanded(flex: 4, child: Column(
+                      children: [
+                        _FocusTimerWidget(),
+                        const SizedBox(height: 16),
+                        _AppGridMockup(),
+                      ],
+                    )),
                     const SizedBox(width: 16),
                     Expanded(flex: 2, child: _ProviderPanelMockup()),
                   ],
                 )
               else ...[
                 _ChatMockup(),
+                const SizedBox(height: 12),
+                _FocusTimerWidget(),
                 const SizedBox(height: 12),
                 _AppGridMockup(),
               ],
@@ -310,6 +318,95 @@ class _ChatMockup extends StatelessWidget {
   }
 }
 
+class _FocusTimerWidget extends StatelessWidget {
+  const _FocusTimerWidget();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1B2E),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          // Header: title + menu.
+          const Row(
+            children: [
+              Text('Focus Timer', style: TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
+              Spacer(),
+              Icon(Icons.more_horiz, size: 16, color: Colors.white54),
+            ],
+          ),
+          const SizedBox(height: 4),
+          // Active indicator.
+          const Row(
+            children: [
+              Icon(Icons.circle, size: 6, color: Color(0xFF34D399)),
+              SizedBox(width: 4),
+              Text('Active', style: TextStyle(fontSize: 10, color: Color(0xFF34D399))),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Circular progress ring with time.
+          SizedBox(
+            width: 120,
+            height: 120,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 120, height: 120,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 6),
+                  ),
+                ),
+                SizedBox(
+                  width: 120, height: 120,
+                  child: CircularProgressIndicator(
+                    value: 0.75,
+                    strokeWidth: 6,
+                    backgroundColor: Colors.transparent,
+                    valueColor: const AlwaysStoppedAnimation(Color(0xFF60A5FA)),
+                  ),
+                ),
+                const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('25:00', style: TextStyle(
+                      fontSize: 28, fontWeight: FontWeight.w700, color: Colors.white)),
+                    Text('Focus time', style: TextStyle(fontSize: 11, color: Colors.white70)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Start Session button.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+              child: Text('Start Session', style: TextStyle(
+                fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text('Work 25 min • Break 5 min', style: TextStyle(
+            fontSize: 10, color: Colors.white54)),
+        ],
+      ),
+    );
+  }
+}
+
 class _AppGridMockup extends StatelessWidget {
   const _AppGridMockup();
 
@@ -326,43 +423,7 @@ class _AppGridMockup extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Focus Timer widget — circular display + Start Session button.
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF60A5FA), Color(0xFF3B82F6)],
-                begin: Alignment.topLeft, end: Alignment.bottomRight),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              children: [
-                Container(
-                  width: 72, height: 72,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: 0.2),
-                  ),
-                  child: const Center(child: Text('25:00', style: TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white))),
-                ),
-                const SizedBox(height: 8),
-                const Text('Focus Timer', style: TextStyle(fontSize: 12, color: Colors.white70)),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text('Start Session', style: TextStyle(
-                    fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          // App icons — colorful, 3x3 grid.
+          // App icons grid — colorful, matching the reference.
           Wrap(
             spacing: 10, runSpacing: 10,
             children: [
