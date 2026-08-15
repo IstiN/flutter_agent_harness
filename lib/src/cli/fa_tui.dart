@@ -186,6 +186,7 @@ final class FaTuiModel extends Model {
     this.termWidth = 80,
     this.termHeight = 24,
     this.busy = false,
+    this.busyStartedAtMs = -1,
     this.spinnerFrame = 0,
     this.stickyLines = const [],
     this.stickyIndex = -1,
@@ -243,6 +244,11 @@ final class FaTuiModel extends Model {
 
   /// Whether a run is streaming; drives the animated thinking indicator.
   final bool busy;
+
+  /// When the current busy stretch started (epoch ms; -1 while idle) — the
+  /// busy row shows the elapsed seconds so a wedged endpoint is visible
+  /// instead of looking like a frozen UI.
+  final int busyStartedAtMs;
   final int spinnerFrame;
 
   /// The last submitted user echo (rule + first input line), pinned to the
@@ -428,6 +434,7 @@ final class FaTuiModel extends Model {
     int? termWidth,
     int? termHeight,
     bool? busy,
+    int? busyStartedAtMs,
     int? spinnerFrame,
     List<String>? stickyLines,
     int? stickyIndex,
@@ -454,6 +461,7 @@ final class FaTuiModel extends Model {
       termWidth: termWidth ?? this.termWidth,
       termHeight: termHeight ?? this.termHeight,
       busy: busy ?? this.busy,
+      busyStartedAtMs: busyStartedAtMs ?? this.busyStartedAtMs,
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
@@ -519,6 +527,7 @@ final class FaTuiModel extends Model {
     return (
       copyWith(
         busy: msg.busy,
+        busyStartedAtMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
         spinnerFrame: 0,
         stickyLines: msg.busy ? null : const [],
         stickyIndex: msg.busy ? null : -1,
@@ -1411,6 +1420,14 @@ final class FaTuiModel extends Model {
     for (final message in messages) {
       lines = _echoAppend(lines, message);
     }
+    // A visible receipt: an echoed-but-unanswered message otherwise reads
+    // as "sent into the void" while the turn runs (or wedges on a dead
+    // endpoint).
+    lines = _appendOutput(
+      lines,
+      _dim('⤷ steered into the running turn — esc aborts'),
+      true,
+    );
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
@@ -1684,7 +1701,13 @@ final class FaTuiModel extends Model {
   void _writeBusyAndQueue(StringBuffer b) {
     if (busy) {
       final frame = _spinnerFrames[spinnerFrame % _spinnerFrames.length];
-      b.writeln('${_accent2Plain(frame)} ${_dim('Working…')}');
+      final elapsedSeconds = busyStartedAtMs < 0
+          ? 0
+          : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
+                .floor();
+      b.writeln(
+        '${_accent2Plain(frame)} ${_dim('Working… ${elapsedSeconds}s')}',
+      );
     }
     if (queue.isNotEmpty) {
       for (final queued in queue) {

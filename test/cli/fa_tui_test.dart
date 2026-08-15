@@ -324,6 +324,12 @@ void main() {
       // stable across ticks (the old re-homing suffix is gone on purpose).
       expect(spinnerRows.length, greaterThan(1));
       expect(model.view().content.split('\n').last, contains('\x1b[?25l'));
+      // The busy row carries the elapsed seconds — a wedged endpoint is
+      // visible instead of looking like a frozen UI.
+      expect(
+        spinnerRows.every((row) => RegExp(r'Working… \d+s').hasMatch(row)),
+        isTrue,
+      );
     },
   );
 
@@ -681,10 +687,15 @@ void main() {
       ]);
       expect(model.queue, isEmpty);
       expect(model.inputText, '');
-      // The steered messages were echoed into the history.
+      // The steered messages were echoed into the history, with the
+      // visible "what happened to my message" receipt.
       expect(
         model.outputLines.join('\n'),
         allOf(contains('typed'), contains('q1')),
+      );
+      expect(
+        model.outputLines.join('\n'),
+        contains('steered into the running turn'),
       );
     });
 
