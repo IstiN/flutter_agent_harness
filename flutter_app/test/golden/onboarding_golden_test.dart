@@ -2,6 +2,8 @@
 /// the first-launch onboarding flow matching the reference design: welcome
 /// with chat/app mockups, provider selection, permission cards, and the
 /// ready page with app grid. Dark + light variants at phone and desktop sizes.
+/// Also covers `onboarding_mockups` (the part file with the mockup widgets)
+/// and `provider_marks` (the brand icons in the page-2 provider cards).
 library;
 
 import 'package:fa/services/onboarding_store.dart';
