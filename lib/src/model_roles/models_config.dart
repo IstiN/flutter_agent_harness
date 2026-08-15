@@ -85,7 +85,7 @@ final class CustomModelDefinition {
     if (catalogProvider(provider) == null) {
       throw ConfigException(
         'unknown provider "$provider" in $where — supported providers: '
-        '${providerCatalog.keys.join(', ')}',
+        '${enabledProviderNames().join(', ')}',
       );
     }
     int? optionalInt(String field) {

@@ -69,6 +69,16 @@ final class ProviderSpec {
 }
 
 /// The built-in provider table.
+///
+/// **Build-time provider filtering:** the `FA_PROVIDERS` dart-define
+/// restricts the binary to a subset of providers —
+/// `dart compile exe -DFA_PROVIDERS=dial,codemie` builds a CLI that offers
+/// ONLY those (plus saved custom openai-like endpoints; `custom` is always
+/// available). Unset or `all` keeps every provider. The [ProviderSpec] map
+/// itself stays complete (adapters, tests, config parsing unchanged); the
+/// filter applies at every user-facing surface: the catalog lookups
+/// ([catalogProvider]), the CLI pickers, `/provider` status, the model
+/// pickers, and key-name collection.
 const providerCatalog = <String, ProviderSpec>{
   'openrouter': ProviderSpec(
     name: 'openrouter',
@@ -135,14 +145,66 @@ const providerCatalog = <String, ProviderSpec>{
   ),
 };
 
-/// Resolves [name] against the [providerCatalog].
+/// The `FA_PROVIDERS` dart-define value: a comma-separated allowlist of
+/// provider names, `all`/empty for everything. Compile-time constant so
+/// filtered-out adapters still tree-shake out of a `dart compile` build.
+/// Set via the CI/build system: the native-binaries workflow passes it as
+/// `-DFA_PROVIDERS=...` on the compile step.
+const _faProvidersDefine = String.fromEnvironment('FA_PROVIDERS');
+
+/// The runtime `FA_PROVIDERS` environment variable, resolved by the host
+/// (bin/fah.dart or the app wiring) and injected once at startup. The
+/// compile-time define WINS over this runtime value when both are set.
+/// Unset (`null`) on hosts without a concept of process env (web).
+String? providerFilterEnvOverride;
+
+/// Whether [name] survives the provider filter (see [providerCatalog]).
+/// `true` for every name without a filter.
+///
+/// Filter precedence: the `FA_PROVIDERS` dart-define first (immutable,
+/// tree-shakable), then the runtime env override ([providerFilterEnvOverride],
+/// set from the process environment by the host at startup). Values: an
+/// empty/`all`/`*` value keeps every provider; anything else is a
+/// comma-separated name allowlist.
+bool providerEnabledInBuild(String name) {
+  final define = _faProvidersDefine.isNotEmpty
+      ? _faProvidersDefine
+      : (providerFilterEnvOverride ?? '');
+  if (define.isEmpty || define == 'all' || define == '*') return true;
+  final allowed = define
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .where((s) => s.isNotEmpty);
+  return allowed.contains(name.trim().toLowerCase());
+}
+
+/// The build-enabled subset of the catalog (insertion order preserved).
+/// Without `FA_PROVIDERS` this is the whole table.
+List<ProviderSpec> enabledProviders() => [
+  for (final spec in providerCatalog.values)
+    if (providerEnabledInBuild(spec.name)) spec,
+];
+
+/// The build-enabled provider names (`enabledProviders` in name form).
+List<String> enabledProviderNames() => [
+  for (final spec in enabledProviders()) spec.name,
+];
+
+/// Resolves [name] against the [providerCatalog], honoring the build-time
+/// provider filter (`FA_PROVIDERS` — filtered names resolve to null and the
+/// error paths list only the enabled providers).
 ///
 /// The legacy CLI kind `openai-completions` is accepted as an alias for
 /// `openrouter` (its historical default endpoint).
 ProviderSpec? catalogProvider(String name) {
   final normalized = name.trim().toLowerCase();
-  if (normalized == 'openai-completions') return providerCatalog['openrouter'];
-  return providerCatalog[normalized];
+  if (normalized == 'openai-completions' &&
+      providerEnabledInBuild('openrouter')) {
+    return providerCatalog['openrouter'];
+  }
+  final spec = providerCatalog[normalized];
+  if (spec == null || !providerEnabledInBuild(spec.name)) return null;
+  return spec;
 }
 
 /// Builds a [Model] for [provider]/[modelId] with catalog defaults, overrid-

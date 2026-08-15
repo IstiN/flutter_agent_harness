@@ -139,7 +139,7 @@ final class ModelRolesResolver {
     if (spec == null) {
       throw ConfigException(
         'unknown provider "${ref.provider}" — supported providers: '
-        '${providerCatalog.keys.join(', ')}',
+        '${enabledProviderNames().join(', ')}',
       );
     }
     final keyBase = _keyBaseName(ref, spec);
