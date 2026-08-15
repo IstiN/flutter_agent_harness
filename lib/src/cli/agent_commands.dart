@@ -69,11 +69,18 @@ extension AgentCliAgentExt on AgentCli {
   }
 
   /// The live agents tree: TUI picker of main + children, or a text dump in
-  /// line mode.
+  /// line mode. Rows carry a ✉N marker for pending inbox messages.
   Future<void> _agentsTreePanel() async {
     final children = _subagentManager.handles;
+    final inboxCounts = <String, int>{
+      _subagentManager.selfId: await _subagentManager.pendingInboxCount(
+        _subagentManager.selfId,
+      ),
+      for (final h in children)
+        h.id: await _subagentManager.pendingInboxCount(h.id),
+    };
     if (!_useTui || _tuiController == null) {
-      _printAgentsTree(children);
+      _printAgentsTree(children, inboxCounts);
       return;
     }
     _tuiController!.openPicker(
@@ -83,6 +90,7 @@ extension AgentCliAgentExt on AgentCli {
         children,
         modelId: _agent.state.model.id,
         messageCount: _agent.state.messages.length,
+        inboxCounts: inboxCounts,
       ),
     );
   }
@@ -106,19 +114,32 @@ extension AgentCliAgentExt on AgentCli {
       io.writeln('  session: ${metadata.path}');
     }
     io.writeln('  children: ${_subagentManager.handles.length}');
+    final inbox = await _subagentManager.pendingInboxCount(
+      _subagentManager.selfId,
+    );
+    if (inbox > 0) io.writeln('  ✉ inbox: $inbox pending');
   }
 
   /// Text-mode agents tree (line mode or non-TUI fallback).
-  void _printAgentsTree(List<SubagentHandle> children) {
-    io.writeln('main (orchestrator) · ${_agent.state.model.id}');
+  void _printAgentsTree(
+    List<SubagentHandle> children,
+    Map<String, int> inboxCounts,
+  ) {
+    final mainInbox = inboxCounts[_subagentManager.selfId] ?? 0;
+    io.writeln(
+      'main (orchestrator) · ${_agent.state.model.id}'
+      '${mainInbox > 0 ? ' · ✉$mainInbox' : ''}',
+    );
     if (children.isEmpty) {
       io.writeln('  (no subagents yet)');
       return;
     }
     for (final h in children) {
+      final inbox = inboxCounts[h.id] ?? 0;
       io.writeln(
         '  ${agentStatusIcon(h.status)} '
-        '${h.agentType}:${h.id} — ${agentRowDescription(h)}',
+        '${h.agentType}:${h.id} — ${agentRowDescription(h)}'
+        '${inbox > 0 ? ' · ✉$inbox' : ''}',
       );
     }
     io.writeln('  /agents <id> to observe · /agents types for the catalog');
@@ -153,7 +174,8 @@ extension AgentCliAgentExt on AgentCli {
   }
 
   /// Prints one child's status row plus its session tail (the observe view's
-  /// transcript part).
+  /// transcript part), then the pending inbox (messages addressed to the
+  /// child but not yet consumed).
   Future<void> _printSubagentObservation(SubagentHandle handle) async {
     io.writeln(
       '${agentStatusIcon(handle.status)} '
@@ -162,10 +184,25 @@ extension AgentCliAgentExt on AgentCli {
     final tail = await _readChildMessages(handle.sessionId, tail: 8);
     if (tail.isEmpty) {
       io.writeln('  (session transcript unavailable)');
-      return;
+    } else {
+      for (final line in tail) {
+        io.writeln('  $line');
+      }
     }
-    for (final line in tail) {
-      io.writeln('  $line');
+    await _printPendingInbox(handle.id);
+  }
+
+  /// The pending inbox lines for one agent (`✉ inbox (n): from …`).
+  Future<void> _printPendingInbox(String id) async {
+    final fabric = _subagentManager.messaging;
+    if (fabric == null) return;
+    final pending = await fabric.peek(_subagentManager.mailboxOf(id));
+    if (pending.isEmpty) return;
+    io.writeln('  ✉ inbox (${pending.length}):');
+    for (final message in pending) {
+      final text = message.text.replaceAll('\n', ' ');
+      final preview = text.length > 60 ? '${text.substring(0, 60)}…' : text;
+      io.writeln('    from ${message.fromId}: $preview');
     }
   }
 

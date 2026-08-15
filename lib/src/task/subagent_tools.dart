@@ -105,11 +105,12 @@ AgentTool _agentMessageTool(
   return AgentTool(
     name: 'agent_message',
     description:
-        'Send a message to a SIBLING subagent in the same session family '
-        '(not the parent — use reply for that). The sibling sees the message '
-        'as a queued instruction; running siblings get it on their next '
-        'turn, completed siblings are resumed. Unknown ids and full queues '
-        'are rejected.',
+        'Send a message to another agent: a SIBLING subagent id, "main" '
+        'for the parent orchestrator (for a final answer prefer reply), or '
+        'an absolute mailbox "<sessionId>/main" to reach another Fa '
+        'instance sharing this session repo. The recipient sees the message '
+        'in its inbox on its next turn; completed siblings are resumed. '
+        'Unknown ids and full queues are rejected.',
     parameters: {
       'type': 'object',
       'properties': {

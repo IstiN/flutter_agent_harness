@@ -58,6 +58,7 @@ class AgentsSection extends StatelessWidget {
             _ChildRow(
               handle: handle,
               theme: theme,
+              inboxCount: manager.pendingInboxCount(handle.id),
               onTap: () => _openDetail(context, handle),
             ),
       ],
@@ -67,7 +68,12 @@ class AgentsSection extends StatelessWidget {
   Future<void> _openDetail(BuildContext context, SubagentHandle handle) {
     return pushFaPage(
       context,
-      AgentDetailPage(handle: handle, observe: observe, send: send),
+      AgentDetailPage(
+        handle: handle,
+        observe: observe,
+        send: send,
+        inbox: () => manager.pendingInbox(handle.id),
+      ),
     );
   }
 }
@@ -112,11 +118,15 @@ class _ChildRow extends StatelessWidget {
   const _ChildRow({
     required this.handle,
     required this.theme,
+    required this.inboxCount,
     required this.onTap,
   });
 
   final SubagentHandle handle;
   final ThemeData theme;
+
+  /// Pending inbox count for the ✉ badge (the messaging fabric).
+  final Future<int> inboxCount;
   final VoidCallback onTap;
 
   @override
@@ -144,6 +154,23 @@ class _ChildRow extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+            FutureBuilder<int>(
+              future: inboxCount,
+              builder: (context, snapshot) {
+                final count = snapshot.data ?? 0;
+                if (count <= 0) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Text(
+                    '✉$count',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                );
+              },
             ),
             Icon(
               Icons.chevron_right,
@@ -179,13 +206,15 @@ String agentStatusEmoji(SubagentStatus status) => switch (status) {
 };
 
 /// One child's detail page: status header, session tail (via [observe]),
-/// and a follow-up message field (via [send]).
+/// the pending inbox (via [inbox], the messaging fabric), and a follow-up
+/// message field (via [send]).
 class AgentDetailPage extends StatefulWidget {
   const AgentDetailPage({
     super.key,
     required this.handle,
     required this.observe,
     required this.send,
+    this.inbox,
   });
 
   /// The child being inspected.
@@ -197,6 +226,10 @@ class AgentDetailPage extends StatefulWidget {
   /// Delivers a follow-up message to the child.
   final Future<void> Function(String id, String message) send;
 
+  /// Reads the pending (unread) inbox messages of the child. Null when no
+  /// messaging fabric is wired.
+  final Future<List<AgentMessage>> Function()? inbox;
+
   @override
   State<AgentDetailPage> createState() => _AgentDetailPageState();
 }
@@ -204,6 +237,7 @@ class AgentDetailPage extends StatefulWidget {
 class _AgentDetailPageState extends State<AgentDetailPage> {
   late final TextEditingController _messageCtrl;
   List<(String, String)>? _messages;
+  List<AgentMessage> _inbox = const [];
   String? _error;
   var _sending = false;
 
@@ -223,9 +257,11 @@ class _AgentDetailPageState extends State<AgentDetailPage> {
   Future<void> _load() async {
     try {
       final messages = await widget.observe(widget.handle.id, tail: 20);
+      final inbox = await widget.inbox?.call() ?? const <AgentMessage>[];
       if (mounted) {
         setState(() {
           _messages = messages;
+          _inbox = inbox;
           _error = null;
         });
       }
@@ -358,6 +394,39 @@ class _AgentDetailPageState extends State<AgentDetailPage> {
                     ),
             ),
             const Divider(height: 1),
+            if (_inbox.isNotEmpty)
+              Container(
+                width: double.infinity,
+                color: theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.4,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '✉ inbox (${_inbox.length})', // l10n:ignore
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    for (final message in _inbox)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'from ${message.fromId}: ${message.text}',
+                          style: theme.textTheme.bodySmall,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            if (_inbox.isNotEmpty) const Divider(height: 1),
             Padding(
               padding: const EdgeInsets.all(12),
               child: Row(

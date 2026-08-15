@@ -10,6 +10,8 @@ library;
 
 import 'dart:async';
 
+import '../messaging/agent_message.dart';
+import '../messaging/messaging_repository.dart';
 import 'subagent.dart';
 
 /// One observable event from a subagent (status transition, output preview,
@@ -37,6 +39,8 @@ final class SubagentManager {
     this.createChildSession,
     this.sink,
     this.source,
+    this.messaging,
+    this.selfId = 'main',
     this.maxPendingMessages = 16,
     this.maxReplyChars = 8000,
   });
@@ -52,6 +56,29 @@ final class SubagentManager {
 
   /// Injected: reads the persisted registry from the parent session.
   final SubagentRegistrySource? source;
+
+  /// Injected: the messaging fabric. When present, inter-agent messages go
+  /// through per-agent inboxes (visible across processes sharing the
+  /// messaging root) instead of the in-process pending queue.
+  final MessagingRepository? messaging;
+
+  /// This host's own agent id in the messaging fabric (`main` for the
+  /// orchestrator). Inbox drains for the loop use it.
+  final String selfId;
+
+  /// Namespace prefix for every mailbox this manager touches (e.g. the
+  /// parent session id): two Fa instances sharing one messaging root never
+  /// drain each other's inboxes. Mutable — the host sets it once the
+  /// session (and thus its id) exists. Empty = single-instance mode.
+  String mailboxPrefix = '';
+
+  /// The fabric mailbox for a local agent id. An id containing `/` is
+  /// already an absolute mailbox (cross-instance addressing like
+  /// `<sessionId>/main`) and passes through unprefixed.
+  String mailboxOf(String id) {
+    if (id.contains('/')) return id;
+    return mailboxPrefix.isEmpty ? id : '$mailboxPrefix/$id';
+  }
 
   /// Size guard: messages queued to one child before new ones are rejected
   /// (Phase 3b pending-queue guard).
@@ -150,44 +177,123 @@ final class SubagentManager {
   /// Queues [message] for [id] (Phase 3b `agent_message` / parent steering).
   /// Throws [StateError] for an unknown id or a full pending queue; caps the
   /// body at [maxReplyChars]. Aborted children refuse new messages.
+  ///
+  /// With a [messaging] fabric the message is DELIVERED to the recipient's
+  /// inbox (cross-process visible); otherwise it sits in the in-process
+  /// pending queue. `main` ([selfId]) is a valid recipient — that is how
+  /// children message the parent.
   Future<void> enqueueMessage(String id, SubagentMessage message) async {
     final handle = _handles[id];
-    if (handle == null) {
-      throw StateError(
-        'unknown subagent "$id" — available: ${_handles.keys.join(', ')}',
-      );
+    _guardRecipient(id, handle);
+    final capped = _capMessage(message);
+    if (messaging != null) {
+      await _deliverViaFabric(id, handle, capped);
+      return;
     }
-    if (handle.status == SubagentStatus.aborted) {
-      throw StateError('subagent "$id" is aborted and takes no messages');
-    }
-    if (handle.pendingMessages.length >= maxPendingMessages) {
+    if (handle!.pendingMessages.length >= maxPendingMessages) {
       throw StateError(
         'subagent "$id" pending queue is full ($maxPendingMessages) — '
         'the child must consume its messages first',
       );
     }
-    final capped = message.text.length > maxReplyChars
-        ? SubagentMessage(
-            fromId: message.fromId,
-            text: '${message.text.substring(0, maxReplyChars)}…[truncated]',
-            sentAt: message.sentAt,
-            hops: message.hops,
-          )
-        : message;
     handle.pendingMessages.add(capped);
+    _touchWithMessage(handle, capped);
+  }
+
+  /// Recipient validation for [enqueueMessage]: known local handle, the
+  /// [selfId] inbox (fabric only), or an absolute cross-instance mailbox
+  /// (fabric only). Aborted children refuse messages.
+  void _guardRecipient(String id, SubagentHandle? handle) {
+    final absolute = id.contains('/');
+    final deliverable =
+        handle != null || (id == selfId || absolute) && messaging != null;
+    if (!deliverable) {
+      throw StateError(
+        'unknown subagent "$id" — available: ${_handles.keys.join(', ')}',
+      );
+    }
+    if (handle?.status == SubagentStatus.aborted) {
+      throw StateError('subagent "$id" is aborted and takes no messages');
+    }
+  }
+
+  /// The body cap: overlong messages are truncated with a marker.
+  SubagentMessage _capMessage(SubagentMessage message) {
+    if (message.text.length <= maxReplyChars) return message;
+    return SubagentMessage(
+      fromId: message.fromId,
+      text: '${message.text.substring(0, maxReplyChars)}…[truncated]',
+      sentAt: message.sentAt,
+      hops: message.hops,
+    );
+  }
+
+  /// Fabric delivery: bounded by the recipient's unread inbox size.
+  Future<void> _deliverViaFabric(
+    String id,
+    SubagentHandle? handle,
+    SubagentMessage message,
+  ) async {
+    final mailbox = mailboxOf(id);
+    final pending = await messaging!.peek(mailbox);
+    if (pending.length >= maxPendingMessages) {
+      throw StateError(
+        'subagent "$id" pending queue is full ($maxPendingMessages) — '
+        'the child must consume its messages first',
+      );
+    }
+    await messaging!.send(
+      AgentMessage(
+        id: newMessageId(),
+        fromId: mailboxOf(message.fromId),
+        toId: mailbox,
+        text: message.text,
+        sentAt: message.sentAt,
+        hops: message.hops,
+      ),
+    );
+    if (handle != null) _touchWithMessage(handle, message);
+  }
+
+  /// Shared bookkeeping after a message is accepted for [handle].
+  void _touchWithMessage(SubagentHandle handle, SubagentMessage message) {
     handle.lastActivity = DateTime.now().toUtc().toIso8601String();
-    _events.add(SubagentEvent(handle: handle, message: capped));
+    _events.add(SubagentEvent(handle: handle, message: message));
     _persist();
   }
 
   /// Drains [id]'s pending queue (delivered messages leave the registry).
-  List<SubagentMessage> drainMessages(String id) {
+  /// With a [messaging] fabric this consumes the agent's file inbox.
+  Future<List<SubagentMessage>> drainMessages(String id) async {
+    final fabric = messaging;
+    if (fabric != null) {
+      final drained = await fabric.drain(mailboxOf(id));
+      return [
+        for (final m in drained)
+          SubagentMessage(
+            fromId: m.fromId,
+            text: m.text,
+            sentAt: m.sentAt,
+            hops: m.hops,
+          ),
+      ];
+    }
     final handle = _handles[id];
     if (handle == null) return const [];
     final drained = List<SubagentMessage>.of(handle.pendingMessages);
     handle.pendingMessages.clear();
     return drained;
   }
+
+  /// Counts the unread inbox messages of [id] (0 without a fabric) — the
+  /// ✉ indicator in the agents panel.
+  Future<int> pendingInboxCount(String id) async =>
+      (await messaging?.peek(mailboxOf(id)) ?? const []).length;
+
+  /// The unread inbox messages of [id] (empty without a fabric) — the
+  /// pending-inbox block of the observe/detail views.
+  Future<List<AgentMessage>> pendingInbox(String id) async =>
+      await messaging?.peek(mailboxOf(id)) ?? const [];
 
   /// Records the child's explicit `reply` (Phase 3b) on its handle.
   Future<void> recordReply(String id, String text) async {

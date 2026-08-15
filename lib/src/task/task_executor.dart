@@ -27,6 +27,7 @@ import '../agent/tool_registry.dart';
 import '../a2a/a2a_client.dart';
 import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
+import '../context.dart';
 import '../json_parse.dart';
 import '../model.dart';
 import '../model_roles/model_resolver.dart';
@@ -233,6 +234,11 @@ final class TaskExecutor {
       systemPrompt: _buildSystemPrompt(definition, context),
       streamFunction: wiring.stream,
       toolRegistry: toolRegistry,
+      // The child's inbox: messages from the parent/siblings (and other Fa
+      // instances sharing the messaging root) arrive at turn boundaries.
+      externalSteeringSource: subagentManager == null
+          ? null
+          : () => _inboxSteeringMessages(id),
     );
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
@@ -244,23 +250,17 @@ final class TaskExecutor {
     // durability must never slow the completion delivery.
     unawaited(_ensureChildSession(id));
     try {
-      await child.prompt(_buildUserPrompt(item, id));
+      await child.prompt(await _buildUserPrompt(item, id));
       unawaited(_flushChildTranscript(id, child));
       cancelToken?.throwIfCancelled();
 
       final finalText = _finalAssistantText(child);
-      var storedContent = finalText;
-      StructuredTaskOutput? structured;
-      if (item.outputSchema != null) {
-        final validation = await _validateStructured(
-          child: child,
-          outputSchema: item.outputSchema!,
-          finalText: finalText,
-          cancelToken: cancelToken,
-        );
-        structured = validation.structured;
-        storedContent = validation.outputContent;
-      }
+      final (storedContent, structured) = await _applyOutputSchema(
+        child,
+        item,
+        finalText,
+        cancelToken,
+      );
 
       final capped = _capOutput(storedContent);
       store.put(id, capped.$1);
@@ -368,7 +368,10 @@ final class TaskExecutor {
       await subagentManager!.update(id, status: SubagentStatus.running);
     }
     try {
-      final remoteTask = await manager.send(serverName, _a2aPrompt(item, id));
+      final remoteTask = await manager.send(
+        serverName,
+        await _a2aPrompt(item, id),
+      );
       // Poll to a terminal state (input-required also settles — the parent
       // can task_send the answer).
       final settled = await manager.waitForTask(
@@ -457,16 +460,48 @@ final class TaskExecutor {
 
   /// The remote agent's prompt: the item task plus the pending inter-agent
   /// messages, mirroring the local child's user prompt.
-  String _a2aPrompt(TaskItem item, String subagentId) {
+  Future<String> _a2aPrompt(TaskItem item, String subagentId) async {
     final buffer = StringBuffer(item.task.trim());
     if (subagentManager != null) {
-      final queued = subagentManager!.drainMessages(subagentId);
+      final queued = await subagentManager!.drainMessages(subagentId);
       for (final message in queued) {
         buffer.writeln();
         buffer.writeln('from ${message.fromId}: ${message.text.trim()}');
       }
     }
     return buffer.toString();
+  }
+
+  /// Schema validation when the item carries an `outputSchema`: the content
+  /// to store plus the structured output (both pass-through when the item
+  /// has no schema). Extracted from [_run] to keep its CRAP in budget.
+  Future<(String, StructuredTaskOutput?)> _applyOutputSchema(
+    Agent child,
+    TaskItem item,
+    String finalText,
+    CancelToken? cancelToken,
+  ) async {
+    if (item.outputSchema == null) return (finalText, null);
+    final validation = await _validateStructured(
+      child: child,
+      outputSchema: item.outputSchema!,
+      finalText: finalText,
+      cancelToken: cancelToken,
+    );
+    return (validation.outputContent, validation.structured);
+  }
+
+  /// The child's inbox as steering messages (the agent loop polls this at
+  /// every turn boundary): each pending inter-agent message becomes a user
+  /// message attributed to its sender, so the transcript reads like a chat.
+  Future<List<Message>> _inboxSteeringMessages(String subagentId) async {
+    final manager = subagentManager;
+    if (manager == null) return const [];
+    final queued = await manager.drainMessages(subagentId);
+    return [
+      for (final message in queued)
+        UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
+    ];
   }
 
   /// Resolves [agentName] to its definition or throws listing the available
@@ -516,12 +551,12 @@ final class TaskExecutor {
   /// The child's assignment prompt, with the schema instructions appended
   /// when the item carries an `outputSchema`, and any queued inter-agent
   /// messages (Phase 3b) delivered as a `# MESSAGES` section.
-  String _buildUserPrompt(TaskItem item, [String? subagentId]) {
+  Future<String> _buildUserPrompt(TaskItem item, [String? subagentId]) async {
     final userPrompt = StringBuffer(
       taskAssignmentPrompt.replaceAll('{{task}}', item.task.trim()),
     );
     if (subagentId != null && subagentManager != null) {
-      final queued = subagentManager!.drainMessages(subagentId);
+      final queued = await subagentManager!.drainMessages(subagentId);
       if (queued.isNotEmpty) {
         userPrompt
           ..writeln()

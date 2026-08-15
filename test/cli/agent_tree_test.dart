@@ -105,6 +105,27 @@ void main() {
       expect(items.last.key, 'noop');
       expect(items.last.label, contains('no subagents yet'));
     });
+
+    test('pending inbox counts append ✉N markers', () {
+      final items = buildAgentTreeItems(
+        [_handle(id: 'a1')],
+        modelId: 'k3',
+        messageCount: 7,
+        inboxCounts: const {'main': 2, 'a1': 3},
+      );
+      expect(items.first.description, contains('✉2'));
+      expect(items[1].description, contains('✉3'));
+    });
+
+    test('no inbox counts — no markers', () {
+      final items = buildAgentTreeItems(
+        [_handle(id: 'a1')],
+        modelId: 'k3',
+        messageCount: 7,
+      );
+      expect(items.first.description, isNot(contains('✉')));
+      expect(items[1].description, isNot(contains('✉')));
+    });
   });
 
   group('subagentReceiveGuard', () {

@@ -405,6 +405,37 @@ void main() {
       );
     });
 
+    test('external steering source is drained before the first turn and '
+        'merged ahead of the in-process queue', () async {
+      final fake = _FakeStreamFunction([_textTurn('a1'), _textTurn('a2')]);
+      final agent = _agentWith(fake);
+      var inboxPolls = 0;
+      final inbox = <Message>[UserMessage.text('from explore:a1: ping')];
+      agent.externalSteeringSource = () {
+        inboxPolls++;
+        if (inbox.isEmpty) return const <Message>[];
+        final drained = List<Message>.of(inbox);
+        inbox.clear();
+        return drained;
+      };
+      agent.steer(UserMessage.text('local steer'));
+      await agent.prompt('p');
+
+      // First poll (before turn 1) delivered the inbox message ahead of
+      // the in-process steer; the second poll found an empty inbox.
+      expect(inboxPolls, greaterThanOrEqualTo(2));
+      final firstCallRoles = fake.contexts[0].messages.map((m) => m.role);
+      expect(firstCallRoles, ['user', 'user', 'user']);
+      expect(
+        (fake.contexts[0].messages[1] as UserMessage).content,
+        'from explore:a1: ping',
+      );
+      expect(
+        (fake.contexts[0].messages[2] as UserMessage).content,
+        'local steer',
+      );
+    });
+
     test('one-at-a-time mode consumes one steering message per turn', () async {
       final fake = _FakeStreamFunction([_textTurn('a1'), _textTurn('a2')]);
       final agent = _agentWith(fake);

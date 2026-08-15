@@ -86,6 +86,11 @@ String _encodeCwd(String cwd) {
   return '--${cwd.replaceFirst(RegExp(r'^[/\\]'), '').replaceAll(RegExp(r'[/\\:]'), '-')}--';
 }
 
+/// The per-project directory slug used under the sessions root
+/// (`/work` → `--work--`). Public so sibling stores (e.g. the messaging
+/// fabric root) colocate with the project's sessions.
+String encodeSessionCwd(String cwd) => _encodeCwd(cwd);
+
 /// Creates a new session id (time-ordered uuidv7).
 String createSessionId() => uuidv7();
 

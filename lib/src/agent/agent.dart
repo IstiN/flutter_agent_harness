@@ -177,6 +177,7 @@ class Agent {
     this.afterToolCall,
     this.transformContext,
     this.prepareNextTurn,
+    this.externalSteeringSource,
     QueueMode steeringMode = QueueMode.oneAtATime,
     QueueMode followUpMode = QueueMode.oneAtATime,
     this.toolExecution = ToolExecutionMode.parallel,
@@ -216,6 +217,12 @@ class Agent {
 
   /// Adjusts context/model between turns. See [PrepareNextTurnHook].
   PrepareNextTurnHook? prepareNextTurn;
+
+  /// External messages merged into the steering poll at every turn boundary
+  /// (before the first turn and after each one) — e.g. the agent's inbox in
+  /// the messaging fabric. Drained BEFORE the in-process steering queue.
+  /// Contract: must not throw; return an empty list when nothing arrived.
+  QueuedMessagesSource? externalSteeringSource;
 
   /// Tool execution strategy for assistant messages that contain multiple
   /// tool calls.
@@ -400,12 +407,14 @@ class Agent {
       prepareNextTurn: prepareNextTurn == null
           ? null
           : (context) => prepareNextTurn?.call(context),
-      getSteeringMessages: () {
+      getSteeringMessages: () async {
         if (skip) {
           skip = false;
           return const <Message>[];
         }
-        return _steeringQueue.drain();
+        final external =
+            await externalSteeringSource?.call() ?? const <Message>[];
+        return [...external, ..._steeringQueue.drain()];
       },
       getFollowUpMessages: _followUpQueue.drain,
     );

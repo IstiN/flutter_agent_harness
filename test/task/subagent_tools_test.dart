@@ -200,11 +200,11 @@ void main() {
       );
       final text = (result.content.first as dynamic).text as String;
       expect(text, contains('queued for "b2"'));
-      final drained = mgr.drainMessages('b2');
+      final drained = await mgr.drainMessages('b2');
       expect(drained, hasLength(1));
       expect(drained.single.fromId, 'a1');
       expect(drained.single.text, 'hand over the file list');
-      expect(mgr.drainMessages('b2'), isEmpty);
+      expect(await mgr.drainMessages('b2'), isEmpty);
     });
 
     test('agent_message to self is refused', () async {

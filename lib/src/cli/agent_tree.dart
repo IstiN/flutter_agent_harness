@@ -40,23 +40,30 @@ String agentRowDescription(SubagentHandle handle) {
 }
 
 /// Builds the `/agents` TUI picker items: main orchestrator first, then one
-/// row per child, plus the empty-state row when there are no children.
+/// row per child, plus the empty-state row when there are no children. A
+/// positive `inboxCounts[id]` appends a ✉N pending-messages marker.
 List<MenuItem> buildAgentTreeItems(
   List<SubagentHandle> children, {
   required String modelId,
   required int messageCount,
+  Map<String, int> inboxCounts = const {},
 }) {
+  final mainInbox = inboxCounts['main'] ?? 0;
   final items = <MenuItem>[
     MenuItem(
       key: 'main',
       label: 'main (orchestrator)',
-      description: '$modelId · $messageCount messages',
+      description:
+          '$modelId · $messageCount messages'
+          '${mainInbox > 0 ? ' · ✉$mainInbox' : ''}',
     ),
     for (final h in children)
       MenuItem(
         key: 'child:${h.id}',
         label: '${agentStatusIcon(h.status)} ${h.agentType}:${h.id}',
-        description: agentRowDescription(h),
+        description:
+            '${agentRowDescription(h)}'
+            '${(inboxCounts[h.id] ?? 0) > 0 ? ' · ✉${inboxCounts[h.id]}' : ''}',
       ),
   ];
   if (children.isEmpty) {

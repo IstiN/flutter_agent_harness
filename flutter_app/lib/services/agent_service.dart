@@ -383,8 +383,17 @@ class AgentService extends ChangeNotifier
     final toolEnv = SessionVarsExecutionEnv(env, _sessionEnvVars);
     // Subagent + memory infrastructure (Phase 3a-3c): the task tool spawns
     // children, monitoring tools let the model query/steer them, memory tools
-    // persist facts across sessions.
-    _subagentManager = SubagentManager(parentSessionId: '');
+    // persist facts across sessions. The messaging fabric gives every agent
+    // (main + children) a file inbox colocated with the sessions — any Fa
+    // instance sharing this root can exchange messages with them.
+    _subagentManager = SubagentManager(
+      parentSessionId: '',
+      messaging: FileMessagingRepository(
+        env: env,
+        root: '${env.cwd}/sessions/messages',
+      ),
+      selfId: 'main',
+    );
     // Real JSONL child sessions at completion (fast register keeps the
     // steering race away; transcript lands when the child finishes).
     Future<Session> childSessionFactory(String parentId, String childId) async {
@@ -529,6 +538,9 @@ class AgentService extends ChangeNotifier
       streamFunction: streamFunction ?? _streamFunctionFor(config),
       toolRegistry: registry,
     );
+    // The main agent's inbox: messages from children (agent_message to
+    // "main") and from other Fa instances arrive at turn boundaries.
+    _agent.externalSteeringSource = _mainInboxMessages;
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
@@ -1212,6 +1224,20 @@ class AgentService extends ChangeNotifier
     final sessionMetadata = await session.getMetadata();
     _sessionId = sessionMetadata.id;
     _sessionFile = sessionMetadata.path;
+    _subagentManager?.mailboxPrefix = sessionMetadata.id;
+  }
+
+  /// The main agent's inbox as steering messages: each pending fabric
+  /// message becomes a user message attributed to its sender, so the
+  /// transcript reads like a chat between agents.
+  Future<List<Message>> _mainInboxMessages() async {
+    final manager = _subagentManager;
+    if (manager == null) return const [];
+    final queued = await manager.drainMessages(manager.selfId);
+    return [
+      for (final message in queued)
+        UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
+    ];
   }
 
   /// Sends a plain-text user message. While the agent is already running the
@@ -1641,6 +1667,7 @@ class AgentService extends ChangeNotifier
     _session = session;
     _sessionId = metadata.id;
     _sessionFile = metadata.path;
+    _subagentManager?.mailboxPrefix = metadata.id;
     _persistedCount = contextMessages.length;
     _currentAssistantMessage = null;
     error = null;

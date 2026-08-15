@@ -113,6 +113,24 @@ factual: paths, commands, invariants — no essays.
   addressable: real JSONL child sessions, `task_status`/`task_observe`/
   `task_send`, child-only `reply` + sibling `agent_message` (pending-queue
   + hop-capped), `completed_without_reply` notice.
+- `lib/src/messaging/` — the agent messaging fabric: every agent (main,
+  subagents, other Fa instances sharing the root) owns a file inbox behind
+  the isolated `MessagingRepository` interface (send/peek/drain/directory —
+  future DB/network impls drop in without caller changes).
+  `FileMessagingRepository` over `ExecutionEnv`:
+  `<root>/<agent>/inbox|read/<id>.json`, timestamp-ordered names, sanitized
+  agent dirs, torn writes skipped. `SubagentManager.messaging` routes
+  `enqueueMessage`/`drainMessages` through the fabric (in-memory queue is
+  the no-fabric fallback); `mailboxPrefix` (the session id, set by the host
+  on every session init/switch) namespaces mailboxes so two instances never
+  drain each other — ids with `/` are absolute cross-instance addresses
+  (`<sessionId>/main`). `agent_message` targets siblings, `main`, or an
+  absolute mailbox. Turn-boundary delivery: `Agent.externalSteeringSource`
+  merges inbox drains into the steering poll (main in AgentCli/AgentService
+  as `_mainInboxMessages`, children via the executor) — messages land as
+  sender-attributed user messages, so they persist in the session and read
+  like a chat. UI: `/agents` rows + the app's AgentsSection show `✉N`
+  pending counts, observe/detail views list the pending inbox.
 - `lib/src/memory/` — long-term memory: `MemoryController` over the
   `flutter_agent_memory` package (hosted pub.dev dep),
   `execution_env_kb_storage` (KbStorage → ExecutionEnv), `memory_add`/

@@ -75,6 +75,7 @@ import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
 import '../memory/compaction_memory_hook.dart';
 import '../memory/memory_controller.dart';
+import '../messaging/file_messaging_repository.dart';
 import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
 import '../ttsr/ttsr.dart';
@@ -392,6 +393,15 @@ class AgentCli {
     // instances of the same cwd).
     _subagentManager = SubagentManager(
       parentSessionId: '',
+      // The messaging fabric: per-agent inboxes colocated with the project's
+      // sessions (`<sessionRoot>/<cwd-slug>/messages`). Any Fa instance
+      // sharing the repo can exchange messages with this one's agents.
+      messaging: FileMessagingRepository(
+        env: config.env,
+        root:
+            '${config.sessionRoot}/${encodeSessionCwd(config.env.cwd)}/messages',
+      ),
+      selfId: 'main',
       sink: (registry) async {
         final session = _session;
         if (session == null) return;
@@ -465,6 +475,10 @@ class AgentCli {
       streamFunction: _streamFunction,
       toolRegistry: _toolRegistry,
     );
+    // The main agent's inbox in the messaging fabric: messages from
+    // children (agent_message to "main") and from other Fa instances
+    // sharing the messaging root arrive at turn boundaries.
+    _agent.externalSteeringSource = _mainInboxMessages;
     // Model roles: when the default role resolves, the agent runs through
     // the resolver's fallback stream (rotation/failover per provider call).
     // A resolver without a default role leaves the legacy wiring in place
@@ -784,6 +798,7 @@ class AgentCli {
   Future<void> run() async {
     await _loadAgentContext();
     _session = await _initializeSession();
+    _syncMailboxPrefix();
     // Phase 3a: rehydrate the subagent registry from the resumed session's
     // `subagent_registry` records — agents of this session are visible again
     // (across restarts AND across instances sharing the session repo).
@@ -1357,6 +1372,26 @@ class AgentCli {
     return session;
   }
 
+  /// The main agent's inbox as steering messages: each pending fabric
+  /// message becomes a user message attributed to its sender, so the
+  /// transcript reads like a chat between agents.
+  Future<List<Message>> _mainInboxMessages() async {
+    final queued = await _subagentManager.drainMessages(
+      _subagentManager.selfId,
+    );
+    return [
+      for (final message in queued)
+        UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
+    ];
+  }
+
+  /// Namespaces this instance's mailboxes with the active session id: two
+  /// Fa instances sharing the messaging root never drain each other's
+  /// inboxes. Called after every session init/switch.
+  void _syncMailboxPrefix() {
+    _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
+  }
+
   /// The label for a startup-resumed session's replay header, or null when
   /// this run started a fresh session (no messages to replay).
   Future<String?> _resumedSessionLabel() async {
@@ -1379,6 +1414,7 @@ class AgentCli {
     _checkpoints.clear();
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
+    _syncMailboxPrefix();
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }
@@ -1391,6 +1427,7 @@ class AgentCli {
     _checkpoints.clear();
     _ttsr?.reset();
     _session = await _loadSession(metadata);
+    _syncMailboxPrefix();
     // Now that `_session` is assigned, the registry source can read the
     // resumed session's `subagent_registry` records.
     unawaited(_subagentManager.rehydrate());
@@ -1492,6 +1529,7 @@ class AgentCli {
     _checkpoints.clear();
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
+    _syncMailboxPrefix();
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }
@@ -2237,6 +2275,7 @@ class AgentCli {
         _checkpoints.clear();
         _ttsr?.reset();
         _session = await _createSession();
+        _syncMailboxPrefix();
         _persistedCount = 0;
         io.writeln('new session started');
       case '/compact':

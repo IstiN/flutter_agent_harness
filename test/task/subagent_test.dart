@@ -1,6 +1,8 @@
 @TestOn('vm')
 library;
 
+import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_agent_harness/src/messaging/file_messaging_repository.dart';
 import 'package:flutter_agent_harness/src/task/subagent.dart';
 import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
 import 'package:test/test.dart';
@@ -211,6 +213,70 @@ void main() {
       expect(capturedParent, 'parent');
       expect(capturedChild, 'c1');
       expect(handle.sessionId, 'parent/subagents/c1');
+    });
+
+    group('messaging fabric', () {
+      late MemoryExecutionEnv env;
+      late FileMessagingRepository repo;
+      late SubagentManager mgr;
+
+      SubagentMessage note(String text, {String from = 'main'}) =>
+          SubagentMessage(
+            fromId: from,
+            text: text,
+            sentAt: '2026-01-01T00:00:00Z',
+          );
+
+      setUp(() async {
+        env = MemoryExecutionEnv(cwd: '/work');
+        repo = FileMessagingRepository(env: env, root: '/mail');
+        mgr = SubagentManager(parentSessionId: 'p', messaging: repo)
+          ..mailboxPrefix = 'sess1';
+        await mgr.register(id: 'a1', name: 'a1', agentType: 'task', task: '');
+      });
+
+      test('enqueue delivers to the namespaced file inbox', () async {
+        await mgr.enqueueMessage('a1', note('note for a1'));
+        final pending = await repo.peek('sess1/a1');
+        expect(pending.single.text, 'note for a1');
+        // The sender address is namespaced too, so the recipient can reply
+        // across instances.
+        expect(pending.single.fromId, 'sess1/main');
+        expect(await mgr.pendingInboxCount('a1'), 1);
+      });
+
+      test('drain consumes the file inbox', () async {
+        await mgr.enqueueMessage('a1', note('one'));
+        await mgr.enqueueMessage('a1', note('two'));
+        final drained = await mgr.drainMessages('a1');
+        expect(drained.map((m) => m.text), ['one', 'two']);
+        expect(await mgr.drainMessages('a1'), isEmpty);
+      });
+
+      test('absolute mailboxes pass through unprefixed', () async {
+        await mgr.enqueueMessage('sess2/main', note('cross-instance'));
+        expect(await repo.peek('sess2/main'), hasLength(1));
+        expect(await repo.peek('sess1/sess2/main'), isEmpty);
+      });
+
+      test('messaging main (selfId) needs no handle', () async {
+        await mgr.enqueueMessage('main', note('for the parent', from: 'a1'));
+        final drained = await mgr.drainMessages('main');
+        expect(drained.single.text, 'for the parent');
+        expect(drained.single.fromId, 'sess1/a1');
+      });
+
+      test('the queue cap reads the fabric inbox size', () async {
+        final small = SubagentManager(
+          parentSessionId: 'p',
+          messaging: repo,
+          maxPendingMessages: 2,
+        )..mailboxPrefix = 'sess1';
+        await small.register(id: 'c9', name: 'c9', agentType: 'task', task: '');
+        await small.enqueueMessage('c9', note('1'));
+        await small.enqueueMessage('c9', note('2'));
+        expect(() => small.enqueueMessage('c9', note('3')), throwsStateError);
+      });
     });
   });
 }

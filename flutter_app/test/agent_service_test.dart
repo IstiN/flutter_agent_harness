@@ -872,6 +872,82 @@ void main() {
       },
     );
 
+    test(
+      'inbox messages to main are injected at the next turn (messaging fabric)',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/');
+        final contexts = <Context>[];
+        AssistantMessageEventStream recording(
+          Model model,
+          Context context, {
+          CancelToken? cancelToken,
+        }) {
+          contexts.add(
+            Context(
+              systemPrompt: context.systemPrompt,
+              messages: List.of(context.messages),
+              tools: context.tools,
+            ),
+          );
+          final stream = AssistantMessageEventStream();
+          final message = AssistantMessage(
+            content: [TextContent(text: 'ok')],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: Usage.zero,
+            stopReason: StopReason.stop,
+            timestamp: DateTime.now(),
+          );
+          stream.push(DoneEvent(reason: StopReason.stop, message: message));
+          stream.end();
+          return stream;
+        }
+
+        final service = await AgentService.create(
+          config: AgentConfig(
+            providerKind: 'openai-completions',
+            modelId: 'test-model',
+            baseUrl: 'https://example.test',
+            apiKey: 'test-key',
+          ),
+          env: env,
+          streamFunction: recording,
+        );
+        addTearDown(service.dispose);
+        await service.initialize();
+
+        final manager = service.subagentManager!;
+        // The session id namespaces this instance's mailboxes.
+        expect(manager.mailboxPrefix, isNotEmpty);
+        // A child (or another Fa instance) messages the main agent through
+        // the file inbox colocated with the sessions.
+        await manager.enqueueMessage(
+          'main',
+          SubagentMessage(
+            fromId: 'a1',
+            text: 'ping from child',
+            sentAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        expect(await manager.pendingInboxCount('main'), 1);
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        final seen = contexts.last.messages
+            .whereType<UserMessage>()
+            .map((m) => m.content)
+            .join('\n');
+        expect(
+          seen,
+          contains('from ${manager.mailboxPrefix}/a1: ping from child'),
+        );
+        // The inbox was consumed.
+        expect(await manager.pendingInboxCount('main'), 0);
+      },
+    );
+
     test('durable memory facts join the composed system prompt', () async {
       final env = MemoryExecutionEnv(cwd: '/');
       // Seed a fact through the same store the service's controller reads

@@ -231,6 +231,38 @@ void main() {
     },
   );
 
+  test(
+    'pending inbox messages show ✉ markers in the tree and observe',
+    () async {
+      final cli = cliFor();
+      final run = cli.run();
+      // Register after boot so the fabric namespace (session id) is active.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await cli.subagentManager.register(
+        id: 'a1',
+        name: 'a1',
+        agentType: 'explore',
+        task: 'scout files',
+      );
+      await cli.subagentManager.enqueueMessage(
+        'a1',
+        SubagentMessage(
+          fromId: 'main',
+          text: 'inbox note',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      await sendAndWait('/agents');
+      await sendAndWait('/agents a1');
+      await sendAndWait('/exit');
+      await run;
+      final output = io.out.toString();
+      expect(output, contains('✉1'));
+      expect(output, contains('✉ inbox (1):'));
+      expect(output, contains('inbox note'));
+    },
+  );
+
   test('switching sessions reloads the target session registry', () async {
     final cli = namedCli('one', io);
     final run = cli.run();
