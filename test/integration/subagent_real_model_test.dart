@@ -29,6 +29,16 @@ void main() {
     'real subagent spawn via task tool (ZAI glm-4.5)',
     timeout: const Timeout(Duration(minutes: 3)),
     () async {
+      // Skip without a ZAI key (CI has none; locally the user sets it).
+      final hasZaiKey =
+          (Platform.environment['ZAI_API_KEY'] ?? '').isNotEmpty ||
+          File('${Platform.environment['HOME']}/.fah/config.yaml')
+              .readAsStringSync()
+              .contains('api.z.ai');
+      if (!hasZaiKey) {
+        return;
+      }
+
       // Use ZAI by overriding the active connection.
       final config = File('${tempHome.path}/.fah/config.yaml');
       config.writeAsStringSync('''
@@ -59,7 +69,7 @@ allowedTools: []
       try {
         await harness.waitForText(
           '[task]',
-          timeout: const Duration(seconds: 90),
+          timeout: const Duration(seconds: 120),
         );
         // The [task] marker confirms the model called the task tool.
         expect(harness.screenText, contains('[task]'));
