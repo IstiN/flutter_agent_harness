@@ -2,8 +2,6 @@
 library;
 
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
-import 'package:flutter_agent_harness/src/context.dart';
-import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/memory/compaction_memory_hook.dart';

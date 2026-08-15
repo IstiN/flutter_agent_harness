@@ -9,7 +9,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/io.dart';
 
 /// Starts an A2A HTTP server on [port] (localhost only) and blocks until
 /// interrupted. [runner] processes each user message through the local agent.
