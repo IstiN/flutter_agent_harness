@@ -1067,11 +1067,17 @@ Future<void> main(List<String> args) async {
       io.fireInterrupt();
     } else if (headlessPrompt == null) {
       // Idle Ctrl-C exits 130; restore canonical mode first so the shell is
-      // not left with raw input disabled, and print the same resume hint
-      // the /exit path shows — this path never returns from cli.run().
+      // not left with raw input disabled, drop a never-used session file,
+      // and print the same resume hint the /exit path shows — this path
+      // never returns from cli.run().
       io.resetRawMode();
       stdout.writeln();
-      unawaited(cli.printSessionResumeHint().whenComplete(() => exit(130)));
+      unawaited(
+        Future(() async {
+          await cli.deleteSessionIfEmpty();
+          await cli.printSessionResumeHint();
+        }).whenComplete(() => exit(130)),
+      );
     } else {
       // Headless: no cosmetic newline on stdout so a pipe never sees it.
       exit(130);

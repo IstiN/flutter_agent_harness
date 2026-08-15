@@ -118,6 +118,30 @@ void main() {
       expect(stored.map((m) => m.id), [result.id]);
     });
 
+    test(
+      'closing an untouched session deletes its file; a used one stays',
+      () async {
+        final first = await boot();
+        final second = await manager.createSession(
+          config: _config,
+          serviceFactory: () async => _fakeService(env),
+        );
+        expect(await repo.list(), hasLength(2));
+
+        // The second session gets real content; the first stays untouched.
+        await second.service.sendText('hi');
+        await second.service.waitForIdle();
+
+        await manager.closeSession(first.id);
+        expect(await repo.list(), hasLength(1));
+
+        await manager.closeSession(second.id);
+        final stored = await repo.list();
+        expect(stored, hasLength(1));
+        expect(stored.single.id, second.id);
+      },
+    );
+
     test('newest session from today with user messages is resumed and no '
         'new session file is created', () async {
       final existing = await _persistSession(repo, userText: 'earlier chat');

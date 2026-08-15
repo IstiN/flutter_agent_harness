@@ -1522,6 +1522,7 @@ class AgentService extends ChangeNotifier
 
   /// Clears the in-memory transcript and starts a new session.
   Future<void> reset() async {
+    await deleteSessionIfEmpty();
     _agent.reset();
     messages.clear();
     error = null;
@@ -1529,6 +1530,23 @@ class AgentService extends ChangeNotifier
     _currentAssistantMessage = null;
     await initialize();
     notifyListeners();
+  }
+
+  /// Deletes the session file when nothing was ever said in it: a session
+  /// the user never typed into must not litter the session list. Called on
+  /// close/reset; best-effort — never throws.
+  Future<void> deleteSessionIfEmpty() async {
+    if (_agent.state.messages.isNotEmpty) return;
+    final session = _session;
+    if (session == null) return;
+    try {
+      await _repo.delete(await session.getMetadata());
+      _session = null;
+      _sessionId = null;
+      _sessionFile = null;
+    } on Object {
+      // Best-effort cleanup.
+    }
   }
 
   /// Switches the backend (provider/model/key) for subsequent messages while

@@ -58,6 +58,59 @@ void main() {
     return session.getEntries();
   }
 
+  /// Polls an async condition (session files appear/disappear off-thread).
+  Future<void> waitForAsync(Future<bool> Function() condition) async {
+    for (var i = 0; i < 200; i++) {
+      if (await condition()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    fail('timed out waiting for async condition');
+  }
+
+  test('an untouched session leaves no file behind on exit', () async {
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    // The file exists while the session runs…
+    await waitForAsync(() async => (await repo.list(cwd: '/work')).isNotEmpty);
+    io.sendLine('/exit');
+    await run;
+    // …and is gone afterwards — nothing was ever said.
+    expect(await repo.list(cwd: '/work'), isEmpty);
+    expect(fake.calls, 0);
+  });
+
+  test('a session with a user message is kept on exit', () async {
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final fake = FakeStreamFunction([textTurn('hi there')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForAsync(() async => (await repo.list(cwd: '/work')).isNotEmpty);
+    io.sendLine('hello');
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+    expect(await repo.list(cwd: '/work'), hasLength(1));
+  });
+
+  test('switching away from an untouched session deletes its file', () async {
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForAsync(() async => (await repo.list(cwd: '/work')).isNotEmpty);
+    io.sendLine('/session named-one');
+    await waitForIt(
+      () => io.out.toString().contains("created session 'named-one'"),
+    );
+    io.sendLine('/exit');
+    await run;
+    // Only the (equally untouched) fresh session would remain — but it is
+    // also empty, so exit deletes it too: nothing at all is left.
+    expect(await repo.list(cwd: '/work'), isEmpty);
+  });
+
   test(
     'default system prompt uses Fa branding and forbids pi/Claude names',
     () async {
@@ -1329,7 +1382,7 @@ void main() {
     });
 
     test('slash commands create, rename, list, and switch sessions', () async {
-      final fake = FakeStreamFunction([]);
+      final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
       final run = cli.run();
 
@@ -1352,19 +1405,19 @@ void main() {
       io.sendLine('/session');
       await waitForIt(() => io.out.toString().contains('session: gamma'));
       expect(io.out.toString(), contains('rename: /rename-session'));
+      // Say something in gamma — the only session worth keeping.
+      io.sendLine('hi');
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
       io.sendLine('/exit');
       await run;
 
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
       final sessions = await repo.list(cwd: '/work');
-      // Startup session + alpha (renamed to beta) + gamma.
-      expect(sessions, hasLength(3));
-      final names = <String?>[];
-      for (final metadata in sessions) {
-        final s = await repo.open(metadata);
-        names.add(await s.getSessionName());
-      }
-      expect(names, containsAll(['beta', 'gamma']));
+      // The startup session and beta stayed empty and were deleted on
+      // switch; gamma has a message and survives.
+      expect(sessions, hasLength(1));
+      final kept = await repo.open(sessions.first);
+      expect(await kept.getSessionName(), 'gamma');
     });
 
     test('switching back to a session replays its transcript', () async {

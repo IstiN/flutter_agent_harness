@@ -60,6 +60,7 @@ import 'chatgpt_oauth_server.dart';
 import 'codemie_sso_server.dart';
 import 'openrouter_oauth_server.dart';
 import '../secrets/secure_key_store.dart';
+import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import 'custom_providers.dart';
 import 'provider_flow.dart';
@@ -385,8 +386,38 @@ class AgentCli {
     // are REAL JSONL sessions in the same repo, created at child COMPLETION
     // (not at register — creating a session mid-spawn loses the steering
     // race), so `/agents open <id>` can switch into them with the full
-    // transcript.
-    _subagentManager = SubagentManager(parentSessionId: '');
+    // transcript. The registry itself persists into the parent session as
+    // `subagent_registry` custom records, so a resumed session rehydrates
+    // its agents (and `/sessions`-shared repos make agents visible across
+    // instances of the same cwd).
+    _subagentManager = SubagentManager(
+      parentSessionId: '',
+      sink: (registry) async {
+        final session = _session;
+        if (session == null) return;
+        await session.appendCustomEntry(
+          customType: 'subagent_registry',
+          data: registry,
+        );
+      },
+      source: () async {
+        final session = _session;
+        if (session == null) return const [];
+        final entries = await session.getEntries();
+        List<Map<String, dynamic>> latest = const [];
+        for (final entry in entries) {
+          if (entry is CustomRecord &&
+              entry.customType == 'subagent_registry' &&
+              entry.data is List) {
+            latest = [
+              for (final item in entry.data as List)
+                if (item is Map<String, dynamic>) item,
+            ];
+          }
+        }
+        return latest;
+      },
+    );
     // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
     // lazily per server (never blocks boot).
     _a2aManager = A2aManager(config.a2aConfig);
@@ -781,6 +812,8 @@ class AgentCli {
       await interruptSub.cancel();
       await taskSub.cancel();
       await _settled;
+      // A session nobody wrote to leaves no file behind.
+      await deleteSessionIfEmpty();
     }
     await printSessionResumeHint();
   }
@@ -858,6 +891,22 @@ class AgentCli {
     final name = await session.getSessionName();
     final id = name ?? (await session.getMetadata()).id;
     io.writeln(_style.dim("resume this session with: fa --session '$id'"));
+  }
+
+  /// Deletes the active session's file when nothing was ever said in it:
+  /// opening the CLI and leaving (or only poking slash commands) must not
+  /// litter the sessions list with empty files. Best-effort — exit and
+  /// session switching never fail on it.
+  Future<void> deleteSessionIfEmpty() async {
+    if (_agent.state.messages.isNotEmpty) return;
+    final session = _session;
+    if (session == null) return;
+    try {
+      await _repo.delete(await session.getMetadata());
+      _session = null;
+    } on Object {
+      // Best-effort cleanup.
+    }
   }
 
   Future<void> _runTuiRepl() async {
@@ -1313,6 +1362,7 @@ class AgentCli {
 
   Future<void> _switchSession(String name) async {
     final trimmed = name.trim();
+    await deleteSessionIfEmpty();
     final metadata = await _findSessionByName(trimmed);
     if (metadata != null) {
       await _switchToMetadata(metadata, trimmed);
@@ -1328,6 +1378,7 @@ class AgentCli {
 
   /// Switches to an existing session by metadata (picker, /resume).
   Future<void> _switchToMetadata(SessionMetadata metadata, String label) async {
+    await deleteSessionIfEmpty();
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
@@ -1424,6 +1475,7 @@ class AgentCli {
       io.writeln("session '$trimmed' already exists");
       return;
     }
+    await deleteSessionIfEmpty();
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();

@@ -310,6 +310,9 @@ final class FlutterSessionManager extends ChangeNotifier {
         (all) => all.firstWhere((m) => m.id == sessionId),
       );
       await _repo.delete(metadata);
+    } else {
+      // A session nobody wrote to leaves no file behind.
+      await managed.service.deleteSessionIfEmpty();
     }
     if (_activeId == sessionId) {
       _activeId = _sessions.isEmpty ? null : _sessions.keys.last;
