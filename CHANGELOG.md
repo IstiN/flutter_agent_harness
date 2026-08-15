@@ -996,4 +996,20 @@
 - feat(ui): Focus Timer as standalone dark card with circular progress ring
 - feat(ui): onboarding rewritten to match reference — 3-col mockups, circular Focus Timer, colorful icons
 
+## 0.1.177
+
+- feat(ui): onboarding provider step is real and mandatory
+- test(crap): decompose + cover /agents panel methods (pure helpers in agent_tree.dart), public subagentManager getter
+- fix(analyze): drop redundant null guard in agents section
+- feat(app): agents panel in settings — live subagent tree with observe/send (CLI parity)
+- test(cli): /agents tree panel integration test (keyless)
+- feat(cli): agents viz A+B — live agents badge in status line, /agents tree panel with observe/send
+- fix(ui): saturated glyph colors for the light brand icon
+- feat(task): Claude Code agent compat — .claude/agents roots + model: frontmatter alias
+- fix(ui): macOS traffic-light clearance for pushed AppBar routes
+- fix(ui): pin the onboarding Privacy link to the footer center
+- feat(ui): single brand tile everywhere, glyph rebalanced in the icon
+- fix(analyze): drop unnecessary non-null assertion
+- feat(task): subagent model role — settings-picked delegation model (TaskModelsStore + roles: config), smol/explore precedence
+
 ## Unreleased
