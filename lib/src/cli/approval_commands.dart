@@ -444,33 +444,12 @@ extension on AgentCli {
   /// Live agents badge for the status line: active subagent handles with
   /// their type and elapsed time (e.g. `bg:explore:A1(12s),+2`), or empty.
   String _agentsBadge() {
-    final active = _subagentManager.handles
-        .where(
-          (h) =>
-              h.status == SubagentStatus.queued ||
-              h.status == SubagentStatus.running ||
-              h.status == SubagentStatus.idle,
-        )
-        .toList();
-    if (active.isEmpty) {
-      final queuedJobs = _taskConfig.jobManager.jobs
-          .where((job) => job.status == TaskJobStatus.queued)
-          .length;
-      return queuedJobs > 0 ? ' · bg:$queuedJobs' : '';
-    }
-    final now = DateTime.now();
-    final shown = active
-        .take(3)
-        .map((h) {
-          final created = DateTime.tryParse(h.createdAt);
-          final elapsed = created == null
-              ? 0
-              : now.difference(created).inSeconds;
-          return '${h.agentType}:${h.id}(${elapsed}s)';
-        })
-        .join(',');
-    final overflow = active.length > 3 ? ',+${active.length - 3}' : '';
-    return ' · bg:$shown$overflow';
+    final badge = formatActiveAgentsBadge(_subagentManager.handles);
+    if (badge.isNotEmpty) return ' · $badge';
+    final queuedJobs = _taskConfig.jobManager.jobs
+        .where((job) => job.status == TaskJobStatus.queued)
+        .length;
+    return queuedJobs > 0 ? ' · bg:$queuedJobs' : '';
   }
 
   /// Compact token counts like pi's `275k` / `1M`.

@@ -70,3 +70,30 @@ List<MenuItem> buildAgentTreeItems(
   }
   return items;
 }
+
+/// The live agents badge for the status line: up to [max] active children
+/// with type, id, and elapsed seconds, then a `+N` overflow counter —
+/// `bg:explore:A1(12s),+2`. Empty string when nothing is active.
+String formatActiveAgentsBadge(
+  List<SubagentHandle> handles, {
+  int max = 3,
+  DateTime? now,
+}) {
+  final active = handles
+      .where(
+        (h) =>
+            h.status == SubagentStatus.queued ||
+            h.status == SubagentStatus.running ||
+            h.status == SubagentStatus.idle,
+      )
+      .toList();
+  if (active.isEmpty) return '';
+  final at = now ?? DateTime.now();
+  final shown = active.take(max).map((h) {
+    final created = DateTime.tryParse(h.createdAt);
+    final elapsed = created == null ? 0 : at.difference(created).inSeconds;
+    return '${h.agentType}:${h.id}(${elapsed}s)';
+  }).join(',');
+  final overflow = active.length > max ? ',+${active.length - max}' : '';
+  return 'bg:$shown$overflow';
+}

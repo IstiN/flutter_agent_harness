@@ -136,4 +136,41 @@ void main() {
       }
     });
   });
+
+  group('formatActiveAgentsBadge', () {
+    test('empty when nothing is active', () {
+      expect(formatActiveAgentsBadge(const []), '');
+      expect(
+        formatActiveAgentsBadge([
+          _handle(status: SubagentStatus.completed),
+          _handle(status: SubagentStatus.failed),
+        ]),
+        '',
+      );
+    });
+
+    test('active children show type, id, and elapsed seconds', () {
+      final now = DateTime.parse('2026-01-01T00:01:00Z');
+      final active = SubagentHandle(
+        id: 'a1',
+        name: 'a1',
+        agentType: 'explore',
+        sessionId: '/tmp/a1.jsonl',
+        createdAt: '2026-01-01T00:00:00Z',
+        task: '',
+      )..status = SubagentStatus.running;
+      final badge = formatActiveAgentsBadge([active], now: now);
+      expect(badge, 'bg:explore:a1(60s)');
+    });
+
+    test('overflow beyond max collapses to +N', () {
+      final handles = [
+        for (var i = 0; i < 5; i++)
+          _handle(id: 'a$i', status: SubagentStatus.running),
+      ];
+      final badge = formatActiveAgentsBadge(handles, max: 2);
+      expect(badge, contains(',+3'));
+      expect(badge.split(',').length, 3);
+    });
+  });
 }
