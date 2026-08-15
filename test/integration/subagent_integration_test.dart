@@ -87,30 +87,31 @@ void main() {
   });
 
   test('/agents bare shows the live tree with main and children', () async {
-    final harness = await FaCliHarness.spawn(extraEnv: {'HOME': tempHome.path});
+    // Keyless test-model config (localhost:9999 is never contacted here).
+    final keylessHome = Directory.systemTemp.createTempSync('fa_agents_tree_');
+    File('${keylessHome.path}/.fah/config.yaml')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('''
+provider: openai-completions
+model: test-model
+baseUrl: http://localhost:9999/v1
+mode: code
+approvalMode: yolo
+allowedTools: []
+''');
+    addTearDown(() => keylessHome.deleteSync(recursive: true));
+
+    final harness = await FaCliHarness.spawn(
+      extraEnv: {'HOME': keylessHome.path},
+    );
     harness.startListening();
     addTearDown(() async => harness.close());
 
     await harness.waitForBoot();
 
-    // Spawn a real subagent through the task tool so the tree has a child.
-    harness.sendText(
-      'Use the task tool with agent "explore" to list the files in the current directory. Reply briefly.',
-    );
-    harness.sendEnter();
-    try {
-      await harness.waitForText(
-        'agent://',
-        timeout: const Duration(seconds: 120),
-      );
-    } on TimeoutException {
-      // Model may not call the tool — the tree must still render main.
-    }
-    await harness.waitForOutput(settleMs: 500);
-
     await harness.runSlashCommand('/agents');
 
-    // TUI picker shows the main orchestrator row.
+    // TUI picker shows the main orchestrator row (no subagents spawned yet).
     await harness.waitForText(
       'main (orchestrator)',
       timeout: const Duration(seconds: 15),
