@@ -53,6 +53,7 @@ final class OpenAICompletionsOptions {
     this.sessionId,
     this.cacheRetention,
     this.urlBuilder,
+    this.idleTimeout,
     this.onPayload,
     this.onResponse,
   });
@@ -105,6 +106,10 @@ final class OpenAICompletionsOptions {
   /// Dialects with a different path layout plug in here (DIAL's
   /// `/openai/deployments/{model}/chat/completions`, see `dial.dart`).
   final Uri Function(Model model)? urlBuilder;
+
+  /// Idle-stream watchdog override (tests); defaults to
+  /// [providerStreamIdleTimeout].
+  final Duration? idleTimeout;
 
   /// Inspect or replace the request payload before it is sent. Return `null`
   /// to keep the payload unchanged.
@@ -247,7 +252,11 @@ final class _OpenAICompletionsSession {
   }
 
   Future<void> _consumeSse(http.StreamedResponse response) async {
-    final iterator = createSseIterator(response, cancelToken);
+    final iterator = createSseIterator(
+      response,
+      cancelToken,
+      idleTimeout: options?.idleTimeout ?? providerStreamIdleTimeout,
+    );
 
     while (await iterator.moveNext()) {
       final data = iterator.current.data.trim();

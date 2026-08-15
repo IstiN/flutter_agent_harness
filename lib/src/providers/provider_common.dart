@@ -276,14 +276,14 @@ Future<http.StreamedResponse> sendProviderRequest(
   final responseFuture = httpClient.send(request);
   final http.StreamedResponse response;
   if (cancelToken == null) {
-    response = await responseFuture;
+    response = await responseFuture.timeout(providerConnectTimeout);
   } else {
     response = await Future.any([
       responseFuture,
       cancelToken.onCancel.then<http.StreamedResponse>(
         (_) => throw const AbortedError(),
       ),
-    ]);
+    ]).timeout(providerConnectTimeout);
   }
 
   if (response.statusCode != 200) {
@@ -297,8 +297,23 @@ Future<http.StreamedResponse> sendProviderRequest(
   return response;
 }
 
+/// Connect/first-headers watchdog for provider calls: an endpoint that
+/// never answers the request would otherwise hang the turn forever.
+const providerConnectTimeout = Duration(seconds: 60);
+
+/// Idle watchdog for provider streams: with no bytes for this long the
+/// endpoint is considered wedged — the stream errors (and the roles
+/// resolver may fail over) instead of hanging the turn forever. Generous
+/// on purpose: reasoning models may think long BETWEEN chunks, so this
+/// only trips on a truly silent connection.
+const providerStreamIdleTimeout = Duration(seconds: 120);
+
 /// Wires an SSE [StreamIterator] over [response]'s body, cancelling the
 /// subscription when [cancelToken] fires so the connection closes promptly.
+///
+/// The byte stream carries an idle watchdog ([providerStreamIdleTimeout],
+/// overridable in tests): a connected-but-silent endpoint raises a
+/// [TimeoutException] the adapters surface as an error event.
 ///
 /// Cancellation through the `async*` [SseDecoder] is lazy: the cancel future
 /// only completes once the generator body resumes, so the response-body
@@ -309,9 +324,19 @@ Future<http.StreamedResponse> sendProviderRequest(
 /// try/catch unchanged.
 StreamIterator<ServerSentEvent> createSseIterator(
   http.StreamedResponse response,
-  CancelToken? cancelToken,
-) {
-  Stream<List<int>> stream = response.stream;
+  CancelToken? cancelToken, {
+  Duration idleTimeout = providerStreamIdleTimeout,
+}) {
+  Stream<List<int>> stream = response.stream.timeout(
+    idleTimeout,
+    onTimeout: (sink) => sink.addError(
+      TimeoutException(
+        'no bytes from the endpoint for '
+        '${idleTimeout.inSeconds}s (stream idle timeout)',
+        idleTimeout,
+      ),
+    ),
+  );
   if (cancelToken != null) {
     stream = stream.handleError((Object error) {
       if (!cancelToken.isCancelled) {

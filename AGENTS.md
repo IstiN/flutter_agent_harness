@@ -79,7 +79,11 @@ factual: paths, commands, invariants — no essays.
   Wired via `builtinTools(env, mcp:)`; resources/prompts out of scope.
 - `lib/src/model_roles/` — model roles (`default`/`smol`/`slow`/`plan`) with
   fallback chains, key rotation (`ApiKeyRing` over `NAME`/`NAME_2`/…), 429
-  mid-turn take-over (`FallbackStreamFunction`, never silent). Config:
+  mid-turn take-over (`FallbackStreamFunction`, never silent). Provider
+  streams carry watchdogs (`provider_common.dart`:
+  `providerConnectTimeout` 60s for the request, `providerStreamIdleTimeout`
+  120s between bytes) so a wedged endpoint errors out — and the resolver
+  can fail over — instead of hanging the turn forever. Config:
   `roles:`/`modelOverrides:`/`retry:` in `~/.fah/config.yaml` (invalid
   schema = `ConfigException`). Also the shared models config:
   `media_model_slots.dart` (media slot names/fields shared with the app's

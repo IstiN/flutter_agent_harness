@@ -521,6 +521,37 @@ void main() {
       expect(await stream.result, same(error.error));
     });
 
+    test(
+      'a silent endpoint errors on the idle watchdog instead of hanging',
+      () async {
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            // Never emits a byte and never closes — the wedged-endpoint case.
+            StreamController<List<int>>().stream,
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          ),
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(
+            apiKey: 'test-key',
+            idleTimeout: Duration(milliseconds: 200),
+          ),
+          client,
+        );
+
+        final events = await stream.toList().timeout(
+          const Duration(seconds: 10),
+        );
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, contains('idle timeout'));
+      },
+    );
+
     test('429 with Retry-After header surfaces the parsed duration', () async {
       final client = http_testing.MockClient(
         (request) async => http.Response(
