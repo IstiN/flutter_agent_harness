@@ -4,8 +4,6 @@ library;
 import 'package:flutter_agent_harness/src/a2a/a2a_client.dart';
 import 'package:flutter_agent_harness/src/a2a/a2a_config.dart';
 import 'package:flutter_agent_harness/src/a2a/a2a_manager.dart';
-import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
-import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/task/agent_registry.dart';

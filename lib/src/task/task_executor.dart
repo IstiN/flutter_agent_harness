@@ -353,7 +353,7 @@ final class TaskExecutor {
         remoteTask.id,
         onUpdate: (task) => cancelToken?.throwIfCancelled(),
       );
-      return _a2aResult(
+      return await _a2aResult(
         item,
         index,
         id,
