@@ -6,7 +6,6 @@ import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/session/session_repo.dart';
 import 'package:flutter_agent_harness/src/session/session_storage.dart';
 import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
-import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
 void main() {
