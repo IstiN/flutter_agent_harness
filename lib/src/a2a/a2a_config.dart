@@ -21,11 +21,7 @@ import '../exceptions.dart';
 /// One remote A2A agent endpoint.
 final class A2aServerConfig {
   /// Creates a config entry.
-  const A2aServerConfig({
-    required this.name,
-    required this.url,
-    this.token,
-  });
+  const A2aServerConfig({required this.name, required this.url, this.token});
 
   /// Parses one `a2a.servers.<name>` entry. [envVarValue] resolves
   /// `${NAME}` token references against the environment.
@@ -45,9 +41,9 @@ final class A2aServerConfig {
     }
     var token = node['token'] as String?;
     if (token != null) {
-      final match = RegExp(r'^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$').firstMatch(
-        token,
-      );
+      final match = RegExp(
+        r'^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$',
+      ).firstMatch(token);
       if (match != null) {
         token = envVarValue(match.group(1)!);
         if (token == null || token.isEmpty) {

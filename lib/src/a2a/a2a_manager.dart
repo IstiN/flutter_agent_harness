@@ -15,8 +15,7 @@ import 'a2a_config.dart';
 /// One managed remote A2A agent: its config, lazily-connected client, and
 /// the last observed connection status.
 final class A2aManagedServer {
-  A2aManagedServer(this.config)
-    : status = A2aServerConnectionStatus.connecting;
+  A2aManagedServer(this.config) : status = A2aServerConnectionStatus.connecting;
 
   /// The parsed config entry.
   final A2aServerConfig config;
@@ -75,8 +74,7 @@ final class A2aManager {
   final _servers = <String, A2aManagedServer>{};
 
   /// All managed servers by name.
-  Map<String, A2aManagedServer> get servers =>
-      Map.unmodifiable(_servers);
+  Map<String, A2aManagedServer> get servers => Map.unmodifiable(_servers);
 
   /// True when at least one A2A agent is configured.
   bool get hasServers => _servers.isNotEmpty;

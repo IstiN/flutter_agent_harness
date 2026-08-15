@@ -30,9 +30,11 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
 import 'self_manage.dart';
+import 'serve_a2a.dart';
 
 const _fallbackVersion = '0.1.0';
 
@@ -340,6 +342,15 @@ String _homeDir() {
   return home;
 }
 
+/// The runtime `FA_PROVIDERS` env override, applied at startup (the
+/// dart-define always wins over it; see [providerEnabledInBuild]).
+void _applyProviderFilterEnv() {
+  final value = Platform.environment['FA_PROVIDERS'];
+  if (value != null && value.trim().isNotEmpty) {
+    providerFilterEnvOverride = value;
+  }
+}
+
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
 /// broadcast interrupt channel fed by the SIGINT handler in `main`.
 ///
@@ -531,12 +542,89 @@ final class _TerminalCliIO implements CliIO {
   }
 }
 
+/// `fa serve --a2a` — mounts the fully-configured agent as an A2A endpoint
+/// (Phase 5b). Every `message/send` runs one headless turn against the
+/// resolved provider/model; the agent's reply becomes the task artifact.
+Future<void> _serveA2a({
+  required Model model,
+  required String provider,
+  required String apiKey,
+  required int port,
+  required String? token,
+}) async {
+  await runA2aServer(
+    port: port,
+    token: token,
+    agentName: 'fa',
+    agentDescription:
+        'Fa CLI agent (flutter_agent_harness) — $provider/${model.id}',
+    runner: (userMessage) async {
+      final stream = providerStreamFunction(provider, apiKey)(
+        model,
+        Context(
+          systemPrompt: cliCodeModePrompt.replaceAll(
+            '{{cwd}}',
+            Directory.current.path,
+          ),
+          messages: [UserMessage.text(userMessage)],
+        ),
+      );
+      final response = await stream.result;
+      if (response.stopReason == StopReason.error ||
+          response.stopReason == StopReason.aborted) {
+        throw StateError(response.errorMessage ?? 'agent turn failed');
+      }
+      return response.content
+          .whereType<TextContent>()
+          .map((block) => block.text)
+          .join('\n')
+          .trim();
+    },
+  );
+}
+
+/// Reads an int flag from the serve positionals (`--port N`).
+int _serveFlagInt(List<String> args, String flag, int fallback) {
+  final idx = args.indexOf(flag);
+  if (idx < 0 || idx + 1 >= args.length) return fallback;
+  return int.tryParse(args[idx + 1]) ?? fallback;
+}
+
+/// Reads a string flag from the serve positionals (`--token T`).
+String? _serveFlagStr(List<String> args, String flag) {
+  final idx = args.indexOf(flag);
+  if (idx < 0 || idx + 1 >= args.length) return null;
+  return args[idx + 1];
+}
+
 Future<void> main(List<String> args) async {
   final packageVersion = _packageVersion();
+  _applyProviderFilterEnv();
+
+  // `fa serve --a2a [--port N] [--token T]` — the parser does not know the
+  // `--a2a` flag, so the serve form is intercepted before CliArgs parsing:
+  // serve-specific flags are stripped from the parsed args and kept for the
+  // late interception below (after model/key resolution).
+  final isServeA2a = args.contains('serve');
+  if (isServeA2a && !args.contains('--a2a')) {
+    _fail('usage: fa serve --a2a [--port N] [--token T]');
+  }
+  final parseArgs = isServeA2a
+      ? [
+          for (var i = 0; i < args.length; i++)
+            if (args[i] != 'serve' &&
+                args[i] != '--a2a' &&
+                args[i] != '--port' &&
+                args[i] != '--token' &&
+                (i == 0 ||
+                    (args[i - 1] != '--port' && args[i - 1] != '--token')))
+              args[i],
+        ]
+      : args;
 
   late final CliArgs parsed;
   try {
-    parsed = switch (parseCliArgs(args)) {
+    parsed = switch (parseCliArgs(parseArgs)) {
       CliArgsHelp() => _exitWithUsage(packageVersion),
       CliArgsVersion() => _exitWithVersion(packageVersion),
       final CliArgs cliArgs => cliArgs,
@@ -802,6 +890,21 @@ Future<void> main(List<String> args) async {
       'note: this terminal does not support raw-mode input; '
       'interactive slash/model menus are unavailable.',
     );
+  }
+
+  // `fa serve --a2a [--port N] [--token T]` — mount this agent as an A2A
+  // endpoint (Phase 5b). Uses the fully-resolved model/key/provider.
+  if (isServeA2a) {
+    final port = _serveFlagInt(args, '--port', 8300);
+    final token = _serveFlagStr(args, '--token');
+    await _serveA2a(
+      model: model,
+      provider: provider,
+      apiKey: apiKey,
+      port: port,
+      token: token,
+    );
+    exit(0);
   }
   // `late` so the onProviderChanged closure can reach the agent (to attach
   // the secret redactor on a runtime token) before the variable is assigned.

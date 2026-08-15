@@ -378,9 +378,12 @@ void _checkDuplicateName(String? name, Set<String> seenNames) {
 }
 
 /// Rejects a non-empty [agent] naming an unknown agent type, listing the
-/// available ones.
+/// available ones. `a2a:<name>` types bypass the local registry — they are
+/// validated against the A2A manager's configured servers instead (an
+/// unknown remote server fails at spawn time with its own message).
 void _checkAgentKnown(String? agent, TaskAgentRegistry registry) {
   if (agent != null && agent.isNotEmpty && registry.resolve(agent) == null) {
+    if (agent.startsWith('a2a:')) return;
     throw ArgumentError(
       'Unknown agent type "$agent" — available: '
       '${registry.agents.map((a) => a.name).join(', ')}',
