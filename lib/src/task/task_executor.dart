@@ -237,69 +237,80 @@ final class TaskExecutor {
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
-    await child.prompt(_buildUserPrompt(item, id));
-    cancelToken?.throwIfCancelled();
+    // Crash-resilient transcript: the real session is created in the
+    // background at spawn time (never blocking the spawn), and turns are
+    // flushed incrementally — a mid-run crash keeps everything written so
+    // far (Phase 3a+). All persistence is fire-and-forget: transcript
+    // durability must never slow the completion delivery.
+    unawaited(_ensureChildSession(id));
+    try {
+      await child.prompt(_buildUserPrompt(item, id));
+      unawaited(_flushChildTranscript(id, child));
+      cancelToken?.throwIfCancelled();
 
-    final finalText = _finalAssistantText(child);
-    var storedContent = finalText;
-    StructuredTaskOutput? structured;
-    if (item.outputSchema != null) {
-      final validation = await _validateStructured(
-        child: child,
-        outputSchema: item.outputSchema!,
-        finalText: finalText,
-        cancelToken: cancelToken,
-      );
-      structured = validation.structured;
-      storedContent = validation.outputContent;
-    }
+      final finalText = _finalAssistantText(child);
+      var storedContent = finalText;
+      StructuredTaskOutput? structured;
+      if (item.outputSchema != null) {
+        final validation = await _validateStructured(
+          child: child,
+          outputSchema: item.outputSchema!,
+          finalText: finalText,
+          cancelToken: cancelToken,
+        );
+        structured = validation.structured;
+        storedContent = validation.outputContent;
+      }
 
-    final capped = _capOutput(storedContent);
-    store.put(id, capped.$1);
-    final usage = _usageStats(child);
+      final capped = _capOutput(storedContent);
+      store.put(id, capped.$1);
+      final usage = _usageStats(child);
 
-    final failed = structured?.status == StructuredValidationStatus.invalid;
-    onProgress?.call(
-      index,
-      id,
-      failed ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
-    );
-
-    // Phase 3b: the child's explicit reply (if any) rides the result; a
-    // missing reply is surfaced via completedWithoutReply.
-    final reply = subagentManager?[id]?.lastReply;
-
-    // Persist the child's transcript into its real session (Phase 3a+).
-    await _persistChildSession(id, child);
-
-    // Update the retained-subagent handle with final status + usage.
-    if (subagentManager != null) {
-      await subagentManager!.update(
+      final failed = structured?.status == StructuredValidationStatus.invalid;
+      onProgress?.call(
+        index,
         id,
-        status: failed ? SubagentStatus.failed : SubagentStatus.completed,
+        failed ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
+      );
+
+      // Phase 3b: the child's explicit reply (if any) rides the result; a
+      // missing reply is surfaced via completedWithoutReply.
+      final reply = subagentManager?[id]?.lastReply;
+
+      // Update the retained-subagent handle with final status + usage.
+      if (subagentManager != null) {
+        await subagentManager!.update(
+          id,
+          status: failed ? SubagentStatus.failed : SubagentStatus.completed,
+          tokens: usage.tokens,
+          requests: usage.requests,
+          modelId: wiring.model.id,
+          error: failed ? 'schema_violation: ${structured!.error}' : null,
+        );
+      }
+
+      return TaskSingleResult(
+        index: index,
+        id: id,
+        agent: agentName,
+        task: item.task,
+        status: failed ? TaskSpawnStatus.failed : TaskSpawnStatus.completed,
+        output: capped.$1,
+        truncated: capped.$2,
+        duration: stopwatch.elapsed,
         tokens: usage.tokens,
         requests: usage.requests,
-        modelId: wiring.model.id,
+        model: wiring.model.id,
         error: failed ? 'schema_violation: ${structured!.error}' : null,
+        structuredOutput: structured,
+        reply: reply,
       );
+    } finally {
+      // Last-chance flush: whatever the child produced before an
+      // abort/failure lands in its session file. Fire-and-forget — the
+      // completion must reach the parent without waiting on file writes.
+      unawaited(_flushChildTranscript(id, child));
     }
-
-    return TaskSingleResult(
-      index: index,
-      id: id,
-      agent: agentName,
-      task: item.task,
-      status: failed ? TaskSpawnStatus.failed : TaskSpawnStatus.completed,
-      output: capped.$1,
-      truncated: capped.$2,
-      duration: stopwatch.elapsed,
-      tokens: usage.tokens,
-      requests: usage.requests,
-      model: wiring.model.id,
-      error: failed ? 'schema_violation: ${structured!.error}' : null,
-      structuredOutput: structured,
-      reply: reply,
-    );
   }
 
   /// Builds the child's tool registry from the agent-type surface plus the
@@ -775,6 +786,61 @@ final class TaskExecutor {
     }
   }
 
+  /// Sessions of in-flight children (id → session once created). Fire-and-
+  /// forget creation via [_ensureChildSession]; flushes append incrementally.
+  final _childSessions = <String, Session>{};
+
+  /// How many transcript messages were flushed per child id (incremental
+  /// appends only new messages beyond this counter).
+  final _childSessionWrites = <String, int>{};
+
+  /// Per-child serialization chain for transcript flushes — concurrent
+  /// fire-and-forget flushes would otherwise interleave session records.
+  final _childFlushChains = <String, Future<void>>{};
+
+  /// Creates the child's real JSONL session in the BACKGROUND at spawn time
+  /// (fire-and-forget — the spawn never waits on it, keeping the completion
+  /// steering race away) and attaches the path to the retained handle.
+  /// Crash resilience: any later [_flushChildTranscript] lands in this file.
+  Future<void> _ensureChildSession(String id) async {
+    final factory = childSessionFactory;
+    final manager = subagentManager;
+    if (factory == null || manager == null) return;
+    try {
+      final session = await factory(manager.parentSessionId, id);
+      _childSessions[id] = session;
+      manager.attachSession(id, (await session.getMetadata()).path);
+    } on Object {
+      // Session creation is best-effort; flushes become no-ops when it fails.
+    }
+  }
+
+  /// Appends the child's NEW transcript messages (beyond the flush counter)
+  /// to its session file, serialized per child so concurrent flushes never
+  /// interleave records. Idempotent — safe to call at every turn boundary
+  /// and in a finally block (the last-chance flush for aborts/failures).
+  Future<void> _flushChildTranscript(String id, Agent child) async {
+    final chain = _childFlushChains[id] ?? Future<void>.value();
+    final next = chain.then((_) => _flushChildTranscriptNow(id, child));
+    _childFlushChains[id] = next;
+    await next;
+  }
+
+  Future<void> _flushChildTranscriptNow(String id, Agent child) async {
+    final session = _childSessions[id];
+    if (session == null) return;
+    final messages = child.state.messages;
+    final written = _childSessionWrites[id] ?? 0;
+    try {
+      for (var i = written; i < messages.length; i++) {
+        await session.appendMessage(messages[i]);
+      }
+      _childSessionWrites[id] = messages.length;
+    } on Object {
+      // A failed flush must not affect the child's result.
+    }
+  }
+
   /// Best-effort subagent status update (no-op when no manager).
   Future<void> _updateSubagentStatus(
     String id,
@@ -783,26 +849,6 @@ final class TaskExecutor {
   }) async {
     if (subagentManager != null) {
       await subagentManager!.update(id, status: status, error: error);
-    }
-  }
-
-  /// Creates the child's real JSONL session (when a factory is wired) and
-  /// appends its full transcript, then attaches it to the retained handle so
-  /// `/agents open <id>` and `task_observe` read the real session file.
-  /// Runs at child completion — never mid-spawn (steering-race safe).
-  Future<void> _persistChildSession(String id, Agent child) async {
-    final factory = childSessionFactory;
-    final manager = subagentManager;
-    if (factory == null || manager == null) return;
-    try {
-      final session = await factory(manager.parentSessionId, id);
-      for (final message in child.state.messages) {
-        await session.appendMessage(message);
-      }
-      manager.attachSession(id, (await session.getMetadata()).path);
-    } on Object {
-      // Transcript persistence is best-effort; a failed write must not turn
-      // the child's result into an error entry.
     }
   }
 }
