@@ -113,10 +113,7 @@ AgentTool _agentMessageTool(
     parameters: {
       'type': 'object',
       'properties': {
-        'to': {
-          'type': 'string',
-          'description': 'The sibling subagent id.',
-        },
+        'to': {'type': 'string', 'description': 'The sibling subagent id.'},
         'message': {
           'type': 'string',
           'description': 'The message body for the sibling.',

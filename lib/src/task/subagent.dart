@@ -135,9 +135,7 @@ final class SubagentHandle {
     'requests': requests,
     'modelId': modelId,
     'lastReply': lastReply,
-    'pendingMessages': [
-      for (final m in pendingMessages) m.toJson(),
-    ],
+    'pendingMessages': [for (final m in pendingMessages) m.toJson()],
   };
 
   /// Reconstructs a handle from a persisted JSON map.

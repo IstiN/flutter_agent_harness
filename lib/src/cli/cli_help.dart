@@ -14,7 +14,7 @@ library;
 /// header line.
 String cliHelpText(String version) =>
     '''
-fa — flutter_agent_harness CLI agent v$version
+fa — flutter_agent_harness CLI agent v$version${_buildFilterNote()}
 
 USAGE
   fa [options]                          interactive REPL
@@ -79,7 +79,7 @@ QUICK COMMANDS
                                y/N confirmation; ~/.fah (sessions, config)
                                is kept unless a second confirmation says yes
 
-PROVIDERS AND API KEYS
+PROVIDERS AND API KEYS${_providerSectionSuffix()}
   openai-completions (default)
       Key: OPENROUTER_API_KEY (fallback OPENAI_API_KEY)
       Default model: anthropic/claude-sonnet-4 @ https://openrouter.ai/api/v1
@@ -383,3 +383,17 @@ CONFIGURATION FILES
   .fah/prompts/        project prompt templates (~/.fah/prompts/ for user)
   ~/.fah/sessions/     session storage root
 ''';
+
+/// The build-time provider filter note (empty without `FA_PROVIDERS`).
+String _buildFilterNote() {
+  const define = String.fromEnvironment('FA_PROVIDERS');
+  if (define.isEmpty || define == 'all' || define == '*') return '';
+  return '\nbuild: providers restricted to $define (FA_PROVIDERS dart-define)';
+}
+
+/// Suffix for the providers section header under a subset build.
+String _providerSectionSuffix() {
+  const define = String.fromEnvironment('FA_PROVIDERS');
+  if (define.isEmpty || define == 'all' || define == '*') return '';
+  return ' (enabled in this build: $define)';
+}

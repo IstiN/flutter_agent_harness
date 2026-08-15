@@ -25,6 +25,8 @@ import 'key_event.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/tool_registry.dart';
+import '../a2a/a2a_config.dart';
+import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import '../task/agent_discovery.dart';
 import '../task/subagent_manager.dart';
@@ -376,6 +378,9 @@ class AgentCli {
     // core tool surface (never `task` itself), completions are injected back
     // into the parent conversation as async-result messages.
     _subagentManager = SubagentManager(parentSessionId: '');
+    // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
+    // lazily per server (never blocks boot).
+    _a2aManager = A2aManager(config.a2aConfig);
     // Discover agent types from .fah/agents/ and .agents/agents/ (fire-and-forget;
     // the registry starts with built-ins and merges discovered types when they arrive).
     final agentRoots = defaultAgentRoots(
@@ -389,6 +394,7 @@ class AgentCli {
       model: config.model,
       rolesResolver: config.modelRolesResolver,
       subagentManager: _subagentManager,
+      a2aManager: _a2aManager,
     );
     final monitoringTools = subagentMonitoringTools(manager: _subagentManager);
     _toolRegistry = ToolRegistry([
@@ -562,6 +568,7 @@ class AgentCli {
   /// Retained-subagent registry (Phase 3a): tracks every spawned child so
   /// `task_status`/`task_observe`/`task_send` work after completion.
   late final SubagentManager _subagentManager;
+  late final A2aManager _a2aManager;
 
   /// Agent types discovered from `.fah/agents/` + `.agents/agents/`.
   List<TaskAgentDefinition> _discoveredAgents = const [];
@@ -2012,6 +2019,10 @@ class AgentCli {
       await _handleMemoryCommand(rest);
       return true;
     }
+    if (command == '/a2a') {
+      _printA2aStatus();
+      return true;
+    }
     return _handleInfoCommandSession(command, rest);
   }
 
@@ -2035,6 +2046,35 @@ class AgentCli {
         return false;
     }
     return true;
+  }
+
+  /// `/a2a` — Phase 5a status: per-server connecting/connected/failed.
+  void _printA2aStatus() {
+    if (!_a2aManager.hasServers) {
+      io.writeln(
+        'no a2a servers configured — add an `a2a:` section to '
+        '~/.fah/config.yaml',
+      );
+      return;
+    }
+    io.writeln('[A2A servers]');
+    for (final server in _a2aManager.servers.values) {
+      final status = switch (server.status) {
+        A2aServerConnectionStatus.connecting => '… connecting',
+        A2aServerConnectionStatus.connected => '✅ connected',
+        A2aServerConnectionStatus.failed => '❌ failed',
+      };
+      io.writeln('  ${server.config.name}: $status');
+      io.writeln('    url: ${server.config.url}');
+      final card = server.card;
+      if (card != null) {
+        io.writeln('    agent: ${card.name} v${card.version}');
+      }
+      if (server.error != null) {
+        io.writeln('    error: ${server.error}');
+      }
+    }
+    io.writeln('  use via the task tool: agent "a2a:<name>"');
   }
 
   /// `/memory [maintain]` — Phase 2 memory surface: stats by default,

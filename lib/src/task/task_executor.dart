@@ -24,6 +24,8 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/param_validator.dart';
 import '../agent/tool_registry.dart';
+import '../a2a/a2a_client.dart';
+import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../json_parse.dart';
 import '../model.dart';
@@ -67,6 +69,7 @@ final class TaskExecutor {
     required this.store,
     this.rolesResolver,
     this.subagentManager,
+    this.a2aManager,
   });
 
   /// The parent tool pool (already minus any host-hidden tools).
@@ -93,6 +96,11 @@ final class TaskExecutor {
   /// Optional retained-subagent registry (Phase 3a). When present, every
   /// spawn registers/updates a [SubagentHandle].
   final SubagentManager? subagentManager;
+
+  /// Optional A2A remote-agent manager (Phase 5a). When present, items
+  /// whose agent type is `a2a:<name>` run against the remote agent instead
+  /// of a local child.
+  final A2aManager? a2aManager;
 
   /// Runs one batch item to completion. Never throws: cancellation and
   /// failure are reported as [TaskSingleResult] error entries.
@@ -182,6 +190,18 @@ final class TaskExecutor {
     Stopwatch stopwatch,
     TaskSpawnProgressCallback? onProgress,
   ) async {
+    // Phase 5a: `a2a:<name>` items run against the remote agent.
+    if (agentName.startsWith('a2a:')) {
+      return _runA2a(
+        item,
+        index,
+        id,
+        agentName.substring(4),
+        stopwatch,
+        cancelToken,
+        onProgress,
+      );
+    }
     final definition = _resolveDefinition(agentName);
     onProgress?.call(index, id, TaskSpawnPhase.running);
 
@@ -282,6 +302,121 @@ final class TaskExecutor {
     );
   }
 
+  /// Runs one `a2a:<name>` item against a remote agent (Phase 5a). Maps the
+  /// A2A task lifecycle onto the local result shape; registers the child in
+  /// the retained-subagent registry so `task_status`/`task_send` work
+  /// uniformly.
+  Future<TaskSingleResult> _runA2a(
+    TaskItem item,
+    int index,
+    String id,
+    String serverName,
+    Stopwatch stopwatch,
+    CancelToken? cancelToken,
+    TaskSpawnProgressCallback? onProgress,
+  ) async {
+    final manager = a2aManager;
+    if (manager == null || manager[serverName] == null) {
+      final available = manager?.servers.keys.join(', ') ?? 'a2a not configured';
+      return _failure(
+        index,
+        id,
+        'a2a:$serverName',
+        item,
+        stopwatch,
+        'unknown a2a server "$serverName" — available: $available',
+      );
+    }
+    onProgress?.call(index, id, TaskSpawnPhase.running);
+    if (subagentManager != null) {
+      await subagentManager!.register(
+        id: id,
+        name: taskItemNameBase(item),
+        agentType: 'a2a:$serverName',
+        task: item.task,
+      );
+      await subagentManager!.update(id, status: SubagentStatus.running);
+    }
+    try {
+      final remoteTask = await manager.send(
+        serverName,
+        _a2aPrompt(item, id),
+      );
+      // Poll to a terminal state (input-required also settles — the parent
+      // can task_send the answer).
+      final settled = await manager.waitForTask(
+        serverName,
+        remoteTask.id,
+        onUpdate: (task) => cancelToken?.throwIfCancelled(),
+      );
+      final output = A2aManager.renderArtifacts(settled);
+      final failed = settled.state == A2aTaskState.failed;
+      final aborted = settled.state == A2aTaskState.canceled;
+      final idle = settled.state == A2aTaskState.inputRequired;
+      final capped = _capOutput(output);
+      store.put(id, capped.$1);
+      onProgress?.call(
+        index,
+        id,
+        failed || aborted
+            ? TaskSpawnPhase.failed
+            : TaskSpawnPhase.completed,
+      );
+      if (subagentManager != null) {
+        await subagentManager!.update(
+          id,
+          status: idle
+              ? SubagentStatus.idle
+              : aborted
+              ? SubagentStatus.aborted
+              : failed
+              ? SubagentStatus.failed
+              : SubagentStatus.completed,
+          modelId: 'a2a:$serverName',
+          error: failed ? 'remote task failed' : null,
+        );
+      }
+      return TaskSingleResult(
+        index: index,
+        id: id,
+        agent: 'a2a:$serverName',
+        task: item.task,
+        status: aborted
+            ? TaskSpawnStatus.aborted
+            : failed
+            ? TaskSpawnStatus.failed
+            : TaskSpawnStatus.completed,
+        output: capped.$1,
+        truncated: capped.$2,
+        duration: stopwatch.elapsed,
+        tokens: 0,
+        requests: 1,
+        model: 'a2a:$serverName',
+        error: failed ? 'remote task failed' : null,
+      );
+    } on CancelledException {
+      rethrow;
+    } on Object catch (error) {
+      onProgress?.call(index, id, TaskSpawnPhase.failed);
+      await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
+      return _failure(index, id, 'a2a:$serverName', item, stopwatch, '$error');
+    }
+  }
+
+  /// The remote agent's prompt: the item task plus the pending inter-agent
+  /// messages, mirroring the local child's user prompt.
+  String _a2aPrompt(TaskItem item, String subagentId) {
+    final buffer = StringBuffer(item.task.trim());
+    if (subagentManager != null) {
+      final queued = subagentManager!.drainMessages(subagentId);
+      for (final message in queued) {
+        buffer.writeln();
+        buffer.writeln('from ${message.fromId}: ${message.text.trim()}');
+      }
+    }
+    return buffer.toString();
+  }
+
   /// Resolves [agentName] to its definition or throws listing the available
   /// agent types.
   TaskAgentDefinition _resolveDefinition(String agentName) {
@@ -340,9 +475,7 @@ final class TaskExecutor {
           ..writeln()
           ..writeln('# MESSAGES');
         for (final message in queued) {
-          userPrompt.writeln(
-            'from ${message.fromId}: ${message.text.trim()}',
-          );
+          userPrompt.writeln('from ${message.fromId}: ${message.text.trim()}');
         }
       }
     }

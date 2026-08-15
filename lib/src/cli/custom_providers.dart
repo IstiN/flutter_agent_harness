@@ -12,8 +12,16 @@ import '../exceptions.dart';
 import '../model_roles/provider_catalog.dart';
 
 /// The api types a custom provider can take (the adapter dialect), mapping
-/// one-to-one to catalog specs.
-const customProviderApiTypes = ['openai', 'anthropic', 'google', 'dial'];
+/// one-to-one to catalog specs. Includes OAuth/SSO-backed catalog providers
+/// (openrouter, codemie) — their connect flows save registry entries so
+/// connected providers show in the `/provider` picker.
+const customProviderApiTypes = [
+  'openai',
+  'anthropic',
+  'google',
+  'dial',
+  'openrouter',
+];
 
 /// One saved custom provider.
 final class CustomProviderEntry {

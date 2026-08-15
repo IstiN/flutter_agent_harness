@@ -28,6 +28,7 @@ import 'dart:async';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../model.dart';
 import '../model_roles/model_resolver.dart';
@@ -155,6 +156,7 @@ final class TaskToolConfig {
     AgentOutputStore? outputs,
     TaskJobManager? jobManager,
     this.subagentManager,
+    this.a2aManager,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
        jobManager = jobManager ?? TaskJobManager();
@@ -199,6 +201,10 @@ final class TaskToolConfig {
   /// spawn registers a [SubagentHandle] so the child is addressable and
   /// observable after completion.
   final SubagentManager? subagentManager;
+
+  /// Optional A2A remote-agent manager (Phase 5a). When present, the agent
+  /// type `a2a:<name>` runs items against the configured remote agent.
+  final A2aManager? a2aManager;
 }
 
 /// Creates the `task` tool bound to [config] (omp's `TaskTool`).
@@ -213,19 +219,29 @@ AgentTool taskTool({required TaskToolConfig config}) {
     store: config.outputs,
     rolesResolver: config.rolesResolver,
     subagentManager: config.subagentManager,
+    a2aManager: config.a2aManager,
   );
+
+  final a2aNames = [
+    for (final name in config.a2aManager?.servers.keys ?? const <String>[])
+      '### a2a:$name (REMOTE)\n'
+          '${config.a2aManager![name]!.config.url}',
+  ];
 
   final description = taskToolDescriptionPrompt
       .replaceAll('{{defaultAgent}}', defaultTaskAgentName)
       .replaceAll(
         '{{agents}}',
-        registry.agents
-            .map(
-              (agent) =>
-                  '### ${agent.name}${agent.readOnly ? ' (READ-ONLY)' : ''}\n'
-                  '${agent.description}',
-            )
-            .join('\n'),
+        [
+          registry.agents
+              .map(
+                (agent) =>
+                    '### ${agent.name}${agent.readOnly ? ' (READ-ONLY)' : ''}\n'
+                    '${agent.description}',
+              )
+              .join('\n'),
+          if (a2aNames.isNotEmpty) ...a2aNames,
+        ].join('\n'),
       );
 
   return AgentTool(

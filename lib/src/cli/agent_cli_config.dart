@@ -23,6 +23,7 @@ final class AgentCliConfig {
     this.sqliteEngine,
     this.lspConfig,
     this.mcpConfig,
+    this.a2aConfig,
     this.plugins = const [],
     this.pluginConfig = const {},
     this.promptTemplateDirs = const [],
@@ -277,6 +278,12 @@ final class AgentCliConfig {
   /// the process transport factory from `lib/io.dart`; remote (HTTP)
   /// servers work on every host. Null disables MCP.
   final McpToolConfig? mcpConfig;
+
+  /// Optional A2A remote-agent configuration (the `a2a:` config section,
+  /// Phase 5a). Servers connect lazily; items with the agent type
+  /// `a2a:<name>` run against the remote agent through the `task` tool.
+  /// Null disables A2A.
+  final A2aConfig? a2aConfig;
 
   /// Plugins to register at startup.
   final List<FahPlugin> plugins;

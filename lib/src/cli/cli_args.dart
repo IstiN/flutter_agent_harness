@@ -12,7 +12,11 @@
 ///   `headless_prompt.dart`, exported from `lib/io.dart`).
 library;
 
-/// The provider kinds accepted by `--provider`.
+/// The provider kinds accepted by `--provider`. Static — the set of every
+/// headless-capable catalog kind; a build filtered through the
+/// `FA_PROVIDERS` dart-define rejects the filtered kinds at resolution
+/// time (buildCliDefaultModel resolves through the filtered
+/// [catalogProvider]).
 const cliProviderKinds = {'openai-completions', 'anthropic', 'google', 'dial'};
 
 /// Invalid command line: the executable prints [message] plus a usage hint

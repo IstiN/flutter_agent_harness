@@ -104,7 +104,7 @@ extension SettingsFlow on AgentCli {
             entry.name,
             '${entry.baseUrl} · ${entry.modelId}',
           ),
-      for (final spec in providerCatalog.values)
+      for (final spec in enabledProviders())
         if (!openAiCompatibleOnly || spec.kind == 'openai-completions')
           ('catalog:${spec.name}', spec.name, spec.defaultBaseUrl),
     ];

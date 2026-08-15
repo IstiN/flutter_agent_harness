@@ -861,6 +861,9 @@ Future<void> main(List<String> args) async {
               config: saved.mcp!,
               transportFactory: ioMcpTransportFactory,
             ),
+      // A2A remote agents (`a2a:` config section, Phase 5a): pure-Dart HTTP
+      // client, connects lazily per server.
+      a2aConfig: saved.a2a,
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,

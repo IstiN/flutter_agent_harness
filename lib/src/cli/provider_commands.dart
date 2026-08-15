@@ -603,7 +603,11 @@ extension on AgentCli {
     }
   }
 
-  /// Saves an OAuth-derived OpenRouter key and switches to OpenRouter.
+  /// Saves an OAuth-derived OpenRouter key and switches to OpenRouter. The
+  /// org is also saved as a registry entry — a connected provider must show
+  /// in the `/provider` picker and survive restarts like every other one
+  /// (CodeMie/dial already do); without the entry the key was only stored
+  /// and OpenRouter stayed invisible in the list.
   Future<void> _applyOpenRouterOAuthKey(
     ProviderSpec spec,
     OpenRouterOAuthKey key,
@@ -616,6 +620,7 @@ extension on AgentCli {
       key.key,
       keyName: keyName,
     );
+    _saveCatalogConnectEntry(spec);
     // already active (not just any openai-completions endpoint).
     final isOpenRouterActive =
         _activeCustomName == null &&
@@ -640,6 +645,27 @@ extension on AgentCli {
     if (key.settingsUrl != null) {
       io.writeln('key settings: ${key.settingsUrl}');
     }
+  }
+
+  /// Saves a connected catalog provider (OAuth/SSO flows) as a registry
+  /// entry named by its endpoint host, so it appears in the `/provider`
+  /// picker and `/provider <name>` restores it. Idempotent — re-connect
+  /// keeps the entry (and its model memory).
+  void _saveCatalogConnectEntry(ProviderSpec spec) {
+    final registry = config.customProviders;
+    if (registry == null) return;
+    final name = _codeMieHostName(spec.defaultBaseUrl);
+    final existing = registry.find(name);
+    registry.add(
+      CustomProviderEntry(
+        name: name,
+        apiType: spec.name,
+        baseUrl: spec.defaultBaseUrl,
+        modelId: existing?.modelId ?? _agent.state.model.id,
+        keyName: CustomProviderRegistry.keyNameFor(spec.defaultBaseUrl),
+      ),
+    );
+    _activeCustomName = name;
   }
 
   /// The `/provider chatgpt oauth [headless]` branch: authenticates the
@@ -1061,7 +1087,7 @@ extension on AgentCli {
     if (spec == null) {
       io.writeln(
         'unknown provider: ${args[0]} — supported providers: '
-        '${providerCatalog.keys.join(', ')}',
+        '${enabledProviderNames().join(', ')}',
       );
       return;
     }
@@ -1557,7 +1583,7 @@ extension on AgentCli {
     if (keyStatus != null) io.writeln('  $keyStatus');
     _printSavedProviders();
     io.writeln('supported providers:');
-    for (final spec in providerCatalog.values) {
+    for (final spec in enabledProviders()) {
       io.writeln('  ${spec.name} — ${spec.defaultBaseUrl}');
     }
     io.writeln(

@@ -44,6 +44,7 @@ const builtinSlashCommands = <String, String>{
   '/stats': 'show token and cost totals',
   '/tasks': '[cancel <id>] — list background agents',
   '/memory': '[maintain] — memory stats or run consolidation',
+  '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
   '/agents': 'list available agent types for the task tool',
   '/model': '<provider/model> — select model (opens selector)',

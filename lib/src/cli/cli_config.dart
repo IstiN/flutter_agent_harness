@@ -11,6 +11,7 @@ import 'dart:io';
 
 import 'package:yaml/yaml.dart';
 
+import '../a2a/a2a_config.dart';
 import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
@@ -33,6 +34,7 @@ final class CliConfig {
     this.customProviders = const [],
     this.models,
     this.mcp,
+    this.a2a,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -75,6 +77,14 @@ final class CliConfig {
           : ModelsConfig.fromYaml(map['models']),
       // The mcp section (external tool servers) is parsed strictly too.
       mcp: map['mcp'] == null ? null : McpConfig.fromYaml(map['mcp']),
+      // The a2a section (remote Agent2Agent endpoints) is strict too; its
+      // `${NAME}` token references resolve against the environment.
+      a2a: map['a2a'] == null
+          ? null
+          : A2aConfig.fromYaml(
+              map['a2a'],
+              (name) => Platform.environment[name],
+            ),
     );
   }
 
@@ -122,6 +132,10 @@ final class CliConfig {
   /// a schema error throws [ConfigException]. `null` disables MCP. Managed
   /// by editing the config file only (no CLI commands yet).
   final McpConfig? mcp;
+
+  /// Optional A2A remote agents config (`a2a:` yaml section). Parsed
+  /// strictly; `${NAME}` tokens resolve from the environment.
+  final A2aConfig? a2a;
 
   String toYaml() {
     final buffer = StringBuffer()
