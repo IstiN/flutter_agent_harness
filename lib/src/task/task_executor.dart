@@ -317,7 +317,8 @@ final class TaskExecutor {
   ) async {
     final manager = a2aManager;
     if (manager == null || manager[serverName] == null) {
-      final available = manager?.servers.keys.join(', ') ?? 'a2a not configured';
+      final available =
+          manager?.servers.keys.join(', ') ?? 'a2a not configured';
       return _failure(
         index,
         id,
@@ -338,10 +339,7 @@ final class TaskExecutor {
       await subagentManager!.update(id, status: SubagentStatus.running);
     }
     try {
-      final remoteTask = await manager.send(
-        serverName,
-        _a2aPrompt(item, id),
-      );
+      final remoteTask = await manager.send(serverName, _a2aPrompt(item, id));
       // Poll to a terminal state (input-required also settles — the parent
       // can task_send the answer).
       final settled = await manager.waitForTask(
@@ -358,9 +356,7 @@ final class TaskExecutor {
       onProgress?.call(
         index,
         id,
-        failed || aborted
-            ? TaskSpawnPhase.failed
-            : TaskSpawnPhase.completed,
+        failed || aborted ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
       );
       if (subagentManager != null) {
         await subagentManager!.update(
