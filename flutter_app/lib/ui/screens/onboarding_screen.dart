@@ -350,19 +350,25 @@ class _Footer extends StatelessWidget {
     if (wide) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(28, 10, 28, 22),
-        child: Row(
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            counter,
-            const SizedBox(width: 14),
-            _ProgressBar(fraction: (page + 1) / 4, width: 200),
-            const Spacer(),
-            privacy,
-            const Spacer(),
-            if (onBack != null) ...[back, const SizedBox(width: 16)],
-            SizedBox(
-              width: 250,
-              child: _PrimaryButton(label: primaryLabel, onTap: onPrimary),
+            Row(
+              children: [
+                counter,
+                const SizedBox(width: 14),
+                _ProgressBar(fraction: (page + 1) / 4, width: 200),
+                const Spacer(),
+                if (onBack != null) ...[back, const SizedBox(width: 16)],
+                SizedBox(
+                  width: 250,
+                  child: _PrimaryButton(label: primaryLabel, onTap: onPrimary),
+                ),
+              ],
             ),
+            // Pinned to the footer center: the Back button appearing on
+            // later pages must not shift the link horizontally.
+            const Center(child: privacy),
           ],
         ),
       );
