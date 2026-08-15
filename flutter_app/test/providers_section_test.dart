@@ -2,12 +2,10 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
-import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa_ui/fa_ui.dart'
-    show ProviderPreset, UnifiedModelPickerPage;
+import 'package:fa_ui/fa_ui.dart' show UnifiedModelPickerPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -94,7 +92,10 @@ void main() {
         provider: 'openai-completions',
       );
       await service.initialize();
-      await _pump(tester, ProvidersSection(service: service, registry: registry));
+      await _pump(
+        tester,
+        ProvidersSection(service: service, registry: registry),
+      );
 
       expect(find.text('Providers'), findsOneWidget);
       expect(find.text('Acme'), findsOneWidget);
@@ -194,8 +195,6 @@ void main() {
       expect(registry.providers, isEmpty);
       expect(find.text('Acme'), findsNothing);
     });
-
-
   });
 
   group('DefaultChatModelSection flow', () {

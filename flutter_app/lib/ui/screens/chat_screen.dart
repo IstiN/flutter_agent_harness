@@ -214,7 +214,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _openSystemSettings(permission);
         } else if (action == 'tryAgain') {
           unawaited(
-            service.sendText('Please try again — I just granted access.'), // l10n:ignore — agent-facing text
+            service.sendText(
+              'Please try again — I just granted access.',
+            ), // l10n:ignore — agent-facing text
           );
         }
       },

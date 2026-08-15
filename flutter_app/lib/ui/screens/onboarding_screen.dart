@@ -193,7 +193,9 @@ class _TopBar extends StatelessWidget {
                       color: idx == page
                           ? const Color(0xFF111827)
                           : const Color(0xFF6B7280),
-                      fontWeight: idx == page ? FontWeight.w600 : FontWeight.w400,
+                      fontWeight: idx == page
+                          ? FontWeight.w600
+                          : FontWeight.w400,
                     ),
                   ),
                 ],
@@ -202,7 +204,10 @@ class _TopBar extends StatelessWidget {
           const Spacer(),
           TextButton(
             onPressed: onSkip,
-            child: const Text('Skip', style: TextStyle(color: Color(0xFF6B7280))),
+            child: const Text(
+              'Skip',
+              style: TextStyle(color: Color(0xFF6B7280)),
+            ),
           ),
         ],
       ),
@@ -251,7 +256,9 @@ class _BottomBar extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                child: const Text('Back'),
+                child: const Text(
+                  'Back',
+                ), // l10n:ignore — prototype redesign ships en-only copy for now
               ),
             ),
           FilledButton.icon(
@@ -435,14 +442,21 @@ class _MockAppGrid extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Text(
                     'Start Session',
-                    style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -454,14 +468,36 @@ class _MockAppGrid extends StatelessWidget {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _appIcon(Icons.calendar_today, 'Calendar', const Color(0xFF3B82F6)),
+              _appIcon(
+                Icons.calendar_today,
+                'Calendar',
+                const Color(0xFF3B82F6),
+              ),
               _appIcon(Icons.note_outlined, 'Notes', const Color(0xFFF59E0B)),
-              _appIcon(Icons.build_outlined, 'Utilities', const Color(0xFF6B7280), badge: '4'),
+              _appIcon(
+                Icons.build_outlined,
+                'Utilities',
+                const Color(0xFF6B7280),
+                badge: '4',
+              ),
               _appIcon(Icons.folder_outlined, 'Files', const Color(0xFF3B82F6)),
-              _appIcon(Icons.calculate_outlined, 'Calculator', const Color(0xFF111827)),
+              _appIcon(
+                Icons.calculate_outlined,
+                'Calculator',
+                const Color(0xFF111827),
+              ),
               _appIcon(Icons.map_outlined, 'Maps', const Color(0xFF10B981)),
-              _appIcon(Icons.timer_outlined, 'Focus Timer', const Color(0xFF4F46E5), badge: 'New'),
-              _appIcon(Icons.settings_outlined, 'Settings', const Color(0xFF6B7280)),
+              _appIcon(
+                Icons.timer_outlined,
+                'Focus Timer',
+                const Color(0xFF4F46E5),
+                badge: 'New',
+              ),
+              _appIcon(
+                Icons.settings_outlined,
+                'Settings',
+                const Color(0xFF6B7280),
+              ),
               _appIcon(Icons.add, 'Add app', const Color(0xFF9CA3AF)),
             ],
           ),
@@ -490,21 +526,31 @@ class _MockAppGrid extends StatelessWidget {
                 top: -2,
                 right: -2,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF4F46E5),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     badge,
-                    style: const TextStyle(fontSize: 8, color: Colors.white, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      fontSize: 8,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
           ],
         ),
         const SizedBox(height: 4),
-        Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF6B7280))),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 9, color: Color(0xFF6B7280)),
+        ),
       ],
     );
   }
@@ -530,7 +576,10 @@ class _FeaturePill extends StatelessWidget {
         children: [
           Icon(icon, size: 14, color: const Color(0xFF4F46E5)),
           const SizedBox(width: 6),
-          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+          ),
         ],
       ),
     );
@@ -596,9 +645,18 @@ class _Page1 extends StatelessWidget {
                 runSpacing: 8,
                 alignment: WrapAlignment.center,
                 children: [
-                  _FeaturePill(icon: Icons.chat_bubble_outline, label: 'Answers questions'),
-                  _FeaturePill(icon: Icons.grid_view_rounded, label: 'Uses your apps'),
-                  _FeaturePill(icon: Icons.auto_awesome, label: 'Builds new apps'),
+                  _FeaturePill(
+                    icon: Icons.chat_bubble_outline,
+                    label: 'Answers questions',
+                  ),
+                  _FeaturePill(
+                    icon: Icons.grid_view_rounded,
+                    label: 'Uses your apps',
+                  ),
+                  _FeaturePill(
+                    icon: Icons.auto_awesome,
+                    label: 'Builds new apps',
+                  ),
                 ],
               ),
               const SizedBox(height: 24),
@@ -643,7 +701,12 @@ class _ProviderPanel extends StatelessWidget {
     );
   }
 
-  Widget _providerRow(IconData icon, String name, String? badge, bool selected) {
+  Widget _providerRow(
+    IconData icon,
+    String name,
+    String? badge,
+    bool selected,
+  ) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -659,28 +722,41 @@ class _ProviderPanel extends StatelessWidget {
                     Flexible(
                       child: Text(
                         name,
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     if (badge != null) ...[
                       const SizedBox(width: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: badge == 'Recommended'
-                              ? const Color(0xFF4F46E5).withValues(alpha: 0.12)
-                              : const Color(0xFF10B981).withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          badge,
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
                             color: badge == 'Recommended'
-                                ? const Color(0xFF4F46E5)
-                                : const Color(0xFF10B981),
+                                ? const Color(
+                                    0xFF4F46E5,
+                                  ).withValues(alpha: 0.12)
+                                : const Color(
+                                    0xFF10B981,
+                                  ).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            badge,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: badge == 'Recommended'
+                                  ? const Color(0xFF4F46E5)
+                                  : const Color(0xFF10B981),
+                            ),
                           ),
                         ),
                       ),
@@ -697,7 +773,9 @@ class _ProviderPanel extends StatelessWidget {
               shape: BoxShape.circle,
               color: selected ? const Color(0xFF4F46E5) : Colors.transparent,
               border: Border.all(
-                color: selected ? const Color(0xFF4F46E5) : const Color(0xFFE5E7EB),
+                color: selected
+                    ? const Color(0xFF4F46E5)
+                    : const Color(0xFFE5E7EB),
                 width: 2,
               ),
             ),
@@ -733,7 +811,9 @@ class _Page2State extends State<_Page2> {
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Center(
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: widget.isWide ? 720 : double.infinity),
+          constraints: BoxConstraints(
+            maxWidth: widget.isWide ? 720 : double.infinity,
+          ),
           child: Column(
             children: [
               const SizedBox(height: 16),
@@ -790,12 +870,19 @@ class _Page2State extends State<_Page2> {
                             const SizedBox(height: 4),
                             const Row(
                               children: [
-                                Icon(Icons.auto_awesome, size: 14, color: Color(0xFF4F46E5)),
+                                Icon(
+                                  Icons.auto_awesome,
+                                  size: 14,
+                                  color: Color(0xFF4F46E5),
+                                ),
                                 SizedBox(width: 4),
                                 Expanded(
                                   child: Text(
                                     'Build a focus timer with work and break sessions.',
-                                    style: TextStyle(fontSize: 11, color: Color(0xFF111827)),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Color(0xFF111827),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -842,7 +929,8 @@ class _Page2State extends State<_Page2> {
           name: 'OpenRouter',
           badge: 'Recommended',
           description: 'Access leading AI models with one connection.',
-          detail: 'Default model: Auto — Fa chooses the best available model for each task.',
+          detail:
+              'Default model: Auto — Fa chooses the best available model for each task.',
           link: 'Choose a model manually',
           selected: _selected == 'openrouter',
           onTap: () => setState(() => _selected = 'openrouter'),
@@ -926,18 +1014,28 @@ class _ProviderCard extends StatelessWidget {
                       Flexible(
                         child: Text(
                           name,
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       if (badge != null) ...[
                         const SizedBox(width: 6),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
                           decoration: BoxDecoration(
                             color: badge == 'Recommended'
-                                ? const Color(0xFF4F46E5).withValues(alpha: 0.12)
-                                : const Color(0xFF10B981).withValues(alpha: 0.12),
+                                ? const Color(
+                                    0xFF4F46E5,
+                                  ).withValues(alpha: 0.12)
+                                : const Color(
+                                    0xFF10B981,
+                                  ).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(3),
                           ),
                           child: Text(
@@ -957,13 +1055,19 @@ class _ProviderCard extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     description,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF6B7280),
+                    ),
                   ),
                   if (detail != null) ...[
                     const SizedBox(height: 4),
                     Text(
                       detail!,
-                      style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF9CA3AF),
+                      ),
                     ),
                   ],
                   if (link != null) ...[
@@ -987,7 +1091,9 @@ class _ProviderCard extends StatelessWidget {
                 shape: BoxShape.circle,
                 color: selected ? const Color(0xFF4F46E5) : Colors.transparent,
                 border: Border.all(
-                  color: selected ? const Color(0xFF4F46E5) : const Color(0xFFE5E7EB),
+                  color: selected
+                      ? const Color(0xFF4F46E5)
+                      : const Color(0xFFE5E7EB),
                   width: 2,
                 ),
               ),
@@ -1052,23 +1158,31 @@ class _Page3 extends StatelessWidget {
                           const Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(child: _PermissionCard(
-                                icon: Icons.calendar_today,
-                                title: 'Calendar & Reminders',
-                                description: 'Check your schedule and create events.',
-                              )),
+                              Expanded(
+                                child: _PermissionCard(
+                                  icon: Icons.calendar_today,
+                                  title: 'Calendar & Reminders',
+                                  description:
+                                      'Check your schedule and create events.',
+                                ),
+                              ),
                               SizedBox(width: 12),
-                              Expanded(child: _PermissionCard(
-                                icon: Icons.notifications_outlined,
-                                title: 'Notifications',
-                                description: 'Send reminders and task updates.',
-                              )),
+                              Expanded(
+                                child: _PermissionCard(
+                                  icon: Icons.notifications_outlined,
+                                  title: 'Notifications',
+                                  description:
+                                      'Send reminders and task updates.',
+                                ),
+                              ),
                               SizedBox(width: 12),
-                              Expanded(child: _PermissionCard(
-                                icon: Icons.mic_outlined,
-                                title: 'Microphone',
-                                description: 'Talk to Fa with your voice.',
-                              )),
+                              Expanded(
+                                child: _PermissionCard(
+                                  icon: Icons.mic_outlined,
+                                  title: 'Microphone',
+                                  description: 'Talk to Fa with your voice.',
+                                ),
+                              ),
                             ],
                           ),
                         ],
@@ -1076,10 +1190,7 @@ class _Page3 extends StatelessWidget {
                     ),
                     const SizedBox(width: 16),
                     // Right: "What you'll get" preview.
-                    Expanded(
-                      flex: 2,
-                      child: _buildPreviewPanel(),
-                    ),
+                    Expanded(flex: 2, child: _buildPreviewPanel()),
                   ],
                 )
               else ...[
@@ -1107,7 +1218,11 @@ class _Page3 extends StatelessWidget {
               const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.check_circle_outline, size: 14, color: Color(0xFF10B981)),
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 14,
+                    color: Color(0xFF10B981),
+                  ),
                   SizedBox(width: 6),
                   Text(
                     'Nothing is enabled by default.',
@@ -1119,7 +1234,11 @@ class _Page3 extends StatelessWidget {
               const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.settings_outlined, size: 14, color: Color(0xFF6B7280)),
+                  Icon(
+                    Icons.settings_outlined,
+                    size: 14,
+                    color: Color(0xFF6B7280),
+                  ),
                   SizedBox(width: 6),
                   Text(
                     'You can manage access anytime in Settings.',
@@ -1161,7 +1280,11 @@ class _Page3 extends StatelessWidget {
           SizedBox(width: 8),
           Text(
             'Focus Timer',
-            style: TextStyle(fontSize: 11, color: Color(0xFF111827), fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 11,
+              color: Color(0xFF111827),
+              fontWeight: FontWeight.w600,
+            ),
           ),
           SizedBox(width: 4),
           Text(
@@ -1430,7 +1553,11 @@ class _Page4 extends StatelessWidget {
                   color: Color(0xFF4F46E5),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.auto_awesome, size: 14, color: Colors.white),
+                child: const Icon(
+                  Icons.auto_awesome,
+                  size: 14,
+                  color: Colors.white,
+                ),
               ),
               const SizedBox(width: 8),
               const Expanded(
@@ -1439,7 +1566,10 @@ class _Page4 extends StatelessWidget {
                   children: [
                     Text(
                       'Focus Timer created',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     Text(
                       'Fa built and added this app to your workspace.',
@@ -1460,7 +1590,8 @@ class _Page4 extends StatelessWidget {
           const _TimelineEntry(
             icon: Icons.auto_awesome,
             label: 'Fa delivered',
-            text: 'Focus Timer — 25/5 focus sessions with work and break cycles.',
+            text:
+                'Focus Timer — 25/5 focus sessions with work and break cycles.',
           ),
         ],
       ),
@@ -1529,21 +1660,31 @@ class _Page4 extends StatelessWidget {
                 top: -2,
                 right: -2,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF4F46E5),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     badge,
-                    style: const TextStyle(fontSize: 8, color: Colors.white, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      fontSize: 8,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
           ],
         ),
         const SizedBox(height: 4),
-        Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF6B7280))),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 9, color: Color(0xFF6B7280)),
+        ),
       ],
     );
   }
@@ -1608,7 +1749,10 @@ class _SuggestionPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+          ),
           const SizedBox(width: 4),
           const Icon(Icons.chevron_right, size: 14, color: Color(0xFF6B7280)),
         ],

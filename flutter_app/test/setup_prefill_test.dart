@@ -182,10 +182,9 @@ Future<void> _pumpForm(
   );
 }
 
-/// Opens the provider dropdown and picks the entry labelled [label].
+/// Picks the provider row labelled [label] in the provider-first list.
 Future<void> _selectProvider(WidgetTester tester, String label) async {
-  await tester.tap(find.byType(DropdownButtonFormField<Object>));
-  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.text(label).last);
   await tester.tap(find.text(label).last);
   await tester.pumpAndSettle();
 }
@@ -259,7 +258,7 @@ void main() {
       expect(find.text('Acme'), findsOneWidget);
       // The registry match (not the bare custom preset) brings the edit
       // action; deletion lives in the editor page.
-      expect(find.text('Edit'), findsOneWidget);
+      expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
       expect(find.text('Delete'), findsNothing);
     });
 

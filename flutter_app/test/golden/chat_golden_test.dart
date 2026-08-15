@@ -435,7 +435,9 @@ void main() {
 
       // The env reads + controller creation resolve on the real event loop
       // (same dance as the generated-image shot); the players themselves are
-      // deterministic fakes (paused at 0:00, fixed 0:07 duration).
+      // deterministic fakes (paused at 0:00, fixed 0:07 duration). Wait for
+      // the players to actually mount instead of a fixed delay budget —
+      // under a loaded suite runner the fixed budget flakes.
       await tester.runAsync(() async {
         await tester.pumpWidget(
           MaterialApp(
@@ -450,9 +452,18 @@ void main() {
             ),
           ),
         );
-        for (var i = 0; i < 8; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 300));
+        for (var i = 0; i < 50; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
           await tester.pump();
+          final audioMounted = find
+              .byType(SandboxAudioPlayer)
+              .evaluate()
+              .isNotEmpty;
+          final videoMounted = find
+              .byType(SandboxVideoPlayer)
+              .evaluate()
+              .isNotEmpty;
+          if (audioMounted && videoMounted && i > 5) break;
         }
         await tester.pumpAndSettle();
       });

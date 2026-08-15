@@ -1016,7 +1016,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             child: TextButton.icon(
               onPressed: () => setState(() => _showProviderListOnly = true),
               icon: const Icon(Icons.arrow_back, size: 16),
-              label: const Text('Change provider'), // l10n:ignore — prototype redesign ships en-only copy for now
+              label: const Text(
+                'Change provider',
+              ), // l10n:ignore — prototype redesign ships en-only copy for now
               style: TextButton.styleFrom(
                 padding: EdgeInsets.zero,
                 minimumSize: Size.zero,

@@ -7,8 +7,6 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/services/provider_registry.dart';
-import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -110,8 +108,9 @@ void main() {
       expect(find.byType(FileBrowser), findsNothing);
     });
 
-    testWidgets('wide: no settings gear in the chat bar (sidebar owns it)',
-        (tester) async {
+    testWidgets('wide: no settings gear in the chat bar (sidebar owns it)', (
+      tester,
+    ) async {
       _useWideSurface(tester);
       final env = MemoryExecutionEnv();
       final service = _fakeService(env);
@@ -123,9 +122,7 @@ void main() {
 
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
         ..addSession('fake-session', service);
-      await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(manager: manager)),
-      );
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
 
       // The chat-bar gear is gone by design: settings open from the

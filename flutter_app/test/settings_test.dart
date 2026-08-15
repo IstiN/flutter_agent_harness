@@ -753,7 +753,9 @@ void main() {
       await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
       await tester.pumpWidget(
-        MaterialApp(home: SettingsScreen(service: service, registry: registry)),
+        MaterialApp(
+          home: SettingsScreen(service: service, registry: registry),
+        ),
       );
       await tester.pumpAndSettle();
 
@@ -766,8 +768,9 @@ void main() {
       await tester.tap(find.textContaining('acme-1', findRichText: true));
       await tester.pumpAndSettle();
 
-      // Not applied — still on the settings screen.
-      expect(service.modelId, 'test-model');
+      // Applied directly — the unified picker needs no key step (the
+      // entry carries the registry's remembered key, empty here).
+      expect(service.modelId, 'acme-1');
     });
 
     testWidgets('applying a picked model saves the last connection', (
@@ -807,6 +810,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Add provider'));
       await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Custom'));
+      await tester.tap(find.text('Custom'));
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
       await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Local');

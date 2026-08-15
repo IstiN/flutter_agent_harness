@@ -129,7 +129,9 @@ class _CodeMieSsoWebViewPageState extends State<CodeMieSsoWebViewPage> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CodeMie Sign In'), // l10n:ignore — proper noun, fallback-only screen
+        title: const Text(
+          'CodeMie Sign In',
+        ), // l10n:ignore — proper noun, fallback-only screen
         actions: [
           if (_loading)
             const Padding(
