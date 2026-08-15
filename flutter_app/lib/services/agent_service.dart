@@ -390,10 +390,11 @@ class AgentService extends ChangeNotifier
     // + explore) and `subagent` (delegation) overrides resolve through it;
     // the Map reads the store lazily, so settings changes apply on the next
     // spawn without rebuilding the agent.
-    if (_taskModelsStore != null) {
+    final taskModelsStore = _taskModelsStore;
+    if (taskModelsStore != null) {
       _taskRolesResolver = ModelRolesResolver(
         config: ModelRolesConfig(
-          roles: _StoreBackedRolesMap(_taskModelsStore!),
+          roles: _StoreBackedRolesMap(taskModelsStore),
         ),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
