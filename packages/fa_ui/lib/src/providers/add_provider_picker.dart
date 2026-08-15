@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
@@ -23,6 +24,7 @@ final class AddProviderPreset {
     required this.description,
     required this.icon,
     this.baseUrl,
+    this.keyHelpUrl,
   });
 
   /// Stable identifier for the tile (routing key).
@@ -40,6 +42,10 @@ final class AddProviderPreset {
   /// Pre-fill base URL for key-based presets; `null` for auth-flow presets
   /// (CodeMie SSO, OpenRouter OAuth) and Custom.
   final String? baseUrl;
+
+  /// A "where do I get the key" page for key-based presets (key console
+  /// link shown next to the key field in the editor); null hides the link.
+  final String? keyHelpUrl;
 }
 
 /// The built-in quick-add presets shown when the user taps "Add provider".
@@ -81,11 +87,34 @@ const defaultAddProviderPresets = <AddProviderPreset>[
     baseUrl: 'https://api.anthropic.com',
   ),
   AddProviderPreset(
-    key: 'gemini',
+    key: 'google',
     name: 'Google Gemini',
     description: 'Gemini models — API key',
     icon: Icons.cloud_outlined,
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+  ),
+  AddProviderPreset(
+    key: 'dial',
+    name: 'DIAL',
+    description: 'EPAM DIAL Core — Api key + deployment',
+    icon: Icons.cloud_outlined,
+    baseUrl: 'https://ai-proxy.lab.epam.com',
+  ),
+  AddProviderPreset(
+    key: 'kimi',
+    name: 'Kimi Code',
+    description: 'Kimi Code models — API key',
+    icon: Icons.cloud_outlined,
+    baseUrl: 'https://api.kimi.com/coding/v1',
+    keyHelpUrl: 'https://www.kimi.com/code/console',
+  ),
+  AddProviderPreset(
+    key: 'zai',
+    name: 'Z.AI',
+    description: 'GLM models — API key',
+    icon: Icons.cloud_outlined,
+    baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+    keyHelpUrl: 'https://z.ai/manage-apikey/apikey-list',
   ),
   AddProviderPreset(
     key: 'ollama',
@@ -203,14 +232,30 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         if (context.mounted) Navigator.of(context).pop(true);
         return;
       default:
-        // Key-based preset (OpenRouter, Ollama, Gemini, ...): open the
-        // editor pre-filled with the preset's base URL.
+        // Key-based preset. The dial preset keeps its fixed endpoint
+        // (read-only URL); other quick-adds (Kimi Code, Z.AI) open the
+        // editor with editable prefills — several instances of the same
+        // provider with custom names are a first-class use case.
         final providerPreset = _matchProviderPreset(preset.key);
+        final editable =
+            preset.key != 'dial' && providerPreset == ProviderPreset.custom;
+        // A key resolved through the host's chain (env / secure store /
+        // saved keys) counts as saved — the editor shows the keep-note.
+        final namedKey = editable
+            ? null
+            : hostedProviderKeyName(providerPreset);
+        final hasSavedKey =
+            namedKey != null &&
+            FaUiHost.resolveKey(namedKey, () => '').isNotEmpty;
         final result = await pushFaPage<ProviderEditorResult>(
           context,
           ProviderEditorPage(
             title: preset.name,
-            preset: providerPreset,
+            preset: editable ? null : providerPreset,
+            prefillName: editable ? preset.name : null,
+            prefillBaseUrl: editable ? preset.baseUrl : null,
+            hasSavedKey: hasSavedKey,
+            keyHelpUrl: preset.keyHelpUrl,
             registry: registry,
             openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
             openRouterOAuthCapture: openRouterOAuthCapture,
@@ -244,8 +289,10 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         return ProviderPreset.openrouter;
       case 'ollama':
         return ProviderPreset.ollamaCloud;
-      case 'gemini':
+      case 'google':
         return ProviderPreset.gemini;
+      case 'dial':
+        return ProviderPreset.dial;
       default:
         return ProviderPreset.custom;
     }

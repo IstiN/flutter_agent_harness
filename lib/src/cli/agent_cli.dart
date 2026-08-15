@@ -28,6 +28,7 @@ import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
 import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
+import 'agent_tree.dart';
 import '../task/agent_discovery.dart';
 import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
@@ -569,6 +570,10 @@ class AgentCli {
   /// Retained-subagent registry (Phase 3a): tracks every spawned child so
   /// `task_status`/`task_observe`/`task_send` work after completion.
   late final SubagentManager _subagentManager;
+
+  /// The session's retained-subagent registry (tests, the app settings
+  /// Agents panel, hosts observing children).
+  SubagentManager get subagentManager => _subagentManager;
   late final A2aManager _a2aManager;
 
   /// Agent types discovered from `.fah/agents/` + `.agents/agents/`.

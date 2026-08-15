@@ -56,16 +56,30 @@ void main() {
     tester,
   ) async {
     tester.view.devicePixelRatio = 1.0;
-    addTearDown(() => tester.view.resetDevicePixelRatio());
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.physicalSize = const Size(1200, 900);
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(harness());
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
 
     expect(find.byType(Dialog), findsOneWidget);
     expect(find.text('Editor'), findsOneWidget);
-    final pageSize = tester.getSize(find.byType(Scaffold).last);
+    // The page's Scaffold inside the dialog (the outer app Scaffold is
+    // unrelated chrome).
+    final pageSize = tester.getSize(
+      find.descendant(of: find.byType(Dialog), matching: find.byType(Scaffold)),
+    );
+    // The dialog's own sizing wrapper (other ConstrainedBoxes come from the
+    // page's internals) — identified by its maxWidth cap.
+    final box = tester
+        .widgetList<ConstrainedBox>(
+          find.descendant(
+            of: find.byType(Dialog),
+            matching: find.byType(ConstrainedBox),
+          ),
+        )
+        .singleWhere((b) => b.constraints.maxWidth == 560);
+    expect(box.constraints.maxHeight, 720); // 80% of the 900px surface
     expect(pageSize.width, lessThanOrEqualTo(560));
     expect(pageSize.height, lessThanOrEqualTo(720));
 

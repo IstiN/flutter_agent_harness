@@ -62,20 +62,30 @@ Finder _editorField(String label) {
 
 void main() {
   group('ProvidersSection', () {
-    testWidgets('lists the hosted presets and marks the current provider', (
+    testWidgets('lists the saved providers and marks the current one', (
       tester,
     ) async {
+      // Hosted presets moved to the add-provider picker (provider-first
+      // redesign); the section lists saved custom providers + Add provider.
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
       final connection = _FakeConnection(
-        baseUrl: 'https://openrouter.ai/api/v1',
+        baseUrl: 'https://acme.example/v1',
         kind: 'openai-completions',
       );
-      await _pump(tester, ProvidersSection(service: connection));
+      await _pump(
+        tester,
+        ProvidersSection(service: connection, registry: registry),
+      );
 
       expect(find.text('Providers'), findsOneWidget);
-      expect(find.text('OpenRouter'), findsOneWidget);
-      expect(find.text('Ollama'), findsOneWidget);
+      expect(find.text('Acme'), findsOneWidget);
       expect(find.text('Add provider'), findsOneWidget);
-      // Exactly one row is marked current — the OpenRouter preset.
+      // Exactly one row is marked current — the saved Acme provider.
       expect(find.byIcon(Icons.check), findsOneWidget);
     });
 
@@ -129,6 +139,13 @@ void main() {
       await _pump(tester, ProvidersSection(registry: registry));
 
       await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+      // The picker's tiles render in a dialog on wide surfaces; the Custom
+      // tile may sit below the fold.
+      await tester.scrollUntilVisible(find.text('Custom'), 200);
+      await tester.ensureVisible(find.text('Custom'));
+      await tester.tap(find.text('Custom'));
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
 
@@ -212,8 +229,8 @@ void main() {
       expect(find.text('Acme'), findsNothing);
     });
 
-    testWidgets('preset editor: name/URL are read-only, the model and key '
-        'save', (tester) async {
+    testWidgets('preset editor: the name is editable, the URL read-only, '
+        'the model and key save', (tester) async {
       final keysStore = SessionKeysStore.inMemory();
       final registry = ProviderRegistry.inMemory();
       await _pump(
@@ -224,10 +241,17 @@ void main() {
         ),
       );
 
+      await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('OpenRouter'));
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
-      expect(tester.widget<TextField>(_editorField('Name')).enabled, isFalse);
+      // The name field is editable (multi-instance naming); the URL stays
+      // read-only for hosted presets.
+      expect(
+        tester.widget<TextField>(_editorField('Name')).enabled ?? true,
+        isTrue,
+      );
       expect(
         tester.widget<TextField>(_editorField('Base URL')).enabled,
         isFalse,
@@ -246,11 +270,10 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
-      expect(keysStore.valueOf('OPENROUTER_API_KEY'), 'sk-or-new');
-      expect(
-        registry.presetModelOverride(ProviderPreset.openrouter.name),
-        'anthropic/claude',
-      );
+      // The added provider keeps the key + model via the registry.
+      expect(registry.providers, hasLength(1));
+      expect(registry.keyFor(registry.providers.single.id), 'sk-or-new');
+      expect(registry.providers.single.modelId, 'anthropic/claude');
     });
 
     testWidgets('preset editor: a saved override prefills the model, saving '
@@ -262,6 +285,8 @@ void main() {
       );
       await _pump(tester, ProvidersSection(registry: registry));
 
+      await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('OpenRouter'));
       await tester.pumpAndSettle();
       expect(
@@ -276,9 +301,11 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
+      // Saving the built-in default stores the model on the new provider
+      // (the preset-override path is gone with the preset editor).
       expect(
-        registry.presetModelOverride(ProviderPreset.openrouter.name),
-        isNull,
+        registry.providers.single.modelId,
+        ProviderPreset.openrouter.defaultModel,
       );
     });
 
@@ -291,6 +318,8 @@ void main() {
       final registry = ProviderRegistry.inMemory();
       await _pump(tester, ProvidersSection(registry: registry));
 
+      await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('OpenRouter'));
       await tester.pumpAndSettle();
       // The host-resolved key counts as saved: the keep-note shows.
@@ -327,35 +356,20 @@ void main() {
       expect(find.text('test-model · example.com'), findsOneWidget);
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
-      expect(find.byType(DefaultModelProviderPickerPage), findsOneWidget);
-      expect(find.text('Choose provider'), findsOneWidget);
+      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
 
-      await tester.tap(find.text('Acme'));
+      // One flat searchable list across providers — pick acme-2 (the
+      // /models-fetched id) and the picker applies it directly.
+      await tester.pump(const Duration(milliseconds: 100));
       await tester.pumpAndSettle();
-      expect(find.byType(DefaultModelPickerPage), findsOneWidget);
-      expect(find.text('Choose model'), findsOneWidget);
-      // The provider's model prefills the field…
-      expect(
-        tester
-            .widget<TextField>(find.widgetWithText(TextField, 'Model id'))
-            .controller!
-            .text,
-        'acme-1',
-      );
-
-      // …and the /models quick select offers the endpoint's models (clear
-      // the prefill first — the typed text filters the options).
-      await tester.enterText(find.widgetWithText(TextField, 'Model id'), '');
-      await tester.tap(find.widgetWithText(TextField, 'Model id'));
+      await tester.enterText(find.byType(TextField), 'acme-2');
       await tester.pumpAndSettle();
-      await tester.tap(find.text('acme-2'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Apply'));
+      await tester.tap(find.textContaining('acme-2', findRichText: true).last);
       await tester.pumpAndSettle();
 
       // Back on the section; onApply ran with the provider's endpoint and
       // session key, and the summary follows the connection.
-      expect(find.byType(DefaultModelPickerPage), findsNothing);
+      expect(find.byType(UnifiedModelPickerPage), findsNothing);
       expect(connection.applied, isNotNull);
       expect(connection.applied!.providerKind, 'openai-completions');
       expect(connection.applied!.modelId, 'acme-2');
@@ -378,12 +392,28 @@ void main() {
           connection: connection,
           onApply: connection.apply,
           registry: registry,
+          addProviderPage: (context) =>
+              AddProviderPresetPickerPage(registry: registry),
         ),
       );
 
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+      // 'Custom' is the LAST tile and may sit below the fold — scroll the
+      // picker's own list to it first.
+      await tester.scrollUntilVisible(
+        find.text('Custom'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(AddProviderPresetPickerPage),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Custom'));
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
 
@@ -392,74 +422,15 @@ void main() {
         _editorField('Base URL'),
         'http://localhost:8080/v1',
       );
+      // A saved model id — the unified picker lists MODELS, so a provider
+      // without one renders no tile.
+      await tester.enterText(_editorField('Model id (optional)'), 'local-1');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
-      // Back on the picker, the new provider is listed and pickable.
-      expect(find.byType(DefaultModelProviderPickerPage), findsOneWidget);
-      expect(find.text('Local'), findsOneWidget);
-    });
-
-    testWidgets('a hosted provider applies with its saved key', (tester) async {
-      final keysStore = SessionKeysStore.inMemory({
-        'OLLAMA_API_KEY': 'sk-ollama',
-      });
-      final connection = _FakeConnection();
-      // The scope wraps the app, so pushed pages see it.
-      await tester.pumpWidget(
-        SessionKeysScope(
-          store: keysStore,
-          child: MaterialApp(
-            home: Scaffold(
-              body: SingleChildScrollView(
-                child: DefaultChatModelSection(
-                  connection: connection,
-                  onApply: connection.apply,
-                  modelsFetcher: _someModels,
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      await tester.tap(find.text('test-model · example.com'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Ollama'));
-      await tester.pumpAndSettle();
-      // The preset's default model is prefilled; apply directly.
-      await tester.tap(find.text('Apply'));
-      await tester.pumpAndSettle();
-
-      expect(connection.model, 'gpt-oss:120b');
-      expect(connection.baseUrl, 'https://ollama.com/v1');
-      expect(connection.applied!.apiKey, 'sk-ollama');
-      expect(find.text('gpt-oss:120b · Ollama'), findsOneWidget);
-    });
-
-    testWidgets('a hosted provider without a key fails validation', (
-      tester,
-    ) async {
-      final connection = _FakeConnection();
-      await _pump(
-        tester,
-        DefaultChatModelSection(
-          connection: connection,
-          onApply: connection.apply,
-        ),
-      );
-
-      await tester.tap(find.text('test-model · example.com'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Ollama'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Apply'));
-      await tester.pump();
-
-      expect(find.text('API key is required'), findsOneWidget);
-      // Still on the model page — nothing was applied.
-      expect(find.byType(DefaultModelPickerPage), findsOneWidget);
-      expect(connection.model, 'test-model');
+      // Back on the unified picker; the new provider is listed.
+      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
+      expect(find.textContaining('Local', findRichText: true), findsWidgets);
     });
 
     testWidgets('on-device routes render and their page unwinds the flow', (

@@ -239,9 +239,7 @@ class _TaskRoleConfigPageState extends State<TaskRoleConfigPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          TaskModelsSection.roleTitles[widget.role] ?? widget.role,
-        ),
+        title: Text(TaskModelsSection.roleTitles[widget.role] ?? widget.role),
       ),
       body: SafeArea(
         child: SingleChildScrollView(

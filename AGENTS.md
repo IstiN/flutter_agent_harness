@@ -163,7 +163,12 @@ factual: paths, commands, invariants — no essays.
   `builtinTools(env, webSearch:)`.
 - `lib/src/model_roles/provider_catalog.dart` — provider table (incl. the
   `chatgpt` Codex-backend entry, kind `chatgpt-codex`); specs
-  default `input: ['text','image']` (vision).
+  default `input: ['text','image']` (vision). The `FA_PROVIDERS`
+  dart-define / runtime env (`providerFilterEnvOverride`, wired from the
+  process env in `bin/fah.dart`; the define wins) allowlists the catalog
+  per build — `enabledProviders`/`providerEnabledInBuild`/`catalogProvider`
+  all honor it, default is everything on
+  (`test/build_filter/provider_filter_test.dart`).
   `lib/src/providers/chatgpt_oauth.dart` + `chatgpt_codex.dart` — ChatGPT
   account sign-in (PKCE against auth.openai.com, Codex CLI client id) and
   the Responses-API SSE adapter (`store: false` — the backend rejects

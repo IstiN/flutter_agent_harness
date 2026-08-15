@@ -459,13 +459,16 @@ extension on AgentCli {
       return queuedJobs > 0 ? ' · bg:$queuedJobs' : '';
     }
     final now = DateTime.now();
-    final shown = active.take(3).map((h) {
-      final created = DateTime.tryParse(h.createdAt);
-      final elapsed = created == null
-          ? 0
-          : now.difference(created).inSeconds;
-      return '${h.agentType}:${h.id}(${elapsed}s)';
-    }).join(',');
+    final shown = active
+        .take(3)
+        .map((h) {
+          final created = DateTime.tryParse(h.createdAt);
+          final elapsed = created == null
+              ? 0
+              : now.difference(created).inSeconds;
+          return '${h.agentType}:${h.id}(${elapsed}s)';
+        })
+        .join(',');
     final overflow = active.length > 3 ? ',+${active.length - 3}' : '';
     return ' · bg:$shown$overflow';
   }

@@ -62,5 +62,9 @@ dependency_overrides:
   # not appear to use 1.19-only APIs. Without this the package's own tests
   # cannot resolve.
   meta: 1.18.0
+  # flutter_agent_memory (hosted, ^0.0.4) depends on the hosted fa_llm
+  # ^0.1.0 while this package pins the path version — force the path one.
+  fa_llm:
+    path: ../fa_llm
 
 flutter:

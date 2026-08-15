@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
@@ -107,12 +108,18 @@ class ProviderEditorPage extends StatefulWidget {
     this.onOAuthSuccess,
     this.openRouterOAuthCallbackUrl,
     this.openRouterOAuthCapture,
+    this.prefillName,
+    this.prefillBaseUrl,
+    this.prefillModelId,
+    this.keyHelpUrl,
   });
 
   /// App bar title (`Add provider` / `Edit provider` / the preset label).
   final String title;
 
-  /// Hosted-preset view mode: the name/URL fields render read-only.
+  /// Hosted-preset view mode: the name field stays editable (the user names
+  /// each instance — the same preset may be added several times), the URL
+  /// field renders read-only.
   final ProviderPreset? preset;
 
   /// The provider being edited; `null` when adding a new one.
@@ -138,6 +145,21 @@ class ProviderEditorPage extends StatefulWidget {
   /// the button calls this instead of showing the manual code-paste sheet.
   final OpenRouterOAuthCaptureCallback? openRouterOAuthCapture;
 
+  /// Editable prefills for key-based quick-add presets that are NOT a
+  /// [ProviderPreset] member (Kimi Code, Z.AI — arbitrary custom dialect
+  /// endpoints): the user renames each instance and may adjust the URL.
+  final String? prefillName;
+
+  /// See [prefillName].
+  final String? prefillBaseUrl;
+
+  /// See [prefillName].
+  final String? prefillModelId;
+
+  /// The provider's key console page, shown as a tappable "get the key"
+  /// hint next to the API-key field; null hides it.
+  final String? keyHelpUrl;
+
   @override
   State<ProviderEditorPage> createState() => _ProviderEditorPageState();
 }
@@ -157,9 +179,15 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
   void initState() {
     super.initState();
     final initial = widget.initial;
-    _nameController = TextEditingController(text: initial?.name ?? '');
-    _urlController = TextEditingController(text: initial?.baseUrl ?? '');
-    _modelController = TextEditingController(text: initial?.modelId ?? '');
+    _nameController = TextEditingController(
+      text: initial?.name ?? widget.prefillName ?? '',
+    );
+    _urlController = TextEditingController(
+      text: initial?.baseUrl ?? widget.prefillBaseUrl ?? '',
+    );
+    _modelController = TextEditingController(
+      text: initial?.modelId ?? widget.prefillModelId ?? '',
+    );
     // Write-only: the existing key is never shown.
     _keyController = TextEditingController();
   }
@@ -168,16 +196,22 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     // The preset's localized label needs the inherited strings, unavailable
-    // in initState.
+    // in initState. Prefills in initState win over the preset defaults.
     if (!_presetSeeded) {
       _presetSeeded = true;
       final preset = widget.preset;
       if (preset != null) {
-        _nameController.text = preset.labelFor(context);
-        _urlController.text = preset.baseUrl ?? '';
-        _modelController.text =
-            widget.registry?.presetModelOverride(preset.name) ??
-            preset.defaultModel;
+        if (_nameController.text.isEmpty) {
+          _nameController.text = preset.labelFor(context);
+        }
+        if (_urlController.text.isEmpty) {
+          _urlController.text = preset.baseUrl ?? '';
+        }
+        if (_modelController.text.isEmpty) {
+          _modelController.text =
+              widget.registry?.presetModelOverride(preset.name) ??
+              preset.defaultModel;
+        }
       }
     }
   }
@@ -256,7 +290,6 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
             children: [
               TextField(
                 controller: _nameController,
-                enabled: !_isPreset,
                 decoration: InputDecoration(
                   labelText: strings.settingsProviderNameLabel,
                   hintText: strings.settingsProviderNameHint,
@@ -295,6 +328,22 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                 autocorrect: false,
                 enableSuggestions: false,
               ),
+              if (widget.keyHelpUrl != null) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: InkWell(
+                    onTap: () => launchUrl(Uri.parse(widget.keyHelpUrl!)),
+                    child: Text(
+                      widget.keyHelpUrl!,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               if (preset == ProviderPreset.openrouter) ...[
                 const SizedBox(height: 12),
                 OpenRouterOAuthButton(

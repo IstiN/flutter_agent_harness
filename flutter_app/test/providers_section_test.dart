@@ -5,7 +5,8 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa_ui/fa_ui.dart' show UnifiedModelPickerPage;
+import 'package:fa_ui/fa_ui.dart'
+    show AddProviderPresetPickerPage, UnifiedModelPickerPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -111,6 +112,18 @@ void main() {
       await _pump(tester, ProvidersSection(registry: registry));
 
       await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+      // 'Custom' is the LAST tile and may sit below the fold — scroll the
+      // picker's own list to it first.
+      await tester.scrollUntilVisible(
+        find.text('Custom'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(AddProviderPresetPickerPage),
+          matching: find.byType(Scrollable),
+        ),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Custom'));
       await tester.pumpAndSettle();
@@ -261,6 +274,18 @@ void main() {
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+      // 'Custom' is the LAST tile and may sit below the fold — scroll the
+      // picker's own list to it first.
+      await tester.scrollUntilVisible(
+        find.text('Custom'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(AddProviderPresetPickerPage),
+          matching: find.byType(Scrollable),
+        ),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Custom'));
       await tester.pumpAndSettle();

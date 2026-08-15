@@ -11,7 +11,8 @@ import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa_ui/fa_ui.dart' show ProviderPreset;
+import 'package:fa_ui/fa_ui.dart'
+    show AddProviderPresetPickerPage, ProviderPreset;
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -811,7 +812,19 @@ void main() {
       await tester.tap(find.text('Add provider'));
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Custom'));
+      expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+      // 'Custom' is the LAST tile and may sit below the fold — scroll the
+      // picker's own list to it first (ensureVisible cannot see tiles the
+      // lazy ListView has not built yet).
+      await tester.scrollUntilVisible(
+        find.text('Custom'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(AddProviderPresetPickerPage),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Custom'));
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);

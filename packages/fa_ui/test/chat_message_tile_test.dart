@@ -37,7 +37,7 @@ void main() {
     expect(find.text('hello'), findsOneWidget);
   });
 
-  testWidgets('no avatarBuilder renders the stock avatar-less bubble', (
+  testWidgets('no avatarBuilder renders the stock default avatar bubble', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -49,7 +49,8 @@ void main() {
       ),
     );
     expect(find.text('hello'), findsOneWidget);
-    expect(find.byType(Row), findsNothing);
+    // The stock avatar is the small indigo circle with the sparkle icon.
+    expect(find.byIcon(Icons.auto_awesome), findsOneWidget);
   });
 
   testWidgets('surface tokens re-seat the bubble and keep the stock border', (
