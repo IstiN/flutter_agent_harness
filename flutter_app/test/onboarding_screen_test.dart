@@ -8,9 +8,11 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
+import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
+import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +26,8 @@ Future<void> _pumpOnboarding(
   SessionKeysStore? keysStore,
   int initialPage = 0,
   void Function({required bool skipped})? onFinished,
+  ProviderRegistry? registry,
+  LastConnectionStore? lastConnectionStore,
 }) {
   return tester.pumpWidget(
     MaterialApp(
@@ -36,6 +40,8 @@ Future<void> _pumpOnboarding(
           onboardingStore: onboardingStore,
           initialPage: initialPage,
           onFinished: onFinished,
+          registry: registry,
+          lastConnectionStore: lastConnectionStore,
         ),
       ),
     ),
@@ -109,6 +115,77 @@ void main() {
 
       // Analytics: only the started + screen events so far (no finish yet).
       expect(events.map((e) => e.$1), ['onboarding_started', 'screen_opened']);
+    });
+
+    testWidgets('provider step is mandatory when a registry is wired', (
+      tester,
+    ) async {
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: ProviderRegistry.inMemory(),
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+      await tester.pumpAndSettle();
+
+      // The shared Add-Provider list is shown…
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+      expect(find.text('OpenRouter'), findsOneWidget);
+      expect(find.text('CodeMie'), findsOneWidget);
+      expect(find.text('Anthropic'), findsOneWidget);
+
+      // …and the step cannot be skipped or continued past.
+      expect(find.text('Skip'), findsNothing);
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+    });
+
+    testWidgets('configuring a provider unlocks the step and advances', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      final lastConnection = LastConnectionStore.inMemory();
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: registry,
+        lastConnectionStore: lastConnection,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Custom'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(SingleChildScrollView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Custom'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+
+      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Acme');
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Base URL'),
+        'https://acme.example/v1',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key (optional)'),
+        'sk-onboarding',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      // Provider + key persisted, the connection saved for the boot
+      // auto-connect, and the flow advanced to the permissions page.
+      expect(registry.providers, hasLength(1));
+      expect(registry.keyFor(registry.providers.single.id), 'sk-onboarding');
+      expect(lastConnection.connection?.baseUrl, 'https://acme.example/v1');
+      expect(find.text('Give access only when it helps.'), findsOneWidget);
+      expect(find.text('Skip'), findsOneWidget); // gate is past
     });
 
     testWidgets('Skip sets the seen flag and reports skipped', (tester) async {

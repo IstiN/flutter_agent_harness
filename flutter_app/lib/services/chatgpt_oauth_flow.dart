@@ -30,7 +30,7 @@ import 'package:fa/services/provider_registry.dart';
 Future<bool> runChatGptOAuthFlow({
   required BuildContext context,
   required ProviderRegistry registry,
-  required AgentService service,
+  required AgentService? service,
   required LastConnectionStore lastConnectionStore,
 }) async {
   if (!Platform.isMacOS) {
@@ -102,7 +102,7 @@ Future<bool> runChatGptOAuthFlow({
     baseUrl: baseUrl,
     apiKey: encoded,
   );
-  await service.reconfigure(config);
+  if (service != null) await service.reconfigure(config);
   await lastConnectionStore.saveFromConfig(config);
 
   return true;

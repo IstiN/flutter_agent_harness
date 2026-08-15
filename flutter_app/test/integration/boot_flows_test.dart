@@ -20,6 +20,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
+import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -89,15 +90,6 @@ Future<void> _settleUntil(
   }
 }
 
-/// Opens the provider dropdown on the setup form and picks [label].
-Future<void> _selectProvider(WidgetTester tester, String label) async {
-  // The provider-first setup flow: a plain list (no dropdown) — the row
-  // itself opens the config fields.
-  await tester.ensureVisible(find.text(label).first);
-  await tester.tap(find.text(label).first);
-  await tester.pumpAndSettle();
-}
-
 /// A fake-backed service persisting into `env`'s sessions root (the same
 /// root the boot flow's manager uses), for seeding "previous run" sessions.
 AgentService _seedingService(MemoryExecutionEnv env) {
@@ -154,20 +146,55 @@ void main() {
         expect(find.byType(OnboardingScreen), findsOneWidget);
         expect(find.byType(SetupScreen), findsNothing);
 
-        // Four pages, Skip on every one of them.
-        for (var page = 0; page < 3; page++) {
-          expect(find.text('Skip'), findsOneWidget, reason: 'page ${page + 1}');
-          await tester.tap(
-            find.text(page == 2 ? 'Continue without access' : 'Continue'),
-          );
-          await tester.pumpAndSettle();
-        }
+        // Page 1: Skip is available…
+        expect(find.text('Skip'), findsOneWidget);
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+
+        // Page 2 (providers) is MANDATORY: no Skip, and Continue is locked
+        // until a provider is configured.
+        expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+        expect(find.text('Skip'), findsNothing);
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+        expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+
+        // Configure a custom provider through the same editor the app's Add
+        // Provider picker pushes (scroll the list — Custom is last).
+        await tester.scrollUntilVisible(
+          find.text('Custom'),
+          200,
+          scrollable: find.descendant(
+            of: find.byType(SingleChildScrollView),
+            matching: find.byType(Scrollable),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Custom'));
+        await tester.pumpAndSettle();
+        expect(find.byType(ProviderEditorPage), findsOneWidget);
+        await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Acme');
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Base URL'),
+          'https://acme.example/v1',
+        );
+        await tester.enterText(
+          find.widgetWithText(TextField, 'API key (optional)'),
+          'sk-first-boot',
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+        await tester.pumpAndSettle();
+
+        // A configured provider auto-advances to the permissions page.
+        expect(find.text('Give access only when it helps.'), findsOneWidget);
+        await tester.tap(find.text('Continue without access'));
+        await tester.pumpAndSettle();
         expect(find.text('Open Fa'), findsOneWidget);
 
-        // Skipping sets the persisted flag and boot continues to the setup
-        // form.
-        await tester.tap(find.text('Skip'));
-        await _settle(tester);
+        // Finishing persists the flag; the provider configured during
+        // onboarding makes the boot auto-connect — no setup form at all.
+        await tester.tap(find.text('Open Fa'));
+        await _settleUntil(tester, find.byType(AppLauncherScreen));
         expect(onboarding.seen, isTrue);
         expect(
           (await env.readTextFile(
@@ -176,17 +203,7 @@ void main() {
           isNotNull,
         );
         expect(find.byType(OnboardingScreen), findsNothing);
-        expect(find.byType(SetupScreen), findsOneWidget);
-
-        // Complete the setup with a hosted endpoint and connect.
-        await _selectProvider(tester, 'Ollama');
-        await tester.enterText(
-          find.widgetWithText(TextField, 'API key'),
-          'sk-first-boot',
-        );
-        await tester.ensureVisible(find.text('Start chat'));
-        await tester.tap(find.text('Start chat'));
-        await _settle(tester);
+        expect(find.byType(SetupScreen), findsNothing);
 
         // Connected: the narrow-layout home is the apps launcher, with the
         // mini chat bar (composer) at the bottom.
@@ -197,8 +214,7 @@ void main() {
         final raw = (await env.readTextFile(
           '${env.cwd}/${LastConnectionStore.fileName}',
         )).valueOrNull!;
-        expect(raw, contains('gpt-oss:120b'));
-        expect(raw, contains('https://ollama.com/v1'));
+        expect(raw, contains('https://acme.example/v1'));
         expect(raw, isNot(contains('sk-first-boot')));
       }, getCurrentDirectory: emptyCwd);
     });

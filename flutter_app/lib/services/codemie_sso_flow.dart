@@ -46,7 +46,7 @@ import 'package:fa_ui/fa_ui.dart' show pushFaPage;
 Future<bool> runCodemieSsoFlow({
   required BuildContext context,
   required ProviderRegistry registry,
-  required AgentService service,
+  required AgentService? service,
   required LastConnectionStore lastConnectionStore,
   String orgUrl = defaultCodeMieBaseUrl,
 }) async {
@@ -162,7 +162,9 @@ Future<bool> runCodemieSsoFlow({
     baseUrl: baseUrl,
     apiKey: cookie,
   );
-  await service.reconfigure(config);
+  // A null service (first-run onboarding) skips the live reconfigure —
+  // the persisted last connection is picked up by the boot auto-connect.
+  if (service != null) await service.reconfigure(config);
   await lastConnectionStore.saveFromConfig(config);
 
   return true;

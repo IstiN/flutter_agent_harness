@@ -9,8 +9,14 @@ import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
+import 'package:fa_ui/fa_ui.dart' as faui;
+import 'package:fa/services/agent_service.dart' show AgentConfig;
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/chatgpt_oauth_flow.dart';
+import 'package:fa/services/codemie_sso_flow.dart';
+import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
+import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 
 /// Onboarding matching the reference prototype pixel-by-pixel.
@@ -23,11 +29,22 @@ class OnboardingScreen extends StatefulWidget {
     this.onboardingStore,
     this.initialPage = 0,
     this.onFinished,
+    this.registry,
+    this.lastConnectionStore,
   });
 
   final OnboardingStore? onboardingStore;
   final int initialPage;
   final void Function({required bool skipped})? onFinished;
+
+  /// The shared provider registry (the page-2 list is the app's Add
+  /// Provider list; a tap opens the real provider config flow). When null
+  /// (tests) page 2 renders the list but the mandatory gate stays off.
+  final faui.ProviderRegistry? registry;
+
+  /// Where the configured provider is persisted as the restorable last
+  /// connection (the boot then auto-connects right after onboarding).
+  final LastConnectionStore? lastConnectionStore;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -54,6 +71,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     initialPage: widget.initialPage,
   );
   late var _page = widget.initialPage;
+
+  /// Set when the user finished a provider config flow on page 2 — the
+  /// provider step is mandatory: Continue/Skip stay locked until then.
+  var _providerConfigured = false;
+
+  /// The provider gate applies only in the real app (a registry is wired);
+  /// tests pumping the bare screen keep the walkthrough skippable.
+  bool get _providerGateActive =>
+      widget.registry != null && !_providerConfigured;
 
   @override
   void initState() {
@@ -87,10 +113,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     curve: Curves.easeOut,
   );
 
+  /// A provider flow completed on page 2: unlock the step and slide on.
+  void _providerDone() {
+    setState(() => _providerConfigured = true);
+    if (_page == 1) _next();
+  }
+
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 920;
     final last = _page == 3;
+    final gated = _page == 1 && _providerGateActive;
     final primaryLabel = switch (_page) {
       2 => 'Continue without access',
       3 => 'Open Fa',
@@ -105,7 +138,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               page: _page,
               labels: _labels,
               wide: wide,
-              onSkip: () => _finish(skipped: true),
+              // The provider step is mandatory — no skipping past it.
+              onSkip: gated ? null : () => _finish(skipped: true),
             ),
             Expanded(
               child: PageView(
@@ -113,7 +147,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 onPageChanged: (p) => setState(() => _page = p),
                 children: [
                   _P1(wide: wide),
-                  _P2(wide: wide),
+                  _P2(
+                    wide: wide,
+                    registry: widget.registry,
+                    lastConnectionStore: widget.lastConnectionStore,
+                    onConfigured: _providerDone,
+                  ),
                   _P3(wide: wide),
                   _P4(wide: wide),
                 ],
@@ -123,6 +162,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               page: _page,
               wide: wide,
               primaryLabel: primaryLabel,
+              primaryEnabled: !gated,
               onPrimary: last ? () => _finish(skipped: false) : _next,
               onBack: _page > 0 ? _back : null,
             ),
@@ -148,7 +188,9 @@ class _Header extends StatelessWidget {
   final int page;
   final List<String> labels;
   final bool wide;
-  final VoidCallback onSkip;
+
+  /// Null hides Skip (the mandatory provider step cannot be skipped).
+  final VoidCallback? onSkip;
 
   @override
   Widget build(BuildContext context) {
@@ -165,7 +207,7 @@ class _Header extends StatelessWidget {
                     child: steps,
                   ),
                 ),
-                _SkipButton(onTap: onSkip),
+                if (onSkip != null) _SkipButton(onTap: onSkip!),
               ],
             )
           : Column(
@@ -174,7 +216,7 @@ class _Header extends StatelessWidget {
                   children: [
                     const _Logo(),
                     const Spacer(),
-                    _SkipButton(onTap: onSkip),
+                    if (onSkip != null) _SkipButton(onTap: onSkip!),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -317,6 +359,7 @@ class _Footer extends StatelessWidget {
     required this.primaryLabel,
     required this.onPrimary,
     required this.onBack,
+    this.primaryEnabled = true,
   });
 
   final int page;
@@ -324,6 +367,9 @@ class _Footer extends StatelessWidget {
   final String primaryLabel;
   final VoidCallback onPrimary;
   final VoidCallback? onBack;
+
+  /// False greys out the primary button (mandatory provider step).
+  final bool primaryEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -362,7 +408,11 @@ class _Footer extends StatelessWidget {
                 if (onBack != null) ...[back, const SizedBox(width: 16)],
                 SizedBox(
                   width: 250,
-                  child: _PrimaryButton(label: primaryLabel, onTap: onPrimary),
+                  child: _PrimaryButton(
+                    label: primaryLabel,
+                    onTap: onPrimary,
+                    enabled: primaryEnabled,
+                  ),
                 ),
               ],
             ),
@@ -394,6 +444,7 @@ class _Footer extends StatelessWidget {
                   label: primaryLabel,
                   onTap: onPrimary,
                   showArrow: false,
+                  enabled: primaryEnabled,
                 ),
               ),
             ],
@@ -470,19 +521,21 @@ class _PrimaryButton extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.showArrow = true,
+    this.enabled = true,
   });
 
   final String label;
   final VoidCallback onTap;
   final bool showArrow;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: _kPrimary,
+      color: enabled ? _kPrimary : const Color(0xFFB9C2D8),
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         borderRadius: BorderRadius.circular(14),
         child: SizedBox(
           height: 52,
@@ -1675,15 +1728,32 @@ class _Badge extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _P2 extends StatefulWidget {
-  const _P2({required this.wide});
+  const _P2({
+    required this.wide,
+    this.registry,
+    this.lastConnectionStore,
+    this.onConfigured,
+  });
+
   final bool wide;
+
+  /// The shared provider registry; null renders the list inert (tests).
+  final faui.ProviderRegistry? registry;
+
+  /// Persists the configured provider as the restorable last connection.
+  final LastConnectionStore? lastConnectionStore;
+
+  /// Fired once a provider config flow completes successfully.
+  final VoidCallback? onConfigured;
 
   @override
   State<_P2> createState() => _P2State();
 }
 
 class _P2State extends State<_P2> {
-  var _sel = 'openrouter';
+  /// The preset key that completed its config flow (gets the check).
+  String? _configuredKey;
+  var _busy = false;
 
   @override
   Widget build(BuildContext context) {
@@ -1745,72 +1815,159 @@ class _P2State extends State<_P2> {
         SizedBox(height: widget.wide ? 28 : 20),
       ],
     );
-    if (!widget.wide) return _NarrowFit(child: body);
+    // The full provider list is taller than a phone viewport: scroll it
+    // instead of the scale-to-fit used by the other pages.
+    if (!widget.wide) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: body,
+          ),
+        ),
+      );
+    }
     return _WideFit(child: body);
   }
 
   Widget _cards() {
+    // The SAME list the app's "Add provider" picker shows.
     return Column(
       children: [
-        _ProviderCard(
-          icon: Icons.autorenew,
-          name: 'OpenRouter',
-          badge: 'Recommended',
-          desc: 'Access leading models with one connection.',
-          selected: _sel == 'openrouter',
-          onTap: () => setState(() => _sel = 'openrouter'),
-        ),
-        const SizedBox(height: 10),
-        _ProviderCard(
-          icon: Icons.cruelty_free,
-          name: 'Ollama',
-          badge: 'Local',
-          desc: 'Run models on your device.',
-          selected: _sel == 'ollama',
-          onTap: () => setState(() => _sel = 'ollama'),
-        ),
-        const SizedBox(height: 10),
-        _ProviderCard(
-          icon: Icons.auto_awesome,
-          name: 'Google Gemini',
-          desc: 'Connect your Gemini API key.',
-          selected: _sel == 'gemini',
-          onTap: () => setState(() => _sel = 'gemini'),
-        ),
-        const SizedBox(height: 10),
-        _ProviderCard(
-          icon: Icons.code,
-          name: 'Custom provider',
-          desc: 'Use your own compatible endpoint.',
-          selected: _sel == 'custom',
-          onTap: () => setState(() => _sel = 'custom'),
-        ),
+        for (final preset in faui.defaultAddProviderPresets) ...[
+          _ProviderCard(
+            preset: preset,
+            configured: _configuredKey == preset.key,
+            onTap: _busy ? null : () => _configure(preset),
+          ),
+          const SizedBox(height: 10),
+        ],
       ],
+    );
+  }
+
+  /// Routes a preset tap to the provider's real config flow (the same
+  /// routing as the app's Add Provider picker): SSO/OAuth flows for
+  /// CodeMie/ChatGPT, the editor for key-based presets and Custom.
+  Future<void> _configure(faui.AddProviderPreset preset) async {
+    final registry = widget.registry;
+    if (registry == null) return;
+    setState(() => _busy = true);
+    var ok = false;
+    try {
+      switch (preset.key) {
+        case 'codemie':
+          ok = await runCodemieSsoFlow(
+            context: context,
+            registry: registry,
+            service: null, // no live service during onboarding
+            lastConnectionStore:
+                widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+          );
+        case 'chatgpt':
+          ok = await runChatGptOAuthFlow(
+            context: context,
+            registry: registry,
+            service: null,
+            lastConnectionStore:
+                widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+          );
+        case 'custom':
+          final provider = await faui.pushProviderEditor(
+            context,
+            registry,
+            title: preset.name,
+          );
+          ok = provider != null;
+          if (ok) {
+            await _saveConnection(provider.baseUrl, provider.modelId, '');
+          }
+        default:
+          ok = await _configureKeyBased(preset, registry);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (ok && mounted) {
+      setState(() => _configuredKey = preset.key);
+      widget.onConfigured?.call();
+    }
+  }
+
+  /// Key-based preset: the editor pre-filled with the preset endpoint,
+  /// then persist the provider, its key, and the last connection.
+  Future<bool> _configureKeyBased(
+    faui.AddProviderPreset preset,
+    faui.ProviderRegistry registry,
+  ) async {
+    final presetMode = switch (preset.key) {
+      'openrouter' => faui.ProviderPreset.openrouter,
+      'ollama' => faui.ProviderPreset.ollamaCloud,
+      'google' => faui.ProviderPreset.gemini,
+      'dial' => faui.ProviderPreset.dial,
+      _ => faui.ProviderPreset.custom,
+    };
+    final editable =
+        preset.key != 'dial' && presetMode == faui.ProviderPreset.custom;
+    final result = await faui.pushFaPage<faui.ProviderEditorResult>(
+      context,
+      faui.ProviderEditorPage(
+        title: preset.name,
+        preset: editable ? null : presetMode,
+        prefillName: editable ? preset.name : null,
+        prefillBaseUrl: editable ? preset.baseUrl : null,
+        keyHelpUrl: preset.keyHelpUrl,
+        registry: registry,
+        openRouterOAuthCallbackUrl:
+            OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
+        openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
+      ),
+    );
+    if (result == null || result.deleted) return false;
+    final provider = await registry.add(
+      name: result.name,
+      baseUrl: result.baseUrl,
+      modelId: result.modelId,
+    );
+    if (result.apiKey.isNotEmpty) {
+      registry.rememberKey(provider.id, result.apiKey);
+    }
+    await _saveConnection(result.baseUrl, result.modelId, result.apiKey);
+    return true;
+  }
+
+  /// Persists the fresh connection so the boot auto-connects straight to
+  /// chat after onboarding (the key itself resolves via the registry).
+  Future<void> _saveConnection(String baseUrl, String modelId, String apiKey) {
+    final store = widget.lastConnectionStore;
+    if (store == null) return Future<void>.value();
+    return store.saveFromConfig(
+      AgentConfig(
+        providerKind: 'openai-completions',
+        modelId: modelId,
+        baseUrl: baseUrl,
+        apiKey: apiKey,
+      ),
     );
   }
 }
 
 class _ProviderCard extends StatelessWidget {
   const _ProviderCard({
-    required this.icon,
-    required this.name,
-    required this.desc,
-    required this.selected,
+    required this.preset,
+    required this.configured,
     required this.onTap,
-    this.badge,
   });
 
-  final IconData icon;
-  final String name;
-  final String? badge;
-  final String desc;
-  final bool selected;
-  final VoidCallback onTap;
+  final faui.AddProviderPreset preset;
+  final bool configured;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? _kSelBg : Colors.white,
+      color: configured ? _kSelBg : Colors.white,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -1820,134 +1977,59 @@ class _ProviderCard extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: selected ? _kPrimary : _kBorder,
-              width: selected ? 1.5 : 1,
+              color: configured ? _kPrimary : _kBorder,
+              width: configured ? 1.5 : 1,
             ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: selected ? Colors.white : const Color(0xFFF3F4F8),
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                    child: Icon(
-                      icon,
-                      size: 20,
-                      color: selected ? _kPrimary : _kGray,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                name,
-                                style: const TextStyle(
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: _kInk,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (badge != null) ...[
-                              const SizedBox(width: 6),
-                              _Badge(badge!),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          desc,
-                          style: const TextStyle(fontSize: 12, color: _kGray),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (selected)
-                    Container(
-                      width: 22,
-                      height: 22,
-                      decoration: const BoxDecoration(
-                        color: _kPrimary,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.check,
-                        size: 13,
-                        color: Colors.white,
-                      ),
-                    )
-                  else
-                    const Icon(
-                      Icons.chevron_right,
-                      size: 20,
-                      color: _kGrayLight,
-                    ),
-                ],
-              ),
-              if (selected) ...[
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.auto_awesome, size: 16, color: _kPrimary),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Default model: Auto',
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w700,
-                                color: _kInk,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Fa selects the best available model.',
-                              style: TextStyle(fontSize: 11, color: _kGray),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: configured ? Colors.white : const Color(0xFFF3F4F8),
+                  borderRadius: BorderRadius.circular(11),
                 ),
-                const SizedBox(height: 10),
-                const Row(
+                child: Icon(
+                  preset.icon,
+                  size: 20,
+                  color: configured ? _kPrimary : _kGray,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(width: 2),
                     Text(
-                      'Choose a model manually',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: _kPrimary,
+                      preset.name,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: _kInk,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    Spacer(),
-                    Icon(Icons.chevron_right, size: 16, color: _kPrimary),
+                    const SizedBox(height: 2),
+                    Text(
+                      preset.description,
+                      style: const TextStyle(fontSize: 12, color: _kGray),
+                    ),
                   ],
                 ),
-              ],
+              ),
+              if (configured)
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: const BoxDecoration(
+                    color: _kPrimary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check, size: 13, color: Colors.white),
+                )
+              else
+                const Icon(Icons.chevron_right, size: 20, color: _kGrayLight),
             ],
           ),
         ),
