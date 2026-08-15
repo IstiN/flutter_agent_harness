@@ -2099,6 +2099,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const Divider(),
                 const SizedBox(height: 16),
               ],
+              // The live subagent tree (CLI `/agents` panel parity): main +
+              // retained children with observe/send.
+              if (widget.service.subagentManager case final manager?
+                  when manager != null) ...[
+                Text(
+                  'Agents', // l10n:ignore
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                faui.AgentsSection(
+                  manager: manager,
+                  mainDescription:
+                      '${widget.service.agentModelId} · '
+                      '${widget.service.messages.length} messages',
+                  observe: widget.service.observeSubagent,
+                  send: widget.service.sendToSubagent,
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
               ModelPresetsSection(
                 service: widget.service,
                 lastConnectionStore: widget.lastConnectionStore,

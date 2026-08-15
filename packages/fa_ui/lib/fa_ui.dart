@@ -7,6 +7,7 @@
 /// ([FaUiTheme]) and string ([FaUiStrings]) customization.
 library;
 
+export 'src/chat/agents_section.dart';
 export 'src/chat/approval_ui.dart';
 export 'src/chat/ask_ui.dart';
 export 'src/chat/chat_composer.dart';

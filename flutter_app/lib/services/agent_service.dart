@@ -679,6 +679,10 @@ class AgentService extends ChangeNotifier
   /// Subagent manager (Phase 3a): tracks spawned children for the task tool.
   SubagentManager? _subagentManager;
 
+  /// The session's retained-subagent registry (null before the agent is
+  /// built). The settings Agents section renders the live tree from it.
+  SubagentManager? get subagentManager => _subagentManager;
+
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
 
@@ -822,6 +826,88 @@ class AgentService extends ChangeNotifier
   /// Model id of the active backend, read live from the agent's model state;
   /// the settings Task models section uses it as the editor's placeholder.
   String get agentModelId => _agent.state.model.id;
+
+  /// Reads the last [tail] messages of subagent [id]'s session as
+  /// `(role, text)` pairs (settings Agents section → observe). Empty when
+  /// the child session is unavailable or the id is unknown.
+  Future<List<(String, String)>> observeSubagent(
+    String id, {
+    int tail = 20,
+  }) async {
+    final handle = _subagentManager?[id];
+    if (handle == null) return const [];
+    try {
+      final metadata = SessionMetadata(
+        id: handle.sessionId,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+        cwd: env.cwd,
+        path: handle.sessionId,
+      );
+      final exists = await env.fileInfo(handle.sessionId);
+      if (exists.valueOrNull == null) return const [];
+      final session = await _repo.open(metadata);
+      final messages = await session.buildContextMessages();
+      final last = messages.length > tail
+          ? messages.sublist(messages.length - tail)
+          : messages;
+      return [
+        for (final message in last)
+          (message.role, _previewMessageText(message)),
+      ];
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// Sends a follow-up message to subagent [id] (settings Agents section →
+  /// send): appends to the child session and marks it resumed. Falls back to
+  /// the sibling pending-queue when the session is unavailable.
+  Future<void> sendToSubagent(String id, String message) async {
+    final handle = _subagentManager?[id];
+    if (handle == null) {
+      throw StateError('no subagent "$id"');
+    }
+    if (handle.status == SubagentStatus.failed ||
+        handle.status == SubagentStatus.aborted) {
+      throw StateError(
+        'cannot send to ${handle.status.name} subagent "$id"',
+      );
+    }
+    try {
+      final metadata = SessionMetadata(
+        id: handle.sessionId,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+        cwd: env.cwd,
+        path: handle.sessionId,
+      );
+      final session = await _repo.open(metadata);
+      await session.appendMessage(UserMessage.text(message));
+    } on Object {
+      // Fall back to the sibling pending queue when the session is gone.
+      await _subagentManager!.enqueueMessage(
+        id,
+        SubagentMessage(
+          fromId: 'parent',
+          text: message,
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      return;
+    }
+    await _subagentManager!.update(id, status: SubagentStatus.running);
+  }
+
+  static String _previewMessageText(Message message) {
+    final Object raw = switch (message) {
+      UserMessage(:final content) => content,
+      AssistantMessage(:final content) => content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join('\n'),
+      _ => '',
+    };
+    return raw is String ? raw.trim() : '$raw';
+  }
 
   /// Fa does not track provider ids in the connection — the provider UI
   /// falls back to base-URL matching for the "current" mark.
