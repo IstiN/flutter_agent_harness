@@ -102,11 +102,22 @@ final class ModelRolesResolver {
   final Future<bool> Function(Duration delay, CancelToken? cancelToken)?
   sleeper;
 
-  final Map<String, String> _secrets;
+  Map<String, String> _secrets;
   final DateTime Function() _now;
   final StreamFunction Function(String kind, String apiKey) _streamFactory;
   final _rings = <String, ApiKeyRing>{};
   final _wrappers = <String, FallbackStreamFunction>{};
+
+  /// Registers an additional secret at runtime — a key typed into a
+  /// provider wizard while the session runs. The constructor's snapshot is
+  /// immutable by design, so this swaps in an extended copy and drops the
+  /// cached key rings and chain wrappers: the next run re-resolves with the
+  /// new secret available.
+  void addSecret(String name, String value) {
+    _secrets = Map.unmodifiable({..._secrets, name: value});
+    _rings.clear();
+    _wrappers.clear();
+  }
 
   /// Chain entries skipped during the last [chainFor] per role, as
   /// `provider/modelId (reason)` — resolution must not degrade silently.

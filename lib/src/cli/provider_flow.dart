@@ -232,8 +232,10 @@ Future<String?> _askProviderName(
   return nameAnswer.trim().isEmpty ? nameDefault : nameAnswer.trim();
 }
 
-/// Step 4 — API key (empty = keyless; skipped in roles mode, and on edit
-/// an empty answer keeps the entry's existing key).
+/// Step 4 — API key (empty = keyless; on edit an empty answer keeps the
+/// entry's existing key). Roles mode still asks — the note explains that
+/// an empty answer falls back to environment resolution; a saved custom
+/// endpoint's key lives in the secure store either way.
 Future<({bool aborted, String? token})> _askApiToken(
   CliIO io,
   CustomProviderFlowConfig config,
@@ -242,10 +244,9 @@ Future<({bool aborted, String? token})> _askApiToken(
 ) async {
   if (config.rolesActive) {
     io.writeln(
-      'roles mode: the key resolves from the environment '
-      '(${spec.apiKeyEnvNames.first}) — no key step',
+      'roles mode: an empty key resolves from the environment '
+      '(${spec.apiKeyEnvNames.first})',
     );
-    return (aborted: false, token: null);
   }
   final keyAnswer = await config.askLine(
     'API key (empty for none): ',
@@ -270,10 +271,10 @@ Future<({bool aborted, String modelId})> _askModelId(
   void Function() cancelled,
 ) async {
   var modelId = config.initialModelId ?? config.currentModelId();
-  if (spec.kind != 'openai-completions') {
+  if (spec.kind != 'openai-completions' && spec.name != 'dial') {
     return _askManualModelId(config, modelId, cancelled);
   }
-  io.writeln('fetching models from $baseUrl/models ...');
+  io.writeln('fetching models from $baseUrl ...');
   final models = await config.fetchModels(spec, baseUrl, token: token);
   if (models.isEmpty) {
     return _askManualModelId(

@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import 'agent_cli_test_support.dart' show FakeSecureKeyStore;
+
 AssistantMessage _msg(
   String modelId, {
   String text = '',
@@ -376,9 +378,10 @@ void main() {
     expect(output, contains('proxied answer'));
   });
 
-  test('/provider rejects an explicit token while roles are active', () async {
+  test('/provider with an explicit token in roles mode threads it through '
+      'the resolver', () async {
     final factory = _RolesFactory({
-      'claude-a': [_textTurn('claude-a', 'a')],
+      'claude-a': [_textTurn('claude-a', 'a'), _textTurn('claude-a', 'b')],
     });
     final resolver = resolverFor(factory, const {
       'default': [ModelRef(provider: 'anthropic', modelId: 'claude-a')],
@@ -386,17 +389,24 @@ void main() {
     final cli = cliFor(resolver);
     final run = cli.run();
 
+    // The typed token joins the resolver's secrets and the pinned default
+    // chain references it by NAME — the switch succeeds.
     io.sendLine('/provider anthropic http://proxy.test:1 some-token');
     await _waitFor(
-      () => io.out.toString().contains('explicit tokens are not supported'),
+      () => io.out.toString().contains('switched provider to anthropic'),
     );
+    io.sendLine('go');
+    await _waitFor(() => factory.calls.isNotEmpty && !cli.isBusy);
     io.sendLine('/exit');
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('set ANTHROPIC_API_KEY in the environment'));
-    expect(cli.agent.state.model.id, 'claude-a');
-    expect(cli.agent.state.model.baseUrl, 'https://api.anthropic.com');
+    expect(output, isNot(contains('explicit tokens are not supported')));
+    expect(cli.agent.state.model.baseUrl, 'http://proxy.test:1');
+    final chain = resolver.config.roles['default']!;
+    expect(chain.first.baseUrl, 'http://proxy.test:1');
+    expect(chain.first.apiKeyName, 'ANTHROPIC_API_KEY');
+    expect(output, isNot(contains('some-token')));
   });
 
   test('/provider reports a clean error when no key resolves', () async {
@@ -418,7 +428,7 @@ void main() {
     expect(io.out.toString(), contains('GOOGLE_API_KEY'));
   });
 
-  test('/provider custom pins the default chain without a key step', () async {
+  test('/provider custom in roles mode still asks for the key', () async {
     final factory = _RolesFactory({
       'claude-a': [_textTurn('claude-a', 'proxied answer')],
     });
@@ -435,9 +445,15 @@ void main() {
     io.sendLine('http://127.0.0.1:1');
     await _waitFor(() => io.out.toString().contains('provider name (empty ='));
     io.sendLine('');
+    // Roles mode notes the env fallback but STILL asks; an empty answer
+    // resolves from the environment.
     await _waitFor(
-      () => io.out.toString().contains('roles mode: the key resolves'),
+      () => io.out.toString().contains('roles mode: an empty key resolves'),
     );
+    await _waitFor(
+      () => io.out.toString().contains('API key (empty for none):'),
+    );
+    io.sendLine('');
     await _waitFor(() => io.out.toString().contains('model id (empty keeps'));
     io.sendLine('claude-a');
     await _waitFor(
@@ -449,9 +465,61 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, isNot(contains('API key (empty for none):')));
+    expect(output, contains('API key (empty for none):'));
     expect(cli.agent.state.model.baseUrl, 'http://127.0.0.1:1');
     expect(factory.calls, ['claude-a']);
     expect(output, contains('proxied answer'));
+  });
+
+  test('/provider custom in roles mode stores a typed key', () async {
+    final factory = _RolesFactory({
+      'claude-a': [_textTurn('claude-a', 'proxied answer')],
+    });
+    final resolver = resolverFor(factory, const {
+      'default': [ModelRef(provider: 'anthropic', modelId: 'claude-a')],
+    });
+    final registry = CustomProviderRegistry([]);
+    final store = FakeSecureKeyStore();
+    final cache = SecureKeyCache(store);
+    await cache.probe();
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: _placeholderModel,
+        apiKey: 'unused',
+        env: env,
+        sessionRoot: '/sessions',
+        modelRolesResolver: resolver,
+        customProviders: registry,
+        secureKeys: cache,
+        envVarValue: (_) => null,
+      ),
+      io: io,
+    );
+    final run = cli.run();
+
+    io.sendLine('/provider custom');
+    await _waitFor(() => io.out.toString().contains('type a number:'));
+    io.sendLine('2'); // anthropic-like
+    await _waitFor(() => io.out.toString().contains('base URL (empty ='));
+    io.sendLine('http://127.0.0.1:1');
+    await _waitFor(() => io.out.toString().contains('provider name (empty ='));
+    io.sendLine('my-proxy');
+    await _waitFor(
+      () => io.out.toString().contains('API key (empty for none):'),
+    );
+    io.sendLine('sk-typed-in-roles-mode');
+    await _waitFor(() => io.out.toString().contains('model id (empty keeps'));
+    io.sendLine('claude-a');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to anthropic'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    // The typed key landed in the secure store under the entry's key name.
+    final entry = registry.find('my-proxy')!;
+    expect(entry.keyName, isNotNull);
+    expect(store.map[entry.keyName], 'sk-typed-in-roles-mode');
+    expect(io.out.toString(), isNot(contains('sk-typed-in-roles-mode')));
   });
 }

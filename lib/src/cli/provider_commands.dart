@@ -1273,18 +1273,25 @@ extension on AgentCli {
     if (rolesResolver != null) {
       // Roles mode: pin the default role to the new provider/endpoint (a
       // single-entry chain for this session), mirroring `/model <id>`.
-      // Keys resolve through the resolver's secrets snapshot, so an explicit
-      // token cannot be threaded through.
+      // A typed key joins the resolver's secrets at runtime and rides the
+      // chain as an apiKeyName reference (the value never touches the
+      // config file).
       if (token != null) {
-        io.writeln(
-          'explicit tokens are not supported while model roles are active; '
-          'set ${spec.apiKeyEnvNames.first} in the environment instead',
+        rolesResolver.addSecret(
+          tokenKeyName ?? spec.apiKeyEnvNames.first,
+          token,
         );
-        return;
       }
       try {
         rolesResolver.setDefaultChain([
-          ModelRef(provider: spec.name, modelId: modelId, baseUrl: baseUrl),
+          ModelRef(
+            provider: spec.name,
+            modelId: modelId,
+            baseUrl: baseUrl,
+            apiKeyName: token == null
+                ? null
+                : tokenKeyName ?? spec.apiKeyEnvNames.first,
+          ),
         ]);
         rolesResolver.applyToAgent(_agent);
       } on ConfigException catch (error) {
