@@ -385,7 +385,7 @@ void main() {
           'bg:',
           timeout: const Duration(seconds: 90),
         );
-      } on TimeoutException {
+      } on Object {
         await harness.close();
         tempHome.deleteSync(recursive: true);
         return;

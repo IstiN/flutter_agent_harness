@@ -173,12 +173,9 @@ extension AgentCliAgentExt on AgentCli {
   Future<void> pickAgentAction(String key) async {
     if (key == 'back') return _agentsTreePanel();
     if (key.startsWith('send:')) {
-      await _askAndSendSubagent(key.substring(5));
-      return;
+      return _askAndSendSubagent(key.substring(5));
     }
-    if (key.startsWith('open:')) {
-      await _openSubagentSession(key.substring(5));
-    }
+    return _openSubagentSession(key.substring(5));
   }
 
   /// Switches the CLI session into the child's session (Variant B "select"):
