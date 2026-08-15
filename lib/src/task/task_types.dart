@@ -134,6 +134,7 @@ final class TaskSingleResult {
     required this.model,
     this.error,
     this.structuredOutput,
+    this.reply,
   });
 
   /// Position of this item in the batch call.
@@ -178,6 +179,16 @@ final class TaskSingleResult {
 
   /// Structured completion metadata when the item carried an `outputSchema`.
   final StructuredTaskOutput? structuredOutput;
+
+  /// The child's explicit `reply` text (Phase 3b). Null when the child
+  /// completed without calling the reply tool — consumers render the
+  /// `completed_without_reply` notice with the output preview instead.
+  final String? reply;
+
+  /// True when the child completed but never sent an explicit reply
+  /// (prime-agent's `completed_without_reply` terminal notice).
+  bool get completedWithoutReply =>
+      status == TaskSpawnStatus.completed && reply == null;
 
   /// Convenience: omp's `exitCode` mapping of [status].
   int get exitCode => status == TaskSpawnStatus.completed ? 0 : 1;

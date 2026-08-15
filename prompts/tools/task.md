@@ -19,7 +19,11 @@ Run subagents in parallel by passing multiple items in a single `tasks[]` batch.
 - `background`: Run items as background jobs (default: host configuration). Blocking calls return every item's output in the result.
 
 # Communication
-Subagents start blank — no conversation history. Put everything they need into `context` (shared) and `task` (per item).
+Subagents start blank — no conversation history. Put everything they need into `context` (shared) and `task` (per item). After spawn, the family stays connected:
+- `task_send {id, message}`: steer a running child, answer a waiting (idle) one, or RESUME a completed one with follow-up work.
+- `task_status` / `task_observe`: inspect the family at any time — status, tokens, and the child's recent transcript.
+- Children can `reply` (their explicit answer to you) and `agent_message` (sibling↔sibling hand-offs) — a child that finishes without replying surfaces a `completed_without_reply` notice with its final text preview.
+- Completed subagents stay addressable: send them more work instead of re-spawning duplicates.
 
 # Format Contracts
 `context` format:

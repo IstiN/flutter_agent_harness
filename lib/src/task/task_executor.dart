@@ -35,6 +35,7 @@ import 'output_manager.dart';
 import 'parallel.dart';
 import 'subagent.dart';
 import 'subagent_manager.dart';
+import 'subagent_tools.dart';
 import 'task_types.dart';
 
 /// Lifecycle phases reported through [TaskSpawnProgressCallback].
@@ -119,6 +120,10 @@ final class TaskExecutor {
         aborted: true,
       );
     }
+    // Per-spawn "current subagent" scope: the child-only reply/agent_message
+    // tools resolve their handle through it (Phase 3b). Re-entrant when the
+    // same executor runs children sequentially (blocking batch mode).
+    _currentSubagentIds.add(id);
     try {
       stopwatch.start();
       return await _run(
@@ -152,10 +157,20 @@ final class TaskExecutor {
       await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
       return _failure(index, id, agentName, item, stopwatch, '$error');
     } finally {
+      _currentSubagentIds.remove(id);
       stopwatch.stop();
       semaphore.release();
     }
   }
+
+  /// Stack of in-flight child ids for this executor. The LAST entry is the
+  /// innermost running child; children run sequentially inside one executor
+  /// call, and concurrent runSpawn calls each push/pop their own id.
+  final _currentSubagentIds = <String>[];
+
+  /// Resolves the innermost running child id (for the child-only tools).
+  String? currentSubagentId() =>
+      _currentSubagentIds.isEmpty ? null : _currentSubagentIds.last;
 
   Future<TaskSingleResult> _run(
     TaskItem item,
@@ -184,6 +199,16 @@ final class TaskExecutor {
     final toolRegistry = ToolRegistry(
       registry.toolSurfaceFor(definition, childTools),
     );
+    // Phase 3b: child-only reply/agent_message tools when a manager backs
+    // this executor — they resolve the handle through currentSubagentId().
+    if (subagentManager != null) {
+      for (final tool in subagentMonitoringTools(
+        manager: subagentManager,
+        currentSubagentId: currentSubagentId,
+      ).where((t) => t.name == 'reply' || t.name == 'agent_message')) {
+        toolRegistry.register(tool);
+      }
+    }
     final wiring = _resolveChildWiring(definition);
 
     final child = Agent(
@@ -195,7 +220,7 @@ final class TaskExecutor {
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
-    await child.prompt(_buildUserPrompt(item));
+    await child.prompt(_buildUserPrompt(item, id));
     cancelToken?.throwIfCancelled();
 
     final finalText = _finalAssistantText(child);
@@ -223,6 +248,10 @@ final class TaskExecutor {
       failed ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
     );
 
+    // Phase 3b: the child's explicit reply (if any) rides the result; a
+    // missing reply is surfaced via completedWithoutReply.
+    final reply = subagentManager?[id]?.lastReply;
+
     // Update the retained-subagent handle with final status + usage.
     if (subagentManager != null) {
       await subagentManager!.update(
@@ -249,6 +278,7 @@ final class TaskExecutor {
       model: wiring.model.id,
       error: failed ? 'schema_violation: ${structured!.error}' : null,
       structuredOutput: structured,
+      reply: reply,
     );
   }
 
@@ -296,11 +326,26 @@ final class TaskExecutor {
   }
 
   /// The child's assignment prompt, with the schema instructions appended
-  /// when the item carries an `outputSchema`.
-  String _buildUserPrompt(TaskItem item) {
+  /// when the item carries an `outputSchema`, and any queued inter-agent
+  /// messages (Phase 3b) delivered as a `# MESSAGES` section.
+  String _buildUserPrompt(TaskItem item, [String? subagentId]) {
     final userPrompt = StringBuffer(
       taskAssignmentPrompt.replaceAll('{{task}}', item.task.trim()),
     );
+    if (subagentId != null && subagentManager != null) {
+      final queued = subagentManager!.drainMessages(subagentId);
+      if (queued.isNotEmpty) {
+        userPrompt
+          ..writeln()
+          ..writeln()
+          ..writeln('# MESSAGES');
+        for (final message in queued) {
+          userPrompt.writeln(
+            'from ${message.fromId}: ${message.text.trim()}',
+          );
+        }
+      }
+    }
     if (item.outputSchema != null) {
       userPrompt
         ..writeln()

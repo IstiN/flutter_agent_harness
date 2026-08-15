@@ -12,11 +12,12 @@ import 'dart:async';
 
 import 'subagent.dart';
 
-/// One observable event from a subagent (status transition, output preview).
+/// One observable event from a subagent (status transition, output preview,
+/// or an inbound message — Phase 3b).
 final class SubagentEvent {
   const SubagentEvent({required this.handle, this.message});
   final SubagentHandle handle;
-  final String? message;
+  final SubagentMessage? message;
 }
 
 typedef ChildSessionFactory =
@@ -36,6 +37,8 @@ final class SubagentManager {
     this.createChildSession,
     this.sink,
     this.source,
+    this.maxPendingMessages = 16,
+    this.maxReplyChars = 8000,
   });
 
   /// The parent session id (used to derive child session paths).
@@ -49,6 +52,13 @@ final class SubagentManager {
 
   /// Injected: reads the persisted registry from the parent session.
   final SubagentRegistrySource? source;
+
+  /// Size guard: messages queued to one child before new ones are rejected
+  /// (Phase 3b pending-queue guard).
+  final int maxPendingMessages;
+
+  /// Size guard: reply/message body cap in characters.
+  final int maxReplyChars;
 
   final _handles = <String, SubagentHandle>{};
   final _events = StreamController<SubagentEvent>.broadcast();
@@ -126,6 +136,60 @@ final class SubagentManager {
   /// Removes a handle (dispose).
   Future<void> dispose(String id) async {
     _handles.remove(id);
+    await _persist();
+  }
+
+  /// Queues [message] for [id] (Phase 3b `agent_message` / parent steering).
+  /// Throws [StateError] for an unknown id or a full pending queue; caps the
+  /// body at [maxReplyChars]. Aborted children refuse new messages.
+  Future<void> enqueueMessage(String id, SubagentMessage message) async {
+    final handle = _handles[id];
+    if (handle == null) {
+      throw StateError(
+        'unknown subagent "$id" — available: ${_handles.keys.join(', ')}',
+      );
+    }
+    if (handle.status == SubagentStatus.aborted) {
+      throw StateError('subagent "$id" is aborted and takes no messages');
+    }
+    if (handle.pendingMessages.length >= maxPendingMessages) {
+      throw StateError(
+        'subagent "$id" pending queue is full ($maxPendingMessages) — '
+        'the child must consume its messages first',
+      );
+    }
+    final capped = message.text.length > maxReplyChars
+        ? SubagentMessage(
+            fromId: message.fromId,
+            text: '${message.text.substring(0, maxReplyChars)}…[truncated]',
+            sentAt: message.sentAt,
+            hops: message.hops,
+          )
+        : message;
+    handle.pendingMessages.add(capped);
+    handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+    _events.add(SubagentEvent(handle: handle, message: capped));
+    await _persist();
+  }
+
+  /// Drains [id]'s pending queue (delivered messages leave the registry).
+  List<SubagentMessage> drainMessages(String id) {
+    final handle = _handles[id];
+    if (handle == null) return const [];
+    final drained = List<SubagentMessage>.of(handle.pendingMessages);
+    handle.pendingMessages.clear();
+    return drained;
+  }
+
+  /// Records the child's explicit `reply` (Phase 3b) on its handle.
+  Future<void> recordReply(String id, String text) async {
+    final handle = _handles[id];
+    if (handle == null) return;
+    handle.lastReply = text.length > maxReplyChars
+        ? '${text.substring(0, maxReplyChars)}…[truncated]'
+        : text;
+    handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+    _events.add(SubagentEvent(handle: handle));
     await _persist();
   }
 

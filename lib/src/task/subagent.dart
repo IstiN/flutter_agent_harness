@@ -6,6 +6,50 @@ library;
 /// The lifecycle state of a retained subagent.
 enum SubagentStatus { queued, running, idle, completed, failed, aborted }
 
+/// One inter-agent message (Phase 3b `agent_message` / `reply` payloads).
+final class SubagentMessage {
+  const SubagentMessage({
+    required this.fromId,
+    required this.text,
+    required this.sentAt,
+    this.hops = 0,
+  });
+
+  /// Sender id (`parent` for parent-originated messages).
+  final String fromId;
+
+  /// Message body.
+  final String text;
+
+  /// ISO 8601 send timestamp.
+  final String sentAt;
+
+  /// Remaining hop budget (sibling-relay cap; 0 refuses further relaying).
+  final int hops;
+
+  SubagentMessage decayed() => SubagentMessage(
+    fromId: fromId,
+    text: text,
+    sentAt: sentAt,
+    hops: hops - 1,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'fromId': fromId,
+    'text': text,
+    'sentAt': sentAt,
+    'hops': hops,
+  };
+
+  factory SubagentMessage.fromJson(Map<String, dynamic> json) =>
+      SubagentMessage(
+        fromId: json['fromId'] as String? ?? 'unknown',
+        text: json['text'] as String? ?? '',
+        sentAt: json['sentAt'] as String? ?? '',
+        hops: json['hops'] as int? ?? 0,
+      );
+}
+
 /// A retained subagent handle: the parent (and the user) can query status,
 /// send follow-up messages, and observe the child's transcript at any time.
 final class SubagentHandle {
@@ -57,6 +101,16 @@ final class SubagentHandle {
   /// The model id used for this child.
   String? modelId;
 
+  /// The child's explicit `reply` text (Phase 3b), if it sent one before
+  /// completing. Null means the child finished without an explicit reply —
+  /// the parent gets a `completed_without_reply` notice with the final-text
+  /// preview instead (prime-agent semantics).
+  String? lastReply;
+
+  /// Inter-agent messages addressed to this child and not yet consumed
+  /// (Phase 3b pending queue). Bounded by the manager's size guard.
+  final List<SubagentMessage> pendingMessages = [];
+
   /// True when the child is waiting for input (e.g. an ask tool answer).
   bool get isWaitingForInput => status == SubagentStatus.idle;
 
@@ -80,6 +134,10 @@ final class SubagentHandle {
     'tokens': tokens,
     'requests': requests,
     'modelId': modelId,
+    'lastReply': lastReply,
+    'pendingMessages': [
+      for (final m in pendingMessages) m.toJson(),
+    ],
   };
 
   /// Reconstructs a handle from a persisted JSON map.
@@ -100,6 +158,13 @@ final class SubagentHandle {
     handle.tokens = json['tokens'] as int? ?? 0;
     handle.requests = json['requests'] as int? ?? 0;
     handle.modelId = json['modelId'] as String?;
+    handle.lastReply = json['lastReply'] as String?;
+    for (final entry
+        in (json['pendingMessages'] as List<dynamic>? ?? const [])) {
+      if (entry is Map<String, dynamic>) {
+        handle.pendingMessages.add(SubagentMessage.fromJson(entry));
+      }
+    }
     return handle;
   }
 
