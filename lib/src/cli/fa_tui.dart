@@ -277,7 +277,11 @@ final class FaTuiModel extends Model {
   /// re-formats.
   var _wrapCache = _WrapCache();
 
-  int get _inputLineCount => inputText.split('\n').length;
+  /// The input block's height in PHYSICAL rows: the text soft-wraps to the
+  /// terminal width, so a long single line occupies several rows. All
+  /// layout math (viewport height, cursor homing) must use this count —
+  /// the raw `\n` count lies once a line wraps.
+  int get _inputLineCount => _wrappedInput().$1.length;
 
   /// Truncates [text] to [maxWidth] (default: the terminal width) with an
   /// ellipsis. Every chrome row (status, menu items) must fit on one
@@ -1698,55 +1702,57 @@ final class FaTuiModel extends Model {
   /// The framed input lines with horizontal cursor-window scrolling; returns
   /// the cursor's input line index and screen column for the cursor home.
   (int, int) _writeInputLines(StringBuffer b) {
+    final (rows, cursorRow, cursorCol) = _wrappedInput();
+    for (var i = 0; i < rows.length; i++) {
+      if (i > 0) b.writeln();
+      b.write(rows[i]);
+    }
+    b.writeln();
+    return (cursorRow, cursorCol);
+  }
+
+  /// The input text soft-wrapped to the terminal width (the whole prompt
+  /// stays visible as a paragraph — no horizontal clipping), plus the
+  /// cursor's row/column inside the wrapped block. A cursor sitting exactly
+  /// past a full-width chunk gets the empty trailing row it points at, so
+  /// the row count is cursor-dependent — [_inputLineCount] uses this same
+  /// computation and the two never disagree.
+  (List<String>, int, int) _wrappedInput() {
+    final width = termWidth < 1 ? 1 : termWidth;
+    final logical = inputText.split('\n');
     final beforeCursor = inputText.substring(0, cursor);
-    final cursorInputLine = '\n'.allMatches(beforeCursor).length;
+    final cursorLogicalLine = '\n'.allMatches(beforeCursor).length;
     final lastNl = beforeCursor.lastIndexOf('\n');
-    final cursorColInInput = lastNl < 0
+    final cursorColInLine = lastNl < 0
         ? beforeCursor.length
         : beforeCursor.length - lastNl - 1;
 
-    final (visibleLines, cursorScreenCol) = _visibleInputLines(
-      inputText.split('\n'),
-      cursorInputLine,
-      cursorColInInput,
-    );
-    for (var i = 0; i < visibleLines.length; i++) {
-      if (i > 0) b.writeln();
-      b.write(visibleLines[i]);
-    }
-    b.writeln();
-    return (cursorInputLine, cursorScreenCol);
-  }
-
-  /// The input lines clipped to the terminal width, keeping a cursor-
-  /// centered horizontal window on the cursor's line (other lines clip at
-  /// the left edge); returns the display lines and the cursor's screen
-  /// column inside the window.
-  (List<String>, int) _visibleInputLines(
-    List<String> inputLines,
-    int cursorInputLine,
-    int cursorColInInput,
-  ) {
-    var cursorScreenCol = cursorColInInput;
-    final visible = <String>[];
-    for (var i = 0; i < inputLines.length; i++) {
-      final avail = termWidth;
-      var line = inputLines[i];
-      if (line.length > avail && avail > 0) {
-        if (i == cursorInputLine) {
-          final start = (cursorColInInput - avail ~/ 2).clamp(
-            0,
-            line.length - avail,
-          );
-          line = line.substring(start, start + avail);
-          cursorScreenCol = cursorColInInput - start;
-        } else {
-          line = line.substring(0, avail);
+    final rows = <String>[];
+    var cursorRow = 0;
+    var cursorCol = 0;
+    for (var i = 0; i < logical.length; i++) {
+      final line = logical[i];
+      final lineRows = <String>[
+        for (var start = 0; start < line.length; start += width)
+          line.substring(
+            start,
+            start + width > line.length ? line.length : start + width,
+          ),
+      ];
+      if (lineRows.isEmpty) lineRows.add('');
+      if (i == cursorLogicalLine) {
+        cursorRow = rows.length + cursorColInLine ~/ width;
+        cursorCol = cursorColInLine % width;
+        if (cursorColInLine == line.length &&
+            cursorColInLine > 0 &&
+            cursorColInLine % width == 0) {
+          // The cursor rests one row past the last full-width chunk.
+          lineRows.add('');
         }
       }
-      visible.add(line);
+      rows.addAll(lineRows);
     }
-    return (visible, cursorScreenCol);
+    return (rows, cursorRow, cursorCol);
   }
 
   static List<String> _appendOutput(

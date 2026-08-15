@@ -233,6 +233,77 @@ void main() {
     expect(lines.join('\n'), isNot(contains('fa> hello')));
   });
 
+  FaTuiModel typedInto(FaTuiModel model, String text) {
+    for (final ch in text.split('')) {
+      model =
+          model.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
+              as FaTuiModel;
+    }
+    return model;
+  }
+
+  test('a long single-line input soft-wraps into physical rows', () {
+    var model = FaTuiModel(
+      callbacks: callbacks(),
+      isExited: () => false,
+      termWidth: 40,
+    );
+    final text = 'a' * 45 + 'b' * 45; // 90 chars at width 40
+    model = typedInto(model, text);
+
+    final plain = model.view().content.replaceAll(
+      RegExp(r'\x1b\[[0-9;]*[A-Za-z]'),
+      '',
+    );
+    // The whole prompt is visible as a paragraph — no horizontal clipping:
+    // 40 a's, then 5 a's + 35 b's, then the trailing 10 b's.
+    expect(plain, contains('${'a' * 40}\n'));
+    expect(plain, contains('${'a' * 5}${'b' * 35}\n'));
+    expect(plain, contains('b' * 10));
+    // The cursor homes to the END of the wrapped text: row 2, column 10.
+    final cursor = model.view().cursor;
+    expect(cursor, isNotNull);
+    expect(cursor!.x, 10);
+  });
+
+  test('an exact-width input gives the cursor its own empty row', () {
+    var model = FaTuiModel(
+      callbacks: callbacks(),
+      isExited: () => false,
+      termWidth: 40,
+    );
+    model = typedInto(model, 'a' * 40);
+    final cursor = model.view().cursor;
+    expect(cursor, isNotNull);
+    expect(cursor!.x, 0); // one row past the full-width chunk
+  });
+
+  test('hard newlines and soft wraps stack in the input zone', () {
+    var model = FaTuiModel(
+      callbacks: callbacks(isShiftPressed: () => true),
+      isExited: () => false,
+      termWidth: 40,
+    );
+    model = typedInto(model, 'x' * 41); // wraps to 2 rows
+    // shift+enter (the host reports shift) — a hard newline, then another
+    // wrapped line.
+    model =
+        model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
+            as FaTuiModel;
+    model = typedInto(model, 'y' * 41);
+    final plain = model.view().content.replaceAll(
+      RegExp(r'\x1b\[[0-9;]*[A-Za-z]'),
+      '',
+    );
+    expect(plain, contains('${'x' * 40}\n'));
+    expect(plain, contains('x\n'));
+    expect(plain, contains('${'y' * 40}\n'));
+    expect(plain, contains('y\n'));
+    // Cursor: logical line 1, col 41 → wrapped row 1 of that line, col 1.
+    final cursor = model.view().cursor;
+    expect(cursor!.x, 1);
+  });
+
   test(
     'spinner ticks cycle the Working… frame while the cursor stays hidden',
     () {
