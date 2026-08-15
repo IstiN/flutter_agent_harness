@@ -91,9 +91,10 @@ Future<void> _settleUntil(
 
 /// Opens the provider dropdown on the setup form and picks [label].
 Future<void> _selectProvider(WidgetTester tester, String label) async {
-  await tester.tap(find.byType(DropdownButtonFormField<Object>));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text(label).last);
+  // The provider-first setup flow: a plain list (no dropdown) — the row
+  // itself opens the config fields.
+  await tester.ensureVisible(find.text(label).first);
+  await tester.tap(find.text(label).first);
   await tester.pumpAndSettle();
 }
 
@@ -159,7 +160,7 @@ void main() {
           await tester.tap(find.text('Continue'));
           await tester.pumpAndSettle();
         }
-        expect(find.text('Get started'), findsOneWidget);
+        expect(find.text('Open Fa'), findsOneWidget);
 
         // Skipping sets the persisted flag and boot continues to the setup
         // form.

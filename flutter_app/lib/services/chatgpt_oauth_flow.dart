@@ -1,3 +1,4 @@
+// l10n:ignore-file — OAuth flow screens — en-only by design
 import 'dart:async';
 import 'dart:io' show Platform;
 

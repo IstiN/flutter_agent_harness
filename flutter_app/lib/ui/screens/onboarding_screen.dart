@@ -13,20 +13,7 @@ import 'package:fa/ui/widgets/fa_mark.dart';
 /// The first-launch onboarding flow, redesigned to match the reference
 /// prototype: four pages with rich mockups, progress dots with labels,
 /// and a clean adaptive layout.
-///
-/// Pages:
-/// 1. "Start with an idea" — hero title + chat mockup + app grid preview
-/// 2. "Choose how Fa thinks" — provider cards (OpenRouter recommended,
-///    Ollama local, Google Gemini, Custom)
-/// 3. "Give access only when it helps" — permission cards (Calendar,
-///    Notifications, Microphone) with Allow/Later buttons
-/// 4. "Your sandbox is ready" — app created notification + My Apps grid
-///    + suggested prompts
-///
-/// Completing or skipping both call [OnboardingStore.markSeen] and
-/// [onFinished] — the boot flow then continues (auto-connect or setup).
 class OnboardingScreen extends StatefulWidget {
-  /// Creates the flow.
   const OnboardingScreen({
     super.key,
     this.onboardingStore,
@@ -34,15 +21,8 @@ class OnboardingScreen extends StatefulWidget {
     this.onFinished,
   });
 
-  /// The seen-flag store; completing or skipping marks it. Null = nothing
-  /// persists (tests).
   final OnboardingStore? onboardingStore;
-
-  /// Page to start on (goldens/tests); production always starts at 0.
   final int initialPage;
-
-  /// Called after the seen flag is set — the boot flow continues. [skipped]
-  /// is true when the user left via the Skip button.
   final void Function({required bool skipped})? onFinished;
 
   @override
@@ -101,117 +81,41 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = _OnboardingColors.of(context);
     final isWide = MediaQuery.sizeOf(context).width >= 700;
     final isLast = _page == _pageCount - 1;
-
     return Scaffold(
-      backgroundColor: colors.bg,
+      backgroundColor: const Color(0xFFF8F9FC),
       body: SafeArea(
         child: Column(
           children: [
-            // ── Top bar: logo + progress + skip ──────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-              child: Row(
-                children: [
-                  // Logo.
-                  const FaMark(size: 24),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Fa',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  // Progress dots with labels.
-                  if (isWide) ...[
-                    for (var i = 0; i < _pageCount; i++) ...[
-                      _ProgressDot(
-                        label: _stepLabels[i],
-                        done: i < _page,
-                        active: i == _page,
-                        colors: colors,
-                      ),
-                      if (i < _pageCount - 1)
-                        _ProgressLine(done: i < _page, colors: colors),
-                    ],
-                  ],
-                  const Spacer(),
-                  // Skip.
-                  TextButton(
-                    onPressed: () => _finish(skipped: true),
-                    child: Text(
-                      'Skip',
-                      style: TextStyle(color: colors.dim),
-                    ),
-                  ),
-                ],
-              ),
+            // Top bar: logo + progress + skip.
+            _TopBar(
+              page: _page,
+              pageCount: _pageCount,
+              stepLabels: _stepLabels,
+              isWide: isWide,
+              onSkip: () => _finish(skipped: true),
             ),
-            // ── Content ──────────────────────────────────────────────
+            // Content.
             Expanded(
               child: PageView(
                 controller: _pageController,
                 onPageChanged: (page) => setState(() => _page = page),
                 children: [
-                  _Page1Welcome(colors: colors, isWide: isWide),
-                  _Page2Provider(colors: colors, isWide: isWide),
-                  _Page3Permissions(colors: colors, isWide: isWide),
-                  _Page4Ready(colors: colors, isWide: isWide),
+                  _Page1(isWide: isWide),
+                  _Page2(isWide: isWide),
+                  _Page3(isWide: isWide),
+                  _Page4(isWide: isWide),
                 ],
               ),
             ),
-            // ── Bottom bar: progress + buttons ───────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-              child: Row(
-                children: [
-                  Text(
-                    '${_page + 1} of $_pageCount',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colors.dim,
-                    ),
-                  ),
-                  const Spacer(),
-                  if (_page > 0)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: OutlinedButton(
-                        onPressed: _prevPage,
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(color: colors.border),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        child: const Text('Back'),
-                      ),
-                    ),
-                  FilledButton.icon(
-                    onPressed:
-                        isLast ? () => _finish(skipped: false) : _nextPage,
-                    icon: Icon(
-                      isLast ? Icons.open_in_new : Icons.arrow_forward,
-                      size: 16,
-                    ),
-                    label: Text(isLast ? 'Open Fa' : 'Continue'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: colors.indigo,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 14,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            // Bottom bar.
+            _BottomBar(
+              page: _page,
+              pageCount: _pageCount,
+              isLast: isLast,
+              onBack: _prevPage,
+              onNext: isLast ? () => _finish(skipped: false) : _nextPage,
             ),
           ],
         ),
@@ -221,237 +125,85 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Colors
+// Top bar
 // ---------------------------------------------------------------------------
 
-class _OnboardingColors {
-  const _OnboardingColors._({
-    required this.bg,
-    required this.card,
-    required this.border,
-    required this.text,
-    required this.dim,
-    required this.indigo,
-    required this.indigoLight,
-    required this.green,
-    required this.amber,
+class _TopBar extends StatelessWidget {
+  const _TopBar({
+    required this.page,
+    required this.pageCount,
+    required this.stepLabels,
+    required this.isWide,
+    required this.onSkip,
   });
 
-  factory _OnboardingColors.of(BuildContext context) {
-    final light = Theme.of(context).brightness == Brightness.light;
-    return light ? _light : _dark;
-  }
-
-  final Color bg;
-  final Color card;
-  final Color border;
-  final Color text;
-  final Color dim;
-  final Color indigo;
-  final Color indigoLight;
-  final Color green;
-  final Color amber;
-
-  static const _light = _OnboardingColors._(
-    bg: Color(0xFFF8F9FC),
-    card: Color(0xFFFFFFFF),
-    border: Color(0xFFE5E7EB),
-    text: Color(0xFF111827),
-    dim: Color(0xFF6B7280),
-    indigo: Color(0xFF4F46E5),
-    indigoLight: Color(0xFFEEF2FF),
-    green: Color(0xFF10B981),
-    amber: Color(0xFFF59E0B),
-  );
-
-  static const _dark = _OnboardingColors._(
-    bg: Color(0xFF070A10),
-    card: Color(0xFF0D1420),
-    border: Color(0xFF1C2637),
-    text: Color(0xFFE8EEF7),
-    dim: Color(0xFF93A1B5),
-    indigo: Color(0xFF818CF8),
-    indigoLight: Color(0xFF232B47),
-    green: Color(0xFF34D399),
-    amber: Color(0xFFFBBF24),
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Progress indicators
-// ---------------------------------------------------------------------------
-
-class _ProgressDot extends StatelessWidget {
-  const _ProgressDot({
-    required this.label,
-    required this.done,
-    required this.active,
-    required this.colors,
-  });
-
-  final String label;
-  final bool done;
-  final bool active;
-  final _OnboardingColors colors;
+  final int page;
+  final int pageCount;
+  final List<String> stepLabels;
+  final bool isWide;
+  final VoidCallback onSkip;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 20,
-          height: 20,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: done || active ? colors.indigo : colors.border,
-          ),
-          child: done
-              ? const Icon(Icons.check, size: 12, color: Colors.white)
-              : null,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 10,
-            color: active ? colors.text : colors.dim,
-            fontWeight: active ? FontWeight.w600 : FontWeight.w400,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ProgressLine extends StatelessWidget {
-  const _ProgressLine({required this.done, required this.colors});
-
-  final bool done;
-  final _OnboardingColors colors;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 32,
-      height: 2,
-      margin: const EdgeInsets.only(bottom: 16),
-      color: done ? colors.indigo : colors.border,
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Shared widgets
-// ---------------------------------------------------------------------------
-
-/// A mockup chat message bubble for onboarding previews.
-class _MockChatBubble extends StatelessWidget {
-  const _MockChatBubble({
-    required this.text,
-    required this.isUser,
-    required this.colors,
-  });
-
-  final String text;
-  final bool isUser;
-  final _OnboardingColors colors;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: isUser ? colors.indigoLight : colors.card,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: isUser
-            ? null
-            : [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
-                ),
-              ],
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 12,
-          color: isUser ? colors.text : colors.dim,
-        ),
-      ),
-    );
-  }
-}
-
-/// A mockup app icon tile for onboarding previews.
-class _MockAppTile extends StatelessWidget {
-  const _MockAppTile({
-    required this.icon,
-    required this.label,
-    required this.colors,
-    this.badge,
-  });
-
-  final IconData icon;
-  final String label;
-  final _OnboardingColors colors;
-  final String? badge;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: colors.card,
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(color: colors.border),
-          ),
-          child: Icon(icon, size: 18, color: colors.dim),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(fontSize: 9, color: colors.dim),
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
-    );
-  }
-}
-
-/// A feature pill at the bottom of page 1.
-class _FeaturePill extends StatelessWidget {
-  const _FeaturePill({
-    required this.icon,
-    required this.label,
-    required this.colors,
-  });
-
-  final IconData icon;
-  final String label;
-  final _OnboardingColors colors;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: colors.card,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: colors.border),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: colors.indigo),
-          const SizedBox(width: 6),
-          Text(label, style: TextStyle(fontSize: 11, color: colors.dim)),
+          const FaMark(size: 24),
+          const SizedBox(width: 8),
+          const Text(
+            'Fa',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+          ),
+          const Spacer(),
+          if (isWide)
+            ...List.generate(pageCount * 2 - 1, (i) {
+              if (i.isOdd) {
+                return Container(
+                  width: 32,
+                  height: 2,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  color: i ~/ 2 < page
+                      ? const Color(0xFF4F46E5)
+                      : const Color(0xFFE5E7EB),
+                );
+              }
+              final idx = i ~/ 2;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: idx <= page
+                          ? const Color(0xFF4F46E5)
+                          : const Color(0xFFE5E7EB),
+                    ),
+                    child: idx < page
+                        ? const Icon(Icons.check, size: 12, color: Colors.white)
+                        : null,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    stepLabels[idx],
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: idx == page
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF6B7280),
+                      fontWeight: idx == page ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                ],
+              );
+            }),
+          const Spacer(),
+          TextButton(
+            onPressed: onSkip,
+            child: const Text('Skip', style: TextStyle(color: Color(0xFF6B7280))),
+          ),
         ],
       ),
     );
@@ -459,104 +211,86 @@ class _FeaturePill extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Page 1: Start with an idea
+// Bottom bar
 // ---------------------------------------------------------------------------
 
-class _Page1Welcome extends StatelessWidget {
-  const _Page1Welcome({required this.colors, required this.isWide});
+class _BottomBar extends StatelessWidget {
+  const _BottomBar({
+    required this.page,
+    required this.pageCount,
+    required this.isLast,
+    required this.onBack,
+    required this.onNext,
+  });
 
-  final _OnboardingColors colors;
-  final bool isWide;
+  final int page;
+  final int pageCount;
+  final bool isLast;
+  final VoidCallback onBack;
+  final VoidCallback onNext;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: isWide ? 720 : double.infinity),
-          child: Column(
-            children: [
-              const SizedBox(height: 24),
-              // Hero title.
-              Text(
-                'Start with an idea.',
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: colors.text,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Ask a question, automate a task, or describe an app you want to use.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colors.dim,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 32),
-              // Chat mockup + app grid preview.
-              if (isWide)
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Chat mockup.
-                    Expanded(
-                      child: _buildChatMockup(theme),
-                    ),
-                    const SizedBox(width: 24),
-                    // App grid mockup.
-                    Expanded(
-                      child: _buildAppGridMockup(theme),
-                    ),
-                  ],
-                )
-              else ...[
-                _buildChatMockup(theme),
-                const SizedBox(height: 16),
-                _buildAppGridMockup(theme),
-              ],
-              const SizedBox(height: 24),
-              // Feature pills.
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  _FeaturePill(
-                    icon: Icons.chat_bubble_outline,
-                    label: 'Answers questions',
-                    colors: colors,
-                  ),
-                  _FeaturePill(
-                    icon: Icons.grid_view_rounded,
-                    label: 'Uses your apps',
-                    colors: colors,
-                  ),
-                  _FeaturePill(
-                    icon: Icons.auto_awesome,
-                    label: 'Builds new apps',
-                    colors: colors,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-            ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+      child: Row(
+        children: [
+          Text(
+            '${page + 1} of $pageCount',
+            style: const TextStyle(color: Color(0xFF6B7280), fontSize: 12),
           ),
-        ),
+          const Spacer(),
+          if (page > 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: OutlinedButton(
+                onPressed: onBack,
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFE5E7EB)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text('Back'),
+              ),
+            ),
+          FilledButton.icon(
+            onPressed: onNext,
+            icon: Icon(
+              isLast ? Icons.open_in_new : Icons.arrow_forward,
+              size: 16,
+            ),
+            label: Text(isLast ? 'Open Fa' : 'Continue'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF4F46E5),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
+}
 
-  Widget _buildChatMockup(ThemeData theme) {
+// ---------------------------------------------------------------------------
+// Shared mockup widgets
+// ---------------------------------------------------------------------------
+
+class _MockChat extends StatelessWidget {
+  const _MockChat();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colors.card,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.border),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -564,10 +298,16 @@ class _Page1Welcome extends StatelessWidget {
         children: [
           Align(
             alignment: Alignment.centerRight,
-            child: _MockChatBubble(
-              text: 'Build a focus timer with work and break sessions.',
-              isUser: true,
-              colors: colors,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEEF2FF),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                'Build a focus timer with work and break sessions.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF111827)),
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -577,8 +317,8 @@ class _Page1Welcome extends StatelessWidget {
               Container(
                 width: 24,
                 height: 24,
-                decoration: BoxDecoration(
-                  color: colors.indigo,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF4F46E5),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -589,12 +329,140 @@ class _Page1Welcome extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: _MockChatBubble(
-                  text: 'Understanding your request…\nPlanning the app, timer logic, and break sessions.',
-                  isUser: false,
-                  colors: colors,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: const Text(
+                    'Understanding your request…\nPlanning the app, timer logic, and break sessions.',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                  ),
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Input bar.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.add, size: 16, color: Color(0xFF6B7280)),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Ask anything…',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
+                  ),
+                ),
+                Icon(Icons.mic_outlined, size: 16, color: Color(0xFF6B7280)),
+                SizedBox(width: 8),
+                Icon(Icons.arrow_upward, size: 16, color: Color(0xFF4F46E5)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MockAppGrid extends StatelessWidget {
+  const _MockAppGrid();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Focus Timer widget — prominent circular display like the reference.
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF60A5FA), Color(0xFF3B82F6)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              children: [
+                // Circular timer display.
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.2),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      '25:00',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Focus Timer',
+                  style: TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'Start Session',
+                    style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // App icons grid — colorful, matching the reference.
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _appIcon(Icons.calendar_today, 'Calendar', const Color(0xFF3B82F6)),
+              _appIcon(Icons.note_outlined, 'Notes', const Color(0xFFF59E0B)),
+              _appIcon(Icons.build_outlined, 'Utilities', const Color(0xFF6B7280), badge: '4'),
+              _appIcon(Icons.folder_outlined, 'Files', const Color(0xFF3B82F6)),
+              _appIcon(Icons.calculate_outlined, 'Calculator', const Color(0xFF111827)),
+              _appIcon(Icons.map_outlined, 'Maps', const Color(0xFF10B981)),
+              _appIcon(Icons.timer_outlined, 'Focus Timer', const Color(0xFF4F46E5), badge: 'New'),
+              _appIcon(Icons.settings_outlined, 'Settings', const Color(0xFF6B7280)),
+              _appIcon(Icons.add, 'Add app', const Color(0xFF9CA3AF)),
             ],
           ),
         ],
@@ -602,52 +470,240 @@ class _Page1Welcome extends StatelessWidget {
     );
   }
 
-  Widget _buildAppGridMockup(ThemeData theme) {
+  Widget _appIcon(IconData icon, String label, Color bg, {String? badge}) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, size: 20, color: Colors.white),
+            ),
+            if (badge != null)
+              Positioned(
+                top: -2,
+                right: -2,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4F46E5),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    badge,
+                    style: const TextStyle(fontSize: 8, color: Colors.white, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF6B7280))),
+      ],
+    );
+  }
+}
+
+class _FeaturePill extends StatelessWidget {
+  const _FeaturePill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFF4F46E5)),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Page 1: Start with an idea
+// ---------------------------------------------------------------------------
+
+class _Page1 extends StatelessWidget {
+  const _Page1({required this.isWide});
+
+  final bool isWide;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: isWide ? 900 : double.infinity),
+          child: Column(
+            children: [
+              const SizedBox(height: 16),
+              const Text(
+                'Start with an idea.',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF111827),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Ask a question, automate a task, or describe an app you want to use.',
+                style: TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              // 3-column layout: chat | app grid | provider panel.
+              if (isWide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 3, child: _MockChat()),
+                    const SizedBox(width: 16),
+                    Expanded(flex: 4, child: _MockAppGrid()),
+                    const SizedBox(width: 16),
+                    Expanded(flex: 2, child: _ProviderPanel()),
+                  ],
+                )
+              else ...[
+                _MockChat(),
+                const SizedBox(height: 12),
+                _MockAppGrid(),
+              ],
+              const SizedBox(height: 24),
+              // Feature pills.
+              const Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  _FeaturePill(icon: Icons.chat_bubble_outline, label: 'Answers questions'),
+                  _FeaturePill(icon: Icons.grid_view_rounded, label: 'Uses your apps'),
+                  _FeaturePill(icon: Icons.auto_awesome, label: 'Builds new apps'),
+                ],
+              ),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The right panel showing "Choose how Fa thinks." with provider list.
+class _ProviderPanel extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colors.card,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.border),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Focus Timer widget preview.
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: colors.indigoLight,
-              borderRadius: BorderRadius.circular(12),
+          const Text(
+            'Choose how Fa thinks.',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF111827),
             ),
-            child: Row(
+          ),
+          const SizedBox(height: 12),
+          _providerRow(Icons.cloud_outlined, 'OpenRouter', 'Recommended', true),
+          _providerRow(Icons.computer, 'Ollama', 'Local', false),
+          _providerRow(Icons.auto_awesome, 'Google Gemini', null, false),
+          _providerRow(Icons.dns_outlined, 'Custom provider', null, false),
+        ],
+      ),
+    );
+  }
+
+  Widget _providerRow(IconData icon, String name, String? badge, bool selected) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: const Color(0xFF4F46E5)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.timer_outlined, size: 20, color: colors.indigo),
-                const SizedBox(width: 8),
-                Text(
-                  '25:00',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: colors.indigo,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (badge != null) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: badge == 'Recommended'
+                              ? const Color(0xFF4F46E5).withValues(alpha: 0.12)
+                              : const Color(0xFF10B981).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          badge,
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: badge == 'Recommended'
+                                ? const Color(0xFF4F46E5)
+                                : const Color(0xFF10B981),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          // App icons grid.
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _MockAppTile(icon: Icons.calendar_today, label: 'Calendar', colors: colors),
-              _MockAppTile(icon: Icons.note_outlined, label: 'Notes', colors: colors),
-              _MockAppTile(icon: Icons.folder_outlined, label: 'Files', colors: colors),
-              _MockAppTile(icon: Icons.calculate_outlined, label: 'Calc', colors: colors),
-              _MockAppTile(icon: Icons.map_outlined, label: 'Maps', colors: colors),
-              _MockAppTile(icon: Icons.settings_outlined, label: 'Settings', colors: colors),
-            ],
+          Container(
+            width: 16,
+            height: 16,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: selected ? const Color(0xFF4F46E5) : Colors.transparent,
+              border: Border.all(
+                color: selected ? const Color(0xFF4F46E5) : const Color(0xFFE5E7EB),
+                width: 2,
+              ),
+            ),
+            child: selected
+                ? const Icon(Icons.check, size: 10, color: Colors.white)
+                : null,
           ),
         ],
       ),
@@ -659,60 +715,52 @@ class _Page1Welcome extends StatelessWidget {
 // Page 2: Choose how Fa thinks
 // ---------------------------------------------------------------------------
 
-class _Page2Provider extends StatefulWidget {
-  const _Page2Provider({required this.colors, required this.isWide});
+class _Page2 extends StatefulWidget {
+  const _Page2({required this.isWide});
 
-  final _OnboardingColors colors;
   final bool isWide;
 
   @override
-  State<_Page2Provider> createState() => _Page2ProviderState();
+  State<_Page2> createState() => _Page2State();
 }
 
-class _Page2ProviderState extends State<_Page2Provider> {
+class _Page2State extends State<_Page2> {
   var _selected = 'openrouter';
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = widget.colors;
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Center(
         child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: widget.isWide ? 480 : double.infinity,
-          ),
+          constraints: BoxConstraints(maxWidth: widget.isWide ? 480 : double.infinity),
           child: Column(
             children: [
-              const SizedBox(height: 24),
-              Text(
+              const SizedBox(height: 16),
+              const Text(
                 'Choose how Fa thinks.',
-                style: theme.textTheme.headlineMedium?.copyWith(
+                style: TextStyle(
+                  fontSize: 28,
                   fontWeight: FontWeight.w700,
-                  color: colors.text,
+                  color: Color(0xFF111827),
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-              Text(
+              const Text(
                 'Connect an AI provider to start chatting. You can switch models anytime.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colors.dim,
-                ),
+                style: TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 32),
-              // Provider cards.
+              const SizedBox(height: 24),
               _ProviderCard(
                 icon: Icons.cloud_outlined,
                 name: 'OpenRouter',
                 badge: 'Recommended',
                 description: 'Access leading AI models with one connection.',
-                detail: 'Default model: Auto',
+                detail: 'Default model: Auto — Fa chooses the best available model for each task.',
                 selected: _selected == 'openrouter',
                 onTap: () => setState(() => _selected = 'openrouter'),
-                colors: colors,
               ),
               const SizedBox(height: 8),
               _ProviderCard(
@@ -722,7 +770,6 @@ class _Page2ProviderState extends State<_Page2Provider> {
                 description: 'Run compatible models on your device.',
                 selected: _selected == 'ollama',
                 onTap: () => setState(() => _selected = 'ollama'),
-                colors: colors,
               ),
               const SizedBox(height: 8),
               _ProviderCard(
@@ -731,7 +778,6 @@ class _Page2ProviderState extends State<_Page2Provider> {
                 description: 'Connect your Gemini API key.',
                 selected: _selected == 'gemini',
                 onTap: () => setState(() => _selected = 'gemini'),
-                colors: colors,
               ),
               const SizedBox(height: 8),
               _ProviderCard(
@@ -740,22 +786,17 @@ class _Page2ProviderState extends State<_Page2Provider> {
                 description: 'Use your own compatible endpoint.',
                 selected: _selected == 'custom',
                 onTap: () => setState(() => _selected = 'custom'),
-                colors: colors,
               ),
-              const SizedBox(height: 24),
-              // Privacy note.
-              Row(
+              const SizedBox(height: 16),
+              const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.lock_outline, size: 14, color: colors.dim),
-                  const SizedBox(width: 6),
+                  Icon(Icons.lock_outline, size: 14, color: Color(0xFF6B7280)),
+                  SizedBox(width: 6),
                   Flexible(
                     child: Text(
                       'API keys stay in your system Keychain. Content is sent only to providers you connect.',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colors.dim,
-                        fontSize: 11,
-                      ),
+                      style: TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -777,7 +818,6 @@ class _ProviderCard extends StatelessWidget {
     required this.description,
     required this.selected,
     required this.onTap,
-    required this.colors,
     this.badge,
     this.detail,
   });
@@ -789,27 +829,25 @@ class _ProviderCard extends StatelessWidget {
   final String? detail;
   final bool selected;
   final VoidCallback onTap;
-  final _OnboardingColors colors;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: selected ? colors.indigoLight : colors.card,
+          color: selected ? const Color(0xFFEEF2FF) : Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? colors.indigo : colors.border,
+            color: selected ? const Color(0xFF4F46E5) : const Color(0xFFE5E7EB),
             width: selected ? 1.5 : 1,
           ),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 24, color: colors.indigo),
+            Icon(icon, size: 24, color: const Color(0xFF4F46E5)),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -820,23 +858,18 @@ class _ProviderCard extends StatelessWidget {
                       Flexible(
                         child: Text(
                           name,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       if (badge != null) ...[
-                        const SizedBox(width: 4),
+                        const SizedBox(width: 6),
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 1,
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                           decoration: BoxDecoration(
                             color: badge == 'Recommended'
-                                ? colors.indigo.withValues(alpha: 0.12)
-                                : colors.green.withValues(alpha: 0.12),
+                                ? const Color(0xFF4F46E5).withValues(alpha: 0.12)
+                                : const Color(0xFF10B981).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(3),
                           ),
                           child: Text(
@@ -845,8 +878,8 @@ class _ProviderCard extends StatelessWidget {
                               fontSize: 9,
                               fontWeight: FontWeight.w600,
                               color: badge == 'Recommended'
-                                  ? colors.indigo
-                                  : colors.green,
+                                  ? const Color(0xFF4F46E5)
+                                  : const Color(0xFF10B981),
                             ),
                           ),
                         ),
@@ -856,18 +889,13 @@ class _ProviderCard extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     description,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colors.dim,
-                    ),
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
                   ),
                   if (detail != null) ...[
                     const SizedBox(height: 4),
                     Text(
                       detail!,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colors.dim,
-                        fontSize: 11,
-                      ),
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
                     ),
                   ],
                 ],
@@ -878,9 +906,9 @@ class _ProviderCard extends StatelessWidget {
               height: 20,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: selected ? colors.indigo : Colors.transparent,
+                color: selected ? const Color(0xFF4F46E5) : Colors.transparent,
                 border: Border.all(
-                  color: selected ? colors.indigo : colors.border,
+                  color: selected ? const Color(0xFF4F46E5) : const Color(0xFFE5E7EB),
                   width: 2,
                 ),
               ),
@@ -899,15 +927,13 @@ class _ProviderCard extends StatelessWidget {
 // Page 3: Give access only when it helps
 // ---------------------------------------------------------------------------
 
-class _Page3Permissions extends StatelessWidget {
-  const _Page3Permissions({required this.colors, required this.isWide});
+class _Page3 extends StatelessWidget {
+  const _Page3({required this.isWide});
 
-  final _OnboardingColors colors;
   final bool isWide;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Center(
@@ -915,101 +941,87 @@ class _Page3Permissions extends StatelessWidget {
           constraints: BoxConstraints(maxWidth: isWide ? 640 : double.infinity),
           child: Column(
             children: [
-              const SizedBox(height: 24),
-              Text(
+              const SizedBox(height: 16),
+              const Text(
                 'Give access only when it helps.',
-                style: theme.textTheme.headlineMedium?.copyWith(
+                style: TextStyle(
+                  fontSize: 28,
                   fontWeight: FontWeight.w700,
-                  color: colors.text,
+                  color: Color(0xFF111827),
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-              Text(
+              const Text(
                 'Fa asks only when an action needs it. You can change access anytime.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colors.dim,
-                ),
+                style: TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 32),
-              // Permission cards.
+              const SizedBox(height: 24),
+              // Permission cards in a row on wide, stacked on narrow.
               if (isWide)
-                Row(
+                const Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(child: _PermissionCard(
                       icon: Icons.calendar_today,
                       title: 'Calendar & Reminders',
                       description: 'Check your schedule and create events.',
-                      colors: colors,
                     )),
-                    const SizedBox(width: 12),
+                    SizedBox(width: 12),
                     Expanded(child: _PermissionCard(
                       icon: Icons.notifications_outlined,
                       title: 'Notifications',
                       description: 'Send reminders and task updates.',
-                      colors: colors,
                     )),
-                    const SizedBox(width: 12),
+                    SizedBox(width: 12),
                     Expanded(child: _PermissionCard(
                       icon: Icons.mic_outlined,
                       title: 'Microphone',
                       description: 'Talk to Fa with your voice.',
-                      colors: colors,
                     )),
                   ],
                 )
               else ...[
-                _PermissionCard(
+                const _PermissionCard(
                   icon: Icons.calendar_today,
                   title: 'Calendar & Reminders',
                   description: 'Check your schedule and create events.',
-                  colors: colors,
                 ),
                 const SizedBox(height: 8),
-                _PermissionCard(
+                const _PermissionCard(
                   icon: Icons.notifications_outlined,
                   title: 'Notifications',
                   description: 'Send reminders and task updates.',
-                  colors: colors,
                 ),
                 const SizedBox(height: 8),
-                _PermissionCard(
+                const _PermissionCard(
                   icon: Icons.mic_outlined,
                   title: 'Microphone',
                   description: 'Talk to Fa with your voice.',
-                  colors: colors,
                 ),
               ],
               const SizedBox(height: 24),
-              // Bottom notes.
-              Row(
+              const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.check_circle_outline, size: 14, color: colors.green),
-                  const SizedBox(width: 6),
+                  Icon(Icons.check_circle_outline, size: 14, color: Color(0xFF10B981)),
+                  SizedBox(width: 6),
                   Text(
                     'Nothing is enabled by default.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colors.green,
-                      fontSize: 11,
-                    ),
+                    style: TextStyle(fontSize: 11, color: Color(0xFF10B981)),
                   ),
                 ],
               ),
               const SizedBox(height: 4),
-              Row(
+              const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.settings_outlined, size: 14, color: colors.dim),
-                  const SizedBox(width: 6),
+                  Icon(Icons.settings_outlined, size: 14, color: Color(0xFF6B7280)),
+                  SizedBox(width: 6),
                   Text(
                     'You can manage access anytime in Settings.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colors.dim,
-                      fontSize: 11,
-                    ),
+                    style: TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
                   ),
                 ],
               ),
@@ -1027,49 +1039,42 @@ class _PermissionCard extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.description,
-    required this.colors,
   });
 
   final IconData icon;
   final String title;
   final String description;
-  final _OnboardingColors colors;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colors.card,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.border),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 24, color: colors.indigo),
+          Icon(icon, size: 24, color: const Color(0xFF4F46E5)),
           const SizedBox(height: 8),
           Text(
             title,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 4),
           Text(
             description,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.dim,
-            ),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
           ),
           const SizedBox(height: 4),
-          Text(
+          const Text(
             'Ask when needed',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.indigo,
+            style: TextStyle(
               fontSize: 11,
+              color: Color(0xFF4F46E5),
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -1083,71 +1088,65 @@ class _PermissionCard extends StatelessWidget {
 // Page 4: Your sandbox is ready
 // ---------------------------------------------------------------------------
 
-class _Page4Ready extends StatelessWidget {
-  const _Page4Ready({required this.colors, required this.isWide});
+class _Page4 extends StatelessWidget {
+  const _Page4({required this.isWide});
 
-  final _OnboardingColors colors;
   final bool isWide;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Center(
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: isWide ? 720 : double.infinity),
+          constraints: BoxConstraints(maxWidth: isWide ? 900 : double.infinity),
           child: Column(
             children: [
-              const SizedBox(height: 24),
-              Text(
+              const SizedBox(height: 16),
+              const Text(
                 'Your sandbox is ready.',
-                style: theme.textTheme.headlineMedium?.copyWith(
+                style: TextStyle(
+                  fontSize: 28,
                   fontWeight: FontWeight.w700,
-                  color: colors.text,
+                  color: Color(0xFF111827),
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-              Text(
+              const Text(
                 'Use apps yourself, let Fa use them for you, or ask Fa to make something new.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colors.dim,
-                ),
+                style: TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
               if (isWide)
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: _buildTimeline(theme)),
-                    const SizedBox(width: 24),
-                    Expanded(child: _buildAppGrid(theme)),
+                    Expanded(child: _buildTimeline()),
+                    const SizedBox(width: 16),
+                    Expanded(child: _buildAppGrid()),
                   ],
                 )
               else ...[
-                _buildTimeline(theme),
-                const SizedBox(height: 16),
-                _buildAppGrid(theme),
+                _buildTimeline(),
+                const SizedBox(height: 12),
+                _buildAppGrid(),
               ],
               const SizedBox(height: 24),
-              // Suggested prompts.
-              Text(
+              const Text(
                 'Try these ideas to get started',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colors.dim,
-                ),
+                style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
               ),
               const SizedBox(height: 8),
-              Wrap(
+              const Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 alignment: WrapAlignment.center,
                 children: [
-                  _SuggestionPill(label: 'Plan my day', colors: colors),
-                  _SuggestionPill(label: 'Build a workout tracker', colors: colors),
-                  _SuggestionPill(label: 'Create an expense app', colors: colors),
+                  _SuggestionPill(label: 'Plan my day'),
+                  _SuggestionPill(label: 'Build a workout tracker'),
+                  _SuggestionPill(label: 'Create an expense app'),
                 ],
               ),
               const SizedBox(height: 24),
@@ -1158,46 +1157,41 @@ class _Page4Ready extends StatelessWidget {
     );
   }
 
-  Widget _buildTimeline(ThemeData theme) {
+  Widget _buildTimeline() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colors.card,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.border),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // "Focus Timer created" notification.
           Row(
             children: [
               Container(
                 width: 28,
                 height: 28,
-                decoration: BoxDecoration(
-                  color: colors.indigo,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF4F46E5),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.auto_awesome, size: 14, color: Colors.white),
               ),
               const SizedBox(width: 8),
-              Expanded(
+              const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Focus Timer created',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                     ),
                     Text(
                       'Fa built and added this app to your workspace.',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colors.dim,
-                      ),
+                      style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
                     ),
                   ],
                 ),
@@ -1205,42 +1199,40 @@ class _Page4Ready extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          // "You asked" / "Fa delivered" timeline.
-          _TimelineEntry(
+          const _TimelineEntry(
             icon: Icons.person_outline,
             label: 'You asked',
             text: 'Build a focus timer with work and break sessions.',
-            colors: colors,
           ),
           const SizedBox(height: 8),
-          _TimelineEntry(
+          const _TimelineEntry(
             icon: Icons.auto_awesome,
             label: 'Fa delivered',
             text: 'Focus Timer — 25/5 focus sessions with work and break cycles.',
-            colors: colors,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildAppGrid(ThemeData theme) {
+  Widget _buildAppGrid() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colors.card,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.border),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
+          const Text(
             'My Apps',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: colors.dim,
+            style: TextStyle(
+              fontSize: 12,
               fontWeight: FontWeight.w600,
+              color: Color(0xFF6B7280),
             ),
           ),
           const SizedBox(height: 12),
@@ -1248,19 +1240,59 @@ class _Page4Ready extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _MockAppTile(icon: Icons.timer_outlined, label: 'Focus Timer', colors: colors, badge: 'New'),
-              _MockAppTile(icon: Icons.wb_sunny_outlined, label: 'Weather', colors: colors),
-              _MockAppTile(icon: Icons.calendar_today, label: 'Calendar', colors: colors),
-              _MockAppTile(icon: Icons.folder_outlined, label: 'Files', colors: colors),
-              _MockAppTile(icon: Icons.note_outlined, label: 'Notes', colors: colors),
-              _MockAppTile(icon: Icons.map_outlined, label: 'Maps', colors: colors),
-              _MockAppTile(icon: Icons.calculate_outlined, label: 'Calc', colors: colors),
-              _MockAppTile(icon: Icons.settings_outlined, label: 'Settings', colors: colors),
-              _MockAppTile(icon: Icons.add, label: 'Create with Fa', colors: colors),
+              _appTile(Icons.timer_outlined, 'Focus Timer', badge: 'New'),
+              _appTile(Icons.wb_sunny_outlined, 'Weather'),
+              _appTile(Icons.calendar_today, 'Calendar'),
+              _appTile(Icons.folder_outlined, 'Files'),
+              _appTile(Icons.note_outlined, 'Notes'),
+              _appTile(Icons.map_outlined, 'Maps'),
+              _appTile(Icons.calculate_outlined, 'Calc'),
+              _appTile(Icons.settings_outlined, 'Settings'),
+              _appTile(Icons.add, 'Create with Fa'),
             ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _appTile(IconData icon, String label, {String? badge}) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Icon(icon, size: 20, color: const Color(0xFF6B7280)),
+            ),
+            if (badge != null)
+              Positioned(
+                top: -2,
+                right: -2,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4F46E5),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    badge,
+                    style: const TextStyle(fontSize: 8, color: Colors.white, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF6B7280))),
+      ],
     );
   }
 }
@@ -1270,21 +1302,18 @@ class _TimelineEntry extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.text,
-    required this.colors,
   });
 
   final IconData icon;
   final String label;
   final String text;
-  final _OnboardingColors colors;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 16, color: colors.dim),
+        Icon(icon, size: 16, color: const Color(0xFF6B7280)),
         const SizedBox(width: 8),
         Expanded(
           child: Column(
@@ -1292,16 +1321,15 @@ class _TimelineEntry extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colors.dim,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF6B7280),
                   fontWeight: FontWeight.w500,
                 ),
               ),
               Text(
                 text,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colors.text,
-                ),
+                style: const TextStyle(fontSize: 12, color: Color(0xFF111827)),
               ),
             ],
           ),
@@ -1312,26 +1340,25 @@ class _TimelineEntry extends StatelessWidget {
 }
 
 class _SuggestionPill extends StatelessWidget {
-  const _SuggestionPill({required this.label, required this.colors});
+  const _SuggestionPill({required this.label});
 
   final String label;
-  final _OnboardingColors colors;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: colors.card,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: colors.border),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: colors.dim)),
+          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
           const SizedBox(width: 4),
-          Icon(Icons.chevron_right, size: 14, color: colors.dim),
+          const Icon(Icons.chevron_right, size: 14, color: Color(0xFF6B7280)),
         ],
       ),
     );

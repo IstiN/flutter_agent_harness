@@ -39,6 +39,11 @@ void main() {
       required String model,
       String key = 'sk-x',
     }) async {
+      // Provider-first form: pick a provider (OpenRouter) to reveal the
+      // config fields, then fill them.
+      await tester.ensureVisible(find.text('OpenRouter'));
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
       await tester.enterText(find.widgetWithText(TextField, 'API key'), key);
       await tester.enterText(find.widgetWithText(TextField, 'Model id'), model);
       await _tapConnect(tester, 'Start chat');

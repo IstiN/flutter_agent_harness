@@ -228,10 +228,20 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: AgentSettingsForm(keysStore: store, onConnect: (_) async {}),
+            body: SingleChildScrollView(
+              child: AgentSettingsForm(
+                keysStore: store,
+                onConnect: (_) async {},
+              ),
+            ),
           ),
         ),
       );
+      // Provider-first: select OpenRouter to reveal the key field (its
+      // named key prefills from the store).
+      await tester.ensureVisible(find.text('OpenRouter'));
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
       final keyField = tester.widget<TextField>(
         find.widgetWithText(TextField, 'API key'),
       );
@@ -244,13 +254,18 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: AgentSettingsForm(
-              keysStore: SessionKeysStore.inMemory(),
-              onConnect: (_) async {},
+            body: SingleChildScrollView(
+              child: AgentSettingsForm(
+                keysStore: SessionKeysStore.inMemory(),
+                onConnect: (_) async {},
+              ),
             ),
           ),
         ),
       );
+      await tester.ensureVisible(find.text('OpenRouter'));
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
       final keyField = tester.widget<TextField>(
         find.widgetWithText(TextField, 'API key'),
       );

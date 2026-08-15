@@ -59,10 +59,9 @@ TextField _field(WidgetTester tester, String label) {
   return tester.widget<TextField>(find.widgetWithText(TextField, label));
 }
 
-/// Opens the provider dropdown and picks the entry labelled [label].
+/// Picks the provider row labelled [label] in the provider-first list.
 Future<void> _selectProvider(WidgetTester tester, String label) async {
-  await tester.tap(find.byType(DropdownButtonFormField<Object>));
-  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.text(label).last);
   await tester.tap(find.text(label).last);
   await tester.pumpAndSettle();
 }
@@ -259,11 +258,9 @@ void main() {
       await tester.pumpWidget(const MyApp());
 
       expect(find.text('Connect to Fa'), findsOneWidget);
-      // The closed picker shows the default selection; opening it lists all
-      // built-in presets.
-      expect(find.text('Provider'), findsOneWidget);
+      // The provider-first list shows the built-in presets directly.
       expect(find.text('OpenRouter'), findsOneWidget);
-      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.tap(find.text('OpenRouter').first);
       await tester.pumpAndSettle();
       expect(find.text('Ollama'), findsOneWidget);
       expect(find.text('Custom'), findsOneWidget);
@@ -296,6 +293,11 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(const MyApp());
+      // Provider-first form: reveal the OpenRouter fields by picking it.
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('OpenRouter').first);
+      await tester.tap(find.text('OpenRouter').first);
+      await tester.pumpAndSettle();
 
       final url = _field(tester, 'Base URL');
       expect(url.enabled, isFalse);
@@ -362,7 +364,7 @@ void main() {
     testWidgets('host build hides the WebLLM provider row', (tester) async {
       await tester.pumpWidget(const MyApp());
 
-      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.tap(find.text('OpenRouter').first);
       await tester.pumpAndSettle();
 
       // WebLLM is web-only; its stub is not selectable on host platforms.
@@ -375,6 +377,11 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      // Reveal the default provider's fields first (provider-first form).
+      await tester.ensureVisible(find.text('OpenRouter').first);
+      await tester.tap(find.text('OpenRouter').first);
+      await tester.pumpAndSettle();
 
       await tester.enterText(
         find.widgetWithText(TextField, 'Model id'),
@@ -496,8 +503,8 @@ void main() {
         'https://acme.example/v1',
       );
       expect(_field(tester, 'Model id').controller!.text, 'acme-1');
-      // Custom providers offer edit; deletion lives in the editor page.
-      expect(find.text('Edit'), findsOneWidget);
+      // Custom providers offer edit (icon); deletion lives in the editor.
+      expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
       expect(find.text('Delete'), findsNothing);
       expect(
         find.textContaining(
@@ -641,7 +648,8 @@ void main() {
       await _pumpForm(tester, registry);
       await _selectProvider(tester, 'Acme');
 
-      await tester.tap(find.text('Edit'));
+      await tester.ensureVisible(find.byIcon(Icons.edit_outlined));
+      await tester.tap(find.byIcon(Icons.edit_outlined));
       await tester.pumpAndSettle();
       expect(
         tester.widget<TextField>(_editorField('Name')).controller!.text,
@@ -668,7 +676,8 @@ void main() {
       await _selectProvider(tester, 'Acme');
 
       // Deletion lives in the full-screen editor page.
-      await tester.tap(find.text('Edit'));
+      await tester.ensureVisible(find.byIcon(Icons.edit_outlined));
+      await tester.tap(find.byIcon(Icons.edit_outlined));
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
       await tester.tap(find.text('Delete'));
@@ -684,7 +693,7 @@ void main() {
       expect(find.text('Delete'), findsNothing);
 
       // And it is gone from the picker entries too.
-      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.tap(find.text('OpenRouter').first);
       await tester.pumpAndSettle();
       expect(find.text('Acme'), findsNothing);
       expect(find.text('Ollama'), findsOneWidget);
@@ -703,13 +712,18 @@ void main() {
       await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.settings_outlined));
+      // The chat-bar gear is gone (settings open from the launcher
+      // sidebar); exercise the screen directly, as the sidebar push does.
+      await tester.pumpWidget(
+        MaterialApp(home: SettingsScreen(service: service)),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('Settings'), findsOneWidget);
-      // Providers first, then the default chat model.
+      // Providers first, then the default chat model. The section lists
+      // saved providers + Add provider (hosted presets live in the model
+      // picker now).
       expect(find.text('Providers'), findsOneWidget);
-      expect(find.text('OpenRouter'), findsOneWidget);
       expect(find.text('Add provider'), findsOneWidget);
       expect(find.text('Default chat model'), findsOneWidget);
       expect(find.text('test-model · example.com'), findsOneWidget);
@@ -721,31 +735,39 @@ void main() {
       );
     });
 
-    testWidgets('a hosted provider without a key fails validation on apply', (
+    testWidgets('a registry provider without a key fails validation', (
       tester,
     ) async {
       final service = _fakeService();
       await service.initialize();
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
       final manager = FlutterSessionManager(
         env: MemoryExecutionEnv(),
         sessionsRoot: '/sessions',
       )..addSession('fake-session', service);
       await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
-
-      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpWidget(
+        MaterialApp(home: SettingsScreen(service: service, registry: registry)),
+      );
       await tester.pumpAndSettle();
 
-      // The default-chat-model flow: pick Ollama (hosted, key required)…
+      // Open the default-chat-model picker; the registry provider's entry
+      // carries no key → apply surfaces the validation error.
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Ollama'));
+      await tester.pump(const Duration(milliseconds: 100));
       await tester.pumpAndSettle();
-      // …and apply without a saved key.
-      await tester.tap(find.text('Apply'));
-      await tester.pump();
+      await tester.tap(find.textContaining('acme-1', findRichText: true));
+      await tester.pumpAndSettle();
 
-      expect(find.text('API key is required'), findsOneWidget);
+      // Not applied — still on the settings screen.
+      expect(service.modelId, 'test-model');
     });
 
     testWidgets('applying a picked model saves the last connection', (
@@ -769,7 +791,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpWidget(
+        MaterialApp(home: SettingsScreen(service: service)),
+      );
       await tester.pumpAndSettle();
 
       // Add a keyless local provider through the Providers section.
@@ -788,20 +812,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Local'), findsOneWidget);
 
-      // The default-chat-model flow: pick the provider, apply its model.
+      // The default-chat-model flow: the unified picker lists every
+      // provider's models; pick Local's entry to apply it.
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Local'));
+      await tester.pump(const Duration(milliseconds: 100));
       await tester.pumpAndSettle();
-      // The provider's model id prefills the model page.
-      expect(
-        tester
-            .widget<TextField>(find.widgetWithText(TextField, 'Model id'))
-            .controller!
-            .text,
-        'llama3',
-      );
-      await tester.tap(find.text('Apply'));
+      await tester.enterText(find.byType(TextField), 'llama');
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('llama3', findRichText: true));
       await tester.pumpAndSettle();
 
       // Back on the settings screen; the connection was reconfigured and
@@ -864,7 +883,7 @@ void main() {
       setPlatform(TargetPlatform.linux);
       await tester.pumpWidget(const MyApp());
 
-      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.tap(find.text('OpenRouter').first);
       await tester.pumpAndSettle();
       expect(find.text('On-device (Gemma)'), findsNothing);
       // WebLLM is web-only and hidden on host platforms.
@@ -974,7 +993,7 @@ void main() {
     ) async {
       await _pumpForm(tester, ProviderRegistry.inMemory(), isWeb: true);
 
-      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.tap(find.text('OpenRouter').first);
       await tester.pumpAndSettle();
       expect(find.text('On-device (Gemma, transformers.js)'), findsOneWidget);
       expect(find.text('On-device (Gemma)'), findsNothing);
@@ -988,7 +1007,7 @@ void main() {
     ) async {
       await tester.pumpWidget(const MyApp());
 
-      await tester.tap(find.byType(DropdownButtonFormField<Object>));
+      await tester.tap(find.text('OpenRouter').first);
       await tester.pumpAndSettle();
       expect(find.text('On-device (Gemma, transformers.js)'), findsNothing);
       expect(find.text('On-device (Gemma)'), findsOneWidget);

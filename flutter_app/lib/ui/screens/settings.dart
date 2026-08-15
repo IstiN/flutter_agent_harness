@@ -478,6 +478,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _lastDefaultModel = provider.modelId;
     _staleModelNote = null;
     _error = null;
+    // Selecting a provider reveals its config fields (provider-first flow).
+    _showProviderListOnly = false;
   }
 
   /// Pre-selects the provider/model of the last successful connection (see
@@ -1014,7 +1016,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             child: TextButton.icon(
               onPressed: () => setState(() => _showProviderListOnly = true),
               icon: const Icon(Icons.arrow_back, size: 16),
-              label: const Text('Change provider'),
+              label: const Text('Change provider'), // l10n:ignore — prototype redesign ships en-only copy for now
               style: TextButton.styleFrom(
                 padding: EdgeInsets.zero,
                 minimumSize: Size.zero,

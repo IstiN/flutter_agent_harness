@@ -763,7 +763,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.byIcon(Icons.auto_awesome));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
@@ -817,7 +817,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.byIcon(Icons.auto_awesome));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
@@ -852,7 +852,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.byIcon(Icons.auto_awesome));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
@@ -895,7 +895,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.byIcon(Icons.auto_awesome));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
@@ -928,7 +928,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.byIcon(Icons.auto_awesome));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();

@@ -181,7 +181,7 @@ void main() {
     // Only the successful generate_image tile gets an inline image — the
     // error tile has no path and other tools are never sniffed.
     expect(_memoryImages(), findsOneWidget);
-    expect(find.text('[ generate_image ]'), findsNWidgets(2));
+    expect(find.textContaining('Generated Image'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
 
     await tester.tap(_memoryImages());

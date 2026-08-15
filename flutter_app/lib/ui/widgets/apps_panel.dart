@@ -1,3 +1,4 @@
+// l10n:ignore-file — prototype redesign ships en-only copy for now
 import 'dart:async';
 
 import 'package:fa/apps/app_icon.dart';
@@ -140,7 +141,7 @@ class _AppsPanelState extends State<AppsPanel> {
       // silently doing nothing.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Connect to a provider first to open apps.'),
+          content: Text('Connect to a provider first to open apps.'), // l10n:ignore — prototype redesign ships en-only copy for now
           duration: Duration(seconds: 2),
         ),
       );

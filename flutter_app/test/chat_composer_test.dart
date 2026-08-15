@@ -95,7 +95,7 @@ Future<void> _pumpComposer(WidgetTester tester, AgentService service) async {
 Future<void> _typeAndSend(WidgetTester tester, String text) async {
   await tester.enterText(find.byType(TextField), text);
   await tester.pump();
-  await tester.tap(find.byIcon(Icons.send));
+  await tester.tap(find.byIcon(Icons.arrow_upward));
   await tester.pump();
 }
 

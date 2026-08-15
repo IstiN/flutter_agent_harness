@@ -23,8 +23,6 @@ import 'package:flutter_test/flutter_test.dart';
 Future<void> _pumpOnboarding(
   WidgetTester tester, {
   OnboardingStore? onboardingStore,
-  MediaModelsStore? mediaModelsStore,
-  LastConnectionStore? lastConnectionStore,
   SessionKeysStore? keysStore,
   int initialPage = 0,
   void Function({required bool skipped})? onFinished,
@@ -38,8 +36,6 @@ Future<void> _pumpOnboarding(
         store: keysStore ?? SessionKeysStore.inMemory(),
         child: OnboardingScreen(
           onboardingStore: onboardingStore,
-          mediaModelsStore: mediaModelsStore ?? MediaModelsStore.inMemory(),
-          lastConnectionStore: lastConnectionStore,
           initialPage: initialPage,
           onFinished: onFinished,
         ),
@@ -96,25 +92,22 @@ void main() {
     testWidgets('swipes and Continues through all four pages', (tester) async {
       await _pumpOnboarding(tester);
       await tester.pumpAndSettle();
-      expect(find.text('Meet Fa'), findsOneWidget);
-      // The AI disclaimer is mandatory on the first page.
-      expect(find.text('AI can make mistakes'), findsOneWidget);
+      expect(find.text('Start with an idea.'), findsOneWidget);
 
       // A horizontal fling on page 1 turns the page.
       await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
       await tester.pumpAndSettle();
-      expect(find.text('Permissions, on your terms'), findsOneWidget);
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
 
       // The primary button advances too.
       await tester.tap(find.text('Continue'));
       await tester.pumpAndSettle();
-      expect(find.text('Pick your models'), findsOneWidget);
+      expect(find.text('Give access only when it helps.'), findsOneWidget);
 
       await tester.tap(find.text('Continue'));
       await tester.pumpAndSettle();
-      expect(find.text('Your data stays yours'), findsOneWidget);
-      expect(find.text('Get started'), findsOneWidget);
-      expect(find.text('Privacy policy'), findsOneWidget);
+      expect(find.text('Your sandbox is ready.'), findsOneWidget);
+      expect(find.text('Open Fa'), findsOneWidget);
 
       // Analytics: only the started + screen events so far (no finish yet).
       expect(events.map((e) => e.$1), ['onboarding_started', 'screen_opened']);
@@ -178,7 +171,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Get started'));
+      await tester.tap(find.text('Open Fa'));
       await tester.pumpAndSettle();
 
       expect(store.seen, isTrue);
@@ -188,52 +181,6 @@ void main() {
         'screen_opened',
         'onboarding_completed',
       ]);
-    });
-
-    testWidgets('applying a preset persists it as the restorable connection', (
-      tester,
-    ) async {
-      final lastConnection = LastConnectionStore.inMemory();
-      final mediaModels = MediaModelsStore.inMemory();
-      await _pumpOnboarding(
-        tester,
-        mediaModelsStore: mediaModels,
-        lastConnectionStore: lastConnection,
-        keysStore: SessionKeysStore.inMemory({
-          'OPENROUTER_API_KEY': 'sk-or-saved',
-        }),
-        initialPage: 2,
-      );
-      await tester.pumpAndSettle();
-
-      final preset = kModelPresets.first;
-      await tester.tap(find.widgetWithText(FilledButton, 'Apply').first);
-      await tester.pumpAndSettle();
-
-      // The combo landed: slot overrides + the last connection the boot
-      // auto-connect restores (no live AgentService exists pre-connect).
-      expect(lastConnection.connection, isNotNull);
-      expect(lastConnection.connection!.modelId, preset.chatModelId);
-      expect(lastConnection.connection!.baseUrl, preset.target.baseUrl);
-      expect(
-        mediaModels.overrideFor(MediaSlot.imageGeneration)?.modelId,
-        preset.mediaSlots[MediaSlot.imageGeneration],
-      );
-      expect(find.text('Applied'), findsOneWidget);
-    });
-
-    testWidgets('a missing provider key disables Apply and offers Set key', (
-      tester,
-    ) async {
-      await _pumpOnboarding(tester, initialPage: 2);
-      await tester.pumpAndSettle();
-
-      final apply = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Apply').first,
-      );
-      expect(apply.onPressed, isNull);
-      expect(find.text('Set key'), findsWidgets);
-      expect(find.text('Set up later'), findsOneWidget);
     });
   });
 

@@ -1,3 +1,4 @@
+// l10n:ignore-file — SSO flow screens — en-only by design (EPAM-internal tooling)
 import 'dart:async';
 import 'dart:io' show Platform;
 

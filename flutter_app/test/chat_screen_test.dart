@@ -110,14 +110,12 @@ void main() {
       expect(find.byType(FileBrowser), findsNothing);
     });
 
-    testWidgets('wide: settings gear opens settings mid-chat; applying '
-        'switches the backend and keeps the transcript', (tester) async {
+    testWidgets('wide: no settings gear in the chat bar (sidebar owns it)',
+        (tester) async {
       _useWideSurface(tester);
       final env = MemoryExecutionEnv();
       final service = _fakeService(env);
       await service.initialize();
-      // The agent loop consumes its event stream on the real event loop,
-      // which the widget test's fake zone only drives inside runAsync.
       await tester.runAsync(() async {
         await service.sendText('hello');
         await service.waitForIdle();
@@ -125,55 +123,21 @@ void main() {
 
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
         ..addSession('fake-session', service);
-      final registry = ProviderRegistry.inMemory();
-      await registry.add(
-        name: 'Acme',
-        baseUrl: 'https://acme.example/v1',
-        modelId: 'acme-1',
-      );
       await tester.pumpWidget(
-        MaterialApp(
-          home: ChatScreen(manager: manager, registry: registry),
-        ),
+        MaterialApp(home: ChatScreen(manager: manager)),
       );
       await tester.pumpAndSettle();
 
-      // The gear opens the connection settings mid-chat.
-      await tester.tap(find.byTooltip('Connection settings'));
-      await tester.pumpAndSettle();
-      expect(find.text('Settings'), findsOneWidget);
-
-      // The default-chat-model flow (the current backend shows in the
-      // settings list): pick the provider, enter a model, apply (keyless
-      // custom endpoint — no key needed).
-      await tester.tap(find.text('test-model · example.com'));
-      await tester.pumpAndSettle();
-      // The provider name shows in both the settings summary behind and the
-      // picker page on top — the top-most page is LAST in the tree.
-      await tester.tap(find.text('Acme').last);
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Model id'),
-        'new-model-2',
-      );
-      await tester.tap(find.text('Apply'));
-      await tester.pumpAndSettle();
-
-      // The backend switched…
-      expect(service.providerKind, 'openai-completions');
-      expect(service.modelId, 'new-model-2');
-      // …the flow returned to the settings screen…
-      expect(find.text('Settings'), findsOneWidget);
-      // …and back in the chat the visible transcript survived.
-      await tester.pageBack();
-      await tester.pumpAndSettle();
+      // The chat-bar gear is gone by design: settings open from the
+      // sidebar nav / apps panel. Files and copy remain app-bar actions.
+      expect(find.byTooltip('Connection settings'), findsNothing);
+      expect(find.byTooltip('Files'), findsOneWidget);
       expect(service.messages, hasLength(2));
       expect(service.messages[0].content, 'hello');
     });
 
     testWidgets(
-      'narrow: settings screen opens from the gear and fits a phone screen '
-      'without overflow',
+      'narrow: no settings gear; the chat bar fits a phone without overflow',
       (tester) async {
         tester.view.devicePixelRatio = 1.0;
         tester.view.physicalSize = const Size(390, 844);
@@ -185,12 +149,7 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        await tester.tap(find.byTooltip('Connection settings'));
-        await tester.pumpAndSettle();
-
-        expect(find.text('Settings'), findsOneWidget);
-        expect(find.byType(SettingsScreen), findsOneWidget);
-        expect(find.byType(AlertDialog), findsNothing);
+        expect(find.byTooltip('Connection settings'), findsNothing);
         // A RenderFlex overflow would throw here.
         expect(tester.takeException(), isNull);
       },

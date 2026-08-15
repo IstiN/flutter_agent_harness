@@ -16,6 +16,11 @@ import 'package:test/test.dart';
 
 /// Tracked files that legitimately carry no AppAnalytics call, and why.
 const _documentedExemptions = <String, String>{
+  'lib/ui/screens/codemie_sso_webview.dart':
+      'Fallback-only WebView (the primary iOS SSO path is '
+      'ASWebAuthenticationSession in codemie_sso_flow.dart, which carries '
+      'the analytics); shown only when the system session cannot start — '
+      'no meaningful user path to track.',
   'lib/ui/widgets/chat_composer.dart':
       'Adapter shim — the composer lives in packages/fa_ui; messageSent/'
       'uploadAdded/voiceInputUsed fire via FaChatHost.track, routed into '

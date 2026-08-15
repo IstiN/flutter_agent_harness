@@ -123,7 +123,7 @@ void main() {
     // `[ name ]` tiles, system rows as `$ …` shell lines.
     expect(find.textContaining('make it purple'), findsOneWidget);
     expect(find.textContaining('weighing purples'), findsOneWidget);
-    expect(find.text('[ edit ]'), findsOneWidget);
+    expect(find.textContaining('Patched'), findsOneWidget);
     expect(find.text('patched widget.js'), findsOneWidget);
     expect(
       find.textContaining('[edit] widget.js', findRichText: true),
