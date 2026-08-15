@@ -133,6 +133,11 @@ extension AgentCliAgentExt on AgentCli {
     if (!_useTui || _tuiController == null) return;
     _tuiController!.openPicker('agentAction', 'agent $id', [
       MenuItem(
+        key: 'open:$id',
+        label: 'Open session',
+        description: 'switch into this agent\'s session (/sessions to go back)',
+      ),
+      MenuItem(
         key: 'send:$id',
         label: 'Send message',
         description: 'steer / resume this agent',
@@ -163,7 +168,27 @@ extension AgentCliAgentExt on AgentCli {
     if (key == 'back') return _agentsTreePanel();
     if (key.startsWith('send:')) {
       await _askAndSendSubagent(key.substring(5));
+      return;
     }
+    if (key.startsWith('open:')) {
+      await _openSubagentSession(key.substring(5));
+    }
+  }
+
+  /// Switches the CLI session into the child's session (Variant B "select"):
+  /// the user watches the subagent's transcript live and returns to the
+  /// parent with `/sessions` or `/resume`.
+  Future<void> _openSubagentSession(String id) async {
+    final handle = _subagentManager[id];
+    final session = handle == null
+        ? null
+        : await _openChildSession(handle.sessionId);
+    if (handle == null || session == null) {
+      io.writeln('cannot open session for "$id" (unavailable)');
+      return;
+    }
+    final metadata = await session.getMetadata();
+    await _switchToMetadata(metadata, 'subagent ${handle.agentType}:$id');
   }
 
   /// The send flow of the child action picker: prompt for the message and
