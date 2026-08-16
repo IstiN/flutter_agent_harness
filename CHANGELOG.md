@@ -1039,4 +1039,8 @@
 - fix(memory): inject the <memory> section into the system prompt (CLI + app)
 - test(cli): drop flaky real-model live badge visual test (unit-covered badge logic); document why
 
+## 0.1.182
+
+- test(messaging): drop unused import (dart analyze warning)
+
 ## Unreleased
