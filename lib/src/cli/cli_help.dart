@@ -376,6 +376,10 @@ TERMINAL
   everywhere (hold your terminal's bypass modifier — Shift in most — to
   be sure). FA_TUI_MOUSE=1 switches to mouse capture for wheel scrolling
   instead.
+  While a run streams, Enter queues the message (❯ rows above the input);
+  ↑ pops the last queued message back for editing. With an empty input
+  ↑/↓ browses the submitted-message history (shell-style); PgUp/PgDn
+  scrolls the transcript.
 
 CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,

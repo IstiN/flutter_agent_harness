@@ -715,6 +715,106 @@ void main() {
     });
   });
 
+  group('input history (submitted messages)', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    FaTuiModel type(FaTuiModel model, String text) {
+      var m = model;
+      for (final ch in text.split('')) {
+        m = send(m, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
+      }
+      return m;
+    }
+
+    FaTuiModel submit(FaTuiModel model, String text) {
+      var m = type(model, text);
+      return send(m, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+    }
+
+    test('up/down cycles submitted messages, past-newest restores empty', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = submit(model, 'first message');
+      model = submit(model, 'second message');
+      expect(model.inputHistory, ['first message', 'second message']);
+      expect(model.inputText, '');
+
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.inputText, 'second message');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.inputText, 'first message');
+      // Oldest reached — another up stays.
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.inputText, 'first message');
+
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      expect(model.inputText, 'second message');
+      // Past the newest: back to the (empty) draft, browsing exited.
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      expect(model.inputText, '');
+      expect(model.historyIndex, -1);
+    });
+
+    test('editing a recalled entry exits browsing', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = submit(model, 'recall me');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.historyIndex, 0);
+      model = type(model, '!');
+      expect(model.historyIndex, -1);
+      expect(model.inputText, 'recall me!');
+    });
+
+    test('the message queue pop wins over history browsing', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = submit(model, 'older message');
+      expect(model.inputHistory, ['older message']);
+      // Now a run streams and a message waits in the queue…
+      model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+      model = type(model, 'queued one');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      expect(model.queue, ['queued one']);
+      // ↑ pops the queued message back for editing — NOT the history entry.
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.inputText, 'queued one');
+      expect(model.queue, isEmpty);
+      expect(model.historyIndex, -1);
+    });
+
+    test('slash commands are not recorded in history', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = submit(model, 'a real message');
+      // Type a slash command, close the completion menu, submit via Ctrl+S.
+      model = type(model, '/session');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
+      model = send(
+        model,
+        KeyPressMsg(
+          const TeaKey(code: KeyCode.rune, text: 's', modifiers: {KeyMod.ctrl}),
+        ),
+      );
+      expect(model.inputHistory, ['a real message']);
+    });
+
+    test('steered messages are recorded in history', () async {
+      final steered = <List<String>>[];
+      var model =
+          FaTuiModel(
+                callbacks: callbacks(steered: steered),
+                isExited: () => false,
+              ).update(BusyMsg(true)).$1
+              as FaTuiModel;
+      model = type(model, 'steer this');
+      final result = model.update(
+        KeyPressMsg(
+          const TeaKey(code: KeyCode.rune, text: 's', modifiers: {KeyMod.ctrl}),
+        ),
+      );
+      await result.$2?.call();
+      model = result.$1 as FaTuiModel;
+      expect(model.inputHistory, ['steer this']);
+    });
+  });
+
   group('follow latch (auto-scroll)', () {
     FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
 

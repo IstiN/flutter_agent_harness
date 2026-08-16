@@ -165,6 +165,10 @@ final class _WrapCache {
 }
 
 /// The dart_tui model backing the Fa interactive REPL.
+/// Sentinel for nullable copyWith fields (distinguishes "keep" from "set
+/// null").
+const Object _unset = Object();
+
 final class FaTuiModel extends Model {
   FaTuiModel({
     required this.callbacks,
@@ -193,6 +197,9 @@ final class FaTuiModel extends Model {
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
     this.queue = const [],
+    this.inputHistory = const [],
+    this.historyIndex = -1,
+    this.historyDraft,
     this.frameNonce = 0,
   });
 
@@ -275,6 +282,18 @@ final class FaTuiModel extends Model {
   /// ↑ pops the last one back into the input, Ctrl+S steers them into the
   /// running agent, and the host drains them as separate turns afterwards.
   final List<String> queue;
+
+  /// Submitted non-empty lines, oldest first (shell-style input history).
+  /// Slash and bang commands are not recorded — ↑ recalls MESSAGES.
+  final List<String> inputHistory;
+
+  /// The browsed history index, or -1 when editing fresh text (not
+  /// browsing). Any edit resets it to -1.
+  final int historyIndex;
+
+  /// The input stashed when history browsing started, restored when the
+  /// user browses back down past the newest entry.
+  final String? historyDraft;
 
   /// Monotonic frame counter, bumped by every `copyWith` (i.e. every model
   /// change). The view mixes it into the cursor line's invisible SGR suffix
@@ -448,6 +467,9 @@ final class FaTuiModel extends Model {
     int? stickyIndex,
     int? stickyEchoLineCount,
     List<String>? queue,
+    List<String>? inputHistory,
+    int? historyIndex,
+    Object? historyDraft = _unset,
   }) {
     final copy = FaTuiModel(
       callbacks: callbacks,
@@ -476,6 +498,11 @@ final class FaTuiModel extends Model {
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
       queue: queue ?? this.queue,
+      inputHistory: inputHistory ?? this.inputHistory,
+      historyIndex: historyIndex ?? this.historyIndex,
+      historyDraft: historyDraft == _unset
+          ? this.historyDraft
+          : historyDraft as String?,
       // Every copy is a new model state: bump the frame nonce so the view's
       // cursor line always differs after a change (see [frameNonce]).
       frameNonce: frameNonce + 1,
@@ -940,13 +967,32 @@ final class FaTuiModel extends Model {
   }
 
   /// Normal-mode arrow scroll keys (↑/↓); null when the key belongs to
-  /// another cluster.
+  /// another cluster. With an empty input ↑ first pops the message queue,
+  /// then browses the submitted-message history (shell-style); ↓ walks it
+  /// back. Viewport scrolling lives on PgUp/PgDn (and the mouse wheel when
+  /// capture is on).
   (Model, Cmd?)? _handleArrowScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'up':
+        // Browsing: step to the older entry (stop at the oldest).
+        if (historyIndex != -1) {
+          if (historyIndex > 0) {
+            final index = historyIndex - 1;
+            final entry = inputHistory[index];
+            return (
+              copyWith(
+                historyIndex: index,
+                inputText: entry,
+                cursor: entry.length,
+              ),
+              null,
+            );
+          }
+          return (this, null);
+        }
         if (inputText.isEmpty) {
           // With a non-empty queue, ↑ pops the last queued message back into
-          // the input for editing (kimi-cli); otherwise it scrolls.
+          // the input for editing (kimi-cli).
           if (queue.isNotEmpty) {
             final popped = queue.last;
             return (
@@ -958,10 +1004,50 @@ final class FaTuiModel extends Model {
               null,
             );
           }
+          // Then the submitted-message history.
+          if (inputHistory.isNotEmpty) {
+            final index = inputHistory.length - 1;
+            final entry = inputHistory[index];
+            return (
+              copyWith(
+                historyIndex: index,
+                historyDraft: '',
+                inputText: entry,
+                cursor: entry.length,
+              ),
+              null,
+            );
+          }
           return (_scrolledTo(scrollOffset - 1), null);
         }
         return (this, null);
       case 'down':
+        // Browsing: step to the newer entry; past the newest restores the
+        // (empty) draft.
+        if (historyIndex != -1) {
+          if (historyIndex < inputHistory.length - 1) {
+            final index = historyIndex + 1;
+            final entry = inputHistory[index];
+            return (
+              copyWith(
+                historyIndex: index,
+                inputText: entry,
+                cursor: entry.length,
+              ),
+              null,
+            );
+          }
+          final draft = historyDraft ?? '';
+          return (
+            copyWith(
+              historyIndex: -1,
+              historyDraft: null,
+              inputText: draft,
+              cursor: draft.length,
+            ),
+            null,
+          );
+        }
         if (inputText.isEmpty) {
           return (_scrolledTo(scrollOffset + 1), null);
         }
@@ -1037,10 +1123,19 @@ final class FaTuiModel extends Model {
   /// Normal-mode text-editing keys (deletion and character insert); catches
   /// every key the other clusters did not claim.
   (Model, Cmd?) _handleEditKey(KeyMsg msg) {
-    return _handleBackspaceKey(msg) ??
+    final result =
+        _handleBackspaceKey(msg) ??
         _handleKillKey(msg) ??
         _handleDeleteKey(msg) ??
         _handleCharInsertKey(msg);
+    // Any real edit exits history browsing (the recalled entry becomes the
+    // new draft).
+    if (historyIndex == -1) return result;
+    final (model, cmd) = result;
+    return (
+      (model as FaTuiModel).copyWith(historyIndex: -1, historyDraft: null),
+      cmd,
+    );
   }
 
   /// Normal-mode backspace; null when the key belongs to another cluster.
@@ -1378,6 +1473,17 @@ final class FaTuiModel extends Model {
       );
     }
     final echoed = _echoAppend(outputLines, inputText);
+    // Shell-style input history: plain messages only (no slash/bang
+    // commands), consecutive duplicates collapsed, capped at 100.
+    final recordable =
+        text.isNotEmpty && !text.startsWith('/') && !text.startsWith('!');
+    var history = inputHistory;
+    if (recordable && (inputHistory.isEmpty || inputHistory.last != text)) {
+      history = [...inputHistory, text];
+      if (history.length > 100) {
+        history = history.sublist(history.length - 100);
+      }
+    }
     // The pinned echo for long answers (Copilot-style): rule + the first
     // input line, truncated to the width with a dim ellipsis marking any
     // remainder — a multi-line message or one simply longer than a row
@@ -1389,6 +1495,9 @@ final class FaTuiModel extends Model {
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
+      inputHistory: history,
+      historyIndex: -1,
+      historyDraft: null,
       outputLines: echoed,
       stickyLines: [rule, '$bg$shown$reset$more'],
       stickyIndex: outputLines.length,
@@ -1437,10 +1546,24 @@ final class FaTuiModel extends Model {
       _dim('⤷ steered into the running turn — esc aborts'),
       true,
     );
+    // Steered messages are sent for real — they join the input history.
+    var history = inputHistory;
+    for (final message in messages) {
+      if (message.startsWith('/') || message.startsWith('!')) continue;
+      if (history.isEmpty || history.last != message) {
+        history = [...history, message];
+      }
+    }
+    if (history.length > 100) {
+      history = history.sublist(history.length - 100);
+    }
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
       queue: const [],
+      inputHistory: history,
+      historyIndex: -1,
+      historyDraft: null,
       outputLines: lines,
     );
     return (
