@@ -52,7 +52,7 @@ final class MediaSlotEditorResult {
 class MediaSlotProviderPickerPage extends StatelessWidget {
   const MediaSlotProviderPickerPage({
     super.key,
-    required this.slot,
+    this.slot,
     required this.title,
     this.initial,
     this.mainBaseUrl = '',
@@ -60,8 +60,10 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     this.modelsFetcher,
   });
 
-  /// The media slot being configured ([MediaSlot] name).
-  final String slot;
+  /// The media slot being configured ([MediaSlot] name); null for the
+  /// generic provider→model flow (agent/task roles): the model page then
+  /// skips the slot-specific extras (voice field, capability chips).
+  final String? slot;
 
   /// App bar title (`Edit Image generation`).
   final String title;
@@ -251,7 +253,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
 class MediaSlotModelPage extends StatefulWidget {
   const MediaSlotModelPage({
     super.key,
-    required this.slot,
+    this.slot,
     required this.provider,
     this.registry,
     this.initialModel = '',
@@ -259,8 +261,11 @@ class MediaSlotModelPage extends StatefulWidget {
     this.modelsFetcher,
   });
 
-  /// The media slot being configured ([MediaSlot] name).
-  final String slot;
+  /// The media slot being configured ([MediaSlot] name); null for the
+  /// generic provider→model flow (agent/task roles) — no voice field, no
+  /// capability chips, and the saved override carries the dial-aware
+  /// provider kind.
+  final String? slot;
 
   /// The picked provider: a hosted [ProviderPreset] or a [CustomProvider].
   final Object provider;
@@ -390,8 +395,12 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// The media capabilities the fetched model ids suggest, in [MediaSlot.all]
   /// order. Empty when nothing was fetched or nothing matched — the hints
   /// stay hidden rather than claiming "no support".
+  /// The media capabilities the fetched model ids suggest, in [MediaSlot.all]
+  /// order. Empty when nothing was fetched or nothing matched — the hints
+  /// stay hidden rather than claiming "no support". Always empty in the
+  /// generic role flow (no slot).
   List<String> get _suggestedCapabilities {
-    if (_endpointModels.isEmpty) return const [];
+    if (widget.slot == null || _endpointModels.isEmpty) return const [];
     bool suggests(String slot, String id) {
       if (slot == MediaSlot.vision) return modelIdSuggestsVision(id);
       final markers = _capabilityMarkers[slot];
@@ -426,7 +435,13 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
     Navigator.of(context).pop(
       MediaSlotEditorResult.save(
         MediaSlotOverride(
-          providerKind: 'openai-completions',
+          // Media tools speak the OpenAI dialect; the generic role flow
+          // (slot == null) maps DIAL endpoints to their own adapter kind.
+          providerKind:
+              widget.slot == null &&
+                  ProviderPreset.fromBaseUrl(_baseUrl) == ProviderPreset.dial
+              ? 'dial'
+              : 'openai-completions',
           baseUrl: _baseUrl,
           modelId: model,
           apiKeyName: keyName,

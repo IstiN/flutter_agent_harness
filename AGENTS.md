@@ -271,12 +271,18 @@ factual: paths, commands, invariants — no essays.
   live quick-search, and a `Use "<query>"` row keeps manual entry —
   `FaModelListPicker` (`src/widgets/model_list_picker.dart`, the initial /
   tap-picked value shows the FULL list with a check, only user typing
-  filters) for the form pages (`MediaSlotModelPage`, `TaskRoleConfigPage`),
-  the same `Use "<filter>"` row inside `UnifiedModelPickerPage` (applies on
-  the ACTIVE provider, key resolved via the registry). The endpoint fetch
+  filters) for the form pages, the same `Use "<filter>"` row inside
+  `UnifiedModelPickerPage` (applies on the ACTIVE provider, key resolved
+  via the registry). The media slots AND the agent-role rows
+  (`TaskModelsSection`: Quick model / Subagents model) share the ONE
+  two-step flow — `MediaSlotProviderPickerPage` → `MediaSlotModelPage`
+  with `slot: null` for roles (no voice field, no capability chips,
+  dial-aware provider kind) — so provider→model picking can never drift
+  between settings surfaces. The endpoint fetch
   goes through the core `fetchModelsForEndpoint` dispatch (DIAL deployments
   / CodeMie marker / OpenAI `/models`); the legacy two-step
-  `DefaultModelProviderPickerPage`/`DefaultModelPickerPage` are gone.
+  `DefaultModelProviderPickerPage`/`DefaultModelPickerPage` and the
+  text-field `TaskRoleConfigPage` are gone.
   The chat leaf widgets live there too (`lib/src/chat/`): the Markdown
   style/sandbox image resolver (`markdown_style.dart`), the inline
   audio/video players (`media_player.dart`), the approval/ask/

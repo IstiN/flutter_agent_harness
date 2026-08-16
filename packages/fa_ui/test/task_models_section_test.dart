@@ -42,60 +42,43 @@ void main() {
       expect(find.text('delegate-1'), findsOneWidget); // subagent
     });
 
-    testWidgets('the role editor lists endpoint models, quick-searches and '
-        'saves the pick', (tester) async {
+    testWidgets('a role edit runs the media-style provider→model flow', (
+      tester,
+    ) async {
       final store = TaskModelsStore.inMemory();
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: TaskModelsSection(store: store, mainModelId: 'main-1'),
+            body: TaskModelsSection(
+              store: store,
+              registry: registry,
+              modelsFetcher: _someModels,
+              mainBaseUrl: 'https://openrouter.ai/api/v1',
+            ),
           ),
         ),
       );
 
       await tester.tap(find.text('Quick model'));
       await tester.pumpAndSettle();
-      expect(find.byType(TaskRoleConfigPage), findsOneWidget);
 
-      // Pick a hosted provider; the editor fetches its list (the fetch is
-      // injected through the page — pump a fresh one with the override).
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => FilledButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const TaskRoleConfigPage(
-                      role: TaskRole.smol,
-                      mainModelId: 'main-1',
-                      modelsFetcher: _someModels,
-                    ),
-                  ),
-                ),
-                child: const Text('open'),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.tap(find.text('open'));
+      // Step 1: the provider picker — main connection, presets, the saved
+      // provider, add-provider.
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      expect(find.text('Main connection'), findsOneWidget);
+      expect(find.text('Acme'), findsOneWidget);
+      await tester.tap(find.text('Acme'));
       await tester.pumpAndSettle();
 
-      // Custom endpoint: type the base URL, the debounced fetch feeds the
-      // list (the fetch is the injected override).
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Base URL'),
-        'https://acme.example/v1',
-      );
-      await tester.pump(const Duration(milliseconds: 700)); // debounce
-      await tester.pumpAndSettle();
-
-      // The list renders; typing narrows it; a tap fills the field.
+      // Step 2: the model page with the fetched list + quick search.
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
       expect(find.text('fast-1'), findsOneWidget);
-      expect(find.text('fast-2'), findsOneWidget);
       await tester.enterText(
         find.widgetWithText(TextField, 'Model id'),
         'fast-2',
@@ -105,14 +88,20 @@ void main() {
       await tester.tap(find.widgetWithText(ListTile, 'fast-2'));
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
-      // (The page popped; nothing asserted about the result here — the
-      // section-level flow below covers persistence.)
-      expect(find.byType(TaskRoleConfigPage), findsNothing);
+
+      final saved = store.overrideFor(TaskRole.smol);
+      expect(saved, isNotNull);
+      expect(saved!.baseUrl, 'https://acme.example/v1');
+      expect(saved.modelId, 'fast-2');
+      // The key rides by NAME (host-scoped), never a value.
+      expect(saved.apiKeyName, ProviderRegistry.keyNameFor(saved.baseUrl));
     });
 
-    testWidgets('"Use main model" clears the override', (tester) async {
+    testWidgets('"Main connection" clears the override', (tester) async {
       final store = TaskModelsStore.inMemory();
       await store.setOverride(
         TaskRole.smol,
@@ -124,13 +113,18 @@ void main() {
       );
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(body: TaskModelsSection(store: store)),
+          home: Scaffold(
+            body: TaskModelsSection(
+              store: store,
+              mainBaseUrl: 'https://openrouter.ai/api/v1',
+            ),
+          ),
         ),
       );
 
       await tester.tap(find.text('Quick model'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Use main model'));
+      await tester.tap(find.text('Main connection'));
       await tester.pumpAndSettle();
 
       expect(store.overrideFor(TaskRole.smol), isNull);

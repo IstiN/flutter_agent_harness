@@ -35,10 +35,18 @@ class ProviderMark extends StatelessWidget {
   }
 
   static (String, Color, Color) _mark(String key) => switch (key) {
-    'openrouter' => (_openrouter, const Color(0xFF5B61F6), const Color(0xFFEEF1FE)),
+    'openrouter' => (
+      _openrouter,
+      const Color(0xFF5B61F6),
+      const Color(0xFFEEF1FE),
+    ),
     'chatgpt' || 'openai' => (_openai, Colors.white, const Color(0xFF172033)),
     'codemie' => (_codemie, const Color(0xFF3566FF), const Color(0xFFEAF1FF)),
-    'anthropic' => (_anthropic, const Color(0xFFD97757), const Color(0xFFF7EEE8)),
+    'anthropic' => (
+      _anthropic,
+      const Color(0xFFD97757),
+      const Color(0xFFF7EEE8),
+    ),
     'google' => (_gemini, const Color(0xFF8E75B2), const Color(0xFFF3EEF9)),
     'dial' => (_dial, const Color(0xFF47506B), const Color(0xFFECEFF5)),
     'kimi' => (_kimi, const Color(0xFF172033), const Color(0xFFEEF0F4)),
