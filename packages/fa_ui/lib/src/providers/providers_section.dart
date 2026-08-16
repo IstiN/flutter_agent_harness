@@ -137,6 +137,18 @@ class ProvidersSection extends StatelessWidget {
                 current: _isCurrent(provider),
                 onTap: () => _editCustom(context, registry, provider),
               ),
+            // On-device engines are provider types too — plain rows in the
+            // same list, not a separate "Local models" section.
+            for (final route in onDeviceProviders)
+              _buildRow(
+                context,
+                theme,
+                label: route.label,
+                leading: Icons.memory_outlined,
+                onTap: () {
+                  unawaited(_openOnDeviceRoute(context, route));
+                },
+              ),
             _buildRow(
               context,
               theme,
@@ -144,26 +156,6 @@ class ProvidersSection extends StatelessWidget {
               leading: Icons.add,
               onTap: () => _addProvider(context, registry),
             ),
-            if (onDeviceProviders.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Divider(),
-              const SizedBox(height: 8),
-              Text(
-                strings.settingsLocalProvidersSectionTitle,
-                style: theme.textTheme.titleSmall,
-              ),
-              const SizedBox(height: 8),
-              for (final route in onDeviceProviders)
-                _buildRow(
-                  context,
-                  theme,
-                  label: route.label,
-                  leading: Icons.memory_outlined,
-                  onTap: () {
-                    unawaited(_openOnDeviceRoute(context, route));
-                  },
-                ),
-            ],
           ],
         );
       },

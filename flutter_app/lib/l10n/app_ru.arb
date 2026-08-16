@@ -299,6 +299,7 @@
   "settingsModelIdOptionalLabel": "ID модели (необязательно)",
   "settingsModelIdRequired": "Требуется ID модели",
   "settingsModelsFetching": "Загрузка списка моделей с эндпоинта…",
+  "settingsModelsGroupTitle": "Модели",
   "settingsNameRequired": "Требуется имя",
   "settingsOnDeviceModelLabel": "Модель на устройстве",
   "settingsPickModelTitle": "Выбор модели",

@@ -302,6 +302,7 @@
   "settingsModelIdOptionalLabel": "Model id (optional)",
   "settingsModelIdRequired": "Model id is required",
   "settingsModelsFetching": "Fetching models from the endpoint…",
+  "settingsModelsGroupTitle": "Models",
   "settingsNameRequired": "Name is required",
   "settingsOnDeviceModelLabel": "On-device model",
   "settingsPickModelTitle": "Choose model",

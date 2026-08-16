@@ -1892,6 +1892,12 @@ abstract class AppLocalizations {
   /// **'Fetching models from the endpoint…'**
   String get settingsModelsFetching;
 
+  /// No description provided for @settingsModelsGroupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Models'**
+  String get settingsModelsGroupTitle;
+
   /// No description provided for @settingsNameRequired.
   ///
   /// In en, this message translates to:

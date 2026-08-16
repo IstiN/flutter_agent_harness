@@ -117,11 +117,10 @@ const kModelPresets = <ModelPreset>[
     target: HostedModelPresetTarget(ProviderPreset.openrouter),
     chatModelId: 'google/gemini-3.6-flash',
     mediaSlots: {
-      MediaSlot.imageGeneration: 'black-forest-labs/flux.2-klein-4b',
-      MediaSlot.audioTts: 'hexgrad/kokoro-82m',
-      MediaSlot.musicGeneration: 'google/lyria-3-clip-preview',
-      MediaSlot.videoGeneration: 'bytedance/seedance-1-5-pro',
-      MediaSlot.transcription: 'openai/whisper-large-v3',
+      // Only slots OpenRouter actually serves get overrides — TTS, music,
+      // video and transcription have no OpenRouter models today, so they
+      // stay on the main connection (the override is CLEARED on apply).
+      MediaSlot.imageGeneration: 'google/gemini-2.5-flash-image',
       // Vision stays on the main connection (no override).
     },
   ),
@@ -130,8 +129,7 @@ const kModelPresets = <ModelPreset>[
     target: HostedModelPresetTarget(ProviderPreset.openrouter),
     chatModelId: 'anthropic/claude-sonnet-4.5',
     mediaSlots: {
-      MediaSlot.imageGeneration: 'google/gemini-2.5-flash-image',
-      MediaSlot.transcription: 'openai/whisper-large-v3',
+      MediaSlot.imageGeneration: 'google/gemini-3-pro-image',
       // Everything else stays on the main connection.
     },
   ),

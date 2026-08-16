@@ -1046,6 +1046,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelsFetching => 'Fetching models from the endpoint…';
 
   @override
+  String get settingsModelsGroupTitle => 'Models';
+
+  @override
   String get settingsNameRequired => 'Name is required';
 
   @override

@@ -1056,6 +1056,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsModelsFetching => 'Загрузка списка моделей с эндпоинта…';
 
   @override
+  String get settingsModelsGroupTitle => 'Модели';
+
+  @override
   String get settingsNameRequired => 'Требуется имя';
 
   @override

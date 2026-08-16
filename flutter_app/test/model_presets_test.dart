@@ -79,12 +79,10 @@ void main() {
       expect(preset.target.baseUrl, 'https://openrouter.ai/api/v1');
       expect(preset.target.keyName, 'OPENROUTER_API_KEY');
       expect(preset.chatModelId, 'google/gemini-3.6-flash');
+      // Only slots OpenRouter actually serves are mapped (TTS, music,
+      // video and transcription have no OpenRouter models today).
       expect(preset.mediaSlots, {
-        MediaSlot.imageGeneration: 'black-forest-labs/flux.2-klein-4b',
-        MediaSlot.audioTts: 'hexgrad/kokoro-82m',
-        MediaSlot.musicGeneration: 'google/lyria-3-clip-preview',
-        MediaSlot.videoGeneration: 'bytedance/seedance-1-5-pro',
-        MediaSlot.transcription: 'openai/whisper-large-v3',
+        MediaSlot.imageGeneration: 'google/gemini-2.5-flash-image',
       });
       // Vision deliberately stays on the main connection.
       expect(preset.mediaSlots, isNot(contains(MediaSlot.vision)));
@@ -201,10 +199,7 @@ void main() {
         keysStore: keys,
       );
       expect(service.modelId, 'anthropic/claude-sonnet-4.5');
-      expect(store.configuredSlots, [
-        MediaSlot.imageGeneration,
-        MediaSlot.transcription,
-      ]);
+      expect(store.configuredSlots, [MediaSlot.imageGeneration]);
       expect(store.overrideFor(MediaSlot.audioTts), isNull);
       expect(store.overrideFor(MediaSlot.musicGeneration), isNull);
       expect(store.overrideFor(MediaSlot.videoGeneration), isNull);
@@ -301,8 +296,8 @@ void main() {
 
       expect(service.modelId, 'google/gemini-3.6-flash');
       expect(
-        store.overrideFor(MediaSlot.audioTts)?.modelId,
-        'hexgrad/kokoro-82m',
+        store.overrideFor(MediaSlot.imageGeneration)?.modelId,
+        'google/gemini-2.5-flash-image',
       );
       expect(lastConnection.connection?.modelId, 'google/gemini-3.6-flash');
 

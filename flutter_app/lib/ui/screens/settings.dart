@@ -2077,29 +2077,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              DefaultChatModelSection(
-                service: widget.service,
-                registry: widget.registry,
-                lastConnectionStore: widget.lastConnectionStore,
-                modelsFetcher: widget.modelsFetcher,
-                webLlmEngine: widget.webLlmEngine,
-                gemmaEngine: widget.gemmaEngine,
-                transformersJsEngine: widget.transformersJsEngine,
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              if (taskModels != null) ...[
-                faui.TaskModelsSection(
-                  store: taskModels,
-                  mainBaseUrl: widget.service.activeBaseUrl,
-                  mainModelId: widget.service.agentModelId,
-                  registry: widget.registry,
-                ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-              ],
               // The live subagent tree (CLI `/agents` panel parity): main +
               // retained children with observe/send.
               if (widget.service.subagentManager case final manager?) ...[
@@ -2120,6 +2097,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const Divider(),
                 const SizedBox(height: 16),
               ],
+              // The Models group: presets first (one-tap combos), then the
+              // main chat model, the task-role overrides and the media slots.
+              Text(
+                context.l10n.settingsModelsGroupTitle,
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
               ModelPresetsSection(
                 service: widget.service,
                 lastConnectionStore: widget.lastConnectionStore,
@@ -2127,14 +2111,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              if ((widget.taskModelsStore ??
-                      faui.TaskModelsScope.maybeOf(context)) !=
-                  null) ...[
-                // l10n:ignore
+              DefaultChatModelSection(
+                service: widget.service,
+                registry: widget.registry,
+                lastConnectionStore: widget.lastConnectionStore,
+                modelsFetcher: widget.modelsFetcher,
+                webLlmEngine: widget.webLlmEngine,
+                gemmaEngine: widget.gemmaEngine,
+                transformersJsEngine: widget.transformersJsEngine,
+              ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              if (taskModels != null) ...[
                 faui.TaskModelsSection(
-                  store: widget.taskModelsStore,
+                  store: taskModels,
                   mainBaseUrl: widget.service.activeBaseUrl,
-                  mainModelId: widget.service.modelId,
+                  mainModelId: widget.service.agentModelId,
                   registry: widget.registry,
                 ),
                 const SizedBox(height: 24),
