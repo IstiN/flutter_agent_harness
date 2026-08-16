@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:flutter/services.dart';
 
 /// Native project-folder operations: directory picking plus the
@@ -22,7 +24,8 @@ final class ProjectFolderChannelOps implements ProjectFolderOps {
   const ProjectFolderChannelOps();
 
   /// Whether native project-folder picking is available (macOS only).
-  static bool get isSupported => Platform.isMacOS;
+  // kIsWeb first: dart:io Platform throws on the web.
+  static bool get isSupported => !kIsWeb && Platform.isMacOS;
 
   static const _channel = MethodChannel('fah/project_folder');
 

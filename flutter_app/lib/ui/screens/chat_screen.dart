@@ -5,6 +5,8 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
@@ -232,6 +234,9 @@ class _ChatScreenState extends State<ChatScreen> {
 /// macOS uses `x-apple.systempreferences:` deep links to the specific
 /// Privacy & Security pane; iOS opens the app's settings page.
 void _openSystemSettings(String permission) {
+  // No system privacy panes exist on the web (and dart:io Platform throws
+  // there) — nothing to open.
+  if (kIsWeb) return;
   final String url;
   if (Platform.isMacOS) {
     final pane = switch (permission.toLowerCase()) {
