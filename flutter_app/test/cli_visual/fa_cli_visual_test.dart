@@ -393,15 +393,22 @@ void main() {
       );
       await harness.screenshot(shotsDir, '92_agents_inbox');
 
-      // Select "main" — its info block lists the pending inbox count.
+      // Select "main" — the info block opens deterministically (model /
+      // children / session rows). The 'N pending' count is racy by design:
+      // the wake turn drains the inbox as soon as it starts, and on a
+      // loaded machine the 2s watcher beats us.
       harness.sendEnter();
       await harness.liveWaitForText(
-        'mail inbox: 1 pending',
+        'children:',
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '93_main_inbox_info');
 
       await harness.close();
+      // The fabric delivery itself is asserted at the source of truth: the
+      // mail text landed in the session file as a user message.
+      final sessionText = sessionFile.readAsStringSync();
+      expect(sessionText, contains('survey done: 42 files'));
       tempHome.deleteSync(recursive: true);
     });
   });
@@ -530,6 +537,157 @@ void main() {
       tempHome.deleteSync(recursive: true);
     });
   });
+
+  group('input, queue and history UX', () {
+    testWidgets('a long single-line input soft-wraps into physical rows', (
+      tester,
+    ) async {
+      final tempHome = _tempHome();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      // Far longer than any terminal width — the whole text must stay
+      // visible as a wrapped paragraph (no horizontal clipping).
+      final text = 'wrap-check-${'a' * 120}-middle-${'b' * 120}-wrap-end';
+      harness.sendText(text);
+      await harness.settle(settleMs: 400);
+      await harness.screenshot(shotsDir, '94_input_wrap');
+      // The text wrapped across rows: the tail chunk is visible, and the
+      // full single-line string is NOT on screen unwrapped.
+      expect(harness.screenText, contains('wrap-check-'));
+      expect(harness.screenText, contains('ap-end'));
+      expect(harness.screenText, isNot(contains(text)));
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+
+    testWidgets('busy queue: enter queues, ↑ pops the message back', (
+      tester,
+    ) async {
+      // A slow endpoint (a python process sleeping on POST) keeps the turn
+      // busy; hosting it OUTSIDE the test isolate keeps cleanup trivial.
+      const port = 18777;
+      final serverScript =
+          File('${Directory.systemTemp.path}/fa_slow_server.py')
+            ..writeAsStringSync('''
+import http.server, time
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        time.sleep(120)
+        self.send_response(200)
+        self.end_headers()
+    def log_message(self, *a):
+        pass
+http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
+''');
+      // Process I/O must run in the REAL-async zone: fake-zone timers
+      // (Future.delayed) never fire without a pump, so zone-naive waits
+      // hang the test forever.
+      final server = (await tester.runAsync(
+        () => Process.start('python3', [serverScript.path]),
+      ))!;
+      final up = await tester.runAsync(() async {
+        for (var i = 0; i < 50; i++) {
+          try {
+            final socket = await Socket.connect('127.0.0.1', port);
+            await socket.close();
+            return true;
+          } on Object {
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+          }
+        }
+        return false;
+      });
+      if (up != true) throw StateError('slow server did not start');
+      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:$port/v1');
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      // The first message starts the (hanging) turn — the busy row shows
+      // the elapsed seconds.
+      harness.sendText('first');
+      await harness.settle(settleMs: 300, timeout: const Duration(seconds: 2));
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'Working',
+        timeout: const Duration(seconds: 30),
+      );
+
+      // The second message queues (❯ row above the input).
+      harness.sendText('second');
+      await harness.settle(settleMs: 300, timeout: const Duration(seconds: 2));
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        '❯ second',
+        timeout: const Duration(seconds: 30),
+      );
+      await harness.screenshot(shotsDir, '95_queue_row');
+
+      // ↑ pops it back into the input for editing (the ❯ row disappears).
+      harness.sendArrowUp();
+      await harness.settle(settleMs: 300, timeout: const Duration(seconds: 2));
+      await harness.screenshot(shotsDir, '96_queue_pop');
+      expect(harness.screenText, isNot(contains('❯ second')));
+
+      await harness.close();
+      await tester.runAsync(() async {
+        server.kill();
+        await server.exitCode.timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => -1,
+        );
+      });
+      tempHome.deleteSync(recursive: true);
+    });
+
+    testWidgets('↑/↓ browses the submitted-message history', (tester) async {
+      // The dead endpoint errors every turn instantly, so both submits
+      // complete and land in the input history.
+      final tempHome = _tempHome();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      harness.sendText('first message');
+      await harness.settle(settleMs: 300);
+      harness.sendEnter();
+      await harness.settle(settleMs: 1500);
+      harness.sendText('second message');
+      await harness.settle(settleMs: 300);
+      harness.sendEnter();
+      await harness.settle(settleMs: 1500);
+
+      // ↑ recalls the newest, then the older one; ↓ walks back.
+      harness.sendArrowUp();
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '97_history_recall');
+      expect(harness.screenText, contains('second message'));
+      harness.sendArrowUp();
+      await harness.settle(settleMs: 300);
+      expect(harness.screenText, contains('first message'));
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+
+    testWidgets('generic picker type-to-filter narrows the settings hub', (
+      tester,
+    ) async {
+      final tempHome = _tempHome();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      await harness.runSlashCommand('/settings');
+      await harness.liveWaitForText(
+        'Media models',
+        timeout: const Duration(seconds: 30),
+      );
+      // Type-to-filter on a generic picker: the title echoes the query.
+      harness.sendText('med');
+      await harness.settle(settleMs: 400);
+      await harness.screenshot(shotsDir, '98_settings_filter');
+      expect(harness.screenText, contains('Settings: med'));
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+  });
 }
 
 /// Walks up from the CWD until a directory containing `bin/fah.dart` is
@@ -593,6 +751,23 @@ Directory _tempHome() {
 provider: openai-completions
 model: test-model
 baseUrl: http://localhost:9999/v1
+mode: code
+approvalMode: yolo
+allowedTools: []
+''');
+  return tempHome;
+}
+
+/// Creates a temp HOME whose endpoint URL is given (e.g. a test HTTP server
+/// on loopback).
+Directory _tempHomeWithEndpoint(String baseUrl) {
+  final tempHome = Directory.systemTemp.createTempSync('fa_test_');
+  File('${tempHome.path}/.fah/config.yaml')
+    ..createSync(recursive: true)
+    ..writeAsStringSync('''
+provider: openai-completions
+model: test-model
+baseUrl: $baseUrl
 mode: code
 approvalMode: yolo
 allowedTools: []

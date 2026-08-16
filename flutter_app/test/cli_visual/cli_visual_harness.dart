@@ -218,6 +218,9 @@ final class CliVisualHarness {
   /// Sends Arrow Down.
   void sendArrowDown() => pty.write('\x1b[B');
 
+  /// Arrow up keystroke (queue pop / input-history browsing).
+  void sendArrowUp() => pty.write('\x1b[A');
+
   /// Waits for the REPL boot to finish: the banner's `[Model]` block is on
   /// screen and the frame redraws have settled.
   ///
