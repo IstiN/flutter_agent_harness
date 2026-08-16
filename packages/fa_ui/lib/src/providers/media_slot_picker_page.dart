@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/providers/voice_presets.dart';
@@ -58,6 +59,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     this.mainBaseUrl = '',
     this.registry,
     this.modelsFetcher,
+    this.connectedOnly = false,
   });
 
   /// The media slot being configured ([MediaSlot] name); null for the
@@ -82,6 +84,12 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
 
   /// `/models` fetch override (tests), forwarded to the model page.
   final ModelsEndpointFetcher? modelsFetcher;
+
+  /// When true (the agent-role flow), hosted presets only appear when their
+  /// key actually resolves — the role pickers choose among CONNECTED
+  /// providers, not every preset the app knows about. Saved custom providers
+  /// always list.
+  final bool connectedOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -114,7 +122,15 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     context,
                   ).pop(const MediaSlotEditorResult.clear()),
                 ),
-                for (final preset in hostedProviderPresets)
+                for (final preset in hostedProviderPresets.where(
+                  (preset) =>
+                      !connectedOnly ||
+                      hostedProviderKeyName(preset) == null ||
+                      FaUiHost.resolveKey(
+                        hostedProviderKeyName(preset)!,
+                        () => '',
+                      ).isNotEmpty,
+                ))
                   _providerTile(
                     context,
                     theme,

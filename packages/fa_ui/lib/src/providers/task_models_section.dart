@@ -152,6 +152,8 @@ class TaskModelsSection extends StatelessWidget {
         mainBaseUrl: mainBaseUrl,
         registry: registry,
         modelsFetcher: modelsFetcher,
+        // Role pickers choose among connected providers only.
+        connectedOnly: true,
       ),
     );
     if (result == null) return;

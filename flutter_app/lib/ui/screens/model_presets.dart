@@ -12,6 +12,7 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -67,6 +68,7 @@ final class ModelPreset {
     required this.target,
     required this.chatModelId,
     this.mediaSlots = const {},
+    this.taskSlots = const {},
   });
 
   /// Stable identifier (drives the localized name/description lookup).
@@ -81,6 +83,11 @@ final class ModelPreset {
   /// Media slot overrides: `{MediaSlot.x → model id}`. Slots NOT listed here
   /// stay on the main connection — their override is CLEARED on apply.
   final Map<String, String> mediaSlots;
+
+  /// Task-role overrides: `{TaskRole.smol/TaskRole.subagent → model id}`.
+  /// Roles NOT listed here follow the main connection — their override is
+  /// CLEARED on apply.
+  final Map<String, String> taskSlots;
 
   /// The localized preset name (the id itself for unknown presets).
   String nameFor(AppLocalizations l10n) => switch (id) {
@@ -123,6 +130,11 @@ const kModelPresets = <ModelPreset>[
       MediaSlot.imageGeneration: 'google/gemini-2.5-flash-image',
       // Vision stays on the main connection (no override).
     },
+    // The cheap combo: flash-lite answers summaries/explore, flash delegates.
+    taskSlots: {
+      TaskRole.smol: 'google/gemini-3.5-flash-lite',
+      TaskRole.subagent: 'google/gemini-3.6-flash',
+    },
   ),
   ModelPreset(
     id: 'quality',
@@ -131,6 +143,10 @@ const kModelPresets = <ModelPreset>[
     mediaSlots: {
       MediaSlot.imageGeneration: 'google/gemini-3-pro-image',
       // Everything else stays on the main connection.
+    },
+    taskSlots: {
+      TaskRole.smol: 'anthropic/claude-haiku-4.5',
+      TaskRole.subagent: 'anthropic/claude-sonnet-4.5',
     },
   ),
 ];
@@ -148,8 +164,9 @@ bool modelPresetKeyAvailable(ModelPreset preset, SessionKeysStore? keysStore) {
 bool modelPresetMatches(
   ModelPreset preset,
   AgentService service,
-  MediaModelsStore store,
-) {
+  MediaModelsStore store, {
+  TaskModelsStore? taskStore,
+}) {
   if (service.providerKind != 'openai-completions') return false;
   if (service.modelId != preset.chatModelId) return false;
   if (service.activeBaseUrl != preset.target.baseUrl) return false;
@@ -162,6 +179,19 @@ bool modelPresetMatches(
         override.modelId != modelId ||
         override.baseUrl != preset.target.baseUrl) {
       return false;
+    }
+  }
+  if (taskStore != null) {
+    for (final role in TaskRole.all) {
+      final modelId = preset.taskSlots[role];
+      final override = taskStore.overrideFor(role);
+      if (modelId == null) {
+        if (override != null) return false;
+      } else if (override == null ||
+          override.modelId != modelId ||
+          override.baseUrl != preset.target.baseUrl) {
+        return false;
+      }
     }
   }
   return true;
@@ -184,6 +214,7 @@ Future<void> applyModelPreset({
   required MediaModelsStore store,
   SessionKeysStore? keysStore,
   LastConnectionStore? lastConnectionStore,
+  TaskModelsStore? taskStore,
 }) async {
   final baseUrl = preset.target.baseUrl;
   final keyName = preset.target.keyName;
@@ -194,6 +225,22 @@ Future<void> applyModelPreset({
       modelId == null
           ? null
           : MediaSlotOverride(
+              providerKind: 'openai-completions',
+              baseUrl: baseUrl,
+              modelId: modelId,
+              apiKeyName: keyName,
+            ),
+    );
+  }
+  // The task roles ride the same endpoint: mapped roles get the override,
+  // unmapped ones fall back to the main connection (cleared).
+  for (final role in TaskRole.all) {
+    final modelId = preset.taskSlots[role];
+    await taskStore?.setOverride(
+      role,
+      modelId == null
+          ? null
+          : TaskRoleConfig(
               providerKind: 'openai-completions',
               baseUrl: baseUrl,
               modelId: modelId,
@@ -230,6 +277,7 @@ class ModelPresetsSection extends StatefulWidget {
     required this.service,
     this.store,
     this.lastConnectionStore,
+    this.taskModelsStore,
   });
 
   /// The service whose backend applying a preset reconfigures.
@@ -240,6 +288,10 @@ class ModelPresetsSection extends StatefulWidget {
 
   /// Updated on every successful apply (see [LastConnectionStore]).
   final LastConnectionStore? lastConnectionStore;
+
+  /// The task-role store for the quick/subagents slots; falls back to the
+  /// nearest [TaskModelsScope]. Null skips the role writes on apply.
+  final TaskModelsStore? taskModelsStore;
 
   @override
   State<ModelPresetsSection> createState() => _ModelPresetsSectionState();
@@ -260,6 +312,8 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
     final theme = Theme.of(context);
     final store = widget.store ?? MediaModelsScope.maybeOf(context);
     if (store == null) return const SizedBox.shrink();
+    final taskStore =
+        widget.taskModelsStore ?? TaskModelsScope.maybeOf(context);
     // The saved-keys scope registers as a dependency, so saving the preset's
     // key from the editor re-enables Apply without a manual refresh.
     final keysStore = SessionKeysScope.maybeOf(context);
@@ -280,7 +334,7 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
             // content area of the wide-screen sidebar layout). viewportFraction
             // 0.9 keeps the active card centered with neighbors peeking in.
             SizedBox(
-              height: 380,
+              height: 430,
               child: PageView.builder(
                 controller: _pageController,
                 itemCount: kModelPresets.length,
@@ -293,6 +347,7 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
                     store: store,
                     keysStore: keysStore,
                     lastConnectionStore: widget.lastConnectionStore,
+                    taskStore: taskStore,
                   ),
                 ),
               ),
@@ -337,6 +392,7 @@ class _PresetCard extends StatelessWidget {
     required this.store,
     required this.keysStore,
     required this.lastConnectionStore,
+    this.taskStore,
   });
 
   final ModelPreset preset;
@@ -344,6 +400,9 @@ class _PresetCard extends StatelessWidget {
   final MediaModelsStore store;
   final SessionKeysStore? keysStore;
   final LastConnectionStore? lastConnectionStore;
+
+  /// The task-role store (quick/subagents overrides on apply).
+  final TaskModelsStore? taskStore;
 
   Future<void> _setupKey(BuildContext context) async {
     final target = preset.target;
@@ -370,7 +429,7 @@ class _PresetCard extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final keyAvailable = modelPresetKeyAvailable(preset, keysStore);
-    final applied = modelPresetMatches(preset, service, store);
+    final applied = modelPresetMatches(preset, service, store, taskStore: taskStore);
     final providerLabel = switch (preset.target) {
       HostedModelPresetTarget(:final provider) => provider.labelFor(context),
     };
@@ -395,6 +454,20 @@ class _PresetCard extends StatelessWidget {
               icon: Icons.chat_bubble_outline,
               label: l10n.modelPresetsChatLabel,
               modelId: preset.chatModelId,
+            ),
+            _comboRow(
+              context,
+              icon: Icons.bolt_outlined,
+              label: 'Quick model', // l10n:ignore
+              modelId: preset.taskSlots[TaskRole.smol] ??
+                  l10n.mediaModelsFallbackSummary,
+            ),
+            _comboRow(
+              context,
+              icon: Icons.groups_outlined,
+              label: 'Subagents model', // l10n:ignore
+              modelId: preset.taskSlots[TaskRole.subagent] ??
+                  l10n.mediaModelsFallbackSummary,
             ),
             for (final slot in MediaSlot.all)
               _comboRow(
@@ -458,6 +531,7 @@ class _PresetCard extends StatelessWidget {
                         store: store,
                         keysStore: keysStore,
                         lastConnectionStore: lastConnectionStore,
+                        taskStore: taskStore,
                       )
                     : null,
                 child: Text(l10n.settingsApplyButton),

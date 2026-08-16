@@ -94,6 +94,37 @@ void main() {
       expect((checkedTile.title as Text).data, 'Acme');
     });
 
+    testWidgets('connectedOnly hides hosted presets whose key does not '
+        'resolve (the agent-role flow)', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      await _pumpWithOpener(
+        tester,
+        MediaSlotProviderPickerPage(
+          slot: null, // the generic provider→model role flow
+          title: 'Quick model',
+          mainBaseUrl: 'https://openrouter.ai/api/v1',
+          registry: registry,
+          modelsFetcher: _someModels,
+          connectedOnly: true,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      // No keys configured in the test environment: hosted presets hide,
+      // the main connection + saved custom providers stay.
+      expect(find.text('Main connection'), findsOneWidget);
+      expect(find.text('Acme'), findsOneWidget);
+      expect(find.text('OpenRouter'), findsNothing);
+      expect(find.text('Ollama'), findsNothing);
+      expect(find.text('Add provider'), findsOneWidget);
+    });
+
     testWidgets('the main connection row pops a clear result', (tester) async {
       MediaSlotEditorResult? result;
       var popped = false;

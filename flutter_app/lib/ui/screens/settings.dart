@@ -2107,6 +2107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ModelPresetsSection(
                 service: widget.service,
                 lastConnectionStore: widget.lastConnectionStore,
+                taskModelsStore: taskModels,
               ),
               const SizedBox(height: 24),
               const Divider(),
