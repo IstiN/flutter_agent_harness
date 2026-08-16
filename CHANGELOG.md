@@ -1048,4 +1048,16 @@
 - feat(tui): leave the mouse to the terminal by default (FA_TUI_MOUSE=1 to capture)
 - fix(app): iOS CodeMie SSO — run the real loopback callback server
 
+## 0.1.186
+
+- fix(crap): decompose FaTuiModel._submit/_wrappedInput (CRAP 12.14/12.01 -> in budget)
+- refactor(cli): split provider key helpers out of provider_commands.dart (2800-line gate)
+- fix(providers): roles-mode switches preserve the scoped key; messaging presence
+- test(cli): visual integration coverage for the new TUI UX
+- feat(tui): shell-style input history on ↑/↓
+- feat(messaging): live cross-instance chat — discovery, self-address, idle wake
+- test(app): web-safety guard — no Platform.is without a kIsWeb guard
+- test(messaging): visual integration for the agents inbox + terminal-safe marker
+- fix(app): no crash on CodeMie/ChatGPT taps in the web build
+
 ## Unreleased
