@@ -1043,4 +1043,9 @@
 
 - test(messaging): drop unused import (dart analyze warning)
 
+## 0.1.185
+
+- feat(tui): leave the mouse to the terminal by default (FA_TUI_MOUSE=1 to capture)
+- fix(app): iOS CodeMie SSO — run the real loopback callback server
+
 ## Unreleased
