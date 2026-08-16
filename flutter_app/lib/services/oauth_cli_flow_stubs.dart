@@ -16,6 +16,20 @@ Never runCodeMieSsoCliFlow({
   'CodeMie SSO sign-in is not supported on the web platform.',
 );
 
+/// Web stub for the loopback SSO callback server (dart:io only).
+class CodeMieSsoCallbackServer {
+  /// Always throws on the web.
+  Future<int> start({Duration timeout = const Duration(minutes: 5)}) =>
+      throw UnsupportedError('Local servers are not supported on the web.');
+
+  /// Always throws on the web.
+  Future<String?> waitForToken() =>
+      throw UnsupportedError('Local servers are not supported on the web.');
+
+  /// No-op on the web.
+  Future<void> close() async {}
+}
+
 /// Always throws on the web — the desktop CLI flow needs a local server.
 Never runChatGptOAuthCliFlow({
   required void Function(String) onStatus,

@@ -199,11 +199,13 @@ const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
 /// `ASWebAuthenticationSession` runs the page in a Safari-grade context, so
 /// the IdP can offer WebAuthn / passkey (Face ID) sign-in.
 ///
-/// The session intercepts the CodeMie callback by its scheme: every page in
-/// the flow is `https`, the final `http://localhost:<port>/?token=...`
-/// redirect is the only `http` navigation, so `callbackScheme: 'http'`
-/// catches exactly the token hand-off (the redirect never leaves the OS
-/// browser context).
+/// The session's scheme interception does NOT fire for `http://` URLs, so
+/// the WebView's dummy-port trick cannot work here. Instead the app runs the
+/// REAL loopback callback server (same as the desktop flow — iOS allows
+/// loopback binds) and the session's final
+/// `http://localhost:<port>/?token=...` redirect loads it for real; the
+/// session sheet is then dismissed programmatically via the channel's
+/// `cancel`.
 ///
 /// Returns the decoded credentials, or a record with [sessionUnavailable]
 /// set when the session could not even start (the caller falls back to the
@@ -211,27 +213,38 @@ const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
 /// means the user cancelled or the callback carried no usable token.
 Future<({CodeMieSsoCredentials? credentials, bool sessionUnavailable})>
 _systemAuthSessionSso(String orgUrl) async {
-  // Same dummy-port convention as the WebView page: the port is baked into
-  // the login URL but never bound — the session intercepts the redirect.
-  const dummyPort = 48127;
-  final ssoUrl = buildCodeMieSsoUrl(orgUrl, dummyPort);
-  final String? callbackUrl;
+  final server = CodeMieSsoCallbackServer();
+  final int port;
   try {
-    callbackUrl = await _webAuthSessionChannel.invokeMethod<String>(
-      'authenticate',
-      {'url': ssoUrl, 'callbackScheme': 'http'},
-    );
-  } on PlatformException {
-    return (credentials: null, sessionUnavailable: true);
-  } on MissingPluginException {
+    port = await server.start();
+  } on Object {
     return (credentials: null, sessionUnavailable: true);
   }
-  if (callbackUrl == null) {
-    return (credentials: null, sessionUnavailable: false); // cancelled
+  final ssoUrl = buildCodeMieSsoUrl(orgUrl, port);
+  var sessionFailed = false;
+  // No callbackScheme: nothing to intercept — the token arrives through the
+  // local server, the session future completes only on cancel/dismiss.
+  unawaited(
+    _webAuthSessionChannel
+        .invokeMethod<String>('authenticate', {'url': ssoUrl})
+        .then((_) => server.close()) // user cancelled the sheet
+        .onError((_, _) {
+          sessionFailed = true;
+          return server.close();
+        }),
+  );
+  final token = await server.waitForToken();
+  // Dismiss the sheet (shows the "Authorized" page only for a split second).
+  unawaited(
+    _webAuthSessionChannel
+        .invokeMethod<void>('cancel')
+        .onError((_, _) => null),
+  );
+  if (sessionFailed) {
+    return (credentials: null, sessionUnavailable: true);
   }
-  final token = Uri.tryParse(callbackUrl)?.queryParameters['token'];
   if (token == null || token.isEmpty) {
-    return (credentials: null, sessionUnavailable: false);
+    return (credentials: null, sessionUnavailable: false); // cancelled
   }
   try {
     final cookies = decodeCodeMieSsoToken(token);
