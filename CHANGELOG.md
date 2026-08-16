@@ -1060,4 +1060,8 @@
 - test(messaging): visual integration for the agents inbox + terminal-safe marker
 - fix(app): no crash on CodeMie/ChatGPT taps in the web build
 
+## 0.1.187
+
+- refactor(ui): sane Settings structure — providers include on-device, one Models group
+
 ## Unreleased
