@@ -1475,15 +1475,7 @@ final class FaTuiModel extends Model {
     final echoed = _echoAppend(outputLines, inputText);
     // Shell-style input history: plain messages only (no slash/bang
     // commands), consecutive duplicates collapsed, capped at 100.
-    final recordable =
-        text.isNotEmpty && !text.startsWith('/') && !text.startsWith('!');
-    var history = inputHistory;
-    if (recordable && (inputHistory.isEmpty || inputHistory.last != text)) {
-      history = [...inputHistory, text];
-      if (history.length > 100) {
-        history = history.sublist(history.length - 100);
-      }
-    }
+    final history = _recordInputHistory(inputHistory, text);
     // The pinned echo for long answers (Copilot-style): rule + the first
     // input line, truncated to the width with a dim ellipsis marking any
     // remainder — a multi-line message or one simply longer than a row
@@ -1516,6 +1508,19 @@ final class FaTuiModel extends Model {
         return null;
       },
     );
+  }
+
+  /// The input history after recording [text]: plain messages only (no
+  /// slash/bang commands), consecutive duplicates collapsed, capped at 100.
+  /// Extracted from [_submit] to keep its CRAP in budget.
+  static List<String> _recordInputHistory(List<String> history, String text) {
+    final recordable =
+        text.isNotEmpty && !text.startsWith('/') && !text.startsWith('!');
+    if (!recordable || (history.isNotEmpty && history.last == text)) {
+      return history;
+    }
+    final next = [...history, text];
+    return next.length > 100 ? next.sublist(next.length - 100) : next;
   }
 
   /// Busy-mode Enter: queues the message (kimi-cli semantics — it is run as
@@ -1886,19 +1891,11 @@ final class FaTuiModel extends Model {
     var cursorRow = 0;
     var cursorCol = 0;
     for (var i = 0; i < logical.length; i++) {
-      final line = logical[i];
-      final lineRows = <String>[
-        for (var start = 0; start < line.length; start += width)
-          line.substring(
-            start,
-            start + width > line.length ? line.length : start + width,
-          ),
-      ];
-      if (lineRows.isEmpty) lineRows.add('');
+      final lineRows = _wrapInputLine(logical[i], width);
       if (i == cursorLogicalLine) {
         cursorRow = rows.length + cursorColInLine ~/ width;
         cursorCol = cursorColInLine % width;
-        if (cursorColInLine == line.length &&
+        if (cursorColInLine == logical[i].length &&
             cursorColInLine > 0 &&
             cursorColInLine % width == 0) {
           // The cursor rests one row past the last full-width chunk.
@@ -1908,6 +1905,21 @@ final class FaTuiModel extends Model {
       rows.addAll(lineRows);
     }
     return (rows, cursorRow, cursorCol);
+  }
+
+  /// One logical input line soft-wrapped to [width]-column rows (always at
+  /// least one row, empty when the line is). Extracted from
+  /// [_wrappedInput] to keep its CRAP in budget.
+  static List<String> _wrapInputLine(String line, int width) {
+    final rows = <String>[
+      for (var start = 0; start < line.length; start += width)
+        line.substring(
+          start,
+          start + width > line.length ? line.length : start + width,
+        ),
+    ];
+    if (rows.isEmpty) rows.add('');
+    return rows;
   }
 
   static List<String> _appendOutput(
