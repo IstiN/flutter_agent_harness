@@ -17,6 +17,7 @@ final class AgentCliConfig {
     this.envVarValue,
     this.modelsFetcher,
     this.modelsHttpClient,
+    this.tuiMouseCapture = false,
     this.systemPrompt,
     this.promptOverrides,
     this.visionConfig,
@@ -236,6 +237,11 @@ final class AgentCliConfig {
   /// [modelsFetcher] only covers the OpenAI shape. Null (production) lets
   /// the fetchers create their own client; tests inject a `MockClient`.
   final http.Client? modelsHttpClient;
+
+  /// Whether the TUI captures the mouse for wheel scrolling. Default false:
+  /// the terminal keeps its native text selection (select-to-copy). The
+  /// executable sets this from `FA_TUI_MOUSE=1`.
+  final bool tuiMouseCapture;
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].
   ///

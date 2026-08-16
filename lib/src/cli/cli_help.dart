@@ -371,6 +371,12 @@ SKILLS AND CONTEXT FILES
   /<template> args   expand a prompt template (see PROMPTS)
   While a run is streaming, typed input steers the agent; Ctrl-C aborts.
 
+TERMINAL
+  The TUI leaves the mouse to the terminal: native select-to-copy works
+  everywhere (hold your terminal's bypass modifier — Shift in most — to
+  be sure). FA_TUI_MOUSE=1 switches to mouse capture for wheel scrolling
+  instead.
+
 CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,
                        approvalMode, allowedTools, plus the prompts:, roles:,

@@ -129,8 +129,9 @@ factual: paths, commands, invariants — no essays.
   merges inbox drains into the steering poll (main in AgentCli/AgentService
   as `_mainInboxMessages`, children via the executor) — messages land as
   sender-attributed user messages, so they persist in the session and read
-  like a chat. UI: `/agents` rows + the app's AgentsSection show `✉N`
-  pending counts, observe/detail views list the pending inbox.
+  like a chat. UI: `/agents` rows show a `mail:N` pending marker (the CLI
+  font has no ✉ glyph), the app's AgentsSection shows `✉N`; observe/detail
+  views list the pending inbox.
 - `lib/src/memory/` — long-term memory: `MemoryController` over the
   `flutter_agent_memory` package (hosted pub.dev dep),
   `execution_env_kb_storage` (KbStorage → ExecutionEnv), `memory_add`/
@@ -158,7 +159,10 @@ factual: paths, commands, invariants — no essays.
   EXISTING file is the prompt source (`.md`/`.txt` inlined, others attached
   by reference; `-p` is verbatim). Args parsed in `lib/src/cli/cli_args.dart`
   (pure Dart). Headless: exit 0/1/130; `CliIO` contract — `write` = primary
-  stream, `writeln` = diagnostics (stderr headless).
+  stream, `writeln` = diagnostics (stderr headless). The TUI leaves the
+  mouse to the terminal by default (native select-to-copy);
+  `FA_TUI_MOUSE=1` (`AgentCliConfig.tuiMouseCapture`) captures it for
+  wheel scrolling.
 - `lib/src/cli/` — REPL machinery: `/provider [name] [baseUrl] [token] |
   custom` (guided wizard in `provider_flow.dart` + `provider_commands.dart`;
   `/models` fetched for openai-like endpoints), custom providers in the

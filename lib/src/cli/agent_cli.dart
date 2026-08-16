@@ -961,6 +961,7 @@ class AgentCli {
   FaTuiController _createTuiController() {
     late final FaTuiController controller;
     controller = FaTuiController(
+      mouseCapture: config.tuiMouseCapture,
       callbacks: FaTuiCallbacks(
         onSubmit: (line) => _handleTuiSubmit(controller, line),
         onModelSelected: _tuiSelectModel,

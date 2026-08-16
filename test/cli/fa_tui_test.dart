@@ -1036,10 +1036,21 @@ void main() {
       expect(model.followTail, isTrue);
     });
 
-    test('the view requests cell-motion mouse mode', () {
-      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-      expect(model.view().mouseMode, MouseMode.cellMotion);
-    });
+    test(
+      'the view leaves the mouse to the terminal unless capture opts in',
+      () {
+        // Default: no capture — native select-to-copy in the terminal.
+        final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+        expect(model.view().mouseMode, MouseMode.none);
+        // FA_TUI_MOUSE=1 wiring: wheel scrolling gets the mouse instead.
+        final capturing = FaTuiModel(
+          callbacks: callbacks(),
+          isExited: () => false,
+          mouseCapture: true,
+        );
+        expect(capturing.view().mouseMode, MouseMode.cellMotion);
+      },
+    );
   });
 
   group('input kill keys', () {

@@ -187,6 +187,7 @@ final class FaTuiModel extends Model {
     this.termHeight = 24,
     this.busy = false,
     this.busyStartedAtMs = -1,
+    this.mouseCapture = false,
     this.spinnerFrame = 0,
     this.stickyLines = const [],
     this.stickyIndex = -1,
@@ -249,6 +250,12 @@ final class FaTuiModel extends Model {
   /// busy row shows the elapsed seconds so a wedged endpoint is visible
   /// instead of looking like a frozen UI.
   final int busyStartedAtMs;
+
+  /// Whether the TUI captures the mouse (wheel scrolling) instead of
+  /// leaving it to the terminal's native text selection. Default off:
+  /// select-to-copy beats wheel scrolling for most users; `FA_TUI_MOUSE=1`
+  /// opts back into capture.
+  final bool mouseCapture;
   final int spinnerFrame;
 
   /// The last submitted user echo (rule + first input line), pinned to the
@@ -435,6 +442,7 @@ final class FaTuiModel extends Model {
     int? termHeight,
     bool? busy,
     int? busyStartedAtMs,
+    bool? mouseCapture,
     int? spinnerFrame,
     List<String>? stickyLines,
     int? stickyIndex,
@@ -462,6 +470,7 @@ final class FaTuiModel extends Model {
       termHeight: termHeight ?? this.termHeight,
       busy: busy ?? this.busy,
       busyStartedAtMs: busyStartedAtMs ?? this.busyStartedAtMs,
+      mouseCapture: mouseCapture ?? this.mouseCapture,
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
@@ -1551,7 +1560,7 @@ final class FaTuiModel extends Model {
       return View(
         content: b.toString() + cursorLine,
         cursor: null,
-        mouseMode: MouseMode.cellMotion,
+        mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
       );
     }
 
@@ -1591,7 +1600,7 @@ final class FaTuiModel extends Model {
       cursor: hideCursor
           ? null
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
-      mouseMode: MouseMode.cellMotion,
+      mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
     );
   }
 
@@ -1808,10 +1817,16 @@ final class FaTuiController {
     required this.callbacks,
     required this.isExited,
     this.programHooks,
+    this.mouseCapture = false,
   });
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
+
+  /// Whether the TUI captures the mouse (wheel scrolling); when false the
+  /// terminal keeps its native text selection. See
+  /// [FaTuiModel.mouseCapture].
+  final bool mouseCapture;
 
   /// Headless test hooks (scripted key bytes, captured frames) — null in
   /// production, where the program reads stdin and renders to stdout.
@@ -1820,12 +1835,13 @@ final class FaTuiController {
   late final FaTuiModel _model = FaTuiModel(
     callbacks: callbacks,
     isExited: isExited,
+    mouseCapture: mouseCapture,
   );
   late final Program _program = Program(
     options: [
       withAltScreen(),
       withHideCursor(false),
-      withMouseCellMotion(),
+      if (mouseCapture) withMouseCellMotion(),
       ..._programHookOptions(programHooks),
     ],
   );

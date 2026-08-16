@@ -351,6 +351,12 @@ void _applyProviderFilterEnv() {
   }
 }
 
+/// Truthy env-var check (`1`/`true`/`yes`/`on`, case-insensitive).
+bool _envTruthy(String name) {
+  final value = Platform.environment[name]?.trim().toLowerCase();
+  return value == '1' || value == 'true' || value == 'yes' || value == 'on';
+}
+
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
 /// broadcast interrupt channel fed by the SIGINT handler in `main`.
 ///
@@ -1024,6 +1030,10 @@ Future<void> main(List<String> args) async {
       // Shift+Enter in the TUI: terminals that do not encode the modifier
       // still expose it through the HID state (macOS only; null elsewhere).
       isShiftPressed: Platform.isMacOS ? _isShiftPressed : null,
+      // FA_TUI_MOUSE=1: capture the mouse for wheel scrolling instead of
+      // the terminal's native text selection (select-to-copy wins by
+      // default).
+      tuiMouseCapture: _envTruthy('FA_TUI_MOUSE'),
     ),
     io: io,
   );
