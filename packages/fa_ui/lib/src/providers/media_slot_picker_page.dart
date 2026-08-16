@@ -122,14 +122,20 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     context,
                   ).pop(const MediaSlotEditorResult.clear()),
                 ),
+                // Dedupe: a saved custom provider on a hosted preset's
+                // endpoint covers it (the CodeMie/ChatGPT/OpenRouter flows
+                // register their instance there) — never show both.
                 for (final preset in hostedProviderPresets.where(
                   (preset) =>
-                      !connectedOnly ||
-                      hostedProviderKeyName(preset) == null ||
-                      FaUiHost.resolveKey(
-                        hostedProviderKeyName(preset)!,
-                        () => '',
-                      ).isNotEmpty,
+                      !registry.providers.any(
+                        (custom) => custom.baseUrl == preset.baseUrl,
+                      ) &&
+                      (!connectedOnly ||
+                          hostedProviderKeyName(preset) == null ||
+                          FaUiHost.resolveKey(
+                            hostedProviderKeyName(preset)!,
+                            () => '',
+                          ).isNotEmpty),
                 ))
                   _providerTile(
                     context,

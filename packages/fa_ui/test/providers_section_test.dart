@@ -89,6 +89,85 @@ void main() {
       expect(find.byIcon(Icons.check), findsOneWidget);
     });
 
+    testWidgets('on-device rows are gated by the visible predicate', (
+      tester,
+    ) async {
+      final connection = _FakeConnection(kind: 'openai-completions');
+      FaOnDeviceRoute route(String id) => FaOnDeviceRoute(
+        label: 'Engine $id',
+        id: id,
+        pageBuilder: (context, apply) => const Scaffold(),
+      );
+      await _pump(
+        tester,
+        ProvidersSection(
+          service: connection,
+          registry: ProviderRegistry.inMemory(),
+          onDeviceProviders: [route('gemma'), route('webllm')],
+          onDeviceRowVisible: (kind) => kind == 'gemma',
+        ),
+      );
+
+      expect(find.text('Engine gemma'), findsOneWidget);
+      expect(find.text('Engine webllm'), findsNothing);
+    });
+
+    testWidgets('the add-provider picker offers the on-device routes and '
+        'reports their connect', (tester) async {
+      final connection = _FakeConnection(kind: 'openai-completions');
+      FaChatModelConfig? connected;
+      await _pump(
+        tester,
+        ProvidersSection(
+          service: connection,
+          registry: ProviderRegistry.inMemory(),
+          onDeviceProviders: [
+            FaOnDeviceRoute(
+              label: 'On-device (Gemma)',
+              id: 'gemma',
+              pageBuilder: (context, apply) => Scaffold(
+                body: FilledButton(
+                  onPressed: () => apply(
+                    const FaChatModelConfig(
+                      providerKind: 'gemma',
+                      modelId: 'local-model',
+                      baseUrl: '',
+                      apiKey: '',
+                    ),
+                  ),
+                  child: const Text('connect local'),
+                ),
+              ),
+            ),
+          ],
+          onDeviceConnected: (config) => connected = config,
+        ),
+      );
+
+      await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
+      // The tile trails the hosted presets — scroll it into view (the
+      // picker's ListView builds lazily).
+      await tester.scrollUntilVisible(
+        find.text('On-device (Gemma)'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(AddProviderPresetPickerPage),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('On-device (Gemma)'), findsOneWidget);
+
+      await tester.tap(find.text('On-device (Gemma)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('connect local'));
+      await tester.pumpAndSettle();
+
+      expect(connected?.providerKind, 'gemma');
+      expect(connected?.modelId, 'local-model');
+    });
+
     testWidgets('two custom providers on one host: only the active id is '
         'marked current', (tester) async {
       final registry = ProviderRegistry.inMemory();

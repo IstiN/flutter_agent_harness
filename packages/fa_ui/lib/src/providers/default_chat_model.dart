@@ -29,7 +29,16 @@ typedef FaOnDevicePageBuilder =
 final class FaOnDeviceRoute {
   /// Creates a route. [label] is the picker tile's text; [pageBuilder]
   /// builds the pushed connect page.
-  const FaOnDeviceRoute({required this.label, required this.pageBuilder});
+  const FaOnDeviceRoute({
+    required this.label,
+    required this.pageBuilder,
+    this.id = '',
+  });
+
+  /// The engine/provider kind this route configures (webllm/gemma/...) —
+  /// hosts use it to gate the tile's visibility (a configured engine keeps
+  /// its row; a never-used one stays discoverable via "Add provider").
+  final String id;
 
   /// The picker tile's label (resolve localization before building — the
   /// route itself is context-free).

@@ -19,6 +19,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -52,7 +53,12 @@ class DefaultChatModelSection extends StatelessWidget {
     this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
+    this.onDeviceConfigStore,
   });
+
+  /// The on-device configured record: the default-chat picker offers only
+  /// configured engines; the rest stay discoverable via "Add provider".
+  final OnDeviceConfigStore? onDeviceConfigStore;
 
   /// The service whose backend the flow reconfigures.
   final AgentService service;
@@ -81,6 +87,14 @@ class DefaultChatModelSection extends StatelessWidget {
   /// Applies [config] as the main connection: reconfigure the service,
   /// persist the last connection.
   Future<void> _apply(AgentConfig config) async {
+    const onDeviceKinds = {
+      webLlmProviderKind,
+      gemmaProviderKind,
+      transformersJsProviderKind,
+    };
+    if (onDeviceKinds.contains(config.providerKind)) {
+      await onDeviceConfigStore?.markConfigured(config.providerKind);
+    }
     await service.reconfigure(config);
     await lastConnectionStore?.saveFromConfig(config);
   }
@@ -102,7 +116,8 @@ class DefaultChatModelSection extends StatelessWidget {
         return const [];
       },
       // The on-device presets connect through the regular form (engine
-      // download + progress) pre-selected to the provider.
+      // download + progress) pre-selected to the provider. Only engines the
+      // user already configured appear as picker tiles.
       onDeviceProviders: buildOnDeviceProviderRoutes(
         context,
         registry: reg,
@@ -111,6 +126,8 @@ class DefaultChatModelSection extends StatelessWidget {
         gemmaEngine: gemmaEngine,
         transformersJsEngine: transformersJsEngine,
         isWeb: isWeb,
+        configStore: onDeviceConfigStore,
+        onlyConfigured: onDeviceConfigStore != null,
       ),
       providerKindLabels: {
         if (webLlmProviderVisible(isWeb: web))
@@ -122,6 +139,16 @@ class DefaultChatModelSection extends StatelessWidget {
       },
       addProviderPage: (context) => fa_ui.AddProviderPresetPickerPage(
         registry: reg,
+        onDeviceRoutes: buildOnDeviceProviderRoutes(
+          context,
+          registry: reg,
+          onApply: _apply,
+          webLlmEngine: webLlmEngine,
+          gemmaEngine: gemmaEngine,
+          transformersJsEngine: transformersJsEngine,
+          isWeb: isWeb,
+          configStore: onDeviceConfigStore,
+        ),
         onCodeMieSso: () async {
           Navigator.of(context).pop();
           await runCodemieSsoFlow(
@@ -161,27 +188,48 @@ List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
   GemmaEngineApi? gemmaEngine,
   TransformersJsEngineApi? transformersJsEngine,
   bool? isWeb,
+  OnDeviceConfigStore? configStore,
+
+  /// When true, only engines the user has already configured (downloaded +
+  /// applied once, see [OnDeviceConfigStore]) produce routes; the full set
+  /// stays discoverable through the "Add provider" picker.
+  bool onlyConfigured = false,
 }) {
   final web = isWeb ?? kIsWeb;
-  fa_ui.FaOnDeviceRoute route(ProviderPreset preset) => fa_ui.FaOnDeviceRoute(
-    label: preset.labelFor(context),
-    pageBuilder: (context, apply) => _OnDeviceFormPage(
-      preset: preset,
-      registry: registry ?? ProviderRegistry.inMemory(),
-      onApply: (config) => apply(_faConfigFrom(config)),
-      webLlmEngine: webLlmEngine,
-      gemmaEngine: gemmaEngine,
-      transformersJsEngine: transformersJsEngine,
-      isWeb: isWeb,
-    ),
-  );
+  fa_ui.FaOnDeviceRoute route(ProviderPreset preset, String kind) =>
+      fa_ui.FaOnDeviceRoute(
+        label: preset.labelFor(context),
+        id: kind,
+        pageBuilder: (context, apply) => _OnDeviceFormPage(
+          preset: preset,
+          registry: registry ?? ProviderRegistry.inMemory(),
+          onApply: (config) async {
+            // A completed on-device connect marks the engine configured:
+            // its row appears in the Providers list from now on.
+            await configStore?.markConfigured(kind);
+            await apply(_faConfigFrom(config));
+          },
+          webLlmEngine: webLlmEngine,
+          gemmaEngine: gemmaEngine,
+          transformersJsEngine: transformersJsEngine,
+          isWeb: isWeb,
+        ),
+      );
+
+  bool visible(String kind) =>
+      !onlyConfigured ||
+      configStore == null ||
+      configStore.isConfigured(kind);
 
   return [
-    if (webLlmProviderVisible(isWeb: web)) route(ProviderPreset.webllm),
-    if (gemmaProviderVisible(isWeb: web, platform: defaultTargetPlatform))
-      route(ProviderPreset.gemma),
-    if (transformersJsProviderVisible(isWeb: web))
-      route(ProviderPreset.transformersJs),
+    if (webLlmProviderVisible(isWeb: web) && visible(webLlmProviderKind))
+      route(ProviderPreset.webllm, webLlmProviderKind),
+    if (gemmaProviderVisible(isWeb: web, platform: defaultTargetPlatform) &&
+        visible(gemmaProviderKind))
+      route(ProviderPreset.gemma, gemmaProviderKind),
+    if (transformersJsProviderVisible(isWeb: web) &&
+        visible(transformersJsProviderKind))
+      route(ProviderPreset.transformersJs, transformersJsProviderKind),
   ];
 }
 

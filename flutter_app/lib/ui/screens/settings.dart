@@ -24,6 +24,7 @@ import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/openrouter_oauth_links_stub.dart'
@@ -999,17 +1000,19 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Provider-first flow: the list is always visible; config fields
-        // appear only after a provider is selected.
-        ProviderSelectionList(
-          selected: _selection,
-          onSelect: (value) => _selectProvider(value),
-          onAdd: _addProvider,
-          registry: _registry,
-          onEdit: (provider) => _editProvider(provider),
-          isWeb: _isWeb,
-        ),
-        if (!_showProviderListOnly) ...[
+        // Provider-first flow: the list is visible unless a provider was
+        // forced (the on-device settings route locks to its engine — no
+        // provider list, no change-provider detour).
+        if (widget.initialProvider == null)
+          ProviderSelectionList(
+            selected: _selection,
+            onSelect: (value) => _selectProvider(value),
+            onAdd: _addProvider,
+            registry: _registry,
+            onEdit: (provider) => _editProvider(provider),
+            isWeb: _isWeb,
+          ),
+        if (!_showProviderListOnly && widget.initialProvider == null) ...[
           const SizedBox(height: 12),
           // "Back to providers" link.
           Align(
@@ -2018,6 +2021,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final taskModels =
         widget.taskModelsStore ?? TaskModelsScope.maybeOf(context);
+    final onDeviceConfig = OnDeviceConfigScope.maybeOf(context);
     return Scaffold(
       appBar: faAppBar(title: Text(context.l10n.settingsTitle)),
       body: SafeArea(
@@ -2060,6 +2064,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onDeviceProviders: buildOnDeviceProviderRoutes(
                   context,
                   registry: widget.registry,
+                  configStore: onDeviceConfig,
                   onApply: (config) async {
                     await widget.service.reconfigure(config);
                     await widget.lastConnectionStore?.saveFromConfig(config);
@@ -2068,8 +2073,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   gemmaEngine: widget.gemmaEngine,
                   transformersJsEngine: widget.transformersJsEngine,
                 ),
+                // On-device rows appear only for engines the user has
+                // configured before; the rest are discovered via Add
+                // provider (the routes above feed the picker's tiles).
+                onDeviceRowVisible: onDeviceConfig == null
+                    ? null
+                    : onDeviceConfig.isConfigured,
                 onDeviceConnected: (config) async {
                   final agentConfig = agentConfigFrom(config);
+                  const onDeviceKinds = {
+                    webLlmProviderKind,
+                    gemmaProviderKind,
+                    transformersJsProviderKind,
+                  };
+                  if (onDeviceKinds.contains(agentConfig.providerKind)) {
+                    await onDeviceConfig?.markConfigured(
+                      agentConfig.providerKind,
+                    );
+                  }
                   await widget.service.reconfigure(agentConfig);
                   await widget.lastConnectionStore?.saveFromConfig(agentConfig);
                 },
@@ -2120,6 +2141,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 webLlmEngine: widget.webLlmEngine,
                 gemmaEngine: widget.gemmaEngine,
                 transformersJsEngine: widget.transformersJsEngine,
+                onDeviceConfigStore: onDeviceConfig,
               ),
               const SizedBox(height: 24),
               const Divider(),

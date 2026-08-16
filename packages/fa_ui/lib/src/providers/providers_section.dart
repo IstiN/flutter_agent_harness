@@ -34,6 +34,7 @@ class ProvidersSection extends StatelessWidget {
     this.service,
     this.registry,
     this.onDeviceProviders = const [],
+    this.onDeviceRowVisible,
     this.onDeviceConnected,
     this.openRouterOAuthCallbackUrl,
     this.openRouterOAuthCapture,
@@ -52,6 +53,12 @@ class ProvidersSection extends StatelessWidget {
   /// On-device provider routes (Gemma, WebLLM, transformers.js, …). Shown
   /// after the custom providers when non-empty.
   final List<FaOnDeviceRoute> onDeviceProviders;
+
+  /// Gates an on-device route's row in the Providers list by engine kind
+  /// (see [FaOnDeviceRoute.id]): null shows all (previews); the app passes
+  /// the on-device config store so a never-configured engine stays
+  /// discoverable through "Add provider" instead of cluttering the list.
+  final bool Function(String kind)? onDeviceRowVisible;
 
   /// Called when an on-device route applies a [FaChatModelConfig] (the user
   /// connected a local model). The host should reconfigure its service.
@@ -140,15 +147,16 @@ class ProvidersSection extends StatelessWidget {
             // On-device engines are provider types too — plain rows in the
             // same list, not a separate "Local models" section.
             for (final route in onDeviceProviders)
-              _buildRow(
-                context,
-                theme,
-                label: route.label,
-                leading: Icons.memory_outlined,
-                onTap: () {
-                  unawaited(_openOnDeviceRoute(context, route));
-                },
-              ),
+              if (onDeviceRowVisible?.call(route.id) ?? true)
+                _buildRow(
+                  context,
+                  theme,
+                  label: route.label,
+                  leading: Icons.memory_outlined,
+                  onTap: () {
+                    unawaited(_openOnDeviceRoute(context, route));
+                  },
+                ),
             _buildRow(
               context,
               theme,
@@ -264,6 +272,8 @@ class ProvidersSection extends StatelessWidget {
         onChatGptOAuth: onChatGptOAuth,
         openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
         openRouterOAuthCapture: openRouterOAuthCapture,
+        onDeviceRoutes: onDeviceProviders,
+        onOnDeviceConnected: onDeviceConnected,
       ),
     );
   }

@@ -125,6 +125,33 @@ void main() {
       expect(find.text('Add provider'), findsOneWidget);
     });
 
+    testWidgets('a custom provider on a hosted preset endpoint dedupes it', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'My OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        modelId: 'acme-1',
+      );
+      await _pumpWithOpener(
+        tester,
+        MediaSlotProviderPickerPage(
+          slot: null,
+          title: 'Quick model',
+          registry: registry,
+          modelsFetcher: _someModels,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      // The hosted OpenRouter preset is covered by the saved instance.
+      expect(find.text('My OpenRouter'), findsOneWidget);
+      expect(find.text('OpenRouter'), findsNothing);
+      expect(find.text('Ollama'), findsOneWidget);
+    });
+
     testWidgets('the main connection row pops a clear result', (tester) async {
       MediaSlotEditorResult? result;
       var popped = false;

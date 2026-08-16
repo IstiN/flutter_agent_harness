@@ -5,6 +5,9 @@
 import 'package:flutter/material.dart';
 
 import 'package:fa_ui/src/host_config.dart';
+import 'package:fa_ui/src/providers/connection.dart' show FaChatModelConfig;
+import 'package:fa_ui/src/providers/default_chat_model.dart'
+    show FaOnDeviceRoute;
 import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_marks.dart';
@@ -153,6 +156,8 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     this.onChatGptOAuth,
     this.openRouterOAuthCallbackUrl,
     this.openRouterOAuthCapture,
+    this.onDeviceRoutes = const [],
+    this.onOnDeviceConnected,
   });
 
   /// The provider registry: needed so the editor can save the new provider.
@@ -177,6 +182,15 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// Automatic callback capture for OpenRouter OAuth (forwarded to the
   /// editor).
   final OpenRouterOAuthCaptureCallback? openRouterOAuthCapture;
+
+  /// On-device engine routes (Gemma/WebLLM/…): each renders a tile after
+  /// the hosted presets so a never-configured engine is discoverable here
+  /// instead of cluttering the Providers list.
+  final List<FaOnDeviceRoute> onDeviceRoutes;
+
+  /// A on-device route completed its connect flow (the host connects +
+  /// marks the engine configured).
+  final ValueChanged<FaChatModelConfig>? onOnDeviceConnected;
 
   @override
   Widget build(BuildContext context) {
@@ -204,6 +218,21 @@ class AddProviderPresetPickerPage extends StatelessWidget {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
                 onTap: () => _onPresetTap(context, preset),
+              ),
+            for (final route in onDeviceRoutes)
+              ListTile(
+                leading: Icon(
+                  Icons.memory_outlined,
+                  color: theme.colorScheme.primary,
+                ),
+                title: Text(route.label),
+                subtitle: const Text('Runs on this device — download once'),
+                trailing: Icon(
+                  Icons.chevron_right,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                onTap: () => _onOnDeviceTap(context, route),
               ),
           ],
         ),
@@ -279,6 +308,23 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         }
         if (context.mounted) Navigator.of(context).pop(true);
     }
+  }
+
+  /// On-device tile: pushes the route's connect page; a completed connect
+  /// reports through [onOnDeviceConnected] and pops the picker.
+  Future<void> _onOnDeviceTap(
+    BuildContext context,
+    FaOnDeviceRoute route,
+  ) async {
+    final config = await pushFaPage<FaChatModelConfig?>(
+      context,
+      route.pageBuilder(context, (config) async {
+        if (context.mounted) Navigator.of(context).pop(config);
+      }),
+    );
+    if (config == null || !context.mounted) return;
+    onOnDeviceConnected?.call(config);
+    Navigator.of(context).pop(true);
   }
 
   /// Maps a [AddProviderPreset.key] to the matching [ProviderPreset] for

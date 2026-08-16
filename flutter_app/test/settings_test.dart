@@ -6,6 +6,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -83,6 +84,8 @@ Finder _editorField(String label) {
     matching: find.widgetWithText(TextField, label),
   );
 }
+
+Future<void> _noopConnect(AgentConfig config) async {}
 
 Future<void> _pumpForm(
   WidgetTester tester,
@@ -904,6 +907,31 @@ void main() {
       await tester.tap(find.textContaining('Gemma 4 E4B'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Gemma 4 E4B'), findsOneWidget);
+      setPlatform(null);
+    });
+
+    testWidgets('a forced provider locks the form: no provider list, no '
+        'change-provider link', (tester) async {
+      setPlatform(TargetPlatform.android);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: AgentSettingsForm(
+                initialProvider: ProviderPreset.gemma,
+                onConnect: _noopConnect,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The on-device settings route locks to its engine: straight to the
+      // model picker, no provider list in between.
+      expect(find.byType(ProviderSelectionList), findsNothing);
+      expect(find.text('Change provider'), findsNothing);
+      expect(find.text('On-device model'), findsOneWidget);
       setPlatform(null);
     });
 

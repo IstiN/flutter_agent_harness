@@ -31,6 +31,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
+import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/task_models_store.dart';
@@ -110,6 +111,7 @@ Future<void> main() async {
   final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
   final mediaModels = await MediaModelsStore.load(env);
   final taskModels = await TaskModelsStore.load(env);
+  final onDeviceConfig = await OnDeviceConfigStore.load(env);
   // fa_ui's provider UI resolves named keys through the app's chain
   // (dart-defines → saved keys → .env), exactly like the connection form.
   FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
@@ -193,6 +195,7 @@ Future<void> main() async {
       sessionKeysStore: sessionKeys,
       mediaModelsStore: mediaModels,
       taskModelsStore: taskModels,
+      onDeviceConfigStore: onDeviceConfig,
       analytics: analytics,
     ),
   );
@@ -226,6 +229,7 @@ class MyApp extends StatelessWidget {
     this.sessionKeysStore,
     this.mediaModelsStore,
     this.taskModelsStore,
+    this.onDeviceConfigStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -264,6 +268,10 @@ class MyApp extends StatelessWidget {
   /// settings Task models section hides, tests).
   final TaskModelsStore? taskModelsStore;
 
+  /// The on-device engines the user configured (drives Providers rows); null
+  /// skips the scope (tests).
+  final OnDeviceConfigStore? onDeviceConfigStore;
+
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
   final WebLlmEngineApi? webLlmEngine;
@@ -284,6 +292,7 @@ class MyApp extends StatelessWidget {
     final theme = themeController ?? _fallbackThemeController;
     final sessionKeys = sessionKeysStore;
     final mediaModels = mediaModelsStore;
+    final onDeviceConfig = onDeviceConfigStore;
     Widget child = ListenableBuilder(
       listenable: theme,
       builder: (context, _) {
@@ -339,6 +348,9 @@ class MyApp extends StatelessWidget {
     child = FahThemeScope(controller: theme, child: child);
     if (sessionKeys != null) {
       child = SessionKeysScope(store: sessionKeys, child: child);
+    }
+    if (onDeviceConfig != null) {
+      child = OnDeviceConfigScope(store: onDeviceConfig, child: child);
     }
     if (mediaModels != null) {
       child = MediaModelsScope(store: mediaModels, child: child);
@@ -503,6 +515,7 @@ class BootstrapScreen extends StatefulWidget {
 
   /// The persisted task-model overrides store, passed to [AgentService.create].
   final TaskModelsStore? taskModelsStore;
+
 
   /// Engine overrides for the on-device providers (tests).
   final WebLlmEngineApi? webLlmEngine;
@@ -706,6 +719,17 @@ class SetupScreen extends StatelessWidget {
   final bool? isWeb;
 
   Future<void> _connect(BuildContext context, AgentConfig config) async {
+    // An on-device connect marks the engine configured — its provider row
+    // appears in the settings list from now on.
+    const onDeviceKinds = {
+      webLlmProviderKind,
+      gemmaProviderKind,
+      transformersJsProviderKind,
+    };
+    if (onDeviceKinds.contains(config.providerKind)) {
+      await OnDeviceConfigScope.maybeOf(context)
+          ?.markConfigured(config.providerKind);
+    }
     final manager = FlutterSessionManager(
       env: env ?? await createPlatformEnv(),
       sessionsRoot: '${(env ?? await createPlatformEnv()).cwd}/sessions',
