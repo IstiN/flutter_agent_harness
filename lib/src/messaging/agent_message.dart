@@ -3,6 +3,8 @@
 /// one messaging root) exchange messages like people do.
 library;
 
+import 'dart:math';
+
 /// One message between two agents.
 final class AgentMessage {
   const AgentMessage({
@@ -52,15 +54,14 @@ final class AgentMessage {
 }
 
 var _messageCounter = 0;
+final _messageRandom = Random();
 
 /// Time-ordered, collision-resistant message id:
-/// `<utcTimestamp>_<counter>_<rand>`. String order == arrival order.
+/// `<microsSinceEpoch:16>_<counter:4>_<rand>` — fixed-width components, so
+/// string order == arrival order (inbox file names sort correctly).
 String newMessageId() {
-  final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
-    RegExp(r'[^0-9]'),
-    '',
-  );
+  final micros = DateTime.now().toUtc().microsecondsSinceEpoch;
   final counter = (_messageCounter++).toRadixString(36).padLeft(4, '0');
-  final rand = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-  return '${stamp}_${counter}_$rand';
+  final rand = _messageRandom.nextInt(1 << 32).toRadixString(36);
+  return '${micros.toString().padLeft(16, '0')}_${counter}_$rand';
 }

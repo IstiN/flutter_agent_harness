@@ -125,11 +125,18 @@ factual: paths, commands, invariants — no essays.
   on every session init/switch) namespaces mailboxes so two instances never
   drain each other — ids with `/` are absolute cross-instance addresses
   (`<sessionId>/main`). `agent_message` targets siblings, `main`, or an
-  absolute mailbox. Turn-boundary delivery: `Agent.externalSteeringSource`
+  absolute mailbox; `agent_directory` lists fabric mailboxes with pending
+  counts (`.id` markers keep real ids despite dir sanitization). The
+  `## Agent messaging` prompt section (prompts messaging_section.md, CLI +
+  app variants) tells the model its own mailbox address. Turn-boundary
+  delivery: `Agent.externalSteeringSource`
   merges inbox drains into the steering poll (main in AgentCli/AgentService
   as `_mainInboxMessages`, children via the executor) — messages land as
   sender-attributed user messages, so they persist in the session and read
-  like a chat. UI: `/agents` rows show a `mail:N` pending marker (the CLI
+  like a chat. Idle wake: an inbox watcher (2s CLI / 3s app) starts a turn
+  when mail arrives while idle — two Fa instances chat live; a 10-run
+  streak cap without user input breaks ping-pong loops.
+  UI: `/agents` rows show a `mail:N` pending marker (the CLI
   font has no ✉ glyph), the app's AgentsSection shows `✉N`; observe/detail
   views list the pending inbox.
 - `lib/src/memory/` — long-term memory: `MemoryController` over the

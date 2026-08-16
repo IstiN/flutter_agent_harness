@@ -106,6 +106,11 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{cwd}}',
   ),
   PromptSpec(
+    source: 'prompts/cli/messaging_section.md',
+    constName: 'cliMessagingSectionPrompt',
+    requiredToken: '{{mailbox}}',
+  ),
+  PromptSpec(
     source: 'prompts/tools/inspect_image.md',
     constName: 'inspectImageVisionSystemPrompt',
   ),
@@ -205,6 +210,11 @@ const exampleSpecs = <PromptSpec>[
   PromptSpec(
     source: 'flutter_app/prompts/transformers_js_no_tools_note.md',
     constName: 'transformersJsNoToolsNote',
+  ),
+  PromptSpec(
+    source: 'flutter_app/prompts/messaging_section.md',
+    constName: 'appMessagingSectionPrompt',
+    requiredToken: '{{mailbox}}',
   ),
 ];
 

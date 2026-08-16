@@ -1,6 +1,9 @@
 @TestOn('vm')
 library;
 
+import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_agent_harness/src/messaging/agent_message.dart';
+import 'package:flutter_agent_harness/src/messaging/file_messaging_repository.dart';
 import 'package:flutter_agent_harness/src/task/subagent.dart';
 import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
 import 'package:flutter_agent_harness/src/task/subagent_tools.dart';
@@ -30,9 +33,9 @@ void main() {
       expect(subagentMonitoringTools(manager: null), isEmpty);
     });
 
-    test('returns 5 tools', () {
+    test('returns 6 tools', () {
       final tools = subagentMonitoringTools(manager: mgr);
-      expect(tools.length, 5);
+      expect(tools.length, 6);
       expect(
         tools.map((t) => t.name),
         containsAll([
@@ -41,9 +44,62 @@ void main() {
           'task_send',
           'reply',
           'agent_message',
+          'agent_directory',
         ]),
       );
     });
+
+    test('agent_directory lists fabric mailboxes and marks self', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final repo = FileMessagingRepository(env: env, root: '/mail');
+      final fabricMgr = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1';
+      await fabricMgr.register(
+        id: 'a1',
+        name: 'a1',
+        agentType: 'task',
+        task: 'work',
+      );
+      await fabricMgr.enqueueMessage(
+        'a1',
+        SubagentMessage(
+          fromId: 'main',
+          text: 'note',
+          sentAt: '2026-01-01T00:00:00Z',
+        ),
+      );
+      // Another instance's mailbox exists in the same fabric.
+      await repo.send(
+        AgentMessage(
+          id: 'x1',
+          fromId: 'sess2/main',
+          toId: 'sess1/main',
+          text: 'cross-instance',
+          sentAt: '2026-01-01T00:00:00Z',
+        ),
+      );
+
+      final tools = subagentMonitoringTools(manager: fabricMgr);
+      final directory = tools.firstWhere((t) => t.name == 'agent_directory');
+      final result = await directory.execute(const {}, null, null);
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('you are "sess1/main"'));
+      expect(text, contains('sess1/main — 1 pending'));
+      expect(text, contains('← you'));
+      expect(text, contains('sess1/a1 — 1 pending'));
+    });
+
+    test(
+      'agent_directory without a fabric still lists registered children',
+      () async {
+        final tools = subagentMonitoringTools(manager: mgr);
+        final directory = tools.firstWhere((t) => t.name == 'agent_directory');
+        final result = await directory.execute(const {}, null, null);
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('a1'));
+        expect(text, contains('subagent'));
+      },
+    );
 
     test('task_status without id lists all subagents', () async {
       final tools = subagentMonitoringTools(manager: mgr);

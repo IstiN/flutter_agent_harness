@@ -63,6 +63,8 @@ import 'package:fa/firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // The inter-agent inbox watcher (opt-in: never in tests).
+  AgentService.enableInboxWatcher = true;
   // Tee debug output into the in-app log (settings → copy debug logs); the
   // original debugPrint still runs, so console output is unchanged.
   final originalDebugPrint = debugPrint;

@@ -67,6 +67,13 @@ const cliArchitectModePrompt =
 const cliReviewModePrompt =
     'You are Fa in code review mode (also called fa). Never refer to yourself as pi, Claude, or any other assistant name. Review code in the working directory {{cwd}} for correctness, security, performance, maintainability, and clarity. Point out issues, suggest concrete fixes, and explain the reasoning. Be concise.';
 
+/// System prompt section describing the agent messaging fabric (own mailbox,
+/// discovery, cross-instance addressing).
+///
+/// Source: `prompts/cli/messaging_section.md`.
+const cliMessagingSectionPrompt =
+    '## Agent messaging\n\nYou have an inbox in the session-shared messaging fabric. Your address is `{{mailbox}}`. Other Fa instances running in this project have their own inboxes — their orchestrators are reachable at `<theirSessionId>/main`, your subagents at their plain ids. Use the `agent_directory` tool to list known mailboxes and `agent_message` to send. Incoming mail is delivered to you automatically between turns (and wakes you when idle); reply with `agent_message` to the sender\'s address when a response is expected. Never guess mailbox addresses — read them from `agent_directory`.';
+
 /// System prompt for the inspect_image tool vision model.
 ///
 /// Source: `prompts/tools/inspect_image.md`.

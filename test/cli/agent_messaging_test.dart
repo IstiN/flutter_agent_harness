@@ -130,4 +130,68 @@ void main() {
       await io.close();
     },
   );
+
+  test(
+    'mail arriving while IDLE wakes the agent into a turn (no user input)',
+    () async {
+      final ioA = FakeCliIO();
+      final ioB = FakeCliIO();
+      final fakeA = FakeStreamFunction([textTurn('answering the mail')]);
+      final cliA = cliFor(ioA, fakeA);
+      final cliB = cliFor(ioB, FakeStreamFunction([]));
+      final runA = cliA.run();
+      final runB = cliB.run();
+      await waitForIt(
+        () =>
+            cliA.subagentManager.mailboxPrefix.isNotEmpty &&
+            cliB.subagentManager.mailboxPrefix.isNotEmpty,
+      );
+
+      // B → A; A is idle at the prompt. The inbox watcher (2s tick) must
+      // start a run by itself — no user input on A.
+      await cliB.subagentManager.enqueueMessage(
+        '${cliA.subagentManager.mailboxPrefix}/main',
+        SubagentMessage(
+          fromId: 'main',
+          text: 'wake up and read this',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      await waitForIt(() => fakeA.calls == 1);
+
+      // The run saw the mail as a sender-attributed user message…
+      final seen = fakeA.contexts[0].messages
+          .whereType<UserMessage>()
+          .map((m) => m.content)
+          .join('\n');
+      expect(seen, contains('wake up and read this'));
+      // …and the transcript told the user about the arrival.
+      expect(ioA.out.toString(), contains('[mail] 1 new message(s)'));
+
+      ioA.sendLine('/exit');
+      ioB.sendLine('/exit');
+      await runA;
+      await runB;
+      await ioA.close();
+      await ioB.close();
+    },
+  );
+
+  test('the system prompt carries the own mailbox address', () async {
+    final io = FakeCliIO();
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(io, fake);
+    final run = cli.run();
+    await waitForIt(() => cli.subagentManager.mailboxPrefix.isNotEmpty);
+    io.sendLine('hello');
+    await waitForIt(() => fake.calls == 1);
+    final prompt = fake.contexts[0].systemPrompt ?? '';
+    final mailbox = cli.subagentManager.mailboxOf('main');
+    expect(prompt, contains('## Agent messaging'));
+    expect(prompt, contains(mailbox));
+    expect(prompt, contains('agent_directory'));
+    io.sendLine('/exit');
+    await run;
+    await io.close();
+  });
 }

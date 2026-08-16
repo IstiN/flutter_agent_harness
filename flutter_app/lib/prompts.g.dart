@@ -27,3 +27,10 @@ const webLlmNoToolsNote =
 /// Source: `flutter_app/prompts/transformers_js_no_tools_note.md`.
 const transformersJsNoToolsNote =
     'IMPORTANT: this conversation runs on-device (Gemma via transformers.js) with NO tools registered — no shell, no file access. Do not emit tool calls, function calls, or shell/file actions; there is nothing to execute them. Answer in plain text only.';
+
+/// System prompt section describing the agent messaging fabric (own mailbox,
+/// discovery, cross-instance addressing) for the Flutter app.
+///
+/// Source: `flutter_app/prompts/messaging_section.md`.
+const appMessagingSectionPrompt =
+    '## Agent messaging\n\nYou have an inbox in the session-shared messaging fabric. Your address is `{{mailbox}}`. Your subagents are reachable at their plain ids; other Fa instances sharing this session store have addresses like `<theirSessionId>/main`. Use the `agent_directory` tool to list known mailboxes and `agent_message` to send. Incoming mail is delivered to you automatically between turns (and wakes you when idle); reply with `agent_message` to the sender\'s address when a response is expected. Never guess mailbox addresses — read them from `agent_directory`.';

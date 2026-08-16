@@ -105,7 +105,9 @@ void main() {
         () => io.out.toString().contains('switched mode to review'),
       );
       expect(cli.currentMode.name, 'review');
-      expect(cli.agent.state.systemPrompt, 'CUSTOM REVIEW');
+      // The messaging section (own mailbox address) appends to the composed
+      // prompt once the session exists — the override owns the head.
+      expect(cli.agent.state.systemPrompt, startsWith('CUSTOM REVIEW'));
       io.sendLine('/code');
       await _waitFor(() => io.out.toString().contains('switched mode to code'));
       // Un-overridden modes keep their built-in prompt.

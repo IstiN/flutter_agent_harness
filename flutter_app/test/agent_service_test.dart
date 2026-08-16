@@ -948,6 +948,83 @@ void main() {
       },
     );
 
+    test(
+      'mail arriving while idle wakes the agent into a turn (app)',
+      () async {
+        AgentService.enableInboxWatcher = true;
+        addTearDown(() => AgentService.enableInboxWatcher = false);
+        final env = MemoryExecutionEnv(cwd: '/');
+        final contexts = <Context>[];
+        AssistantMessageEventStream recording(
+          Model model,
+          Context context, {
+          CancelToken? cancelToken,
+        }) {
+          contexts.add(
+            Context(
+              systemPrompt: context.systemPrompt,
+              messages: List.of(context.messages),
+              tools: context.tools,
+            ),
+          );
+          final stream = AssistantMessageEventStream();
+          final message = AssistantMessage(
+            content: [TextContent(text: 'ok')],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: Usage.zero,
+            stopReason: StopReason.stop,
+            timestamp: DateTime.now(),
+          );
+          stream.push(DoneEvent(reason: StopReason.stop, message: message));
+          stream.end();
+          return stream;
+        }
+
+        final service = await AgentService.create(
+          config: AgentConfig(
+            providerKind: 'openai-completions',
+            modelId: 'test-model',
+            baseUrl: 'https://example.test',
+            apiKey: 'test-key',
+          ),
+          env: env,
+          streamFunction: recording,
+        );
+        addTearDown(service.dispose);
+        await service.initialize();
+
+        final manager = service.subagentManager!;
+        // The prompt now carries the own mailbox address.
+        expect(service.systemPromptForTest, contains('## Agent messaging'));
+        expect(
+          service.systemPromptForTest,
+          contains(manager.mailboxOf('main')),
+        );
+
+        // Mail arrives while the agent idles: the watcher (3s tick) starts
+        // a run without any user input.
+        await manager.enqueueMessage(
+          'main',
+          SubagentMessage(
+            fromId: 'a1',
+            text: 'wake up, app',
+            sentAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        for (var i = 0; i < 400 && contexts.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(contexts, isNotEmpty);
+        final seen = contexts.first.messages
+            .whereType<UserMessage>()
+            .map((m) => m.content)
+            .join('\n');
+        expect(seen, contains('wake up, app'));
+      },
+    );
+
     test('durable memory facts join the composed system prompt', () async {
       final env = MemoryExecutionEnv(cwd: '/');
       // Seed a fact through the same store the service's controller reads

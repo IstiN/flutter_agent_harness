@@ -35,6 +35,7 @@ import '../task/subagent_manager.dart';
 import '../task/subagent_tools.dart';
 import '../skills/skills.dart';
 import '../prompts/project_context.dart';
+import '../prompts/prompts.g.dart' show cliMessagingSectionPrompt;
 import '../approval/approval.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
@@ -730,6 +731,19 @@ class AgentCli {
       contextSection: formatProjectContext(_contextFiles),
       skillsSection: formatSkillsForPrompt(_skills),
       memorySection: _memorySection,
+      messagingSection: _messagingSection(),
+    );
+  }
+
+  /// The `## Agent messaging` prompt section: the agent's own mailbox in
+  /// the fabric + how discovery/addressing work. Empty until the session
+  /// (and thus the mailbox prefix) exists.
+  String _messagingSection() {
+    final prefix = _subagentManager.mailboxPrefix;
+    if (_subagentManager.messaging == null || prefix.isEmpty) return '';
+    return cliMessagingSectionPrompt.replaceAll(
+      '{{mailbox}}',
+      _subagentManager.mailboxOf(_subagentManager.selfId),
     );
   }
 
@@ -816,6 +830,13 @@ class AgentCli {
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
     );
+    // The inbox watcher: incoming inter-agent mail while IDLE wakes the
+    // agent into a turn (mid-run mail is already delivered by the steering
+    // poll). This is what makes two Fa instances chat live.
+    final inboxTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_wakeOnInboxMail()),
+    );
     try {
       if (_useTui) {
         // The TUI prints the banner itself into its output history (buffered
@@ -830,6 +851,7 @@ class AgentCli {
       _cancelPendingAnswers();
       await interruptSub.cancel();
       await taskSub.cancel();
+      inboxTimer.cancel();
       await _settled;
       // A session nobody wrote to leaves no file behind.
       await deleteSessionIfEmpty();
@@ -1391,6 +1413,8 @@ class AgentCli {
   /// inboxes. Called after every session init/switch.
   void _syncMailboxPrefix() {
     _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
+    // The prompt's messaging section carries the live mailbox address.
+    _applyPromptComposition();
   }
 
   /// The label for a startup-resumed session's replay header, or null when
@@ -1877,6 +1901,8 @@ class AgentCli {
     final trimmed = line.trim();
     if (_routePendingInput(trimmed)) return;
     if (trimmed.isEmpty) return;
+    // Real user input resets the inbox wake streak (the ping-pong guard).
+    _inboxWakeStreak = 0;
     // A tool call waiting on an approval decision owns the next input line;
     // it must not be steered into the agent as a user message.
     final pendingApproval = _pendingApprovalAnswer;
@@ -2063,6 +2089,39 @@ class AgentCli {
     await _ttsr?.settled;
     await _persistMessages();
     await _maybeAutoCompact();
+  }
+
+  /// Idle-wake guard: one inbox-triggered run at a time.
+  var _inboxWakeRunning = false;
+
+  /// Consecutive inbox-triggered runs without any user input — capped so
+  /// two chatty instances cannot ping-pong forever (mail still accumulates
+  /// and is delivered at the next real turn).
+  var _inboxWakeStreak = 0;
+  static const _maxInboxWakeStreak = 10;
+
+  /// The inbox watcher tick: while IDLE, new inter-agent mail starts a turn
+  /// (the loop's first steering poll drains the inbox into the run). Mid-run
+  /// mail needs no wake — the per-turn steering poll already delivers it.
+  Future<void> _wakeOnInboxMail() async {
+    if (_exited || isBusy || _inboxWakeRunning) return;
+    if (_inboxWakeStreak >= _maxInboxWakeStreak) return;
+    final count = await _subagentManager.pendingInboxCount(
+      _subagentManager.selfId,
+    );
+    if (count == 0) return;
+    _inboxWakeStreak++;
+    _inboxWakeRunning = true;
+    io.writeln(
+      _style.dim('[mail] $count new message(s) — waking up to answer'),
+    );
+    _startRun(
+      '<system-notice>New inter-agent mail arrived ($count message(s)) — '
+      'the messages follow below as user messages. Read them and act: reply '
+      'with the agent_message tool to the sender address when a response is '
+      'expected, or just incorporate the information.</system-notice>',
+    );
+    unawaited(_settled.whenComplete(() => _inboxWakeRunning = false));
   }
 
   Future<void> _persistMessages() async {

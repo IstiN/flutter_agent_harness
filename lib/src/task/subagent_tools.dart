@@ -47,7 +47,51 @@ List<AgentTool> subagentMonitoringTools({
     _taskSendTool(manager, sendToChild),
     _replyTool(manager, currentSubagentId),
     _agentMessageTool(manager, currentSubagentId),
+    _agentDirectoryTool(manager),
   ];
+}
+
+/// `agent_directory` — the messaging fabric's phone book: every known
+/// mailbox (subagents, this instance, other Fa instances sharing the
+/// session repo) with pending counts, own address marked.
+AgentTool _agentDirectoryTool(SubagentManager manager) {
+  return AgentTool(
+    name: 'agent_directory',
+    description:
+        'List the known agent mailboxes in the messaging fabric: your '
+        'subagents, other Fa instances sharing this session repo, and your '
+        'own address (marked). Combine with agent_message to talk to any of '
+        'them: plain ids for subagents, "<sessionId>/main" for another '
+        'instance\'s orchestrator.',
+    parameters: const {'type': 'object', 'properties': {}},
+    tier: ApprovalTier.read,
+    execute: (args, cancelToken, onUpdate) async {
+      final fabric = manager.messaging;
+      final self = manager.mailboxOf(manager.selfId);
+      final buffer = StringBuffer('agent mailboxes (you are "$self"):');
+      final ids = await fabric?.directory() ?? const <String>[];
+      for (final id in ids) {
+        final pending = await fabric!.peek(id);
+        buffer
+          ..writeln()
+          ..write('  $id — ${pending.length} pending');
+        if (id == self) buffer.write('  ← you');
+      }
+      // Registered children get mailboxes on first mail — list them
+      // explicitly so they are addressable before that.
+      for (final handle in manager.handles) {
+        final mailbox = manager.mailboxOf(handle.id);
+        if (ids.contains(mailbox)) continue;
+        buffer
+          ..writeln()
+          ..write('  $mailbox — subagent (${handle.status.name})');
+      }
+      if (ids.isEmpty && manager.handles.isEmpty) {
+        buffer.write(' none yet — subagent mailboxes appear on first mail');
+      }
+      return ToolExecutionResult.text(buffer.toString());
+    },
+  );
 }
 
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to
@@ -126,7 +170,7 @@ AgentTool _agentMessageTool(
     execute: (args, cancelToken, onUpdate) async {
       final to = args['to'] as String;
       final message = args['message'] as String? ?? '';
-      final fromId = currentSubagentId?.call() ?? 'parent';
+      final fromId = currentSubagentId?.call() ?? manager.selfId;
       if (message.trim().isEmpty) {
         return ToolExecutionResult.text('error: message is required');
       }

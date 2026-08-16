@@ -997,8 +997,25 @@ class AgentService extends ChangeNotifier
       if (_projectMountNote() case final note?) note,
       if (_promptSuffix.isNotEmpty) _promptSuffix,
       if (_memorySection.isNotEmpty) _memorySection,
+      if (_messagingSection().isNotEmpty) _messagingSection(),
     ];
     return parts.join('\n\n');
+  }
+
+  /// The `## Agent messaging` prompt section: the agent's own mailbox in
+  /// the fabric + how discovery/addressing work. Empty until the session
+  /// (and thus the mailbox prefix) exists.
+  String _messagingSection() {
+    final manager = _subagentManager;
+    if (manager == null ||
+        manager.messaging == null ||
+        manager.mailboxPrefix.isEmpty) {
+      return '';
+    }
+    return appMessagingSectionPrompt.replaceAll(
+      '{{mailbox}}',
+      manager.mailboxOf(manager.selfId),
+    );
   }
 
   /// The cached `<memory>` prompt section (durable facts from past
@@ -1225,6 +1242,62 @@ class AgentService extends ChangeNotifier
     _sessionId = sessionMetadata.id;
     _sessionFile = sessionMetadata.path;
     _subagentManager?.mailboxPrefix = sessionMetadata.id;
+    // The prompt's messaging section carries the live mailbox address.
+    final config = _config;
+    if (config != null) {
+      _agent.state.systemPrompt = _composeSystemPrompt(config);
+    }
+    // The watcher only exists with a messaging fabric (production ctor);
+    // lightweight test services never start a timer.
+    if (_subagentManager != null) _startInboxWatcher();
+  }
+
+  /// The inbox watcher: incoming inter-agent mail while IDLE wakes the
+  /// agent into a turn (mid-run mail is already delivered by the steering
+  /// poll). This is what makes two Fa instances chat live.
+  Timer? _inboxWatchTimer;
+  var _inboxWakeRunning = false;
+  var _disposed = false;
+
+  /// Opt-in for the real app bootstrap (main.dart): the periodic watcher
+  /// never starts in tests (a pending periodic Timer fails flutter_test's
+  /// invariants), so it is off by default.
+  static bool enableInboxWatcher = false;
+
+  /// Consecutive inbox-triggered runs without any user input — capped so
+  /// two chatty instances cannot ping-pong forever (mail still accumulates
+  /// and is delivered at the next real turn).
+  var _inboxWakeStreak = 0;
+  static const _maxInboxWakeStreak = 10;
+
+  void _startInboxWatcher() {
+    if (!enableInboxWatcher) return;
+    _inboxWatchTimer ??= Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => unawaited(_wakeOnInboxMail()),
+    );
+  }
+
+  Future<void> _wakeOnInboxMail() async {
+    final manager = _subagentManager;
+    if (manager == null || _inboxWakeRunning || _disposed) return;
+    if (isStreaming || _agent.state.isStreaming) return;
+    if (_inboxWakeStreak >= _maxInboxWakeStreak) return;
+    final count = await manager.pendingInboxCount(manager.selfId);
+    if (count == 0) return;
+    _inboxWakeStreak++;
+    _inboxWakeRunning = true;
+    try {
+      await sendText(
+        '<system-notice>New inter-agent mail arrived ($count message(s)) — '
+        'the messages follow below as user messages. Read them and act: '
+        'reply with the agent_message tool to the sender address when a '
+        'response is expected, or just incorporate the information.'
+        '</system-notice>',
+      );
+    } finally {
+      _inboxWakeRunning = false;
+    }
   }
 
   /// The main agent's inbox as steering messages: each pending fabric
@@ -1247,6 +1320,9 @@ class AgentService extends ChangeNotifier
   Future<void> sendText(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    // Real user input resets the inbox wake streak (the ping-pong guard);
+    // the watcher itself calls sendText with the flag set.
+    if (!_inboxWakeRunning) _inboxWakeStreak = 0;
     _clearError();
     if (_agent.state.isStreaming) {
       _agent.steer(UserMessage.text(trimmed));
@@ -1537,6 +1613,8 @@ class AgentService extends ChangeNotifier
 
   @override
   void dispose() {
+    _disposed = true;
+    _inboxWatchTimer?.cancel();
     _idleWatchdog?.cancel();
     _liveActivityEndTimer?.cancel();
     fsRevision.dispose();
@@ -1668,6 +1746,11 @@ class AgentService extends ChangeNotifier
     _sessionId = metadata.id;
     _sessionFile = metadata.path;
     _subagentManager?.mailboxPrefix = metadata.id;
+    // The prompt's messaging section carries the live mailbox address.
+    final activeConfig = _config;
+    if (activeConfig != null) {
+      _agent.state.systemPrompt = _composeSystemPrompt(activeConfig);
+    }
     _persistedCount = contextMessages.length;
     _currentAssistantMessage = null;
     error = null;

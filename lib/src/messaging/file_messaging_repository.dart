@@ -43,6 +43,13 @@ final class FileMessagingRepository implements MessagingRepository {
   Future<void> send(AgentMessage message) async {
     final dir = _inboxDir(message.toId);
     (await _env.createDir(dir)).getOrThrow();
+    final agentDir = '$_root/${sanitizeAgentId(message.toId)}';
+    // The real (unsanitized) id marker, so directory() can report
+    // human-meaningful mailbox names instead of filesystem-safe ones.
+    final marker = '$agentDir/.id';
+    if ((await _env.exists(marker)).valueOrNull != true) {
+      (await _env.writeFile(marker, message.toId)).getOrThrow();
+    }
     final path = '$dir/${_fileName(message)}';
     (await _env.writeFile(path, jsonEncode(message.toJson()))).getOrThrow();
   }
@@ -73,10 +80,19 @@ final class FileMessagingRepository implements MessagingRepository {
     final result = await _env.listDir(_root);
     final entries = result.valueOrNull;
     if (entries == null) return const [];
-    return [
-      for (final entry in entries)
-        if (entry.kind == FileKind.directory) entry.name,
-    ];
+    final ids = <String>[];
+    for (final entry in entries) {
+      if (entry.kind != FileKind.directory) continue;
+      // The `.id` marker carries the real mailbox id (sanitization is
+      // lossy); fall back to the directory name for foreign/corrupt dirs.
+      final marker = await _env.readTextFile('${entry.path}/.id');
+      ids.add(
+        marker.valueOrNull?.trim().isNotEmpty == true
+            ? marker.valueOrNull!.trim()
+            : entry.name,
+      );
+    }
+    return ids;
   }
 
   /// Deterministic, collision-resistant file name: the message id already
