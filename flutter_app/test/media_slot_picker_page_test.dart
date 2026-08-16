@@ -6,6 +6,7 @@ import 'package:fa_ui/fa_ui.dart' show FaVoicePresetPicker;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fa_ui/fa_ui.dart' show FaUiHost;
 
 /// A `/models` fetch reporting image and vision models.
 Future<ModelsEndpointInfo> _someModels(
@@ -150,6 +151,26 @@ void main() {
       expect(find.text('My OpenRouter'), findsOneWidget);
       expect(find.text('OpenRouter'), findsNothing);
       expect(find.text('Ollama'), findsOneWidget);
+    });
+
+    testWidgets('connectedOnly: a preset with a host-scoped FA_KEY_<HOST> '
+        'key still lists (CLI parity)', (tester) async {
+      FaUiHost.keyResolver = (name) =>
+          name == 'FA_KEY_OPENROUTER_AI' ? 'sk-or-scoped' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotProviderPickerPage(
+          slot: null,
+          title: 'Quick model',
+          connectedOnly: true,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      expect(find.text('OpenRouter'), findsOneWidget);
+      expect(find.text('Ollama'), findsNothing);
     });
 
     testWidgets('the main connection row pops a clear result', (tester) async {

@@ -386,6 +386,13 @@ void main() {
           await tester.pump();
         }
         await tester.pumpAndSettle();
+        // Determinism: the composer's cursor blink is an infinite
+        // animation whose phase at capture is wall-clock dependent —
+        // unfocus so the snapshot never catches a random blink phase, then
+        // wait out the cursor's fade-out animation.
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pump();
       });
       await expectGolden(tester, 'chat_generated_image');
     });

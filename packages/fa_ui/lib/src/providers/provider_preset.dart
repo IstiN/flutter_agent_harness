@@ -106,6 +106,21 @@ enum ProviderPreset {
 
 /// The secure-store key name backing a hosted preset's API key. `null` for
 /// presets without an endpoint key (custom, on-device).
+/// Whether the hosted [preset] is "connected": SOME key resolves for its
+/// default endpoint through the CLI's documented chain — the catalog env
+/// name ([hostedProviderKeyName], env/store) or the endpoint-scoped
+/// `FA_KEY_<HOST>` entry (what the OAuth/SSO flows write). Keyless presets
+/// (no key name) count as connected.
+bool hostedProviderConnected(ProviderPreset preset) {
+  final envName = hostedProviderKeyName(preset);
+  if (envName == null) return true; // keyless
+  if (FaUiHost.resolveKey(envName, () => '').isNotEmpty) return true;
+  final baseUrl = preset.baseUrl;
+  if (baseUrl == null) return false;
+  final scoped = ProviderRegistry.keyNameFor(baseUrl);
+  return FaUiHost.resolveKey(scoped, () => '').isNotEmpty;
+}
+
 String? hostedProviderKeyName(ProviderPreset preset) => switch (preset) {
   ProviderPreset.openrouter => 'OPENROUTER_API_KEY',
   ProviderPreset.ollamaCloud => 'OLLAMA_API_KEY',

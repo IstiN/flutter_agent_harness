@@ -211,6 +211,40 @@ void main() {
       );
     });
 
+    testWidgets('a hosted preset with a resolvable key lists like a provider '
+        '(CLI chain: env name or host-scoped FA_KEY_<HOST>)', (tester) async {
+      FaUiHost.keyResolver = (name) =>
+          name == 'FA_KEY_OPENROUTER_AI' ? 'sk-or-scoped' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+      await _pump(
+        tester,
+        ProvidersSection(registry: ProviderRegistry.inMemory()),
+      );
+
+      // The OpenRouter preset is connected via its host-scoped key.
+      expect(find.text('OpenRouter'), findsOneWidget);
+      // Keyless presets stay out of the list.
+      expect(find.text('Ollama'), findsNothing);
+      expect(find.text('Google Gemini'), findsNothing);
+    });
+
+    testWidgets('a custom provider on the preset endpoint covers the preset '
+        '(never both in the list)', (tester) async {
+      FaUiHost.keyResolver = (name) =>
+          name == 'OPENROUTER_API_KEY' ? 'sk-or-env' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'My OR',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        modelId: 'acme-1',
+      );
+      await _pump(tester, ProvidersSection(registry: registry));
+
+      expect(find.text('My OR'), findsOneWidget);
+      expect(find.text('OpenRouter'), findsNothing);
+    });
+
     testWidgets('add provider: the editor page persists via the registry', (
       tester,
     ) async {

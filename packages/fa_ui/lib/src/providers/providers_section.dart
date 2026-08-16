@@ -130,6 +130,24 @@ class ProvidersSection extends StatelessWidget {
                   style: theme.textTheme.bodySmall,
                 ),
               ),
+            // Connected hosted presets (a key resolves through the CLI's
+            /// chain) list like providers; a custom provider on the same
+            // endpoint covers its preset (never both).
+            for (final preset in hostedProviderPresets)
+              if (hostedProviderConnected(preset) &&
+                  !registry.providers.any(
+                    (custom) => custom.baseUrl == preset.baseUrl,
+                  ))
+                _buildRow(
+                  context,
+                  theme,
+                  label: preset.labelFor(context),
+                  subtitle:
+                      '${registry.presetModelOverride(preset.name) ?? preset.defaultModel} · '
+                      '${providerHostOf(preset.baseUrl!)}',
+                  current: _isCurrent(preset),
+                  onTap: () => _editPreset(context, registry, preset),
+                ),
             for (final provider in registry.providers)
               _buildRow(
                 context,
@@ -228,6 +246,54 @@ class ProvidersSection extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// A connected hosted preset opens its preset-mode editor (fixed
+  /// endpoint; the user re-keys or re-models it). Saving lands as the
+  /// custom provider on that endpoint (same as the add-provider flow) —
+  /// the custom row then covers the preset everywhere.
+  Future<void> _editPreset(
+    BuildContext context,
+    ProviderRegistry registry,
+    ProviderPreset preset,
+  ) async {
+    final result = await pushFaPage<ProviderEditorResult>(
+      context,
+      ProviderEditorPage(
+        title: preset.labelFor(context),
+        preset: preset,
+        hasSavedKey: hostedProviderConnected(preset),
+        registry: registry,
+        openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
+        openRouterOAuthCapture: openRouterOAuthCapture,
+      ),
+    );
+    if (result == null || result.deleted) return;
+    final existing = registry.providers
+        .where((p) => p.baseUrl == preset.baseUrl)
+        .firstOrNull;
+    if (existing != null) {
+      await registry.update(
+        CustomProvider(
+          id: existing.id,
+          name: result.name,
+          baseUrl: existing.baseUrl,
+          modelId: result.modelId,
+        ),
+      );
+      if (result.apiKey.isNotEmpty) {
+        registry.rememberKey(existing.id, result.apiKey);
+      }
+      return;
+    }
+    final added = await registry.add(
+      name: result.name,
+      baseUrl: result.baseUrl.isEmpty ? preset.baseUrl! : result.baseUrl,
+      modelId: result.modelId,
+    );
+    if (result.apiKey.isNotEmpty) {
+      registry.rememberKey(added.id, result.apiKey);
+    }
   }
 
   Future<void> _editCustom(

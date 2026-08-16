@@ -130,12 +130,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                       !registry.providers.any(
                         (custom) => custom.baseUrl == preset.baseUrl,
                       ) &&
-                      (!connectedOnly ||
-                          hostedProviderKeyName(preset) == null ||
-                          FaUiHost.resolveKey(
-                            hostedProviderKeyName(preset)!,
-                            () => '',
-                          ).isNotEmpty),
+                      (!connectedOnly || hostedProviderConnected(preset)),
                 ))
                   _providerTile(
                     context,
