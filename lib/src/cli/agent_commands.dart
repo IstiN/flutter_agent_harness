@@ -69,7 +69,7 @@ extension AgentCliAgentExt on AgentCli {
   }
 
   /// The live agents tree: TUI picker of main + children, or a text dump in
-  /// line mode. Rows carry a ✉N marker for pending inbox messages.
+  /// line mode. Rows carry a `mail:N` marker for pending inbox messages.
   Future<void> _agentsTreePanel() async {
     final children = _subagentManager.handles;
     final inboxCounts = <String, int>{
@@ -117,7 +117,7 @@ extension AgentCliAgentExt on AgentCli {
     final inbox = await _subagentManager.pendingInboxCount(
       _subagentManager.selfId,
     );
-    if (inbox > 0) io.writeln('  ✉ inbox: $inbox pending');
+    if (inbox > 0) io.writeln('  mail inbox: $inbox pending');
   }
 
   /// Text-mode agents tree (line mode or non-TUI fallback).
@@ -128,7 +128,7 @@ extension AgentCliAgentExt on AgentCli {
     final mainInbox = inboxCounts[_subagentManager.selfId] ?? 0;
     io.writeln(
       'main (orchestrator) · ${_agent.state.model.id}'
-      '${mainInbox > 0 ? ' · ✉$mainInbox' : ''}',
+      '${mainInbox > 0 ? ' · mail:$mainInbox' : ''}',
     );
     if (children.isEmpty) {
       io.writeln('  (no subagents yet)');
@@ -139,7 +139,7 @@ extension AgentCliAgentExt on AgentCli {
       io.writeln(
         '  ${agentStatusIcon(h.status)} '
         '${h.agentType}:${h.id} — ${agentRowDescription(h)}'
-        '${inbox > 0 ? ' · ✉$inbox' : ''}',
+        '${inbox > 0 ? ' · mail:$inbox' : ''}',
       );
     }
     io.writeln('  /agents <id> to observe · /agents types for the catalog');
@@ -192,13 +192,13 @@ extension AgentCliAgentExt on AgentCli {
     await _printPendingInbox(handle.id);
   }
 
-  /// The pending inbox lines for one agent (`✉ inbox (n): from …`).
+  /// The pending inbox lines for one agent (`mail inbox (n): from …`).
   Future<void> _printPendingInbox(String id) async {
     final fabric = _subagentManager.messaging;
     if (fabric == null) return;
     final pending = await fabric.peek(_subagentManager.mailboxOf(id));
     if (pending.isEmpty) return;
-    io.writeln('  ✉ inbox (${pending.length}):');
+    io.writeln('  mail inbox (${pending.length}):');
     for (final message in pending) {
       final text = message.text.replaceAll('\n', ' ');
       final preview = text.length > 60 ? '${text.substring(0, 60)}…' : text;

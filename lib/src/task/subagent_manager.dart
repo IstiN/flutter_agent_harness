@@ -286,7 +286,7 @@ final class SubagentManager {
   }
 
   /// Counts the unread inbox messages of [id] (0 without a fabric) — the
-  /// ✉ indicator in the agents panel.
+  /// `mail:N` indicator in the agents panel.
   Future<int> pendingInboxCount(String id) async =>
       (await messaging?.peek(mailboxOf(id)) ?? const []).length;
 

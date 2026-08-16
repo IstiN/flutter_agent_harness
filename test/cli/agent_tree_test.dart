@@ -106,15 +106,15 @@ void main() {
       expect(items.last.label, contains('no subagents yet'));
     });
 
-    test('pending inbox counts append ✉N markers', () {
+    test('pending inbox counts append mail:N markers', () {
       final items = buildAgentTreeItems(
         [_handle(id: 'a1')],
         modelId: 'k3',
         messageCount: 7,
         inboxCounts: const {'main': 2, 'a1': 3},
       );
-      expect(items.first.description, contains('✉2'));
-      expect(items[1].description, contains('✉3'));
+      expect(items.first.description, contains('mail:2'));
+      expect(items[1].description, contains('mail:3'));
     });
 
     test('no inbox counts — no markers', () {
@@ -123,8 +123,8 @@ void main() {
         modelId: 'k3',
         messageCount: 7,
       );
-      expect(items.first.description, isNot(contains('✉')));
-      expect(items[1].description, isNot(contains('✉')));
+      expect(items.first.description, isNot(contains('mail:')));
+      expect(items[1].description, isNot(contains('mail:')));
     });
   });
 

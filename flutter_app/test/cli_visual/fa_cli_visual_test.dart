@@ -12,6 +12,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -352,6 +353,56 @@ void main() {
       );
       await harness.screenshot(shotsDir, '91_agents_types');
       await harness.close();
+    });
+
+    testWidgets('/agents shows pending inbox markers from the messaging '
+        'fabric', (tester) async {
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      // Deliver a message into the main agent's file inbox, exactly like
+      // another Fa instance (or a child agent) would through the messaging
+      // fabric: <sessions>/<cwd-slug>/messages/<sessionId>_main/inbox/.
+      final sessionsDir = Directory('${tempHome.path}/.fah/sessions');
+      final sessionFile = sessionsDir
+          .listSync(recursive: true)
+          .whereType<File>()
+          .firstWhere((f) => f.path.endsWith('.jsonl'));
+      final sessionId = sessionFile.uri.pathSegments.last
+          .split('_')
+          .last
+          .replaceAll('.jsonl', '');
+      final inboxDir = Directory(
+        '${sessionFile.parent.path}/messages/${sessionId}_main/inbox',
+      )..createSync(recursive: true);
+      File('${inboxDir.path}/20260816000000_0001_x.json').writeAsStringSync(
+        jsonEncode({
+          'id': '20260816000000_0001_x',
+          'fromId': 'explore:a1',
+          'toId': '$sessionId/main',
+          'text': 'survey done: 42 files',
+          'sentAt': '2026-08-16T00:00:00Z',
+          'hops': 0,
+        }),
+      );
+
+      await harness.runSlashCommand('/agents');
+      await harness.liveWaitForText(
+        'mail:1',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '92_agents_inbox');
+
+      // Select "main" — its info block lists the pending inbox count.
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'mail inbox: 1 pending',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '93_main_inbox_info');
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
   });
 

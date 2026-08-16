@@ -232,7 +232,7 @@ void main() {
   );
 
   test(
-    'pending inbox messages show ✉ markers in the tree and observe',
+    'pending inbox messages show mail: markers in the tree and observe',
     () async {
       final cli = cliFor();
       final run = cli.run();
@@ -257,8 +257,8 @@ void main() {
       await sendAndWait('/exit');
       await run;
       final output = io.out.toString();
-      expect(output, contains('✉1'));
-      expect(output, contains('✉ inbox (1):'));
+      expect(output, contains('mail:1'));
+      expect(output, contains('mail inbox (1):'));
       expect(output, contains('inbox note'));
     },
   );
