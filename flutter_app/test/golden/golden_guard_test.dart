@@ -34,8 +34,6 @@ const _coverage = <String, String>{
       'test/golden/onboarding_golden_test.dart',
   'lib/ui/screens/onboarding_mockups.dart':
       'test/golden/onboarding_golden_test.dart',
-  'lib/ui/widgets/provider_marks.dart':
-      'test/golden/onboarding_golden_test.dart',
   'lib/ui/screens/chat_screen.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/screens/app_launcher_screen.dart':
       'test/golden/launcher_golden_test.dart',

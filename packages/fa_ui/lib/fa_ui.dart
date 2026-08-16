@@ -24,6 +24,7 @@ export 'src/chat/secret_request_sheet.dart';
 export 'src/chat/upload_utils.dart';
 export 'src/host_config.dart';
 export 'src/providers/add_provider_picker.dart';
+export 'src/providers/provider_marks.dart';
 export 'src/providers/connection.dart';
 export 'src/providers/default_chat_model.dart';
 export 'src/providers/llm_config_mapping.dart';

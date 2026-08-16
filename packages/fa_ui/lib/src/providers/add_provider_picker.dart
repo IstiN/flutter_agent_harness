@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
+import 'package:fa_ui/src/providers/provider_marks.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
@@ -194,7 +195,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
           children: [
             for (final preset in visiblePresets)
               ListTile(
-                leading: Icon(preset.icon, color: theme.colorScheme.primary),
+                leading: ProviderMark(preset.key, size: 32),
                 title: Text(preset.name),
                 subtitle: Text(preset.description),
                 trailing: Icon(

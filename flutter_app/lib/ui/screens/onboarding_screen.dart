@@ -18,7 +18,6 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
-import 'package:fa/ui/widgets/provider_marks.dart';
 
 part 'onboarding_mockups.dart';
 
@@ -1481,7 +1480,7 @@ class _ProviderCard extends StatelessWidget {
           ),
           child: Row(
             children: [
-              ProviderMark(preset.key, size: 40),
+              faui.ProviderMark(preset.key, size: 40),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
