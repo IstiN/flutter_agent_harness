@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -50,6 +51,22 @@ Future<bool> runCodemieSsoFlow({
   required LastConnectionStore lastConnectionStore,
   String orgUrl = defaultCodeMieBaseUrl,
 }) async {
+  // The web build cannot run the loopback callback server — say so
+  // honestly instead of crashing on dart:io Platform access.
+  if (kIsWeb) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'CodeMie sign-in needs the desktop or mobile app '
+            '(a localhost callback server). Use a key-based provider '
+            'in the web build.',
+          ),
+        ),
+      );
+    }
+    return false;
+  }
   // ── Step 1: SSO ─────────────────────────────────────────────────────
   CodeMieSsoCredentials? credentials;
   if (Platform.isMacOS) {

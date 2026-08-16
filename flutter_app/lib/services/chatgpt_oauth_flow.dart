@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
@@ -33,6 +34,19 @@ Future<bool> runChatGptOAuthFlow({
   required AgentService? service,
   required LastConnectionStore lastConnectionStore,
 }) async {
+  if (kIsWeb) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'ChatGPT sign-in needs the desktop app (a localhost callback '
+            'server). Use OpenAI with an API key in the web build.',
+          ),
+        ),
+      );
+    }
+    return false;
+  }
   if (!Platform.isMacOS) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
