@@ -1043,4 +1043,9 @@
 
 - test(messaging): drop unused import (dart analyze warning)
 
+## 0.1.184
+
+- refactor(ui): agent models pick through the media-style provider→model flow
+- feat(ui): ProviderMark in the shared Add provider picker too
+
 ## Unreleased
