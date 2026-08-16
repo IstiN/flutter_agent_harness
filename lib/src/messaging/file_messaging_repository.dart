@@ -40,6 +40,16 @@ final class FileMessagingRepository implements MessagingRepository {
   String _readDir(String agentId) => '$_root/${sanitizeAgentId(agentId)}/read';
 
   @override
+  Future<void> register(String agentId) async {
+    final agentDir = '$_root/${sanitizeAgentId(agentId)}';
+    (await _env.createDir('$agentDir/inbox')).getOrThrow();
+    final marker = '$agentDir/.id';
+    if ((await _env.exists(marker)).valueOrNull != true) {
+      (await _env.writeFile(marker, agentId)).getOrThrow();
+    }
+  }
+
+  @override
   Future<void> send(AgentMessage message) async {
     final dir = _inboxDir(message.toId);
     (await _env.createDir(dir)).getOrThrow();

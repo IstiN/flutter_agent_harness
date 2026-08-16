@@ -18,6 +18,11 @@ abstract interface class MessagingRepository {
   /// silently (a failed delivery throws).
   Future<void> send(AgentMessage message);
 
+  /// Announces [agentId]'s mailbox in the directory (presence): an agent
+  /// with no mail yet is still discoverable. Called by hosts on session
+  /// start/switch.
+  Future<void> register(String agentId);
+
   /// The unread messages for [agentId], oldest first, without consuming
   /// them.
   Future<List<AgentMessage>> peek(String agentId);

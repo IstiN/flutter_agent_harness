@@ -1247,6 +1247,12 @@ class AgentService extends ChangeNotifier
     if (config != null) {
       _agent.state.systemPrompt = _composeSystemPrompt(config);
     }
+    // Presence: a zero-mail instance is discoverable in agent_directory.
+    unawaited(
+      _subagentManager?.messaging?.register(
+        _subagentManager!.mailboxOf(_subagentManager!.selfId),
+      ),
+    );
     // The watcher only exists with a messaging fabric (production ctor);
     // lightweight test services never start a timer.
     if (_subagentManager != null) _startInboxWatcher();
@@ -1751,6 +1757,11 @@ class AgentService extends ChangeNotifier
     if (activeConfig != null) {
       _agent.state.systemPrompt = _composeSystemPrompt(activeConfig);
     }
+    unawaited(
+      _subagentManager?.messaging?.register(
+        _subagentManager!.mailboxOf(_subagentManager!.selfId),
+      ),
+    );
     _persistedCount = contextMessages.length;
     _currentAssistantMessage = null;
     error = null;

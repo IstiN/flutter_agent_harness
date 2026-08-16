@@ -405,8 +405,60 @@ void main() {
     expect(cli.agent.state.model.baseUrl, 'http://proxy.test:1');
     final chain = resolver.config.roles['default']!;
     expect(chain.first.baseUrl, 'http://proxy.test:1');
-    expect(chain.first.apiKeyName, 'ANTHROPIC_API_KEY');
+    // The key rides under the ENDPOINT-scoped name (never the catalog env
+    // name — a kimi key must not shadow KIMI_API_KEY, and vice versa).
+    expect(chain.first.apiKeyName, 'FA_KEY_PROXY_TEST_1');
     expect(output, isNot(contains('some-token')));
+  });
+
+  test('/provider without a token preserves the scoped key name on the '
+      'pinned chain (the "key reset itself" regression)', () async {
+    final factory = _RolesFactory({
+      'placeholder': [_textTurn('placeholder', 'ok')],
+    });
+    final usedKeys = <String>[];
+    StreamFunction recordingFactory(String kind, String apiKey) {
+      usedKeys.add(apiKey);
+      return factory.call(kind, apiKey);
+    }
+
+    // The user's setup: the default chain points at a kimi endpoint with a
+    // provider-scoped store key.
+    final resolver = ModelRolesResolver(
+      config: ModelRolesConfig(
+        roles: const {
+          'default': [
+            ModelRef(
+              provider: 'openai',
+              modelId: 'kimi-for-coding',
+              baseUrl: 'https://api.kimi.com/coding/v1',
+              apiKeyName: 'FA_KEY_API_KIMI_COM_KIMI_IRA1',
+            ),
+          ],
+        },
+        retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+      ),
+      secrets: const {'FA_KEY_API_KIMI_COM_KIMI_IRA1': 'kimi-key'},
+      streamFactory: recordingFactory,
+    );
+    final cli = cliFor(resolver);
+    final run = cli.run();
+
+    // A provider switch WITHOUT a token (keep-current semantics) must not
+    // drop the scoped key name — before the fix the pin lost apiKeyName and
+    // the next turn fell back to the stale catalog env key (401).
+    io.sendLine('/provider openai https://api.kimi.com/coding/v1');
+    await _waitFor(
+      () => io.out.toString().contains('switched provider to openai'),
+    );
+    io.sendLine('go');
+    await _waitFor(() => factory.calls.isNotEmpty && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+
+    final chain = resolver.config.roles['default']!;
+    expect(chain.first.apiKeyName, 'FA_KEY_API_KIMI_COM_KIMI_IRA1');
+    expect(usedKeys, ['kimi-key']);
   });
 
   test('/provider reports a clean error when no key resolves', () async {

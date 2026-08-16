@@ -1273,14 +1273,19 @@ extension on AgentCli {
     if (rolesResolver != null) {
       // Roles mode: pin the default role to the new provider/endpoint (a
       // single-entry chain for this session), mirroring `/model <id>`.
-      // A typed key joins the resolver's secrets at runtime and rides the
-      // chain as an apiKeyName reference (the value never touches the
-      // config file).
+      // The key name MUST survive the pin: a typed key is persisted to the
+      // secure store under it; without a token the existing chain entry's /
+      // registry entry's keyName carries over — otherwise the pin silently
+      // drops the scoped key and the next turn reads the (stale) catalog
+      // env name instead ("the provider key reset itself").
+      final preservedName =
+          tokenKeyName ?? _rolesKeyNameFor(spec.name, baseUrl);
+      final pinnedKeyName = token != null
+          ? (preservedName ?? CustomProviderRegistry.keyNameFor(baseUrl))
+          : preservedName;
       if (token != null) {
-        rolesResolver.addSecret(
-          tokenKeyName ?? spec.apiKeyEnvNames.first,
-          token,
-        );
+        await _storeProviderToken(spec, baseUrl, token, keyName: pinnedKeyName);
+        rolesResolver.addSecret(pinnedKeyName!, token);
       }
       try {
         rolesResolver.setDefaultChain([
@@ -1288,9 +1293,7 @@ extension on AgentCli {
             provider: spec.name,
             modelId: modelId,
             baseUrl: baseUrl,
-            apiKeyName: token == null
-                ? null
-                : tokenKeyName ?? spec.apiKeyEnvNames.first,
+            apiKeyName: pinnedKeyName,
           ),
         ]);
         rolesResolver.applyToAgent(_agent);
@@ -1360,6 +1363,36 @@ extension on AgentCli {
     io.writeln('  $keyLine');
     io.writeln(modelLine);
     config.onProviderChanged?.call(_providerKind, _apiKey);
+  }
+
+  /// The secure-store key name to keep on a roles-chain pin for
+  /// ([provider], [baseUrl]): the current default chain entry for the same
+  /// endpoint wins, then the saved custom-provider entry's keyName. Null
+  /// when neither knows a scoped key (catalog env names resolve then).
+  String? _rolesKeyNameFor(String provider, String? baseUrl) {
+    final resolver = config.modelRolesResolver;
+    if (resolver == null) return null;
+    final refs =
+        resolver.config.chainFor(
+          defaultModelRole,
+          cwd: config.env.cwd,
+          homeDir: config.homeDir,
+        ) ??
+        const <ModelRef>[];
+    for (final ref in refs) {
+      if (ref.provider == provider &&
+          ref.baseUrl == baseUrl &&
+          ref.apiKeyName != null) {
+        return ref.apiKeyName;
+      }
+    }
+    for (final entry
+        in config.customProviders?.entries ?? const <CustomProviderEntry>[]) {
+      if (entry.baseUrl == baseUrl && entry.keyName != null) {
+        return entry.keyName;
+      }
+    }
+    return null;
   }
 
   /// Persists an explicit `/provider` token in the platform secure store
@@ -2332,6 +2365,8 @@ extension on AgentCli {
           baseUrl: def.baseUrl,
           contextWindow: def.contextWindow,
           maxTokens: def.maxTokens,
+          // Keep the endpoint's scoped key on the pin (see _switchProvider).
+          apiKeyName: _rolesKeyNameFor(spec.name, def.baseUrl),
         ),
       ]);
       rolesResolver.applyToAgent(_agent);
@@ -2397,7 +2432,8 @@ extension on AgentCli {
     final cap = _modelMaxTokens[modelId] ?? current.maxTokens;
     if (rolesResolver != null) {
       // Roles mode: pin the default role to the requested model id on the
-      // current provider (a single-entry chain for this session).
+      // current provider (a single-entry chain for this session). The
+      // endpoint's scoped key name rides along (see _switchProvider).
       rolesResolver.setDefaultChain([
         ModelRef(
           provider: current.provider,
@@ -2405,6 +2441,7 @@ extension on AgentCli {
           baseUrl: current.baseUrl,
           contextWindow: window,
           maxTokens: cap,
+          apiKeyName: _rolesKeyNameFor(current.provider, current.baseUrl),
         ),
       ]);
       rolesResolver.applyToAgent(_agent);

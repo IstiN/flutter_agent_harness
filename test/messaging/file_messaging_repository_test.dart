@@ -116,5 +116,16 @@ void main() {
       final sorted = [...ids]..sort();
       expect(ids, sorted);
     });
+
+    test('register announces a zero-mail mailbox in the directory', () async {
+      expect(await repo.directory(), isEmpty);
+      await repo.register('sess1/main');
+      expect(await repo.directory(), ['sess1/main']);
+      // Idempotent and non-destructive.
+      await repo.send(msg());
+      await repo.register('sess1/main');
+      expect(await repo.peek('a1'), hasLength(1));
+      expect(await repo.directory(), containsAll(['sess1/main', 'a1']));
+    });
   });
 }

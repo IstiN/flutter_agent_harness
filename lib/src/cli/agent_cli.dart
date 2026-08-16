@@ -1415,6 +1415,13 @@ class AgentCli {
     _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
     // The prompt's messaging section carries the live mailbox address.
     _applyPromptComposition();
+    // Presence: a zero-mail instance is discoverable in agent_directory.
+    final fabric = _subagentManager.messaging;
+    if (fabric != null && _subagentManager.mailboxPrefix.isNotEmpty) {
+      unawaited(
+        fabric.register(_subagentManager.mailboxOf(_subagentManager.selfId)),
+      );
+    }
   }
 
   /// The label for a startup-resumed session's replay header, or null when
