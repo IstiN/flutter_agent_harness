@@ -214,6 +214,29 @@ jobs:
           echo "=== Dependency versions ==="
           flutter pub deps --style=compact
 
+      # flutter_gemma ≥1.5.5 no longer downloads the Apple LiteRT-LM companion
+      # dylibs from its hook (they are bundled via the Podfile phase), so a
+      # fresh runner has nothing at ~/Library/Caches/flutter_gemma and the
+      # Runner script phase fails with "Could not find macOS companion
+      # dylibs". Seed the cache from the upstream native release (pinned,
+      # sha256-verified).
+      - name: Ensure flutter_gemma macOS companion dylibs
+        run: |
+          set -euo pipefail
+          GEMMA_CACHE="$HOME/Library/Caches/flutter_gemma/native/macos_arm64"
+          if [ -f "$GEMMA_CACHE/libGemmaModelConstraintProvider.dylib" ]; then
+            echo "companion dylibs already cached"
+          else
+            echo "seeding companion dylibs from flutter_gemma native-v0.16.0"
+            mkdir -p "$GEMMA_CACHE"
+            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+              -o /tmp/litertlm-macos_arm64.tar.gz \
+              https://github.com/DenisovAV/flutter_gemma/releases/download/native-v0.16.0/litertlm-macos_arm64.tar.gz
+            echo "c597554a7a5cdf099658227099a54ef4916c5802b9182757e656e1788f9426b6  /tmp/litertlm-macos_arm64.tar.gz" | shasum -a 256 -c -
+            tar xzf /tmp/litertlm-macos_arm64.tar.gz -C "$GEMMA_CACHE"
+          fi
+          ls -la "$GEMMA_CACHE"
+
       # The workspace is re-cloned every run, which wipes Pods/ and forces a
       # full pod install (~4 min with Firebase). Cache it keyed by the
       # lockfile; $HOME-level caches (pub-cache, CocoaPods download cache,

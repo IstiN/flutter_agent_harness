@@ -30,11 +30,13 @@ void main() {
     timeout: const Timeout(Duration(minutes: 3)),
     () async {
       // Skip without a ZAI key (CI has none; locally the user sets it).
+      final configFile = File(
+        '${Platform.environment['HOME']}/.fah/config.yaml',
+      );
       final hasZaiKey =
           (Platform.environment['ZAI_API_KEY'] ?? '').isNotEmpty ||
-          File(
-            '${Platform.environment['HOME']}/.fah/config.yaml',
-          ).readAsStringSync().contains('api.z.ai');
+          (configFile.existsSync() &&
+              configFile.readAsStringSync().contains('api.z.ai'));
       if (!hasZaiKey) {
         return;
       }
