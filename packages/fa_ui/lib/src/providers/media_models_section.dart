@@ -182,6 +182,8 @@ class MediaModelsSection extends StatelessWidget {
         mainBaseUrl: mainBaseUrl,
         registry: registry,
         modelsFetcher: modelsFetcher,
+        // Media slots choose among connected providers only.
+        connectedOnly: true,
       ),
     );
     if (result == null) return;

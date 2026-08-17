@@ -10,9 +10,14 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/default_chat_model.dart';
 import 'package:fa_ui/src/providers/media_slot_picker_page.dart';
+import 'package:fa_ui/src/providers/media_slot_picker_page.dart'
+    show MediaSlotEditorResult;
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
+import 'package:fa_ui/src/stores/media_models_store.dart'
+    show MediaSlotOverride;
+import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 
@@ -78,7 +83,24 @@ class UnifiedModelPickerPage extends StatefulWidget {
     this.onDeviceProviders = const [],
     this.providerKindLabels = const {},
     this.addProviderPage,
+    this.overrideMode = false,
+    this.overrideTitle,
+    this.currentModelId,
+    this.currentBaseUrl,
   });
+
+  /// Override mode (task roles): the page pops a [MediaSlotEditorResult]
+  /// instead of applying the main connection — a leading "Same as main
+  /// connection" row pops a clear, a model pick pops the role override.
+  final bool overrideMode;
+
+  /// Override-mode app bar title (the role name).
+  final String? overrideTitle;
+
+  /// The current override's model/endpoint (override mode): that row gets
+  /// the "current" mark instead of the main connection's.
+  final String? currentModelId;
+  final String? currentBaseUrl;
 
   /// The active connection — its model is highlighted as "current".
   final FaChatConnection connection;
@@ -145,11 +167,24 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     final entries = <_ModelEntry>[];
     final fetch = widget.modelsFetcher ?? defaultModelsEndpointFetcher;
 
-    // Gather all endpoint providers.
+    // Gather all CONNECTED endpoint providers: saved custom providers plus
+    // hosted presets whose key resolves (hostedProviderConnected) — the
+    // same set every other picker in the app shows. A custom provider on a
+    // preset's endpoint covers the preset (never both).
     final providers = <({String name, String id, String baseUrl})>[];
     if (registry != null) {
       for (final p in registry.providers) {
         providers.add((name: p.name, id: p.id, baseUrl: p.baseUrl));
+      }
+      for (final preset in hostedProviderPresets) {
+        if (preset.baseUrl == null) continue;
+        if (providers.any((p) => p.baseUrl == preset.baseUrl)) continue;
+        if (!hostedProviderConnected(preset)) continue;
+        providers.add((
+          name: preset.labelFor(context),
+          id: preset.name,
+          baseUrl: preset.baseUrl!,
+        ));
       }
     }
 
@@ -214,7 +249,21 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     ModelsEndpointFetcher fetch,
   ) async {
     try {
-      final key = widget.registry?.keyFor(provider.id) ?? '';
+      var key = widget.registry?.keyFor(provider.id) ?? '';
+      if (key.isEmpty) {
+        // A hosted preset entry: its named key resolves through the host's
+        // key chain (env / secure store / saved keys).
+        final preset = hostedProviderPresets
+            .where((p) => p.name == provider.id)
+            .firstOrNull;
+        if (preset != null) {
+          key = resolveProviderKey(
+            preset,
+            registry: widget.registry,
+            keysStore: SessionKeysScope.maybeOf(context),
+          );
+        }
+      }
 
       // The host/test override wins; production goes through the core
       // dispatch (DIAL deployments + the CodeMie marker included).
@@ -339,6 +388,25 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   }
 
   Future<void> _selectModel(_ModelEntry entry) async {
+    if (widget.overrideMode) {
+      Navigator.of(context).pop(
+        MediaSlotEditorResult.save(
+          MediaSlotOverride(
+            providerKind:
+                ProviderPreset.fromBaseUrl(entry.baseUrl) ==
+                    ProviderPreset.dial
+                ? 'dial'
+                : 'openai-completions',
+            baseUrl: entry.baseUrl,
+            modelId: entry.modelId,
+            apiKeyName: entry.baseUrl.isEmpty
+                ? null
+                : ProviderRegistry.keyNameFor(entry.baseUrl),
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _error = null);
     try {
       await widget.onApply(
@@ -379,7 +447,13 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     final strings = FaUiStrings.of(context);
     final entries = _filtered;
     return Scaffold(
-      appBar: AppBar(title: Text(strings.settingsPickModelTitle)),
+      appBar: AppBar(
+        title: Text(
+          widget.overrideMode
+              ? widget.overrideTitle ?? strings.settingsPickModelTitle
+              : strings.settingsPickModelTitle,
+        ),
+      ),
       body: SafeArea(
         child: Column(
           children: [
@@ -413,6 +487,26 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
                   : ListView(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       children: [
+                        if (widget.overrideMode)
+                          ListTile(
+                            leading: Icon(
+                              Icons.link,
+                              size: 20,
+                              color: theme.colorScheme.primary,
+                            ),
+                            title: Text(strings.mediaModelsMainConnection),
+                            subtitle: Text(
+                              widget.connection.activeBaseUrl.isEmpty
+                                  ? ''
+                                  : providerHostOf(
+                                      widget.connection.activeBaseUrl,
+                                    ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => Navigator.of(
+                              context,
+                            ).pop(const MediaSlotEditorResult.clear()),
+                          ),
                         // The manual escape: the typed id is always
                         // applicable on the active provider's endpoint.
                         if (_filter.isNotEmpty &&
@@ -435,8 +529,10 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
                           ),
                         for (final entry in entries)
                           _modelTile(context, theme, entry),
-                        // On-device routes.
-                        for (final route in widget.onDeviceProviders)
+                        // On-device routes (endpoint pickers only — the
+                        // role override targets an endpoint model).
+                        if (!widget.overrideMode)
+                          for (final route in widget.onDeviceProviders)
                           ListTile(
                             leading: Icon(
                               Icons.memory_outlined,
@@ -498,9 +594,11 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   }
 
   Widget _modelTile(BuildContext context, ThemeData theme, _ModelEntry entry) {
-    final isActive =
-        entry.modelId == widget.connection.modelId &&
-        entry.baseUrl == widget.connection.activeBaseUrl;
+    final isActive = widget.overrideMode
+        ? entry.modelId == widget.currentModelId &&
+            entry.baseUrl == widget.currentBaseUrl
+        : entry.modelId == widget.connection.modelId &&
+            entry.baseUrl == widget.connection.activeBaseUrl;
     return ListTile(
       leading: Icon(
         isActive ? Icons.check_circle : Icons.radio_button_unchecked,

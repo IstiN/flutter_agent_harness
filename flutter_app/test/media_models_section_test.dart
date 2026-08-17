@@ -6,6 +6,7 @@ import 'package:fa_ui/fa_ui.dart' show FaVoicePresetPicker;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fa_ui/fa_ui.dart' show FaUiHost;
 
 Future<void> _pump(WidgetTester tester, Widget child) {
   return tester.pumpWidget(
@@ -69,9 +70,11 @@ void main() {
       expect(find.text('Same as main connection'), findsNWidgets(6));
     });
 
-    testWidgets('the flow saves an override and the row updates', (
-      tester,
-    ) async {
+    testWidgets('the flow saves an override and the row updates', (tester) async {
+      // The picker lists connected providers only — key up OpenRouter.
+      FaUiHost.keyResolver =
+          (name) => name == 'OPENROUTER_API_KEY' ? 'sk-or-test' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
       final store = MediaModelsStore.inMemory();
       await _pump(
         tester,
@@ -150,9 +153,11 @@ void main() {
       expect(find.text('acme-img · Acme'), findsOneWidget);
     });
 
-    testWidgets('the model page picks from the endpoint model list', (
-      tester,
-    ) async {
+    testWidgets('the model page picks from the endpoint model list', (tester) async {
+      // The picker lists connected providers only — key up OpenRouter.
+      FaUiHost.keyResolver =
+          (name) => name == 'OPENROUTER_API_KEY' ? 'sk-or-test' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
       final store = MediaModelsStore.inMemory();
       await _pump(
         tester,
@@ -183,9 +188,11 @@ void main() {
       expect(saved!.modelId, 'dall-e-3');
     });
 
-    testWidgets('capability hints reflect the endpoint model metadata', (
-      tester,
-    ) async {
+    testWidgets('capability hints reflect the endpoint model metadata', (tester) async {
+      // The picker lists connected providers only — key up OpenRouter.
+      FaUiHost.keyResolver =
+          (name) => name == 'OPENROUTER_API_KEY' ? 'sk-or-test' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
       final store = MediaModelsStore.inMemory();
       await _pump(
         tester,
@@ -207,9 +214,11 @@ void main() {
       expect(find.text('Music generation'), findsNothing);
     });
 
-    testWidgets('no capability hints when the endpoint has no /models', (
-      tester,
-    ) async {
+    testWidgets('no capability hints when the endpoint has no /models', (tester) async {
+      // The picker lists connected providers only — key up OpenRouter.
+      FaUiHost.keyResolver =
+          (name) => name == 'OPENROUTER_API_KEY' ? 'sk-or-test' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
       final store = MediaModelsStore.inMemory();
       await _pump(
         tester,
@@ -263,9 +272,11 @@ void main() {
       expect(find.textContaining('OPENAI_API_KEY'), findsNothing);
     });
 
-    testWidgets('the TTS flow edits the voice and the override keeps it', (
-      tester,
-    ) async {
+    testWidgets('the TTS flow edits the voice and the override keeps it', (tester) async {
+      // The picker lists connected providers only — key up OpenRouter.
+      FaUiHost.keyResolver =
+          (name) => name == 'OPENROUTER_API_KEY' ? 'sk-or-test' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
       final store = MediaModelsStore.inMemory();
       await store.setOverride(
         MediaSlot.audioTts,
@@ -305,6 +316,9 @@ void main() {
     });
 
     testWidgets('non-TTS slots render no voice field', (tester) async {
+      FaUiHost.keyResolver =
+          (name) => name == 'OPENROUTER_API_KEY' ? 'sk-or-test' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
       final store = MediaModelsStore.inMemory();
       await _pump(
         tester,

@@ -2,6 +2,7 @@ import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fa_ui/fa_ui.dart' show FaUiHost;
 
 Future<void> _pump(WidgetTester tester, Widget child) {
   return tester.pumpWidget(
@@ -60,6 +61,11 @@ void main() {
         ),
       );
 
+      // Media slots list connected providers only — give OpenRouter a key.
+      FaUiHost.keyResolver =
+          (name) => name == 'OPENROUTER_API_KEY' ? 'sk-or' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+
       await tester.tap(find.text('Image generation'));
       await tester.pumpAndSettle();
       expect(opened, [MediaSlot.imageGeneration]);
@@ -88,6 +94,10 @@ void main() {
     });
 
     testWidgets('the Gemini preset saves its URL and key name', (tester) async {
+      FaUiHost.keyResolver =
+          (name) => name == 'GEMINI_API_KEY' ? 'sk-gemini' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+
       final store = MediaModelsStore.inMemory();
       await _pump(
         tester,

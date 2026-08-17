@@ -28,6 +28,32 @@ abstract interface class FaChatConnection implements Listenable {
   String get modelId;
 }
 
+/// A static [FaChatConnection] over plain values: the override flows (task
+/// roles, media slots) know the main connection as strings, not as a live
+/// host service.
+final class FaStaticChatConnection extends ChangeNotifier
+    implements FaChatConnection {
+  /// Creates a static connection view.
+  FaStaticChatConnection({
+    required this.providerKind,
+    required this.activeBaseUrl,
+    required this.modelId,
+    this.activeProviderId,
+  });
+
+  @override
+  final String providerKind;
+
+  @override
+  final String activeBaseUrl;
+
+  @override
+  final String modelId;
+
+  @override
+  final String? activeProviderId;
+}
+
 /// The connection settings assembled by fa_ui's model pickers and handed to
 /// the host's apply callback — the host maps it onto its own agent config
 /// type (it owns the agent service).
