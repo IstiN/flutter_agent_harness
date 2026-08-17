@@ -105,19 +105,11 @@ class ProviderRegistry extends ChangeNotifier {
 
   /// The secure-store key name backing [baseUrl]'s key:
   /// `FA_KEY_API_ACME_COM`, `FA_KEY_LOCALHOST_11434`.
-  static String keyNameFor(String baseUrl) {
-    final uri = Uri.tryParse(baseUrl);
-    var host = uri?.host ?? baseUrl;
-    if (host.isEmpty) host = 'custom';
-    final port = uri?.port;
-    final defaultPort = uri?.scheme == 'https' ? 443 : 80;
-    if (port != null && port != defaultPort) host = '${host}_$port';
-    final sanitized = host
-        .toUpperCase()
-        .replaceAll(RegExp('[^A-Z0-9]+'), '_')
-        .replaceAll(RegExp('^_+|_+\$'), '');
-    return 'FA_KEY_${sanitized.isEmpty ? 'CUSTOM' : sanitized}';
-  }
+  static String keyNameFor(String baseUrl) =>
+      // The single canonical algorithm lives in the harness
+      // (CustomProviderRegistry.keyNameFor) — the CLI and the app produce
+      // identical FA_KEY_<HOST> names for the same endpoint.
+      CustomProviderRegistry.keyNameFor(baseUrl);
 
   /// Loads the registry persisted in [env]; a missing, unreadable, or
   /// corrupt file yields an empty registry (never crashes boot). With a

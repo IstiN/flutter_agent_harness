@@ -4,6 +4,8 @@
 
 import 'package:flutter/widgets.dart';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart' as harness;
+
 import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/stores/keychain_store.dart';
 import 'package:fa_ui/src/stores/media_models_store.dart';
@@ -114,11 +116,24 @@ enum ProviderPreset {
 bool hostedProviderConnected(ProviderPreset preset) {
   final envName = hostedProviderKeyName(preset);
   if (envName == null) return true; // keyless
-  if (FaUiHost.resolveKey(envName, () => '').isNotEmpty) return true;
   final baseUrl = preset.baseUrl;
   if (baseUrl == null) return false;
-  final scoped = ProviderRegistry.keyNameFor(baseUrl);
-  return FaUiHost.resolveKey(scoped, () => '').isNotEmpty;
+  // The CLI/app shared chain (resolveEndpointKey): the app's host resolver
+  // merges env/store per name, so envRead and storeRead are the same lookup.
+  return harness.resolveEndpointKey(
+        envNames: [envName],
+        defaultBaseUrl: baseUrl,
+        baseUrl: baseUrl,
+        envRead: (name) {
+          final value = FaUiHost.resolveKey(name, () => '');
+          return value.isEmpty ? null : value;
+        },
+        storeRead: (name) {
+          final value = FaUiHost.resolveKey(name, () => '');
+          return value.isEmpty ? null : value;
+        },
+      ) !=
+      null;
 }
 
 String? hostedProviderKeyName(ProviderPreset preset) => switch (preset) {
