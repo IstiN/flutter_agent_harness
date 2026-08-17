@@ -209,7 +209,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             ),
             Divider(height: 1, thickness: 1, color: colors.border),
             _buildNavItems(colors),
-            _buildModelFooter(colors),
           ],
         ),
       ),
@@ -298,39 +297,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             selected: false,
             collapsed: _sidebarCollapsed,
             onTap: _openSettings,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildModelFooter(FahColors colors) {
-    final modelId = widget.manager.active?.service.modelId;
-    if (_sidebarCollapsed) {
-      return Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: colors.border)),
-        ),
-        child: Center(child: Icon(Icons.memory, size: 16, color: colors.dim)),
-      );
-    }
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: colors.border)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.memory, size: 16, color: colors.dim),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              modelId ?? '',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colors.dim, fontSize: 12),
-            ),
           ),
         ],
       ),
@@ -484,25 +450,48 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     );
   }
 
-  /// Opens the unified model picker so the user can quickly switch models
-  /// across all configured providers without leaving the chat.
+  /// Opens the same two-step provider → model picker the settings
+  /// "Default chat model" row uses — keeping the chat header's quick
+  /// model switch in lockstep with the settings flow.
   Future<void> _openModelPicker(FlutterManagedSession session) async {
     final service = session.service;
     final registry = widget.registry;
     final lastConnectionStore = widget.lastConnectionStore;
     if (registry == null) return;
-    await pushFaPage<void>(
+    final result = await pushFaPage<MediaSlotEditorResult>(
       context,
-      UnifiedModelPickerPage(
-        connection: service,
-        onApply: (config) async {
-          final agentConfig = agentConfigFrom(config);
-          await service.reconfigure(agentConfig);
-          await lastConnectionStore?.saveFromConfig(agentConfig);
-        },
+      MediaSlotProviderPickerPage(
+        slot: null,
+        title: context.l10n.settingsDefaultChatModelTitle,
+        initial: null,
+        mainBaseUrl: service.activeBaseUrl,
         registry: registry,
+        // Connected providers only — same as the role/media rows.
+        connectedOnly: true,
+        // Editing the main connection: no "Same as main" row.
+        allowMainConnection: false,
       ),
     );
+    if (result == null || result.cleared) return;
+    if (!mounted) return;
+    final override = result.override!;
+    String? resolvedKey;
+    if (override.apiKeyName != null && override.apiKeyName!.isNotEmpty) {
+      resolvedKey = registry.keyValueForName(override.apiKeyName!) ?? '';
+      if (resolvedKey.isEmpty) {
+        resolvedKey = FaUiHost.resolveKey(override.apiKeyName!, () => '');
+      }
+    }
+    final config = FaChatModelConfig(
+      providerKind: override.providerKind,
+      modelId: override.modelId,
+      baseUrl: override.baseUrl,
+      apiKey: resolvedKey ?? '',
+      providerId: override.providerId,
+    );
+    final agentConfig = agentConfigFrom(config);
+    await service.reconfigure(agentConfig);
+    await lastConnectionStore?.saveFromConfig(agentConfig);
   }
 
   Future<void> _openSettings() async {
