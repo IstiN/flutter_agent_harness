@@ -138,8 +138,20 @@ class _MyAppsShellState extends State<MyAppsShell> {
     }
   }
 
-  List<JsAppInfo> get _demoApps => _apps.where((a) => a.bundled).toList();
-  List<JsAppInfo> get _customApps => _apps.where((a) => !a.bundled).toList();
+  /// Bundled demos are the apps that ship with the app — they're seeded
+  /// from `assets/apps/` into the env on first run. The manifest flag is
+  /// preserved across that seed, but AppsStore reads manifests back with
+  /// `bundled: false` (it doesn't know which seed a given app came from),
+  /// so the canonical "is this a demo" check is the id against
+  /// [AppsStore.demoAppIds]. We honour the manifest flag too — third-party
+  /// apps that mark themselves bundled still surface as demos.
+  bool _isDemo(JsAppInfo app) =>
+      app.bundled || AppsStore.demoAppIds.contains(app.id);
+
+  List<JsAppInfo> get _demoApps =>
+      _apps.where(_isDemo).toList();
+  List<JsAppInfo> get _customApps =>
+      _apps.where((a) => !_isDemo(a)).toList();
 
   List<JsAppInfo> get _filteredApps {
     final query = _searchController.text.trim().toLowerCase();
@@ -173,7 +185,7 @@ class _MyAppsShellState extends State<MyAppsShell> {
       );
       return;
     }
-    final isDemo = AppsStore.demoAppIds.contains(app.id);
+    final isDemo = _isDemo(app);
     final source = widget.mode == MyAppsShellMode.mobile
         ? 'launcher'
         : 'apps_panel';

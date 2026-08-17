@@ -72,6 +72,10 @@ String _badgeIcon(String bg, String shape) =>
 const _fg = '#f8fafc';
 
 /// id → [display name, inline SVG icon, bundled flag].
+/// Bundled ids match `AppsStore.demoAppIds` exactly — that's how
+/// `MyAppsShell` distinguishes a demo from a user app, regardless of
+/// what `bundled:` says on the manifest (AppsStore reads manifests back
+/// with `bundled: false` after seeding).
 Map<String, List<Object>> get _apps => {
   'weather': [
     'Weather',
@@ -85,44 +89,45 @@ Map<String, List<Object>> get _apps => {
     ),
     true,
   ],
-  'notes': [
-    'Notes',
+  'calendar': [
+    'Calendar',
     _badgeIcon(
       '#6366f1',
-      "<rect x='7' y='7' width='10' height='2' rx='1' fill='$_fg'/>"
-          "<rect x='7' y='11' width='10' height='2' rx='1' fill='$_fg'/>"
-          "<rect x='7' y='15' width='6' height='2' rx='1' fill='$_fg'/>",
+      "<rect x='3' y='5' width='18' height='16' rx='2' fill='none' "
+          "stroke='$_fg' stroke-width='2'/><rect x='3' y='9' width='18' "
+          "height='2' fill='$_fg'/><rect x='7' y='3' width='2' height='4' "
+          "rx='1' fill='$_fg'/><rect x='15' y='3' width='2' height='4' "
+          "rx='1' fill='$_fg'/>",
     ),
     true,
   ],
-  'pomodoro': [
-    'Pomodoro',
-    _badgeIcon(
-      '#f43f5e',
-      "<circle cx='12' cy='13' r='6' fill='none' stroke='$_fg' "
-          "stroke-width='2'/><rect x='10' y='4' width='4' height='2' rx='1' "
-          "fill='$_fg'/><path d='M12 13 L12 9.5' stroke='$_fg' "
-          "stroke-width='2' stroke-linecap='round'/>",
-    ),
-    true,
-  ],
-  'habits': [
-    'Habit Tracker',
+  'contacts': [
+    'Contacts',
     _badgeIcon(
       '#22c55e',
-      "<path d='M7 12.5 L10.5 16 L17 8.5' stroke='$_fg' stroke-width='2.5' "
-          "fill='none' stroke-linecap='round' stroke-linejoin='round'/>",
+      "<circle cx='12' cy='8' r='4' fill='$_fg'/>"
+          "<path d='M4 20c0-4 4-6 8-6s8 2 8 6' fill='$_fg'/>",
     ),
     true,
   ],
-  'dice': [
-    'Dice Roller',
+  'reminders': [
+    'Reminders',
+    _badgeIcon(
+      '#f43f5e',
+      "<circle cx='12' cy='12' r='9' fill='none' stroke='$_fg' "
+          "stroke-width='2'/><path d='M12 7v5l3 3' stroke='$_fg' "
+          "stroke-width='2' fill='none' stroke-linecap='round' "
+          "stroke-linejoin='round'/>",
+    ),
+    true,
+  ],
+  'fitness-trainer': [
+    'Fitness Trainer',
     _badgeIcon(
       '#8b5cf6',
-      "<circle cx='8.5' cy='8.5' r='1.8' fill='$_fg'/>"
-          "<circle cx='15.5' cy='8.5' r='1.8' fill='$_fg'/>"
-          "<circle cx='8.5' cy='15.5' r='1.8' fill='$_fg'/>"
-          "<circle cx='15.5' cy='15.5' r='1.8' fill='$_fg'/>",
+      "<rect x='5' y='10' width='2' height='4' rx='1' fill='$_fg'/>"
+          "<rect x='17' y='10' width='2' height='4' rx='1' fill='$_fg'/>"
+          "<rect x='7' y='11' width='10' height='2' rx='1' fill='$_fg'/>",
     ),
     true,
   ],
@@ -146,14 +151,14 @@ Map<String, List<Object>> get _apps => {
     ),
     false,
   ],
-  'focus': [
-    'Focus Timer',
+  'pomodoro': [
+    'Pomodoro',
     _badgeIcon(
       '#f59e0b',
-      "<circle cx='12' cy='12' r='7' fill='none' stroke='$_fg' "
-          "stroke-width='2'/><path d='M12 7v5' stroke='$_fg' "
-          "stroke-width='2' stroke-linecap='round'/><circle cx='12' "
-          "cy='12' r='1.5' fill='$_fg'/>",
+      "<circle cx='12' cy='13' r='6' fill='none' stroke='$_fg' "
+          "stroke-width='2'/><rect x='10' y='4' width='4' height='2' rx='1' "
+          "fill='$_fg'/><path d='M12 13 L12 9.5' stroke='$_fg' "
+          "stroke-width='2' stroke-linecap='round'/>",
     ),
     false,
   ],
