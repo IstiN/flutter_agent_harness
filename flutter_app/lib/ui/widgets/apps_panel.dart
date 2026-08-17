@@ -156,33 +156,10 @@ class _AppsPanelState extends State<AppsPanel> {
     pushJsApp(context, manager: manager, app: app, source: 'apps_panel');
   }
 
-  /// Opens the file browser within the apps panel's nested navigator.
-  void _openFiles(BuildContext context) {
-    final service = widget.manager.active?.service;
-    if (service == null) return;
-    AppAnalytics.instance.filesOpened('apps_panel');
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          appBar: AppBar(title: const Text('Files')),
-          body: const Center(child: Text('Files')),
-        ),
-      ),
-    );
-  }
+  // Files / Settings live in the shell sidebar and open the real
+  // [FileBrowser] / [SettingsScreen] from there — the apps panel no
+  // longer surfaces grey placeholder tiles for them.
 
-  /// Opens the settings screen within the apps panel's nested navigator.
-  void _openSettings(BuildContext context) {
-    AppAnalytics.instance.settingsOpened();
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          appBar: AppBar(title: const Text('Settings')),
-          body: const Center(child: Text('Settings')),
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -308,13 +285,17 @@ class _AppsPanelState extends State<AppsPanel> {
       );
     }
 
-    // Sectioned view matching the prototype.
+    // Sectioned view matching the prototype. The "Weather placeholder"
+    // and "System tiles" rows used to live here as grey stub icons
+    // (Calendar, Files, Notes, Maps, Calculator, Settings, Utilities,
+    // Travel); they were placeholders that opened nothing or a blank
+    // Scaffold. Calendar / Weather / Contacts / Reminders / Health /
+    // Maps live in the bundled apps (see AppsStore.demoAppIds) and
+    // surface as real tiles under Demo apps below — there's nothing to
+    // "stub" here. Focus Timer + Up next are real interactive widgets.
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        // ── Weather placeholder ──────────────────────────────────
-        _WeatherWidget(colors: colors, theme: theme, isLight: isLight),
-        const SizedBox(height: 12),
         // ── Up next (real calendar events) ───────────────────────
         if (_calendarLoaded && _upcomingEvents.isNotEmpty) ...[
           _UpNextWidget(
@@ -325,18 +306,8 @@ class _AppsPanelState extends State<AppsPanel> {
           ),
           const SizedBox(height: 12),
         ],
-        // ── Focus Timer placeholder ──────────────────────────────
+        // ── Focus Timer (real interactive 25-min pomodoro) ───────
         _FocusTimerWidget(colors: colors, theme: theme, isLight: isLight),
-        const SizedBox(height: 16),
-
-        // ── System tiles (Calendar, Files, Notes, Maps, etc.) ────
-        _SystemAppsGrid(
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-          onOpenFiles: () => _openFiles(context),
-          onOpenSettings: () => _openSettings(context),
-        ),
         const SizedBox(height: 16),
 
         // ── Custom apps section ──────────────────────────────────
@@ -432,60 +403,6 @@ class _FilterTab extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// The weather widget placeholder (will be replaced with a real weather app
-/// tile when one is installed).
-class _WeatherWidget extends StatelessWidget {
-  const _WeatherWidget({
-    required this.colors,
-    required this.theme,
-    required this.isLight,
-  });
-
-  final FahColors colors;
-  final ThemeData theme;
-  final bool isLight;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF60A5FA), Color(0xFF3B82F6)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.wb_sunny, color: Colors.white, size: 24),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '25°',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                'Sunny',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.white.withValues(alpha: 0.85),
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }
@@ -940,159 +857,13 @@ class _AppTile extends StatelessWidget {
   }
 }
 
-/// System-level app tiles matching the prototype: Calendar, Files, Notes,
-/// Maps, Calculator, Settings, Utilities, Travel. These are placeholders
-/// that open the corresponding system feature or do nothing yet.
-class _SystemAppsGrid extends StatelessWidget {
-  const _SystemAppsGrid({
-    required this.colors,
-    required this.theme,
-    required this.isLight,
-    required this.onOpenFiles,
-    required this.onOpenSettings,
-  });
-
-  final FahColors colors;
-  final ThemeData theme;
-  final bool isLight;
-  final VoidCallback onOpenFiles;
-  final VoidCallback onOpenSettings;
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 4,
-      childAspectRatio: 0.82,
-      crossAxisSpacing: 8,
-      mainAxisSpacing: 12,
-      children: [
-        _SystemAppTile(
-          icon: Icons.calendar_today,
-          label: 'Calendar',
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-        ),
-        _SystemAppTile(
-          icon: Icons.folder_outlined,
-          label: 'Files',
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-          onTap: onOpenFiles,
-        ),
-        _SystemAppTile(
-          icon: Icons.note_outlined,
-          label: 'Notes',
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-        ),
-        _SystemAppTile(
-          icon: Icons.map_outlined,
-          label: 'Maps',
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-        ),
-        _SystemAppTile(
-          icon: Icons.calculate_outlined,
-          label: 'Calculator',
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-        ),
-        _SystemAppTile(
-          icon: Icons.settings_outlined,
-          label: 'Settings',
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-          onTap: onOpenSettings,
-        ),
-        _SystemAppTile(
-          icon: Icons.build_outlined,
-          label: 'Utilities',
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-          subtitle: '4 apps',
-        ),
-        _SystemAppTile(
-          icon: Icons.flight_outlined,
-          label: 'Travel',
-          colors: colors,
-          theme: theme,
-          isLight: isLight,
-          subtitle: '3 apps',
-        ),
-      ],
-    );
-  }
-}
-
-class _SystemAppTile extends StatelessWidget {
-  const _SystemAppTile({
-    required this.icon,
-    required this.label,
-    required this.colors,
-    required this.theme,
-    required this.isLight,
-    this.subtitle,
-    this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final FahColors colors;
-  final ThemeData theme;
-  final bool isLight;
-  final String? subtitle;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: isLight ? colors.panelAlt : colors.panel,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: colors.border),
-            ),
-            child: Icon(icon, size: 22, color: colors.dim),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: 11,
-              color: colors.dim,
-            ),
-          ),
-          if (subtitle != null)
-            Text(
-              subtitle!,
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontSize: 9,
-                color: colors.dim.withValues(alpha: 0.6),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
+/// The System apps row (Calendar, Files, Notes, Maps, Calculator,
+/// Settings, Utilities, Travel) was removed — these were grey placeholder
+/// tiles that opened the corresponding system feature or did nothing.
+/// Calendar / Weather / Contacts / Reminders / Health / Maps / Calculator
+/// live as real JS apps in the apps store and surface under Demo apps
+/// below; Files / Settings are real sidebar entries that open
+/// [FileBrowser] / [SettingsScreen].
 
 /// Recent activity footer.
 class _RecentActivity extends StatelessWidget {
