@@ -208,7 +208,8 @@ class _MyAppsShellState extends State<MyAppsShell> {
     // Mobile owns its own app bar (the shell pushes a MaterialApp with
     // its own title), so the mobile header here is the simple in-content
     // row only; panel uses the same row plus the macOS top-padding
-    // clearance.
+    // clearance. No Customize affordance — there was nothing to wire it
+    // to, and a non-functional link is worse than no link.
     final topPad = widget.mode == MyAppsShellMode.panel && _isMacOS
         ? 28.0
         : 16.0;
@@ -227,13 +228,6 @@ class _MyAppsShellState extends State<MyAppsShell> {
             '${_apps.length}',
             style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
           ),
-          const SizedBox(width: 8),
-          Text(
-            'Customize',
-            style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
-          ),
-          const SizedBox(width: 4),
-          Icon(Icons.tune, size: 16, color: colors.dim),
         ],
       ),
     );
@@ -330,7 +324,6 @@ class _MyAppsShellState extends State<MyAppsShell> {
           _AppGrid(
             apps: _customApps,
             onTap: _openApp,
-            showAddTile: true,
             gridDelegate: _gridDelegateFor(),
           ),
           const SizedBox(height: 16),
@@ -360,11 +353,6 @@ class _MyAppsShellState extends State<MyAppsShell> {
               ),
             ),
           ),
-
-        // ── Recent activity footer ───────────────────────────────
-        const Divider(height: 1),
-        const SizedBox(height: 8),
-        _RecentActivity(colors: colors, theme: theme),
       ],
     );
   }
@@ -748,84 +736,28 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// 4-column grid of app tiles. When [showAddTile] is true, an "Add app"
-/// tile is appended (matching the prototype's "+" tile in the "Created by
-/// you" section).
+/// 4-column grid of app tiles.
 class _AppGrid extends StatelessWidget {
   const _AppGrid({
     required this.apps,
     required this.onTap,
     required this.gridDelegate,
-    this.showAddTile = false,
   });
 
   final List<JsAppInfo> apps;
   final ValueChanged<JsAppInfo> onTap;
-  final bool showAddTile;
   final SliverGridDelegate gridDelegate;
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final theme = Theme.of(context);
-    final isLight = theme.brightness == Brightness.light;
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: gridDelegate,
-      itemCount: apps.length + (showAddTile ? 1 : 0),
+      itemCount: apps.length,
       itemBuilder: (context, index) {
-        if (showAddTile && index == apps.length) {
-          return _AddAppTile(colors: colors, theme: theme, isLight: isLight);
-        }
         return _AppTile(app: apps[index], onTap: () => onTap(apps[index]));
       },
-    );
-  }
-}
-
-/// The "Add app" tile at the end of the custom apps grid.
-class _AddAppTile extends StatelessWidget {
-  const _AddAppTile({
-    required this.colors,
-    required this.theme,
-    required this.isLight,
-  });
-
-  final FahColors colors;
-  final ThemeData theme;
-  final bool isLight;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () {}, // Placeholder — will open app creation flow
-      borderRadius: BorderRadius.circular(12),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: isLight ? colors.panel : colors.panelAlt,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: colors.border),
-            ),
-            child: Icon(Icons.add, size: 22, color: colors.indigo),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Add app',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: 11,
-              color: colors.indigo,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -875,88 +807,6 @@ class _AppTile extends StatelessWidget {
             style: theme.textTheme.bodySmall?.copyWith(
               fontSize: 11,
               color: colors.dim,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Recent activity footer.
-class _RecentActivity extends StatelessWidget {
-  const _RecentActivity({required this.colors, required this.theme});
-
-  final FahColors colors;
-  final ThemeData theme;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'Recent activity',
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: colors.dim,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 8),
-        _ActivityRow(
-          icon: Icons.check_circle_outline,
-          label: 'Checked Calendar',
-          time: 'Just now',
-          colors: colors,
-          theme: theme,
-        ),
-        _ActivityRow(
-          icon: Icons.folder_open,
-          label: 'Opened Files',
-          time: '10m ago',
-          colors: colors,
-          theme: theme,
-        ),
-      ],
-    );
-  }
-}
-
-class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({
-    required this.icon,
-    required this.label,
-    required this.time,
-    required this.colors,
-    required this.theme,
-  });
-
-  final IconData icon;
-  final String label;
-  final String time;
-  final FahColors colors;
-  final ThemeData theme;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: colors.dim),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              label,
-              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
-            ),
-          ),
-          Text(
-            time,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.dim.withValues(alpha: 0.6),
-              fontSize: 10,
             ),
           ),
         ],
