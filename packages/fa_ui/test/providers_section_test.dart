@@ -469,20 +469,30 @@ void main() {
       expect(find.text('test-model · example.com'), findsOneWidget);
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
-      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
 
-      // One flat searchable list across providers — pick acme-2 (the
-      // /models-fetched id) and the picker applies it directly.
-      await tester.pump(const Duration(milliseconds: 100));
+      // The SAME two-step flow the role/media pickers use: provider picker
+      // (no "main connection" row when editing the main connection)…
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      expect(find.text('Main connection'), findsNothing);
+      expect(find.text('Acme'), findsOneWidget);
+      await tester.tap(find.text('Acme'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'acme-2');
+
+      // …then the model page with the fetched list — pick acme-2.
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'acme-2',
+      );
       await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('acme-2', findRichText: true).last);
+      await tester.tap(find.widgetWithText(ListTile, 'acme-2'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Save'));
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
       // Back on the section; onApply ran with the provider's endpoint and
-      // session key, and the summary follows the connection.
-      expect(find.byType(UnifiedModelPickerPage), findsNothing);
+      // resolved session key, and the summary follows the connection.
       expect(connection.applied, isNotNull);
       expect(connection.applied!.providerKind, 'openai-completions');
       expect(connection.applied!.modelId, 'acme-2');
@@ -541,13 +551,14 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
-      // Back on the unified picker; the new provider is listed.
-      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
-      expect(find.textContaining('Local', findRichText: true), findsWidgets);
+      // Back on the provider picker; the new provider is listed.
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      expect(find.text('Local'), findsOneWidget);
     });
 
-    testWidgets('an unlisted id offers the manual "Use" row on the active '
-        'provider', (tester) async {
+    testWidgets('an unlisted id saves manually on the picked provider', (
+      tester,
+    ) async {
       final registry = ProviderRegistry.inMemory();
       final provider = await registry.add(
         name: 'Acme',
@@ -571,20 +582,22 @@ void main() {
 
       await tester.tap(find.text('test-model · Acme'));
       await tester.pumpAndSettle();
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pumpAndSettle();
-      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
-
-      // An id the endpoint does not list: the manual row shows and applies
-      // it with the active provider's endpoint + resolved key.
-      await tester.enterText(find.byType(TextField), 'my-custom');
-      await tester.pumpAndSettle();
-      expect(find.text('Use "my-custom"'), findsOneWidget);
-      expect(find.textContaining('acme-1', findRichText: true), findsNothing);
-      await tester.tap(find.text('Use "my-custom"'));
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      await tester.tap(find.text('Acme'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(UnifiedModelPickerPage), findsNothing);
+      // An id the endpoint does not list: the free-text field takes it.
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'my-custom',
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('acme-1'), findsNothing);
+      await tester.ensureVisible(find.text('Save'));
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
       expect(connection.applied, isNotNull);
       expect(connection.applied!.modelId, 'my-custom');
       expect(connection.applied!.baseUrl, 'https://acme.example/v1');

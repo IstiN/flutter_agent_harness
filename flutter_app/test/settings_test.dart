@@ -18,6 +18,7 @@ import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fa_ui/fa_ui.dart' show MediaSlotModelPage, MediaSlotProviderPickerPage;
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
@@ -763,17 +764,24 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Open the default-chat-model picker; the registry provider's entry
-      // carries no key → apply surfaces the validation error.
+      // Open the default-chat-model picker (two-step): the registry
+      // provider's entry carries no key — apply still works (keyless
+      // local endpoints are legitimate).
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
-      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      await tester.tap(find.text('Acme'));
       await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('acme-1', findRichText: true));
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'acme-1',
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Save'));
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
-      // Applied directly — the unified picker needs no key step (the
-      // entry carries the registry's remembered key, empty here).
       expect(service.modelId, 'acme-1');
     });
 
@@ -844,15 +852,21 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Local'), findsOneWidget);
 
-      // The default-chat-model flow: the unified picker lists every
-      // provider's models; pick Local's entry to apply it.
+      // The default-chat-model flow: the two-step picker (provider →
+      // model), the same one the role/media rows open.
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
-      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      await tester.tap(find.text('Local'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'llama');
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'llama3',
+      );
       await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('llama3', findRichText: true));
+      await tester.ensureVisible(find.text('Save'));
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
       // Back on the settings screen; the connection was reconfigured and

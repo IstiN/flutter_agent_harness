@@ -5,9 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/media_slot_picker_page.dart';
-import 'package:fa_ui/src/providers/unified_model_picker.dart';
 import 'package:fa_ui/src/stores/media_models_store.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/task_models_store.dart';
@@ -134,25 +132,28 @@ class TaskModelsSection extends StatelessWidget {
     TaskModelsStore store,
     String role,
   ) async {
-    // The SAME picker the default-chat-model row opens, in override mode:
-    // the connected providers' live model lists with search; "Same as main
-    // connection" clears the role override.
+    // pushFaPage shows a dialog on wide screens (matching the settings
+    // style) and a full page on narrow. The media-slot pages run the
+    // generic provider→model flow with slot: null (no voice/chips).
     final current = store.overrideFor(role);
     final result = await pushFaPage<MediaSlotEditorResult>(
       context,
-      UnifiedModelPickerPage(
-        connection: FaStaticChatConnection(
-          providerKind: 'openai-completions',
-          activeBaseUrl: mainBaseUrl,
-          modelId: mainModelId,
-        ),
-        onApply: (_) async {}, // unused in override mode
+      MediaSlotProviderPickerPage(
+        slot: null,
+        title: roleTitles[role] ?? role,
+        initial: current == null
+            ? null
+            : MediaSlotOverride(
+                providerKind: current.providerKind,
+                baseUrl: current.baseUrl,
+                modelId: current.modelId,
+                apiKeyName: current.apiKeyName,
+              ),
+        mainBaseUrl: mainBaseUrl,
         registry: registry,
         modelsFetcher: modelsFetcher,
-        overrideMode: true,
-        overrideTitle: roleTitles[role] ?? role,
-        currentModelId: current?.modelId,
-        currentBaseUrl: current?.baseUrl,
+        // Role pickers choose among connected providers only.
+        connectedOnly: true,
       ),
     );
     if (result == null) return;

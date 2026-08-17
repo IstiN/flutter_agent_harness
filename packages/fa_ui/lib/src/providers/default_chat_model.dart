@@ -7,6 +7,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
+import 'package:fa_ui/src/host_config.dart';
+import 'package:fa_ui/src/providers/media_slot_picker_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/providers/unified_model_picker.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
@@ -46,6 +48,16 @@ final class FaOnDeviceRoute {
 
   /// Builds the on-device connect page.
   final FaOnDevicePageBuilder pageBuilder;
+}
+
+/// Resolves a stored key NAME to its value for the main-connection apply:
+/// the registry's custom-provider session keys first, then the host chain
+/// (env / secure store / saved keys).
+String _resolveKeyByName(ProviderRegistry? registry, String? apiKeyName) {
+  if (apiKeyName == null || apiKeyName.isEmpty) return '';
+  final fromRegistry = registry?.keyValueForName(apiKeyName);
+  if (fromRegistry != null && fromRegistry.isNotEmpty) return fromRegistry;
+  return FaUiHost.resolveKey(apiKeyName, () => '');
 }
 
 /// The settings "Default chat model" section — one row showing the active
@@ -121,17 +133,35 @@ class DefaultChatModelSection extends StatelessWidget {
             const SizedBox(height: 8),
             InkWell(
               onTap: () async {
-                await pushFaPage<void>(
+                // The SAME two-step flow the role/media pickers use
+                // (provider → model), editing the main connection.
+                final result = await pushFaPage<MediaSlotEditorResult>(
                   context,
-                  UnifiedModelPickerPage(
-                    connection: connection,
-                    onApply: onApply,
+                  MediaSlotProviderPickerPage(
+                    slot: null,
+                    title: strings.settingsDefaultChatModelTitle,
+                    initial: null,
+                    mainBaseUrl: connection.activeBaseUrl,
                     registry: registry,
                     modelsFetcher: modelsFetcher,
-                    providerModelFetcher: providerModelFetcher,
-                    onDeviceProviders: onDeviceProviders,
-                    providerKindLabels: providerKindLabels,
+                    // Connected providers only — like every other picker.
+                    connectedOnly: true,
+                    // Editing the main connection: no "same as main" row.
+                    allowMainConnection: false,
+                    onDeviceRoutes: onDeviceProviders,
                     addProviderPage: addProviderPage,
+                  ),
+                );
+                if (result == null || result.cleared) return;
+                final override = result.override!;
+                if (!context.mounted) return;
+                await onApply(
+                  FaChatModelConfig(
+                    providerKind: override.providerKind,
+                    modelId: override.modelId,
+                    baseUrl: override.baseUrl,
+                    apiKey: _resolveKeyByName(registry, override.apiKeyName),
+                    providerId: override.providerId,
                   ),
                 );
               },

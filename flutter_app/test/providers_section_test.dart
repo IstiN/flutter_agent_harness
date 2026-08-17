@@ -10,6 +10,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fa_ui/fa_ui.dart' show MediaSlotModelPage, MediaSlotProviderPickerPage;
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
@@ -238,15 +239,20 @@ void main() {
       expect(find.text('test-model · example.com'), findsOneWidget);
       await tester.tap(find.text('test-model · example.com'));
       await tester.pumpAndSettle();
-      await tester.pump(const Duration(milliseconds: 50));
-      await tester.pumpAndSettle();
-      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
 
-      // The unified picker: one flat, searchable list across providers.
-      // The Acme entry carries the registry's remembered session key.
-      await tester.enterText(find.byType(TextField), 'acme');
+      // The two-step provider → model flow (the same picker the role rows
+      // open). The Acme entry carries the registry's remembered session key.
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      await tester.tap(find.text('Acme'));
       await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('acme-1', findRichText: true));
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'acme-1',
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Save'));
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
       // Back on the section; the service was reconfigured with the
@@ -299,9 +305,10 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
-      // Back on the picker with the saved provider's model listed.
+      // Back on the (two-step) picker with the saved provider listed.
       expect(find.byType(ProviderEditorPage), findsNothing);
-      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      expect(find.text('Local'), findsOneWidget);
     });
   });
 

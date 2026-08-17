@@ -8,6 +8,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa_ui/src/host_config.dart';
+import 'package:fa_ui/src/providers/connection.dart'
+    show FaChatModelConfig;
+import 'package:fa_ui/src/providers/default_chat_model.dart'
+    show FaOnDeviceRoute;
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/providers/voice_presets.dart';
@@ -60,6 +64,9 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     this.registry,
     this.modelsFetcher,
     this.connectedOnly = false,
+    this.allowMainConnection = true,
+    this.onDeviceRoutes = const [],
+    this.addProviderPage,
   });
 
   /// The media slot being configured ([MediaSlot] name); null for the
@@ -91,6 +98,20 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
   /// always list.
   final bool connectedOnly;
 
+  /// Whether the leading "Same as main connection" row shows. False when
+  /// editing the main connection itself (the default-chat-model flow) —
+  /// clearing it makes no sense there.
+  final bool allowMainConnection;
+
+  /// On-device engine routes (Gemma/WebLLM/…), rendered as tiles before the
+  /// Add provider row (the default-chat flow offers them; role/media
+  /// overrides don't).
+  final List<FaOnDeviceRoute> onDeviceRoutes;
+
+  /// A host-provided "Add provider" page builder (the full preset picker
+  /// with SSO/OAuth tiles). Null uses the plain [pushProviderEditor].
+  final WidgetBuilder? addProviderPage;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -110,18 +131,19 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
             return ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
-                _providerTile(
-                  context,
-                  theme,
-                  label: strings.mediaModelsMainConnection,
-                  subtitle: mainBaseUrl.isEmpty
-                      ? null
-                      : providerHostOf(mainBaseUrl),
-                  checked: initial == null,
-                  onTap: () => Navigator.of(
+                if (allowMainConnection)
+                  _providerTile(
                     context,
-                  ).pop(const MediaSlotEditorResult.clear()),
-                ),
+                    theme,
+                    label: strings.mediaModelsMainConnection,
+                    subtitle: mainBaseUrl.isEmpty
+                        ? null
+                        : providerHostOf(mainBaseUrl),
+                    checked: initial == null,
+                    onTap: () => Navigator.of(
+                      context,
+                    ).pop(const MediaSlotEditorResult.clear()),
+                  ),
                 // Dedupe: a saved custom provider on a hosted preset's
                 // endpoint covers it (the CodeMie/ChatGPT/OpenRouter flows
                 // register their instance there) — never show both.
@@ -148,6 +170,14 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     subtitle: providerHostOf(provider.baseUrl),
                     checked: selected == provider,
                     onTap: () => _openModelPage(context, registry, provider),
+                  ),
+                for (final route in onDeviceRoutes)
+                  _providerTile(
+                    context,
+                    theme,
+                    label: route.label,
+                    leading: Icons.memory_outlined,
+                    onTap: () => _openOnDevice(context, route),
                   ),
                 const Divider(),
                 _providerTile(
@@ -244,12 +274,46 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     if (result != null && context.mounted) Navigator.of(context).pop(result);
   }
 
+  /// On-device tile: the route's connect page; a completed connect maps to
+  /// an override result carrying the engine's kind and pops the picker.
+  Future<void> _openOnDevice(
+    BuildContext context,
+    FaOnDeviceRoute route,
+  ) async {
+    final config = await pushFaPage<FaChatModelConfig?>(
+      context,
+      route.pageBuilder(context, (config) async {
+        if (context.mounted) Navigator.of(context).pop(config);
+      }),
+    );
+    if (config == null || !context.mounted) return;
+    Navigator.of(context).pop(
+      MediaSlotEditorResult.save(
+        MediaSlotOverride(
+          providerKind: config.providerKind,
+          baseUrl: config.baseUrl,
+          modelId: config.modelId,
+          apiKeyName: null,
+        ),
+      ),
+    );
+  }
+
   /// Adds a provider through the shared create page and continues straight
   /// to its model page.
   Future<void> _addProvider(
     BuildContext context,
     ProviderRegistry registry,
   ) async {
+    // The host's full picker (SSO/OAuth/on-device tiles) owns its flows —
+    // the registry listener refreshes this list when it returns.
+    final hostPage = addProviderPage;
+    if (hostPage != null) {
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: hostPage));
+      return;
+    }
     final added = await pushProviderEditor(
       context,
       registry,
@@ -463,6 +527,11 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
           modelId: model,
           apiKeyName: keyName,
           voice: voice.isEmpty ? null : voice,
+          providerId: switch (provider) {
+            CustomProvider custom => custom.id,
+            ProviderPreset preset => preset.name,
+            _ => null,
+          },
         ),
       ),
     );

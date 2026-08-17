@@ -42,8 +42,9 @@ void main() {
       expect(find.text('delegate-1'), findsOneWidget); // subagent
     });
 
-    testWidgets('a role edit runs the SAME unified picker as the default '
-        'chat model, in override mode', (tester) async {
+    testWidgets('a role edit runs the media-style provider→model flow', (
+      tester,
+    ) async {
       final store = TaskModelsStore.inMemory();
       final registry = ProviderRegistry.inMemory();
       await registry.add(
@@ -67,17 +68,29 @@ void main() {
       await tester.tap(find.text('Quick model'));
       await tester.pumpAndSettle();
 
-      // The unified picker: search field, the clear row, fetched models.
-      expect(find.byType(UnifiedModelPickerPage), findsOneWidget);
+      // Step 1: the provider picker — main connection, presets, the saved
+      // provider, add-provider.
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
       expect(find.text('Main connection'), findsOneWidget);
-      expect(
-        find.textContaining('fast-2', findRichText: true),
-        findsWidgets,
-      );
+      expect(find.text('Acme'), findsOneWidget);
+      await tester.tap(find.text('Acme'));
+      await tester.pumpAndSettle();
 
-      await tester.tap(
-        find.textContaining('fast-2', findRichText: true).first,
+      // Step 2: the model page with the fetched list + quick search.
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      expect(find.text('fast-1'), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Model id'),
+        'fast-2',
       );
+      await tester.pumpAndSettle();
+      expect(find.text('fast-1'), findsNothing);
+      await tester.tap(find.widgetWithText(ListTile, 'fast-2'));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
       final saved = store.overrideFor(TaskRole.smol);

@@ -60,6 +60,7 @@ final class MediaSlotOverride {
     required this.modelId,
     this.apiKeyName,
     this.voice,
+    this.providerId,
   });
 
   /// Restores an override from its JSON form (see [toJson]).
@@ -70,6 +71,7 @@ final class MediaSlotOverride {
         modelId: (json['modelId'] ?? '').toString(),
         apiKeyName: json['apiKeyName']?.toString(),
         voice: json['voice']?.toString(),
+        providerId: json['providerId']?.toString(),
       );
 
   /// Provider adapter kind; the media tools speak the OpenAI-compatible
@@ -93,6 +95,10 @@ final class MediaSlotOverride {
   /// Meaningless for the other slots.
   final String? voice;
 
+  /// The picked provider's stable id (custom id or preset name) — the
+  /// default-chat flow keeps the provider's identity through the apply.
+  final String? providerId;
+
   /// JSON form persisted in the store file; absent fields stay absent.
   Map<String, dynamic> toJson() => {
     'providerKind': providerKind,
@@ -100,6 +106,7 @@ final class MediaSlotOverride {
     'modelId': modelId,
     if (apiKeyName != null) 'apiKeyName': apiKeyName,
     if (voice != null && voice!.isNotEmpty) 'voice': voice,
+        'providerId': providerId,
   };
 
   @override
