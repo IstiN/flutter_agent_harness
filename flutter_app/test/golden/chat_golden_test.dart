@@ -1,5 +1,6 @@
 /// Golden (screenshot) tests for the chat surface:
-/// `lib/ui/screens/chat_screen.dart` (the full `ChatScreen`) and
+/// `lib/ui/screens/chat_screen.dart` (the full `ChatScreen`) — which
+/// embeds `lib/ui/widgets/chat_composer.dart` for the input row — and
 /// `lib/ui/widgets/fa_mark.dart`.
 ///
 /// Messages are injected straight into `AgentService.messages` (the pattern

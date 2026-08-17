@@ -12,7 +12,7 @@ import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
-import 'package:fa/ui/widgets/apps_panel.dart';
+import 'package:fa/ui/widgets/my_apps_shell.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/providers_section.dart' show agentConfigFrom;
@@ -422,10 +422,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       onGenerateRoute: (settings) => MaterialPageRoute(
         builder: (context) => ManagerScope(
           manager: widget.manager,
-          child: AppsPanel(
+          child: MyAppsShell(
             manager: widget.manager,
             appsStore: widget.appsStore,
-            sessionNamesStore: widget.sessionNamesStore,
+            mode: MyAppsShellMode.panel,
           ),
         ),
       ),

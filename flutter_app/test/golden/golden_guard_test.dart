@@ -35,11 +35,7 @@ const _coverage = <String, String>{
   'lib/ui/screens/onboarding_mockups.dart':
       'test/golden/onboarding_golden_test.dart',
   'lib/ui/screens/chat_screen.dart': 'test/golden/chat_golden_test.dart',
-  'lib/ui/screens/app_launcher_screen.dart':
-      'test/golden/launcher_golden_test.dart',
-  'lib/apps/app_tile_host.dart': 'test/golden/launcher_golden_test.dart',
-  'lib/apps/session_chat_sheet.dart': 'test/golden/launcher_golden_test.dart',
-  'lib/ui/widgets/chat_composer.dart': 'test/golden/launcher_golden_test.dart',
+  'lib/ui/widgets/chat_composer.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/media_player.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/model_mark.dart': 'test/golden/widgets_golden_test.dart',
@@ -82,7 +78,20 @@ const _exempt = <String, String>{
       'sidebar sessions list; rendered inside wide_layout_shell (covered indirectly)',
   'lib/ui/widgets/code_viewer.dart':
       'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
-  'lib/ui/widgets/apps_panel.dart': 'test/golden/apps_panel_golden_test.dart',
+  'lib/apps/app_tile_host.dart':
+      'tile widget engine; live JS tiles — no host golden (the engine '
+      'needs a real JSRuntime, exercised in widget tests instead)',
+  'lib/apps/session_chat_sheet.dart':
+      'floating chat sheet over the launcher; covered indirectly by the '
+      'launcher chat sheet tests in test/apps/',
+  'lib/ui/screens/app_launcher_screen.dart':
+      'thin wrapper around MyAppsShell + SessionChatSheet — its visuals '
+      'are covered by my_apps_shell + chat sheet goldens, the shell code '
+      'is exercised by app_launcher_screen widget tests',
+  'lib/ui/widgets/apps_panel.dart':
+      'deprecated: superseded by my_apps_shell (test/golden/my_apps_shell_golden_test.dart)',
+  'lib/ui/widgets/my_apps_shell.dart':
+      'test/golden/my_apps_shell_golden_test.dart',
   'lib/ui/widgets/provider_selection_list.dart':
       'list-based provider picker; rendered inside AgentSettingsForm (covered by settings goldens)',
   'lib/ui/screens/codemie_sso_webview.dart':

@@ -11,18 +11,33 @@ import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// The right-side "My Apps" panel for the [WideLayoutShell].
+/// Layout mode for [MyAppsShell].
 ///
-/// Structured like the prototype: a header with count, a search bar,
-/// filter chips (All/Recent/Created/Pinned), optional weather/timer widget,
-/// then a 4-column grid of app tiles grouped into sections, and a
-/// "Recent activity" footer.
-class AppsPanel extends StatefulWidget {
-  const AppsPanel({
+/// * [panel] — right-side panel of the wide-layout shell. Compact spacing,
+///   no top app bar (the shell provides the chrome).
+/// * [mobile] — full-screen home on narrow layouts (replaces the old
+///   iOS-grid launcher). The shell overlay (chat sheet) sits above this
+///   in a Stack — `MyAppsShell` only owns the apps surface itself.
+enum MyAppsShellMode { panel, mobile }
+
+/// The shared "My Apps" surface used on every layout: the wide-layout
+/// shell's right-side panel AND the mobile home. One widget tree, one
+/// header (count + Customize), one search field, one set of filter chips
+/// (All / Recent / Created with ★ / Pinned), and the same sections
+/// (Up next, Focus Timer, Created by you, Demo apps).
+///
+/// This unifies the previous [AppsPanel] (panel-only, search + sections)
+/// and the old [AppLauncherScreen] grid (mobile-only, drag-and-drop with
+/// folders). Drag-and-drop / folders / reorder are NOT carried over — the
+/// 1000-line launcher logic was a mobile-only thing that doesn't fit the
+/// unified layout (and is an obvious follow-up: add a section-level
+/// reorder if/when it's wanted). Apps themselves stay 1-tap-to-launch.
+class MyAppsShell extends StatefulWidget {
+  const MyAppsShell({
     super.key,
     required this.manager,
     this.appsStore,
-    this.sessionNamesStore,
+    this.mode = MyAppsShellMode.panel,
   });
 
   final FlutterSessionManager manager;
@@ -30,18 +45,23 @@ class AppsPanel extends StatefulWidget {
   /// App discovery/seeding; null → creates one from the manager's env.
   final AppsStore? appsStore;
 
-  final dynamic sessionNamesStore;
+  /// Layout mode (panel / mobile). See [MyAppsShellMode].
+  final MyAppsShellMode mode;
 
   @override
-  State<AppsPanel> createState() => _AppsPanelState();
+  State<MyAppsShell> createState() => _MyAppsShellState();
 }
 
-class _AppsPanelState extends State<AppsPanel> {
+class _MyAppsShellState extends State<MyAppsShell> {
   final _searchController = TextEditingController();
   late final AppsStore _appsStore;
   List<JsAppInfo> _apps = const [];
   var _loading = true;
   var _filter = _AppFilter.all;
+
+  /// Today's remaining calendar events for the "Up next" widget.
+  List<CalendarEvent> _upcomingEvents = const [];
+  var _calendarLoaded = false;
 
   /// Whether we're on macOS desktop (traffic lights float over content).
   static bool get _isMacOS =>
@@ -55,6 +75,16 @@ class _AppsPanelState extends State<AppsPanel> {
     _reloadApps();
     unawaited(_loadCalendar());
     widget.manager.active?.service.fsRevision.addListener(_onFsRevision);
+  }
+
+  @override
+  void didUpdateWidget(covariant MyAppsShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.manager != widget.manager) {
+      oldWidget.manager.active?.service.fsRevision.removeListener(_onFsRevision);
+      widget.manager.active?.service.fsRevision.addListener(_onFsRevision);
+      _reloadApps();
+    }
   }
 
   @override
@@ -86,10 +116,6 @@ class _AppsPanelState extends State<AppsPanel> {
       if (mounted) setState(() => _loading = false);
     }
   }
-
-  /// Today's remaining calendar events for the "Up next" widget.
-  List<CalendarEvent> _upcomingEvents = const [];
-  var _calendarLoaded = false;
 
   Future<void> _loadCalendar() async {
     try {
@@ -137,8 +163,6 @@ class _AppsPanelState extends State<AppsPanel> {
   void _openApp(JsAppInfo app) {
     final manager = widget.manager;
     if (manager.active?.service == null) {
-      // No active session — can't open an app. Show a hint instead of
-      // silently doing nothing.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -149,17 +173,13 @@ class _AppsPanelState extends State<AppsPanel> {
       );
       return;
     }
-    AppAnalytics.instance.jsAppOpened(
-      isDemo: AppsStore.demoAppIds.contains(app.id),
-      source: 'apps_panel',
-    );
-    pushJsApp(context, manager: manager, app: app, source: 'apps_panel');
+    final isDemo = AppsStore.demoAppIds.contains(app.id);
+    final source = widget.mode == MyAppsShellMode.mobile
+        ? 'launcher'
+        : 'apps_panel';
+    AppAnalytics.instance.jsAppOpened(isDemo: isDemo, source: source);
+    pushJsApp(context, manager: manager, app: app, source: source);
   }
-
-  // Files / Settings live in the shell sidebar and open the real
-  // [FileBrowser] / [SettingsScreen] from there — the apps panel no
-  // longer surfaces grey placeholder tiles for them.
-
 
   @override
   Widget build(BuildContext context) {
@@ -171,88 +191,9 @@ class _AppsPanelState extends State<AppsPanel> {
       color: bg,
       child: Column(
         children: [
-          // ── Header ───────────────────────────────────────────────
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              16,
-              // macOS: extra top padding to clear traffic lights (content
-              // extends to the window top — no global 28px strip).
-              _isMacOS ? 28 : 16,
-              16,
-              8,
-            ),
-            child: Row(
-              children: [
-                Text(
-                  'My Apps',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '${_apps.length}',
-                  style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
-                ),
-                const SizedBox(width: 8),
-                // "Customize" label like the prototype.
-                Text(
-                  'Customize',
-                  style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
-                ),
-                const SizedBox(width: 4),
-                Icon(Icons.tune, size: 16, color: colors.dim),
-              ],
-            ),
-          ),
-          // ── Search bar ───────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search, size: 18),
-                hintText: 'Search apps, files, and more…',
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: colors.border),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: colors.border),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: colors.indigo, width: 1.2),
-                ),
-                filled: true,
-                fillColor: isLight ? colors.panel : colors.panelAlt,
-              ),
-            ),
-          ),
-          // ── Filter tabs (prototype style: pill highlight, no borders) ──
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (final filter in _AppFilter.values)
-                    _FilterTab(
-                      label: filter.label,
-                      selected: _filter == filter,
-                      onTap: () => setState(() => _filter = filter),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          // ── Content ──────────────────────────────────────────────
+          _buildHeader(colors, theme),
+          _buildSearch(colors, isLight),
+          _buildFilters(colors, theme),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
@@ -263,20 +204,100 @@ class _AppsPanelState extends State<AppsPanel> {
     );
   }
 
+  Widget _buildHeader(FahColors colors, ThemeData theme) {
+    // Mobile owns its own app bar (the shell pushes a MaterialApp with
+    // its own title), so the mobile header here is the simple in-content
+    // row only; panel uses the same row plus the macOS top-padding
+    // clearance.
+    final topPad = widget.mode == MyAppsShellMode.panel && _isMacOS
+        ? 28.0
+        : 16.0;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, topPad, 16, 8),
+      child: Row(
+        children: [
+          Text(
+            'My Apps',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            '${_apps.length}',
+            style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Customize',
+            style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+          ),
+          const SizedBox(width: 4),
+          Icon(Icons.tune, size: 16, color: colors.dim),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearch(FahColors colors, bool isLight) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          prefixIcon: const Icon(Icons.search, size: 18),
+          hintText: 'Search apps, files, and more…',
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: colors.border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: colors.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: colors.indigo, width: 1.2),
+          ),
+          filled: true,
+          fillColor: isLight ? colors.panel : colors.panelAlt,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilters(FahColors colors, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final filter in _AppFilter.values)
+              _FilterTab(
+                label: filter.label,
+                selected: _filter == filter,
+                onTap: () => setState(() => _filter = filter),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildContent(FahColors colors, ThemeData theme, bool isLight) {
     final filtered = _filteredApps;
     final query = _searchController.text.trim();
 
     if (query.isNotEmpty) {
-      // Search mode: flat grid of matches.
       return GridView.builder(
         padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 4,
-          childAspectRatio: 0.82,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 12,
-        ),
+        gridDelegate: _gridDelegateFor(),
         itemCount: filtered.length,
         itemBuilder: (context, index) => _AppTile(
           app: filtered[index],
@@ -285,14 +306,6 @@ class _AppsPanelState extends State<AppsPanel> {
       );
     }
 
-    // Sectioned view matching the prototype. The "Weather placeholder"
-    // and "System tiles" rows used to live here as grey stub icons
-    // (Calendar, Files, Notes, Maps, Calculator, Settings, Utilities,
-    // Travel); they were placeholders that opened nothing or a blank
-    // Scaffold. Calendar / Weather / Contacts / Reminders / Health /
-    // Maps live in the bundled apps (see AppsStore.demoAppIds) and
-    // surface as real tiles under Demo apps below — there's nothing to
-    // "stub" here. Focus Timer + Up next are real interactive widgets.
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
@@ -314,7 +327,12 @@ class _AppsPanelState extends State<AppsPanel> {
         if (_customApps.isNotEmpty) ...[
           _SectionHeader(title: 'Created by you', count: _customApps.length),
           const SizedBox(height: 8),
-          _AppGrid(apps: _customApps, onTap: _openApp, showAddTile: true),
+          _AppGrid(
+            apps: _customApps,
+            onTap: _openApp,
+            showAddTile: true,
+            gridDelegate: _gridDelegateFor(),
+          ),
           const SizedBox(height: 16),
         ],
 
@@ -322,7 +340,11 @@ class _AppsPanelState extends State<AppsPanel> {
         if (_demoApps.isNotEmpty) ...[
           _SectionHeader(title: 'Demo apps', count: _demoApps.length),
           const SizedBox(height: 8),
-          _AppGrid(apps: _demoApps, onTap: _openApp),
+          _AppGrid(
+            apps: _demoApps,
+            onTap: _openApp,
+            gridDelegate: _gridDelegateFor(),
+          ),
           const SizedBox(height: 16),
         ],
 
@@ -339,13 +361,24 @@ class _AppsPanelState extends State<AppsPanel> {
             ),
           ),
 
-        // ── Recent activity ──────────────────────────────────────
+        // ── Recent activity footer ───────────────────────────────
         const Divider(height: 1),
         const SizedBox(height: 8),
         _RecentActivity(colors: colors, theme: theme),
       ],
     );
   }
+
+  /// Mobile home has more horizontal space (a typical phone is 4 columns,
+  /// the panel is 4 columns too at its default 380 px). Keep them equal —
+  /// any column-count tuning belongs to a later design pass.
+  SliverGridDelegate _gridDelegateFor() =>
+      const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        childAspectRatio: 0.82,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 12,
+      );
 }
 
 enum _AppFilter {
@@ -474,9 +507,7 @@ class _UpNextWidget extends StatelessWidget {
         event.start.year == now.year &&
         event.start.month == now.month &&
         event.start.day == now.day;
-    final dayLabel = isToday
-        ? 'Today'
-        : '${event.start.month}/${event.start.day}';
+    final dayLabel = isToday ? 'Today' : '${event.start.month}/${event.start.day}';
     return '$dayLabel, $start - $end';
   }
 }
@@ -633,7 +664,6 @@ class _FocusTimerWidgetState extends State<_FocusTimerWidget> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Start/Pause button.
               InkWell(
                 onTap: _toggle,
                 borderRadius: BorderRadius.circular(8),
@@ -669,7 +699,6 @@ class _FocusTimerWidgetState extends State<_FocusTimerWidget> {
                 ),
               ),
               const SizedBox(width: 8),
-              // Reset button.
               InkWell(
                 onTap: _reset,
                 borderRadius: BorderRadius.circular(8),
@@ -726,12 +755,14 @@ class _AppGrid extends StatelessWidget {
   const _AppGrid({
     required this.apps,
     required this.onTap,
+    required this.gridDelegate,
     this.showAddTile = false,
   });
 
   final List<JsAppInfo> apps;
   final ValueChanged<JsAppInfo> onTap;
   final bool showAddTile;
+  final SliverGridDelegate gridDelegate;
 
   @override
   Widget build(BuildContext context) {
@@ -741,12 +772,7 @@ class _AppGrid extends StatelessWidget {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        childAspectRatio: 0.82,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 12,
-      ),
+      gridDelegate: gridDelegate,
       itemCount: apps.length + (showAddTile ? 1 : 0),
       itemBuilder: (context, index) {
         if (showAddTile && index == apps.length) {
@@ -856,14 +882,6 @@ class _AppTile extends StatelessWidget {
     );
   }
 }
-
-/// The System apps row (Calendar, Files, Notes, Maps, Calculator,
-/// Settings, Utilities, Travel) was removed — these were grey placeholder
-/// tiles that opened the corresponding system feature or did nothing.
-/// Calendar / Weather / Contacts / Reminders / Health / Maps / Calculator
-/// live as real JS apps in the apps store and surface under Demo apps
-/// below; Files / Settings are real sidebar entries that open
-/// [FileBrowser] / [SettingsScreen].
 
 /// Recent activity footer.
 class _RecentActivity extends StatelessWidget {

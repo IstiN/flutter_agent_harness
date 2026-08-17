@@ -1,7 +1,7 @@
-/// Golden (screenshot) tests for the wide-layout right-side apps panel:
-/// `lib/ui/widgets/apps_panel.dart` — the "My Apps" panel with search bar,
-/// filter chips, weather/up-next/focus-timer widgets, sectioned app grid,
-/// and recent-activity footer.
+/// Golden (screenshot) tests for the unified "My Apps" surface —
+/// `lib/ui/widgets/my_apps_shell.dart` — the panel variant that backs the
+/// wide-layout right side AND the mobile home. Search bar, filter chips,
+/// up-next/focus-timer widgets, sectioned app grid, recent-activity footer.
 ///
 /// Apps are seeded into a `MemoryExecutionEnv` with inline-SVG manifest
 /// icons (the golden font sandbox renders no emoji glyphs).
@@ -11,7 +11,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/widgets/apps_panel.dart';
+import 'package:fa/ui/widgets/my_apps_shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -186,7 +186,11 @@ String _jsonString(String value) {
   return buffer.toString();
 }
 
-Future<void> _pumpAppsPanel(WidgetTester tester, {ThemeData? theme}) async {
+Future<void> _pumpMyAppsShell(
+  WidgetTester tester, {
+  ThemeData? theme,
+  MyAppsShellMode mode = MyAppsShellMode.panel,
+}) async {
   final env = await _seededEnv();
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   final service = _fakeService(env);
@@ -201,7 +205,7 @@ Future<void> _pumpAppsPanel(WidgetTester tester, {ThemeData? theme}) async {
     tester,
     ManagerScope(
       manager: manager,
-      child: AppsPanel(manager: manager, appsStore: appsStore),
+      child: MyAppsShell(manager: manager, appsStore: appsStore, mode: mode),
     ),
     // Right panel width (~380px) on a desktop-height surface.
     size: const Size(380, 800),
@@ -213,15 +217,15 @@ Future<void> _pumpAppsPanel(WidgetTester tester, {ThemeData? theme}) async {
 void main() {
   setUpAll(ensureGoldenFonts);
 
-  group('AppsPanel goldens (apps_panel/)', () {
+  group('MyAppsShell goldens (my_apps_shell/)', () {
     testWidgets('apps panel — dark', (tester) async {
-      await _pumpAppsPanel(tester);
-      await expectGolden(tester, 'apps_panel/panel_dark');
+      await _pumpMyAppsShell(tester);
+      await expectGolden(tester, 'my_apps_shell/panel_dark');
     });
 
     testWidgets('apps panel — light', (tester) async {
-      await _pumpAppsPanel(tester, theme: buildFahThemeLight());
-      await expectGolden(tester, 'apps_panel/panel_light');
+      await _pumpMyAppsShell(tester, theme: buildFahThemeLight());
+      await expectGolden(tester, 'my_apps_shell/panel_light');
     });
   });
 }
