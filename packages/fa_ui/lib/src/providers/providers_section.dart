@@ -11,6 +11,7 @@ import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/default_chat_model.dart';
 import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
+import 'package:fa_ui/src/providers/provider_marks.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
@@ -146,6 +147,7 @@ class ProvidersSection extends StatelessWidget {
                       '${registry.presetModelOverride(preset.name) ?? preset.defaultModel} · '
                       '${providerHostOf(preset.baseUrl!)}',
                   current: _isCurrent(preset),
+                  leading: ProviderMark(preset.name),
                   onTap: () => _editPreset(context, registry, preset),
                 ),
             for (final provider in registry.providers)
@@ -160,6 +162,12 @@ class ProvidersSection extends StatelessWidget {
                         providerHostOf(provider.baseUrl),
                       ),
                 current: _isCurrent(provider),
+                // The same branded mark the onboarding list shows — for
+                // custom providers keyed by the baseUrl host we map back
+                // to a preset name (OpenAI-compatible baseUrl → 'openai').
+                leading: ProviderMark(
+                  ProviderPreset.fromBaseUrl(provider.baseUrl).name,
+                ),
                 onTap: () => _editCustom(context, registry, provider),
               ),
             // On-device engines are provider types too — plain rows in the
@@ -170,7 +178,7 @@ class ProvidersSection extends StatelessWidget {
                   context,
                   theme,
                   label: route.label,
-                  leading: Icons.memory_outlined,
+                  leading: ProviderMark(route.id),
                   onTap: () {
                     unawaited(_openOnDeviceRoute(context, route));
                   },
@@ -179,7 +187,7 @@ class ProvidersSection extends StatelessWidget {
               context,
               theme,
               label: strings.settingsAddProvider,
-              leading: Icons.add,
+              leadingIcon: Icons.add,
               onTap: () => _addProvider(context, registry),
             ),
           ],
@@ -209,7 +217,8 @@ class ProvidersSection extends StatelessWidget {
     required String label,
     String? subtitle,
     bool current = false,
-    IconData leading = Icons.cloud_outlined,
+    Widget? leading,
+    IconData? leadingIcon = Icons.cloud_outlined,
     required VoidCallback onTap,
   }) {
     return InkWell(
@@ -218,7 +227,16 @@ class ProvidersSection extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
           children: [
-            Icon(leading, size: 20, color: theme.colorScheme.primary),
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: leading ??
+                  Icon(
+                    leadingIcon,
+                    size: 20,
+                    color: theme.colorScheme.primary,
+                  ),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(

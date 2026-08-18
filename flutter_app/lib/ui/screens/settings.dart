@@ -2202,6 +2202,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               OnboardingReplaySection(
                 mediaModelsStore: MediaModelsScope.maybeOf(context),
                 lastConnectionStore: widget.lastConnectionStore,
+                registry: widget.registry,
               ),
               const SizedBox(height: 24),
               const Divider(),
@@ -2294,6 +2295,7 @@ class OnboardingReplaySection extends StatelessWidget {
     super.key,
     this.mediaModelsStore,
     this.lastConnectionStore,
+    this.registry,
   });
 
   /// Forwarded to the onboarding model-preset wizard (falls back to the
@@ -2302,6 +2304,12 @@ class OnboardingReplaySection extends StatelessWidget {
 
   /// Updated when a preset is applied during the replay.
   final LastConnectionStore? lastConnectionStore;
+
+  /// The custom-provider registry — without it, page 2's tap handler
+  /// short-circuits and the provider list looks completely inert. The
+  /// settings screen always has one (its own section uses it), so wire
+  /// it through.
+  final ProviderRegistry? registry;
 
   @override
   Widget build(BuildContext context) {
@@ -2317,6 +2325,8 @@ class OnboardingReplaySection extends StatelessWidget {
                 // state — finishing just pops back to settings.
                 onFinished: ({required bool skipped}) =>
                     Navigator.of(context).pop(),
+                registry: registry,
+                lastConnectionStore: lastConnectionStore,
               ),
             ),
           ),
