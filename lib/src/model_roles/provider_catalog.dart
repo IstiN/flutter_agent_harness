@@ -34,6 +34,7 @@ final class ProviderSpec {
     required this.maxTokens,
     this.reasoning = true,
     this.input = const ['text', 'image'],
+    this.visible = true,
   });
 
   /// Canonical provider name (e.g. `openrouter`, `anthropic`).
@@ -66,6 +67,12 @@ final class ProviderSpec {
 
   /// Default input modalities.
   final List<String> input;
+
+  /// Whether this provider shows in the CLI/app provider pickers.
+  /// ChatGPT Codex is hidden until the WebSocket adapter ships —
+  /// plain HTTP /responses returns 404 from the Codex backend
+  /// (see docs/codex_websocket_adapter.md for the plan).
+  final bool visible;
 }
 
 /// The built-in provider table.
@@ -106,6 +113,10 @@ const providerCatalog = <String, ProviderSpec>{
     apiKeyEnvNames: ['CHATGPT_OAUTH_CREDENTIALS'],
     contextWindow: 128000,
     maxTokens: 16384,
+    // Hidden from the picker until the Codex WebSocket adapter ships —
+    // plain HTTP POST returns 404 from the Codex backend (see
+    // docs/codex_websocket_adapter.md for the full plan).
+    visible: false,
   ),
   'codemie': ProviderSpec(
     name: 'codemie',
@@ -122,6 +133,21 @@ const providerCatalog = <String, ProviderSpec>{
     api: 'openai-completions',
     defaultBaseUrl: 'https://ai-proxy.lab.epam.com',
     apiKeyEnvNames: ['DIAL_API_KEY'],
+    contextWindow: 200000,
+    maxTokens: 16384,
+  ),
+  'minimax': ProviderSpec(
+    name: 'minimax',
+    // Chat is OpenAI-compatible (MiniMax-M3 works via the OpenAI completions
+    // adapter, including vision); image generation uses a separate dialect
+    // handled in generate_image.dart (detected by the baseUrl marker). The
+    // kind is its own so `--provider minimax` and the parity guards treat it
+    // as a first-class provider; providerStreamFunction routes it to the
+    // OpenAI completions adapter.
+    kind: 'minimax',
+    api: 'openai-completions',
+    defaultBaseUrl: 'https://api.minimax.io/v1',
+    apiKeyEnvNames: ['MINIMAX_API_KEY'],
     contextWindow: 200000,
     maxTokens: 16384,
   ),
@@ -179,10 +205,12 @@ bool providerEnabledInBuild(String name) {
 }
 
 /// The build-enabled subset of the catalog (insertion order preserved).
-/// Without `FA_PROVIDERS` this is the whole table.
+/// Without `FA_PROVIDERS` this is the whole table; `visible: false`
+/// entries (ChatGPT Codex until its WebSocket adapter ships) are
+/// excluded regardless of the filter.
 List<ProviderSpec> enabledProviders() => [
   for (final spec in providerCatalog.values)
-    if (providerEnabledInBuild(spec.name)) spec,
+    if (spec.visible && providerEnabledInBuild(spec.name)) spec,
 ];
 
 /// The build-enabled provider names (`enabledProviders` in name form).
@@ -252,6 +280,7 @@ Model buildCliDefaultModel(
     'anthropic' => providerCatalog['anthropic']!,
     'google' => providerCatalog['google']!,
     'dial' => providerCatalog['dial']!,
+    'minimax' => providerCatalog['minimax']!,
     'openai-completions' || 'openrouter' =>
       baseUrl == null
           ? providerCatalog['openrouter']!
@@ -261,6 +290,7 @@ Model buildCliDefaultModel(
   const defaultIds = {
     'anthropic': 'claude-sonnet-4-5',
     'google': 'gemini-2.5-pro',
+    'minimax': 'MiniMax-M3',
     'openai-completions': 'anthropic/claude-sonnet-4',
   };
   final id = modelId ?? defaultIds[spec.kind];
@@ -306,6 +336,7 @@ StreamFunction providerStreamFunction(
       kind != 'anthropic' &&
       kind != 'google' &&
       kind != 'dial' &&
+      kind != 'minimax' &&
       kind != 'chatgpt-codex') {
     throw ConfigException('Unknown provider kind: $kind');
   }
@@ -353,7 +384,7 @@ final class _CatalogStreamFunction {
     final effectiveSessionId = routing?.sessionId ?? _sessionId?.call();
     final effectiveRetention = routing?.cacheRetention ?? _cacheRetention;
     return switch (_kind) {
-      'openai-completions' => streamOpenAICompletions(
+      'openai-completions' || 'minimax' => streamOpenAICompletions(
         model,
         context,
         OpenAICompletionsOptions(
