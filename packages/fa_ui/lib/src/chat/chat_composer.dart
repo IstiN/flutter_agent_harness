@@ -351,37 +351,36 @@ class _ChatComposerState extends State<ChatComposer>
     final galleryPicker = _galleryPicker;
     final cameraPicker = _cameraPicker;
     final uploadPicker = _uploadPicker;
+
+    // Skip the sheet when there's only one option — go straight to the
+    // picker (e.g. on macOS the camera is hidden, leaving gallery +
+    // file; if only one is wired up there's no choice to make).
+    final available = <(IconData, String, FaChatUploadPicker)>[
+      if (galleryPicker != null)
+        (Icons.photo_library, strings.chatGallery, galleryPicker),
+      if (cameraPicker != null)
+        (Icons.camera_alt, strings.chatCamera, cameraPicker),
+      if (uploadPicker != null)
+        (Icons.upload_file, strings.chatAttachFile, uploadPicker),
+    ];
+    if (available.length == 1) {
+      _attachFiles(available.single.$3);
+      return;
+    }
+
     showModalBottomSheet<void>(
       context: context,
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (galleryPicker != null)
+            for (final (icon, label, picker) in available)
               ListTile(
-                leading: const Icon(Icons.photo_library),
-                title: Text(strings.chatGallery),
+                leading: Icon(icon),
+                title: Text(label),
                 onTap: () {
                   Navigator.of(context).pop();
-                  _attachFiles(galleryPicker);
-                },
-              ),
-            if (cameraPicker != null)
-              ListTile(
-                leading: const Icon(Icons.camera_alt),
-                title: Text(strings.chatCamera),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _attachFiles(cameraPicker);
-                },
-              ),
-            if (uploadPicker != null)
-              ListTile(
-                leading: const Icon(Icons.upload_file),
-                title: Text(strings.chatAttachFile),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _attachFiles(uploadPicker);
+                  _attachFiles(picker);
                 },
               ),
           ],
@@ -547,9 +546,10 @@ class _ChatComposerState extends State<ChatComposer>
                 children: [
                   if (showAttach)
                     IconButton(
-                      // Prototype shows a star/sparkle icon (auto_awesome)
-                      // on the left of the input field.
-                      icon: const Icon(Icons.auto_awesome),
+                      // A paperclip — the universal "attach a file"
+                      // affordance. The previous sparkle was the AI
+                      // prototype's placeholder; users expect this.
+                      icon: const Icon(Icons.attach_file),
                       tooltip: strings.chatAttachTooltip,
                       onPressed: _showAttachmentSheet,
                     ),
