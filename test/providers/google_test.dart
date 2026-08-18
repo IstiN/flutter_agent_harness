@@ -1335,5 +1335,65 @@ void main() {
         });
       },
     );
+
+    test(
+      'strips <thought> tags from Gemma-style plain-text streams',
+      () async {
+        final client = sseClient(
+          sseBody([
+            {
+              'candidates': [
+                {
+                  'content': {
+                    'parts': [
+                      {
+                        'text': '<thought>let me think</thought>answer',
+                      },
+                    ],
+                    'role': 'model',
+                  },
+                },
+              ],
+            },
+            textChunk(
+              '',
+              finishReason: 'STOP',
+              usage: {
+                'promptTokenCount': 5,
+                'candidatesTokenCount': 10,
+                'totalTokenCount': 15,
+              },
+            ),
+          ]),
+        );
+
+        final stream = streamGoogle(
+          testModel,
+          simpleContext(),
+          const GoogleOptions(apiKey: 'test-key'),
+          client,
+        );
+
+        final events = await stream.toList();
+        // The thought block is pulled out as a separate Thinking block;
+        // the text after </thought> is the assistant's reply.
+        expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
+        final thinkingDeltas =
+            events.whereType<ThinkingDeltaEvent>().toList();
+        expect(thinkingDeltas, hasLength(1));
+        final thinkingPartial =
+            thinkingDeltas.first.partial.content.first as ThinkingContent;
+        expect(thinkingPartial.thinking, 'let me think');
+
+        final textDeltas = events.whereType<TextDeltaEvent>().toList();
+        // The STOP chunk's empty text also emits a delta (matches the
+        // existing live-partial-accumulation behaviour).
+        expect(textDeltas, hasLength(2));
+        expect(
+          (textDeltas.first.partial.content.last as TextContent).text,
+          'answer',
+        );
+      },
+    );
   });
 }

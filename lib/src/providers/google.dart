@@ -389,14 +389,65 @@ final class _GoogleChunkHandler {
   /// kind switches (text ↔ thinking) and retaining thought signatures.
   void _processTextPart(String text, Map<String, dynamic> rawPart) {
     final isThinking = rawPart['thought'] == true;
+    // Some Gemma models return their reasoning as raw `<thought>…</thought>`
+    // tags inside the plain-text body (no `thought: true` JSON marker).
+    // Strip them and route the inner text to a ThinkingStreamingBlock so
+    // the UI can render it as a collapsed thinking note instead of
+    // leaking it into the assistant bubble.
+    final thoughtSignature = rawPart['thoughtSignature'] as String?;
+    final (plain, thoughts) = _splitThoughts(text);
+    if (thoughts.isNotEmpty) {
+      _processTextChunk(thoughts, isThinking: true, thoughtSignature: null);
+    }
+    if (plain.isNotEmpty || !isThinking) {
+      _processTextChunk(
+        plain,
+        isThinking: isThinking,
+        thoughtSignature: thoughtSignature,
+      );
+    }
+  }
+
+  /// Writes one chunk of text into the right block type.
+  void _processTextChunk(
+    String text, {
+    required bool isThinking,
+    String? thoughtSignature,
+  }) {
     if (_currentBlock == null ||
         (isThinking && _currentBlock is! ThinkingStreamingBlock) ||
         (!isThinking && _currentBlock is! TextStreamingBlock)) {
       endCurrentBlock();
       _openTextBlock(isThinking);
     }
-    final thoughtSignature = rawPart['thoughtSignature'] as String?;
     _appendTextDelta(_currentBlock!, text, thoughtSignature);
+  }
+
+  /// Splits [text] on `<thought>…</thought>` tags. Returns the plain
+  /// text (tags removed) and the concatenated thinking content.
+  /// Unclosed tags are dropped (streaming can split them mid-tag).
+  (String, String) _splitThoughts(String text) {
+    final plain = StringBuffer();
+    final thoughts = StringBuffer();
+    var cursor = 0;
+    while (true) {
+      final open = text.indexOf('<thought>', cursor);
+      if (open < 0) {
+        plain.write(text.substring(cursor));
+        break;
+      }
+      plain.write(text.substring(cursor, open));
+      final close = text.indexOf('</thought>', open);
+      if (close < 0) {
+        // Unclosed tag — treat the remainder as plain text (Gemma
+        // sometimes truncates mid-tag on short streams).
+        plain.write(text.substring(open));
+        break;
+      }
+      thoughts.write(text.substring(open + 9, close));
+      cursor = close + 10;
+    }
+    return (plain.toString(), thoughts.toString());
   }
 
   /// Opens a fresh thinking or text block and pushes its start event.
