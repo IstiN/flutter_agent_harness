@@ -2031,66 +2031,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // controller, …) — render the provider-first CTA as the entire
     // page in that case.
     final service = widget.service;
-    if (service == null) {
-      return Scaffold(
-        appBar: faAppBar(title: Text(context.l10n.settingsTitle)),
-        body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: _NoServiceSettings(
-              registry: widget.registry,
-              onCodeMieSso: () async {
-                final registry = widget.registry;
-                if (registry == null) return;
-                await runCodemieSsoFlow(
-                  context: context,
-                  registry: registry,
-                  service: service,
-                  lastConnectionStore: widget.lastConnectionStore ??
-                      LastConnectionStore.inMemory(),
-                );
-              },
-              onChatGptOAuth: () async {
-                final registry = widget.registry;
-                if (registry == null) return;
-                await runChatGptOAuthFlow(
-                  context: context,
-                  registry: registry,
-                  service: service,
-                  lastConnectionStore: widget.lastConnectionStore ??
-                      LastConnectionStore.inMemory(),
-                );
-              },
-              onAddProvider: () async {
-                final registry = widget.registry;
-                if (registry == null) return;
-                final result = await Navigator.of(context).push<
-                    ProviderEditorResult>(
-                  MaterialPageRoute(
-                    builder: (_) => ProviderEditorPage(
-                      title: context.l10n.settingsAddProvider,
-                    ),
-                  ),
-                );
-                if (result == null || result.deleted) return;
-                final provider = await registry.add(
-                  name: result.name,
-                  baseUrl: result.baseUrl,
-                  modelId: result.modelId,
-                );
-                if (result.apiKey.isNotEmpty) {
-                  registry.rememberKey(provider.id, result.apiKey);
-                }
-                AppAnalytics.instance.providerSaved('add');
-              },
-            ),
-          ),
-        ),
-      );
-    }
-    // From here on, [service] is non-null. Dart's flow analysis
-    // promotes the local through the null check above so the dense
-    // section below doesn't need `!` on every call.
+    // The full settings surface is always rendered — the post-onboarding
+    // empty-manager home opens Settings with no active service, but
+    // theme / keys / layout / debug logs / onboarding replay are
+    // service-independent. Service-dependent sections (default chat
+    // model, media slots, approval mode, subagent manager) are
+    // gated below; a small Add-provider CTA surfaces at the top so
+    // the no-service case still has a clear next action.
     return Scaffold(
       appBar: faAppBar(title: Text(context.l10n.settingsTitle)),
       body: SafeArea(
@@ -2099,6 +2046,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (service == null) ...[
+                _NoServiceSettings(
+                  onAddProvider: () async {
+                    final registry = widget.registry;
+                    if (registry == null) return;
+                    final result = await Navigator.of(context)
+                        .push<ProviderEditorResult>(
+                          MaterialPageRoute(
+                            builder: (_) => ProviderEditorPage(
+                              title: context.l10n.settingsAddProvider,
+                            ),
+                          ),
+                        );
+                    if (result == null || result.deleted) return;
+                    final provider = await registry.add(
+                      name: result.name,
+                      baseUrl: result.baseUrl,
+                      modelId: result.modelId,
+                    );
+                    if (result.apiKey.isNotEmpty) {
+                      registry.rememberKey(provider.id, result.apiKey);
+                    }
+                    AppAnalytics.instance.providerSaved('add');
+                  },
+                ),
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 8),
+              ],
               ProvidersSection(
                 service: service,
                 registry: widget.registry,
@@ -2135,7 +2111,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   registry: widget.registry,
                   configStore: onDeviceConfig,
                   onApply: (config) async {
-                    await service.reconfigure(config);
+                    await service?.reconfigure(config);
                     await widget.lastConnectionStore?.saveFromConfig(config);
                   },
                   webLlmEngine: widget.webLlmEngine,
@@ -2160,80 +2136,88 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       agentConfig.providerKind,
                     );
                   }
-                  await service.reconfigure(agentConfig);
+                  await service?.reconfigure(agentConfig);
                   await widget.lastConnectionStore?.saveFromConfig(agentConfig);
                 },
               ),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              // The live subagent tree (CLI `/agents` panel parity): main +
-              // retained children with observe/send.
-              if (service.subagentManager case final manager?) ...[
+              // The Agents / Models / Approval-mode sections all read
+              // from the live service (reconfigure, subagentManager,
+              // activeBaseUrl, …). Gate them on a non-null service
+              // so the no-service case still surfaces theme / keys /
+              // layout / debug logs / onboarding replay below.
+              if (service != null) ...[
+                // The live subagent tree (CLI `/agents` panel parity):
+                // main + retained children with observe/send.
+                if (service.subagentManager case final manager?) ...[
+                  Text(
+                    'Agents', // l10n:ignore
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  faui.AgentsSection(
+                    manager: manager,
+                    mainDescription:
+                        '${service.agentModelId} · '
+                        '${service.messages.length} messages',
+                    observe: service.observeSubagent,
+                    send: service.sendToSubagent,
+                  ),
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                ],
+                // The Models group: presets first (one-tap combos),
+                // then the main chat model, the task-role overrides and
+                // the media slots.
                 Text(
-                  'Agents', // l10n:ignore
+                  context.l10n.settingsModelsGroupTitle,
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 8),
-                faui.AgentsSection(
-                  manager: manager,
-                  mainDescription:
-                      '${service.agentModelId} · '
-                      '${service.messages.length} messages',
-                  observe: service.observeSubagent,
-                  send: service.sendToSubagent,
+                ModelPresetsSection(
+                  service: service,
+                  lastConnectionStore: widget.lastConnectionStore,
+                  taskModelsStore: taskModels,
                 ),
                 const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 16),
-              ],
-              // The Models group: presets first (one-tap combos), then the
-              // main chat model, the task-role overrides and the media slots.
-              Text(
-                context.l10n.settingsModelsGroupTitle,
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 8),
-              ModelPresetsSection(
-                service: service,
-                lastConnectionStore: widget.lastConnectionStore,
-                taskModelsStore: taskModels,
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              DefaultChatModelSection(
-                service: service,
-                registry: widget.registry,
-                lastConnectionStore: widget.lastConnectionStore,
-                modelsFetcher: widget.modelsFetcher,
-                webLlmEngine: widget.webLlmEngine,
-                gemmaEngine: widget.gemmaEngine,
-                transformersJsEngine: widget.transformersJsEngine,
-                onDeviceConfigStore: onDeviceConfig,
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              if (taskModels != null) ...[
-                faui.TaskModelsSection(
-                  store: taskModels,
-                  mainBaseUrl: service.activeBaseUrl,
-                  mainModelId: service.agentModelId,
+                DefaultChatModelSection(
+                  service: service,
                   registry: widget.registry,
+                  lastConnectionStore: widget.lastConnectionStore,
+                  modelsFetcher: widget.modelsFetcher,
+                  webLlmEngine: widget.webLlmEngine,
+                  gemmaEngine: widget.gemmaEngine,
+                  transformersJsEngine: widget.transformersJsEngine,
+                  onDeviceConfigStore: onDeviceConfig,
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+                if (taskModels != null) ...[
+                  faui.TaskModelsSection(
+                    store: taskModels,
+                    mainBaseUrl: service.activeBaseUrl,
+                    mainModelId: service.agentModelId,
+                    registry: widget.registry,
+                  ),
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                ],
+                MediaModelsSection(
+                  service: service,
+                  registry: widget.registry,
+                  modelsFetcher: widget.modelsFetcher,
                 ),
                 const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 16),
               ],
-              MediaModelsSection(
-                service: service,
-                registry: widget.registry,
-                modelsFetcher: widget.modelsFetcher,
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
               const ThemeModeSection(),
               const SizedBox(height: 24),
               const Divider(),
@@ -2248,10 +2232,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              ApprovalModeSelector(service: service),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              if (service != null) ...[
+                ApprovalModeSelector(service: service),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
               WebLlmCacheSection(engine: widget.webLlmEngine),
               // The transformers.js section is web-only (its provider is);
               // the Gemma section hides where its provider is unsupported —
@@ -2590,17 +2576,15 @@ class _VisionBadge extends StatelessWidget {
 /// home). Lists the available hosted providers + an Add provider row so
 /// the user has a clear path to connect; the service-dependent sections
 /// below stay hidden until they do.
+/// A small banner + "Add provider" CTA shown at the top of [SettingsScreen]
+/// when the post-onboarding empty-manager home has no active service.
+/// The rest of the page (theme, keys, layout, debug logs, onboarding
+/// replay) is rendered below — only the service-dependent sections are
+/// gated. A provider-first CTA is enough: a full provider-picker form
+/// already lives one row down in [ProvidersSection].
 class _NoServiceSettings extends StatelessWidget {
-  const _NoServiceSettings({
-    required this.registry,
-    required this.onCodeMieSso,
-    required this.onChatGptOAuth,
-    required this.onAddProvider,
-  });
+  const _NoServiceSettings({required this.onAddProvider});
 
-  final ProviderRegistry? registry;
-  final Future<void> Function() onCodeMieSso;
-  final Future<void> Function() onChatGptOAuth;
   final Future<void> Function() onAddProvider;
 
   @override
@@ -2632,21 +2616,9 @@ class _NoServiceSettings extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 16),
-        OutlinedButton.icon(
-          onPressed: registry == null ? null : onChatGptOAuth,
-          icon: const Icon(Icons.login),
-          label: const Text('Sign in with ChatGPT'), // l10n:ignore
-        ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: registry == null ? null : onCodeMieSso,
-          icon: const Icon(Icons.login),
-          label: const Text('Sign in with CodeMie'), // l10n:ignore
-        ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: registry == null ? null : onAddProvider,
+          onPressed: onAddProvider,
           icon: const Icon(Icons.add),
           label: Text(context.l10n.settingsAddProvider),
         ),
