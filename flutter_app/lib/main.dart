@@ -627,11 +627,44 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
           env: env,
           sessionsRoot: '${env.cwd}/sessions',
         );
-        return faHomeScreen(
-          context: context,
-          manager: manager,
-          registry: widget.registry,
-          lastConnectionStore: widget.lastConnectionStore,
+        // A placeholder session so the home never lands empty: user
+        // always has an active session, apps render + open, sessions
+        // list shows something to pick from. The placeholder uses
+        // a no-op stream (the LLM call errors gracefully) — when the
+        // user actually connects a provider via Settings, reconfigure
+        // takes over.
+        return FutureBuilder<FlutterManagedSession>(
+          future: manager.createSession(
+            config: AgentConfig(
+              providerKind: 'openai-completions',
+              modelId: 'placeholder',
+              baseUrl: '',
+              apiKey: '',
+            ),
+            serviceFactory: () async => AgentService.create(
+              config: AgentConfig(
+                providerKind: 'openai-completions',
+                modelId: 'placeholder',
+                baseUrl: '',
+                apiKey: '',
+              ),
+              env: env,
+              providerRegistry: widget.registry,
+            ),
+          ),
+          builder: (context, sessionSnapshot) {
+            if (!sessionSnapshot.hasData) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+            return faHomeScreen(
+              context: context,
+              manager: manager,
+              registry: widget.registry,
+              lastConnectionStore: widget.lastConnectionStore,
+            );
+          },
         );
       },
     );

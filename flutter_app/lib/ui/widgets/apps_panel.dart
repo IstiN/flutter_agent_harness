@@ -7,7 +7,6 @@ import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/ui/screens/settings.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -144,21 +143,11 @@ class _AppsPanelState extends State<AppsPanel> {
 
   void _openApp(JsAppInfo app) {
     final manager = widget.manager;
-    if (manager.active?.service == null) {
-      // No active session — apps need the agent's ExecutionEnv to
-      // mount. Bounce the user to the SettingsScreen so they can wire
-      // up a provider — the no-service Settings now renders the
-      // provider-first CTA + the full provider list.
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => SettingsScreen(
-            service: null,
-            registry: widget.registry,
-          ),
-        ),
-      );
-      return;
-    }
+    // The post-onboarding empty-manager home always has a placeholder
+    // session (see _buildHomeWithEmptyManager), so an active service
+    // exists even before the user wires up a provider. Apps that need
+    // LLM will fail gracefully inside the app; the rest (calendar,
+    // notes, weather, etc.) work without one.
     AppAnalytics.instance.jsAppOpened(
       isDemo: AppsStore.demoAppIds.contains(app.id),
       source: 'apps_panel',
@@ -826,11 +815,10 @@ class _AppTile extends StatelessWidget {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
     final isLight = theme.brightness == Brightness.light;
-    final service = context
+    final manager = context
         .dependOnInheritedWidgetOfExactType<ManagerScope>()
-        ?.manager
-        .active
-        ?.service;
+        ?.manager;
+    final service = manager?.active?.service;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -848,7 +836,7 @@ class _AppTile extends StatelessWidget {
             child: Center(
               child: service != null
                   ? AppIcon(app: app, env: service.env, size: 24)
-                  : const Icon(Icons.apps, size: 22),
+                  : AppIcon(app: app, env: manager!.env, size: 24),
             ),
           ),
           const SizedBox(height: 6),
