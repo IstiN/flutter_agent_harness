@@ -516,7 +516,6 @@ class BootstrapScreen extends StatefulWidget {
   /// The persisted task-model overrides store, passed to [AgentService.create].
   final TaskModelsStore? taskModelsStore;
 
-
   /// Engine overrides for the on-device providers (tests).
   final WebLlmEngineApi? webLlmEngine;
   final GemmaEngineApi? gemmaEngine;
@@ -608,6 +607,42 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
     }
   }
 
+  /// Lands the user on the home screen with an empty manager after
+  /// onboarding (no provider applied during the walkthrough) — the
+  /// launcher's empty state prompts them to open Settings → Providers
+  /// rather than dumping them back into the legacy "Connect to Fa"
+  /// form they just left.
+  Widget _buildHomeWithEmptyManager() {
+    AppAnalytics.instance.setupShown('onboarding_done_no_provider');
+    return FutureBuilder<ExecutionEnv>(
+      future: _envForHome(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final env = snapshot.data!;
+        final manager = FlutterSessionManager(
+          env: env,
+          sessionsRoot: '${env.cwd}/sessions',
+        );
+        return faHomeScreen(
+          context: context,
+          manager: manager,
+          registry: widget.registry,
+          lastConnectionStore: widget.lastConnectionStore,
+        );
+      },
+    );
+  }
+
+  Future<ExecutionEnv> _envForHome() async {
+    final env = widget.env;
+    if (env != null) return env;
+    return createPlatformEnv();
+  }
+
   Widget _buildSetupScreen() {
     AppAnalytics.instance.setupShown(
       widget.lastConnectionStore?.connection != null
@@ -656,6 +691,16 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
     final config = _config;
     if (config == null) {
       if (_showOnboarding) return _buildOnboardingScreen();
+      // After onboarding (seen flag set) the user has already walked
+      // through the provider-first flow. Land them on the home screen
+      // with an empty manager — the launcher's empty-state prompts
+      // them to open Settings → Providers — rather than dumping them
+      // back into the legacy "Connect to Fa" form. The pre-onboarding
+      // (onboardingStore == null) path keeps the legacy SetupScreen
+      // for upgraders / first-launch-without-onboarding.
+      if (widget.onboardingStore != null) {
+        return _buildHomeWithEmptyManager();
+      }
       return _buildSetupScreen();
     }
     return const Scaffold(
@@ -727,8 +772,9 @@ class SetupScreen extends StatelessWidget {
       transformersJsProviderKind,
     };
     if (onDeviceKinds.contains(config.providerKind)) {
-      await OnDeviceConfigScope.maybeOf(context)
-          ?.markConfigured(config.providerKind);
+      await OnDeviceConfigScope.maybeOf(
+        context,
+      )?.markConfigured(config.providerKind);
     }
     final manager = FlutterSessionManager(
       env: env ?? await createPlatformEnv(),
