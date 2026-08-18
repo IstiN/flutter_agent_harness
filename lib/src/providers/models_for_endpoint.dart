@@ -9,6 +9,7 @@ library;
 
 import 'package:http/http.dart' as http;
 
+import 'chatgpt_codex_models.dart';
 import 'codemie_sso.dart';
 import 'dial.dart';
 import 'models_endpoint.dart';
@@ -45,6 +46,20 @@ Future<ModelsEndpointInfo> fetchModelsForEndpoint(
     } on Object {
       return (const <String>[], const <String, int>{}, const <String, int>{});
     }
+  }
+  if (provider == 'chatgpt-codex') {
+    // Codex backend has no public /models endpoint — the picker has to
+    // fall back to the bundled list (mirrors codex-rs/models-manager/
+    // models.json) with the same context-window defaults the catalog
+    // carries.
+    final windows = <String, int>{
+      for (final m in chatGptCodexModels)
+        m: 272000, // matches the gpt-5.6-* context_window in models.json
+    };
+    final caps = <String, int>{
+      for (final m in chatGptCodexModels) m: 16384,
+    };
+    return (chatGptCodexModels, windows, caps);
   }
   final httpClient = client ?? http.Client();
   final ownsClient = client == null;

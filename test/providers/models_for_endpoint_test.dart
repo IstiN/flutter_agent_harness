@@ -61,9 +61,30 @@ void main() {
     );
 
     test(
-      'dial hint: deployments from /openai/models with reported limits',
+      'chatgpt-codex hint: returns the bundled Codex catalog without hitting /models',
       () async {
-        http.Request? seen;
+        // The Codex backend has no public /models endpoint; the picker
+        // must serve the bundled list (mirrors codex-rs/models-manager/
+        // models.json) so users always have something to pick from.
+        final client = http_testing.MockClient((request) async {
+          fail('chatgpt-codex must NOT issue an HTTP /models probe');
+        });
+        final (ids, windows, caps) = await fetchModelsForEndpoint(
+          'https://chatgpt.com/backend-api/codex',
+          apiKey: 'irrelevant',
+          provider: 'chatgpt-codex',
+          client: client,
+        );
+        expect(ids, containsAll(chatGptCodexModels));
+        expect(ids.first, 'gpt-5.6-sol');
+        expect(windows[ids.first], 272000);
+        expect(caps[ids.first], 16384);
+      },
+    );
+
+    test(
+      'dial hint: deployments from /openai/models with reported limits',
+      () async {        http.Request? seen;
         final client = http_testing.MockClient((request) async {
           seen = request;
           return http.Response(

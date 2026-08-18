@@ -124,6 +124,17 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   var _loading = true;
   String? _error;
 
+  /// Maps a baseUrl to the dispatcher string [fetchModelsForEndpoint]
+  /// understands: 'dial' for DIAL deployments, 'chatgpt-codex' for the
+  /// Codex backend (no /models endpoint — we serve the bundled list),
+  /// null for everything else (the generic OpenAI `/models` probe).
+  String? _dispatchProviderFor(String baseUrl) {
+    final preset = ProviderPreset.fromBaseUrl(baseUrl);
+    if (preset == ProviderPreset.dial) return 'dial';
+    if (baseUrl == chatGptCodexBaseUrl) return 'chatgpt-codex';
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -246,17 +257,14 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
       }
 
       // The host/test override wins; production goes through the core
-      // dispatch (DIAL deployments + the CodeMie marker included).
+      // dispatch (DIAL deployments + the CodeMie marker + the bundled
+      // Codex catalog all live in there).
       var (ids, windows, caps) = widget.modelsFetcher != null
           ? await fetch(provider.baseUrl, apiKey: key)
           : await fetchModelsForEndpoint(
               provider.baseUrl,
               apiKey: key,
-              provider:
-                  ProviderPreset.fromBaseUrl(provider.baseUrl) ==
-                      ProviderPreset.dial
-                  ? 'dial'
-                  : null,
+              provider: _dispatchProviderFor(provider.baseUrl),
             );
 
       // CodeMie (and other non-standard endpoints): fall back to the

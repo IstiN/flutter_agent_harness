@@ -83,7 +83,10 @@ Future<bool> runChatGptOAuthFlow({
   // ── Save provider + key ─────────────────────────────────────────────
   const baseUrl = chatGptCodexBaseUrl;
   const name = 'ChatGPT';
-  const modelId = 'o4-mini';
+  // The bundled Codex default — gpt-5.6-sol, the same entry the
+  // original codex-rs surfaces as recommended. (Was hardcoded to the
+  // stale 'o4-mini' value.)
+  const modelId = chatGptCodexDefaultModel;
 
   final encoded = credentials.encode();
 
