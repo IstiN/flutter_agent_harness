@@ -85,8 +85,10 @@ Future<bool> runChatGptOAuthFlow({
   const name = 'ChatGPT';
   // The bundled Codex default — gpt-5.6-sol, the same entry the
   // original codex-rs surfaces as recommended. (Was hardcoded to the
-  // stale 'o4-mini' value.)
-  const modelId = chatGptCodexDefaultModel;
+  // stale 'o4-mini' value.) chatGptCodexDefaultModel is not const
+  // (it's derived from the generated list), so modelId is a runtime
+  // constant instead.
+  final modelId = chatGptCodexDefaultModel;
 
   final encoded = credentials.encode();
 
