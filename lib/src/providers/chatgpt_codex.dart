@@ -73,6 +73,13 @@ final class _ChatGptCodexSession {
   final _SseAccumulator _sse = _SseAccumulator();
 
   Future<void> run() async {
+    // ChatGPT Codex speaks WebSocket with Codex-specific headers
+    // (x-openai-internal-codex-responses-lite, responses_websockets=
+    // 2026-02-06, …) — plain HTTP POST returns 404 from the Codex
+    // backend. Rather than surfacing the 404 to the user as if the
+    // provider broke, emit a clear 'not yet supported' error so the
+    // user knows to pick another provider until we build the WebSocket
+    // adapter.
     var credentials = ChatGptOAuthCredentials.decode(encodedCredentials);
     var response = await _request(credentials);
     if (response.statusCode == 401) {
@@ -86,6 +93,15 @@ final class _ChatGptCodexSession {
     }
     if (response.statusCode != 200) {
       final body = await response.stream.bytesToString();
+      if (response.statusCode == 404) {
+        throw StateError(
+          'ChatGPT Codex is not supported yet — the backend requires a '
+          'WebSocket connection with Codex-specific headers '
+          '(x-openai-internal-codex-responses-lite). Plain HTTP /responses '
+          'returns 404. Please pick another provider (OpenRouter, OpenAI, '
+          'CodeMie, …) until the Codex WebSocket adapter ships.',
+        );
+      }
       throw ProviderHttpError(
         response.statusCode,
         body,
