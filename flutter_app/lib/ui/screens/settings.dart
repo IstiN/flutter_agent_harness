@@ -2046,7 +2046,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (service == null) ...[
+              // Show the "Connect a provider" hint only when the registry
+              // has no saved providers — if the user already configured one
+              // (just hasn't applied it yet) the hint is noise. Providers
+              // section below carries its own Add-provider row.
+              if (service == null && (widget.registry?.providers.isEmpty ?? true)) ...[
                 _NoServiceSettings(
                   onAddProvider: () async {
                     final registry = widget.registry;
