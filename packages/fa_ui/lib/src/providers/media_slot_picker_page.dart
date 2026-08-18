@@ -381,6 +381,19 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
 
   String? _error;
 
+  /// The provider kind for a media-slot save: DIAL endpoints get 'dial'
+  /// (their own URL/auth dialect), Google endpoints get 'google' (the
+  /// Gemini adapter handles inlineData images), everything else is
+  /// openai-completions. Media tools only speak the OpenAI dialect —
+  /// this mapping keeps the chat-path adapters in sync with the picker.
+  String _mediaSlotProviderKind(String? slot, String baseUrl) {
+    if (slot != null) return 'openai-completions';
+    final preset = ProviderPreset.fromBaseUrl(baseUrl);
+    if (preset == ProviderPreset.dial) return 'dial';
+    if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
+    return 'openai-completions';
+  }
+
   /// Id fragments suggesting a media capability, matched case-insensitively
   /// against the endpoint's `/models` ids. Vision uses the shared
   /// [modelIdSuggestsVision] heuristic instead (its marker list is far
@@ -518,11 +531,9 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
         MediaSlotOverride(
           // Media tools speak the OpenAI dialect; the generic role flow
           // (slot == null) maps DIAL endpoints to their own adapter kind.
-          providerKind:
-              widget.slot == null &&
-                  ProviderPreset.fromBaseUrl(_baseUrl) == ProviderPreset.dial
-              ? 'dial'
-              : 'openai-completions',
+          // Google endpoints use the Gemini adapter (inlineData, not
+          // image_url) so image-based media slots work.
+          providerKind: _mediaSlotProviderKind(widget.slot, _baseUrl),
           baseUrl: _baseUrl,
           modelId: model,
           apiKeyName: keyName,

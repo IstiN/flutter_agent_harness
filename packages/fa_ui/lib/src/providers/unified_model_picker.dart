@@ -135,6 +135,17 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     return null;
   }
 
+  /// The provider kind for a picked model entry — matches the dispatch
+  /// above so the stream adapter gets the right wire shape. Google
+  /// endpoints need the Gemini adapter (inlineData, not image_url);
+  /// DIAL needs its own dialect; Codex is bundled-list only.
+  String _providerKindFor(String baseUrl) {
+    final preset = ProviderPreset.fromBaseUrl(baseUrl);
+    if (preset == ProviderPreset.dial) return 'dial';
+    if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
+    return 'openai-completions';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -380,12 +391,10 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     try {
       await widget.onApply(
         FaChatModelConfig(
-          // DIAL deployments live on a dial adapter kind (URL/auth dialect),
-          // everything else is plain openai-completions.
-          providerKind:
-              ProviderPreset.fromBaseUrl(entry.baseUrl) == ProviderPreset.dial
-              ? 'dial'
-              : 'openai-completions',
+          // DIAL deployments live on a dial adapter kind (URL/auth dialect);
+          // Google endpoints use the Gemini adapter (inlineData, not
+          // image_url); everything else is plain openai-completions.
+          providerKind: _providerKindFor(entry.baseUrl),
           modelId: entry.modelId,
           baseUrl: entry.baseUrl,
           apiKey: entry.apiKey,
