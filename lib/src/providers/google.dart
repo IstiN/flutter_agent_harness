@@ -31,6 +31,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 
 import '../cancel_token.dart';
 import '../context.dart';
@@ -841,9 +842,7 @@ Map<String, dynamic>? _convertUserMessage(UserMessage message) {
       case TextContent():
         parts.add({'text': item.text});
       case ImageContent():
-        parts.add({
-          'inlineData': {'mimeType': item.mimeType, 'data': item.data},
-        });
+        parts.add(_convertImageContent(item));
       case ThinkingContent() || ToolCall():
         // Not valid in user messages; skip defensively.
         break;
@@ -1058,10 +1057,7 @@ void _appendToolResultMessage(
       : '';
 
   final imageParts = [
-    for (final image in imageContent)
-      {
-        'inlineData': {'mimeType': image.mimeType, 'data': image.data},
-      },
+    for (final image in imageContent) _convertImageContent(image),
   ];
 
   final functionResponsePart = _buildFunctionResponsePart(
@@ -1164,3 +1160,33 @@ StopReason _mapStopReason(String reason) {
     _ => StopReason.error,
   };
 }
+
+/// Converts one [ImageContent] to a Gemini `inlineData` part. PNG images
+/// are re-encoded as JPEG (quality 95) — Gemma's vision encoder rejects
+/// PNGs with alpha channels or EXIF orientation metadata; JPEG strips
+/// both. Non-PNG images pass through unchanged.
+Map<String, dynamic> _convertImageContent(ImageContent item) {
+  final mimeType = item.mimeType.toLowerCase();
+  if (mimeType != 'image/png') {
+    return {
+      'inlineData': {'mimeType': item.mimeType, 'data': item.data},
+    };
+  }
+  try {
+    final decoded = img.decodePng(base64Decode(item.data));
+    if (decoded == null) return _passthrough(item);
+    final jpegBytes = img.encodeJpg(decoded, quality: 95);
+    return {
+      'inlineData': {
+        'mimeType': 'image/jpeg',
+        'data': base64Encode(jpegBytes),
+      },
+    };
+  } on Object {
+    return _passthrough(item);
+  }
+}
+
+Map<String, dynamic> _passthrough(ImageContent item) => {
+  'inlineData': {'mimeType': item.mimeType, 'data': item.data},
+};

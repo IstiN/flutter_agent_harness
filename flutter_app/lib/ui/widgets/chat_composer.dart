@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'package:fa_ui/fa_ui.dart' as fa_ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -62,7 +63,12 @@ class ChatComposer extends StatelessWidget {
                 ),
             ],
       galleryPicker: () => _pickImage(ImageSource.gallery),
-      cameraPicker: () => _pickImage(ImageSource.camera),
+      // macOS has no camera through ImagePicker (it requires a
+      // cameraDelegate — only iOS/Android register one). Hide the
+      // camera entry on macOS so the picker doesn't throw.
+      cameraPicker: (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS)
+          ? null
+          : () => _pickImage(ImageSource.camera),
       voiceInput: _AsrVoiceInput(
         service: service,
         asr: asr,

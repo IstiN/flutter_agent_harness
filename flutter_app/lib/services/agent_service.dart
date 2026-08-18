@@ -1810,12 +1810,21 @@ class AgentService extends ChangeNotifier
           imageBytes = base64Decode(block.data);
           break;
         }
+        // Strip the '[attached file: uploads/… — read it with your tools]'
+        // prefix from the visible text — the image already carries the
+        // content, and the path reference is agent-facing only.
+        final visibleText = blocks
+            .whereType<TextContent>()
+            .map((b) => b.text)
+            .join('\n')
+            .replaceAll(
+              RegExp(r'\[attached file: uploads/[^\]]+\]\s*\n?'),
+              '',
+            )
+            .trim();
         return FahChatMessage(
           role: 'user',
-          content: blocks
-              .whereType<TextContent>()
-              .map((b) => b.text)
-              .join('\n'),
+          content: visibleText,
           imageBytes: imageBytes,
         );
       case AssistantMessage(:final content):
