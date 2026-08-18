@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -23,6 +25,8 @@ import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show ExecutionEnv;
 
 /// The wide-screen adaptive shell: a 3-pane layout with a collapsible
 /// sidebar (sessions list + Settings/Files nav) on the left, the active
@@ -500,9 +504,21 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Future<void> _openSettings() async {
     final service = widget.manager.active?.service;
-    if (service == null) return;
     AppAnalytics.instance.settingsOpened();
     if (!mounted) return;
+    if (service == null) {
+      // Post-onboarding boot lands here when the user skipped applying a
+      // provider preset: the manager has no active service, and
+      // SettingsScreen requires one (DefaultChatModelSection,
+      // ApprovalModeSelector, MediaModelsSection all call back into
+      // it). Bounce them into the OnboardingScreen — it's the same
+      // "Choose how Fa thinks" flow they just left, the proper
+      // provider-first entry point with no legacy form to trap them in.
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const OnboardingScreen()));
+      return;
+    }
     // pushFaPage shows a dialog (maxWidth 560) on wide screens, a full-page
     // route on narrow — matches the prototype's popup style.
     await pushFaPage<void>(
@@ -517,22 +533,40 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   Future<void> _openFiles() async {
-    final service = widget.manager.active?.service;
-    if (service == null) return;
     AppAnalytics.instance.filesOpened('sidebar');
     if (!mounted) return;
+    final service = widget.manager.active?.service;
+    // Without an active service we still have an env (post-onboarding
+    // empty manager creates one for the home screen), so the file
+    // browser renders against the sandbox cwd.
+    final env = service?.env ?? await _resolveHomeEnv();
+    if (!mounted) return;
+    final fsRevision = service?.fsRevision;
     await pushFaPage<void>(
       context,
       Scaffold(
         appBar: faAppBar(title: Text(context.l10n.chatFilesTooltip)),
         body: FileBrowser(
-          env: service.env,
+          env: env,
           inlinePreview: false,
-          fsRevision: service.fsRevision,
-          onProjectMountChanged: service.refreshProjectMountPrompt,
+          fsRevision: fsRevision,
+          onProjectMountChanged: service?.refreshProjectMountPrompt,
         ),
       ),
     );
+  }
+
+  /// Cached env for routes that need a sandbox root but not an active
+  /// service (the post-onboarding empty-manager home). Resolved once
+  /// per shell instance; the platform env creation is cheap (memory
+  /// or ProjectMount) but the route shouldn't repeatedly pay for it.
+  Future<ExecutionEnv>? _cachedHomeEnv;
+  Future<ExecutionEnv> _resolveHomeEnv() {
+    return _cachedHomeEnv ??= _createPlatformEnv();
+  }
+
+  Future<ExecutionEnv> _createPlatformEnv() async {
+    return createPlatformEnv();
   }
 }
 
