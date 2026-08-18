@@ -7,6 +7,7 @@ import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/screens/settings.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +24,7 @@ class AppsPanel extends StatefulWidget {
     required this.manager,
     this.appsStore,
     this.sessionNamesStore,
+    this.registry,
   });
 
   final FlutterSessionManager manager;
@@ -31,6 +33,12 @@ class AppsPanel extends StatefulWidget {
   final AppsStore? appsStore;
 
   final dynamic sessionNamesStore;
+
+  /// Custom-provider registry — forwarded to [SettingsScreen] when an
+  /// app tap lands without an active service (post-onboarding
+  /// empty-manager home), so the "Add provider" path from there has
+  /// the same registry instance.
+  final ProviderRegistry? registry;
 
   @override
   State<AppsPanel> createState() => _AppsPanelState();
@@ -137,16 +145,16 @@ class _AppsPanelState extends State<AppsPanel> {
   void _openApp(JsAppInfo app) {
     final manager = widget.manager;
     if (manager.active?.service == null) {
-      // No active session — can't open an app. Show a hint if a
-      // ScaffoldMessenger is reachable (the apps panel lives in the
-      // wide shell's nested Navigator, which doesn't have one) —
-      // otherwise stay silent.
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Connect to a provider first to open apps.',
-          ), // l10n:ignore — prototype redesign ships en-only copy for now
-          duration: Duration(seconds: 2),
+      // No active session — apps need the agent's ExecutionEnv to
+      // mount. Bounce the user to the SettingsScreen so they can wire
+      // up a provider — the no-service Settings now renders the
+      // provider-first CTA + the full provider list.
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => SettingsScreen(
+            service: null,
+            registry: widget.registry,
+          ),
         ),
       );
       return;

@@ -433,6 +433,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             manager: widget.manager,
             appsStore: widget.appsStore,
             sessionNamesStore: widget.sessionNamesStore,
+            registry: widget.registry,
           ),
         ),
       ),
