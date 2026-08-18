@@ -108,6 +108,33 @@ void main() {
     );
 
     test(
+      'google hint: list models with x-goog-api-key header, strip the "models/" prefix',
+      () async {
+        http.Request? seen;
+        final client = http_testing.MockClient((request) async {
+          seen = request;
+          return http.Response(
+            '{"models":[{"name":"models/gemini-2.0-flash"},'
+            '{"name":"models/gemini-2.0-pro"}]}',
+            200,
+          );
+        });
+        final (ids, _, _) = await fetchModelsForEndpoint(
+          'https://generativelanguage.googleapis.com/v1beta',
+          apiKey: 'google-key',
+          client: client,
+        );
+        expect(
+          seen!.url.toString(),
+          'https://generativelanguage.googleapis.com/v1beta/models',
+        );
+        expect(seen!.headers['x-goog-api-key'], 'google-key');
+        expect(seen!.headers['authorization'], isNull);
+        expect(ids, ['gemini-2.0-flash', 'gemini-2.0-pro']);
+      },
+    );
+
+    test(
       'failures answer an empty info (manual entry stays the fallback)',
       () async {
         final cases = <Future<ModelsEndpointInfo> Function()>[

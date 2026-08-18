@@ -57,6 +57,46 @@ Future<ModelsEndpointInfo> fetchModelsForEndpoint(
       Map<String, int>.from(chatGptCodexMaxTokens),
     );
   }
+  if (baseUrl.contains('generativelanguage.googleapis.com')) {
+    // Gemini: GET {baseUrl}/models with x-goog-api-key header
+    // (NOT Bearer). Response: {"models": [{"name": "models/gemini-…"}]}.
+    // Slugs carry a "models/" prefix — strip it so the picker shows
+    // just the model id the user would type.
+    final gClient = client ?? http.Client();
+    final gOwnsClient = client == null;
+    try {
+      final uri = Uri.parse(
+        '${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models',
+      );
+      final response = await gClient
+          .get(
+            uri,
+            headers: {
+              'Accept': 'application/json',
+              if (apiKey.isNotEmpty) 'x-goog-api-key': apiKey,
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) {
+        return (const <String>[], const <String, int>{}, const <String, int>{});
+      }
+      final (ids, windows, maxTokens) = parseModelsResponse(response.body);
+      final stripped = [for (final id in ids) id.replaceFirst('models/', '')];
+      final strippedWindows = {
+        for (final entry in windows.entries)
+          entry.key.replaceFirst('models/', ''): entry.value,
+      };
+      final strippedMaxTokens = {
+        for (final entry in maxTokens.entries)
+          entry.key.replaceFirst('models/', ''): entry.value,
+      };
+      return (stripped, strippedWindows, strippedMaxTokens);
+    } on Object {
+      return (const <String>[], const <String, int>{}, const <String, int>{});
+    } finally {
+      if (gOwnsClient) gClient.close();
+    }
+  }
   final httpClient = client ?? http.Client();
   final ownsClient = client == null;
   try {
