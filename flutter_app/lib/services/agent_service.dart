@@ -1431,6 +1431,18 @@ class AgentService extends ChangeNotifier
     ];
     final inline = images.isNotEmpty && inlinesImageAttachments;
     _clearError();
+    // Gemini's inlineData limit is ~4 MB of raw image bytes — base64
+    // inflates by ~4/3, so a 3 MB PNG becomes a 4 MB payload. Cap at
+    // 3 MB so the backend never sees an oversized inlineData (its
+    // 'Unable to process input image' 400 is unhelpful).
+    const maxInlineBytes = 3 * 1024 * 1024;
+    final oversized = images.where((a) => a.bytes.length > maxInlineBytes);
+    if (oversized.isNotEmpty) {
+      error = 'Image is too large to send inline (max ~3 MB). '
+          'Resize it or attach as a file instead.';
+      notifyListeners();
+      return;
+    }
     final message = inline
         ? UserMessage(
             content: [
@@ -2102,11 +2114,11 @@ class AgentService extends ChangeNotifier
     return estimateTokens(UserMessage.text(system));
   }
 
-  /// Auto-compaction after each completed run (CLI parity): when the
-  /// estimated transcript crosses the scaled threshold, the oldest history
-  /// is summarized so the next engine call still fits the window. Best
-  /// effort — a failure leaves the history untouched and a later turn
-  /// retries.
+  /// Auto-compaction after each completed run (CLI parity): the shared
+  /// [AutoCompactor] in core drives the multi-pass loop + smol→main
+  /// fallback + transient retry. This wrapper only builds the per-host
+  /// smol/main summarizers and the [AutoCompactorHooks] that mirrors the
+  /// compacted transcript into the chat list.
   Future<void> _maybeAutoCompact() async {
     final conversationWindow = _conversationWindow;
     if (_session == null || conversationWindow <= 0) return;
@@ -2122,63 +2134,82 @@ class AgentService extends ChangeNotifier
     // engine — that surfaces as a readable run error, not a compaction
     // loop.)
     if (transcriptTokens <= settings.keepRecentTokens) return;
-    await _compact(settings);
-  }
 
-  Future<void> _compact(CompactionSettings settings) async {
-    final session = _session;
-    if (session == null) return;
-    try {
-      final smolConfig = _taskModelsStore?.overrideFor(TaskRole.smol);
-      final StreamFunction summarizeStream;
-      final Model summarizeModel;
-      if (smolConfig != null && smolConfig.modelId.isNotEmpty) {
-        // Resolve the API key: the smol config's named key from the session
-        // secrets, falling back to the main connection's active key.
-        var apiKey = _activeApiKey;
-        final keyName = smolConfig.apiKeyName;
-        if (keyName != null && keyName.isNotEmpty) {
-          final resolved = _secretsEnv != null
-              ? _secretsEnv.secretsSnapshot()[keyName]
-              : null;
-          if (resolved != null && resolved.isNotEmpty) apiKey = resolved;
-        }
-        summarizeModel = Model(
-          id: smolConfig.modelId,
-          name: smolConfig.modelId,
-          api: _agent.state.model.api,
-          provider: _agent.state.model.provider,
-          baseUrl: smolConfig.baseUrl,
-          contextWindow: _agent.state.model.contextWindow,
-          maxTokens: _agent.state.model.maxTokens,
-          input: _agent.state.model.input,
-        );
-        summarizeStream = providerStreamFunction(
-          smolConfig.providerKind,
-          apiKey,
-        );
-      } else {
-        summarizeStream = _agent.streamFunction;
-        summarizeModel = _agent.state.model;
+    // Resolve the smol summarizer from the task-models store, or fall
+    // back to the main stream. The harness core doesn't know about
+    // TaskModelsStore — only the host does.
+    final smolConfig = _taskModelsStore?.overrideFor(TaskRole.smol);
+    StreamFunction? smolStream;
+    Model? smolModel;
+    if (smolConfig != null && smolConfig.modelId.isNotEmpty) {
+      var apiKey = _activeApiKey;
+      final keyName = smolConfig.apiKeyName;
+      if (keyName != null && keyName.isNotEmpty) {
+        final resolved = _secretsEnv != null
+            ? _secretsEnv.secretsSnapshot()[keyName]
+            : null;
+        if (resolved != null && resolved.isNotEmpty) apiKey = resolved;
       }
-      final manager = CompactionManager(
-        summarize: streamFunctionSummarizer(summarizeStream, summarizeModel),
-        settings: settings,
+      smolModel = Model(
+        id: smolConfig.modelId,
+        name: smolConfig.modelId,
+        api: _agent.state.model.api,
+        provider: _agent.state.model.provider,
+        baseUrl: smolConfig.baseUrl,
+        contextWindow: _agent.state.model.contextWindow,
+        maxTokens: _agent.state.model.maxTokens,
+        input: _agent.state.model.input,
       );
-      final record = await manager.compactSession(session);
-      if (record == null) return;
-      // Replace the in-memory transcript (and its UI projection) with the
-      // session's compacted context, mirroring loadSession.
-      _agent.state.messages = await session.buildContextMessages();
-      _persistedCount = _agent.state.messages.length;
-      messages
-        ..clear()
-        ..addAll(_agent.state.messages.map(_toChatMessage));
-      notifyListeners();
-    } on Object {
-      // Best effort, like persistence: a failed compaction must not leak
-      // into the agent's event plumbing; the next turn retries.
+      smolStream = providerStreamFunction(smolConfig.providerKind, apiKey);
     }
+
+    await AutoCompactorFactory(
+      session: _session!,
+      state: _agent.state,
+      window: conversationWindow,
+      settings: settings,
+      sources: AutoCompactorSources(
+        smolStream: smolStream,
+        smolModel: smolModel,
+        mainStream: _agent.streamFunction,
+        mainModel: _agent.state.model,
+      ),
+      hooks: _AutoCompactorFlutterHooks(this),
+      prompts: const CompactionPrompts(),
+    ).run();
+
+    // The AutoCompactor replaces `state.messages` on success; mirror
+    // that into the chat list so the UI reflects the new transcript.
+    _persistedCount = _agent.state.messages.length;
+    messages
+      ..clear()
+      ..addAll(_agent.state.messages.map(_toChatMessage));
+    notifyListeners();
+  }
+}
+
+/// [AutoCompactorHooks] impl for the Flutter chat sheet. The chat list is
+/// rebuilt from `state.messages` at the end of [AutoCompactor.run], so
+/// hooks only need to drive per-pass UX (silent here — chat doesn't
+/// surface each pass).
+class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
+  _AutoCompactorFlutterHooks(this._service);
+
+  final AgentService _service;
+
+  @override
+  void onPass(AutoCompactorPass pass) {}
+
+  @override
+  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
+
+  @override
+  void onDone(int passes, int tokens) {}
+
+  @override
+  void onBothRolesFailed(Object lastError) {
+    // Surfaced via the next run's run-error stream; chat list keeps its
+    // current view.
   }
 }
 
