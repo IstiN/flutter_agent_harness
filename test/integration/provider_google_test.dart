@@ -129,6 +129,94 @@ void main() {
     );
 
     test(
+      'reads an inline PNG image and describes it',
+      () async {
+        // 8x8 red square PNG (75 bytes) — tiny, deterministic, cheap.
+        const pngB64 =
+            'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC';
+        final stream = streamGoogle(
+          _model,
+          Context(
+            messages: [
+              UserMessage(
+                content: [
+                  TextContent(text: 'What color is this image?'),
+                  ImageContent(data: pngB64, mimeType: 'image/png'),
+                ],
+                timestamp: DateTime.now(),
+              ),
+            ],
+          ),
+          GoogleOptions(
+            apiKey: _apiKey!,
+            maxTokens: 128,
+            thinking: const GoogleThinking(enabled: false),
+          ),
+        );
+
+        final events = await stream.toList();
+        final error = events.whereType<ErrorEvent>().firstOrNull;
+        expect(
+          error,
+          isNull,
+          reason:
+              'Gemini rejected the inline PNG: '
+              '${error?.error.errorMessage ?? 'none'}',
+        );
+        final deltas = events.whereType<TextDeltaEvent>().toList();
+        expect(deltas, isNotEmpty, reason: 'expected at least one text delta');
+        final fullText = deltas.map((d) => d.delta).join();
+        expect(fullText, isNotEmpty);
+      },
+      skip: _skip,
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+
+    test(
+      'reads an RGBA PNG with alpha channel (converted to JPEG by the adapter)',
+      () async {
+        // 8x8 RGBA PNG (75 bytes) — alpha channel present. The Google
+        // adapter converts PNG → JPEG before sending (strips alpha/EXIF).
+        // This test asserts the conversion path works against the live API.
+        const pngB64 =
+            'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGP4z8DwHx9mGBkKAMLXf4EvceABAAAAAElFTkSuQmCC';
+        final stream = streamGoogle(
+          _model,
+          Context(
+            messages: [
+              UserMessage(
+                content: [
+                  TextContent(text: 'What color is this image?'),
+                  ImageContent(data: pngB64, mimeType: 'image/png'),
+                ],
+                timestamp: DateTime.now(),
+              ),
+            ],
+          ),
+          GoogleOptions(
+            apiKey: _apiKey!,
+            maxTokens: 128,
+            thinking: const GoogleThinking(enabled: false),
+          ),
+        );
+
+        final events = await stream.toList();
+        final error = events.whereType<ErrorEvent>().firstOrNull;
+        expect(
+          error,
+          isNull,
+          reason:
+              'Gemini rejected the RGBA PNG: '
+              '${error?.error.errorMessage ?? 'none'}',
+        );
+        final deltas = events.whereType<TextDeltaEvent>().toList();
+        expect(deltas, isNotEmpty, reason: 'expected at least one text delta');
+      },
+      skip: _skip,
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+
+    test(
       'CancelToken abort mid-stream ends with aborted stop reason',
       () async {
         final source = CancelTokenSource();
