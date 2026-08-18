@@ -7,39 +7,22 @@ import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/services/pinned_apps_store.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// Layout mode for [MyAppsShell].
+/// The right-side "My Apps" panel for the [WideLayoutShell].
 ///
-/// * [panel] — right-side panel of the wide-layout shell. Compact spacing,
-///   no top app bar (the shell provides the chrome).
-/// * [mobile] — full-screen home on narrow layouts (replaces the old
-///   iOS-grid launcher). The shell overlay (chat sheet) sits above this
-///   in a Stack — `MyAppsShell` only owns the apps surface itself.
-enum MyAppsShellMode { panel, mobile }
-
-/// The shared "My Apps" surface used on every layout: the wide-layout
-/// shell's right-side panel AND the mobile home. One widget tree, one
-/// header (count + Customize), one search field, one set of filter chips
-/// (All / Recent / Created with ★ / Pinned), and the same sections
-/// (Up next, Focus Timer, Created by you, Demo apps).
-///
-/// This unifies the previous [AppsPanel] (panel-only, search + sections)
-/// and the old [AppLauncherScreen] grid (mobile-only, drag-and-drop with
-/// folders). Drag-and-drop / folders / reorder are NOT carried over — the
-/// 1000-line launcher logic was a mobile-only thing that doesn't fit the
-/// unified layout (and is an obvious follow-up: add a section-level
-/// reorder if/when it's wanted). Apps themselves stay 1-tap-to-launch.
-class MyAppsShell extends StatefulWidget {
-  const MyAppsShell({
+/// Structured like the prototype: a header with count, a search bar,
+/// filter chips (All/Recent/Created/Pinned), optional weather/timer widget,
+/// then a 4-column grid of app tiles grouped into sections, and a
+/// "Recent activity" footer.
+class AppsPanel extends StatefulWidget {
+  const AppsPanel({
     super.key,
     required this.manager,
     this.appsStore,
-    this.pinnedStore,
-    this.mode = MyAppsShellMode.panel,
+    this.sessionNamesStore,
   });
 
   final FlutterSessionManager manager;
@@ -47,28 +30,18 @@ class MyAppsShell extends StatefulWidget {
   /// App discovery/seeding; null → creates one from the manager's env.
   final AppsStore? appsStore;
 
-  /// Pinned-ids store; null → an in-memory store (no persistence,
-  /// useful in widget tests + golden screenshots).
-  final PinnedAppsStore? pinnedStore;
-
-  /// Layout mode (panel / mobile). See [MyAppsShellMode].
-  final MyAppsShellMode mode;
+  final dynamic sessionNamesStore;
 
   @override
-  State<MyAppsShell> createState() => _MyAppsShellState();
+  State<AppsPanel> createState() => _AppsPanelState();
 }
 
-class _MyAppsShellState extends State<MyAppsShell> {
+class _AppsPanelState extends State<AppsPanel> {
   final _searchController = TextEditingController();
   late final AppsStore _appsStore;
-  late final PinnedAppsStore _pinnedStore;
   List<JsAppInfo> _apps = const [];
   var _loading = true;
   var _filter = _AppFilter.all;
-
-  /// Today's remaining calendar events for the "Up next" widget.
-  List<CalendarEvent> _upcomingEvents = const [];
-  var _calendarLoaded = false;
 
   /// Whether we're on macOS desktop (traffic lights float over content).
   static bool get _isMacOS =>
@@ -78,33 +51,15 @@ class _MyAppsShellState extends State<MyAppsShell> {
   void initState() {
     super.initState();
     _appsStore = widget.appsStore ?? AppsStore(widget.manager.env);
-    _pinnedStore = widget.pinnedStore ?? PinnedAppsStore(widget.manager.env);
-    _pinnedStore.addListener(_onPinnedChanged);
     _searchController.addListener(_onSearchChanged);
     _reloadApps();
     unawaited(_loadCalendar());
-    unawaited(_pinnedStore.load());
     widget.manager.active?.service.fsRevision.addListener(_onFsRevision);
-  }
-
-  void _onPinnedChanged() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void didUpdateWidget(covariant MyAppsShell oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.manager != widget.manager) {
-      oldWidget.manager.active?.service.fsRevision.removeListener(_onFsRevision);
-      widget.manager.active?.service.fsRevision.addListener(_onFsRevision);
-      _reloadApps();
-    }
   }
 
   @override
   void dispose() {
     widget.manager.active?.service.fsRevision.removeListener(_onFsRevision);
-    _pinnedStore.removeListener(_onPinnedChanged);
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
@@ -132,6 +87,10 @@ class _MyAppsShellState extends State<MyAppsShell> {
     }
   }
 
+  /// Today's remaining calendar events for the "Up next" widget.
+  List<CalendarEvent> _upcomingEvents = const [];
+  var _calendarLoaded = false;
+
   Future<void> _loadCalendar() async {
     try {
       final calendar = createCalendarService();
@@ -153,20 +112,8 @@ class _MyAppsShellState extends State<MyAppsShell> {
     }
   }
 
-  /// Bundled demos are the apps that ship with the app — they're seeded
-  /// from `assets/apps/` into the env on first run. The manifest flag is
-  /// preserved across that seed, but AppsStore reads manifests back with
-  /// `bundled: false` (it doesn't know which seed a given app came from),
-  /// so the canonical "is this a demo" check is the id against
-  /// [AppsStore.demoAppIds]. We honour the manifest flag too — third-party
-  /// apps that mark themselves bundled still surface as demos.
-  bool _isDemo(JsAppInfo app) =>
-      app.bundled || AppsStore.demoAppIds.contains(app.id);
-
-  List<JsAppInfo> get _demoApps =>
-      _apps.where(_isDemo).toList();
-  List<JsAppInfo> get _customApps =>
-      _apps.where((a) => !_isDemo(a)).toList();
+  List<JsAppInfo> get _demoApps => _apps.where((a) => a.bundled).toList();
+  List<JsAppInfo> get _customApps => _apps.where((a) => !a.bundled).toList();
 
   List<JsAppInfo> get _filteredApps {
     final query = _searchController.text.trim().toLowerCase();
@@ -174,10 +121,7 @@ class _MyAppsShellState extends State<MyAppsShell> {
       _AppFilter.all => _apps,
       _AppFilter.recent => _apps,
       _AppFilter.created => _customApps,
-      _AppFilter.pinned => [
-        for (final a in _apps)
-          if (_pinnedStore.isPinned(a.id)) a,
-      ],
+      _AppFilter.pinned => _apps,
     };
     if (query.isEmpty) return source.toList();
     return source
@@ -193,6 +137,8 @@ class _MyAppsShellState extends State<MyAppsShell> {
   void _openApp(JsAppInfo app) {
     final manager = widget.manager;
     if (manager.active?.service == null) {
+      // No active session — can't open an app. Show a hint instead of
+      // silently doing nothing.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -203,19 +149,17 @@ class _MyAppsShellState extends State<MyAppsShell> {
       );
       return;
     }
-    final isDemo = _isDemo(app);
-    final source = widget.mode == MyAppsShellMode.mobile
-        ? 'launcher'
-        : 'apps_panel';
-    AppAnalytics.instance.jsAppOpened(isDemo: isDemo, source: source);
-    pushJsApp(context, manager: manager, app: app, source: source);
+    AppAnalytics.instance.jsAppOpened(
+      isDemo: AppsStore.demoAppIds.contains(app.id),
+      source: 'apps_panel',
+    );
+    pushJsApp(context, manager: manager, app: app, source: 'apps_panel');
   }
 
-  /// Long-press handler on a tile — toggles the Pinned filter for that
-  /// app. The store notifies; setState runs via [_onPinnedChanged].
-  void _togglePin(String appId) {
-    unawaited(_pinnedStore.toggle(appId));
-  }
+  // Files / Settings live in the shell sidebar and open the real
+  // [FileBrowser] / [SettingsScreen] from there — the apps panel no
+  // longer surfaces grey placeholder tiles for them.
+
 
   @override
   Widget build(BuildContext context) {
@@ -227,9 +171,88 @@ class _MyAppsShellState extends State<MyAppsShell> {
       color: bg,
       child: Column(
         children: [
-          _buildHeader(colors, theme),
-          _buildSearch(colors, isLight),
-          _buildFilters(colors, theme),
+          // ── Header ───────────────────────────────────────────────
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              // macOS: extra top padding to clear traffic lights (content
+              // extends to the window top — no global 28px strip).
+              _isMacOS ? 28 : 16,
+              16,
+              8,
+            ),
+            child: Row(
+              children: [
+                Text(
+                  'My Apps',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${_apps.length}',
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+                ),
+                const SizedBox(width: 8),
+                // "Customize" label like the prototype.
+                Text(
+                  'Customize',
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.tune, size: 16, color: colors.dim),
+              ],
+            ),
+          ),
+          // ── Search bar ───────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search, size: 18),
+                hintText: 'Search apps, files, and more…',
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: colors.indigo, width: 1.2),
+                ),
+                filled: true,
+                fillColor: isLight ? colors.panel : colors.panelAlt,
+              ),
+            ),
+          ),
+          // ── Filter tabs (prototype style: pill highlight, no borders) ──
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final filter in _AppFilter.values)
+                    _FilterTab(
+                      label: filter.label,
+                      selected: _filter == filter,
+                      onTap: () => setState(() => _filter = filter),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          // ── Content ──────────────────────────────────────────────
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
@@ -240,111 +263,36 @@ class _MyAppsShellState extends State<MyAppsShell> {
     );
   }
 
-  Widget _buildHeader(FahColors colors, ThemeData theme) {
-    // Mobile owns its own app bar (the shell pushes a MaterialApp with
-    // its own title), so the mobile header here is the simple in-content
-    // row only; panel uses the same row plus the macOS top-padding
-    // clearance. No Customize affordance — there was nothing to wire it
-    // to, and a non-functional link is worse than no link.
-    final topPad = widget.mode == MyAppsShellMode.panel && _isMacOS
-        ? 28.0
-        : 16.0;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(16, topPad, 16, 8),
-      child: Row(
-        children: [
-          Text(
-            'My Apps',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const Spacer(),
-          Text(
-            '${_apps.length}',
-            style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearch(FahColors colors, bool isLight) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: TextField(
-        controller: _searchController,
-        decoration: InputDecoration(
-          prefixIcon: const Icon(Icons.search, size: 18),
-          hintText: 'Search apps, files, and more…',
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 8,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: colors.border),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: colors.border),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: colors.indigo, width: 1.2),
-          ),
-          filled: true,
-          fillColor: isLight ? colors.panel : colors.panelAlt,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilters(FahColors colors, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final filter in _AppFilter.values)
-              _FilterTab(
-                label: filter.label,
-                selected: _filter == filter,
-                onTap: () => setState(() => _filter = filter),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildContent(FahColors colors, ThemeData theme, bool isLight) {
     final filtered = _filteredApps;
     final query = _searchController.text.trim();
 
     if (query.isNotEmpty) {
+      // Search mode: flat grid of matches.
       return GridView.builder(
         padding: const EdgeInsets.all(12),
-        gridDelegate: _gridDelegateFor(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 4,
+          childAspectRatio: 0.82,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 12,
+        ),
         itemCount: filtered.length,
-        itemBuilder: (context, index) {
-          final app = filtered[index];
-          return _AppTile(
-            app: app,
-            onTap: () => _openApp(app),
-            pinned: _pinnedStore.isPinned(app.id),
-            onLongPress: () => _togglePin(app.id),
-          );
-        },
+        itemBuilder: (context, index) => _AppTile(
+          app: filtered[index],
+          onTap: () => _openApp(filtered[index]),
+        ),
       );
     }
 
-    // The non-search view: widgets first, then apps. The apps section
-    // depends on the active filter — Pinned / Created / All show
-    // different sections; Recent is the same as All (recent opens live
-    // with the agent and would otherwise need a per-app open-history).
+    // Sectioned view matching the prototype. The "Weather placeholder"
+    // and "System tiles" rows used to live here as grey stub icons
+    // (Calendar, Files, Notes, Maps, Calculator, Settings, Utilities,
+    // Travel); they were placeholders that opened nothing or a blank
+    // Scaffold. Calendar / Weather / Contacts / Reminders / Health /
+    // Maps live in the bundled apps (see AppsStore.demoAppIds) and
+    // surface as real tiles under Demo apps below — there's nothing to
+    // "stub" here. Focus Timer + Up next are real interactive widgets.
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
@@ -362,84 +310,23 @@ class _MyAppsShellState extends State<MyAppsShell> {
         _FocusTimerWidget(colors: colors, theme: theme, isLight: isLight),
         const SizedBox(height: 16),
 
-        // ── Pinned filter: one flat section of pinned apps ──────
-        if (_filter == _AppFilter.pinned) ...[
-          if (filtered.isEmpty)
-            _EmptyState(
-              message: 'Nothing pinned yet.\nLong-press an app tile to pin it.',
-              colors: colors,
-              theme: theme,
-            )
-          else ...[
-            _SectionHeader(title: 'Pinned', count: filtered.length),
-            const SizedBox(height: 8),
-            _AppGrid(
-              apps: filtered,
-              onTap: _openApp,
-              gridDelegate: _gridDelegateFor(),
-              onLongPress: (app) => _togglePin(app.id),
-              pinnedResolver: (app) => _pinnedStore.isPinned(app.id),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ]
-        // ── Created filter: only custom apps ─────────────────────
-        else if (_filter == _AppFilter.created) ...[
-          if (_customApps.isEmpty)
-            _EmptyState(
-              message:
-                  'No custom apps yet.\nAsk Fa to build one in the chat.',
-              colors: colors,
-              theme: theme,
-            )
-          else ...[
-            _SectionHeader(
-              title: 'Created by you',
-              count: _customApps.length,
-            ),
-            const SizedBox(height: 8),
-            _AppGrid(
-              apps: _customApps,
-              onTap: _openApp,
-              gridDelegate: _gridDelegateFor(),
-              onLongPress: (app) => _togglePin(app.id),
-              pinnedResolver: (app) => _pinnedStore.isPinned(app.id),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ]
-        // ── Default (All / Recent): both sections ───────────────
-        else ...[
-          if (_customApps.isNotEmpty) ...[
-            _SectionHeader(
-              title: 'Created by you',
-              count: _customApps.length,
-            ),
-            const SizedBox(height: 8),
-            _AppGrid(
-              apps: _customApps,
-              onTap: _openApp,
-              gridDelegate: _gridDelegateFor(),
-              onLongPress: (app) => _togglePin(app.id),
-              pinnedResolver: (app) => _pinnedStore.isPinned(app.id),
-            ),
-            const SizedBox(height: 16),
-          ],
-          if (_demoApps.isNotEmpty) ...[
-            _SectionHeader(title: 'Demo apps', count: _demoApps.length),
-            const SizedBox(height: 8),
-            _AppGrid(
-              apps: _demoApps,
-              onTap: _openApp,
-              gridDelegate: _gridDelegateFor(),
-              onLongPress: (app) => _togglePin(app.id),
-              pinnedResolver: (app) => _pinnedStore.isPinned(app.id),
-            ),
-            const SizedBox(height: 16),
-          ],
+        // ── Custom apps section ──────────────────────────────────
+        if (_customApps.isNotEmpty) ...[
+          _SectionHeader(title: 'Created by you', count: _customApps.length),
+          const SizedBox(height: 8),
+          _AppGrid(apps: _customApps, onTap: _openApp, showAddTile: true),
+          const SizedBox(height: 16),
         ],
 
-        // ── All apps fallback (when no apps at all) ──────────────
+        // ── Demo apps section ────────────────────────────────────
+        if (_demoApps.isNotEmpty) ...[
+          _SectionHeader(title: 'Demo apps', count: _demoApps.length),
+          const SizedBox(height: 8),
+          _AppGrid(apps: _demoApps, onTap: _openApp),
+          const SizedBox(height: 16),
+        ],
+
+        // ── All apps fallback ────────────────────────────────────
         if (_customApps.isEmpty && _demoApps.isEmpty)
           Center(
             child: Padding(
@@ -451,20 +338,14 @@ class _MyAppsShellState extends State<MyAppsShell> {
               ),
             ),
           ),
+
+        // ── Recent activity ──────────────────────────────────────
+        const Divider(height: 1),
+        const SizedBox(height: 8),
+        _RecentActivity(colors: colors, theme: theme),
       ],
     );
   }
-
-  /// Mobile home has more horizontal space (a typical phone is 4 columns,
-  /// the panel is 4 columns too at its default 380 px). Keep them equal —
-  /// any column-count tuning belongs to a later design pass.
-  SliverGridDelegate _gridDelegateFor() =>
-      const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        childAspectRatio: 0.82,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 12,
-      );
 }
 
 enum _AppFilter {
@@ -593,7 +474,9 @@ class _UpNextWidget extends StatelessWidget {
         event.start.year == now.year &&
         event.start.month == now.month &&
         event.start.day == now.day;
-    final dayLabel = isToday ? 'Today' : '${event.start.month}/${event.start.day}';
+    final dayLabel = isToday
+        ? 'Today'
+        : '${event.start.month}/${event.start.day}';
     return '$dayLabel, $start - $end';
   }
 }
@@ -750,6 +633,7 @@ class _FocusTimerWidgetState extends State<_FocusTimerWidget> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // Start/Pause button.
               InkWell(
                 onTap: _toggle,
                 borderRadius: BorderRadius.circular(8),
@@ -785,6 +669,7 @@ class _FocusTimerWidgetState extends State<_FocusTimerWidget> {
                 ),
               ),
               const SizedBox(width: 8),
+              // Reset button.
               InkWell(
                 onTap: _reset,
                 borderRadius: BorderRadius.circular(8),
@@ -834,68 +719,97 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// 4-column grid of app tiles.
+/// 4-column grid of app tiles. When [showAddTile] is true, an "Add app"
+/// tile is appended (matching the prototype's "+" tile in the "Created by
+/// you" section).
 class _AppGrid extends StatelessWidget {
   const _AppGrid({
     required this.apps,
     required this.onTap,
-    required this.gridDelegate,
-    this.onLongPress,
-    this.pinnedResolver,
+    this.showAddTile = false,
   });
 
   final List<JsAppInfo> apps;
   final ValueChanged<JsAppInfo> onTap;
-  final SliverGridDelegate gridDelegate;
-
-  /// Long-press handler for every tile in this grid. When set, every
-  /// tile gets a long-press gesture (pin toggle, typically).
-  final ValueChanged<JsAppInfo>? onLongPress;
-
-  /// Per-app "is pinned?" lookup. When set, every tile gets a pin
-  /// badge if the resolver returns true.
-  final bool Function(JsAppInfo)? pinnedResolver;
+  final bool showAddTile;
 
   @override
   Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: gridDelegate,
-      itemCount: apps.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        childAspectRatio: 0.82,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 12,
+      ),
+      itemCount: apps.length + (showAddTile ? 1 : 0),
       itemBuilder: (context, index) {
-        final app = apps[index];
-        return _AppTile(
-          app: app,
-          onTap: () => onTap(app),
-          pinned: pinnedResolver?.call(app) ?? false,
-          onLongPress:
-              onLongPress == null ? null : () => onLongPress!(app),
-        );
+        if (showAddTile && index == apps.length) {
+          return _AddAppTile(colors: colors, theme: theme, isLight: isLight);
+        }
+        return _AppTile(app: apps[index], onTap: () => onTap(apps[index]));
       },
+    );
+  }
+}
+
+/// The "Add app" tile at the end of the custom apps grid.
+class _AddAppTile extends StatelessWidget {
+  const _AddAppTile({
+    required this.colors,
+    required this.theme,
+    required this.isLight,
+  });
+
+  final FahColors colors;
+  final ThemeData theme;
+  final bool isLight;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () {}, // Placeholder — will open app creation flow
+      borderRadius: BorderRadius.circular(12),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: isLight ? colors.panel : colors.panelAlt,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: colors.border),
+            ),
+            child: Icon(Icons.add, size: 22, color: colors.indigo),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Add app',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 11,
+              color: colors.indigo,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 /// One app tile: rounded-square icon + label.
 class _AppTile extends StatelessWidget {
-  const _AppTile({
-    required this.app,
-    required this.onTap,
-    this.pinned = false,
-    this.onLongPress,
-  });
+  const _AppTile({required this.app, required this.onTap});
 
   final JsAppInfo app;
   final VoidCallback onTap;
-
-  /// Whether this tile's app is currently pinned. Renders a small pin
-  /// badge on the icon — the only visible affordance of the Pinned
-  /// filter when the user is on All / Demo apps / Created by you.
-  final bool pinned;
-
-  /// Long-press → toggle pin. Null disables the gesture (search mode).
-  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -909,55 +823,23 @@ class _AppTile extends StatelessWidget {
         ?.service;
     return InkWell(
       onTap: onTap,
-      onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: isLight ? colors.panelAlt : colors.panel,
-                  borderRadius: BorderRadius.circular(11),
-                  border: Border.all(color: colors.border),
-                ),
-                child: Center(
-                  child: service != null
-                      ? AppIcon(app: app, env: service.env, size: 24)
-                      : const Icon(Icons.apps, size: 22),
-                ),
-              ),
-              if (pinned)
-                Positioned.fill(
-                  child: Align(
-                    alignment: Alignment.topRight,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 0, right: 0),
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: colors.indigo,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: isLight ? colors.bg : colors.panel,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: const Icon(
-                          Icons.push_pin,
-                          size: 8,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: isLight ? colors.panelAlt : colors.panel,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: colors.border),
+            ),
+            child: Center(
+              child: service != null
+                  ? AppIcon(app: app, env: service.env, size: 24)
+                  : const Icon(Icons.apps, size: 22),
+            ),
           ),
           const SizedBox(height: 6),
           Text(
@@ -975,30 +857,91 @@ class _AppTile extends StatelessWidget {
   }
 }
 
-/// Empty-state placeholder when a filter or section has no apps — keeps
-/// the panel from collapsing to nothing while still telling the user
-/// what action would surface apps (e.g. "long-press to pin").
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({
-    required this.message,
-    required this.colors,
-    required this.theme,
-  });
+/// The System apps row (Calendar, Files, Notes, Maps, Calculator,
+/// Settings, Utilities, Travel) was removed — these were grey placeholder
+/// tiles that opened the corresponding system feature or did nothing.
+/// Calendar / Weather / Contacts / Reminders / Health / Maps / Calculator
+/// live as real JS apps in the apps store and surface under Demo apps
+/// below; Files / Settings are real sidebar entries that open
+/// [FileBrowser] / [SettingsScreen].
 
-  final String message;
+/// Recent activity footer.
+class _RecentActivity extends StatelessWidget {
+  const _RecentActivity({required this.colors, required this.theme});
+
   final FahColors colors;
   final ThemeData theme;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          message,
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Recent activity',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: colors.dim,
+            fontWeight: FontWeight.w600,
+          ),
         ),
+        const SizedBox(height: 8),
+        _ActivityRow(
+          icon: Icons.check_circle_outline,
+          label: 'Checked Calendar',
+          time: 'Just now',
+          colors: colors,
+          theme: theme,
+        ),
+        _ActivityRow(
+          icon: Icons.folder_open,
+          label: 'Opened Files',
+          time: '10m ago',
+          colors: colors,
+          theme: theme,
+        ),
+      ],
+    );
+  }
+}
+
+class _ActivityRow extends StatelessWidget {
+  const _ActivityRow({
+    required this.icon,
+    required this.label,
+    required this.time,
+    required this.colors,
+    required this.theme,
+  });
+
+  final IconData icon;
+  final String label;
+  final String time;
+  final FahColors colors;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: colors.dim),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+            ),
+          ),
+          Text(
+            time,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.dim.withValues(alpha: 0.6),
+              fontSize: 10,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -85,13 +85,9 @@ const _exempt = <String, String>{
       'floating chat sheet over the launcher; covered indirectly by the '
       'launcher chat sheet tests in test/apps/',
   'lib/ui/screens/app_launcher_screen.dart':
-      'thin wrapper around MyAppsShell + SessionChatSheet — its visuals '
-      'are covered by my_apps_shell + chat sheet goldens, the shell code '
-      'is exercised by app_launcher_screen widget tests',
+      'test/golden/launcher_golden_test.dart',
   'lib/ui/widgets/apps_panel.dart':
-      'deprecated: superseded by my_apps_shell (test/golden/my_apps_shell_golden_test.dart)',
-  'lib/ui/widgets/my_apps_shell.dart':
-      'test/golden/my_apps_shell_golden_test.dart',
+      'test/golden/apps_panel_golden_test.dart',
   'lib/ui/widgets/provider_selection_list.dart':
       'list-based provider picker; rendered inside AgentSettingsForm (covered by settings goldens)',
   'lib/ui/screens/codemie_sso_webview.dart':
