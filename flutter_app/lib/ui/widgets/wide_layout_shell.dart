@@ -326,50 +326,62 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           child: Row(
             children: [
               Expanded(
-                child: InkWell(
-                  onTap: () {}, // Workspace picker placeholder
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Personal Workspace',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
+                child: Material(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  child: InkWell(
+                    onTap: () {}, // Workspace picker placeholder
+                    borderRadius: BorderRadius.circular(8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Personal Workspace',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 16,
-                        color: colors.dim,
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.keyboard_arrow_down,
+                          size: 16,
+                          color: colors.dim,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
               // Quick model switch: current model name → tap opens the
-              // unified model picker (all providers, filter).
-              InkWell(
-                onTap: () => _openModelPicker(active),
+              // unified model picker (all providers, filter). The chip
+              // is wrapped in a [Material] so the [InkWell] ripple has
+              // somewhere to paint — a plain Container ancestor would
+              // swallow the gesture highlight.
+              Material(
+                color: Colors.transparent,
                 borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.memory, size: 14, color: colors.indigo),
-                      const SizedBox(width: 4),
-                      Text(
-                        active.service.modelId,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.dim,
-                          fontSize: 12,
+                child: InkWell(
+                  onTap: () => _openModelPicker(active),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.memory, size: 14, color: colors.indigo),
+                        const SizedBox(width: 4),
+                        Text(
+                          active.service.modelId,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.dim,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
