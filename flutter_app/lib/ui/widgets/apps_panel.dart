@@ -137,9 +137,11 @@ class _AppsPanelState extends State<AppsPanel> {
   void _openApp(JsAppInfo app) {
     final manager = widget.manager;
     if (manager.active?.service == null) {
-      // No active session — can't open an app. Show a hint instead of
-      // silently doing nothing.
-      ScaffoldMessenger.of(context).showSnackBar(
+      // No active session — can't open an app. Show a hint if a
+      // ScaffoldMessenger is reachable (the apps panel lives in the
+      // wide shell's nested Navigator, which doesn't have one) —
+      // otherwise stay silent.
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         const SnackBar(
           content: Text(
             'Connect to a provider first to open apps.',
