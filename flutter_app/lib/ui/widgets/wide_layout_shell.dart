@@ -373,14 +373,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                   ),
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.edit_outlined),
-                onPressed: () {}, // Edit workspace placeholder
-                iconSize: 18,
-                color: colors.dim,
-                tooltip:
-                    'Edit workspace', // l10n:ignore — prototype redesign ships en-only copy for now
-              ),
             ],
           ),
         ),
