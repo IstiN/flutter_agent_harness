@@ -7,6 +7,7 @@ import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/pinned_apps_store.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +38,7 @@ class MyAppsShell extends StatefulWidget {
     super.key,
     required this.manager,
     this.appsStore,
+    this.pinnedStore,
     this.mode = MyAppsShellMode.panel,
   });
 
@@ -44,6 +46,10 @@ class MyAppsShell extends StatefulWidget {
 
   /// App discovery/seeding; null → creates one from the manager's env.
   final AppsStore? appsStore;
+
+  /// Pinned-ids store; null → an in-memory store (no persistence,
+  /// useful in widget tests + golden screenshots).
+  final PinnedAppsStore? pinnedStore;
 
   /// Layout mode (panel / mobile). See [MyAppsShellMode].
   final MyAppsShellMode mode;
@@ -55,6 +61,7 @@ class MyAppsShell extends StatefulWidget {
 class _MyAppsShellState extends State<MyAppsShell> {
   final _searchController = TextEditingController();
   late final AppsStore _appsStore;
+  late final PinnedAppsStore _pinnedStore;
   List<JsAppInfo> _apps = const [];
   var _loading = true;
   var _filter = _AppFilter.all;
@@ -71,10 +78,17 @@ class _MyAppsShellState extends State<MyAppsShell> {
   void initState() {
     super.initState();
     _appsStore = widget.appsStore ?? AppsStore(widget.manager.env);
+    _pinnedStore = widget.pinnedStore ?? PinnedAppsStore(widget.manager.env);
+    _pinnedStore.addListener(_onPinnedChanged);
     _searchController.addListener(_onSearchChanged);
     _reloadApps();
     unawaited(_loadCalendar());
+    unawaited(_pinnedStore.load());
     widget.manager.active?.service.fsRevision.addListener(_onFsRevision);
+  }
+
+  void _onPinnedChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -90,6 +104,7 @@ class _MyAppsShellState extends State<MyAppsShell> {
   @override
   void dispose() {
     widget.manager.active?.service.fsRevision.removeListener(_onFsRevision);
+    _pinnedStore.removeListener(_onPinnedChanged);
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
@@ -159,7 +174,10 @@ class _MyAppsShellState extends State<MyAppsShell> {
       _AppFilter.all => _apps,
       _AppFilter.recent => _apps,
       _AppFilter.created => _customApps,
-      _AppFilter.pinned => _apps,
+      _AppFilter.pinned => [
+        for (final a in _apps)
+          if (_pinnedStore.isPinned(a.id)) a,
+      ],
     };
     if (query.isEmpty) return source.toList();
     return source
@@ -191,6 +209,12 @@ class _MyAppsShellState extends State<MyAppsShell> {
         : 'apps_panel';
     AppAnalytics.instance.jsAppOpened(isDemo: isDemo, source: source);
     pushJsApp(context, manager: manager, app: app, source: source);
+  }
+
+  /// Long-press handler on a tile — toggles the Pinned filter for that
+  /// app. The store notifies; setState runs via [_onPinnedChanged].
+  void _togglePin(String appId) {
+    unawaited(_pinnedStore.toggle(appId));
   }
 
   @override
@@ -305,13 +329,22 @@ class _MyAppsShellState extends State<MyAppsShell> {
         padding: const EdgeInsets.all(12),
         gridDelegate: _gridDelegateFor(),
         itemCount: filtered.length,
-        itemBuilder: (context, index) => _AppTile(
-          app: filtered[index],
-          onTap: () => _openApp(filtered[index]),
-        ),
+        itemBuilder: (context, index) {
+          final app = filtered[index];
+          return _AppTile(
+            app: app,
+            onTap: () => _openApp(app),
+            pinned: _pinnedStore.isPinned(app.id),
+            onLongPress: () => _togglePin(app.id),
+          );
+        },
       );
     }
 
+    // The non-search view: widgets first, then apps. The apps section
+    // depends on the active filter — Pinned / Created / All show
+    // different sections; Recent is the same as All (recent opens live
+    // with the agent and would otherwise need a per-app open-history).
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
@@ -329,31 +362,84 @@ class _MyAppsShellState extends State<MyAppsShell> {
         _FocusTimerWidget(colors: colors, theme: theme, isLight: isLight),
         const SizedBox(height: 16),
 
-        // ── Custom apps section ──────────────────────────────────
-        if (_customApps.isNotEmpty) ...[
-          _SectionHeader(title: 'Created by you', count: _customApps.length),
-          const SizedBox(height: 8),
-          _AppGrid(
-            apps: _customApps,
-            onTap: _openApp,
-            gridDelegate: _gridDelegateFor(),
-          ),
-          const SizedBox(height: 16),
+        // ── Pinned filter: one flat section of pinned apps ──────
+        if (_filter == _AppFilter.pinned) ...[
+          if (filtered.isEmpty)
+            _EmptyState(
+              message: 'Nothing pinned yet.\nLong-press an app tile to pin it.',
+              colors: colors,
+              theme: theme,
+            )
+          else ...[
+            _SectionHeader(title: 'Pinned', count: filtered.length),
+            const SizedBox(height: 8),
+            _AppGrid(
+              apps: filtered,
+              onTap: _openApp,
+              gridDelegate: _gridDelegateFor(),
+              onLongPress: (app) => _togglePin(app.id),
+              pinnedResolver: (app) => _pinnedStore.isPinned(app.id),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ]
+        // ── Created filter: only custom apps ─────────────────────
+        else if (_filter == _AppFilter.created) ...[
+          if (_customApps.isEmpty)
+            _EmptyState(
+              message:
+                  'No custom apps yet.\nAsk Fa to build one in the chat.',
+              colors: colors,
+              theme: theme,
+            )
+          else ...[
+            _SectionHeader(
+              title: 'Created by you',
+              count: _customApps.length,
+            ),
+            const SizedBox(height: 8),
+            _AppGrid(
+              apps: _customApps,
+              onTap: _openApp,
+              gridDelegate: _gridDelegateFor(),
+              onLongPress: (app) => _togglePin(app.id),
+              pinnedResolver: (app) => _pinnedStore.isPinned(app.id),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ]
+        // ── Default (All / Recent): both sections ───────────────
+        else ...[
+          if (_customApps.isNotEmpty) ...[
+            _SectionHeader(
+              title: 'Created by you',
+              count: _customApps.length,
+            ),
+            const SizedBox(height: 8),
+            _AppGrid(
+              apps: _customApps,
+              onTap: _openApp,
+              gridDelegate: _gridDelegateFor(),
+              onLongPress: (app) => _togglePin(app.id),
+              pinnedResolver: (app) => _pinnedStore.isPinned(app.id),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (_demoApps.isNotEmpty) ...[
+            _SectionHeader(title: 'Demo apps', count: _demoApps.length),
+            const SizedBox(height: 8),
+            _AppGrid(
+              apps: _demoApps,
+              onTap: _openApp,
+              gridDelegate: _gridDelegateFor(),
+              onLongPress: (app) => _togglePin(app.id),
+              pinnedResolver: (app) => _pinnedStore.isPinned(app.id),
+            ),
+            const SizedBox(height: 16),
+          ],
         ],
 
-        // ── Demo apps section ────────────────────────────────────
-        if (_demoApps.isNotEmpty) ...[
-          _SectionHeader(title: 'Demo apps', count: _demoApps.length),
-          const SizedBox(height: 8),
-          _AppGrid(
-            apps: _demoApps,
-            onTap: _openApp,
-            gridDelegate: _gridDelegateFor(),
-          ),
-          const SizedBox(height: 16),
-        ],
-
-        // ── All apps fallback ────────────────────────────────────
+        // ── All apps fallback (when no apps at all) ──────────────
         if (_customApps.isEmpty && _demoApps.isEmpty)
           Center(
             child: Padding(
@@ -754,11 +840,21 @@ class _AppGrid extends StatelessWidget {
     required this.apps,
     required this.onTap,
     required this.gridDelegate,
+    this.onLongPress,
+    this.pinnedResolver,
   });
 
   final List<JsAppInfo> apps;
   final ValueChanged<JsAppInfo> onTap;
   final SliverGridDelegate gridDelegate;
+
+  /// Long-press handler for every tile in this grid. When set, every
+  /// tile gets a long-press gesture (pin toggle, typically).
+  final ValueChanged<JsAppInfo>? onLongPress;
+
+  /// Per-app "is pinned?" lookup. When set, every tile gets a pin
+  /// badge if the resolver returns true.
+  final bool Function(JsAppInfo)? pinnedResolver;
 
   @override
   Widget build(BuildContext context) {
@@ -768,7 +864,14 @@ class _AppGrid extends StatelessWidget {
       gridDelegate: gridDelegate,
       itemCount: apps.length,
       itemBuilder: (context, index) {
-        return _AppTile(app: apps[index], onTap: () => onTap(apps[index]));
+        final app = apps[index];
+        return _AppTile(
+          app: app,
+          onTap: () => onTap(app),
+          pinned: pinnedResolver?.call(app) ?? false,
+          onLongPress:
+              onLongPress == null ? null : () => onLongPress!(app),
+        );
       },
     );
   }
@@ -776,10 +879,23 @@ class _AppGrid extends StatelessWidget {
 
 /// One app tile: rounded-square icon + label.
 class _AppTile extends StatelessWidget {
-  const _AppTile({required this.app, required this.onTap});
+  const _AppTile({
+    required this.app,
+    required this.onTap,
+    this.pinned = false,
+    this.onLongPress,
+  });
 
   final JsAppInfo app;
   final VoidCallback onTap;
+
+  /// Whether this tile's app is currently pinned. Renders a small pin
+  /// badge on the icon — the only visible affordance of the Pinned
+  /// filter when the user is on All / Demo apps / Created by you.
+  final bool pinned;
+
+  /// Long-press → toggle pin. Null disables the gesture (search mode).
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -793,23 +909,55 @@ class _AppTile extends StatelessWidget {
         ?.service;
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: isLight ? colors.panelAlt : colors.panel,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: colors.border),
-            ),
-            child: Center(
-              child: service != null
-                  ? AppIcon(app: app, env: service.env, size: 24)
-                  : const Icon(Icons.apps, size: 22),
-            ),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: isLight ? colors.panelAlt : colors.panel,
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: colors.border),
+                ),
+                child: Center(
+                  child: service != null
+                      ? AppIcon(app: app, env: service.env, size: 24)
+                      : const Icon(Icons.apps, size: 22),
+                ),
+              ),
+              if (pinned)
+                Positioned.fill(
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 0, right: 0),
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: colors.indigo,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isLight ? colors.bg : colors.panel,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.push_pin,
+                          size: 8,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 6),
           Text(
@@ -822,6 +970,35 @@ class _AppTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Empty-state placeholder when a filter or section has no apps — keeps
+/// the panel from collapsing to nothing while still telling the user
+/// what action would surface apps (e.g. "long-press to pin").
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.message,
+    required this.colors,
+    required this.theme,
+  });
+
+  final String message;
+  final FahColors colors;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+        ),
       ),
     );
   }

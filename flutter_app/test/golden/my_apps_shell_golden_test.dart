@@ -10,6 +10,7 @@ library;
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/pinned_apps_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/my_apps_shell.dart';
 import 'package:flutter/material.dart';
@@ -231,6 +232,90 @@ void main() {
     testWidgets('apps panel — light', (tester) async {
       await _pumpMyAppsShell(tester, theme: buildFahThemeLight());
       await expectGolden(tester, 'my_apps_shell/panel_light');
+    });
+
+    testWidgets('pinned filter — light', (tester) async {
+      // Pin a couple of apps (one bundled, one custom) and tap the
+      // Pinned filter chip — the grid should narrow to just those two.
+      final env = await _seededEnv();
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+      )..addSession('test-session', _fakeService(env));
+      final appsStore = AppsStore(
+        env,
+        readAsset: (path) async =>
+            throw StateError('no bundled assets in this test'),
+        seedDemoIds: const [],
+      );
+      final pinned = PinnedAppsStore.inMemory(
+        initial: {'weather', 'pomodoro'},
+      );
+      await pumpGolden(
+        tester,
+        ManagerScope(
+          manager: manager,
+          child: MyAppsShell(
+            manager: manager,
+            appsStore: appsStore,
+            pinnedStore: pinned,
+          ),
+        ),
+        size: const Size(380, 800),
+        theme: buildFahThemeLight(),
+        wrap: (child) => Scaffold(body: child),
+      );
+      // The Pinned chip is the fourth filter tab.
+      await tester.tap(find.text('Pinned'));
+      await tester.pumpAndSettle();
+      await expectGolden(tester, 'my_apps_shell/pinned_filter_light');
+    });
+
+    testWidgets('long-press a tile toggles the pin badge', (tester) async {
+      // Confirms the gesture is wired: a long-press on an app tile
+      // flips its pin state and the small pin badge appears on the
+      // icon.
+      final env = await _seededEnv();
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+      )..addSession('test-session', _fakeService(env));
+      final appsStore = AppsStore(
+        env,
+        readAsset: (path) async =>
+            throw StateError('no bundled assets in this test'),
+        seedDemoIds: const [],
+      );
+      final pinned = PinnedAppsStore.inMemory();
+      await pumpGolden(
+        tester,
+        ManagerScope(
+          manager: manager,
+          child: MyAppsShell(
+            manager: manager,
+            appsStore: appsStore,
+            pinnedStore: pinned,
+          ),
+        ),
+        size: const Size(380, 800),
+        theme: buildFahTheme(),
+        wrap: (child) => Scaffold(body: child),
+      );
+      // Before long-press: no pin badges anywhere.
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+      // Long-press the Calendar tile.
+      final calendarTile = find.text('Calendar');
+      expect(calendarTile, findsOneWidget);
+      await tester.longPress(calendarTile);
+      await tester.pumpAndSettle();
+      // After long-press: one pin badge appears (on Calendar).
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(pinned.isPinned('calendar'), isTrue);
+      // Long-press again → unpin.
+      await tester.longPress(calendarTile);
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+      expect(pinned.isPinned('calendar'), isFalse);
     });
   });
 }
