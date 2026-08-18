@@ -5,7 +5,6 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -503,28 +502,16 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   Future<void> _openSettings() async {
-    final service = widget.manager.active?.service;
     AppAnalytics.instance.settingsOpened();
     if (!mounted) return;
-    if (service == null) {
-      // Post-onboarding boot lands here when the user skipped applying a
-      // provider preset: the manager has no active service, and
-      // SettingsScreen requires one (DefaultChatModelSection,
-      // ApprovalModeSelector, MediaModelsSection all call back into
-      // it). Bounce them into the OnboardingScreen — it's the same
-      // "Choose how Fa thinks" flow they just left, the proper
-      // provider-first entry point with no legacy form to trap them in.
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute<void>(builder: (_) => const OnboardingScreen()));
-      return;
-    }
-    // pushFaPage shows a dialog (maxWidth 560) on wide screens, a full-page
-    // route on narrow — matches the prototype's popup style.
+    // SettingsScreen handles service == null itself (renders a
+    // provider-first CTA at the top), so the post-onboarding
+    // empty-manager home opens Settings directly — no detour through
+    // OnboardingScreen.
     await pushFaPage<void>(
       context,
       SettingsScreen(
-        service: service,
+        service: widget.manager.active?.service,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
         layoutStore: widget.layoutStore,

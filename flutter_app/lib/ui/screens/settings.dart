@@ -1959,7 +1959,7 @@ class MediaModelsSection extends StatelessWidget {
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
-    required this.service,
+    this.service,
     this.registry,
     this.lastConnectionStore,
     this.layoutStore,
@@ -1971,7 +1971,10 @@ class SettingsScreen extends StatefulWidget {
   });
 
   /// The service whose backend the default-chat-model flow reconfigures.
-  final AgentService service;
+  /// Optional — the post-onboarding empty-manager home shows Settings
+  /// with `service == null` and renders a "Connect a provider" CTA at
+  /// the top instead of the service-dependent sections.
+  final AgentService? service;
 
   /// The user-added providers shown in the Providers section and the
   /// pickers.
@@ -2022,6 +2025,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final taskModels =
         widget.taskModelsStore ?? TaskModelsScope.maybeOf(context);
     final onDeviceConfig = OnDeviceConfigScope.maybeOf(context);
+    // The post-onboarding empty-manager home opens Settings with no
+    // active service. Every section below depends on it (reconfigure,
+    // activeBaseUrl/agentModelId, ApprovalModeSelector wraps it in a
+    // controller, …) — render the provider-first CTA as the entire
+    // page in that case.
+    final service = widget.service;
+    if (service == null) {
+      return Scaffold(
+        appBar: faAppBar(title: Text(context.l10n.settingsTitle)),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: _NoServiceSettings(
+              registry: widget.registry,
+              onCodeMieSso: () async {
+                final registry = widget.registry;
+                if (registry == null) return;
+                await runCodemieSsoFlow(
+                  context: context,
+                  registry: registry,
+                  service: service,
+                  lastConnectionStore: widget.lastConnectionStore ??
+                      LastConnectionStore.inMemory(),
+                );
+              },
+              onChatGptOAuth: () async {
+                final registry = widget.registry;
+                if (registry == null) return;
+                await runChatGptOAuthFlow(
+                  context: context,
+                  registry: registry,
+                  service: service,
+                  lastConnectionStore: widget.lastConnectionStore ??
+                      LastConnectionStore.inMemory(),
+                );
+              },
+              onAddProvider: () async {
+                final registry = widget.registry;
+                if (registry == null) return;
+                final result = await Navigator.of(context).push<
+                    ProviderEditorResult>(
+                  MaterialPageRoute(
+                    builder: (_) => ProviderEditorPage(
+                      title: context.l10n.settingsAddProvider,
+                    ),
+                  ),
+                );
+                if (result == null || result.deleted) return;
+                final provider = await registry.add(
+                  name: result.name,
+                  baseUrl: result.baseUrl,
+                  modelId: result.modelId,
+                );
+                if (result.apiKey.isNotEmpty) {
+                  registry.rememberKey(provider.id, result.apiKey);
+                }
+                AppAnalytics.instance.providerSaved('add');
+              },
+            ),
+          ),
+        ),
+      );
+    }
+    // From here on, [service] is non-null. Dart's flow analysis
+    // promotes the local through the null check above so the dense
+    // section below doesn't need `!` on every call.
     return Scaffold(
       appBar: faAppBar(title: Text(context.l10n.settingsTitle)),
       body: SafeArea(
@@ -2031,7 +2100,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               ProvidersSection(
-                service: widget.service,
+                service: service,
                 registry: widget.registry,
                 openRouterOAuthCallbackUrl:
                     OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
@@ -2043,7 +2112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   await runCodemieSsoFlow(
                     context: context,
                     registry: registry,
-                    service: widget.service,
+                    service: service,
                     lastConnectionStore:
                         widget.lastConnectionStore ??
                         LastConnectionStore.inMemory(),
@@ -2055,7 +2124,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   await runChatGptOAuthFlow(
                     context: context,
                     registry: registry,
-                    service: widget.service,
+                    service: service,
                     lastConnectionStore:
                         widget.lastConnectionStore ??
                         LastConnectionStore.inMemory(),
@@ -2066,7 +2135,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   registry: widget.registry,
                   configStore: onDeviceConfig,
                   onApply: (config) async {
-                    await widget.service.reconfigure(config);
+                    await service.reconfigure(config);
                     await widget.lastConnectionStore?.saveFromConfig(config);
                   },
                   webLlmEngine: widget.webLlmEngine,
@@ -2091,7 +2160,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       agentConfig.providerKind,
                     );
                   }
-                  await widget.service.reconfigure(agentConfig);
+                  await service.reconfigure(agentConfig);
                   await widget.lastConnectionStore?.saveFromConfig(agentConfig);
                 },
               ),
@@ -2100,7 +2169,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 16),
               // The live subagent tree (CLI `/agents` panel parity): main +
               // retained children with observe/send.
-              if (widget.service.subagentManager case final manager?) ...[
+              if (service.subagentManager case final manager?) ...[
                 Text(
                   'Agents', // l10n:ignore
                   style: Theme.of(context).textTheme.titleSmall,
@@ -2109,10 +2178,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 faui.AgentsSection(
                   manager: manager,
                   mainDescription:
-                      '${widget.service.agentModelId} · '
-                      '${widget.service.messages.length} messages',
-                  observe: widget.service.observeSubagent,
-                  send: widget.service.sendToSubagent,
+                      '${service.agentModelId} · '
+                      '${service.messages.length} messages',
+                  observe: service.observeSubagent,
+                  send: service.sendToSubagent,
                 ),
                 const SizedBox(height: 24),
                 const Divider(),
@@ -2126,7 +2195,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 8),
               ModelPresetsSection(
-                service: widget.service,
+                service: service,
                 lastConnectionStore: widget.lastConnectionStore,
                 taskModelsStore: taskModels,
               ),
@@ -2134,7 +2203,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const Divider(),
               const SizedBox(height: 16),
               DefaultChatModelSection(
-                service: widget.service,
+                service: service,
                 registry: widget.registry,
                 lastConnectionStore: widget.lastConnectionStore,
                 modelsFetcher: widget.modelsFetcher,
@@ -2149,8 +2218,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (taskModels != null) ...[
                 faui.TaskModelsSection(
                   store: taskModels,
-                  mainBaseUrl: widget.service.activeBaseUrl,
-                  mainModelId: widget.service.agentModelId,
+                  mainBaseUrl: service.activeBaseUrl,
+                  mainModelId: service.agentModelId,
                   registry: widget.registry,
                 ),
                 const SizedBox(height: 24),
@@ -2158,7 +2227,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 16),
               ],
               MediaModelsSection(
-                service: widget.service,
+                service: service,
                 registry: widget.registry,
                 modelsFetcher: widget.modelsFetcher,
               ),
@@ -2179,7 +2248,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              ApprovalModeSelector(service: widget.service),
+              ApprovalModeSelector(service: service),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
@@ -2512,6 +2581,76 @@ class _VisionBadge extends StatelessWidget {
           color: theme.colorScheme.onTertiaryContainer,
         ),
       ),
+    );
+  }
+}
+
+/// The provider-first entry point rendered at the top of [SettingsScreen]
+/// when there's no active service (the post-onboarding empty-manager
+/// home). Lists the available hosted providers + an Add provider row so
+/// the user has a clear path to connect; the service-dependent sections
+/// below stay hidden until they do.
+class _NoServiceSettings extends StatelessWidget {
+  const _NoServiceSettings({
+    required this.registry,
+    required this.onCodeMieSso,
+    required this.onChatGptOAuth,
+    required this.onAddProvider,
+  });
+
+  final ProviderRegistry? registry;
+  final Future<void> Function() onCodeMieSso;
+  final Future<void> Function() onChatGptOAuth;
+  final Future<void> Function() onAddProvider;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = FahColors.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: colors.indigo.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colors.indigo.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.cloud_outlined, color: colors.indigo, size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Connect a provider to start chatting.', // l10n:ignore
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: registry == null ? null : onChatGptOAuth,
+          icon: const Icon(Icons.login),
+          label: const Text('Sign in with ChatGPT'), // l10n:ignore
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: registry == null ? null : onCodeMieSso,
+          icon: const Icon(Icons.login),
+          label: const Text('Sign in with CodeMie'), // l10n:ignore
+        ),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: registry == null ? null : onAddProvider,
+          icon: const Icon(Icons.add),
+          label: Text(context.l10n.settingsAddProvider),
+        ),
+      ],
     );
   }
 }
