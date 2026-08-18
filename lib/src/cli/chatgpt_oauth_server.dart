@@ -31,7 +31,10 @@ final class ChatGptOAuthLocalCallbackServer {
     final server = _server;
     return server == null
         ? null
-        : 'http://127.0.0.1:${server.port}/auth/callback';
+        // Mirror the original codex-rs redirect URI exactly
+        // (server.rs: `format!("http://localhost:{port}/auth/callback")`)
+        // — auth.openai.com rejects 127.0.0.1 as an off-list host.
+        : 'http://localhost:${server.port}/auth/callback';
   }
 
   Future<String> start({Duration timeout = const Duration(minutes: 5)}) async {
