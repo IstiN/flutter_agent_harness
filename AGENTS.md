@@ -744,6 +744,12 @@ tests are done right:
   `lib/src/prompts/prompts.g.dart` + `flutter_app/lib/prompts.g.dart`
   (generated, never edit by hand); `test/prompts/prompts_sync_test.dart`
   gates drift.
+- Bundled Codex model catalog
+  (`lib/src/providers/chatgpt_codex_models_data.dart`) is generated from
+  `codex-rs/models-manager/models.json` via
+  `dart run scripts/sync_codex_models.dart`. Re-run the script when
+  codex-rs ships a new catalog so the picker / OAuth default stay current
+  without a manual edit.
 
 ## Quality gates (pre-commit hook: `scripts/pre-commit`)
 

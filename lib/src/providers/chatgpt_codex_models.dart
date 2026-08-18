@@ -1,27 +1,32 @@
-/// The bundled ChatGPT Codex model catalog — mirrors what
-/// `codex-rs/models-manager/models.json` ships. The Codex backend
-/// (`https://chatgpt.com/backend-api/codex`) doesn't expose a public
-/// `/models` endpoint, so the picker has to fall back to a hardcoded
-/// list keyed off the canonical Codex CLI defaults.
+/// Public surface for the bundled Codex model catalog. The actual data
+/// is generated from the official codex-rs models.json by
+/// `scripts/sync_codex_models.dart` (committed alongside this file).
 ///
-/// The default ([chatGptCodexDefaultModel]) is the same `gpt-5.6-sol`
-/// the original Codex CLI surfaces as the recommended entry point.
-/// `chatGptCodexBaseUrl` lives in lib/src/providers/chatgpt_oauth.dart
-/// (re-exported via flutter_agent_harness) — both layers read it from
-/// there.
+/// Re-run that script when codex-rs ships a new catalog — the picker,
+/// the OAuth default, and the per-model context-window/maxTokens maps
+/// all flow from the generated `chatGptCodexBundledModels` list below.
 library;
 
-const List<String> chatGptCodexModels = <String>[
-  'gpt-5.6-sol',
-  'gpt-5.6-terra',
-  'gpt-5.6-luna',
-  'gpt-5.5',
-  'gpt-5.4',
-  'gpt-5.4-mini',
-  'gpt-5.2',
+import 'chatgpt_codex_models_data.dart';
+
+/// Slugs only — same shape callers used to read from the hand-rolled
+/// list before the sync script existed.
+final List<String> chatGptCodexModels = <String>[
+  for (final m in chatGptCodexBundledModels) m.slug,
 ];
 
-/// The default Codex model — the first entry in [chatGptCodexModels],
-/// kept as a separate constant so the OAuth flow + the picker read the
-/// same answer.
-const String chatGptCodexDefaultModel = 'gpt-5.6-sol';
+/// Default model — first entry of [chatGptCodexBundledModels],
+/// kept as a separate constant so the OAuth flow and the picker agree.
+final String chatGptCodexDefaultModel = chatGptCodexBundledDefault;
+
+/// Per-model context window (input cap) keyed by slug.
+final Map<String, int> chatGptCodexContextWindows = <String, int>{
+  for (final m in chatGptCodexBundledModels)
+    if (m.contextWindow > 0) m.slug: m.contextWindow,
+};
+
+/// Per-model output cap (max tokens) keyed by slug.
+final Map<String, int> chatGptCodexMaxTokens = <String, int>{
+  for (final m in chatGptCodexBundledModels)
+    if (m.maxTokens > 0) m.slug: m.maxTokens,
+};
