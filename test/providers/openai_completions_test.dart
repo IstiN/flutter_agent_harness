@@ -1650,5 +1650,44 @@ void main() {
       final tool = messagesOf(body).single as Map<String, dynamic>;
       expect(tool['name'], 'read');
     });
+
+    test('google endpoint skips the OpenAI-only strict field', () async {
+      final googleModel = Model(
+        id: 'gemini-2.0-flash',
+        api: 'openai-completions',
+        provider: 'google',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1',
+        contextWindow: 1000000,
+        maxTokens: 8192,
+      );
+      final body = await sentBody(
+        googleModel,
+        Context(
+          messages: [
+            UserMessage(
+              content: 'hello',
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+          tools: [
+            Tool(
+              name: 'get_weather',
+              description: 'Get the weather',
+              parameters: {
+                'type': 'object',
+                'properties': {
+                  'location': {'type': 'string'},
+                },
+              },
+            ),
+          ],
+        ),
+      );
+      final tools = body['tools'] as List;
+      expect(tools, hasLength(1));
+      final tool = tools.single as Map<String, dynamic>;
+      expect(tool.containsKey('strict'), isFalse,
+          reason: 'Gemini rejects the OpenAI-only strict field with 400');
+    });
   });
 }

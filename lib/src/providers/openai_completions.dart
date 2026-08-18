@@ -728,9 +728,18 @@ bool _isDialModel(Model model) {
   return model.provider == 'dial';
 }
 
+/// Gemini's generateContent endpoint (`generativelanguage.googleapis.com`)
+/// rejects the OpenAI-only `strict: false` field in `tools[i]` with
+/// 400 "Cannot find field". Detect it by host or provider name.
+bool _isGoogleModel(Model model) {
+  return model.provider == 'google' ||
+      model.baseUrl.contains('generativelanguage.googleapis.com');
+}
+
 _ResolvedCompat _getCompat(Model model) {
   final isOpenRouter = _isOpenRouterModel(model);
   final isDial = _isDialModel(model);
+  final isGoogle = _isGoogleModel(model);
   final compat = model.compat;
   return _ResolvedCompat(
     maxTokensField: compat?.maxTokensField ?? 'max_completion_tokens',
@@ -743,7 +752,11 @@ _ResolvedCompat _getCompat(Model model) {
         ? 'anthropic'
         : null,
     supportsLongCacheRetention: true,
-    sendsToolStrict: compat?.sendsToolStrict ?? !isDial,
+    // DIAL Core's strict schema rejects `strict`; Google's Gemini
+    // generateContent endpoint also rejects it (400 "Cannot find
+    // field 'strict'"). Neither adapter carries it.
+    sendsToolStrict:
+        compat?.sendsToolStrict ?? (!isDial && !isGoogle),
   );
 }
 
