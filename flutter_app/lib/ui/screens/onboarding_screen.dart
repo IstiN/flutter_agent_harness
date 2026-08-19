@@ -120,6 +120,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   );
 
   /// A provider flow completed on page 2: unlock the step and slide on.
+  /// The SSO/OAuth flow is async — the user may have swiped to another
+  /// page by the time it completes. Always advance when we're still
+  /// on the provider page (index 1), so the button unlocks and the
+  /// flow moves forward even if the user idled on it.
   void _providerDone(String presetKey) {
     setState(() {
       _providerConfigured = true;
@@ -1229,6 +1233,13 @@ class _P2State extends State<_P2> {
   var _busy = false;
   Timer? _busyTimer;
 
+  /// Presets whose config flow is currently running. An SSO/OAuth flow
+  /// waits on the system browser for minutes — far longer than the 3s
+  /// double-tap lock — so a re-tap on the SAME card must stay ignored for
+  /// the whole flow (two taps used to spawn two callback servers and two
+  /// browser tabs).
+  final _runningPresets = <String>{};
+
   @override
   void dispose() {
     _busyTimer?.cancel();
@@ -1333,6 +1344,7 @@ class _P2State extends State<_P2> {
   Future<void> _configure(faui.AddProviderPreset preset) async {
     final registry = widget.registry;
     if (registry == null || _busy) return;
+    if (!_runningPresets.add(preset.key)) return; // flow already running
     setState(() => _busy = true);
     // The busy flag is double-tap protection, NOT a flow-long lock: an SSO
     // flow waits on the system browser and may hang for minutes when the
@@ -1384,6 +1396,7 @@ class _P2State extends State<_P2> {
         );
       }
     } finally {
+      _runningPresets.remove(preset.key);
       _busyTimer?.cancel();
       if (mounted) setState(() => _busy = false);
     }

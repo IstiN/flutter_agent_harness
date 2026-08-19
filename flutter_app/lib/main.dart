@@ -597,9 +597,12 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
           ),
         ),
       );
-    } on Object {
+    } on Object catch (error, stack) {
       // A failed restore (endpoint down, key rejected) lands on the setup
-      // form — prefilled by the same last-connection record.
+      // form — prefilled by the same last-connection record. Log it: a
+      // silent catch here used to leave the boot spinner up forever with
+      // no clue why.
+      debugPrint('[fah] boot restore failed: $error\n$stack');
       if (mounted) {
         AppAnalytics.instance.bootstrapResult('setup_restore_failed');
         setState(() => _config = null);
@@ -614,66 +617,11 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// form they just left.
   Widget _buildHomeWithEmptyManager() {
     AppAnalytics.instance.setupShown('onboarding_done_no_provider');
-    return FutureBuilder<ExecutionEnv>(
-      future: _envForHome(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        final env = snapshot.data!;
-        final manager = FlutterSessionManager(
-          env: env,
-          sessionsRoot: '${env.cwd}/sessions',
-        );
-        // A placeholder session so the home never lands empty: user
-        // always has an active session, apps render + open, sessions
-        // list shows something to pick from. The placeholder uses
-        // a no-op stream (the LLM call errors gracefully) — when the
-        // user actually connects a provider via Settings, reconfigure
-        // takes over.
-        return FutureBuilder<FlutterManagedSession>(
-          future: manager.createSession(
-            config: AgentConfig(
-              providerKind: 'openai-completions',
-              modelId: 'placeholder',
-              baseUrl: '',
-              apiKey: '',
-            ),
-            serviceFactory: () async => AgentService.create(
-              config: AgentConfig(
-                providerKind: 'openai-completions',
-                modelId: 'placeholder',
-                baseUrl: '',
-                apiKey: '',
-              ),
-              env: env,
-              providerRegistry: widget.registry,
-            ),
-          ),
-          builder: (context, sessionSnapshot) {
-            if (!sessionSnapshot.hasData) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
-            return faHomeScreen(
-              context: context,
-              manager: manager,
-              registry: widget.registry,
-              lastConnectionStore: widget.lastConnectionStore,
-            );
-          },
-        );
-      },
+    return _EmptyManagerHome(
+      env: widget.env,
+      registry: widget.registry,
+      lastConnectionStore: widget.lastConnectionStore,
     );
-  }
-
-  Future<ExecutionEnv> _envForHome() async {
-    final env = widget.env;
-    if (env != null) return env;
-    return createPlatformEnv();
   }
 
   Widget _buildSetupScreen() {
@@ -735,6 +683,121 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
         return _buildHomeWithEmptyManager();
       }
       return _buildSetupScreen();
+    }
+    return const Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FaBrandTile(size: 48),
+            SizedBox(height: 24),
+            CircularProgressIndicator(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Home with an empty session manager (post-onboarding, no provider yet).
+///
+/// The env + manager + placeholder session are created ONCE in [initState]:
+/// the previous FutureBuilder-in-build version minted a new manager and a
+/// new session future on every rebuild (duplicate sessions stacked up) and
+/// showed an infinite spinner when session creation failed (a FutureBuilder
+/// error has no data). Errors now surface with a retry.
+class _EmptyManagerHome extends StatefulWidget {
+  const _EmptyManagerHome({this.env, this.registry, this.lastConnectionStore});
+
+  final ExecutionEnv? env;
+  final ProviderRegistry? registry;
+  final LastConnectionStore? lastConnectionStore;
+
+  /// A placeholder session so the home never lands empty: user always has
+  /// an active session, apps render + open, the sessions list shows
+  /// something to pick from. The placeholder uses a no-op stream (the LLM
+  /// call errors gracefully) — when the user actually connects a provider
+  /// via Settings, reconfigure takes over.
+  static final placeholderConfig = AgentConfig(
+    providerKind: 'openai-completions',
+    modelId: 'placeholder',
+    baseUrl: '',
+    apiKey: '',
+  );
+
+  @override
+  State<_EmptyManagerHome> createState() => _EmptyManagerHomeState();
+}
+
+class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
+  FlutterSessionManager? _manager;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_start());
+  }
+
+  Future<void> _start() async {
+    try {
+      final env = widget.env ?? await createPlatformEnv();
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '${env.cwd}/sessions',
+      );
+      await manager.createSession(
+        config: _EmptyManagerHome.placeholderConfig,
+        serviceFactory: () => AgentService.create(
+          config: _EmptyManagerHome.placeholderConfig,
+          env: env,
+          providerRegistry: widget.registry,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _manager = manager;
+        _error = null;
+      });
+    } on Object catch (error, stack) {
+      debugPrint('[fah] empty-manager home failed: $error\n$stack');
+      if (mounted) setState(() => _error = error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final manager = _manager;
+    if (manager != null) {
+      return faHomeScreen(
+        context: context,
+        manager: manager,
+        registry: widget.registry,
+        lastConnectionStore: widget.lastConnectionStore,
+      );
+    }
+    final error = _error;
+    if (error != null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const FaBrandTile(size: 48),
+              const SizedBox(height: 24),
+              Text('Could not start a session: $error'),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () {
+                  setState(() => _error = null);
+                  unawaited(_start());
+                },
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
     }
     return const Scaffold(
       body: Center(

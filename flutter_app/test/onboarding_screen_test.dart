@@ -281,16 +281,21 @@ void main() {
         expect(find.byType(OnboardingScreen), findsOneWidget);
         expect(find.byType(SetupScreen), findsNothing);
 
-        // Skipping sets the flag and boot continues to the setup form.
+        // Skipping sets the flag and boot continues to the home bootstrap
+        // (an empty manager + placeholder session — the launcher's empty
+        // state prompts for a provider; the legacy setup form is gone).
+        // One frame only: the home never settles in a fake-async test zone
+        // (asset loads never complete), same as the restore-boot test.
         await tester.tap(find.text('Skip'));
-        await tester.pumpAndSettle();
+        await tester.pump();
         expect(onboardingStore.seen, isTrue);
         expect(find.byType(OnboardingScreen), findsNothing);
-        expect(find.byType(SetupScreen), findsOneWidget);
+        expect(find.byType(SetupScreen), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
       },
     );
 
-    testWidgets('a seen flag routes straight to the setup form', (
+    testWidgets('a seen flag routes straight to the home bootstrap', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -308,7 +313,8 @@ void main() {
       );
       await tester.pump();
       expect(find.byType(OnboardingScreen), findsNothing);
-      expect(find.byType(SetupScreen), findsOneWidget);
+      expect(find.byType(SetupScreen), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
     testWidgets(
