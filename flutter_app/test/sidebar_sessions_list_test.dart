@@ -249,6 +249,57 @@ void main() {
     expect(await repo.list(), isEmpty);
   });
 
+  testWidgets('tile shows the session folder (basename of cwd)', (
+    tester,
+  ) async {
+    manager.addSession('live-1', _fakeService(env));
+    final names = SessionNamesStore.inMemory({'live-1': 'Live chat'});
+
+    await tester.pumpWidget(harness(names: names));
+    await tester.pumpAndSettle();
+
+    // The fake service's env (MemoryExecutionEnv()) reports cwd '/' — that
+    // looks like an unscoped sandbox root, so the tile should NOT show a
+    // folder line at all (no useful basename).
+    expect(find.byIcon(Icons.folder_outlined), findsNothing);
+
+    // Sanity: the title still renders.
+    expect(find.text('Live chat'), findsOneWidget);
+  });
+
+  testWidgets('a session scoped into a real folder shows the folder basename', (
+    tester,
+  ) async {
+    // Build a dedicated env rooted at the project path so basename(mount)
+    // is meaningful.
+    final scopedEnv = MemoryExecutionEnv(
+      cwd: '/Users/test/Documents/my-project',
+    );
+    final scopedManager = FlutterSessionManager(
+      env: scopedEnv,
+      sessionsRoot: '/sessions',
+    );
+    scopedManager.addSession('live-1', _fakeService(scopedEnv));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: SidebarSessionsList(
+            manager: scopedManager,
+            sessionNamesStore: SessionNamesStore.inMemory(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('my-project'), findsOneWidget);
+    expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
+  });
+
   testWidgets('deleting the active live session mints a fresh one', (
     tester,
   ) async {

@@ -6,6 +6,7 @@ import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show SessionMetadata;
+import 'package:path/path.dart' as p;
 
 /// The sessions list for the wide-screen sidebar: shows every live session
 /// (from [manager]) plus persisted on-disk sessions not currently live
@@ -125,6 +126,18 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     return '${months[created.month - 1]} ${created.day}';
   }
 
+  /// The folder label rendered next to the title — the last path segment
+  /// of the session's working directory so the user can scan which project
+  /// each session belongs to at a glance. Null when the cwd is missing
+  /// or looks like an unscoped sandbox root (no useful basename).
+  String? _cwdLabel(_SessionEntry entry) {
+    final cwd = entry.cwd;
+    if (cwd == null || cwd.isEmpty) return null;
+    final name = p.basename(cwd);
+    if (name.isEmpty || name == '/' || name == '.') return null;
+    return name;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -147,6 +160,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
         _SessionEntry(
           id: session.id,
           createdAt: session.createdAt,
+          cwd: session.service.env.cwd,
           live: session,
         ),
       for (final metadata in widget.persistedSessions)
@@ -154,6 +168,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
           _SessionEntry(
             id: metadata.id,
             createdAt: metadata.createdAt,
+            cwd: metadata.cwd,
             persisted: metadata,
           ),
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -198,6 +213,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                         _SessionTile(
                           title: _titleFor(entry),
                           subtitle: _subtitleFor(entry),
+                          cwd: _cwdLabel(entry),
                           isActive: widget.manager.active?.id == entry.id,
                           onTap: () => _openEntry(entry),
                           onMenu: (anchor) => _showSessionMenu(entry, anchor),
@@ -450,12 +466,19 @@ final class _SessionEntry {
   const _SessionEntry({
     required this.id,
     required this.createdAt,
+    this.cwd,
     this.live,
     this.persisted,
   });
 
   final String id;
   final DateTime createdAt;
+
+  /// The session's working directory at creation time (CLI sessions store
+  /// the host cwd; macOS app sessions store the Fa sandbox root). Drives
+  /// the folder label rendered next to the title so the user can tell at
+  /// a glance which project/sandbox each session belongs to.
+  final String? cwd;
   final FlutterManagedSession? live;
   final SessionMetadata? persisted;
 }
@@ -496,12 +519,17 @@ class _SessionTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.isActive,
+    this.cwd,
     required this.onTap,
     this.onMenu,
   });
 
   final String title;
   final String subtitle;
+  final String? cwd;
+
+  /// Distinct, monospace basename of the session's working directory.
+  /// Null when the cwd is unknown or the personal (unscoped) sandbox.
   final bool isActive;
   final VoidCallback onTap;
 
@@ -566,6 +594,32 @@ class _SessionTile extends StatelessWidget {
                             color: colors.dim.withValues(alpha: 0.7),
                             fontSize: 11,
                           ),
+                        ),
+                      ],
+                      if (cwd != null) ...[
+                        const SizedBox(height: 2),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.folder_outlined,
+                              size: 11,
+                              color: colors.dim.withValues(alpha: 0.6),
+                            ),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                cwd!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: colors.dim.withValues(alpha: 0.6),
+                                  fontSize: 11,
+                                  fontFamily: 'JetBrainsMono',
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ],
