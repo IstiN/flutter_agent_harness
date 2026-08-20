@@ -2110,6 +2110,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         LastConnectionStore.inMemory(),
                   );
                 },
+                // CodeMie edit provider → "Re-authenticate": re-run the SSO
+                // flow for that org (the cookie key expires and cannot be
+                // refreshed by re-typing). The flow itself refreshes the
+                // existing provider's key and keeps its model.
+                onProviderReauthenticate: (ctx, provider) async {
+                  final registry = widget.registry;
+                  if (registry == null) return false;
+                  return runCodemieSsoFlow(
+                    context: ctx,
+                    registry: registry,
+                    service: service,
+                    lastConnectionStore:
+                        widget.lastConnectionStore ??
+                        LastConnectionStore.inMemory(),
+                    orgUrl: codeMieOrgUrl(provider.baseUrl),
+                  );
+                },
                 onDeviceProviders: buildOnDeviceProviderRoutes(
                   context,
                   registry: widget.registry,

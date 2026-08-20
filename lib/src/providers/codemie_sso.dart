@@ -39,6 +39,19 @@ String codeMieApiBase(String rawUrl) {
 String buildCodeMieSsoUrl(String codeMieUrl, int port) =>
     '${codeMieApiBase(codeMieUrl)}/v1/auth/login/$port';
 
+/// True when [baseUrl] points at a CodeMie API endpoint
+/// (`<org>/code-assistant-api[/v1]`).
+bool isCodeMieBaseUrl(String baseUrl) =>
+    RegExp(r'/code-assistant-api(/|$)', caseSensitive: false).hasMatch(baseUrl);
+
+/// The inverse of the stored provider base URL:
+/// `<org>/code-assistant-api/v1` → `<org>` — the bare organization URL the
+/// SSO flow needs (re-login from the provider editor).
+String codeMieOrgUrl(String baseUrl) => baseUrl.trim().replaceFirst(
+  RegExp(r'/code-assistant-api(/v1)?/?$', caseSensitive: false),
+  '',
+);
+
 /// The result of a successful CodeMie SSO login: the session cookies plus
 /// the resolved API base URL.
 final class CodeMieSsoCredentials {

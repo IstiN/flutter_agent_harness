@@ -5,6 +5,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show isCodeMieBaseUrl;
 
 import 'package:fa_ui/src/providers/add_provider_picker.dart';
 import 'package:fa_ui/src/providers/connection.dart';
@@ -41,6 +43,7 @@ class ProvidersSection extends StatelessWidget {
     this.openRouterOAuthCapture,
     this.onCodeMieSso,
     this.onChatGptOAuth,
+    this.onProviderReauthenticate,
   });
 
   /// The active connection, for the current-provider mark. `null` renders
@@ -82,6 +85,14 @@ class ProvidersSection extends StatelessWidget {
   /// picker. When null, ChatGPT is not offered. The host should open the
   /// ChatGPT OAuth flow.
   final VoidCallback? onChatGptOAuth;
+
+  /// Re-authentication for SSO-backed providers (CodeMie) in the edit
+  /// editor: the host re-runs the sign-in flow for [provider] (refreshing
+  /// its stored key) and returns whether it completed. Only consulted for
+  /// providers whose base URL matches a known SSO endpoint (CodeMie's
+  /// `/code-assistant-api`); null hides the button everywhere.
+  final Future<bool> Function(BuildContext context, CustomProvider provider)?
+  onProviderReauthenticate;
 
   bool _isCurrent(Object provider) {
     final service = this.service;
@@ -319,12 +330,18 @@ class ProvidersSection extends StatelessWidget {
     ProviderRegistry registry,
     CustomProvider provider,
   ) async {
+    final reauth = onProviderReauthenticate;
     final result = await pushFaPage<ProviderEditorResult>(
       context,
       ProviderEditorPage(
         title: FaUiStrings.of(context).settingsEditProviderTitle,
         initial: provider,
         hasSavedKey: (registry.keyFor(provider.id) ?? '').isNotEmpty,
+        // SSO-backed providers (CodeMie) get a Re-authenticate button:
+        // the cookie key expires and cannot be refreshed by re-typing.
+        onReauthenticate: reauth != null && isCodeMieBaseUrl(provider.baseUrl)
+            ? (ctx) => reauth(ctx, provider)
+            : null,
       ),
     );
     if (result == null) return;

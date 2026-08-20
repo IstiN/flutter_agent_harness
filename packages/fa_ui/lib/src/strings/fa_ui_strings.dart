@@ -64,6 +64,10 @@ abstract class FaUiStrings {
   /// The Delete button.
   String get settingsDeleteButton;
 
+  /// The re-authentication button (SSO providers, e.g. CodeMie) in the
+  /// provider editor: re-runs the sign-in flow to refresh the stored key.
+  String get settingsReauthenticateButton;
+
   /// Validation error: the name field is empty.
   String get settingsNameRequired;
 
@@ -256,6 +260,8 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsDeleteButton => 'Delete';
   @override
+  String get settingsReauthenticateButton => 'Re-authenticate';
+  @override
   String get settingsNameRequired => 'Name is required';
   @override
   String get settingsBaseUrlRequired => 'Base URL is required';
@@ -423,6 +429,8 @@ class FaUiStringsRu extends FaUiStrings {
   String get settingsCancelButton => 'Отмена';
   @override
   String get settingsDeleteButton => 'Удалить';
+  @override
+  String get settingsReauthenticateButton => 'Войти заново';
   @override
   String get settingsNameRequired => 'Требуется имя';
   @override

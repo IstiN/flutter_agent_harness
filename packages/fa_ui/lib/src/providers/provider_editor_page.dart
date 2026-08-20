@@ -112,6 +112,7 @@ class ProviderEditorPage extends StatefulWidget {
     this.prefillBaseUrl,
     this.prefillModelId,
     this.keyHelpUrl,
+    this.onReauthenticate,
   });
 
   /// App bar title (`Add provider` / `Edit provider` / the preset label).
@@ -160,6 +161,13 @@ class ProviderEditorPage extends StatefulWidget {
   /// hint next to the API-key field; null hides it.
   final String? keyHelpUrl;
 
+  /// Re-authentication action for SSO-backed providers (CodeMie), shown in
+  /// edit mode only: re-runs the host's sign-in flow, which itself persists
+  /// the refreshed credentials. Returns true when the flow completed — the
+  /// editor then closes (its fields are stale by definition: the flow owns
+  /// the save). Null hides the button.
+  final Future<bool> Function(BuildContext context)? onReauthenticate;
+
   @override
   State<ProviderEditorPage> createState() => _ProviderEditorPageState();
 }
@@ -172,6 +180,7 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
 
   String? _error;
   var _presetSeeded = false;
+  var _reauthRunning = false;
 
   bool get _isPreset => widget.preset != null;
 
@@ -275,6 +284,20 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
     Navigator.of(context).pop(const ProviderEditorResult.delete());
   }
 
+  Future<void> _reauthenticate() async {
+    final action = widget.onReauthenticate;
+    if (action == null || _reauthRunning) return;
+    setState(() => _reauthRunning = true);
+    try {
+      final ok = await action(context);
+      // The flow persisted the refreshed credentials itself; the editor's
+      // fields are stale now, so a successful re-auth closes the page.
+      if (ok && mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _reauthRunning = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -353,6 +376,21 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                     _keyController.text = key;
                     widget.onOAuthSuccess?.call(key);
                   },
+                ),
+              ],
+              if (widget.initial != null &&
+                  widget.onReauthenticate != null) ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _reauthRunning ? null : _reauthenticate,
+                  icon: _reauthRunning
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh, size: 18),
+                  label: Text(strings.settingsReauthenticateButton),
                 ),
               ],
               const SizedBox(height: 12),

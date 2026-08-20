@@ -34,6 +34,32 @@ void main() {
     });
   });
 
+  group('isCodeMieBaseUrl', () {
+    test('matches the API path with and without /v1', () {
+      expect(isCodeMieBaseUrl('https://h.example/code-assistant-api'), isTrue);
+      expect(
+        isCodeMieBaseUrl('https://h.example/code-assistant-api/v1'),
+        isTrue,
+      );
+      expect(isCodeMieBaseUrl('https://h.example/v1'), isFalse);
+      expect(isCodeMieBaseUrl('https://code-assistant-api.example/v1'), isFalse);
+    });
+  });
+
+  group('codeMieOrgUrl', () {
+    test('strips the API suffix from a stored provider base URL', () {
+      expect(
+        codeMieOrgUrl('https://h.example/code-assistant-api/v1'),
+        'https://h.example',
+      );
+      expect(
+        codeMieOrgUrl('https://h.example/code-assistant-api'),
+        'https://h.example',
+      );
+      expect(codeMieOrgUrl('https://h.example/'), 'https://h.example/');
+    });
+  });
+
   group('decodeCodeMieSsoToken', () {
     test('decodes the base64 JSON cookies object', () {
       final token = base64.encode(

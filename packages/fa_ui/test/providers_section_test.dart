@@ -342,7 +342,51 @@ void main() {
       expect(find.text('Acme'), findsNothing);
     });
 
-    testWidgets('preset editor: the name is editable, the URL read-only, '
+    testWidgets('edit provider: a CodeMie provider shows Re-authenticate, '
+        'a plain one does not; success closes the editor', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      final codemie = await registry.add(
+        name: 'CodeMie',
+        baseUrl: 'https://codemie.example/code-assistant-api/v1',
+        modelId: 'gpt-4o',
+      );
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      CustomProvider? reauthed;
+      await _pump(
+        tester,
+        ProvidersSection(
+          registry: registry,
+          onProviderReauthenticate: (context, provider) async {
+            reauthed = provider;
+            return true;
+          },
+        ),
+      );
+
+      // A plain key-based provider has no re-auth button.
+      await tester.tap(find.text('Acme'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      expect(find.text('Re-authenticate'), findsNothing);
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+
+      // The CodeMie provider does: it runs the host's SSO flow with the
+      // edited provider and a success closes the (now stale) editor.
+      await tester.tap(find.text('CodeMie'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      await tester.tap(find.text('Re-authenticate'));
+      await tester.pumpAndSettle();
+      expect(reauthed?.id, codemie.id);
+      expect(find.byType(ProviderEditorPage), findsNothing);
+    });
+
+    testWidgets('preset editor: the name and URL are editable, '
         'the model and key save', (tester) async {
       final keysStore = SessionKeysStore.inMemory();
       final registry = ProviderRegistry.inMemory();
