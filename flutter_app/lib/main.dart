@@ -367,16 +367,30 @@ class MyApp extends StatelessWidget {
 /// or null when the setup screen should show instead: nothing configured,
 /// an on-device connection (those re-offer the quick start instead of
 /// silently loading multi-GB weights at boot), or a hosted connection
-/// whose key is gone. Key order: the matching custom provider's
-/// (Keychain-backed) registry key, then the saved hosted key; keyless
-/// custom endpoints (llama.cpp/Ollama) connect without a key.
+/// whose key is gone. Every hosted catalog kind restores
+/// (`openai-completions`, `google`, `anthropic`, `dial`, `minimax`,
+/// `chatgpt-codex`). Key order: the matching custom provider's
+/// (Keychain-backed) registry key, then the catalog kind's standard env
+/// names (`GOOGLE_API_KEY`, …) from the saved-keys chain, then the legacy
+/// hosted key; keyless custom endpoints (llama.cpp/Ollama) connect
+/// without a key.
 AgentConfig? restorableBootConfig({
   required LastConnection? connection,
   required ProviderRegistry? registry,
   required SessionKeysStore? sessionKeysStore,
 }) {
   if (connection == null) return null;
-  if (connection.providerKind != 'openai-completions') return null;
+  final kind = connection.providerKind;
+  // On-device backends re-offer the quick start instead of silently
+  // loading multi-GB weights at boot. Every hosted catalog kind
+  // (openai-completions, google, anthropic, dial, minimax,
+  // chatgpt-codex) restores — a 'google' last connection used to fall
+  // into the placeholder home here.
+  if (kind == webLlmProviderKind ||
+      kind == gemmaProviderKind ||
+      kind == transformersJsProviderKind) {
+    return null;
+  }
   final baseUrl = connection.baseUrl ?? '';
   if (baseUrl.isEmpty) return null;
   CustomProvider? custom;
@@ -390,11 +404,23 @@ AgentConfig? restorableBootConfig({
   }
   var key = custom != null ? registry!.keyFor(custom.id) ?? '' : '';
   if (key.isEmpty) {
+    // Hosted catalog kinds resolve their standard key names
+    // (GOOGLE_API_KEY, ANTHROPIC_API_KEY, …) from the saved-keys chain.
+    for (final spec in providerCatalog.values) {
+      if (spec.kind != kind) continue;
+      for (final name in spec.apiKeyEnvNames) {
+        key = settingsKeyEnv(name, sessionKeysStore);
+        if (key.isNotEmpty) break;
+      }
+      break;
+    }
+  }
+  if (key.isEmpty) {
     key = settingsKeyEnv('OPENROUTER_API_KEY', sessionKeysStore);
   }
   if (key.isEmpty && custom == null) return null;
   return AgentConfig(
-    providerKind: connection.providerKind,
+    providerKind: kind,
     modelId: connection.modelId,
     baseUrl: baseUrl,
     apiKey: key,

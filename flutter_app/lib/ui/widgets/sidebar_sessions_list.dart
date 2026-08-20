@@ -3,10 +3,15 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show SessionMetadata;
 
 /// The sessions list for the wide-screen sidebar: shows every live session
-/// (from [manager]) with its derived or custom title, the active session
-/// highlighted with a teal dot, and a "New session" button at the top.
+/// (from [manager]) plus persisted on-disk sessions not currently live
+/// ([persistedSessions]) with its derived or custom title, the active
+/// session highlighted with a teal dot, and a "New session" button at the
+/// top. Tapping a persisted-only session opens it from disk via
+/// [onOpenPersisted].
 ///
 /// When [collapsed] is true the list degrades to a centered column of dots
 /// (active = teal, inactive = dim) with a tooltip per dot — the icon-rail
@@ -18,6 +23,8 @@ class SidebarSessionsList extends StatefulWidget {
     this.sessionNamesStore,
     this.onNewSession,
     this.onSessionTap,
+    this.persistedSessions = const [],
+    this.onOpenPersisted,
     this.collapsed = false,
   });
 
@@ -27,6 +34,13 @@ class SidebarSessionsList extends StatefulWidget {
 
   /// Called after a session is tapped and [manager.switchTo] has run.
   final VoidCallback? onSessionTap;
+
+  /// On-disk sessions (newest first). Entries not live in [manager] render
+  /// below the live ones and open from disk on tap.
+  final List<SessionMetadata> persistedSessions;
+
+  /// Opens a persisted-only session from disk (see [persistedSessions]).
+  final ValueChanged<SessionMetadata>? onOpenPersisted;
 
   /// When true the list renders as a compact column of session dots.
   final bool collapsed;
@@ -54,20 +68,14 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     super.dispose();
   }
 
-  String _titleFor(FlutterManagedSession session) {
-    return widget.sessionNamesStore?.titleFor(session.id) ??
-        derivedSessionTitle(
-          context,
-          id: session.id,
-          createdAt: session.createdAt,
-        );
+  String _titleFor(_SessionEntry entry) {
+    return widget.sessionNamesStore?.titleFor(entry.id) ??
+        derivedSessionTitle(context, id: entry.id, createdAt: entry.createdAt);
   }
 
   /// Short timestamp for the session subtitle (e.g. "12:34 PM" or "May 7").
-  String _subtitleFor(FlutterManagedSession session) {
-    final created = session.createdAt;
-    // ignore: unnecessary_null_comparison, dead_code
-    if (created == null) return '';
+  String _subtitleFor(_SessionEntry entry) {
+    final created = entry.createdAt;
     final now = DateTime.now();
     final diff = now.difference(created);
     if (diff.inDays == 0) {
@@ -113,8 +121,27 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   // ---------------------------------------------------------------------------
 
   Widget _buildExpanded(FahColors colors) {
-    final sessions = widget.manager.sessions;
-    final grouped = _groupSessionsByDate(sessions);
+    final live = widget.manager.sessions;
+    final liveIds = live.map((s) => s.id).toSet();
+    // Live sessions plus the persisted ones not currently open — the full
+    // on-disk history stays reachable from the sidebar, like the mobile
+    // chat sheet's persisted tail.
+    final entries = <_SessionEntry>[
+      for (final session in live)
+        _SessionEntry(
+          id: session.id,
+          createdAt: session.createdAt,
+          live: session,
+        ),
+      for (final metadata in widget.persistedSessions)
+        if (!liveIds.contains(metadata.id))
+          _SessionEntry(
+            id: metadata.id,
+            createdAt: metadata.createdAt,
+            persisted: metadata,
+          ),
+    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final grouped = _groupEntriesByDate(entries);
     return Column(
       children: [
         Padding(
@@ -151,16 +178,15 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                   children: [
                     for (final group in grouped) ...[
                       _DateHeader(label: group.label, colors: colors),
-                      for (final session in group.sessions)
+                      for (final entry in group.entries)
                         _SessionTile(
-                          title: _titleFor(session),
-                          subtitle: _subtitleFor(session),
-                          isActive: widget.manager.active?.id == session.id,
-                          onTap: () {
-                            widget.manager.switchTo(session.id);
-                            widget.onSessionTap?.call();
-                          },
-                          onMenu: () => _showSessionMenu(session),
+                          title: _titleFor(entry),
+                          subtitle: _subtitleFor(entry),
+                          isActive: widget.manager.active?.id == entry.id,
+                          onTap: () => _openEntry(entry),
+                          onMenu: entry.live != null
+                              ? () => _showSessionMenu(entry.live!)
+                              : null,
                         ),
                     ],
                   ],
@@ -170,32 +196,39 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     );
   }
 
-  /// Groups sessions by date headers (Today, Yesterday, May 7, ...).
-  List<_SessionGroup> _groupSessionsByDate(
-    List<FlutterManagedSession> sessions,
-  ) {
-    if (sessions.isEmpty) return const [];
-    final groups = <String, List<FlutterManagedSession>>{};
+  void _openEntry(_SessionEntry entry) {
+    final live = entry.live;
+    if (live != null) {
+      widget.manager.switchTo(live.id);
+      widget.onSessionTap?.call();
+      return;
+    }
+    final persisted = entry.persisted;
+    if (persisted != null) widget.onOpenPersisted?.call(persisted);
+  }
+
+  /// Groups entries by date headers (Today, Yesterday, May 7, ...).
+  List<_SessionGroup> _groupEntriesByDate(List<_SessionEntry> entries) {
+    if (entries.isEmpty) return const [];
+    final groups = <String, List<_SessionEntry>>{};
     final order = <String>[];
-    for (final session in sessions) {
-      final label = _groupLabel(session);
+    for (final entry in entries) {
+      final label = _groupLabel(entry);
       if (!groups.containsKey(label)) {
         groups[label] = [];
         order.add(label);
       }
-      groups[label]!.add(session);
+      groups[label]!.add(entry);
     }
     return [
       for (final label in order)
-        _SessionGroup(label: label, sessions: groups[label]!),
+        _SessionGroup(label: label, entries: groups[label]!),
     ];
   }
 
-  /// Date group label for a session: "Today", "Yesterday", or a date.
-  String _groupLabel(FlutterManagedSession session) {
-    final created = session.createdAt;
-    // ignore: unnecessary_null_comparison, dead_code
-    if (created == null) return 'Earlier';
+  /// Date group label for an entry: "Today", "Yesterday", or a date.
+  String _groupLabel(_SessionEntry entry) {
+    final created = entry.createdAt;
     final now = DateTime.now();
     final diff = now.difference(created);
     if (diff.inDays == 0) return 'Today';
@@ -253,7 +286,13 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                     final session = sessions[index];
                     final isActive = widget.manager.active?.id == session.id;
                     return Tooltip(
-                      message: _titleFor(session),
+                      message: _titleFor(
+                        _SessionEntry(
+                          id: session.id,
+                          createdAt: session.createdAt,
+                          live: session,
+                        ),
+                      ),
                       child: GestureDetector(
                         onTap: () {
                           widget.manager.switchTo(session.id);
@@ -284,12 +323,28 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   }
 }
 
+/// One row in the expanded list: a live [FlutterManagedSession] or a
+/// persisted-only [SessionMetadata] still sitting on disk.
+final class _SessionEntry {
+  const _SessionEntry({
+    required this.id,
+    required this.createdAt,
+    this.live,
+    this.persisted,
+  });
+
+  final String id;
+  final DateTime createdAt;
+  final FlutterManagedSession? live;
+  final SessionMetadata? persisted;
+}
+
 /// A group of sessions under one date header.
 final class _SessionGroup {
-  const _SessionGroup({required this.label, required this.sessions});
+  const _SessionGroup({required this.label, required this.entries});
 
   final String label;
-  final List<FlutterManagedSession> sessions;
+  final List<_SessionEntry> entries;
 }
 
 /// A small date header label (Today, Yesterday, May 7, ...).

@@ -25,7 +25,7 @@ import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show ExecutionEnv;
+    show ExecutionEnv, SessionMetadata;
 
 /// The wide-screen adaptive shell: a 3-pane layout with a collapsible
 /// sidebar (sessions list + Settings/Files nav) on the left, the active
@@ -100,6 +100,10 @@ PreferredSizeWidget faAppBar({
 class _WideLayoutShellState extends State<WideLayoutShell> {
   bool _sidebarCollapsed = false;
 
+  /// On-disk sessions (newest first) backing the sidebar's persisted tail —
+  /// reloaded whenever the manager changes (create/open/close).
+  List<SessionMetadata> _persistedSessions = const [];
+
   /// Width of the right-side apps panel (user-resizable via drag handle).
   double _appsPanelWidth = 380;
 
@@ -113,7 +117,15 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   void _onManagerChanged() {
     _subscribeToActiveService();
+    unawaited(_reloadPersistedSessions());
     if (mounted) setState(() {});
+  }
+
+  /// Refreshes the sidebar's persisted-sessions tail from disk.
+  Future<void> _reloadPersistedSessions() async {
+    final all = await widget.manager.listPersistedSessions();
+    if (!mounted) return;
+    setState(() => _persistedSessions = all);
   }
 
   /// Rebuilds when the active service notifies (model change, reconfigure).
@@ -137,6 +149,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     super.initState();
     widget.manager.addListener(_onManagerChanged);
     _subscribeToActiveService();
+    unawaited(_reloadPersistedSessions());
   }
 
   @override
@@ -208,6 +221,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                 collapsed: _sidebarCollapsed,
                 onNewSession: _newSession,
                 onSessionTap: () => setState(() {}),
+                persistedSessions: _persistedSessions,
+                onOpenPersisted: _openPersistedSession,
               ),
             ),
             Divider(height: 1, thickness: 1, color: colors.border),
@@ -456,6 +471,33 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         serviceFactory: () async => service.clone(),
       ),
     );
+  }
+
+  /// Opens a persisted-only session from disk (the sidebar's history tail),
+  /// cloning the active service's connection — the same pattern the JS-app
+  /// session binding uses.
+  Future<void> _openPersistedSession(SessionMetadata metadata) async {
+    final active = widget.manager.active;
+    if (active == null) return;
+    final service = active.service;
+    try {
+      await widget.manager.openSession(
+        metadata,
+        config:
+            service.configForClone ??
+            AgentConfig(
+              providerKind: service.providerKind,
+              modelId: service.modelId,
+              baseUrl: '',
+              apiKey: '',
+            ),
+        serviceFactory: () => service.clone(),
+      );
+    } on Object catch (error) {
+      // A torn/corrupt session file must not crash the shell — the entry
+      // just stays in the list.
+      debugPrint('[fah] open persisted session ${metadata.id} failed: $error');
+    }
   }
 
   /// Opens the same two-step provider → model picker the settings

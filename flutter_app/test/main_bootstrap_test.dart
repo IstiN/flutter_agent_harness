@@ -101,5 +101,63 @@ void main() {
       expect(config, isNotNull);
       expect(config!.apiKey, isEmpty);
     });
+
+    test('a google (Gemini) connection restores with GOOGLE_API_KEY', () {
+      final config = restorableBootConfig(
+        connection: const LastConnection(
+          providerKind: 'google',
+          modelId: 'gemini-3-flash',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        ),
+        registry: null,
+        sessionKeysStore: SessionKeysStore.inMemory({
+          'GOOGLE_API_KEY': 'g-key',
+        }),
+      );
+      expect(config, isNotNull);
+      expect(config!.providerKind, 'google');
+      expect(config.apiKey, 'g-key');
+      expect(config.modelId, 'gemini-3-flash');
+    });
+
+    test(
+      'a google connection restores through the custom provider key',
+      () async {
+        const conn = LastConnection(
+          providerKind: 'google',
+          modelId: 'gemini-3-flash',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        );
+        final registry = ProviderRegistry.inMemory();
+        final provider = await registry.add(
+          name: 'Gemini',
+          baseUrl: conn.baseUrl!,
+          modelId: 'gemini-3-flash',
+        );
+        registry.rememberKey(provider.id, 'g-custom');
+        final config = restorableBootConfig(
+          connection: conn,
+          registry: registry,
+          sessionKeysStore: SessionKeysStore.inMemory(),
+        );
+        expect(config, isNotNull);
+        expect(config!.apiKey, 'g-custom');
+      },
+    );
+
+    test('null for a google connection whose key is gone', () {
+      expect(
+        restorableBootConfig(
+          connection: const LastConnection(
+            providerKind: 'google',
+            modelId: 'gemini-3-flash',
+            baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          ),
+          registry: null,
+          sessionKeysStore: SessionKeysStore.inMemory(),
+        ),
+        isNull,
+      );
+    });
   });
 }

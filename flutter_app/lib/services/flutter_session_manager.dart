@@ -91,6 +91,17 @@ final class FlutterSessionManager extends ChangeNotifier {
   List<FlutterManagedSession> get sessions =>
       _sessions.values.toList()..sort((a, b) => b.id.compareTo(a.id));
 
+  /// Every session persisted on disk, newest first (live ones included).
+  /// Storage failures yield an empty list — a broken sessions dir must not
+  /// break the sidebar listing.
+  Future<List<SessionMetadata>> listPersistedSessions() async {
+    try {
+      return await _repo.list();
+    } on Object {
+      return const [];
+    }
+  }
+
   /// The active session, if any.
   FlutterManagedSession? get active =>
       _activeId == null ? null : _sessions[_activeId];
