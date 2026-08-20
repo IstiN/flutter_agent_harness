@@ -379,5 +379,18 @@
   "settingsIconsPerRowHint": "Home grid columns; Auto is 4 on phone, 6 on wide screens",
   "settingsIconsPerRowAuto": "Auto",
   "settingsShowOnboarding": "Show welcome tour",
-  "chatSteerTooltip": "Send now (interrupt)"
+  "chatSteerTooltip": "Send now (interrupt)",
+  "workspaceDialogTitle": "Working folder",
+  "workspaceDialogChangeFolder": "Change folder…",
+  "workspaceDialogClearFolder": "Use Personal folder",
+  "workspaceDialogClose": "Close",
+  "workspaceDialogCurrentFolder": "Current folder",
+  "workspaceDialogHostPath": "Host path",
+  "workspaceDialogMountHint": "Files at /project/... in the agent map to this folder on your Mac.",
+  "workspaceDialogUnsupported": "Project folders are only available on macOS right now.",
+  "workspaceDialogPersonal": "Personal (no folder mounted)",
+  "workspaceDialogMailbox": "Your mailbox",
+  "workspaceDialogMailboxHint": "Other Fa agents can message this session at this address.",
+  "workspaceDialogMailboxCopy": "Copy",
+  "workspaceDialogMailboxCopied": "Mailbox address copied"
 }

@@ -7,7 +7,7 @@ import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:fa/services/icloud_sync_service.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
-import 'package:fa/services/project_mount_store.dart';
+import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
@@ -112,46 +112,32 @@ class _FileBrowserState extends State<FileBrowser> {
   }
 
   Future<void> _pickProjectFolder() async {
-    final mountEnv = _mountEnv;
-    if (mountEnv == null) return;
     final ops = widget.projectFolderOps ?? _defaultProjectFolderOps();
-    if (ops == null) return;
-    final picked = await ops.pickDirectory();
-    if (picked == null) return;
-    final ok = await ops.startAccessing(picked.bookmark);
-    if (!ok) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.filesFolderAccessDenied)),
-        );
-      }
-      return;
-    }
-    await ProjectMountStore.save(
-      widget.env,
-      path: picked.path,
-      bookmark: picked.bookmark,
+    final picked = await pickAndApplyProjectMount(
+      env: widget.env,
+      ops: ops,
+      onApplied: () => widget.onProjectMountChanged?.call(),
+      onAccessDenied: () {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.l10n.filesFolderAccessDenied)),
+          );
+        }
+      },
     );
-    setState(() {
-      mountEnv.mountedRoot = picked.path;
-      mountEnv.mountUnavailable = null;
-    });
-    widget.onProjectMountChanged?.call();
+    if (picked == null) return;
+    setState(() {});
     await _load();
   }
 
   Future<void> _unmountProjectFolder() async {
-    final mountEnv = _mountEnv;
-    final root = mountEnv?.mountedRoot;
-    if (mountEnv == null || root == null) return;
-    final ops = widget.projectFolderOps ?? _defaultProjectFolderOps();
-    final stored = await ProjectMountStore.load(widget.env);
-    if (stored != null && ops != null) {
-      await ops.stopAccessing(stored.bookmark);
-    }
-    await ProjectMountStore.clear(widget.env);
-    setState(() => mountEnv.mountedRoot = null);
-    widget.onProjectMountChanged?.call();
+    final cleared = await unapplyProjectMount(
+      env: widget.env,
+      ops: widget.projectFolderOps ?? _defaultProjectFolderOps(),
+      onApplied: () => widget.onProjectMountChanged?.call(),
+    );
+    if (!cleared) return;
+    setState(() {});
     await _load();
   }
 

@@ -1,4 +1,9 @@
 import 'dart:async';
+import 'dart:io' show Platform;
+
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+
+import 'package:path/path.dart' as p;
 
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
@@ -10,6 +15,7 @@ import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
+import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
@@ -131,6 +137,31 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final all = await widget.manager.listPersistedSessions();
     if (!mounted) return;
     setState(() => _persistedSessions = all);
+  }
+
+  /// The host path of the current project mount (null = Personal / no mount).
+  String? get _mountedPath {
+    final env = widget.manager.active?.service.env;
+    if (env == null) return null;
+    return currentMountedPath(env);
+  }
+
+  /// Chip label: the basename of the mounted folder, or the Personal
+  /// fallback when nothing is mounted.
+  String _mountedFolderLabel() {
+    final path = _mountedPath;
+    if (path == null) return 'Personal Workspace'; // l10n:ignore — see dialog
+    return p.basename(path);
+  }
+
+  /// The absolute mailbox address another Fa instance uses to deliver an
+  /// `agent_message` to this session over the shared messaging fabric.
+  /// Falls back to a placeholder when the service hasn't materialized its
+  /// session id yet (e.g. the placeholder home before the user connects).
+  String _mailboxAddress(AgentService? service) {
+    final id = service?.currentSessionId;
+    if (id == null || id.isEmpty) return '—';
+    return '$id/main';
   }
 
   /// Loads the session-title store from the shared env when the host did
@@ -365,15 +396,26 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                   color: Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                   child: InkWell(
-                    onTap: () {}, // Workspace picker placeholder
+                    onTap: _openWorkspaceDialog,
                     borderRadius: BorderRadius.circular(8),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          'Personal Workspace',
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
+                        Icon(
+                          Icons.folder_outlined,
+                          size: 16,
+                          color: _mountedPath == null
+                              ? colors.dim
+                              : colors.indigo,
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            _mountedFolderLabel(),
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 4),
@@ -559,6 +601,129 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final agentConfig = agentConfigFrom(config);
     await service.reconfigure(agentConfig);
     await lastConnectionStore?.saveFromConfig(agentConfig);
+  }
+
+  /// Workspace picker dialog: shows the current project mount, lets the user
+  /// pick a new folder (macOS only) or clear the mount. Backed by the shared
+  /// [pickAndApplyProjectMount] / [unapplyProjectMount] flows so the file
+  /// browser's open/unmount path stays in lockstep.
+  Future<void> _openWorkspaceDialog() async {
+    final l10n = context.l10n;
+    final service = widget.manager.active?.service;
+    final env = service?.env;
+    if (env == null) return;
+    final mounted = _mountedPath;
+    final supportsPicking = !kIsWeb && Platform.isMacOS;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.workspaceDialogTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              l10n.workspaceDialogCurrentFolder,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              mounted ?? l10n.workspaceDialogPersonal,
+              style: Theme.of(dialogContext).textTheme.bodyMedium,
+            ),
+            if (mounted != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                l10n.workspaceDialogHostPath,
+                style: Theme.of(dialogContext).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 2),
+              Text(mounted, style: Theme.of(dialogContext).textTheme.bodySmall),
+              const SizedBox(height: 8),
+              Text(
+                l10n.workspaceDialogMountHint,
+                style: Theme.of(dialogContext).textTheme.bodySmall,
+              ),
+            ],
+            if (!supportsPicking) ...[
+              const SizedBox(height: 12),
+              Text(
+                l10n.workspaceDialogUnsupported,
+                style: Theme.of(dialogContext).textTheme.bodySmall,
+              ),
+            ],
+            // Cross-instance messaging address — other instances of Fa
+            // (the CLI, a phone, another Mac window) can deliver an
+            // `agent_message` to this exact session by addressing
+            // `<sessionId>/main` over the shared messaging root.
+            const SizedBox(height: 16),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Text(
+              l10n.workspaceDialogMailbox,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _mailboxAddress(service),
+              style: Theme.of(dialogContext).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              l10n.workspaceDialogMailboxHint,
+              style: Theme.of(dialogContext).textTheme.bodySmall,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(dialogContext);
+              final address = _mailboxAddress(service);
+              await Clipboard.setData(ClipboardData(text: address));
+              messenger.showSnackBar(
+                SnackBar(content: Text(l10n.workspaceDialogMailboxCopied)),
+              );
+            },
+            child: Text(l10n.workspaceDialogMailboxCopy),
+          ),
+          if (supportsPicking)
+            TextButton(
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(dialogContext);
+                final picked = await pickAndApplyProjectMount(
+                  env: env,
+                  onApplied: () => service?.refreshProjectMountPrompt(),
+                  onAccessDenied: () {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text(l10n.filesFolderAccessDenied)),
+                    );
+                  },
+                );
+                if (picked != null && dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              },
+              child: Text(l10n.workspaceDialogChangeFolder),
+            ),
+          if (mounted != null && supportsPicking)
+            TextButton(
+              onPressed: () async {
+                await unapplyProjectMount(
+                  env: env,
+                  onApplied: () => service?.refreshProjectMountPrompt(),
+                );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              },
+              child: Text(l10n.workspaceDialogClearFolder),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(l10n.workspaceDialogClose),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _openSettings() async {

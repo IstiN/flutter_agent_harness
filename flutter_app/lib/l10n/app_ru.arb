@@ -376,5 +376,18 @@
   "settingsIconsPerRowHint": "Колонок в сетке домашнего экрана; Авто — 4 на телефоне, 6 на широких",
   "settingsIconsPerRowAuto": "Авто",
   "settingsShowOnboarding": "Показать приветствие",
-  "chatSteerTooltip": "Отправить сейчас (прервать)"
+  "chatSteerTooltip": "Отправить сейчас (прервать)",
+  "workspaceDialogTitle": "Рабочая папка",
+  "workspaceDialogChangeFolder": "Сменить папку…",
+  "workspaceDialogClearFolder": "Использовать личную папку",
+  "workspaceDialogClose": "Закрыть",
+  "workspaceDialogCurrentFolder": "Текущая папка",
+  "workspaceDialogHostPath": "Путь на хосте",
+  "workspaceDialogMountHint": "Файлы по /project/... в агенте указывают на эту папку на вашем Mac.",
+  "workspaceDialogUnsupported": "Проектные папки сейчас доступны только на macOS.",
+  "workspaceDialogPersonal": "Личная (папка не выбрана)",
+  "workspaceDialogMailbox": "Ваш mailbox",
+  "workspaceDialogMailboxHint": "Другие инстансы Fa могут писать этой сессии на этот адрес.",
+  "workspaceDialogMailboxCopy": "Копировать",
+  "workspaceDialogMailboxCopied": "Адрес mailbox скопирован"
 }
