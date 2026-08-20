@@ -56,6 +56,7 @@ import '../types.dart';
 import '../web_search/web_search.dart';
 import 'archive_reader.dart';
 import 'read_selector.dart';
+import 'shell_jobs.dart';
 import 'sqlite/sqlite_reader.dart';
 import 'tool_format.dart';
 
@@ -110,6 +111,7 @@ List<AgentTool> builtinTools(
   SqliteEngine? sqlite,
   LspToolConfig? lsp,
   McpManager? mcp,
+  ShellJobRegistry? shellJobs,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return [
@@ -117,7 +119,8 @@ List<AgentTool> builtinTools(
     writeFileTool(env),
     editFileTool(env, snapshots: store),
     listDirTool(env),
-    shellTool(env),
+    shellTool(env, jobs: shellJobs),
+    if (shellJobs != null) bashJobTool(shellJobs),
     if (lsp != null) lspTool(env, config: lsp),
     if (webSearch != null) ...[
       webSearchTool(config: webSearch),
@@ -2096,7 +2099,18 @@ String _appendStatus(String text, String status) {
 /// [defaultToolMaxLines] lines / [defaultToolMaxBytes] bytes. A non-zero
 /// exit code, timeout, or abort throws (the loop turns it into an error
 /// tool result, pi semantics).
-AgentTool shellTool(ExecutionEnv env) {
+///
+/// With [jobs] (and an environment implementing [BackgroundShell]) the tool
+/// gains two background behaviors:
+///
+/// - `background: true` starts the command detached and returns immediately
+///   with the job id; completion is reported back as a follow-up message.
+/// - Foreground runs still block, but a user steering message mid-run
+///   (the loop's soft-yield token, see [currentYieldToken]) moves the command
+///   into a background job WITHOUT killing it: the tool call answers with the
+///   job id and a partial-output tail, and the user message is delivered at
+///   the next step boundary.
+AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
   return AgentTool(
     name: bashToolName,
     label: 'bash',
@@ -2105,7 +2119,13 @@ AgentTool shellTool(ExecutionEnv env) {
         'Execute a bash command in the current working directory. Returns '
         'stdout and stderr. Output is truncated to the last '
         '$defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
-        '(whichever is hit first). Optionally provide a timeout in seconds.',
+        '(whichever is hit first). Optionally provide a timeout in seconds. '
+        'For long-running commands (builds, servers, watchers) pass '
+        'background: true — the command keeps running as a job, you get its '
+        'id immediately and are notified when it finishes; check progress '
+        'with bash_job. A foreground command that is still running when the '
+        'user sends a message is moved to a background job untouched (never '
+        'killed) so the user gets an answer right away.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -2117,6 +2137,12 @@ AgentTool shellTool(ExecutionEnv env) {
           'type': 'number',
           'description': 'Timeout in seconds (optional, no default timeout)',
         },
+        'background': {
+          'type': 'boolean',
+          'description':
+              'Run detached and return the job id immediately (optional, '
+              'default false). Use for long-running commands.',
+        },
       },
       'required': ['command'],
     },
@@ -2125,10 +2151,55 @@ AgentTool shellTool(ExecutionEnv env) {
       final command = arguments['command'] as String;
       final timeoutArg = arguments['timeout'] as num?;
       final timeout = timeoutArg == null ? null : _resolveTimeout(timeoutArg);
+      final background = arguments['background'] as bool? ?? false;
+      final canJob = jobs != null && jobs.isSupported;
+
+      if (background) {
+        if (!canJob) {
+          return ToolExecutionResult.text(
+            'Background execution is not supported in this environment — '
+            'run the command in the foreground with an explicit timeout.',
+          );
+        }
+        final entry = await jobs.start(
+          command,
+          options: ShellExecOptions(
+            cwd: env.cwd,
+            timeout: timeout,
+            cancelToken: cancelToken,
+          ),
+        );
+        return ToolExecutionResult.text(
+          'Started background job ${entry.id}.\n'
+          'Log: ${entry.logPath}\n'
+          'You will be notified when it finishes; check progress with '
+          'bash_job (action: status | output | stop).',
+        );
+      }
+
+      // Yield-aware foreground run: executed as a job from the start so a
+      // steering message can move it to the background mid-flight without
+      // killing the process. Settled before any yield → identical result to
+      // the classic inline path.
+      if (canJob && currentYieldToken() != null) {
+        return _shellViaJob(
+          env,
+          jobs,
+          command,
+          timeout: timeout,
+          timeoutArg: timeoutArg,
+          cancelToken: cancelToken,
+          yieldToken: currentYieldToken()!,
+        );
+      }
 
       final result = await env.exec(
         command,
-        options: ShellExecOptions(timeout: timeout, cancelToken: cancelToken),
+        options: ShellExecOptions(
+          cwd: env.cwd,
+          timeout: timeout,
+          cancelToken: cancelToken,
+        ),
       );
 
       String outputOf(ShellExecResult execResult) {
@@ -2182,4 +2253,164 @@ AgentTool shellTool(ExecutionEnv env) {
       return ToolExecutionResult.text(output.isEmpty ? '(no output)' : output);
     },
   );
+}
+
+/// The yield-aware foreground bash path: the command runs as a registry job
+/// from the start; settling before the yield token fires produces the
+/// classic inline result, a yield moves it to the background untouched.
+Future<ToolExecutionResult> _shellViaJob(
+  ExecutionEnv env,
+  ShellJobRegistry jobs,
+  String command, {
+  required Duration? timeout,
+  required num? timeoutArg,
+  required CancelToken? cancelToken,
+  required CancelToken yieldToken,
+}) async {
+  final entry = await jobs.start(
+    command,
+    options: ShellExecOptions(
+      cwd: env.cwd,
+      timeout: timeout,
+      cancelToken: cancelToken,
+    ),
+  );
+  final finished = await Future.any<bool>([
+    entry.settled.then((_) => true),
+    yieldToken.onCancel.then((_) => false),
+  ]);
+
+  if (!finished) {
+    // The user steered mid-run: the process keeps running as a background
+    // job; the loop delivers the user message right after this result.
+    final tail = await jobs.tail(entry.id, maxLines: 20);
+    return ToolExecutionResult.text(
+      'The command is still running and was moved to background job '
+      '${entry.id} (the process was NOT killed) because the user sent a '
+      'message, which follows next.\n'
+      'Log: ${entry.logPath}\n'
+      'You will be notified when the job finishes; check progress with '
+      'bash_job.'
+      '${tail.isEmpty ? '' : '\n\nPartial output so far:\n$tail'}',
+    );
+  }
+
+  // Settled inline: report exactly like the synchronous path and suppress
+  // the registry's settle notification (the result is already here).
+  entry.suppressSettleNotification();
+  final log = await env.readTextFile(entry.logPath);
+  // The log file is newline-terminated; the inline result is not.
+  var rawOutput = log.isErr ? '' : log.valueOrNull!;
+  if (rawOutput.endsWith('\n')) {
+    rawOutput = rawOutput.substring(0, rawOutput.length - 1);
+  }
+  final truncation = _truncateTail(rawOutput);
+  final output = !truncation.truncated
+      ? rawOutput
+      : '${truncation.content}\n\n[Showing lines '
+            '${truncation.totalLines - truncation.outputLines + 1}-'
+            '${truncation.totalLines} of ${truncation.totalLines}.]';
+  final exitCode = entry.exitCode ?? -1;
+  if (entry.stopReason == 'timeout') {
+    throw StateError(
+      _appendStatus(
+        output,
+        'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+      ),
+    );
+  }
+  if (entry.stopReason == 'cancelled') {
+    throw StateError(_appendStatus(output, 'Command aborted'));
+  }
+  if (exitCode != 0) {
+    throw StateError(
+      _appendStatus(output, 'Command exited with code $exitCode'),
+    );
+  }
+  return ToolExecutionResult.text(output.isEmpty ? '(no output)' : output);
+}
+
+/// Creates the `bash_job` tool: inspect and stop the session's background
+/// shell jobs (see [ShellJobRegistry]).
+AgentTool bashJobTool(ShellJobRegistry jobs) {
+  return AgentTool(
+    name: 'bash_job',
+    label: 'bash job',
+    // `stop` kills a process, so the whole tool sits at the write tier
+    // (task_send precedent); status/output are plain reads.
+    tier: ApprovalTier.write,
+    description:
+        'Manage background shell jobs (started with bash background: true '
+        'or moved to background when you were interrupted). Actions: '
+        '"status" lists all jobs (or one with id), "output" shows the tail '
+        'of a job log (id, optional lines), "stop" terminates a running job '
+        '(id).',
+    parameters: const {
+      'type': 'object',
+      'properties': {
+        'action': {
+          'type': 'string',
+          'enum': ['status', 'output', 'stop'],
+          'description': 'What to do with the job(s)',
+        },
+        'id': {
+          'type': 'string',
+          'description': 'The job id (e.g. sh-1); required for output/stop',
+        },
+        'lines': {
+          'type': 'number',
+          'description': 'Log tail size for output (default 50)',
+        },
+      },
+      'required': ['action'],
+    },
+    execute: (arguments, cancelToken, onUpdate) async {
+      final action = arguments['action'] as String;
+      final id = arguments['id'] as String?;
+      switch (action) {
+        case 'status':
+          if (id == null) {
+            if (jobs.jobs.isEmpty) {
+              return ToolExecutionResult.text(
+                'No background jobs this session.',
+              );
+            }
+            return ToolExecutionResult.text(
+              jobs.jobs.map(_shellJobStatusLine).join('\n'),
+            );
+          }
+          final entry = jobs.job(id);
+          if (entry == null) throw StateError('unknown background job: $id');
+          return ToolExecutionResult.text(_shellJobStatusLine(entry));
+        case 'output':
+          if (id == null) throw StateError('bash_job output requires an id');
+          final lines = (arguments['lines'] as num?)?.toInt() ?? 50;
+          final tail = await jobs.tail(id, maxLines: lines);
+          return ToolExecutionResult.text(
+            tail.isEmpty ? '(no output yet)' : tail,
+          );
+        case 'stop':
+          if (id == null) throw StateError('bash_job stop requires an id');
+          final entry = jobs.job(id);
+          if (entry == null) throw StateError('unknown background job: $id');
+          if (!entry.isRunning) {
+            return ToolExecutionResult.text(
+              '$id already finished (exit code ${entry.exitCode})',
+            );
+          }
+          await entry.stop();
+          return ToolExecutionResult.text('Stopped $id');
+        default:
+          throw StateError('unknown bash_job action: $action');
+      }
+    },
+  );
+}
+
+String _shellJobStatusLine(ShellJobEntry entry) {
+  final state = entry.isRunning ? 'running' : 'exited(${entry.exitCode})';
+  final command = entry.command.length > 80
+      ? '${entry.command.substring(0, 79)}…'
+      : entry.command;
+  return '${entry.id}: $state — $command (log: ${entry.logPath})';
 }

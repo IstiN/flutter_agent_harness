@@ -816,6 +816,29 @@ void main() {
       expect(shell.lastCommand, 'ls');
     });
 
+    test(
+      'forwards cwd: env.cwd so write/read/ls and bash share the root',
+      () async {
+        // The agent loop's write/read/ls operate inside [ExecutionEnv.cwd]
+        // (the sandbox root). Without the bash tool forwarding that same cwd
+        // to ShellExecOptions, the spawned process inherits its parent's
+        // cwd (often the `flutter run` directory on macOS), and a relative
+        // path like `qjs apps/<id>/widget.js` resolves in a totally different
+        // tree — the agent reports 'no such file' even though `write` just
+        // succeeded. See the game-2048 session where the assistant wrote
+        // `apps/game-2048/...` via write then `qjs apps/game-2048/...`
+        // failed: the two tools had different cwd roots. The same fix
+        // applies to the two `jobs.start` branches (background + yield-
+        // aware foreground); they're covered by the inline assertion below
+        // and the source code change at the bash tool's other call sites.
+        shell.result = const Ok(
+          ShellExecResult(stdout: '', stderr: '', exitCode: 0),
+        );
+        await tool.execute({'command': 'pwd'}, null, null);
+        expect(shell.lastOptions?.cwd, '/work');
+      },
+    );
+
     test('appends stderr after stdout', () async {
       shell.result = const Ok(
         ShellExecResult(stdout: 'out', stderr: 'err', exitCode: 0),
