@@ -1255,12 +1255,23 @@ void main() {
     await expectGolden(tester, golden);
   }
 
+  /// Unmounts the app view and lets fake time pass: the runtime's deferred
+  /// native release (a zero-delay Future scheduled on engine dispose) must
+  /// fire before the test ends — pending, it trips the fake-zone
+  /// timers-pending invariant. Call at the END of the test body, after any
+  /// finder assertions (they need the tree mounted).
+  Future<void> unmountAndFlush(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(milliseconds: 1));
+  }
+
   testWidgets('map app renders the bundled Map demo with offline tiles', (
     tester,
   ) async {
     // The bundled manifest asks for full chrome; pin the header chrome so
     // this snapshot keeps covering the AppBar layout.
     await mapGolden(tester, golden: 'apps_map_view', chromeOverride: 'header');
+    await unmountAndFlush(tester);
   });
 
   testWidgets('map app in full chrome floats the controls menu over the map', (
@@ -1271,6 +1282,7 @@ void main() {
     await mapGolden(tester, golden: 'apps_map_full');
     expect(find.byType(AppBar), findsNothing);
     expect(find.byIcon(Icons.more_vert), findsOneWidget);
+    await unmountAndFlush(tester);
   });
 }
 

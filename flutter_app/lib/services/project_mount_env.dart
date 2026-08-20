@@ -19,7 +19,7 @@ const projectMountSegment = '/project';
 /// Path mapping is idempotent: host paths already under the mounted
 /// directory pass through unchanged, so values the env itself hands out
 /// ([absolutePath]/[joinPath] results, [FileInfo.path]) stay valid input.
-final class ProjectMountEnv implements ExecutionEnv {
+final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
   /// Creates an env over [delegate] with no active mount.
   ProjectMountEnv(this._delegate);
 
@@ -33,6 +33,12 @@ final class ProjectMountEnv implements ExecutionEnv {
   /// (store/channel) owns the security-scoped access lifecycle.
   set mountedRoot(String? hostPath) =>
       _mountedRoot = hostPath == null || hostPath.isEmpty ? null : hostPath;
+
+  /// Whether the agent's tools are restricted to operate only inside the
+  /// mounted folder. Persists across restarts via [ProjectMountStore.scoped].
+  /// The flag is independent of the mount itself — toggling it does not
+  /// re-pick the folder; use the workspace dialog to change it.
+  bool scoped = false;
 
   /// A stored mount whose bookmark no longer resolves (folder moved or
   /// deleted): the UI offers to pick again. Set at startup remount only.
@@ -56,6 +62,45 @@ final class ProjectMountEnv implements ExecutionEnv {
     String command, {
     ShellExecOptions? options,
   }) => _delegate.exec(command, options: options);
+
+  // Background shell jobs (desktop: the delegate is the real host shell).
+  // The log path comes from the registry under env.cwd — already a host path,
+  // so it needs no mount mapping.
+
+  @override
+  bool get backgroundJobsSupported {
+    final delegate = _delegate;
+    if (delegate case final BackgroundShell bg) {
+      return bg.backgroundJobsSupported;
+    }
+    return false;
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) {
+    final delegate = _delegate;
+    if (delegate case final BackgroundShell bg) {
+      return bg.startShellJob(
+        command,
+        id: id,
+        logPath: logPath,
+        options: options,
+      );
+    }
+    return Future.value(
+      const Err(
+        ExecutionError(
+          ExecutionErrorCode.shellUnavailable,
+          'background shell jobs are not supported by this shell',
+        ),
+      ),
+    );
+  }
 
   @override
   Future<Result<String, FileError>> absolutePath(String path) =>

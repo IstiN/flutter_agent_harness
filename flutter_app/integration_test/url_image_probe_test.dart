@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/sandbox/env_factory.dart';

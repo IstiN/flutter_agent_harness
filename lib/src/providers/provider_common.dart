@@ -32,6 +32,19 @@ const nonVisionUserImagePlaceholder =
 const nonVisionToolImagePlaceholder =
     '(tool image omitted: model does not support images)';
 
+/// Placeholder substituted for user-message images after the backend
+/// rejected the request as undecodable (e.g. Gemini's 400 `Unable to
+/// process input image`): the retry tells the model WHY the image is gone
+/// instead of silently dropping it.
+const undecodableUserImagePlaceholder =
+    '(image omitted: the model backend could not decode it — the file may '
+    'be corrupt or in an unsupported format)';
+
+/// Tool-result counterpart of [undecodableUserImagePlaceholder].
+const undecodableToolImagePlaceholder =
+    '(tool image omitted: the model backend could not decode it — the file '
+    'may be corrupt or in an unsupported format)';
+
 /// pi's `replaceImagesWithPlaceholder`: consecutive images collapse into a
 /// single placeholder, and a text block already equal to the placeholder
 /// suppresses a duplicate.
@@ -67,13 +80,61 @@ List<Message> downgradeUnsupportedImages(List<Message> messages, Model model) {
   if (model.input.contains('image')) {
     return messages;
   }
+  return _replaceImages(
+    messages,
+    nonVisionUserImagePlaceholder,
+    nonVisionToolImagePlaceholder,
+  );
+}
+
+/// Replaces EVERY image block with [undecodableUserImagePlaceholder] /
+/// [undecodableToolImagePlaceholder], regardless of the model's declared
+/// modalities. Used when a vision-capable backend rejected the request as
+/// undecodable (Gemini's 400 `Unable to process input image`): the adapter
+/// retries once with the images downgraded, so the turn survives and the
+/// model can tell the user the image was unreadable.
+List<Message> downgradeUndecodableImages(List<Message> messages) {
+  return _replaceImages(
+    messages,
+    undecodableUserImagePlaceholder,
+    undecodableToolImagePlaceholder,
+  );
+}
+
+/// Whether [messages] contains any [ImageContent] (user messages and tool
+/// results) — guards the undecodable-image retry so image-shaped backend
+/// errors on image-free requests don't trigger a pointless second call.
+bool messagesContainImages(List<Message> messages) {
+  for (final message in messages) {
+    if (message is UserMessage && message.content is List<ContentBlock>) {
+      if ((message.content as List<ContentBlock>).any(
+        (b) => b is ImageContent,
+      )) {
+        return true;
+      }
+    }
+    if (message is ToolResultMessage) {
+      if (message.content.any((b) => b is ImageContent)) return true;
+    }
+  }
+  return false;
+}
+
+/// Shared machinery of [downgradeUnsupportedImages] and
+/// [downgradeUndecodableImages]: swap image blocks for the given per-kind
+/// placeholder text, keeping every other field of the message intact.
+List<Message> _replaceImages(
+  List<Message> messages,
+  String userPlaceholder,
+  String toolPlaceholder,
+) {
   return [
     for (final message in messages)
       if (message is UserMessage && message.content is List<ContentBlock>)
         UserMessage(
           content: _replaceImagesWithPlaceholder(
             message.content as List<ContentBlock>,
-            nonVisionUserImagePlaceholder,
+            userPlaceholder,
           ),
           timestamp: message.timestamp,
         )
@@ -83,7 +144,7 @@ List<Message> downgradeUnsupportedImages(List<Message> messages, Model model) {
           toolName: message.toolName,
           content: _replaceImagesWithPlaceholder(
             message.content,
-            nonVisionToolImagePlaceholder,
+            toolPlaceholder,
           ),
           isError: message.isError,
           timestamp: message.timestamp,
@@ -161,7 +222,17 @@ final class ProviderHttpError implements Exception {
   ///
   /// [retryAfter] is the provider-suggested wait parsed from the
   /// `Retry-After` response header, when present and parseable.
-  const ProviderHttpError(this.statusCode, this.body, {this.retryAfter});
+  ///
+  /// [requestUrl] and [redirectLocation] are supplied by
+  /// [sendProviderRequest] so that [formatProviderError] can diagnose
+  /// expired SSO sessions / wrong endpoints from the response context.
+  const ProviderHttpError(
+    this.statusCode,
+    this.body, {
+    this.retryAfter,
+    this.requestUrl,
+    this.redirectLocation,
+  });
 
   /// The HTTP status code.
   final int statusCode;
@@ -170,8 +241,14 @@ final class ProviderHttpError implements Exception {
   final String body;
 
   /// The provider-suggested delay before retrying (parsed from the
-  /// `Retry-After` header), typically set on HTTP 429 responses.
+  /// `Retry-After` response header), typically set on HTTP 429 responses.
   final Duration? retryAfter;
+
+  /// Request URL that produced the error, when known.
+  final Uri? requestUrl;
+
+  /// `Location` response header on a redirect response, when present.
+  final String? redirectLocation;
 }
 
 /// Parses a `Retry-After` header value into a [Duration].
@@ -244,6 +321,9 @@ DateTime? _parseHttpDate(String value) {
 /// there is no SDK whose error shapes need probing here.
 String formatProviderError(Object error) {
   if (error is ProviderHttpError) {
+    final redirect = _formatAuthRedirect(error);
+    if (redirect != null) return redirect;
+
     final body = error.body.trim();
     if (body.isEmpty) {
       return 'Request failed with status ${error.statusCode}';
@@ -262,6 +342,87 @@ String formatProviderError(Object error) {
   return error.toString();
 }
 
+/// Marker used by UIs to detect an "auth session expired" provider error
+/// and offer a re-authorize button. The format is `[[auth-expired:<id>]]`
+/// and it is appended at the end of the formatted message.
+const authExpiredMarkerPrefix = '[[auth-expired:';
+
+/// Whether [url] matches a known provider whose SSO cookie can expire and
+/// produce a redirect.
+bool _isKnownAuthExpiredHost(String url) {
+  final lower = url.toLowerCase();
+  return lower.contains('codemie') || lower.contains('code-assistant-api');
+}
+
+/// Returns the provider id for an auth-expired formatted message, or null
+/// if there is no marker.
+///
+/// UIs can call this to render a re-authorize card instead of the raw
+/// redirect page. See [formatProviderError] and [authExpiredMarkerPrefix].
+String? authExpiredProvider(String formattedError) {
+  final start = formattedError.indexOf(authExpiredMarkerPrefix);
+  if (start < 0) return null;
+  final close = formattedError.indexOf(
+    ']]',
+    start + authExpiredMarkerPrefix.length,
+  );
+  if (close < 0) return null;
+  return formattedError.substring(
+    start + authExpiredMarkerPrefix.length,
+    close,
+  );
+}
+
+/// Removes the auth-expired marker (and surrounding whitespace) from the
+/// formatted error, leaving the human-readable part for display.
+String stripAuthExpiredMarker(String formattedError) {
+  final start = formattedError.indexOf(authExpiredMarkerPrefix);
+  if (start < 0) return formattedError;
+  final close = formattedError.indexOf(
+    ']]',
+    start + authExpiredMarkerPrefix.length,
+  );
+  if (close < 0) return formattedError;
+  final end = close + 2;
+  // Strip trailing whitespace before the marker too.
+  var cut = start;
+  while (cut > 0 && formattedError[cut - 1] == ' ') {
+    cut--;
+  }
+  return formattedError.substring(0, cut) + formattedError.substring(end);
+}
+
+/// Produces a friendly explanation for an HTTP redirect (3xx). These are
+/// almost always expired SSO sessions or wrong URLs — the raw HTML redirect
+/// page is not useful in the transcript, and we want a human-readable hint
+/// plus a machine-readable marker for actionable UIs.
+String? _formatAuthRedirect(ProviderHttpError error) {
+  if (error.statusCode < 300 || error.statusCode >= 400) return null;
+
+  final location = error.redirectLocation;
+  final locationBit = location != null && location.isNotEmpty
+      ? ' → $location'
+      : '';
+
+  final requestUrl = error.requestUrl?.toString().toLowerCase() ?? '';
+  final locationLower = location?.toLowerCase() ?? '';
+  final isCodemie =
+      _isKnownAuthExpiredHost(requestUrl) ||
+      _isKnownAuthExpiredHost(locationLower);
+
+  if (isCodemie) {
+    return '${error.statusCode}: CodeMie session expired — the endpoint '
+        'redirected the request to the SSO login portal$locationBit. '
+        'Re-authorize to refresh the token (CLI: /provider codemie sso). '
+        '$authExpiredMarkerPrefix'
+        'codemie]]';
+  }
+
+  return '${error.statusCode}: the endpoint answered with an HTTP redirect'
+      '$locationBit instead of JSON — usually an expired SSO login or a '
+      'moved URL.';
+}
+
 /// Sends [request], racing [cancelToken] (abort wins), and validates the
 /// response status.
 ///
@@ -276,14 +437,14 @@ Future<http.StreamedResponse> sendProviderRequest(
   final responseFuture = httpClient.send(request);
   final http.StreamedResponse response;
   if (cancelToken == null) {
-    response = await responseFuture.timeout(providerConnectTimeout);
+    response = await responseFuture.timeout(effectiveProviderConnectTimeout);
   } else {
     response = await Future.any([
       responseFuture,
       cancelToken.onCancel.then<http.StreamedResponse>(
         (_) => throw const AbortedError(),
       ),
-    ]).timeout(providerConnectTimeout);
+    ]).timeout(effectiveProviderConnectTimeout);
   }
 
   if (response.statusCode != 200) {
@@ -292,21 +453,65 @@ Future<http.StreamedResponse> sendProviderRequest(
       response.statusCode,
       body,
       retryAfter: parseRetryAfter(response.headers['retry-after']),
+      requestUrl: request.url,
+      redirectLocation: response.headers['location'],
     );
   }
   return response;
 }
 
 /// Connect/first-headers watchdog for provider calls: an endpoint that
-/// never answers the request would otherwise hang the turn forever.
-const providerConnectTimeout = Duration(seconds: 60);
+/// never answers the request would otherwise hang the turn forever. Three
+/// minutes on purpose: loaded reasoning endpoints (kimi-k3 et al.) may hold
+/// a big request for over a minute before the first byte.
+const providerConnectTimeout = Duration(seconds: 180);
 
 /// Idle watchdog for provider streams: with no bytes for this long the
 /// endpoint is considered wedged — the stream errors (and the roles
 /// resolver may fail over) instead of hanging the turn forever. Generous
-/// on purpose: reasoning models may think long BETWEEN chunks, so this
-/// only trips on a truly silent connection.
-const providerStreamIdleTimeout = Duration(seconds: 120);
+/// on purpose: reasoning models may think long BETWEEN chunks (kimi-k3
+/// thinks for minutes), so this only trips on a truly silent connection.
+const providerStreamIdleTimeout = Duration(minutes: 5);
+
+/// Provider watchdog overrides from the `providerTimeouts:` section of
+/// `~/.fah/config.yaml` (strict [ConfigException] parsing in
+/// `cli_config.dart`).
+final class ProviderTimeoutsOverride {
+  /// Creates an override; null fields keep the defaults.
+  const ProviderTimeoutsOverride({this.connect, this.streamIdle});
+
+  /// Connect/first-headers watchdog override ([providerConnectTimeout]).
+  final Duration? connect;
+
+  /// Idle-stream watchdog override ([providerStreamIdleTimeout]).
+  final Duration? streamIdle;
+}
+
+/// Process-wide watchdog override, set once at startup from the config file
+/// (same pattern as `providerFilterEnvOverride`); tests may set it directly.
+/// Null keeps [providerConnectTimeout]/[providerStreamIdleTimeout].
+ProviderTimeoutsOverride? providerTimeoutsOverride;
+
+http.Client? _sharedProviderClient;
+
+/// The shared keep-alive HTTP client for provider streams.
+///
+/// Streaming adapters use it when the caller injects no client: a fresh
+/// `http.Client` per request churns a new TCP+TLS connection every turn,
+/// which on tool-heavy runs piles up TIME_WAIT sockets until connect()
+/// stalls into the watchdog (kimi-cli/pi reuse one client for exactly this
+/// reason). The shared client is never closed per call — an aborted stream
+/// closes only its own response subscription.
+http.Client sharedProviderHttpClient() =>
+    _sharedProviderClient ??= http.Client();
+
+/// The effective connect watchdog: the config override or the default.
+Duration get effectiveProviderConnectTimeout =>
+    providerTimeoutsOverride?.connect ?? providerConnectTimeout;
+
+/// The effective stream-idle watchdog: the config override or the default.
+Duration get effectiveProviderStreamIdleTimeout =>
+    providerTimeoutsOverride?.streamIdle ?? providerStreamIdleTimeout;
 
 /// Wires an SSE [StreamIterator] over [response]'s body, cancelling the
 /// subscription when [cancelToken] fires so the connection closes promptly.
@@ -325,15 +530,17 @@ const providerStreamIdleTimeout = Duration(seconds: 120);
 StreamIterator<ServerSentEvent> createSseIterator(
   http.StreamedResponse response,
   CancelToken? cancelToken, {
-  Duration idleTimeout = providerStreamIdleTimeout,
+  Duration? idleTimeout,
 }) {
+  final effectiveIdleTimeout =
+      idleTimeout ?? effectiveProviderStreamIdleTimeout;
   Stream<List<int>> stream = response.stream.timeout(
-    idleTimeout,
+    effectiveIdleTimeout,
     onTimeout: (sink) => sink.addError(
       TimeoutException(
         'no bytes from the endpoint for '
-        '${idleTimeout.inSeconds}s (stream idle timeout)',
-        idleTimeout,
+        '${effectiveIdleTimeout.inSeconds}s (stream idle timeout)',
+        effectiveIdleTimeout,
       ),
     ),
   );

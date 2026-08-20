@@ -150,6 +150,7 @@ String? _optionalApiKey(
     'anthropic' => const ['ANTHROPIC_API_KEY'],
     'google' => const ['GOOGLE_API_KEY'],
     'dial' => const ['DIAL_API_KEY'],
+    'minimax' => const ['MINIMAX_API_KEY'],
     'vision' => const ['VISION_API_KEY'],
     'transcribe' => const ['TRANSCRIBE_API_KEY'],
     _ => const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
@@ -199,6 +200,7 @@ String _resolveApiKey(
       'anthropic' => 'ANTHROPIC_API_KEY',
       'google' => 'GOOGLE_API_KEY',
       'dial' => 'DIAL_API_KEY',
+      'minimax' => 'MINIMAX_API_KEY',
       'vision' => 'VISION_API_KEY',
       'transcribe' => 'TRANSCRIBE_API_KEY',
       _ => 'OPENROUTER_API_KEY',
@@ -669,6 +671,9 @@ Future<void> main(List<String> args) async {
   } on ConfigException catch (error) {
     _fail('invalid ~/.fah/config.yaml: ${error.message}');
   }
+  // Provider watchdog overrides (`providerTimeouts:` section): process-wide,
+  // read by the adapters' connect/idle watchdogs on every request.
+  providerTimeoutsOverride = saved.providerTimeouts;
 
   // An explicit --provider wins; without it the saved `provider:` (the
   // persisted /provider switch) restores the last provider kind — model and
@@ -676,7 +681,13 @@ Future<void> main(List<String> args) async {
   // rebuild e.g. dial as a plain openai endpoint. Only kinds the legacy
   // single-model path can build are restored (chatgpt-codex keeps the
   // openai-completions default; its OAuth flow re-establishes on demand).
-  const restorableKinds = {'openai-completions', 'anthropic', 'google', 'dial'};
+  const restorableKinds = {
+    'openai-completions',
+    'anthropic',
+    'google',
+    'dial',
+    'minimax',
+  };
   final provider = parsed.providerExplicit
       ? parsed.provider
       : (restorableKinds.contains(saved.providerKind)

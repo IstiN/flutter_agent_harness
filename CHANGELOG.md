@@ -1065,3 +1065,81 @@
 - refactor(ui): sane Settings structure — providers include on-device, one Models group
 
 ## Unreleased
+
+- feat(app): js_widget_runtime back on hosted pub (`^0.4.79`, the git pin
+  dropped) — JS apps gain the Material 3 catalog: appBar/navigationBar/
+  navigationRail/tabBar/fab/segmentedButton/radio/searchBar/tooltip/
+  popupMenu/banner/bottomAppBar/carousel/drawer, modal overlay nodes
+  (bottomSheet/dialog/snackBar/datePicker/timePicker), `flChart`
+  (line/bar/pie/radar/scatter via fl_chart), new layout/display/input nodes
+  (wrap/align/flexible/spacer/scroll/clipRRect/svg/markdown/chip/badge/
+  progress indicators/switch/checkbox/slider/dropdown, textButton/
+  outlinedButton/iconButton), M3 motion tokens — and the seeded `js-apps`
+  skill documents the whole catalog
+- fix(providers): one shared keep-alive HTTP client for all provider streams
+  instead of a fresh client per call — per-turn TCP churn piled up TIME_WAIT
+  sockets until connect() stalled into the watchdog (`TimeoutException:
+  Future not completed`); kimi-cli/pi reuse one client for exactly this
+  reason. Aborts still close just their own response subscription
+- fix(compaction): auto-compaction no longer spins identical no-op passes to
+  the max after a compaction: a pass with nothing left to cut stops the loop,
+  and the post-pass transcript restamp clears the kept messages' stale
+  generation-time usage so the estimate reflects the compacted size (before,
+  a compacted session kept reporting its pre-compaction ~200k and retriggered
+  compaction on every idle wake)
+- fix(tui): the status row is padded to the terminal width — switching from
+  a long model id to a shorter one no longer leaves the old tail on screen
+- fix(cli): the status line is live again — ctx% shows the current context
+  pressure (provider-reported usage plus the estimated tail, i.e. what the
+  next request carries, not the last turn's frozen prompt size) and the tok
+  counter grows during streaming (settled turns + in-flight estimate)
+- fix(providers): inline `<think>…</think>` tags in the content stream (kimi
+  k3 via openai-completions and other endpoints without a reasoning field)
+  are extracted into the thinking block instead of rendering as raw tags —
+  streaming-safe (tags may split across deltas)
+- fix(tui): history wrapping no longer breaks markdown styling — the wrap is
+  now word-aware (no more mid-word cuts) and active SGR styles are closed at
+  the cut and re-opened on the continuation row, so a wrapped bold/code span
+  keeps its style instead of going plain (visible mostly after resizes)
+- fix(tui): restored sessions no longer lose markdown formatting after an
+  unclosed code fence — replay truncation (20-row cap) and the replay budget
+  cut could leave the fence state dangling, rendering everything after as
+  verbatim text; truncated messages now close their fence synthetically and
+  a budget cut starting mid-fence prepends a balancing opener
+- fix(tui): restored sessions no longer dump the raw `<summary>`/`<read-files>`
+  block into the history — a projected compaction/branch summary replays as
+  one dim marker row with the summary's first line as a hint
+- feat(config): provider watchdogs are configurable — `providerTimeouts:`
+  section in `~/.fah/config.yaml` (`connectTimeoutMs`, `streamIdleTimeoutMs`;
+  strict parsing) for slow endpoints whose first byte takes minutes; the
+  connect default itself is raised 60s → 180s (loaded reasoning endpoints
+  hold big requests before the first byte) and the stream-idle default
+  120s → 5min (reasoning models think for minutes between chunks — pi and
+  kimi-cli carry no such watchdog at all / SDK's 600s total)
+- fix(tui): Cyrillic/CJK paste no longer arrives as mojibake — dart_tui
+  2.0.0's bracketed-paste decoder maps every pasted byte to a Latin-1 char
+  code; fa re-decodes the (lossless) mis-decoded text as UTF-8 at the
+  PasteMsg boundary
+- fix(tui): Ctrl+S no longer freezes the terminal — dart_tui's raw mode left
+  termios IXON on, so Ctrl+S was the tty driver's VSTOP (XOFF: output froze,
+  the keypress never reached the app); the TUI now disables software flow
+  control for its lifetime and restores the saved termios on exit
+- feat(tools): background shell jobs — `bash background: true` runs detached
+  (log in `.fah/bash_jobs/<id>.log`), `bash_job {status|output|stop}` manages
+  them, completions re-enter the conversation as system-notices (steered
+  mid-run, fresh turn while idle)
+- feat(agent): steer soft-yield — a message arriving mid tool-call phase
+  (Ctrl+S, subagent completion, inbox mail) asks yield-aware tools to finish
+  the call early WITHOUT stopping the work: a running foreground `bash` moves
+  to a background job untouched, a blocking `task` converts still-running
+  children to background jobs; the user message is delivered at the next
+  step boundary instead of after the whole tool call
+- feat(task): model-facing `task_cancel` aborts a running background subagent
+  job; `/tasks` lists background agents AND shell jobs, `/tasks cancel <id>`
+  routes by id
+- feat(app): background shell jobs on every platform — the desktop app
+  forwards the host shell's capability through `ProjectMountEnv`; mobile's
+  `WasiSandboxShell` and web's `MemoryShell` run jobs as detached script
+  Futures on job-local interpreter clones (own cwd/vars/output capture,
+  shared filesystem), so `bash background: true` + steer-yield work in the
+  sandbox too

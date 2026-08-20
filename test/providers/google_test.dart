@@ -1336,62 +1336,519 @@ void main() {
       },
     );
 
-    test(
-      'strips <thought> tags from Gemma-style plain-text streams',
-      () async {
-        final client = sseClient(
-          sseBody([
-            {
-              'candidates': [
-                {
-                  'content': {
-                    'parts': [
-                      {
-                        'text': '<thought>let me think</thought>answer',
-                      },
-                    ],
-                    'role': 'model',
-                  },
+    test('strips <thought> tags from Gemma-style plain-text streams', () async {
+      final client = sseClient(
+        sseBody([
+          {
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': '<thought>let me think</thought>answer'},
+                  ],
+                  'role': 'model',
                 },
-              ],
-            },
-            textChunk(
-              '',
-              finishReason: 'STOP',
-              usage: {
-                'promptTokenCount': 5,
-                'candidatesTokenCount': 10,
-                'totalTokenCount': 15,
               },
-            ),
-          ]),
+            ],
+          },
+          textChunk(
+            '',
+            finishReason: 'STOP',
+            usage: {
+              'promptTokenCount': 5,
+              'candidatesTokenCount': 10,
+              'totalTokenCount': 15,
+            },
+          ),
+        ]),
+      );
+
+      final stream = streamGoogle(
+        testModel,
+        simpleContext(),
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      // The thought block is pulled out as a separate Thinking block;
+      // the text after </thought> is the assistant's reply.
+      expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
+      final thinkingDeltas = events.whereType<ThinkingDeltaEvent>().toList();
+      expect(thinkingDeltas, hasLength(1));
+      final thinkingPartial =
+          thinkingDeltas.first.partial.content.first as ThinkingContent;
+      expect(thinkingPartial.thinking, 'let me think');
+
+      final textDeltas = events.whereType<TextDeltaEvent>().toList();
+      // The STOP chunk's empty text also emits a delta (matches the
+      // existing live-partial-accumulation behaviour).
+      expect(textDeltas, hasLength(2));
+      expect(
+        (textDeltas.first.partial.content.last as TextContent).text,
+        'answer',
+      );
+    });
+  });
+
+  group('assistant empty parts carrying thought signatures', () {
+    // pi keeps empty text/thinking parts when they carry a valid signature:
+    // Gemini attaches the signature to a part whose visible text is empty
+    // and requires it echoed back — dropping it breaks the reasoning chain
+    // and triggers the 400 'missing a thought_signature' on the replayed
+    // functionCall.
+
+    /// A base64-shaped signature that passes the adapter's validity check.
+    const validSig = 'c2lnMQ==';
+
+    Future<Map<String, dynamic>> captureBody(
+      List<Message> messages, {
+      String provider = 'google',
+      String modelId = 'gemini-2.5-flash',
+    }) async {
+      Map<String, dynamic>? captured;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        captured =
+            jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+          200,
         );
+      });
+      final stream = streamGoogle(
+        testModel,
+        Context(messages: messages),
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+      await stream.result;
+      return captured!;
+    }
+
+    AssistantMessage assistantWith(List<ContentBlock> content) =>
+        AssistantMessage(
+          content: content,
+          api: testModel.api,
+          provider: testModel.provider,
+          model: testModel.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+
+    test('empty text part with a valid signature is kept', () async {
+      final body = await captureBody([
+        assistantWith(const [
+          TextContent(text: '', textSignature: validSig),
+          ToolCall(id: 'c1', name: 'ls', arguments: {}),
+        ]),
+      ]);
+      final parts = (body['contents'] as List).single['parts'] as List;
+      expect(parts, hasLength(2));
+      expect(parts[0], {'text': '', 'thoughtSignature': validSig});
+      expect((parts[1] as Map).containsKey('functionCall'), isTrue);
+    });
+
+    test('empty text part without a signature is still dropped', () async {
+      final body = await captureBody([
+        assistantWith(const [
+          TextContent(text: ''),
+          ToolCall(id: 'c1', name: 'ls', arguments: {}),
+        ]),
+      ]);
+      final parts = (body['contents'] as List).single['parts'] as List;
+      expect(parts, hasLength(1));
+      expect((parts[0] as Map).containsKey('functionCall'), isTrue);
+    });
+
+    test('empty thinking part with a valid signature is kept', () async {
+      final body = await captureBody([
+        assistantWith(const [
+          ThinkingContent(thinking: '', thinkingSignature: validSig),
+          ToolCall(id: 'c1', name: 'ls', arguments: {}),
+        ]),
+      ]);
+      final parts = (body['contents'] as List).single['parts'] as List;
+      expect(parts, hasLength(2));
+      expect(parts[0], {
+        'thought': true,
+        'text': '',
+        'thoughtSignature': validSig,
+      });
+    });
+
+    test('cross-provider signatures on empty parts are dropped', () async {
+      final foreign = AssistantMessage(
+        content: const [TextContent(text: '', textSignature: validSig)],
+        api: 'anthropic-messages',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      );
+      final body = await captureBody([foreign, UserMessage.text('next')]);
+      // The empty foreign part resolves to no signature and is dropped;
+      // only the user message remains.
+      expect(body['contents'], hasLength(1));
+      expect((body['contents'] as List).single['role'], 'user');
+    });
+  });
+
+  group('undecodable image 400 (Unable to process input image)', () {
+    const image400 =
+        '{"error":{"code":400,"message":"Unable to process input image. '
+        'Please retry or report in '
+        'https://developers.generativeai.google/guide/troubleshooting",'
+        '"status":"INVALID_ARGUMENT"}}';
+
+    Context imageContext() => Context(
+      messages: [
+        UserMessage(
+          content: const [
+            TextContent(text: 'what is on this image?'),
+            ImageContent(data: 'aGk=', mimeType: 'image/png'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    test(
+      'retries once with images replaced by a placeholder, no error event',
+      () async {
+        final bodies = <String>[];
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          bodies.add(await body.bytesToString());
+          if (calls == 1) {
+            return http.StreamedResponse(
+              Stream.value(utf8.encode(image400)),
+              400,
+            );
+          }
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([textChunk('no image seen')]))),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
 
         final stream = streamGoogle(
           testModel,
-          simpleContext(),
+          imageContext(),
           const GoogleOptions(apiKey: 'test-key'),
           client,
         );
 
         final events = await stream.toList();
-        // The thought block is pulled out as a separate Thinking block;
-        // the text after </thought> is the assistant's reply.
-        expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
-        final thinkingDeltas =
-            events.whereType<ThinkingDeltaEvent>().toList();
-        expect(thinkingDeltas, hasLength(1));
-        final thinkingPartial =
-            thinkingDeltas.first.partial.content.first as ThinkingContent;
-        expect(thinkingPartial.thinking, 'let me think');
-
-        final textDeltas = events.whereType<TextDeltaEvent>().toList();
-        // The STOP chunk's empty text also emits a delta (matches the
-        // existing live-partial-accumulation behaviour).
-        expect(textDeltas, hasLength(2));
+        expect(events.whereType<ErrorEvent>(), isEmpty);
+        final done = events.last as DoneEvent;
+        expect(done.reason, StopReason.stop);
         expect(
-          (textDeltas.first.partial.content.last as TextContent).text,
-          'answer',
+          done.message.content
+              .whereType<TextContent>()
+              .map((b) => b.text)
+              .join(),
+          contains('no image seen'),
+        );
+
+        expect(calls, 2);
+        // First attempt carried the inline image; the retry must not.
+        expect(bodies[0], contains('inlineData'));
+        expect(bodies[1], isNot(contains('inlineData')));
+        expect(bodies[1], contains('image omitted'));
+        expect(bodies[1], contains('could not decode'));
+      },
+    );
+
+    test('a different 400 does not retry', () async {
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        return http.StreamedResponse(
+          Stream.value(
+            utf8.encode('{"error":{"code":400,"message":"bad request"}}'),
+          ),
+          400,
+        );
+      });
+
+      final stream = streamGoogle(
+        testModel,
+        imageContext(),
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      final error = events.single as ErrorEvent;
+      expect(error.reason, StopReason.error);
+      expect(error.error.errorMessage, contains('400'));
+      expect(calls, 1);
+    });
+
+    test('image-shaped 400 without images in context does not retry', () async {
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        return http.StreamedResponse(Stream.value(utf8.encode(image400)), 400);
+      });
+
+      final stream = streamGoogle(
+        testModel,
+        simpleContext(),
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      expect(events.single, isA<ErrorEvent>());
+      expect(calls, 1);
+    });
+
+    test('image-shaped 400 on the retry too ends in an error event', () async {
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        return http.StreamedResponse(Stream.value(utf8.encode(image400)), 400);
+      });
+
+      final stream = streamGoogle(
+        testModel,
+        imageContext(),
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      final error = events.single as ErrorEvent;
+      expect(error.error.errorMessage, contains('Unable to process'));
+      expect(calls, 2);
+    });
+
+    test('tool-result images are downgraded on the retry as well', () async {
+      final bodies = <String>[];
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        bodies.add(await body.bytesToString());
+        if (calls == 1) {
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(image400)),
+            400,
+          );
+        }
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(sseBody([textChunk('ok')]))),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+
+      final context = Context(
+        messages: [
+          AssistantMessage(
+            content: const [ToolCall(id: 'c1', name: 'read', arguments: {})],
+            api: testModel.api,
+            provider: testModel.provider,
+            model: testModel.id,
+            usage: Usage.zero,
+            stopReason: StopReason.toolUse,
+            timestamp: DateTime.utc(2026),
+          ),
+          ToolResultMessage(
+            toolCallId: 'c1',
+            toolName: 'read',
+            content: const [ImageContent(data: 'aGk=', mimeType: 'image/png')],
+            isError: false,
+            timestamp: DateTime.utc(2026),
+          ),
+        ],
+      );
+
+      final stream = streamGoogle(
+        testModel,
+        context,
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+      final events = await stream.toList();
+      expect(events.whereType<ErrorEvent>(), isEmpty);
+      expect(calls, 2);
+      expect(bodies[1], isNot(contains('inlineData')));
+      expect(bodies[1], contains('tool image omitted'));
+    });
+  });
+
+  group('missing thought_signature 400 (Gemini 3 tool replay)', () {
+    const sig400 =
+        '{"error":{"code":400,"message":"Function call is missing a '
+        'thought_signature in functionCall parts. This is required for '
+        'tools to work correctly, and missing thought_signature may lead '
+        'to degraded model performance.","status":"INVALID_ARGUMENT"}}';
+
+    /// A base64-shaped signature that passes the adapter's validity check.
+    const validSig = 'c2lnMQ==';
+
+    AssistantMessage toolCallTurn(String id, {String? signature}) =>
+        AssistantMessage(
+          content: [
+            ToolCall(
+              id: id,
+              name: 'ls',
+              arguments: const {'path': 'uploads'},
+              thoughtSignature: signature,
+            ),
+          ],
+          api: testModel.api,
+          provider: testModel.provider,
+          model: testModel.id,
+          usage: Usage.zero,
+          stopReason: StopReason.toolUse,
+          timestamp: DateTime.utc(2026),
+        );
+
+    ToolResultMessage toolResult(String id) => ToolResultMessage(
+      toolCallId: id,
+      toolName: 'ls',
+      content: const [TextContent(text: 'diagram.png')],
+      isError: false,
+      timestamp: DateTime.utc(2026),
+    );
+
+    /// Mock client answering the first call with [sig400] and the second
+    /// with a normal SSE text chunk; records request bodies.
+    ({http.Client client, List<String> bodies}) sig400ThenOk() {
+      final bodies = <String>[];
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        bodies.add(await body.bytesToString());
+        if (calls == 1) {
+          return http.StreamedResponse(Stream.value(utf8.encode(sig400)), 400);
+        }
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(sseBody([textChunk('recovered')]))),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      return (client: client, bodies: bodies);
+    }
+
+    test(
+      'unsigned tool call: retries once with the call + result as text notes',
+      () async {
+        final mock = sig400ThenOk();
+        final context = Context(
+          messages: [
+            UserMessage.text('list uploads', timestamp: DateTime.utc(2026)),
+            toolCallTurn('c1'), // no signature
+            toolResult('c1'),
+          ],
+        );
+
+        final stream = streamGoogle(
+          testModel,
+          context,
+          const GoogleOptions(apiKey: 'test-key'),
+          mock.client,
+        );
+
+        final events = await stream.toList();
+        expect(events.whereType<ErrorEvent>(), isEmpty);
+        expect((events.last as DoneEvent).reason, StopReason.stop);
+
+        expect(mock.bodies, hasLength(2));
+        final retry = mock.bodies[1];
+        expect(retry, isNot(contains('functionCall')));
+        expect(retry, isNot(contains('functionResponse')));
+        expect(retry, contains('tool call omitted'));
+        expect(retry, contains('result of the omitted ls tool call'));
+        expect(retry, contains('diagram.png'));
+      },
+    );
+
+    test('properly signed tool call does not retry', () async {
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        return http.StreamedResponse(Stream.value(utf8.encode(sig400)), 400);
+      });
+      final context = Context(
+        messages: [
+          UserMessage.text('list uploads', timestamp: DateTime.utc(2026)),
+          toolCallTurn('c1', signature: validSig),
+          toolResult('c1'),
+        ],
+      );
+
+      final stream = streamGoogle(
+        testModel,
+        context,
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      expect(events.single, isA<ErrorEvent>());
+      expect(calls, 1);
+    });
+
+    test('the 400 without any tool call in history does not retry', () async {
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        return http.StreamedResponse(Stream.value(utf8.encode(sig400)), 400);
+      });
+
+      final stream = streamGoogle(
+        testModel,
+        simpleContext(),
+        const GoogleOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      expect(events.single, isA<ErrorEvent>());
+      expect(calls, 1);
+    });
+
+    test(
+      'on the retry, signed calls stay native while unsigned ones textify',
+      () async {
+        final mock = sig400ThenOk();
+        final context = Context(
+          messages: [
+            UserMessage.text('work', timestamp: DateTime.utc(2026)),
+            toolCallTurn('signed', signature: validSig),
+            toolResult('signed'),
+            toolCallTurn('unsigned'),
+            toolResult('unsigned'),
+          ],
+        );
+
+        final stream = streamGoogle(
+          testModel,
+          context,
+          const GoogleOptions(apiKey: 'test-key'),
+          mock.client,
+        );
+
+        final events = await stream.toList();
+        expect(events.whereType<ErrorEvent>(), isEmpty);
+        final retry = mock.bodies[1];
+        // The signed call keeps its native functionCall + functionResponse…
+        expect(retry, contains('functionCall'));
+        expect(retry, contains('functionResponse'));
+        expect(retry, contains('"thoughtSignature":"$validSig"'));
+        // …and exactly one pair was textified.
+        expect('tool call omitted'.allMatches(retry), hasLength(1));
+        expect(
+          'result of the omitted ls tool call'.allMatches(retry),
+          hasLength(1),
         );
       },
     );

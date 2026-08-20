@@ -389,5 +389,7 @@
   "workspaceDialogMailbox": "Ваш mailbox",
   "workspaceDialogMailboxHint": "Другие инстансы Fa могут писать этой сессии на этот адрес.",
   "workspaceDialogMailboxCopy": "Копировать",
-  "workspaceDialogMailboxCopied": "Адрес mailbox скопирован"
+  "workspaceDialogMailboxCopied": "Адрес mailbox скопирован",
+  "workspaceDialogRestrictTools": "Ограничить инструменты этой папкой",
+  "workspaceDialogRestrictToolsHint": "Отключает всё, что читало или писало бы за пределами смонтированной папки. Попытки выйти за рамки будут блокироваться (и в будущем — просить вашего подтверждения через диалог)."
 }

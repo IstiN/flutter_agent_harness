@@ -52,6 +52,21 @@ factual: paths, commands, invariants — no essays.
   `:table[:key][?params]`, `?q=SELECT`). FFI engine (`package:sqlite3`)
   exported only from `lib/io.dart`, passed via `builtinTools(env, sqlite:)`;
   without it a clean "not supported" note.
+- `lib/src/tools/shell_jobs.dart` — background shell jobs:
+  `ShellJobRegistry` over the `BackgroundShell` capability
+  (`execution_env.dart`; `LocalShell`/`LocalExecutionEnv` implement it,
+  `SessionVarsExecutionEnv`/`SecretsExecutionEnv`/`MemoryExecutionEnv` and
+  the app's `ProjectMountEnv`/`SandboxedExecutionEnv`/
+  `PersistentWebExecutionEnv` forward it — the desktop app runs the host
+  shell; mobile's `WasiSandboxShell` and web's `MemoryShell` run jobs as
+  detached script Futures on job-local interpreter clones via
+  `flutter_app/lib/sandbox/shell_job.dart` — own cwd/vars/capture, shared
+  fs). `bash background: true` runs detached with output
+  streaming into `.fah/bash_jobs/<id>.log`; `bash_job {status|output|stop}`
+  (write tier) manages them. A settle fires `onSettled` (CLI
+  `_onShellJobSettled`, app `sendText` system-notice) → steered mid-run or a
+  fresh idle turn. A foreground call that consumed the result inline
+  suppresses the notification. Job logs on disk are NOT secret-redacted.
 - `lib/src/lsp/` — `lsp` tool (diagnostics/definition/references/rename):
   pure-Dart JSON-RPC client over `LspTransport`; `.dart` →
   `dart language-server --protocol=lsp`, projects merge `.fah/lsp.json`;
@@ -81,9 +96,14 @@ factual: paths, commands, invariants — no essays.
   fallback chains, key rotation (`ApiKeyRing` over `NAME`/`NAME_2`/…), 429
   mid-turn take-over (`FallbackStreamFunction`, never silent). Provider
   streams carry watchdogs (`provider_common.dart`:
-  `providerConnectTimeout` 60s for the request, `providerStreamIdleTimeout`
-  120s between bytes) so a wedged endpoint errors out — and the resolver
-  can fail over — instead of hanging the turn forever. Config:
+  `providerConnectTimeout` 180s for the request, `providerStreamIdleTimeout`
+  5min between bytes — overridable via the `providerTimeouts:` config
+  section, `connectTimeoutMs`/`streamIdleTimeoutMs`, published to
+  `providerTimeoutsOverride` at startup) so a wedged endpoint errors out — and the resolver
+  can fail over — instead of hanging the turn forever. Streaming adapters
+  share ONE keep-alive `http.Client` (`sharedProviderHttpClient`) instead of
+  a fresh client per call: per-turn TCP churn piled TIME_WAIT sockets into
+  connect stalls. Config:
   `roles:`/`modelOverrides:`/`retry:` in `~/.fah/config.yaml` (invalid
   schema = `ConfigException`). Also the shared models config:
   `media_model_slots.dart` (media slot names/fields shared with the app's
@@ -108,11 +128,23 @@ factual: paths, commands, invariants — no essays.
   `{context, tasks[]}` + `background` flag; children never get `task` (no
   nesting); roles: `explore`→`smol`, `review`→`slow`; `outputSchema` with
   ONE fix retry; child failure = per-item error, never batch failure.
-  `/tasks` lists jobs, `/tasks cancel <id>`; completions re-enter the parent
+  `/tasks` lists jobs (background agents AND background shell jobs),
+  `/tasks cancel <id>` routes by id; completions re-enter the parent
   as async-result messages (`agent://<id>` refs). Subagents are retained &
   addressable: real JSONL child sessions, `task_status`/`task_observe`/
-  `task_send`, child-only `reply` + sibling `agent_message` (pending-queue
-  + hop-capped), `completed_without_reply` notice.
+  `task_send`/`task_cancel` (model-facing job abort), child-only `reply` +
+  sibling `agent_message` (pending-queue + hop-capped),
+  `completed_without_reply` notice.
+- Steer soft-yield: a steering message (user `Ctrl+S`, subagent completion,
+  inbox mail) arriving DURING a tool-call phase cancels the phase's
+  zone-scoped yield token — `currentYieldToken()` in `cancel_token.dart`,
+  published by `_runToolCallPhase` (`agent_loop.dart`), fed by
+  `AgentLoopConfig.steeringNotifications` (in-process queue) and the
+  non-draining `hasPendingSteering` probe (external inbox, 2s poll).
+  Yield-aware tools (`bash`, blocking `task`) finish the tool call early
+  WITHOUT stopping the work — it continues as a background job and the user
+  message is delivered at the step boundary. Tools ignoring the token keep
+  the classic behavior (message waits for the phase).
 - `lib/src/messaging/` — the agent messaging fabric: every agent (main,
   subagents, other Fa instances sharing the root) owns a file inbox behind
   the isolated `MessagingRepository` interface (send/peek/drain/directory —
@@ -458,11 +490,12 @@ factual: paths, commands, invariants — no essays.
   mount (`/project` → user-picked host dir; security-scoped bookmarks in
   `project_mount.json`; stale bookmark = "pick again" warning).
 - `flutter_app/lib/apps/` — JS apps platform on `package:js_widget_runtime`
-  (git-pinned to IstiN/flutter_js_widget_runtime@9498d0c — the queued-
-  callEvent-after-dispose guard + restart-safe bridge channels; the
+  (hosted `^0.4.79` — ships the queued-callEvent-after-dispose guard +
+  restart-safe bridge channels that the old git pin carried, plus the M3
+  nodes/overlays/flChart/pickers/drawer catalog and M3 motion tokens; the
   use-after-free SIGSEGV is owned by `js_app_engine.dart`'s process-wide
-  lifecycle serialization — releases must stay immediate, never deferred —
-  until a pub release >0.4.20 ships both; ≥0.4.5 adds the `map` node: center/zoom/markers/polylines/
+  lifecycle serialization — releases must stay immediate, never deferred;
+  the `map` node: center/zoom/markers/polylines/
   fitBounds, onTap/onMarkerTap). `flutter_js` itself is overridden in
   `flutter_app/pubspec.yaml` to IstiN/flutter_js@74a11bf
   (fix-jscore-multi-instance: the shared native sendMessage callback routed

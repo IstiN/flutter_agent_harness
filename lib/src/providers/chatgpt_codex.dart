@@ -25,7 +25,8 @@ AssistantMessageEventStream streamChatGptCodex(
   http.Client? client,
 }) {
   final events = AssistantMessageEventStream();
-  final httpClient = client ?? http.Client();
+  // No injected client: the shared keep-alive client (never closed per call).
+  final httpClient = client ?? sharedProviderHttpClient();
   final state = ProviderStreamState(model);
   final session = _ChatGptCodexSession(
     model,
@@ -43,7 +44,7 @@ AssistantMessageEventStream streamChatGptCodex(
       state,
       cancelToken,
       httpClient,
-      ownsClient: client == null,
+      ownsClient: false, // shared or injected — never closed per call
       body: session.run,
     ),
   );

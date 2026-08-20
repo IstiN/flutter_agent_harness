@@ -24,6 +24,7 @@ import '../agent/agent.dart';
 import 'key_event.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
+import '../agent/auto_compactor.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
 import '../a2a/a2a_manager.dart';
@@ -71,7 +72,9 @@ import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
+import '../tools/generate_image.dart';
 import '../tools/inspect_image.dart';
+import '../tools/shell_jobs.dart';
 import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
 import '../memory/compaction_memory_hook.dart';
@@ -351,17 +354,25 @@ class AgentCli {
       projectRoot: config.env.cwd,
       userRoot: config.homeDir,
     );
+    final decoratedEnv = SessionVarsExecutionEnv(config.env, _sessionEnvVars);
+    // Session-scoped background shell jobs (bash background / steer-yield);
+    // settle notifications re-enter the conversation like task completions.
+    _shellJobs = ShellJobRegistry(
+      env: decoratedEnv,
+      onSettled: _onShellJobSettled,
+    );
     final coreTools = <AgentTool>[
       ...builtinTools(
         // Session-correlation env vars (FAH_SESSION_ID/FILE/PROVIDER/MODEL)
         // for the bash tool; resolved live, so `/provider` switches and
         // session (re)creation are picked up per exec.
-        SessionVarsExecutionEnv(config.env, _sessionEnvVars),
+        decoratedEnv,
         webSearch: config.webSearchConfig,
         model: () => _agent.state.model,
         sqlite: config.sqliteEngine,
         lsp: config.lspConfig,
         mcp: _mcp.manager,
+        shellJobs: _shellJobs,
       ),
       ...memoryTools(
         _memory,
@@ -381,6 +392,17 @@ class AgentCli {
         inspectImageTool(config.env, config.visionConfig!),
       if (config.transcribeConfig != null)
         transcribeAudioTool(config.env, config.transcribeConfig!),
+      // Image generation: resolves the `imageGeneration` slot from the
+      // models config (or falls back to the main connection) lazily per
+      // call, so `/models set imageGeneration ...` is picked up live.
+      generateImageTool(
+        env: config.env,
+        modelsConfig: config.modelsConfig,
+        mainBaseUrl: () => _agent.state.model.baseUrl,
+        mainModelId: () => _agent.state.model.id,
+        mainApiKey: () => _apiKey,
+        resolveKey: _resolveMediaKey,
+      ),
       ...pluginTools,
     ];
     // The `task` tool (omp's background subagents): children draw from the
@@ -402,6 +424,8 @@ class AgentCli {
         env: config.env,
         root:
             '${config.sessionRoot}/${encodeSessionCwd(config.env.cwd)}/messages',
+        decodeSessionCwd: decodeSessionCwd,
+        homeDir: config.homeDir,
       ),
       selfId: 'main',
       sink: (registry) async {
@@ -465,7 +489,10 @@ class AgentCli {
         return session;
       },
     );
-    final monitoringTools = subagentMonitoringTools(manager: _subagentManager);
+    final monitoringTools = subagentMonitoringTools(
+      manager: _subagentManager,
+      jobs: _taskConfig.jobManager,
+    );
     _toolRegistry = ToolRegistry([
       ...coreTools,
       ...monitoringTools,
@@ -481,6 +508,14 @@ class AgentCli {
     // children (agent_message to "main") and from other Fa instances
     // sharing the messaging root arrive at turn boundaries.
     _agent.externalSteeringSource = _mainInboxMessages;
+    // Non-draining probe for the same inbox: mid-run mail also triggers the
+    // tool phase's soft-yield so a long bash/task call does not delay it.
+    _agent.externalSteeringProbe = () async {
+      final count = await _subagentManager.pendingInboxCount(
+        _subagentManager.selfId,
+      );
+      return count > 0;
+    };
     // Model roles: when the default role resolves, the agent runs through
     // the resolver's fallback stream (rotation/failover per provider call).
     // A resolver without a default role leaves the legacy wiring in place
@@ -638,6 +673,11 @@ class AgentCli {
   /// back into the parent conversation (omp's async-result flow).
   late final TaskToolConfig _taskConfig;
 
+  /// The session's background shell jobs (`bash background: true` and
+  /// steer-yielded foreground commands); settle notifications are injected
+  /// like task-job completions.
+  late final ShellJobRegistry _shellJobs;
+
   /// Retained-subagent registry (Phase 3a): tracks every spawned child so
   /// `task_status`/`task_observe`/`task_send` work after completion.
   late final SubagentManager _subagentManager;
@@ -668,6 +708,12 @@ class AgentCli {
   /// provider then; legacy mode reads them from the provider kind.
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
+
+  /// Memo fields for the status line's live context estimate
+  /// (see `_liveContextTokens` in approval_commands.dart): keyed on the
+  /// transcript size plus the in-flight stream's text length.
+  (int, int)? _ctxCacheKey;
+  int _ctxCacheValue = 0;
   late final _repo = JsonlSessionRepo(
     fs: config.env,
     sessionsRoot: config.sessionRoot,
@@ -1136,9 +1182,15 @@ class AgentCli {
   Future<void> _tuiPickSession(String key) async {
     final metadata = listItemAt(_lastSessionList, int.tryParse(key) ?? -1);
     if (metadata == null) return;
-    final session = await _repo.open(metadata);
-    final label = await session.getSessionName() ?? metadata.id;
-    await _switchToMetadata(metadata, label);
+    try {
+      final session = await _repo.open(metadata);
+      final label = await session.getSessionName() ?? metadata.id;
+      await _switchToMetadata(metadata, label);
+    } on Object catch (error) {
+      // Never let a broken session file kill the TUI through the picker's
+      // Cmd — report inline instead.
+      io.writeln(_errorLine('failed to open session ${metadata.id}: $error'));
+    }
   }
 
   /// A provider-picker selection: `custom` starts the guided flow,
@@ -1194,6 +1246,11 @@ class AgentCli {
         description: 'GLM models — key: z.ai/manage-apikey/apikey-list',
       ),
       const MenuItem(
+        key: 'preset:minimax',
+        label: 'MiniMax',
+        description: 'api.minimax.io — key: platform.minimax.io/interface-key',
+      ),
+      const MenuItem(
         key: 'preset:openai',
         label: 'OpenAI',
         description: 'api.openai.com — API key',
@@ -1244,6 +1301,12 @@ class AgentCli {
       initialName: 'z.ai',
       initialModelId: 'glm-4.5',
     ),
+    'minimax': () async => _startProviderFlow(
+      initialType: 'minimax',
+      initialBaseUrl: 'https://api.minimax.io/v1',
+      initialName: 'minimax',
+      initialModelId: 'MiniMax-M3',
+    ),
   };
 
   /// A non-`custom` provider-picker selection: a saved entry or a catalog
@@ -1274,7 +1337,15 @@ class AgentCli {
   List<SessionMetadata>? _lastSessionList;
 
   Future<void> _openSessionsPicker() async {
-    final sessions = await _repo.list(cwd: config.env.cwd);
+    final List<SessionMetadata> sessions;
+    try {
+      sessions = await _repo.list(cwd: config.env.cwd);
+    } on Object catch (error) {
+      // A failing store must surface as an inline error, never kill the TUI
+      // (a Cmd exception in dart_tui terminates the whole program silently).
+      io.writeln(_errorLine('failed to list sessions: $error'));
+      return;
+    }
     if (sessions.isEmpty) {
       io.writeln('no sessions for ${config.env.cwd}');
       return;
@@ -1300,15 +1371,20 @@ class AgentCli {
   }
 
   /// One numbered sessions-picker row, marked when it is the active
-  /// session.
+  /// session. An unreadable session file degrades to its id with an
+  /// "(unreadable)" note instead of failing the whole picker.
   Future<MenuItem> _sessionPickerItem(
     int i,
     SessionMetadata metadata,
     SessionMetadata? current,
   ) async {
-    final session = await _repo.open(metadata);
-    final name = await session.getSessionName();
-    final label = name ?? metadata.id;
+    String label;
+    try {
+      final session = await _repo.open(metadata);
+      label = await session.getSessionName() ?? metadata.id;
+    } on Object {
+      label = '${metadata.id} (unreadable)';
+    }
     final marker = current?.path == metadata.path ? ' (current)' : '';
     return MenuItem(
       key: '$i',
@@ -1770,6 +1846,14 @@ class AgentCli {
     return config.customProviders?.find(name)?.keyName;
   }
 
+  /// Resolves a named secret (env first, then the secure store) for media
+  /// slot `apiKeyName` overrides. Returns null when the name is unknown.
+  Future<String?> _resolveMediaKey(String name) async {
+    final value = config.envVarValue?.call(name);
+    if (value != null && value.isNotEmpty) return value;
+    return config.secureKeys?.read(name);
+  }
+
   /// The `error:` diagnostic line for a failed run. Provider JSON blobs
   /// (OpenRouter wraps upstream errors in nested JSON) are compacted to the
   /// most specific message. A connection-level failure ("Connection
@@ -2091,6 +2175,31 @@ class AgentCli {
     );
   }
 
+  /// Called when a background shell job settles (the same async-result flow
+  /// as task-job completions): a transcript note, then a system-notice
+  /// steered into the running turn or run as a fresh turn while idle.
+  void _onShellJobSettled(ShellJobEntry job) {
+    io.writeln(
+      _style.dim('[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}'),
+    );
+    if (_exited) return;
+    final message =
+        '<system-notice>\n'
+        'Background shell job ${job.id} finished with exit code '
+        '${job.exitCode}.\n'
+        'Command: ${job.command}\n'
+        'Log: ${job.logPath}\n'
+        'Check the result with bash_job (action: output) or by reading the '
+        'log file, and act on it when the result was awaited.\n'
+        '</system-notice>';
+    if (isBusy) {
+      // Mid-run: the steering queue delivers it at the next step boundary.
+      _agent.steer(UserMessage.text(message));
+    } else {
+      _startRun(message);
+    }
+  }
+
   Future<void> _afterRun() async {
     // A TTSR abort/inject/retry chain may still be in flight when the
     // aborted run settles; persist only once the whole chain completed.
@@ -2179,57 +2288,108 @@ class AgentCli {
   }
 
   Future<void> _maybeAutoCompact() async {
-    final messages = _agent.state.messages;
-    if (messages.isEmpty) return;
-    final tokens = estimateContextTokens(messages).tokens;
+    final session = _session;
+    if (session == null) return;
+    if (_agent.state.messages.isEmpty) return;
+    final tokens = estimateContextTokens(_agent.state.messages).tokens;
     if (!shouldCompact(
       tokens,
       _agent.state.model.contextWindow,
-      defaultCompactionSettings,
+      config.compactionSettings ?? defaultCompactionSettings,
     )) {
       return;
     }
-    await _compact('[auto-compacted]');
+    await _runAutoCompact('[auto-compacted]');
   }
 
-  Future<void> _compact(String label) async {
+  /// `/compact` manual override: same AutoCompactor pipeline as the
+  /// auto-trigger, but unconditional. Honours the user's explicit ask
+  /// even when the threshold isn't crossed.
+  Future<void> _runManualCompact() async {
     final session = _session;
     if (session == null) return;
-    try {
-      // Cheap summaries: when model roles are configured, compaction
-      // resolves through the `smol` role (falling back to the default chain
-      // when smol is unset, per role inheritance). The prompts come from the
-      // config `prompts:` overrides when present.
-      final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
-      final compactionPrompts = CompactionPrompts.fromOverrides(
-        config.promptOverrides,
-      );
-      final manager = CompactionManager(
-        summarize: streamFunctionSummarizer(
-          smol?.stream ?? _streamFunction,
-          smol?.model ?? _agent.state.model,
-          prompts: compactionPrompts,
-        ),
-        prompts: compactionPrompts,
-        memoryExtractionHook: compactionMemoryHook(
+    if (_agent.state.messages.isEmpty) {
+      io.writeln('nothing to compact');
+      return;
+    }
+    await _runAutoCompact('[compacted]');
+  }
+
+  /// Builds the per-host smol/main summarizers and runs the shared
+  /// [AutoCompactor]. Used by both [_maybeAutoCompact] (gated by
+  /// [shouldCompact]) and [_runManualCompact] (unconditional).
+  Future<void> _runAutoCompact(String label) async {
+    final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
+    final ok = await AutoCompactorFactory(
+      session: _session!,
+      state: _agent.state,
+      window: _agent.state.model.contextWindow,
+      settings: config.compactionSettings ?? defaultCompactionSettings,
+      sources: AutoCompactorSources(
+        smolStream: smol?.stream,
+        smolModel: smol?.model,
+        mainStream: _streamFunction,
+        mainModel: _agent.state.model,
+      ),
+      hooks: _AutoCompactorCliHooks(this),
+      prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
+      memoryExtractionHook: (text) async {
+        final hook = compactionMemoryHook(
           memory: _memory,
           stream: smol?.stream ?? _streamFunction,
           model: smol?.model ?? _agent.state.model,
-        ),
-      );
-      final record = await manager.compactSession(session);
-      if (record == null) {
-        io.writeln('nothing to compact');
-        return;
-      }
-      // Replace the in-memory transcript with the session's projected
-      // context (summary in place of the compacted region).
-      _agent.state.messages = await session.buildContextMessages();
-      _persistedCount = _agent.state.messages.length;
-      io.writeln('$label ${record.tokensBefore} tokens summarized');
-    } catch (error) {
-      io.writeln('compaction failed: $error');
+        );
+        await hook?.call(text);
+      },
+      force: label == '[compacted]',
+    ).run();
+    _persistedCount = _agent.state.messages.length;
+    if (label == '[compacted]' && ok) {
+      // Manual `/compact` echoes the legacy "compacted" line; the
+      // auto-trigger prints its own per-pass "[auto-compacted]" line via
+      // [_AutoCompactorCliHooks.onPass].
+      io.writeln('$label $_persistedCount messages kept');
     }
+  }
+
+  /// Writes a diagnostic line to the log file (`~/.fah/logs/fa.log`).
+  /// TUI/stderr stay clean — the AutoCompactor hook streams progress to
+  /// the user, the log captures everything for post-mortem.
+  void _logDiagnostic(String message) {
+    final path = _diagnosticLogPath;
+    if (path == null) return;
+    final line = '${DateTime.now().toIso8601String()} $message\n';
+    unawaited(() async {
+      try {
+        if (!_diagnosticLogDirEnsured) {
+          _diagnosticLogDirEnsured = true;
+          await config.env.createDir(
+            '${config.homeDir}/.fah/logs',
+            recursive: true,
+          );
+        }
+        await config.env.appendFile(path, line);
+      } catch (_) {
+        // Diagnostics must never break the CLI.
+      }
+    }());
+  }
+
+  /// Returns a user-facing hint for a compaction failure, pointing at the
+  /// `smol` role config when the summarization model hit a provider limit.
+  String _compactionFailureHint(Object error) {
+    final text = error.toString();
+    if (text.contains('usage limit') ||
+        text.contains('access_terminated_error') ||
+        text.contains('rate limit') ||
+        text.contains('429')) {
+      return '$error\n\n'
+          'Compaction uses the `smol` role model (see `roles.smol` in '
+          '~/.fah/config.yaml). The current smol model/provider returned '
+          'the error above. Switch it to a model/key with available quota, '
+          'e.g. via `/settings` → Agent models, or edit ~/.fah/config.yaml.';
+    }
+    return text;
   }
 
   Future<void> _handleCommand(String trimmed) async {
@@ -2347,7 +2507,10 @@ class AgentCli {
         _persistedCount = 0;
         io.writeln('new session started');
       case '/compact':
-        await _compact('[compacted]');
+        // `/compact` is a manual override — always run the compactor even
+        // when the auto-trigger threshold isn't crossed. The user is
+        // asking for it explicitly, so we honour the request.
+        await _runManualCompact();
       default:
         return false;
     }
@@ -2525,6 +2688,69 @@ class AgentCli {
   /// Runtime secrets granted via `request_secret`.
   final Map<String, String> _runtimeSecrets = {};
 
+  /// Path of the diagnostic log file under `~/.fah/logs/fa.log`. Null
+  /// when the host has no `homeDir` (web build, sandbox).
+  String? get _diagnosticLogPath {
+    final home = config.homeDir;
+    if (home == null || home.isEmpty) return null;
+    return '$home/.fah/logs/fa.log';
+  }
+
+  var _diagnosticLogDirEnsured = false;
+
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
+}
+
+/// [AutoCompactorHooks] impl that drives the CLI TUI / stderr and the
+/// diagnostic log file (`~/.fah/logs/fa.log`). One per run; cheap to
+/// allocate.
+class _AutoCompactorCliHooks implements AutoCompactorHooks {
+  _AutoCompactorCliHooks(this.cli);
+
+  final AgentCli cli;
+
+  @override
+  void onPass(AutoCompactorPass pass) {
+    cli.io.writeln(
+      '[auto-compacted${pass.pass == 1 ? '' : ' pass=${pass.pass}'}] '
+      '${pass.tokensBefore} tokens summarized',
+    );
+    cli._logDiagnostic(
+      'auto-compact pass ${pass.pass} '
+      'fallback=${pass.fallback ?? '-'} '
+      'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
+      'ok=${pass.ok} error=${pass.error ?? '-'}',
+    );
+  }
+
+  @override
+  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {
+    cli.io.writeln(
+      'compaction transient error (attempt $attempt/$maxAttempts); '
+      'retrying in ${backoff.inSeconds}s — $error',
+    );
+    cli._logDiagnostic(
+      'compact retry attempt=$attempt backoff=${backoff.inSeconds}s '
+      'error=$error',
+    );
+  }
+
+  @override
+  void onDone(int passes, int tokens) {
+    if (passes > 0) {
+      cli._logDiagnostic('auto-compact done passes=$passes tokens=$tokens');
+    }
+  }
+
+  @override
+  void onBothRolesFailed(Object lastError) {
+    final hint = cli._compactionFailureHint(lastError);
+    cli.io.writeln('compaction both roles failed: $hint');
+    cli.io.writeln(
+      'compaction both roles failed; the agent cannot make progress '
+      'until you switch models (e.g. `/model`) or start a new session '
+      '(`/new`).',
+    );
+  }
 }

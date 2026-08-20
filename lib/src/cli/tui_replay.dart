@@ -1,5 +1,51 @@
 import '../context.dart';
+import '../session/session_tree.dart'
+    show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
+
+/// A code-fence opener/closer line (```). Tracked by the replay so a
+/// truncated message never leaves a dangling fence: the view formats the
+/// whole history as ONE markdown stream, and an unclosed fence would render
+/// everything after it as verbatim code (raw `**`, tables, links).
+final _fenceLineRe = RegExp(r'^\s*```');
+
+/// Appends a synthetic closing fence when [rows] (a truncated assistant
+/// message) ends inside a fenced code block.
+void _closeDanglingFence(List<String> rows) {
+  var open = false;
+  for (final row in rows) {
+    if (_fenceLineRe.hasMatch(row)) open = !open;
+  }
+  if (open) rows.add('```');
+}
+
+/// A transcript message projected from a compaction/branch summary starts
+/// with one of the known prefixes and carries the whole `<summary>` block —
+/// replaying it verbatim dumps a wall of XML-ish tags and file lists into
+/// the history. The replay instead shows one compact marker row with the
+/// summary's first line as a hint. Returns null for non-summary messages;
+/// a summary without a plain-text line yields an empty hint.
+(String label, String firstLine)? _summaryMarker(String text) {
+  final isCompaction = text.startsWith(compactionSummaryPrefix);
+  if (!isCompaction && !text.startsWith(branchSummaryPrefix)) return null;
+  final body = text.substring(
+    (isCompaction ? compactionSummaryPrefix : branchSummaryPrefix).length,
+  );
+  var firstLine = '';
+  for (final line in body.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.isNotEmpty && !trimmed.startsWith('<')) {
+      firstLine = trimmed;
+      break;
+    }
+  }
+  return (
+    isCompaction
+        ? '⋮ context compacted into a summary'
+        : '⋮ summary of the detour branch',
+    firstLine,
+  );
+}
 
 /// TUI-mode replay entry in the ACTIVE session's format: the user message
 /// as the same background echo box the TUI draws at submit time, the
@@ -22,6 +68,19 @@ List<String> replayLinesTui(
                 .map((b) => b.text)
                 .join('\n');
       if (text.trim().isEmpty) return const [];
+      final summary = _summaryMarker(text);
+      if (summary != null) {
+        // A projected compaction/branch summary renders compact: the raw
+        // block is model context, not reading material. The marker fits the
+        // terminal width — a wrapped chrome row desyncs the renderer.
+        final (label, firstLine) = summary;
+        final hint = firstLine.isEmpty ? '' : ' — $firstLine';
+        final marker = '$label$hint';
+        final line = marker.length > width
+            ? '${marker.substring(0, width - 1)}…'
+            : marker;
+        return [dim('─' * width), dim(line), ''];
+      }
       const bg = '\x1b[48;2;30;34;42m';
       const reset = '\x1b[0m';
       return [
@@ -38,7 +97,10 @@ List<String> replayLinesTui(
       if (texts.isEmpty) return const [];
       final rows = texts.split('\n');
       final head = rows.take(maxRows).toList();
-      if (rows.length > maxRows) head[head.length - 1] = '${head.last} …';
+      if (rows.length > maxRows) {
+        head[head.length - 1] = '${head.last} …';
+        _closeDanglingFence(head);
+      }
       final calls = content
           .whereType<ToolCall>()
           .map((c) => '[${c.name}]')
@@ -53,6 +115,15 @@ List<String> replayLinesTui(
 /// messages the replay skips (tool results — their calls are already
 /// shown).
 List<String> replayLines(Message message, {required int maxRows}) {
+  if (message case UserMessage(:final content)) {
+    final text = _userReplayText(content);
+    final summary = _summaryMarker(text);
+    if (summary != null) {
+      final (label, firstLine) = summary;
+      final hint = firstLine.isEmpty ? '' : ' — $firstLine';
+      return ['$label$hint'];
+    }
+  }
   final (prefix, text) = switch (message) {
     UserMessage(:final content) => ('you: ', _userReplayText(content)),
     AssistantMessage(:final content) => (
@@ -65,6 +136,7 @@ List<String> replayLines(Message message, {required int maxRows}) {
   final rows = text.split('\n');
   final head = rows.take(maxRows).toList();
   final suffix = rows.length > maxRows ? ' …' : '';
+  if (suffix.isNotEmpty) _closeDanglingFence(head);
   final indent = ' ' * prefix.length;
   return [
     for (var i = 0; i < head.length; i++)
@@ -152,7 +224,40 @@ bool isToolCallOnlyAssistant(Message message) {
     collector.addEntry(entry, i);
   }
   collector.flushInto();
+  // The kept region may begin INSIDE a fenced code block whose opener was
+  // dropped with the over-budget head: the view formats the history as one
+  // markdown stream, so the region's first (originally closing) fence would
+  // toggle state ON and swallow everything after it. Open a synthetic fence
+  // to keep the kept region's fence lines balanced.
+  if (collector.firstIndex > 0 &&
+      collector.entries.isNotEmpty &&
+      _fenceOpenBefore(messages, collector.firstIndex)) {
+    collector.entries.insert(0, const ['```']);
+  }
   return (collector.entries, collector.firstIndex);
+}
+
+/// Whether the text of messages BEFORE [firstIndex] leaves a code fence
+/// open (mirrors what the replay emits: user text and assistant text; tool
+/// results never render).
+bool _fenceOpenBefore(List<Message> messages, int firstIndex) {
+  var open = false;
+  for (var i = 0; i < firstIndex; i++) {
+    final message = messages[i];
+    final String text;
+    switch (message) {
+      case UserMessage(:final content):
+        text = _userReplayText(content);
+      case AssistantMessage(:final content):
+        text = content.whereType<TextContent>().map((b) => b.text).join('\n');
+      default:
+        continue;
+    }
+    for (final line in text.split('\n')) {
+      if (_fenceLineRe.hasMatch(line)) open = !open;
+    }
+  }
+  return open;
 }
 
 /// Row accumulator for [buildReplayEntries]: the entry list with its row

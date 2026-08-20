@@ -341,9 +341,11 @@ final class UnavailableShell implements Shell {
 /// In-memory [ExecutionEnv]: [MemoryFileSystem] plus a [Shell].
 ///
 /// The default shell is [UnavailableShell]; pass a custom [shell] to test
-/// shell-consuming code without spawning real processes.
+/// shell-consuming code without spawning real processes. When the shell
+/// implements [BackgroundShell] (the app's sandbox shells do), the env
+/// forwards detached-job calls to it.
 final class MemoryExecutionEnv extends MemoryFileSystem
-    implements ExecutionEnv {
+    implements ExecutionEnv, BackgroundShell {
   /// Creates a [MemoryExecutionEnv] rooted at [cwd].
   MemoryExecutionEnv({super.cwd, this._shell = const UnavailableShell()});
 
@@ -355,5 +357,38 @@ final class MemoryExecutionEnv extends MemoryFileSystem
     ShellExecOptions? options,
   }) {
     return _shell.exec(command, options: options);
+  }
+
+  @override
+  bool get backgroundJobsSupported {
+    final shell = _shell;
+    if (shell case final BackgroundShell bg) return bg.backgroundJobsSupported;
+    return false;
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) {
+    final shell = _shell;
+    if (shell case final BackgroundShell bg) {
+      return bg.startShellJob(
+        command,
+        id: id,
+        logPath: logPath,
+        options: options,
+      );
+    }
+    return Future.value(
+      const Err(
+        ExecutionError(
+          ExecutionErrorCode.shellUnavailable,
+          'background shell jobs are not supported by this shell',
+        ),
+      ),
+    );
   }
 }

@@ -786,13 +786,20 @@ All nodes are plain JSON objects with a `type` field.
 |------|-----------|-------------|
 | `column` | `children`, `mainAxisAlignment`, `crossAxisAlignment`, `mainAxisSize` | Vertical stack |
 | `row` | `children`, `mainAxisAlignment`, `crossAxisAlignment` | Horizontal stack |
-| `stack` | `children`, `alignment`, `fit` (`expand`/`loose`) | Overlapping layers |
+| `wrap` | `children`, `spacing`, `runSpacing`, `alignment` | Flow-wrap to the next row |
+| `stack` | `children`, `alignment`, `fit` (`expand`/`loose`) | Overlapping layers; children may use `positioned: {left, top, right, bottom}` |
+| `overlay` | `children` | Stack layer supporting `positioned` children |
 | `center` | `child` | Center child |
+| `align` | `child`, `alignment` | Align child within available space |
 | `padding` | `child`, `padding: [left, top, right, bottom]` | Add padding |
 | `expanded` | `child`, `flex` | Flex expand inside row/column |
+| `flexible` | `child`, `flex`, `fit` (`tight`/`loose`) | Flex without forcing the size |
+| `spacer` | `flex` | Empty flex space in row/column |
 | `sizedBox` | `width`, `height`, `child` | Fixed size box |
 | `safeArea` | `child` | Insets for notches/bars |
 | `aspectRatio` | `child`, `aspectRatio` | Force aspect ratio |
+| `clipRRect` | `child`, `borderRadius` | Clip child to rounded corners |
+| `scroll` | `child` | Single-child scroll view |
 | `listView` | `children`, `shrinkWrap`, `scrollDirection`, `physics` | Scrollable list (set `shrinkWrap: false` + bounded height for long lists) |
 | `gridView` | `children`, `crossAxisCount`, `crossAxisSpacing`, `mainAxisSpacing`, `childAspectRatio`, `padding` | Fixed-column grid | (`shrinkWrap` default true, `physics` `never`\|`always`\|`platform` to enable scrolling)
 
@@ -801,15 +808,22 @@ All nodes are plain JSON objects with a `type` field.
 | Type | Key props | Description |
 |------|-----------|-------------|
 | `text` | `data`, `style` | Text label |
+| `markdown` | `data` | Markdown-formatted text (`**bold**`, lists, …) |
 | `icon` | `name`, `color`, `size` | Material icon by name |
+| `svg` | `data` (inline SVG markup), `width`, `height`, `color` | Custom vector mark; `color` tints via srcIn — the SVG must paint pixels (stroked icons need an explicit `stroke`) |
 | `divider` | `color`, `height`, `thickness` | Horizontal line |
+| `circleAvatar` | `text` or `image`, `radius` | Round avatar |
+| `chip` | `label`, `avatar?`, `color` | Material chip |
+| `badge` | `label`, `child` | M3 badge over a child |
+| `linearProgressIndicator` | `value` (0..1, null = indeterminate) | Progress bar |
+| `circularProgressIndicator` | — | Spinner |
 | `image` | `url`, `asset:<path>`, `file:<path>`, `fit`, `width`, `height` | Image |
 
 ### Containers
 
 | Type | Key props | Description |
 |------|-----------|-------------|
-| `container` | `child`, `color`, `decoration`, `padding`, `margin`, `width`, `height`, `alignment` | Styled box |
+| `container` | `child`, `color`, `decoration` (`color`, `borderRadius`, `border`, `boxShadows`, `gradient`), `padding`, `margin`, `width`, `height`, `alignment`, `clip`, `transform`, `blur` | Styled box |
 | `card` | `child`, `color`, `elevation`, `borderRadius` | Material card |
 | `inkWell` | `child`, `onTap`, `borderRadius` | Tappable area (ripple effect) |
 
@@ -818,9 +832,46 @@ All nodes are plain JSON objects with a `type` field.
 | Type | Key props | Description |
 |------|-----------|-------------|
 | `button` | `label`, `onPressed`, `icon`, `color`, `textColor` | Elevated button |
+| `textButton` | `label`, `onPressed` | Flat text button |
+| `outlinedButton` | `label`, `onPressed`, `icon` | Outlined button |
+| `iconButton` | `icon`, `onTap`, `tooltip?` | Icon-only button |
 | `textField` | `hint`, `value`, `onSubmit`, `onChange`, `obscure` | Text input field |
 | `textArea` | `value`, `hint`, `minLines` (3), `maxLines` (8), `onChange`, `onSubmit` | Multiline text input (expands, then scrolls) |
-| `gestureDetector` | `child`, `onTap`, `onTapDown`, `onTapUp`, `onPanStart`, `onPanUpdate`, `onPanEnd` | Touch/gesture input with local coordinates |
+| `switch` | `value`, `onChanged` → `{value: bool}` | Toggle |
+| `checkbox` | `value`, `label?`, `onChanged` → `{value: bool}` | Checkbox |
+| `slider` | `value`, `min`, `max`, `divisions`, `onChanged` → `{value: num}` | Slider |
+| `dropdown` | `items` (strings or `{value, label}`), `value`, `onChanged` | Dropdown picker |
+| `gestureDetector` | `child`, `onTap`, `onTapDown`, `onTapUp`, `onPanStart`, `onPanUpdate`, `onPanEnd`, `onLongPress` | Touch/gesture input with local coordinates |
+
+### Material 3
+
+| Type | Key props | Events |
+|------|-----------|--------|
+| `appBar` | `title`, `leading: {icon, onTap}`, `actions: [{icon, onTap, tooltip}]`, `color` | taps |
+| `navigationBar` / `navigationRail` | `destinations: [{icon, label}]`, `selectedIndex`, `onChanged` | `{value: index}` |
+| `tabBar` | `tabs: [string]`, `children: [node]` | none (self-contained) |
+| `fab` | `icon?`, `label?` (extended), `mini?`, `onTap` | tap |
+| `segmentedButton` | `segments: [{value, label, icon?}]`, `selected: [...]`, `multiSelect?`, `onChanged` | `{value}` or `{value: [...]}` |
+| `radio` | `value`, `groupValue`, `label?`, `onChanged` | `{value}` |
+| `searchBar` | `hint`, `onChanged`, `onSubmitted` | `{value: text}` |
+| `tooltip` | `message`, `child` | — |
+| `popupMenu` | `items: [{value, label, icon?}]`, `icon?`, `onSelected` | `{value}` |
+| `banner` | `message`, `icon?`, `actions: [{label, onTap}]` | taps |
+| `bottomAppBar` | `children`, `color?`, `height?` | — |
+| `carousel` | `children`, `itemExtent?` (200), `shrinkExtent?` (0) | — |
+| `drawer` | `drawer: node`, `child: node` — wraps child in a nested Scaffold with a Drawer; an `appBar` inside gets the hamburger automatically | — |
+
+### Overlays (modal surfaces)
+
+Zero-size driver nodes: they open a modal surface when they ENTER the tree and close it when they leave. Pattern: keep `state.overlay = null | 'sheet' | ...`, render the node conditionally, and on its dismiss event set `state.overlay = null` + re-render.
+
+| Type | Key props | Events |
+|------|-----------|--------|
+| `bottomSheet` | `child`, `height?`, `color?`, `dismissible?` (true), `onDismiss?` | dismiss → `onDismiss ?? 'bottomSheetDismiss'` |
+| `dialog` | `title?`, `message?` or `child?`, `actions: [{label, onTap}]`, `dismissible?`, `onDismiss?` | action tap = pop + its `onTap`; barrier → `onDismiss ?? 'dialogDismiss'` |
+| `snackBar` | `message`, `actionLabel?`, `onAction?`, `durationMs?` | `onAction` |
+| `datePicker` | `initialDate?`/`firstDate?`/`lastDate?` ('YYYY-MM-DD'), `onSelected`, `onDismiss?` | `{value: 'YYYY-MM-DD'}` |
+| `timePicker` | `initialTime?` ('HH:MM'), `onSelected`, `onDismiss?` | `{value: 'HH:MM'}` (24h) |
 
 ### Animated (Implicit Animations)
 
@@ -832,7 +883,7 @@ All nodes are plain JSON objects with a `type` field.
 | `entrance` | `child`, `animation`, `delay` (ms), `duration` (ms), `curve` | One-shot mount animation — plays once, then rests |
 | `animatedSwitcher` | `child`, `switchKey`, `animation`, `duration` (ms), `curve` | View transition — changing `switchKey` animates old child out, new one in |
 
-**Curves**: `linear`, `easeIn`, `easeOut`, `easeInOut`, `bounce`, `bounceIn`, `elastic`, `elasticIn`, `decelerate`, `fastOutSlowIn`
+**Curves**: `linear`, `easeIn`, `easeOut`, `easeInOut`, `bounce`, `bounceIn`, `elastic`, `elasticIn`, `decelerate`, `fastOutSlowIn`, plus M3 motion tokens (approximated): `emphasized`, `emphasizedAccelerate`, `emphasizedDecelerate`, `standard`, `standardAccelerate`, `standardDecelerate`
 
 **Transform** (on `animatedContainer`): `{translateX, translateY, scale, rotate}` — rotate in radians.
 
@@ -858,12 +909,23 @@ All nodes are plain JSON objects with a `type` field.
 
 | Type | Key props | Description |
 |------|-----------|-------------|
-| `chart` | `data`, `chartType` (`line`\|`bar`), `color`, `fillColor`, `strokeWidth`, `height` | Sparkline or bar chart |
+| `flChart` | `chartType` + per-type props (below) | Full charts via fl_chart — prefer over `chart` for anything user-facing |
+| `chart` | `data`, `chartType` (`line`\|`bar`), `color`, `fillColor`, `strokeWidth`, `height` | Legacy sparkline/bar painter |
 | `map` | `center {lat,lng}`, `zoom`, `markers [{id,lat,lng,label?,color?}]`, `polylines`, `fitBounds`, `width`, `height` | OpenStreetMap (needs `network`) — `onTap` fires `{lat,lng}`, `onMarkerTap` fires `{id}`; `center`/`zoom` apply on creation only, so re-create the node to move the camera |
 | `path` | `path` (SVG path data), `progress`, `color`, `strokeWidth`, `cap`, `join` | SVG path stroke |
 | `absoluteFill` / `fill` | `color`, `child` | Expand to fill parent |
 | `video` | `src`, `autoPlay`, `loop`, `controls`, `fit`, `width`, `height` | Video player |
 | `audio` | `src`, `autoPlay`, `loop`, `title` | Audio player |
+
+**`flChart` per chartType:**
+
+- `'line'`: `{series: [{label?, color?, points: [y...]}], minY?, maxY?, showGrid? (true), curved? (true)}`
+- `'bar'`: `{values: [y...], color?}`
+- `'pie'`: `{sections: [{label?, value, color?}], centerSpaceRadius? (32)}`
+- `'radar'`: `{features: [names], entries: [{label?, color?, values}]}` (≥3 features; short value lists are zero-padded)
+- `'scatter'`: `{points: [{x, y, radius?, color?}], minX?/maxX?/minY?/maxY?}`
+
+Default palette cycles `#818cf8 #a78bfa #22d3ee #f59e0b #ef4444`.
 
 **Universal effect props** (any node): `offsetX`, `offsetY`, `scale`, `rotation` (radians), `opacity`, `blur`.
 
@@ -887,6 +949,7 @@ The `gestureDetector` node fires events with coordinates:
 | `onPanStart` | `{x, y}` |
 | `onPanUpdate` | `{x, y, dx, dy}` — position + delta |
 | `onPanEnd` | `{velocityX, velocityY}` |
+| `onLongPress` | `{}` |
 
 ```javascript
 jsr.render({
@@ -1004,6 +1067,49 @@ Bar variant: `{type:'chart', chartType:'bar', data:[3,7,4], color:'#0ea5e9', hei
   color: '#94a3b8',
   size: 24,
 }
+```
+
+### `flChart`
+```javascript
+{
+  type: 'flChart',
+  chartType: 'line',                    // line | bar | pie | radar | scatter
+  series: [
+    { label: '2024', color: '#818cf8', points: [1.2, 2.5, 1.8, 3.0] },
+    { label: '2025', color: '#22d3ee', points: [1.8, 2.1, 2.9, 3.6] },
+  ],
+  height: 160,
+}
+```
+Pie: `{type:'flChart', chartType:'pie', sections:[{label:'A', value:40},{label:'B', value:60}], height:180}`
+
+### `segmentedButton` (Material 3)
+```javascript
+{
+  type: 'segmentedButton',
+  segments: [
+    {value: 'day', label: 'Day'},
+    {value: 'week', label: 'Week'},
+    {value: 'month', label: 'Month'},
+  ],
+  selected: [state.range],
+  onChanged: 'range_changed',   // fires handleEvent('range_changed', {value: ['week']})
+}
+```
+
+### `bottomSheet` (overlay)
+```javascript
+// Render conditionally; the sheet opens while the node is in the tree and
+// closes when it leaves. Always clear the state on dismiss.
+if (state.overlay === 'settings') {
+  children.push({
+    type: 'bottomSheet',
+    height: 320,
+    onDismiss: 'close_overlay',   // or omit → 'bottomSheetDismiss'
+    child: settingsPanel(),
+  });
+}
+// jsr.onEvent: on 'close_overlay'/'bottomSheetDismiss' → state.overlay = null; render();
 ```
 
 ---

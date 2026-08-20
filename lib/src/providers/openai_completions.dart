@@ -152,7 +152,10 @@ AssistantMessageEventStream streamOpenAICompletions(
 ]) {
   final eventStream = AssistantMessageEventStream();
   final cancelToken = options?.cancelToken;
-  final httpClient = client ?? http.Client();
+  // No injected client: the shared keep-alive client (never closed per
+  // call — a fresh client per turn churns TCP connections into TIME_WAIT
+  // pileups that stall connect() into the watchdog).
+  final httpClient = client ?? sharedProviderHttpClient();
 
   // Mutable accumulation state. pi mutates a single `output` object; we keep
   // the pieces in a shared state holder and build an immutable snapshot per
@@ -174,7 +177,7 @@ AssistantMessageEventStream streamOpenAICompletions(
       state,
       cancelToken,
       httpClient,
-      ownsClient: client == null,
+      ownsClient: false, // shared or injected — never closed per call
       body: session.run,
     ),
   );
@@ -186,6 +189,10 @@ AssistantMessageEventStream streamOpenAICompletions(
 /// accumulation state pi keeps in closures around one `output` object plus
 /// the per-block streaming helpers, so [run] reads as the same phase
 /// sequence as pi's `stream` body.
+/// Inline-`<think>` extraction state (see `_OpenAICompletionsSession`):
+/// deciding whether the content starts with the tag, inside it, or past it.
+enum _ThinkTagState { deciding, inThink, plain }
+
 final class _OpenAICompletionsSession {
   _OpenAICompletionsSession(
     this.model,
@@ -212,6 +219,13 @@ final class _OpenAICompletionsSession {
 
   TextStreamingBlock? textBlock;
   ThinkingStreamingBlock? thinkingBlock;
+
+  // Inline `<think>` extraction: endpoints without a reasoning field send
+  // thinking as `<think>…</think>` tags inside the content stream (kimi k3
+  // via openai-completions). Routing it into a thinking block keeps the
+  // transcript clean instead of showing raw tags.
+  _ThinkTagState _thinkTagState = _ThinkTagState.deciding;
+  final _thinkTagBuf = StringBuffer();
 
   List<StreamingBlock> get blocks => state.blocks;
 
@@ -255,7 +269,8 @@ final class _OpenAICompletionsSession {
     final iterator = createSseIterator(
       response,
       cancelToken,
-      idleTimeout: options?.idleTimeout ?? providerStreamIdleTimeout,
+      // Null falls through to the effective (config-overridable) default.
+      idleTimeout: options?.idleTimeout,
     );
 
     while (await iterator.moveNext()) {
@@ -346,17 +361,98 @@ final class _OpenAICompletionsSession {
 
   void _handleContentDelta(Map<String, dynamic> delta) {
     final content = delta['content'];
-    if (content is String && content.isNotEmpty) {
-      final block = _ensureTextBlock();
-      block.text.write(content);
-      eventStream.push(
-        TextDeltaEvent(
-          contentIndex: _contentIndex(block),
-          delta: content,
-          partial: state.snapshot(),
-        ),
-      );
+    if (content is! String || content.isEmpty) return;
+    _routeContent(content);
+  }
+
+  /// Routes content text into the text block or — when the stream starts
+  /// with a `<think>` tag — into the thinking block until `</think>`.
+  void _routeContent(String chunk) {
+    if (_thinkTagState == _ThinkTagState.plain) {
+      _emitText(chunk);
+      return;
     }
+    _thinkTagBuf.write(chunk);
+    _drainThinkTagBuffer();
+  }
+
+  /// Drains the think-tag buffer as far as decidable: tags may split across
+  /// deltas, so an ambiguous prefix stays buffered until [flush] (stream end).
+  void _drainThinkTagBuffer({bool flush = false}) {
+    var text = _thinkTagBuf.toString();
+    if (text.isEmpty) return;
+
+    if (_thinkTagState == _ThinkTagState.deciding) {
+      final probe = text.trimLeft();
+      // Undecided while the probe could still grow into the open tag.
+      if (!flush && probe.length < 7 && '<think>'.startsWith(probe)) return;
+      if (probe.startsWith('<think>')) {
+        _thinkTagState = _ThinkTagState.inThink;
+        text = probe.substring(7);
+        _thinkTagBuf
+          ..clear()
+          ..write(text);
+      } else {
+        _thinkTagState = _ThinkTagState.plain;
+        _thinkTagBuf.clear();
+        _emitText(text);
+        return;
+      }
+    }
+
+    if (_thinkTagState == _ThinkTagState.inThink) {
+      final end = text.indexOf('</think>');
+      if (end >= 0) {
+        if (end > 0) _emitThinking(text.substring(0, end));
+        _thinkTagState = _ThinkTagState.plain;
+        _thinkTagBuf.clear();
+        final rest = text.substring(end + 8);
+        if (rest.isNotEmpty) _emitText(rest);
+        return;
+      }
+      // Hold back a potential partial `</think>` tail.
+      final hold = flush ? 0 : _partialTagTail(text);
+      final emit = hold == 0 ? text : text.substring(0, text.length - hold);
+      if (emit.isNotEmpty) _emitThinking(emit);
+      _thinkTagBuf
+        ..clear()
+        ..write(hold == 0 ? '' : text.substring(text.length - hold));
+    }
+  }
+
+  /// The length of the longest suffix of [text] that could grow into the
+  /// `</think>` close tag (0-8).
+  static int _partialTagTail(String text) {
+    const tag = '</think>';
+    final max = text.length < tag.length - 1 ? text.length : tag.length - 1;
+    for (var len = max; len > 0; len--) {
+      if (tag.startsWith(text.substring(text.length - len))) return len;
+    }
+    return 0;
+  }
+
+  void _emitText(String text) {
+    final block = _ensureTextBlock();
+    block.text.write(text);
+    eventStream.push(
+      TextDeltaEvent(
+        contentIndex: _contentIndex(block),
+        delta: text,
+        partial: state.snapshot(),
+      ),
+    );
+  }
+
+  void _emitThinking(String text) {
+    final block = _ensureThinkingBlock('think_tag');
+    block.thinking.write(text);
+    eventStream.push(
+      ThinkingDeltaEvent(
+        contentIndex: _contentIndex(block),
+        delta: text,
+        partial: state.snapshot(),
+      ),
+    );
   }
 
   void _handleReasoningDelta(Map<String, dynamic> delta) {
@@ -601,6 +697,9 @@ final class _OpenAICompletionsSession {
   /// Block-end events, abort/error propagation, the no-finish-reason
   /// fallback, and the final [DoneEvent].
   void _finish() {
+    // A truncated/ended stream may leave an undecided or mid-tag think
+    // buffer: flush it so its content lands in the right block.
+    _drainThinkTagBuffer(flush: true);
     for (final block in List.of(blocks)) {
       pushBlockEndEvent(eventStream, blocks, block, state.snapshot);
     }
@@ -755,8 +854,7 @@ _ResolvedCompat _getCompat(Model model) {
     // DIAL Core's strict schema rejects `strict`; Google's Gemini
     // generateContent endpoint also rejects it (400 "Cannot find
     // field 'strict'"). Neither adapter carries it.
-    sendsToolStrict:
-        compat?.sendsToolStrict ?? (!isDial && !isGoogle),
+    sendsToolStrict: compat?.sendsToolStrict ?? (!isDial && !isGoogle),
   );
 }
 

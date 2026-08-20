@@ -16,8 +16,39 @@ import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
+import '../providers/provider_common.dart';
 import '../ttsr/ttsr.dart';
 import 'custom_providers.dart';
+
+/// Parses the `providerTimeouts:` section: provider watchdog overrides
+/// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
+/// [ConfigException] instead of silently keeping the defaults.
+ProviderTimeoutsOverride? _parseProviderTimeouts(Object? node) {
+  if (node == null) return null;
+  if (node is! YamlMap) {
+    throw ConfigException('providerTimeouts must be a map, got: $node');
+  }
+  Duration? readTimeout(String key) {
+    final value = node[key];
+    if (value == null) return null;
+    if (value is! int || value <= 0) {
+      throw ConfigException(
+        '"providerTimeouts.$key" must be a positive integer (milliseconds)',
+      );
+    }
+    return Duration(milliseconds: value);
+  }
+
+  final connect = readTimeout('connectTimeoutMs');
+  final streamIdle = readTimeout('streamIdleTimeoutMs');
+  for (final key in node.keys) {
+    if (key != 'connectTimeoutMs' && key != 'streamIdleTimeoutMs') {
+      throw ConfigException('unknown "providerTimeouts" key: $key');
+    }
+  }
+  if (connect == null && streamIdle == null) return null;
+  return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
+}
 
 /// Persisted CLI configuration.
 final class CliConfig {
@@ -35,6 +66,7 @@ final class CliConfig {
     this.models,
     this.mcp,
     this.a2a,
+    this.providerTimeouts,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -85,6 +117,9 @@ final class CliConfig {
               map['a2a'],
               (name) => Platform.environment[name],
             ),
+      // The providerTimeouts section (provider watchdog overrides) is strict
+      // too.
+      providerTimeouts: _parseProviderTimeouts(map['providerTimeouts']),
     );
   }
 
@@ -137,6 +172,11 @@ final class CliConfig {
   /// strictly; `${NAME}` tokens resolve from the environment.
   final A2aConfig? a2a;
 
+  /// Optional provider watchdog overrides (`providerTimeouts:` yaml
+  /// section, `connectTimeoutMs`/`streamIdleTimeoutMs`). Parsed strictly.
+  /// `bin/fah.dart` publishes it to [providerTimeoutsOverride] at startup.
+  final ProviderTimeoutsOverride? providerTimeouts;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -157,6 +197,18 @@ final class CliConfig {
     }
     final mcpConfig = mcp;
     if (mcpConfig != null) buffer.write(mcpConfig.toYaml());
+    final timeouts = providerTimeouts;
+    if (timeouts != null) {
+      buffer.write('providerTimeouts:\n');
+      final connect = timeouts.connect;
+      if (connect != null) {
+        buffer.write('  connectTimeoutMs: ${connect.inMilliseconds}\n');
+      }
+      final streamIdle = timeouts.streamIdle;
+      if (streamIdle != null) {
+        buffer.write('  streamIdleTimeoutMs: ${streamIdle.inMilliseconds}\n');
+      }
+    }
     return buffer.toString();
   }
 

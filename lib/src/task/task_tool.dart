@@ -406,6 +406,12 @@ void _checkAgentKnown(String? agent, TaskAgentRegistry registry) {
 /// through [onUpdate], and return every per-item output (omp's settled
 /// response, reduced to the text block — our `ToolExecutionResult` has no
 /// `details` side channel).
+///
+/// Yield-aware: when the loop's soft-yield token fires (a user steering
+/// message arrived mid-wait), the STILL-RUNNING children are converted into
+/// background jobs untouched — never aborted — and the tool call answers
+/// with their job ids, so the user message is delivered at the next step
+/// boundary. Settled items report inline as usual.
 Future<ToolExecutionResult> _runBlocking(
   TaskToolConfig config,
   TaskExecutor executor,
@@ -417,18 +423,27 @@ Future<ToolExecutionResult> _runBlocking(
   final stopwatch = Stopwatch()..start();
   final phases = List<TaskSpawnPhase?>.filled(items.length, null);
   final ids = <int, String>{};
+  // Ids are allocated up front (omp's async path does the same) so a yield
+  // conversion can register jobs for children still queued on the semaphore.
+  final preallocatedIds = [
+    for (final item in items) config.outputs.allocateId(taskItemNameBase(item)),
+  ];
+  var returned = false;
   void emitProgress() {
+    if (returned) return;
     onUpdate?.call(
       ToolExecutionResult.text(_renderProgress(items, phases, ids)),
     );
   }
 
-  final results = await Future.wait([
+  final results = List<TaskSingleResult?>.filled(items.length, null);
+  final futures = [
     for (var i = 0; i < items.length; i++)
       executor.runSpawn(
         item: items[i],
         index: i,
         context: context,
+        preallocatedId: preallocatedIds[i],
         cancelToken: cancelToken,
         onProgress: (index, id, phase) {
           ids[index] = id;
@@ -436,9 +451,72 @@ Future<ToolExecutionResult> _runBlocking(
           emitProgress();
         },
       ),
-  ]);
+  ];
+  final indexed = [
+    for (var i = 0; i < items.length; i++)
+      futures[i].then((result) => results[i] = result),
+  ];
+  final allSettled = Future.wait(indexed);
+
+  final yieldToken = currentYieldToken();
+  if (yieldToken == null) {
+    await allSettled;
+    stopwatch.stop();
+    returned = true;
+    return ToolExecutionResult.text(
+      _renderResults(results.cast(), stopwatch.elapsed),
+    );
+  }
+
+  await Future.any([allSettled, yieldToken.onCancel]);
+  returned = true;
   stopwatch.stop();
-  return ToolExecutionResult.text(_renderResults(results, stopwatch.elapsed));
+  if (results.every((result) => result != null)) {
+    await allSettled;
+    return ToolExecutionResult.text(
+      _renderResults(results.cast(), stopwatch.elapsed),
+    );
+  }
+
+  // Yielded: move the unfinished children into the session job registry
+  // untouched; their completions arrive via the async-result flow.
+  final moved = <String>[];
+  for (var i = 0; i < items.length; i++) {
+    if (results[i] != null) continue;
+    final job = config.jobManager._register(
+      id: preallocatedIds[i],
+      index: i,
+      agent: taskItemAgentName(items[i]),
+      task: items[i].task,
+    );
+    job._status = phases[i] == TaskSpawnPhase.running
+        ? TaskJobStatus.running
+        : TaskJobStatus.queued;
+    unawaited(
+      futures[i].then((result) => config.jobManager._finish(job, result)),
+    );
+    moved.add(preallocatedIds[i]);
+  }
+  final finished = results.whereType<TaskSingleResult>().toList();
+  final buffer = StringBuffer(
+    'Moved ${moved.length} still-running '
+    '${moved.length == 1 ? 'agent' : 'agents'} to background jobs (they were '
+    'NOT aborted) because the user sent a message, which follows next:\n',
+  );
+  for (final id in moved) {
+    buffer.writeln('- `$id` (result arrives as agent://$id)');
+  }
+  buffer.write(
+    '\nEach result is delivered when its job settles; use task_status / '
+    'task_send / task_observe to follow up.',
+  );
+  if (finished.isNotEmpty) {
+    buffer.write('\n\nAlready finished before the yield:');
+    for (final result in finished) {
+      _renderResult(buffer, result);
+    }
+  }
+  return ToolExecutionResult.text(buffer.toString());
 }
 
 /// Background execution: allocate ids up front, register one job per item,

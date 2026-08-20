@@ -354,9 +354,20 @@ const _blockMarkerChars = {0x23, 0x3E, 0x2D, 0x2A, 0x2B, 0x20};
 
 /// Wraps one ANSI-styled line to [width] visible columns WITHOUT cutting
 /// inside SGR escape sequences — dart_tui's viewport wrap slices raw text
-/// and leaks escape tails (e.g. `212m`) as visible text. SGR state carries
-/// across the cut, so styles continue correctly on the next row. The
-/// unicode flag makes `.` match whole runes, keeping emoji intact.
+/// and leaks escape tails (e.g. `212m`) as visible text.
+///
+/// Two correctness rules beyond the escape safety:
+///
+/// - Word-aware: breaks at spaces when possible (a hard mid-word cut only
+///   happens for a single word longer than [width]); a boundary space stays
+///   at the end of the closing row, so reassembling the rows reproduces the
+///   original text.
+/// - SGR state carries across the cut EXPLICITLY: the closed row ends with
+///   a reset and the continuation row re-opens the active styles. dart_tui
+///   redraws rows independently, so relying on the terminal to keep SGR
+///   across a newline loses styling on every wrapped styled span.
+///
+/// The unicode flag makes `.` match whole runes, keeping emoji intact.
 List<String> wrapAnsiLine(String line, int width) {
   if (width <= 0) return [line];
   // Skip the ANSI strip on plain-text lines (the common case).
@@ -365,24 +376,76 @@ List<String> wrapAnsiLine(String line, int width) {
       ? line.replaceAll(AnsiMarkdown.ansiSgrPattern, '').length
       : line.length;
   if (visible <= width) return [line];
+
   final rows = <String>[];
-  var current = StringBuffer();
+  final row = StringBuffer();
   var col = 0;
-  final tokens = _ansiTokenRe.allMatches(line);
-  for (final match in tokens) {
-    final token = match.group(0)!;
+  // SGR codes active at the current write position (since the last reset).
+  final activeSgr = <String>[];
+  // The word being accumulated: whole tokens (chars + inline SGR) and its
+  // visible length.
+  final wordTokens = <String>[];
+  var wordVisible = 0;
+
+  void closeRow() {
+    if (activeSgr.isNotEmpty) row.write('\x1b[0m');
+    rows.add(row.toString());
+    row
+      ..clear()
+      ..writeAll(activeSgr);
+    col = 0;
+  }
+
+  void writeToken(String token, int visibleLen) {
+    row.write(token);
+    col += visibleLen;
     if (token.startsWith('\x1b')) {
-      current.write(token);
+      if (token == '\x1b[0m') {
+        activeSgr.clear();
+      } else {
+        activeSgr.add(token);
+      }
+    }
+  }
+
+  void flushWord() {
+    if (wordTokens.isEmpty) return;
+    if (wordVisible > width) {
+      // A single word longer than the width: hard-cut it across rows.
+      if (col > 0) closeRow();
+      for (final token in wordTokens) {
+        final isSgr = token.startsWith('\x1b');
+        if (!isSgr && col >= width) closeRow();
+        writeToken(token, isSgr ? 0 : 1);
+      }
+    } else {
+      if (col > 0 && col + wordVisible > width) closeRow();
+      for (final token in wordTokens) {
+        writeToken(token, token.startsWith('\x1b') ? 0 : 1);
+      }
+    }
+    wordTokens.clear();
+    wordVisible = 0;
+  }
+
+  for (final match in _ansiTokenRe.allMatches(line)) {
+    final token = match.group(0)!;
+    if (token == ' ') {
+      flushWord();
+      // A boundary space ends the closing row when it fits; at the very edge
+      // it is dropped rather than becoming an invisible leading space.
+      if (col + 1 <= width) {
+        writeToken(token, 1);
+      } else {
+        closeRow();
+      }
       continue;
     }
-    if (col >= width) {
-      rows.add(current.toString());
-      current = StringBuffer();
-      col = 0;
-    }
-    current.write(token);
-    col++;
+    wordTokens.add(token);
+    if (!token.startsWith('\x1b')) wordVisible++;
   }
-  if (current.isNotEmpty) rows.add(current.toString());
+  flushWord();
+  // A row holding only re-emitted SGR codes (no visible columns) is dropped.
+  if (col > 0) closeRow();
   return rows;
 }

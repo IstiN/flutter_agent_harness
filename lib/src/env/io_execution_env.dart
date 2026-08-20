@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../cancel_token.dart';
 import 'execution_env.dart';
 
 FileError _toFileError(Object error, String path) {
@@ -332,9 +333,12 @@ final class LocalFileSystem implements FileSystem {
 /// callbacks receive output chunks as they arrive; timeout and cancellation
 /// kill the process. This is the v1 shell — pi's richer bash-discovery logic
 /// is deferred until a tool actually needs it.
-final class LocalShell implements Shell {
+final class LocalShell implements Shell, BackgroundShell {
   /// Creates a [LocalShell].
   const LocalShell();
+
+  @override
+  bool get backgroundJobsSupported => true;
 
   /// The child environment: the host's, with the caller's `options.env`
   /// merged on top (its values override, per the [ShellExecOptions.env]
@@ -505,12 +509,130 @@ final class LocalShell implements Shell {
       exitCode: exitCode,
     );
   }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async {
+    final token = options?.cancelToken;
+    if (token?.isCancelled ?? false) {
+      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+    }
+    final started = await _start(command, options);
+    if (started.isErr) return Err(started.errorOrNull!);
+    final process = started.valueOrNull!;
+    final IOSink logSink;
+    try {
+      logSink = File(logPath).openWrite(mode: FileMode.append);
+    } on Object catch (error) {
+      process.kill();
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'cannot open job log file $logPath: $error',
+          cause: error,
+        ),
+      );
+    }
+    return Ok(
+      _LocalShellJob(
+        id: id,
+        command: command,
+        logPath: logPath,
+        process: process,
+        logSink: logSink,
+        timeout: options?.timeout,
+        token: token,
+      ),
+    );
+  }
+}
+
+/// A [ShellJob] over a local [Process]: stdout/stderr stream into the log
+/// file; timeout and the cancel token both stop the process.
+final class _LocalShellJob implements ShellJob {
+  _LocalShellJob({
+    required this.id,
+    required this.command,
+    required this.logPath,
+    required Process process,
+    required this._logSink,
+    Duration? timeout,
+    CancelToken? token,
+  }) : _process = process {
+    _stdoutSub = process.stdout
+        .transform(utf8.decoder)
+        .listen(_logSink.write, onError: (_) {});
+    _stderrSub = process.stderr
+        .transform(utf8.decoder)
+        .listen(_logSink.write, onError: (_) {});
+    if (timeout != null) {
+      _timer = Timer(timeout, () {
+        _stopReason = 'timeout';
+        stop();
+      });
+    }
+    token?.onCancel.then((_) {
+      _stopReason = 'cancelled';
+      stop();
+    });
+    unawaited(
+      _process.exitCode.then((code) async {
+        _exitCode = code;
+        _timer?.cancel();
+        await _stdoutSub.cancel();
+        await _stderrSub.cancel();
+        await _logSink.flush();
+        await _logSink.close();
+        _settled.complete();
+      }),
+    );
+  }
+
+  final Process _process;
+  final IOSink _logSink;
+  late final StreamSubscription<void> _stdoutSub;
+  late final StreamSubscription<void> _stderrSub;
+  Timer? _timer;
+  final _settled = Completer<void>();
+  int? _exitCode;
+  String? _stopReason;
+
+  @override
+  final String id;
+
+  @override
+  final String command;
+
+  @override
+  final String logPath;
+
+  @override
+  bool get isRunning => _exitCode == null;
+
+  @override
+  int? get exitCode => _exitCode;
+
+  @override
+  String? get stopReason => _stopReason;
+
+  @override
+  Future<void> get settled => _settled.future;
+
+  @override
+  Future<void> stop() async {
+    _stopReason ??= 'stopped';
+    _process.kill();
+  }
 }
 
 /// Local [ExecutionEnv]: [LocalFileSystem] plus [LocalShell].
 ///
 /// Exported only from `lib/io.dart`.
-final class LocalExecutionEnv implements ExecutionEnv {
+final class LocalExecutionEnv implements ExecutionEnv, BackgroundShell {
   /// Creates a [LocalExecutionEnv] rooted at [cwd].
   ///
   /// A custom [shell] may be provided to swap the default [LocalShell] for a
@@ -590,4 +712,39 @@ final class LocalExecutionEnv implements ExecutionEnv {
     String command, {
     ShellExecOptions? options,
   }) => _shell.exec(command, options: options);
+
+  @override
+  bool get backgroundJobsSupported {
+    final shell = _shell;
+    if (shell case final BackgroundShell bg) return bg.backgroundJobsSupported;
+    return false;
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) {
+    final shell = _shell;
+    if (shell case final BackgroundShell bg) {
+      return bg.startShellJob(
+        command,
+        id: id,
+        logPath: logPath,
+        options: options,
+      );
+    }
+    // A swapped-in shell (e.g. the sandboxed WASM shell) without the
+    // background capability: clean error, never a crash.
+    return Future.value(
+      const Err(
+        ExecutionError(
+          ExecutionErrorCode.shellUnavailable,
+          'background shell jobs are not supported by this shell',
+        ),
+      ),
+    );
+  }
 }

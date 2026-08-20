@@ -392,5 +392,7 @@
   "workspaceDialogMailbox": "Your mailbox",
   "workspaceDialogMailboxHint": "Other Fa agents can message this session at this address.",
   "workspaceDialogMailboxCopy": "Copy",
-  "workspaceDialogMailboxCopied": "Mailbox address copied"
+  "workspaceDialogMailboxCopied": "Mailbox address copied",
+  "workspaceDialogRestrictTools": "Restrict tools to this folder",
+  "workspaceDialogRestrictToolsHint": "Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up)."
 }

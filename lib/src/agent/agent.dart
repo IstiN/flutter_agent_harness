@@ -127,9 +127,16 @@ final class _PendingMessageQueue {
   /// How many messages [drain] returns.
   QueueMode mode;
 
+  /// Fires synchronously on every [enqueue] — the agent loop's tool phase
+  /// turns a mid-phase arrival into a soft-yield request.
+  void Function()? onEnqueue;
+
   final _messages = <Message>[];
 
-  void enqueue(Message message) => _messages.add(message);
+  void enqueue(Message message) {
+    _messages.add(message);
+    onEnqueue?.call();
+  }
 
   bool hasItems() => _messages.isNotEmpty;
 
@@ -190,12 +197,17 @@ class Agent {
          messages: messages ?? const [],
        ),
        _steeringQueue = _PendingMessageQueue(steeringMode),
-       _followUpQueue = _PendingMessageQueue(followUpMode);
+       _followUpQueue = _PendingMessageQueue(followUpMode) {
+    _steeringQueue.onEnqueue = () {
+      if (!_steeringArrived.isClosed) _steeringArrived.add(null);
+    };
+  }
 
   final AgentState _state;
   final _listeners = <AgentListener>{};
   final _PendingMessageQueue _steeringQueue;
   final _PendingMessageQueue _followUpQueue;
+  final _steeringArrived = StreamController<void>.broadcast(sync: true);
   _ActiveRun? _activeRun;
 
   /// Provider adapter used for every model call. See [StreamFunction].
@@ -223,6 +235,16 @@ class Agent {
   /// the messaging fabric. Drained BEFORE the in-process steering queue.
   /// Contract: must not throw; return an empty list when nothing arrived.
   QueuedMessagesSource? externalSteeringSource;
+
+  /// Non-draining probe paired with [externalSteeringSource]: returns true
+  /// when the external source has messages pending. Polled on a slow timer
+  /// during tool-call phases so external mail also triggers the soft-yield
+  /// of long-running tools (steering delivery itself stays at the boundary).
+  Future<bool> Function()? externalSteeringProbe;
+
+  /// Fires whenever a message is enqueued into the steering queue mid-run;
+  /// the agent loop subscribes per tool-call phase to request soft-yields.
+  Stream<void> get steeringArrived => _steeringArrived.stream;
 
   /// Tool execution strategy for assistant messages that contain multiple
   /// tool calls.
@@ -417,6 +439,13 @@ class Agent {
         return [...external, ..._steeringQueue.drain()];
       },
       getFollowUpMessages: _followUpQueue.drain,
+      steeringNotifications: _steeringArrived.stream,
+      // The in-process queue notifies via [steeringArrived]; the probe is
+      // only needed for the external (file-inbox) source, which cannot
+      // notify on its own.
+      hasPendingSteering: externalSteeringProbe == null
+          ? null
+          : () => externalSteeringProbe!(),
     );
   }
 

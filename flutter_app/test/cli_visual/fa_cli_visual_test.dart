@@ -11,7 +11,6 @@
 ///   cd flutter_app && flutter test test/cli_visual --tags integration
 library;
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -687,6 +686,119 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       await harness.close();
       tempHome.deleteSync(recursive: true);
     });
+
+    testWidgets('bracketed paste of Cyrillic text stays UTF-8 (no mojibake)', (
+      tester,
+    ) async {
+      final tempHome = _tempHome();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      // dart_tui 2.0.0's paste decoder mapped bytes to Latin-1 char codes;
+      // fa repairs it — pasted Cyrillic must render as itself.
+      harness
+        ..sendText('\x1b[200~')
+        ..sendText('Привет, проверка вставки')
+        ..sendText('\x1b[201~');
+      await harness.settle(settleMs: 400);
+      await harness.screenshot(shotsDir, '99_paste_cyrillic');
+      expect(harness.screenText, contains('Привет, проверка вставки'));
+      expect(harness.screenText, isNot(contains('Ð')));
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+
+    testWidgets('a markdown bold span keeps its style across a soft wrap', (
+      tester,
+    ) async {
+      // The canned endpoint answers one long line whose bold span is longer
+      // than any terminal row: the wrap MUST cut inside it, and the
+      // continuation row must stay bold (SGR carry across the cut).
+      final server = await _startAnsweringServer(
+        tester,
+        18778,
+        'Verified: **the bold span deliberately runs past every possible '
+        'terminal width so the soft wrap cuts right through the middle of '
+        'it** — and this trailing plain suffix proves word wrap.',
+      );
+      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:18778/v1');
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      harness.sendText('go');
+      await harness.settle(settleMs: 300);
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'Verified:',
+        timeout: const Duration(seconds: 30),
+      );
+      await harness.screenshot(shotsDir, '100_markdown_wrap');
+      // The whole line is on screen (wrapped); row splits put newlines into
+      // the raw screen text, so assertions run on the flattened form. The
+      // markdown markers themselves are consumed by the formatter.
+      final flat = harness.screenText.replaceAll('\n', '');
+      expect(flat, contains('bold span deliberately'));
+      expect(flat, contains('trailing plain suffix'));
+      expect(flat, isNot(contains('**')));
+
+      await harness.close();
+      await _stopServer(tester, server);
+      tempHome.deleteSync(recursive: true);
+    });
+
+    testWidgets('ctrl+s during a long bash moves it to a background job '
+        'untouched and answers right away', (tester) async {
+      // The canned endpoint answers a `sleep 300` tool call to the first
+      // user message and a text answer once the user steers mid-tool.
+      final server = await _startAnsweringServer(
+        tester,
+        18779,
+        null, // steer mode: tool call first, text after the steer
+      );
+      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:18779/v1');
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      harness.sendText('run the long task');
+      await harness.settle(settleMs: 300);
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'sleep 300',
+        timeout: const Duration(seconds: 30),
+      );
+
+      // Steer mid-tool: the bash call must yield to a background job (the
+      // process is NOT killed) and the message is answered immediately.
+      harness.sendText('status?');
+      await harness.settle(settleMs: 200);
+      harness.sendText('\x13'); // ctrl+s
+      await harness.liveWaitForText(
+        'Working on it',
+        timeout: const Duration(seconds: 30),
+      );
+      await harness.screenshot(shotsDir, '101_steer_yield');
+      // The follow-up answer mentions the background job (flattened: row
+      // splits insert newlines into the raw screen text).
+      expect(
+        harness.screenText.replaceAll('\n', ''),
+        contains('background job'),
+      );
+
+      // The job is alive and listed; cancel it by hand.
+      await harness.runSlashCommand('/tasks');
+      await harness.liveWaitForText(
+        'sh-1',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '102_tasks_shell_job');
+      expect(harness.screenText, contains('sleep 300'));
+
+      await harness.runSlashCommand('/tasks cancel sh-1');
+      await harness.settle(settleMs: 500);
+      expect(harness.screenText, contains('stopped sh-1'));
+
+      await harness.close();
+      await _stopServer(tester, server);
+      tempHome.deleteSync(recursive: true);
+    });
   });
 }
 
@@ -773,4 +885,104 @@ approvalMode: yolo
 allowedTools: []
 ''');
   return tempHome;
+}
+
+/// A canned OpenAI-SSE endpoint for visual tests: with [answer] it always
+/// replies with that text; without it (steer mode) the first user message
+/// gets a `sleep 300` bash tool call and every later request a text answer.
+const _answerServerPy = r'''
+import http.server, json, sys
+
+args = sys.argv[1:]
+ANSWER = args[0] if len(args) > 1 else ''
+PORT = int(args[-1])
+
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        raw = self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        if ANSWER:
+            deltas = [
+                {'choices': [{'delta': {'content': ANSWER}}]},
+                {'choices': [{'delta': {}, 'finish_reason': 'stop'}]},
+            ]
+        else:
+            messages = json.loads(raw).get('messages', [])
+            last_user = ''
+            for m in reversed(messages):
+                if m.get('role') == 'user':
+                    c = m.get('content')
+                    last_user = c if isinstance(c, str) else json.dumps(c)
+                    break
+            if 'run the long task' in last_user:
+                deltas = [
+                    {'choices': [{'delta': {'tool_calls': [
+                        {'index': 0, 'id': 'call_1', 'function': {
+                            'name': 'bash',
+                            'arguments': '{"command":"sleep 300"}'}}]}}]},
+                    {'choices': [{'delta': {}, 'finish_reason': 'tool_calls'}]},
+                ]
+            else:
+                deltas = [
+                    {'choices': [{'delta': {'content':
+                        'Working on it — the long task keeps running as a '
+                        'background job.'}}]},
+                    {'choices': [{'delta': {}, 'finish_reason': 'stop'}]},
+                ]
+        body = ''.join('data: %s\n\n' % json.dumps(c) for c in deltas)
+        body += 'data: [DONE]\n\n'
+        encoded = body.encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Content-Length', str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, *a):
+        pass
+
+http.server.HTTPServer(('127.0.0.1', PORT), H).serve_forever()
+''';
+
+/// Starts the canned-answer server on [port] and waits until it accepts
+/// connections. Process I/O runs in the real-async zone (see the harness
+/// docs on fake-zone timers).
+Future<Process> _startAnsweringServer(
+  WidgetTester tester,
+  int port,
+  String? answer,
+) async {
+  final script = File('${Directory.systemTemp.path}/fa_answer_server_$port.py')
+    ..writeAsStringSync(_answerServerPy);
+  final server = (await tester.runAsync(
+    () => Process.start('python3', [
+      script.path,
+      ?answer,
+      '$port',
+    ]),
+  ))!;
+  final up = await tester.runAsync(() async {
+    for (var i = 0; i < 50; i++) {
+      try {
+        final socket = await Socket.connect('127.0.0.1', port);
+        await socket.close();
+        return true;
+      } on Object {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    }
+    return false;
+  });
+  if (up != true) throw StateError('answer server did not start on $port');
+  return server;
+}
+
+/// Stops the canned-answer server (best-effort).
+Future<void> _stopServer(WidgetTester tester, Process server) async {
+  await tester.runAsync(() async {
+    server.kill();
+    await server.exitCode.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => -1,
+    );
+  });
 }

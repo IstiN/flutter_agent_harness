@@ -418,17 +418,15 @@ extension on AgentCli {
     final total = _usage.total;
     final cost = total.cost.total.toStringAsFixed(4);
     final cwd = config.env.cwd;
-    // Current context pressure: the last assistant message's prompt size
-    // against the model's context window (pi's `context: N% (used/max)`).
-    // Error/aborted terminal messages carry Usage.zero — skip them, or the
-    // gauge snaps back to 0% right after a failed run. Scanned from the END:
-    // this runs on every rendered frame, so a full-history forward scan
-    // (allocating lazy iterables over hundreds of messages) is wasted work.
-    final lastAssistant = _agent.state.messages.reversed
-        .whereType<AssistantMessage>()
-        .where((m) => m.usage.input > 0)
-        .firstOrNull;
-    final contextTokens = lastAssistant?.usage.input ?? 0;
+    // Live context pressure: provider-reported usage up to the last reported
+    // turn plus an estimate of the trailing messages (what the NEXT request
+    // carries) — moves mid-run as tool results and the stream land, instead
+    // of freezing at the last turn's prompt size.
+    final contextTokens = _liveContextTokens();
+    // Live token counter: settled turns plus the in-flight stream estimate.
+    var totalTokens = total.totalTokens;
+    final streaming = _agent.state.streamingMessage;
+    if (streaming != null) totalTokens += estimateTokens(streaming);
     final window = model.contextWindow;
     final pct = window > 0 ? (contextTokens / window * 100).round() : 0;
     // kimi's toolbar badge: active background agents, when any. Variant A
@@ -437,8 +435,35 @@ extension on AgentCli {
     final badge = _agentsBadge();
     return '$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
-        '${total.totalTokens}tok · \$$cost · turn ${_usage.turns}$badge · '
+        '$totalTokens'
+        'tok · \$$cost · turn ${_usage.turns}$badge · '
         '${model.id}';
+  }
+
+  /// Live context pressure for the status line: provider-reported usage up
+  /// to the last reported turn plus an estimate of the trailing messages
+  /// (what the NEXT request carries) — moves mid-run as tool results and
+  /// the stream land, instead of freezing at the last turn's prompt size.
+  /// Memoized (the memo fields live on [AgentCli]): the status line runs on
+  /// every rendered frame.
+  int _liveContextTokens() {
+    final messages = _agent.state.messages;
+    final streaming = _agent.state.streamingMessage;
+    final streamLen = switch (streaming) {
+      AssistantMessage(:final content) =>
+        content.whereType<TextContent>().fold<int>(
+          0,
+          (sum, b) => sum + b.text.length,
+        ),
+      _ => 0,
+    };
+    final key = (messages.length, streamLen);
+    if (key == _ctxCacheKey) return _ctxCacheValue;
+    var tokens = estimateContextTokens(messages).tokens;
+    if (streaming != null) tokens += estimateTokens(streaming);
+    _ctxCacheKey = key;
+    _ctxCacheValue = tokens;
+    return tokens;
   }
 
   /// Live agents badge for the status line: active subagent handles with
@@ -595,9 +620,10 @@ extension on AgentCli {
     return buffer.toString();
   }
 
-  /// `/tasks [cancel <id>]` — lists the session's background agents with
-  /// their states (kimi's TaskList surface; cancelling a running job aborts
-  /// its child run, which then settles as aborted).
+  /// `/tasks [cancel <id>]` — lists the session's background agents and
+  /// background shell jobs with their states (kimi's TaskList surface;
+  /// cancelling a running job aborts its child run / stops the process,
+  /// which then settles as aborted).
   void _listTaskJobs(String rest) {
     final parts = rest
         .trim()
@@ -610,16 +636,35 @@ extension on AgentCli {
       return;
     }
     final jobs = _taskConfig.jobManager.jobs;
-    if (jobs.isEmpty) {
-      io.writeln('no background agents this session');
+    final shellJobs = _shellJobs.jobs;
+    if (jobs.isEmpty && shellJobs.isEmpty) {
+      io.writeln('no background jobs this session');
       return;
     }
-    for (final line in taskJobLines(jobs, dim: _style.dim)) {
-      io.writeln(line);
+    if (jobs.isNotEmpty) {
+      for (final line in taskJobLines(jobs, dim: _style.dim)) {
+        io.writeln(line);
+      }
+    }
+    if (shellJobs.isNotEmpty) {
+      io.writeln('background shell jobs:');
+      for (final entry in shellJobs) {
+        io.writeln(_shellJobLine(entry));
+      }
     }
   }
 
-  /// `/tasks cancel <id>`: aborts the job's child run.
+  /// One `/tasks` row for a background shell job.
+  String _shellJobLine(ShellJobEntry entry) {
+    final state = entry.isRunning ? '● running' : '✓ exited(${entry.exitCode})';
+    final command = entry.command.length > 60
+        ? '${entry.command.substring(0, 59)}…'
+        : entry.command;
+    return '  ${entry.id}: $state — $command '
+        '${_style.dim('(log: ${entry.logPath})')}';
+  }
+
+  /// `/tasks cancel <id>`: aborts the job's child run / stops the process.
   void _cancelTaskJob(List<String> parts) {
     if (parts.length < 2) {
       io.writeln('usage: /tasks cancel <id>');
@@ -628,15 +673,26 @@ extension on AgentCli {
     _cancelTaskJobById(parts[1]);
   }
 
-  /// Cancels the job named [id], or reports it as unknown.
+  /// Cancels the task job or stops the shell job named [id], or reports it
+  /// as unknown.
   void _cancelTaskJobById(String id) {
     final job = _taskConfig.jobManager.job(id);
-    if (job == null) {
-      io.writeln('unknown task job: $id');
+    if (job != null) {
+      job.cancel();
+      io.writeln('cancelled ${job.id}');
       return;
     }
-    job.cancel();
-    io.writeln('cancelled ${job.id}');
+    final shellJob = _shellJobs.job(id);
+    if (shellJob != null) {
+      if (!shellJob.isRunning) {
+        io.writeln('$id already finished (exit code ${shellJob.exitCode})');
+        return;
+      }
+      unawaited(shellJob.stop());
+      io.writeln('stopped ${shellJob.id}');
+      return;
+    }
+    io.writeln('unknown job: $id');
   }
 
   void _onAgentEvent(AgentEvent event, CancelToken cancelToken) {

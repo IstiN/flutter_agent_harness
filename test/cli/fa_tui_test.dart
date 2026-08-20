@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert' show utf8;
 
 import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
@@ -579,6 +580,39 @@ void main() {
         reason: 'row exceeds width: $line',
       );
     }
+  });
+
+  test('the status row is padded to the width so a shorter status '
+      'overwrites the previous tail', () {
+    // Switching from a long model id to a short one must not leave the old
+    // tail on screen (the renderer only rewrites covered cells).
+    final ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]');
+    FaTuiModel modelWith(String status) => FaTuiModel(
+      callbacks: FaTuiCallbacks(
+        onSubmit: (_) async {},
+        onModelSelected: (_) async {},
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_) => const [],
+        statusLine: () => status,
+        prompt: '',
+      ),
+      isExited: () => false,
+      termWidth: 40,
+    );
+    final longRow = modelWith('cwd · very-long-model-id-here · turn 9')
+        .view()
+        .content
+        .split('\n')
+        .lastWhere((l) => l.replaceAll(ansi, '').trim().isNotEmpty);
+    expect(longRow.replaceAll(ansi, '').length, 40);
+    final shortRow = modelWith('cwd · k3 · turn 1')
+        .view()
+        .content
+        .split('\n')
+        .lastWhere((l) => l.replaceAll(ansi, '').trim().isNotEmpty);
+    // Padded with spaces to the full width — the old tail is overwritten.
+    expect(shortRow.replaceAll(ansi, '').length, 40);
+    expect(shortRow.replaceAll(ansi, ''), endsWith(' '));
   });
 
   group('message queue (busy)', () {
@@ -1416,6 +1450,16 @@ void main() {
       model = send(model, PasteMsg('bc'));
       expect(model.inputText, 'abcd');
       expect(model.cursor, 3);
+    });
+
+    test('paste repairs dart_tui byte-as-charcode mojibake (Cyrillic)', () {
+      // dart_tui 2.0.0's paste decoder maps every pasted byte to a char code
+      // (Latin-1): UTF-8 Cyrillic arrives as mojibake. fa repairs it.
+      final mangled = String.fromCharCodes(utf8.encode('Привет'));
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = send(model, PasteMsg(mangled));
+      expect(model.inputText, 'Привет');
+      expect(model.cursor, 6);
     });
 
     test('a multi-char rune splits into single key events', () {

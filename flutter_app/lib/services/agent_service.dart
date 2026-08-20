@@ -46,7 +46,6 @@ import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
-import 'package:fa/services/vision_models.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/secrets_store.dart';
@@ -165,11 +164,10 @@ class AgentService extends ChangeNotifier
     JsonlSessionRepo? repo,
     SecretRedactor? redactor,
     this._config,
-    String promptSuffix = '',
+    this._promptSuffix = '',
     Duration? responseTimeout,
     ApprovalMode? initialApprovalMode,
-  }) : _promptSuffix = promptSuffix,
-       _resolveSecretName = null,
+  }) : _resolveSecretName = null,
        _secretsEnv = null,
        _sessionKeys = null,
        _taskModelsStore = null,
@@ -320,19 +318,14 @@ class AgentService extends ChangeNotifier
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
     MediaKeyResolver? resolveSecretName,
-    SecretsExecutionEnv? secretsEnv,
-    SessionKeysStore? sessionKeys,
-    TaskModelsStore? taskModelsStore,
-    String promptSuffix = '',
+    this._secretsEnv,
+    this._sessionKeys,
+    this._taskModelsStore,
+    this._promptSuffix = '',
     ApprovalMode? initialApprovalMode,
-    ApprovalModeStore? approvalModeStore,
+    this._approvalModeStore,
   }) : _config = config,
        _resolveSecretName = resolveSecretName,
-       _secretsEnv = secretsEnv,
-       _sessionKeys = sessionKeys,
-       _taskModelsStore = taskModelsStore,
-       _promptSuffix = promptSuffix,
-       _approvalModeStore = approvalModeStore,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
@@ -390,7 +383,9 @@ class AgentService extends ChangeNotifier
       parentSessionId: '',
       messaging: FileMessagingRepository(
         env: env,
-        root: '${env.cwd}/sessions/messages',
+        root: '$sessionsRoot/${encodeSessionCwd(env.cwd)}/messages',
+        decodeSessionCwd: decodeSessionCwd,
+        homeDir: null,
       ),
       selfId: 'main',
     );
@@ -424,24 +419,37 @@ class AgentService extends ChangeNotifier
       );
     }
     // Task tool config: childTools is set after the full registry is built
-    // (children inherit the core surface minus `task` itself).
+    // (children inherit the core surface minus `task` itself). ONE shared
+    // job manager across both configs (placeholder + final) so task_cancel
+    // and the tool always see the same jobs.
+    final taskJobManager = TaskJobManager();
     _taskConfig = TaskToolConfig(
       childTools: const [],
       streamFunction: streamFunction ?? _streamFunctionFor(config),
       model: config.toModel(),
       subagentManager: _subagentManager,
+      jobManager: taskJobManager,
     );
+    // Background shell jobs (bash background: true / steer-yielded commands).
+    // Sandboxed environments without the BackgroundShell capability answer a
+    // clean "not supported" note; completions re-enter via sendText (steer
+    // mid-run, fresh turn while idle).
+    _shellJobs = ShellJobRegistry(env: toolEnv, onSettled: _onShellJobSettled);
     final registry = ToolRegistry([
       ...builtinTools(
         toolEnv,
         webSearch: isOnDevice ? null : webSearchConfig,
         model: () => _agent.state.model,
+        shellJobs: _shellJobs,
       ),
       ...memoryTools(
         _memoryController,
         onChanged: () => unawaited(_refreshMemorySection()),
       ),
-      ...subagentMonitoringTools(manager: _subagentManager),
+      ...subagentMonitoringTools(
+        manager: _subagentManager,
+        jobs: taskJobManager,
+      ),
       // taskTool is registered AFTER the child surface is built (below).
       askTool(callback: _answerAskQuestions),
       // Secret requests: the agent asks the user for a missing credential
@@ -529,6 +537,7 @@ class AgentService extends ChangeNotifier
       rolesResolver: _taskRolesResolver,
       subagentManager: _subagentManager,
       childSessionFactory: _childSessionFactory,
+      jobManager: taskJobManager,
     );
     // Re-register the task tool with the real child surface.
     registry.register(taskTool(config: _taskConfig!));
@@ -541,6 +550,13 @@ class AgentService extends ChangeNotifier
     // The main agent's inbox: messages from children (agent_message to
     // "main") and from other Fa instances arrive at turn boundaries.
     _agent.externalSteeringSource = _mainInboxMessages;
+    // Non-draining probe for the same inbox: mid-run mail also triggers the
+    // tool phase's soft-yield so a long bash/task call does not delay it.
+    _agent.externalSteeringProbe = () async {
+      final manager = _subagentManager;
+      if (manager == null) return false;
+      return await manager.pendingInboxCount(manager.selfId) > 0;
+    };
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
@@ -720,6 +736,10 @@ class AgentService extends ChangeNotifier
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
 
+  /// The session's background shell jobs (bash background / steer-yield);
+  /// null before the agent is built.
+  ShellJobRegistry? _shellJobs;
+
   /// Model-roles resolver over the [TaskModelsStore] (`smol` + `subagent`
   /// overrides), lazily reflecting settings edits (Phase 3d).
   ModelRolesResolver? _taskRolesResolver;
@@ -856,6 +876,7 @@ class AgentService extends ChangeNotifier
 
   /// Provider adapter kind of the active backend (`openai-completions`,
   /// `webllm`, ...). Updated by [reconfigure].
+  @override
   String get providerKind => _providerKind;
   late String _providerKind;
 
@@ -863,6 +884,7 @@ class AgentService extends ChangeNotifier
   /// updated by [reconfigure]; empty for the on-device providers. The
   /// settings Media models section uses it as the editor's
   /// placeholder/default.
+  @override
   String get activeBaseUrl => _activeBaseUrl;
 
   /// Model id of the active backend, read live from the agent's model state;
@@ -978,6 +1000,7 @@ class AgentService extends ChangeNotifier
 
   /// Model id of the active backend (shorthand for the agent's current
   /// model; updated by [reconfigure]).
+  @override
   String get modelId => _agent.state.model.id;
 
   /// Redactor captured at construction so [reconfigure] can rebuild the
@@ -994,7 +1017,7 @@ class AgentService extends ChangeNotifier
     final base = _effectiveSystemPrompt(config, _redactor);
     final parts = [
       base,
-      if (_projectMountNote() case final note?) note,
+      ?_projectMountNote(),
       if (_promptSuffix.isNotEmpty) _promptSuffix,
       if (_memorySection.isNotEmpty) _memorySection,
       if (_messagingSection().isNotEmpty) _messagingSection(),
@@ -1223,17 +1246,69 @@ class AgentService extends ChangeNotifier
   /// or a provider/model switch is picked up by later commands. Never
   /// secret values — ids, paths, provider kinds, model ids.
   Map<String, String> _sessionEnvVars() => {
-    if (_sessionId case final id?) sessionIdEnvVar: id,
-    if (_sessionFile case final path?) sessionFileEnvVar: path,
+    sessionIdEnvVar: ?_sessionId,
+    sessionFileEnvVar: ?_sessionFile,
     providerEnvVar: _providerKind,
     modelEnvVar: _agent.state.model.id,
   };
 
-  /// Initializes session persistence.
+  /// Initializes session persistence — WITHOUT creating an empty JSONL file.
+  ///
+  /// The session file (and the agent's mailbox address in the messaging
+  /// fabric) are materialised lazily on the first [_persist] run; a service
+  /// that is initialised but never receives a user message leaves no file
+  /// behind. [loadSession] still creates an OS-backed [_session] for the
+  /// restored session.
   Future<void> initialize() async {
+    // The session FILE materialises lazily on the first persist (an
+    // untouched session never hits the disk), but the id is allocated
+    // eagerly: hosts (FlutterSessionManager) key sessions by id from the
+    // moment the service exists, and the prompt's messaging section needs
+    // the real mailbox address before the first message.
+    if (_session == null && _sessionId == null) {
+      final id = createSessionId();
+      _sessionId = id;
+      _subagentManager?.mailboxPrefix = id;
+    }
+    // Compose the system prompt eagerly — messaging address defaults to the
+    // host's local id (`main`) until the session materialises (so a brand
+    // new, no-message service doesn't crash on prompt render).
+    final config = _config;
+    if (config != null) {
+      _agent.state.systemPrompt = _composeSystemPrompt(config);
+    }
+    // Best-effort cleanup of legacy empty sessions (no transcript — only the
+    // JSONL header). Runs in the background so it never slows startup.
+    unawaited(_cleanupLegacyEmptySessions());
+    // The watcher only exists with a messaging fabric (production ctor);
+    // lightweight test services never start a timer.
+    if (_subagentManager != null) _startInboxWatcher();
+  }
+
+  /// Removes every legacy empty `.jsonl` (only header) left on disk by the
+  /// previous eager session-creation code paths. Idempotent and silently
+  /// best-effort.
+  Future<void> _cleanupLegacyEmptySessions() async {
+    try {
+      await _repo.cleanupEmptySessions();
+    } on Object {
+      // Never propagate — cleanup is best-effort, the next launch will
+      // retry.
+    }
+  }
+
+  /// Materialises the JSONL session file the first time persistence is
+  /// required — no-op when the session is already open (e.g. loadSession).
+  /// All callers that may produce a transcript ([_persist], subagent
+  /// follow-up messages) must go through here.
+  Future<void> _materialiseSessionIfNeeded() async {
+    if (_session != null) return;
     final session = await _repo.create(
       JsonlSessionCreateOptions(
         cwd: _agent.state.model.provider,
+        // Allocated eagerly in [initialize] — the file adopts it so the
+        // id the host already keyed this session by stays stable.
+        id: _sessionId,
         metadata: {'agent': 'fa', 'model': _agent.state.model.id},
       ),
     );
@@ -1242,20 +1317,17 @@ class AgentService extends ChangeNotifier
     _sessionId = sessionMetadata.id;
     _sessionFile = sessionMetadata.path;
     _subagentManager?.mailboxPrefix = sessionMetadata.id;
-    // The prompt's messaging section carries the live mailbox address.
+    // The messaging section now carries the real mailbox address.
     final config = _config;
     if (config != null) {
       _agent.state.systemPrompt = _composeSystemPrompt(config);
     }
-    // Presence: a zero-mail instance is discoverable in agent_directory.
+    // Presence in the messaging fabric once an id is available.
     unawaited(
       _subagentManager?.messaging?.register(
         _subagentManager!.mailboxOf(_subagentManager!.selfId),
       ),
     );
-    // The watcher only exists with a messaging fabric (production ctor);
-    // lightweight test services never start a timer.
-    if (_subagentManager != null) _startInboxWatcher();
   }
 
   /// The inbox watcher: incoming inter-agent mail while IDLE wakes the
@@ -1281,6 +1353,25 @@ class AgentService extends ChangeNotifier
     _inboxWatchTimer ??= Timer.periodic(
       const Duration(seconds: 3),
       (_) => unawaited(_wakeOnInboxMail()),
+    );
+  }
+
+  /// Called when a background shell job settles: the completion re-enters
+  /// the conversation as a system notice (sendText steers mid-run and
+  /// starts a fresh turn while idle — the same flow as inbox mail).
+  void _onShellJobSettled(ShellJobEntry job) {
+    if (_disposed) return;
+    unawaited(
+      sendText(
+        '<system-notice>\n'
+        'Background shell job ${job.id} finished with exit code '
+        '${job.exitCode}.\n'
+        'Command: ${job.command}\n'
+        'Log: ${job.logPath}\n'
+        'Check the result with bash_job (action: output) or by reading the '
+        'log file, and act on it when the result was awaited.\n'
+        '</system-notice>',
+      ),
     );
   }
 
@@ -1438,7 +1529,8 @@ class AgentService extends ChangeNotifier
     const maxInlineBytes = 3 * 1024 * 1024;
     final oversized = images.where((a) => a.bytes.length > maxInlineBytes);
     if (oversized.isNotEmpty) {
-      error = 'Image is too large to send inline (max ~3 MB). '
+      error =
+          'Image is too large to send inline (max ~3 MB). '
           'Resize it or attach as a file instead.';
       notifyListeners();
       return;
@@ -1645,6 +1737,11 @@ class AgentService extends ChangeNotifier
   /// Clears the in-memory transcript and starts a new session.
   Future<void> reset() async {
     await deleteSessionIfEmpty();
+    // Detach the old session so [initialize] allocates a fresh id — the
+    // old file (when it has content) stays on disk for the session list.
+    _session = null;
+    _sessionId = null;
+    _sessionFile = null;
     _agent.reset();
     messages.clear();
     error = null;
@@ -1689,7 +1786,7 @@ class AgentService extends ChangeNotifier
       '[Fa] reconfigure: baseUrl=${config.baseUrl}, '
       'apiKey.len=${config.apiKey.length}, '
       'isCodeMie=${isCodeMieProvider(config.baseUrl)}, '
-      'model.headers=${newModel.headers?.keys.toList() ?? null}, '
+      'model.headers=${newModel.headers?.keys.toList()}, '
       'streamApiKey.len=${isCodeMieProvider(config.baseUrl) ? 0 : config.apiKey.length}',
     );
     _agent.state.model = newModel;
@@ -1817,10 +1914,7 @@ class AgentService extends ChangeNotifier
             .whereType<TextContent>()
             .map((b) => b.text)
             .join('\n')
-            .replaceAll(
-              RegExp(r'\[attached file: uploads/[^\]]+\]\s*\n?'),
-              '',
-            )
+            .replaceAll(RegExp(r'\[attached file: uploads/[^\]]+\]\s*\n?'), '')
             .trim();
         return FahChatMessage(
           role: 'user',
@@ -2082,6 +2176,9 @@ class AgentService extends ChangeNotifier
   }
 
   Future<void> _persist() async {
+    // The session is created lazily on the first persisted message — no
+    // JSONL file appears until the user actually writes something.
+    await _materialiseSessionIfNeeded();
     final session = _session;
     if (session == null) return;
     final all = _agent.state.messages;

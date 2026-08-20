@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:io' show IOSink;
+import 'dart:convert' show latin1, utf8;
+import 'dart:io' show IOSink, Platform, Process, ProcessException, stdin;
 
 import 'package:dart_tui/dart_tui.dart';
 
@@ -716,11 +717,25 @@ final class FaTuiModel extends Model {
     return (this, null);
   }
 
+  /// dart_tui 2.0.0's bracketed-paste decoder maps every pasted BYTE to a
+  /// char code (Latin-1), so pasted non-ASCII text arrives as mojibake
+  /// ("ÐÑÐ¸Ð²ÐµÑ" instead of "Привет"). The mis-decode is lossless —
+  /// re-encoding as Latin-1 recovers the original bytes — so decode them as
+  /// UTF-8 here. ASCII and already-correct input pass through unchanged.
+  static String _fixPasteMojibake(String text) {
+    try {
+      return utf8.decode(latin1.encode(text));
+    } on Object {
+      return text; // never worse than the input
+    }
+  }
+
   (Model, Cmd?) _handlePaste(PasteMsg msg) {
+    final content = _fixPasteMojibake(msg.content);
     // Prompt mode: pastes go into the open prompt's buffer (e.g. an API key
     // pasted into the dial/secret prompts), like typed characters do.
     if (prompt != null) {
-      final key = PromptPaste(msg.content);
+      final key = PromptPaste(content);
       final (state: next, resolved: answer) = handleTuiPromptKey(prompt!, key);
       if (answer != null) {
         _promptCompleter?.complete(answer);
@@ -733,8 +748,8 @@ final class FaTuiModel extends Model {
     final after = inputText.substring(cursor);
     return (
       copyWith(
-        inputText: before + msg.content + after,
-        cursor: cursor + msg.content.length,
+        inputText: before + content + after,
+        cursor: cursor + content.length,
       ),
       null,
     );
@@ -1683,7 +1698,7 @@ final class FaTuiModel extends Model {
         b.writeln(line);
       }
       b.writeln(); // spacer
-      b.write(_dim(_fitWidth(callbacks.statusLine())));
+      b.write(_statusRow());
       const cursorLine = '\x1b[?25l';
       return View(
         content: b.toString() + cursorLine,
@@ -1695,9 +1710,7 @@ final class FaTuiModel extends Model {
     final (cursorInputLine, cursorScreenCol) = _writeInputLines(b);
     b.writeln(_dim('─' * termWidth));
     // The status line stays plain; the busy indicator lives above the input.
-    // Truncated to the width like every other chrome row — a wrapped status
-    // line shifts the whole frame by one row on every repaint.
-    b.write(_dim(_fitWidth(callbacks.statusLine())));
+    b.write(_statusRow());
 
     final lines = b.toString().split('\n');
     final inputStartRow = lines.length - 2 - _inputLineCount;
@@ -1858,6 +1871,13 @@ final class FaTuiModel extends Model {
     }
     b.writeln(_dim('─' * termWidth));
   }
+
+  /// The status row, fitted AND padded to the terminal width: a shorter new
+  /// status (e.g. switching from a long model id to a short one) must
+  /// overwrite the previous row's tail — the renderer only rewrites the
+  /// cells the new content covers.
+  String _statusRow() =>
+      _dim(_fitWidth(callbacks.statusLine()).padRight(termWidth));
 
   /// The framed input lines with horizontal cursor-window scrolling; returns
   /// the cursor's input line index and screen column for the cursor home.
@@ -2082,13 +2102,55 @@ final class FaTuiController {
     return completer.future;
   }
 
-  Future<void> run() {
+  Future<void> run() async {
     _running = true;
     var model = _model;
     for (final msg in _pending) {
       model = model.update(msg).$1 as FaTuiModel;
     }
     _pending.clear();
-    return _program.run(model);
+    final savedTermios = await _disableTerminalFlowControl();
+    try {
+      await _program.run(model);
+    } finally {
+      if (savedTermios != null) await _restoreTermios(savedTermios);
+    }
+  }
+
+  /// dart_tui's raw mode flips only Dart's echo/line flags; termios IXON
+  /// (software flow control) stays on, so on terminals without the Kitty
+  /// keyboard protocol Ctrl+S is the tty driver's VSTOP byte: the tty
+  /// swallows the keypress and suspends output (XOFF) — the UI freezes while
+  /// the app stays alive, and the steer never fires. Disable flow control
+  /// for the TUI's lifetime; returns the saved termios string for
+  /// [_restoreTermios], or null when there is no tty to fix.
+  static Future<String?> _disableTerminalFlowControl() async {
+    if (Platform.isWindows || !stdin.hasTerminal) return null;
+    // BSD stty uses -f, GNU stty -F; both take the device path, so no tty
+    // stdin redirection is needed.
+    final deviceFlag = Platform.isMacOS ? '-f' : '-F';
+    try {
+      final saved = await Process.run('stty', [deviceFlag, '/dev/tty', '-g']);
+      if (saved.exitCode != 0) return null;
+      final cleared = await Process.run('stty', [
+        deviceFlag,
+        '/dev/tty',
+        '-ixon',
+        '-ixoff',
+      ]);
+      if (cleared.exitCode != 0) return null;
+      return (saved.stdout as String).trim();
+    } on ProcessException {
+      return null; // no stty on PATH — leave the tty untouched
+    }
+  }
+
+  static Future<void> _restoreTermios(String saved) async {
+    final deviceFlag = Platform.isMacOS ? '-f' : '-F';
+    try {
+      await Process.run('stty', [deviceFlag, '/dev/tty', saved]);
+    } on ProcessException {
+      // Nothing sensible left to do — the next shell's own reset covers it.
+    }
   }
 }

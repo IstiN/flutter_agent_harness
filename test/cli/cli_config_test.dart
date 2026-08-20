@@ -250,5 +250,72 @@ prompts:
         ),
       );
     });
+
+    test('parses providerTimeouts and round-trips them', () async {
+      final original = CliConfig(
+        providerTimeouts: const ProviderTimeoutsOverride(
+          connect: Duration(seconds: 120),
+          streamIdle: Duration(minutes: 5),
+        ),
+      );
+      await saveCliConfig(tmp.path, original);
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.providerTimeouts?.connect, const Duration(seconds: 120));
+      expect(loaded.providerTimeouts?.streamIdle, const Duration(minutes: 5));
+    });
+
+    test('providerTimeouts defaults to null when absent', () {
+      expect(loadCliConfig(tmp.path).providerTimeouts, isNull);
+    });
+
+    test('rejects a malformed providerTimeouts section', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('providerTimeouts:\n  connectTimeoutMs: "x"\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('connectTimeoutMs'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects unknown providerTimeouts keys', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('providerTimeouts:\n  bogusMs: 5\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('bogusMs'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('provider watchdog overrides', () {
+    tearDown(() => providerTimeoutsOverride = null);
+
+    test('defaults apply without an override', () {
+      expect(effectiveProviderConnectTimeout, providerConnectTimeout);
+      expect(effectiveProviderStreamIdleTimeout, providerStreamIdleTimeout);
+    });
+
+    test('the override wins field-wise', () {
+      providerTimeoutsOverride = const ProviderTimeoutsOverride(
+        connect: Duration(seconds: 7),
+      );
+      expect(effectiveProviderConnectTimeout, const Duration(seconds: 7));
+      // Untouched field keeps the default.
+      expect(effectiveProviderStreamIdleTimeout, providerStreamIdleTimeout);
+    });
   });
 }

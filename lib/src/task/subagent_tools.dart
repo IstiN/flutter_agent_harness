@@ -1,20 +1,25 @@
-/// Phase 3b+3c tools: `task_status`, `task_observe`, `task_send`.
+/// Phase 3b+3c tools: `task_status`, `task_observe`, `task_send`,
+/// `task_cancel`.
 ///
 /// - `task_status` (read): query one or all retained subagents.
 /// - `task_observe` (read): read the last N messages from a child's session.
 /// - `task_send` (write): send a follow-up message to an idle/completed child.
+/// - `task_cancel` (write): abort a running background subagent job.
 ///
-/// All three are backed by the [SubagentManager] injected through
+/// All are backed by the [SubagentManager] injected through
 /// [TaskToolConfig.subagentManager]. Without a manager they return guidance.
 library;
 
 import 'dart:async';
+
+import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import 'subagent.dart';
 import 'subagent_manager.dart';
+import 'task_tool.dart' show TaskJobManager, TaskJobStatus;
 
 /// Callback to read the last N messages from a child's session.
 typedef ChildMessageReader =
@@ -34,59 +39,100 @@ typedef CurrentSubagentIdProvider = String? Function();
 
 /// Returns the subagent monitoring tools backed by [manager].
 /// Register alongside the `task` tool when a manager is available.
+/// [jobs] enables `task_cancel` over the session's background job registry.
 List<AgentTool> subagentMonitoringTools({
   required SubagentManager? manager,
   ChildMessageReader? readMessages,
   ChildMessageSender? sendToChild,
   CurrentSubagentIdProvider? currentSubagentId,
+  TaskJobManager? jobs,
 }) {
   if (manager == null) return const [];
   return [
     _taskStatusTool(manager),
     _taskObserveTool(manager, readMessages),
     _taskSendTool(manager, sendToChild),
+    if (jobs != null) _taskCancelTool(jobs),
     _replyTool(manager, currentSubagentId),
     _agentMessageTool(manager, currentSubagentId),
     _agentDirectoryTool(manager),
   ];
 }
 
+/// `task_cancel` — abort a running background subagent job.
+AgentTool _taskCancelTool(TaskJobManager jobs) {
+  return AgentTool(
+    name: 'task_cancel',
+    description:
+        'Abort a running background subagent job by id (see task_status for '
+        'ids). The child agent is cancelled; already-settled jobs report '
+        'their state instead.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'id': {
+          'type': 'string',
+          'description': 'The background job id to abort.',
+        },
+      },
+      'required': ['id'],
+    },
+    tier: ApprovalTier.write,
+    execute: (args, cancelToken, onUpdate) async {
+      final id = args['id'] as String;
+      final job = jobs.job(id);
+      if (job == null) {
+        return ToolExecutionResult.text('no background job with id "$id"');
+      }
+      if (job.status != TaskJobStatus.queued &&
+          job.status != TaskJobStatus.running) {
+        return ToolExecutionResult.text('job $id already ${job.status.name}');
+      }
+      job.cancel();
+      return ToolExecutionResult.text('cancelled job $id');
+    },
+  );
+}
+
 /// `agent_directory` — the messaging fabric's phone book: every known
 /// mailbox (subagents, this instance, other Fa instances sharing the
-/// session repo) with pending counts, own address marked.
+/// session repo) with pending counts, cwd metadata, and own address marked.
 AgentTool _agentDirectoryTool(SubagentManager manager) {
   return AgentTool(
     name: 'agent_directory',
     description:
         'List the known agent mailboxes in the messaging fabric: your '
         'subagents, other Fa instances sharing this session repo, and your '
-        'own address (marked). Combine with agent_message to talk to any of '
-        'them: plain ids for subagents, "<sessionId>/main" for another '
-        'instance\'s orchestrator.',
+        'own address (marked). Each entry shows its pending message count '
+        'and, when known, the working directory it belongs to. Combine with '
+        'agent_message to talk to any of them: plain ids for subagents, '
+        '"<sessionId>/main" for another instance\'s orchestrator.',
     parameters: const {'type': 'object', 'properties': {}},
     tier: ApprovalTier.read,
     execute: (args, cancelToken, onUpdate) async {
       final fabric = manager.messaging;
       final self = manager.mailboxOf(manager.selfId);
       final buffer = StringBuffer('agent mailboxes (you are "$self"):');
-      final ids = await fabric?.directory() ?? const <String>[];
-      for (final id in ids) {
-        final pending = await fabric!.peek(id);
+      final entries = await fabric?.directory() ?? const <MailboxEntry>[];
+      for (final entry in entries) {
+        final pending = await fabric!.peek(entry.id);
         buffer
           ..writeln()
-          ..write('  $id — ${pending.length} pending');
-        if (id == self) buffer.write('  ← you');
+          ..write('  ${entry.id} — ${pending.length} pending');
+        if (entry.cwd case final cwd?) buffer.write('  [$cwd]');
+        if (entry.id == self) buffer.write('  ← you');
       }
       // Registered children get mailboxes on first mail — list them
       // explicitly so they are addressable before that.
+      final knownIds = entries.map((e) => e.id).toSet();
       for (final handle in manager.handles) {
         final mailbox = manager.mailboxOf(handle.id);
-        if (ids.contains(mailbox)) continue;
+        if (knownIds.contains(mailbox)) continue;
         buffer
           ..writeln()
           ..write('  $mailbox — subagent (${handle.status.name})');
       }
-      if (ids.isEmpty && manager.handles.isEmpty) {
+      if (entries.isEmpty && manager.handles.isEmpty) {
         buffer.write(' none yet — subagent mailboxes appear on first mail');
       }
       return ToolExecutionResult.text(buffer.toString());

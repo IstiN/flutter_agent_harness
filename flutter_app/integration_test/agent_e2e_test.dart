@@ -16,7 +16,6 @@ library;
 
 import 'dart:convert';
 
-import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';

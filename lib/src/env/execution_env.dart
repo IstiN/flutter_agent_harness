@@ -339,6 +339,58 @@ abstract interface class Shell {
   });
 }
 
+/// A detached shell job: a process that keeps running after the tool call
+/// that started it has returned. Output is appended to the job's log file
+/// (the path is chosen by the caller of [BackgroundShell.startShellJob]).
+abstract interface class ShellJob {
+  /// Registry-unique job id.
+  String get id;
+
+  /// The command line being executed.
+  String get command;
+
+  /// The log file receiving the job's stdout and stderr.
+  String get logPath;
+
+  /// Whether the process is still running.
+  bool get isRunning;
+
+  /// The process exit code, or null while [isRunning].
+  int? get exitCode;
+
+  /// Completes when the process exits (naturally, killed, or timed out).
+  Future<void> get settled;
+
+  /// Why the job was stopped early: 'timeout' ([ShellExecOptions.timeout])
+  /// or 'cancelled' ([ShellExecOptions.cancelToken]); null when the process
+  /// exited on its own (or is still running).
+  String? get stopReason;
+
+  /// Terminates the process. No-op when it already exited.
+  Future<void> stop();
+}
+
+/// Optional [Shell] capability: detached, log-file-backed jobs that outlive
+/// the initiating tool call. Implemented by process-backed environments
+/// (local shell); sandboxed/web environments simply do not implement it and
+/// callers answer a clean "not supported here" note instead.
+abstract interface class BackgroundShell {
+  /// Whether [startShellJob] actually works here. Decorators forward their
+  /// delegate's answer, so wrapping an env never fakes the capability.
+  bool get backgroundJobsSupported;
+
+  /// Starts [command] detached: stdout/stderr append to [logPath] and the
+  /// returned [ShellJob] keeps running until it exits or is stopped.
+  /// [ShellExecOptions.timeout] and [ShellExecOptions.cancelToken] still
+  /// apply (both stop the job).
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  });
+}
+
 /// Filesystem and process execution environment used by the harness.
 ///
 /// Ported from pi's `ExecutionEnv` (`interface ExecutionEnv extends

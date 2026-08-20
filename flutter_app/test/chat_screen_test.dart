@@ -201,6 +201,11 @@ void main() {
         await tester.pump();
         await Future<void>.delayed(const Duration(milliseconds: 300));
       });
+      // The runtime's deferred native release is a zero-delay Timer: unmount
+      // the tree and elapse fake time so it fires instead of tripping the
+      // timers-pending invariant.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 1));
     });
 
     testWidgets('the composer send button becomes stop while streaming', (

@@ -52,12 +52,19 @@ final class AgentCliConfig {
     this.chatGptOAuthExchangeFn,
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
+    this.compactionSettings,
   });
 
   /// The user's home directory, when the host has one (used for user-level
   /// skill/context discovery: `~/.fah/skills`, `~/.fah/AGENTS.md`). Null on
   /// sandboxed hosts (web) where only the project FS exists.
   final String? homeDir;
+
+  /// Override for the compaction thresholds (ratio-based trigger, reserve
+  /// and recent-token budgets). When `null`, `defaultCompactionSettings`
+  /// is used (ratio 0.7, reserve 50000, keep 80000). Hosts plumb their
+  /// `compaction:` yaml section through this field.
+  final CompactionSettings? compactionSettings;
 
   /// Optional override for the OpenRouter OAuth code exchange. Tests inject a
   /// fake here so the `/provider openrouter oauth` flow can run without

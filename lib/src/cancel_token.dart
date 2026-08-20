@@ -75,3 +75,18 @@ class CancelledException implements Exception {
   @override
   String toString() => 'CancelledException${reason == null ? '' : ': $reason'}';
 }
+
+/// Zone key under which the agent loop publishes the current tool phase's
+/// soft-yield token (see [currentYieldToken]).
+const Symbol yieldTokenZoneKey = #fahYieldToken;
+
+/// The soft-yield token of the enclosing tool-call phase, or null.
+///
+/// Yielding is NOT cancellation: a steering message arriving mid-phase asks
+/// long-running tools (bash, task) to finish the tool call early WITHOUT
+/// stopping the underlying work — the work continues as a background job and
+/// the loop delivers the user message at the next step boundary. Tools opt
+/// in by reading this token; everyone else ignores it and the message simply
+/// waits for the phase to complete (the classic behavior).
+CancelToken? currentYieldToken() =>
+    Zone.current[yieldTokenZoneKey] as CancelToken?;

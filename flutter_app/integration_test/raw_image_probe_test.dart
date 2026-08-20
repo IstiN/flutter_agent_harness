@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -16,7 +17,7 @@ void main() {
             url,
             width: 120,
             height: 120,
-            errorBuilder: (_, error, __) {
+            errorBuilder: (_, error, _) {
               captured = error;
               return const Icon(Icons.error);
             },

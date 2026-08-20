@@ -16,7 +16,7 @@ import 'dart:typed_data';
 import 'execution_env.dart';
 
 /// An [ExecutionEnv] that injects secret env vars into every [exec].
-final class SecretsExecutionEnv implements ExecutionEnv {
+final class SecretsExecutionEnv implements ExecutionEnv, BackgroundShell {
   /// Creates a decorator over [delegate] injecting [secrets] (name → value).
   SecretsExecutionEnv(this._delegate, Map<String, String> secrets)
     : _secrets = Map.of(secrets);
@@ -59,6 +59,56 @@ final class SecretsExecutionEnv implements ExecutionEnv {
       onStderr: options?.onStderr,
     );
     return _delegate.exec(command, options: merged);
+  }
+
+  // Background shell jobs: forwarded with the same secrets merged in —
+  // a detached command expands `$NAME` exactly like a foreground one.
+
+  @override
+  bool get backgroundJobsSupported {
+    final delegate = _delegate;
+    if (delegate case final BackgroundShell bg) {
+      return bg.backgroundJobsSupported;
+    }
+    return false;
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) {
+    final delegate = _delegate;
+    if (delegate is! BackgroundShell) {
+      return Future.value(
+        const Err(
+          ExecutionError(
+            ExecutionErrorCode.shellUnavailable,
+            'background shell jobs are not supported by this shell',
+          ),
+        ),
+      );
+    }
+    final bg = delegate as BackgroundShell;
+    if (_secrets.isEmpty) {
+      return bg.startShellJob(
+        command,
+        id: id,
+        logPath: logPath,
+        options: options,
+      );
+    }
+    final merged = ShellExecOptions(
+      cwd: options?.cwd,
+      env: {..._secrets, ...?options?.env},
+      timeout: options?.timeout,
+      cancelToken: options?.cancelToken,
+      onStdout: options?.onStdout,
+      onStderr: options?.onStderr,
+    );
+    return bg.startShellJob(command, id: id, logPath: logPath, options: merged);
   }
 
   @override

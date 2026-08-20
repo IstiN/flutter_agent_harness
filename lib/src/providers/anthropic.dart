@@ -199,7 +199,8 @@ AssistantMessageEventStream streamAnthropic(
 ]) {
   final eventStream = AssistantMessageEventStream();
   final cancelToken = options?.cancelToken;
-  final httpClient = client ?? http.Client();
+  // No injected client: the shared keep-alive client (never closed per call).
+  final httpClient = client ?? sharedProviderHttpClient();
 
   // Blocks accumulate in the shared state holder; each event carries a
   // fresh immutable snapshot of them (pi mutates one `output` object).
@@ -212,7 +213,7 @@ AssistantMessageEventStream streamAnthropic(
       state,
       cancelToken,
       httpClient,
-      ownsClient: client == null,
+      ownsClient: false, // shared or injected — never closed per call
       body: () => session.run(context, options, httpClient, cancelToken),
     ),
   );

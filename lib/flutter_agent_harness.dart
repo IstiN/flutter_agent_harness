@@ -9,7 +9,13 @@ library;
 export 'src/agent/agent.dart';
 export 'src/agent/agent_loop.dart';
 export 'src/agent/agent_tool.dart';
-export 'src/agent/auto_compactor.dart' show AutoCompactor, AutoCompactorFactory, AutoCompactorHooks, AutoCompactorPass, AutoCompactorSources;
+export 'src/agent/auto_compactor.dart'
+    show
+        AutoCompactor,
+        AutoCompactorFactory,
+        AutoCompactorHooks,
+        AutoCompactorPass,
+        AutoCompactorSources;
 export 'src/agent/param_validator.dart';
 export 'src/agent/tool_registry.dart';
 export 'src/approval/approval.dart';
@@ -59,6 +65,7 @@ export 'src/providers/models_endpoint.dart';
 export 'src/providers/models_for_endpoint.dart';
 export 'src/providers/openai_completions.dart';
 export 'src/providers/openrouter_oauth.dart';
+export 'src/providers/provider_common.dart';
 export 'src/secrets/secret_redactor.dart';
 export 'src/secrets/secrets_store.dart';
 export 'src/secrets/secure_key_store.dart';
@@ -80,6 +87,7 @@ export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/inspect_image.dart';
 export 'src/tools/read_selector.dart';
 export 'src/tools/request_secret_tool.dart';
+export 'src/tools/shell_jobs.dart';
 export 'src/tools/sqlite/sqlite_reader.dart';
 export 'src/tools/transcribe_audio.dart';
 export 'src/prompts/project_context.dart';

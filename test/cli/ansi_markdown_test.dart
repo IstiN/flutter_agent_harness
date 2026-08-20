@@ -117,6 +117,40 @@ void main() {
         final rows = wrapAnsiLine('x' * 25, 10);
         expect(rows, ['x' * 10, 'x' * 10, 'x' * 5]);
       });
+
+      test('wraps at word boundaries instead of mid-word', () {
+        final rows = wrapAnsiLine('aaa bb cc', 5);
+        expect(rows, ['aaa ', 'bb cc']);
+      });
+
+      test('a boundary space at the very edge is dropped, not leaked as a '
+          'leading space', () {
+        final rows = wrapAnsiLine('aaaa bbbb', 4);
+        expect(rows, ['aaaa', 'bbbb']);
+      });
+
+      test('SGR state carries across the wrap: reset at the cut, re-opened '
+          'on the continuation row', () {
+        const bold = '\x1b[1m';
+        const reset = '\x1b[0m';
+        // Bold span straddling the wrap: the continuation must re-open bold
+        // (dart_tui redraws rows independently — terminal state does not
+        // carry across rows).
+        final line = 'aa ${bold}bbbb bbbb$reset cc';
+        final rows = wrapAnsiLine(line, 6);
+        expect(rows.length, greaterThan(1));
+        // The row where bold opens but does not close ends with a reset…
+        final opened = rows.firstWhere((r) => r.contains(bold));
+        expect(opened.endsWith(reset), isTrue);
+        // …and the continuation re-opens it.
+        final index = rows.indexOf(opened);
+        expect(rows[index + 1].startsWith(bold), isTrue);
+        // Reassembled visible text is unchanged.
+        expect(
+          rows.join().replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
+          line.replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
+        );
+      });
     });
 
     group('tables', () {

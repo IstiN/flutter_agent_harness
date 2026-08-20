@@ -39,6 +39,9 @@ Future<String?> pickAndApplyProjectMount({
     env,
     path: picked.path,
     bookmark: picked.bookmark,
+    // Preserve the current scoped state across re-picks; default false
+    // for a fresh /project.
+    scoped: mountEnv.scoped,
   );
   mountEnv.mountedRoot = picked.path;
   mountEnv.mountUnavailable = null;
@@ -71,6 +74,41 @@ Future<bool> unapplyProjectMount({
 /// folder is mounted (the agent works in its container root).
 String? currentMountedPath(ExecutionEnv env) =>
     _resolveMountEnv(env)?.mountedRoot;
+
+/// Whether the active mount is scoped (tool restriction flag on).
+bool? currentMountedScoped(ExecutionEnv env) => _resolveMountEnv(env)?.scoped;
+
+/// Toggles the 'restrict tools to this folder' flag without re-picking
+/// the folder: updates [ProjectMountEnv.scoped] in place, persists the
+/// new flag via [ProjectMountStore.save] (re-using the existing path +
+/// bookmark), and recomposes the agent's prompt. Returns true when the
+/// toggle landed. No-op when nothing is mounted (nothing to scope TO).
+Future<bool> setProjectMountScoped({
+  required ExecutionEnv env,
+  required bool scoped,
+  required void Function() onApplied,
+}) async {
+  final mountEnv = _resolveMountEnv(env);
+  if (mountEnv == null) {
+    return false;
+  }
+  if (mountEnv.mountedRoot == null) {
+    return false;
+  }
+  final stored = await ProjectMountStore.load(env);
+  if (stored == null) {
+    return false;
+  }
+  mountEnv.scoped = scoped;
+  await ProjectMountStore.save(
+    env,
+    path: stored.path,
+    bookmark: stored.bookmark,
+    scoped: scoped,
+  );
+  onApplied();
+  return true;
+}
 
 /// Whether native directory picking is available on this platform (macOS).
 bool projectFolderPickingSupported() {

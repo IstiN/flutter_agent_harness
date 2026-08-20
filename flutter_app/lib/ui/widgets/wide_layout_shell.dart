@@ -644,6 +644,47 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                 l10n.workspaceDialogMountHint,
                 style: Theme.of(dialogContext).textTheme.bodySmall,
               ),
+              const SizedBox(height: 8),
+              // 'Restrict tools to this folder' — the toggle that will
+              // eventually gate read/write/bash outside the mounted root
+              // (tool enforcement lands in the next pass once agent_service
+              // and the approval UI are unblocked from the parallel work).
+              StatefulBuilder(
+                builder: (innerContext, setLocal) {
+                  final scoped = currentMountedScoped(env) ?? false;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: scoped,
+                        title: Text(l10n.workspaceDialogRestrictTools),
+                        onChanged: (value) async {
+                          if (value == null) return;
+                          await setProjectMountScoped(
+                            env: env,
+                            scoped: value,
+                            onApplied: () =>
+                                service?.refreshProjectMountPrompt(),
+                          );
+                          if (dialogContext.mounted) {
+                            setLocal(() {});
+                            setState(() {});
+                          }
+                        },
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 32, top: 2),
+                        child: Text(
+                          l10n.workspaceDialogRestrictToolsHint,
+                          style: Theme.of(dialogContext).textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
             ],
             if (!supportsPicking) ...[
               const SizedBox(height: 12),

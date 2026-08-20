@@ -34,7 +34,7 @@ const modelEnvVar = 'FAH_MODEL';
 
 /// An [ExecutionEnv] that injects session-correlation env vars into every
 /// [exec]. See the library doc for the contract.
-final class SessionVarsExecutionEnv implements ExecutionEnv {
+final class SessionVarsExecutionEnv implements ExecutionEnv, BackgroundShell {
   /// Creates a decorator over [delegate] injecting the vars returned by
   /// [vars] (consulted live on every [exec]).
   SessionVarsExecutionEnv(this._delegate, this._vars);
@@ -65,6 +65,53 @@ final class SessionVarsExecutionEnv implements ExecutionEnv {
       onStderr: options?.onStderr,
     );
     return _delegate.exec(command, options: merged);
+  }
+
+  @override
+  bool get backgroundJobsSupported {
+    final delegate = _delegate;
+    if (delegate case final BackgroundShell bg) {
+      return bg.backgroundJobsSupported;
+    }
+    return false;
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async {
+    final delegate = _delegate;
+    if (delegate is! BackgroundShell) {
+      return const Err(
+        ExecutionError(
+          ExecutionErrorCode.shellUnavailable,
+          'background shell jobs are not supported by this shell',
+        ),
+      );
+    }
+    final bg = delegate as BackgroundShell;
+    final vars = await _vars();
+    if (vars.isEmpty) {
+      return bg.startShellJob(
+        command,
+        id: id,
+        logPath: logPath,
+        options: options,
+      );
+    }
+    // Per-call env entries win over the injected session vars.
+    final merged = ShellExecOptions(
+      cwd: options?.cwd,
+      env: {...vars, ...?options?.env},
+      timeout: options?.timeout,
+      cancelToken: options?.cancelToken,
+      onStdout: options?.onStdout,
+      onStderr: options?.onStderr,
+    );
+    return bg.startShellJob(command, id: id, logPath: logPath, options: merged);
   }
 
   @override

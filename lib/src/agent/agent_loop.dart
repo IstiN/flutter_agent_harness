@@ -359,6 +359,8 @@ final class AgentLoopConfig {
     this.prepareNextTurn,
     this.getSteeringMessages,
     this.getFollowUpMessages,
+    this.steeringNotifications,
+    this.hasPendingSteering,
     this.maxEmptyRetries = 1,
   });
 
@@ -387,6 +389,20 @@ final class AgentLoopConfig {
   /// Follow-up messages to process after the run would otherwise stop.
   final QueuedMessagesSource? getFollowUpMessages;
 
+  /// Fires when a steering message arrives mid-run (the in-process queue).
+  /// The tool-call phase turns the first arrival into a soft-yield request
+  /// (see [currentYieldToken]): yield-aware long-running tools (bash, task)
+  /// finish the tool call early WITHOUT stopping the underlying work, so the
+  /// user message is delivered at the next step boundary instead of waiting
+  /// for the whole tool call.
+  final Stream<void>? steeringNotifications;
+
+  /// Probes for externally pending steering (e.g. the messaging inbox)
+  /// WITHOUT draining it — polled on a slow timer during the tool-call
+  /// phase as a second yield trigger. Null when the host has no external
+  /// steering source.
+  final Future<bool> Function()? hasPendingSteering;
+
   /// How many times a degenerate EMPTY completion (stopReason `stop`, no
   /// tool calls, no text — some providers answer like this under load) is
   /// retried with the same context before the turn accepts it. Default: 1
@@ -405,6 +421,8 @@ final class AgentLoopConfig {
       prepareNextTurn: prepareNextTurn,
       getSteeringMessages: getSteeringMessages,
       getFollowUpMessages: getFollowUpMessages,
+      steeringNotifications: steeringNotifications,
+      hasPendingSteering: hasPendingSteering,
       maxEmptyRetries: maxEmptyRetries,
     );
   }
@@ -894,6 +912,54 @@ Future<void> _injectPendingMessages(
 /// context and [newMessages]. Returns the results and whether tool turns
 /// continue.
 Future<({List<ToolResultMessage> results, bool hasMore})> _runToolCallPhase(
+  Context currentContext,
+  AssistantMessage message,
+  AgentLoopConfig currentConfig,
+  ToolExecutor toolExecutor,
+  CancelToken? cancelToken,
+  AgentEventSink emit,
+  List<Message> newMessages,
+) {
+  // The soft-yield token for this phase (see [currentYieldToken]): the first
+  // steering arrival — in-process queue notification or the external probe's
+  // slow poll — asks yield-aware long-running tools to finish early WITHOUT
+  // stopping their work, so the user's message is delivered at the upcoming
+  // step boundary instead of after the whole tool call.
+  final yieldSource = CancelTokenSource();
+  final notificationSub = currentConfig.steeringNotifications?.listen((_) {
+    yieldSource.cancel('steering message arrived');
+  });
+  Timer? probeTimer;
+  final probe = currentConfig.hasPendingSteering;
+  if (probe != null) {
+    probeTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      try {
+        if (await probe()) {
+          yieldSource.cancel('external steering message pending');
+        }
+      } on Object {
+        // A probe failure must never break the tool phase.
+      }
+    });
+  }
+  return runZoned(
+    () => _executeToolCallPhase(
+      currentContext,
+      message,
+      currentConfig,
+      toolExecutor,
+      cancelToken,
+      emit,
+      newMessages,
+    ),
+    zoneValues: {yieldTokenZoneKey: yieldSource.token},
+  ).whenComplete(() async {
+    await notificationSub?.cancel();
+    probeTimer?.cancel();
+  });
+}
+
+Future<({List<ToolResultMessage> results, bool hasMore})> _executeToolCallPhase(
   Context currentContext,
   AssistantMessage message,
   AgentLoopConfig currentConfig,

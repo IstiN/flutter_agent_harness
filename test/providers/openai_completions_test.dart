@@ -305,6 +305,192 @@ void main() {
       expect(events.last, isA<DoneEvent>());
     });
 
+    test(
+      'extracts inline <think> tags from content into a thinking block',
+      () async {
+        // Endpoints without a reasoning field (kimi k3 via openai-completions)
+        // send thinking as inline <think>…</think> tags in the content stream.
+        final client = sseClient(
+          sseBody([
+            {
+              'choices': [
+                {
+                  'delta': {'content': '<think>let me '},
+                },
+              ],
+            },
+            {
+              'choices': [
+                {
+                  'delta': {'content': 'verify</think>the answer'},
+                },
+              ],
+            },
+            {
+              'choices': [
+                {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+              ],
+            },
+            'data: [DONE]\n\n',
+          ]),
+        );
+
+        final stream = streamOpenAICompletions(
+          openRouterModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+
+        final events = await stream.toList();
+        expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
+        final thinking = events
+            .whereType<ThinkingDeltaEvent>()
+            .map((e) => e.delta)
+            .join();
+        expect(thinking, 'let me verify');
+        final text = events
+            .whereType<TextDeltaEvent>()
+            .map((e) => e.delta)
+            .join();
+        expect(text, 'the answer');
+        // The tags themselves never leak into either channel.
+        expect(thinking, isNot(contains('<think>')));
+        expect(text, isNot(contains('think>')));
+        expect(events.last, isA<DoneEvent>());
+      },
+    );
+
+    test('inline <think> tags split across deltas are reassembled', () async {
+      final client = sseClient(
+        sseBody([
+          {
+            'choices': [
+              {
+                'delta': {'content': '<thi'},
+              },
+            ],
+          },
+          {
+            'choices': [
+              {
+                'delta': {'content': 'nk>rea'},
+              },
+            ],
+          },
+          {
+            'choices': [
+              {
+                'delta': {'content': 'son</thi'},
+              },
+            ],
+          },
+          {
+            'choices': [
+              {
+                'delta': {'content': 'nk>done'},
+              },
+            ],
+          },
+          {
+            'choices': [
+              {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+            ],
+          },
+          'data: [DONE]\n\n',
+        ]),
+      );
+
+      final stream = streamOpenAICompletions(
+        openRouterModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      expect(
+        events.whereType<ThinkingDeltaEvent>().map((e) => e.delta).join(),
+        'reason',
+      );
+      expect(
+        events.whereType<TextDeltaEvent>().map((e) => e.delta).join(),
+        'done',
+      );
+    });
+
+    test('an unclosed inline <think> at stream end stays thinking (no tag '
+        'leak)', () async {
+      final client = sseClient(
+        sseBody([
+          {
+            'choices': [
+              {
+                'delta': {'content': '<think>still reason'},
+              },
+            ],
+          },
+          {
+            'choices': [
+              {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+            ],
+          },
+          'data: [DONE]\n\n',
+        ]),
+      );
+
+      final stream = streamOpenAICompletions(
+        openRouterModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      expect(
+        events.whereType<ThinkingDeltaEvent>().map((e) => e.delta).join(),
+        'still reason',
+      );
+      expect(events.whereType<TextDeltaEvent>(), isEmpty);
+    });
+
+    test(
+      'plain content without a think tag passes through untouched',
+      () async {
+        final client = sseClient(
+          sseBody([
+            {
+              'choices': [
+                {
+                  'delta': {'content': 'just an answer'},
+                },
+              ],
+            },
+            {
+              'choices': [
+                {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+              ],
+            },
+            'data: [DONE]\n\n',
+          ]),
+        );
+
+        final stream = streamOpenAICompletions(
+          openRouterModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+
+        final events = await stream.toList();
+        expect(events.whereType<ThinkingStartEvent>(), isEmpty);
+        expect(
+          events.whereType<TextDeltaEvent>().map((e) => e.delta).join(),
+          'just an answer',
+        );
+      },
+    );
+
     test('streams reasoning_details text entries as thinking blocks', () async {
       // OpenRouter routes some models' reasoning (e.g. NVIDIA nemotron) as
       // reasoning_details text entries instead of a `reasoning` delta field.
@@ -1664,10 +1850,7 @@ void main() {
         googleModel,
         Context(
           messages: [
-            UserMessage(
-              content: 'hello',
-              timestamp: DateTime.utc(2026),
-            ),
+            UserMessage(content: 'hello', timestamp: DateTime.utc(2026)),
           ],
           tools: [
             Tool(
@@ -1686,8 +1869,11 @@ void main() {
       final tools = body['tools'] as List;
       expect(tools, hasLength(1));
       final tool = tools.single as Map<String, dynamic>;
-      expect(tool.containsKey('strict'), isFalse,
-          reason: 'Gemini rejects the OpenAI-only strict field with 400');
+      expect(
+        tool.containsKey('strict'),
+        isFalse,
+        reason: 'Gemini rejects the OpenAI-only strict field with 400',
+      );
     });
   });
 }

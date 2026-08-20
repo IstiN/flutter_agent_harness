@@ -161,7 +161,8 @@ AssistantMessageEventStream streamGoogle(
 ]) {
   final eventStream = AssistantMessageEventStream();
   final cancelToken = options?.cancelToken;
-  final httpClient = client ?? http.Client();
+  // No injected client: the shared keep-alive client (never closed per call).
+  final httpClient = client ?? sharedProviderHttpClient();
 
   // Blocks accumulate in the shared state holder; each event carries a
   // fresh immutable snapshot of them (pi mutates one `output` object).
@@ -173,22 +174,15 @@ AssistantMessageEventStream streamGoogle(
       state,
       cancelToken,
       httpClient,
-      ownsClient: client == null,
+      ownsClient: false, // shared or injected — never closed per call
       body: () async {
         final apiKey = _getClientApiKey(
           model.provider,
           options?.apiKey,
           options?.headers,
         );
-        final params = await applyPayloadHook(
-          _buildParams(model, context, options),
-          model,
-          options?.onPayload,
-        );
 
-        cancelToken?.throwIfCancelled();
-
-        final request =
+        http.Request buildRequest(Map<String, dynamic> params) =>
             http.Request(
                 'POST',
                 Uri.parse(
@@ -199,14 +193,69 @@ AssistantMessageEventStream streamGoogle(
               ..headers.addAll(_buildHeaders(model, options, apiKey))
               ..body = jsonEncode(params);
 
-        final response = await startProviderResponse(
-          eventStream,
-          state,
-          httpClient,
-          request,
-          cancelToken,
-          options?.onResponse,
+        final params = await applyPayloadHook(
+          _buildParams(model, context, options),
+          model,
+          options?.onPayload,
         );
+
+        cancelToken?.throwIfCancelled();
+
+        http.StreamedResponse response;
+        try {
+          response = await startProviderResponse(
+            eventStream,
+            state,
+            httpClient,
+            buildRequest(params),
+            cancelToken,
+            options?.onResponse,
+          );
+        } on ProviderHttpError catch (error) {
+          // Two Gemini 400s are recoverable by rewriting the request and
+          // retrying ONCE — the turn survives and the model can explain the
+          // situation to the user instead of dying with a raw API error:
+          //
+          // 1. 'Unable to process input image': an inline image the backend
+          //    cannot decode → every image downgraded to placeholder text.
+          // 2. 'missing a thought_signature': a replayed functionCall whose
+          //    signature was never captured / dropped / belongs to another
+          //    model → the tool call and its result become plain text notes.
+          final List<Message>? retryMessages;
+          if (_isUndecodableImageError(error) &&
+              messagesContainImages(context.messages)) {
+            retryMessages = downgradeUndecodableImages(context.messages);
+          } else if (_isMissingThoughtSignatureError(error) &&
+              _hasUnreplayableToolCall(context.messages, model)) {
+            retryMessages = _textifyUnreplayableToolCalls(
+              context.messages,
+              model,
+            );
+          } else {
+            retryMessages = null;
+          }
+          if (retryMessages == null) rethrow;
+
+          final retryContext = Context(
+            systemPrompt: context.systemPrompt,
+            messages: retryMessages,
+            tools: context.tools,
+          );
+          final retryParams = await applyPayloadHook(
+            _buildParams(model, retryContext, options),
+            model,
+            options?.onPayload,
+          );
+          cancelToken?.throwIfCancelled();
+          response = await startProviderResponse(
+            eventStream,
+            state,
+            httpClient,
+            buildRequest(retryParams),
+            cancelToken,
+            options?.onResponse,
+          );
+        }
 
         // pi tracks `currentBlock` (the open text/thinking block) inline;
         // here that cursor lives in the chunk handler.
@@ -914,14 +963,18 @@ Map<String, dynamic>? _convertAssistantTextBlock(
   TextContent block,
   bool isSameProviderAndModel,
 ) {
-  // Skip empty text blocks.
-  if (block.text.trim().isEmpty) {
-    return null;
-  }
   final thoughtSignature = _resolveThoughtSignature(
     isSameProviderAndModel,
     block.textSignature,
   );
+  // Skip empty text blocks — unless they carry a thought signature. Gemini
+  // can attach the signature to a part whose visible text is empty and
+  // requires it echoed back; dropping it breaks the reasoning chain and the
+  // next request fails with the 400 'missing a thought_signature' on the
+  // replayed functionCall (pi keeps such parts for the same reason).
+  if (block.text.trim().isEmpty && thoughtSignature == null) {
+    return null;
+  }
   return {'text': block.text, 'thoughtSignature': ?thoughtSignature};
 }
 
@@ -930,15 +983,17 @@ Map<String, dynamic>? _convertAssistantThinkingBlock(
   ThinkingContent block,
   bool isSameProviderAndModel,
 ) {
-  // Skip empty thinking blocks.
-  if (block.thinking.trim().isEmpty) {
-    return null;
-  }
   if (isSameProviderAndModel) {
     final thoughtSignature = _resolveThoughtSignature(
       isSameProviderAndModel,
       block.thinkingSignature,
     );
+    // Same rule as text blocks: an empty thinking block is dropped only
+    // when it carries no signature — Gemini needs signature-bearing parts
+    // echoed back verbatim (see _convertAssistantTextBlock).
+    if (block.thinking.trim().isEmpty && thoughtSignature == null) {
+      return null;
+    }
     return {
       'thought': true,
       'text': block.thinking,
@@ -1161,6 +1216,130 @@ StopReason _mapStopReason(String reason) {
   };
 }
 
+/// Whether [error] is Gemini's undecodable-image rejection (HTTP 400 with
+/// the fixed message `Unable to process input image`). Only this exact
+/// failure justifies the placeholder-retry — every other 400 (bad schema,
+/// thought-signature violations, …) must surface unchanged.
+bool _isUndecodableImageError(ProviderHttpError error) =>
+    error.statusCode == 400 &&
+    error.body.contains('Unable to process input image');
+
+/// Whether [error] is Gemini's missing-thought-signature rejection of a
+/// replayed functionCall (HTTP 400, message `Function call is missing a
+/// thought_signature …`). Only this exact failure justifies the
+/// textify-retry below.
+bool _isMissingThoughtSignatureError(ProviderHttpError error) =>
+    error.statusCode == 400 &&
+    error.body.contains('missing a thought_signature');
+
+/// Whether [messages] holds an assistant tool call that would replay
+/// WITHOUT a thought signature on its functionCall part: no signature, an
+/// invalid (non-base64) one, or one from a different provider/model — such
+/// signatures are dropped by [_convertAssistantToolCallBlock], and Gemini 3
+/// rejects the replay with [_isMissingThoughtSignatureError].
+bool _hasUnreplayableToolCall(List<Message> messages, Model model) {
+  for (final message in messages) {
+    if (message is! AssistantMessage) continue;
+    final sameProviderAndModel =
+        message.provider == model.provider && message.model == model.id;
+    for (final block in message.content) {
+      if (block is ToolCall &&
+          !(sameProviderAndModel &&
+              _isValidThoughtSignature(block.thoughtSignature))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/// Rewrites [messages] so no unreplayable tool call survives as a native
+/// functionCall part: the [ToolCall] block becomes a text note on the
+/// assistant message, and its [ToolResultMessage] becomes a user message
+/// carrying the tool output as text. Signed, same-model tool calls stay
+/// native. The model keeps full knowledge of what was called and what came
+/// back, so the turn can continue (it may simply re-call the tool) instead
+/// of dying with Gemini's missing-thought-signature 400.
+List<Message> _textifyUnreplayableToolCalls(
+  List<Message> messages,
+  Model model,
+) {
+  final droppedCallIds = <String>{};
+  final result = <Message>[];
+  for (final message in messages) {
+    if (message is AssistantMessage) {
+      final sameProviderAndModel =
+          message.provider == model.provider && message.model == model.id;
+      var changed = false;
+      final content = <ContentBlock>[];
+      for (final block in message.content) {
+        if (block is ToolCall &&
+            !(sameProviderAndModel &&
+                _isValidThoughtSignature(block.thoughtSignature))) {
+          droppedCallIds.add(block.id);
+          changed = true;
+          content.add(
+            TextContent(
+              text:
+                  '(tool call omitted: ${block.name}'
+                  '(${jsonEncode(block.arguments)}) — its thought signature '
+                  'was not replayable)',
+            ),
+          );
+        } else {
+          content.add(block);
+        }
+      }
+      result.add(
+        changed
+            ? AssistantMessage(
+                content: content,
+                api: message.api,
+                provider: message.provider,
+                model: message.model,
+                responseModel: message.responseModel,
+                responseId: message.responseId,
+                usage: message.usage,
+                stopReason: message.stopReason,
+                rawStopReason: message.rawStopReason,
+                errorMessage: message.errorMessage,
+                timestamp: message.timestamp,
+              )
+            : message,
+      );
+    } else if (message is ToolResultMessage &&
+        droppedCallIds.contains(message.toolCallId)) {
+      // Tool results always follow their assistant message, so a single
+      // pass suffices. The functionResponse would reference a functionCall
+      // that no longer exists — convert it to a user-turn text note.
+      final text = [
+        for (final block in message.content)
+          if (block is TextContent) block.text,
+      ].join('\n');
+      final images = [
+        for (final block in message.content)
+          if (block is ImageContent) block,
+      ];
+      result.add(
+        UserMessage(
+          content: [
+            TextContent(
+              text:
+                  '(result of the omitted ${message.toolName} tool call:)'
+                  '\n$text',
+            ),
+            ...images,
+          ],
+          timestamp: message.timestamp,
+        ),
+      );
+    } else {
+      result.add(message);
+    }
+  }
+  return result;
+}
+
 /// Converts one [ImageContent] to a Gemini `inlineData` part. PNG images
 /// are re-encoded as JPEG (quality 95) — Gemma's vision encoder rejects
 /// PNGs with alpha channels or EXIF orientation metadata; JPEG strips
@@ -1177,10 +1356,7 @@ Map<String, dynamic> _convertImageContent(ImageContent item) {
     if (decoded == null) return _passthrough(item);
     final jpegBytes = img.encodeJpg(decoded, quality: 95);
     return {
-      'inlineData': {
-        'mimeType': 'image/jpeg',
-        'data': base64Encode(jpegBytes),
-      },
+      'inlineData': {'mimeType': 'image/jpeg', 'data': base64Encode(jpegBytes)},
     };
   } on Object {
     return _passthrough(item);

@@ -303,7 +303,7 @@ REPL COMMANDS
   /reset             start a new session
   /compact           summarize history to free context
   /stats             show token and cost totals
-  /tasks [cancel <id>] list (or cancel) background agents
+  /tasks [cancel <id>] list (or cancel) background agents and shell jobs
   /skills            list discovered skills; /skill:<name> [args] invokes one
   /agents             list available agent types (built-in + .fah/agents/*.md)
 

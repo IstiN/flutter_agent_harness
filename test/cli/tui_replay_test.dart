@@ -1,5 +1,11 @@
 import 'package:flutter_agent_harness/src/cli/tui_replay.dart';
 import 'package:flutter_agent_harness/src/context.dart';
+import 'package:flutter_agent_harness/src/session/session_tree.dart'
+    show
+        branchSummaryPrefix,
+        branchSummarySuffix,
+        compactionSummaryPrefix,
+        compactionSummarySuffix;
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
@@ -104,6 +110,109 @@ void main() {
         ),
         isEmpty,
       );
+    });
+
+    test('a compaction summary renders as one compact marker row', () {
+      final summary =
+          '$compactionSummaryPrefix'
+          'Implemented the login flow and fixed the token refresh.\n\n'
+          '<read-files>\n/a.dart\n/b.dart\n</read-files>'
+          '$compactionSummarySuffix';
+      final lines = replayLinesTui(
+        UserMessage.text(summary),
+        width: 80,
+        dim: dim,
+      );
+      expect(lines, hasLength(3));
+      expect(lines[1], contains('context compacted into a summary'));
+      expect(lines[1], contains('Implemented the login flow'));
+      // The raw XML-ish block never leaks into the history.
+      expect(lines.join('\n'), isNot(contains('<read-files>')));
+      expect(lines.join('\n'), isNot(contains('</summary>')));
+    });
+
+    test('a branch summary renders compact too', () {
+      final summary =
+          '$branchSummaryPrefix'
+          'The detour explored X.\n'
+          '$branchSummarySuffix';
+      final lines = replayLinesTui(
+        UserMessage.text(summary),
+        width: 80,
+        dim: dim,
+      );
+      expect(lines[1], contains('summary of the detour branch'));
+      expect(lines[1], contains('The detour explored X.'));
+    });
+
+    test('the marker row is truncated to the terminal width', () {
+      final summary =
+          '$compactionSummaryPrefix'
+          '${'very long line ' * 20}'
+          '$compactionSummarySuffix';
+      final lines = replayLinesTui(
+        UserMessage.text(summary),
+        width: 40,
+        dim: dim,
+      );
+      // dim() wraps in <d></d>; the visible text stays within 40 cols.
+      final visible = lines[1].replaceAll('<d>', '').replaceAll('</d>', '');
+      expect(visible.length, 40);
+      expect(visible, endsWith('…'));
+    });
+
+    test('a truncated message never leaves a dangling code fence', () {
+      // 25 rows with a fence opened at row 2 and closed past the 20-row cap:
+      // the replay must close it synthetically, or the whole history after
+      // the message renders as verbatim code (raw **, tables, links).
+      final body = [
+        'intro',
+        '```dart',
+        for (var i = 0; i < 22; i++) 'line $i',
+        '```',
+        'after',
+      ].join('\n');
+      final lines = replayLinesTui(
+        assistant([TextContent(text: body)]),
+        width: 40,
+        dim: dim,
+      );
+      // Truncated at 20 rows + the synthetic closer.
+      expect(lines, hasLength(21));
+      expect(lines.last, '```');
+    });
+
+    test('a budget cut starting mid-fence prepends a balancing fence', () {
+      final messages = [
+        assistant([TextContent(text: '```\ncode\n```\nafter')]),
+        assistant([TextContent(text: 'recent answer')]),
+      ];
+      // Budget admits only the last entry: the kept region is fence-balanced
+      // here (no synthetic fence needed).
+      var (entries, _) = buildReplayEntries(
+        messages,
+        tui: true,
+        width: 40,
+        dim: dim,
+        rowBudget: 10,
+      );
+      expect(entries.first, isNot(['```']));
+
+      // Now the fence OPENS in the dropped head and closes inside the kept
+      // region: without the synthetic opener the closer would toggle state
+      // ON and swallow the rest.
+      final midCut = [
+        assistant([TextContent(text: '```\nlong code block')]),
+        assistant([TextContent(text: '```\nafter the block')]),
+      ];
+      (entries, _) = buildReplayEntries(
+        midCut,
+        tui: true,
+        width: 40,
+        dim: dim,
+        rowBudget: 2,
+      );
+      expect(entries.first, ['```']);
     });
   });
 }
