@@ -111,6 +111,7 @@ private func pickDirectoryWithBookmark() -> [String: String]? {
   panel.canChooseDirectories = true
   panel.canChooseFiles = false
   panel.allowsMultipleSelection = false
+  panel.canCreateDirectories = true
   panel.prompt = "Open"
   panel.message = "Choose a project folder the agent may work in"
   guard panel.runModal() == .OK, let url = panel.url else { return nil }
