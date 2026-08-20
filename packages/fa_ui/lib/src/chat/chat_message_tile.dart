@@ -4,6 +4,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show authExpiredProvider, stripAuthExpiredMarker;
 
 import '../theme/app_theme.dart';
 import 'chat_strings.dart';
@@ -23,6 +25,11 @@ typedef FaChatAvatarBuilder =
 typedef FaPermissionActionCallback =
     void Function(String permission, String action);
 
+/// Called when the user taps the "Authorize" button on an auth-expired card.
+/// [providerId] is the provider identifier from [authExpiredProvider]
+/// (e.g. 'codemie').
+typedef FaAuthRecoveryCallback = void Function(String providerId);
+
 /// One transcript message, rendered the same way on every chat surface: the
 /// full chat screen (through its `flutter_chat_ui` builders) and the in-app
 /// Fa chat overlay both delegate to this widget, so user bubbles, assistant
@@ -41,6 +48,7 @@ class ChatMessageTile extends StatelessWidget {
     this.videoControllerFactory,
     this.avatarBuilder,
     this.onPermissionAction,
+    this.onAuthRecovery,
     this.compact = false,
   });
 
@@ -69,6 +77,10 @@ class ChatMessageTile extends StatelessWidget {
   /// Settings" or "Try again"). The host should open system settings or
   /// retry the permission request.
   final FaPermissionActionCallback? onPermissionAction;
+
+  /// Called when the user taps the "Authorize" button on an auth-expired
+  /// card. The host should launch the provider's SSO/re-authorization flow.
+  final FaAuthRecoveryCallback? onAuthRecovery;
 
   /// Tighter outer spacing for the in-app Fa overlay, whose panel already
   /// pads the transcript list.
@@ -260,14 +272,31 @@ class ChatMessageTile extends StatelessWidget {
     // Permission-denied tool results get a special card: orange badge +
     // action buttons (Open Settings / Try again) matching the prototype.
     // We check the CONTENT, not just isError — some tools return the denial
-    // as a plain text result, not an error.
-    if (_isPermissionError(content)) {
+    // as a plain text result, not an error. AND the tool name: arbitrary
+    // tool results whose body text happens to mention 'X access required'
+    // (e.g. a `read` of a skill that documents the permission flow) keep
+    // the normal collapsible tile instead of hijacking the visual.
+    if (_isPermissionError(toolName: toolName, content: content)) {
       return _permissionCard(
         context,
         palette,
         content,
         isLight,
         onPermissionAction,
+      );
+    }
+
+    // Auth-expired provider errors (SSO session expired) get a special card
+    // with an Authorize button that re-launches the SSO flow.
+    final expiredProvider = authExpiredProvider(content);
+    if (expiredProvider != null) {
+      return _authExpiredCard(
+        context,
+        palette,
+        content,
+        isLight,
+        expiredProvider,
+        onAuthRecovery,
       );
     }
 
@@ -469,9 +498,43 @@ String _toolDisplayName(String toolName) {
 }
 
 /// Whether a tool error is a permission/access denial (calendar, contacts,
-/// home, health, etc.) that should render as a permission card with action
-/// buttons instead of a plain error tile.
-bool _isPermissionError(String content) {
+/// Tool names whose denial surface renders as a permission card instead of
+/// a generic tool tile. Adding a new OS-permission tool = adding it here.
+const _permissionToolNames = <String>{
+  // Calendar (EventKit).
+  'calendar_events',
+  'calendar_calendars',
+  'calendar_add',
+  'calendar_update',
+  'calendar_delete',
+  // Home (HomeKit).
+  'home_devices',
+  'home_turn_on',
+  'home_turn_off',
+  'home_set',
+  // Health (HealthKit).
+  'health_summary',
+  // Contacts.
+  'contacts_search',
+  'contacts_add',
+  'contacts_call',
+  'contacts_sms',
+  // Notifications / microphone / media library (future agents).
+  'notify',
+  'microphone',
+  'media',
+};
+
+/// True for tool results that should render as the orange permission card:
+/// the tool is one that can require an OS permission AND the content text
+/// matches the permission-denial signature.
+bool _isPermissionError({
+  required String? toolName,
+  required String content,
+}) {
+  final isPermissionTool =
+      toolName == null || _permissionToolNames.contains(toolName);
+  if (!isPermissionTool) return false;
   final lower = content.toLowerCase();
   return lower.contains('access') &&
       (lower.contains('required') ||
@@ -573,6 +636,90 @@ Widget _permissionCard(
               ),
             ),
           ],
+        ),
+      ],
+    ),
+  );
+}
+
+/// An auth-expired card for provider SSO sessions that have expired:
+/// red badge + explanatory text + Authorize button. Mirrors the
+/// permission-denied card pattern.
+Widget _authExpiredCard(
+  BuildContext context,
+  FahColors palette,
+  String content,
+  bool isLight,
+  String providerId,
+  FaAuthRecoveryCallback? onAuthorize,
+) {
+  final theme = Theme.of(context);
+  final displayText = stripAuthExpiredMarker(content);
+  return Container(
+    margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: isLight ? Colors.white : palette.panelAlt,
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.04),
+          blurRadius: 8,
+          offset: const Offset(0, 1),
+        ),
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Red badge.
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: palette.error.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.key_off, size: 14, color: palette.error),
+              const SizedBox(width: 4),
+              Text(
+                'Session expired',
+                style: TextStyle(
+                  color: palette.error,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Title.
+        Text(
+          'Your $providerId session has expired.',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Body text.
+        Text(
+          displayText,
+          style: theme.textTheme.bodySmall?.copyWith(color: palette.dim),
+        ),
+        const SizedBox(height: 16),
+        // Authorize button.
+        FilledButton.icon(
+          onPressed: () => onAuthorize?.call(providerId),
+          icon: const Icon(Icons.login, size: 16),
+          label: const Text('Authorize'),
+          style: FilledButton.styleFrom(
+            backgroundColor: palette.indigo,
+            foregroundColor: Colors.white,
+          ),
         ),
       ],
     ),

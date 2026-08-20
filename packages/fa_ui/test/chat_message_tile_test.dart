@@ -85,6 +85,100 @@ void main() {
     );
   });
 
+  testWidgets(
+    'tool tile with codemie auth-expired marker shows the recovery card',
+    (tester) async {
+      String? recoveredProvider;
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(
+              role: 'tool',
+              content:
+                  'CodeMie session expired — the endpoint redirected the '
+                  'request to the SSO login portal. Re-authorize to refresh '
+                  'the token. [[auth-expired:codemie]]',
+              toolName: 'web_search',
+              isError: true,
+            ),
+            images: images(),
+            onAuthRecovery: (provider) => recoveredProvider = provider,
+          ),
+        ),
+      );
+
+      // The auth-expired badge.
+      expect(find.text('Session expired'), findsOneWidget);
+
+      // The provider name in the title.
+      expect(find.text('Your codemie session has expired.'), findsOneWidget);
+
+      // The Authorize button (triggers the callback with 'codemie').
+      expect(find.widgetWithText(FilledButton, 'Authorize'), findsOneWidget);
+      await tester.tap(find.text('Authorize'));
+      expect(recoveredProvider, 'codemie');
+    },
+  );
+
+  testWidgets(
+    'auth-expired card strips the marker from the visible body text',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(
+              role: 'tool',
+              content:
+                  'CodeMie session expired — the endpoint redirected the '
+                  'request to the SSO login portal. Re-authorize to refresh '
+                  'the token. [[auth-expired:codemie]]',
+              toolName: 'web_search',
+              isError: true,
+            ),
+            images: images(),
+          ),
+        ),
+      );
+
+      // The marker itself must not appear in the body.
+      expect(find.textContaining('[[auth-expired:codemie]]'), findsNothing);
+
+      // The human-readable part is still shown.
+      expect(
+        find.textContaining('CodeMie session expired'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'plain tool error (no auth marker) renders as a normal tile, not a card',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(
+              role: 'tool',
+              content: 'Something went wrong.',
+              toolName: 'bash',
+              isError: true,
+            ),
+            images: images(),
+          ),
+        ),
+      );
+
+      // No auth-expired badge should appear.
+      expect(find.text('Session expired'), findsNothing);
+
+      // The error text renders normally.
+      expect(find.text('Something went wrong.'), findsOneWidget);
+
+      // No Authorize button.
+      expect(find.text('Authorize'), findsNothing);
+    },
+  );
+
   test('fahChatColorsOf maps the surface tokens onto the chat palette', () {
     const stock = FahColors.dark;
     final reseated = stock.withSurfaces(
@@ -102,4 +196,85 @@ void main() {
     expect(identicalCopy.bg, stock.bg);
     expect(identicalCopy.panel, stock.panel);
   });
+
+  testWidgets(
+    'a non-permission tool whose body text happens to mention '
+    '"X access required" stays on the normal collapsible tile',
+    (tester) async {
+      // Skill bodies (e.g. js-apps/SKILL.md) document the permission flows,
+      // so a `read` result containing the string "Calendar access required"
+      // used to be hijacked by the permission-card heuristic.
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(
+              role: 'tool',
+              content:
+                  '1. Open the app.\n'
+                  '2. When prompted "Calendar access required", grant.\n'
+                  '3. Continue.\n'
+                  '${List.generate(15, (i) => 'step detail $i').join('\n')}',
+              toolName: 'read',
+              isError: false,
+            ),
+            images: images(),
+          ),
+        ),
+      );
+
+      // The orange permission badge must NOT appear (the tool isn't a
+      // permission-needing one).
+      expect(find.text('Calendar access required'), findsNothing);
+
+      // No permission action buttons.
+      expect(find.text('Open Settings'), findsNothing);
+      expect(find.text('Try again'), findsNothing);
+
+      // The collapsible tile stays — content is long, so the "Show all"
+      // affordance renders (we only show the first 8 lines by default).
+      expect(find.textContaining('Show all'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a calendar_events result that is actually a permission denial still '
+    'renders the orange permission card with action buttons',
+    (tester) async {
+      String? permission;
+      String? action;
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(
+              role: 'tool',
+              content:
+                  'Calendar access denied — open System Settings → Privacy → '
+                  'Calendars to grant access, then try again.',
+              toolName: 'calendar_events',
+              isError: true,
+            ),
+            images: images(),
+            onPermissionAction: (perm, act) {
+              permission = perm;
+              action = act;
+            },
+          ),
+        ),
+      );
+
+      // The permission card surfaces with its orange badge + body.
+      expect(find.text('Calendar access required'), findsOneWidget);
+      expect(find.textContaining('System Settings'), findsOneWidget);
+
+      // The "Open Settings" button routes the callback with permission +
+      // the action it represents.
+      expect(
+        find.widgetWithText(FilledButton, 'Open Settings'),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Open Settings'));
+      expect(permission, 'Calendar');
+      expect(action, isNotNull);
+    },
+  );
 }
