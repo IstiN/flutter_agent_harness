@@ -332,6 +332,21 @@ final class FlutterSessionManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Deletes a session outright: a live one is closed (aborting any run)
+  /// with its file removed; a persisted-only one ([metadata]) is deleted
+  /// straight from the repo. Powers the sidebar tile menu.
+  Future<void> deleteSession(String id, {SessionMetadata? metadata}) async {
+    if (_sessions.containsKey(id)) {
+      await closeSession(id, deleteFile: true);
+      return;
+    }
+    final SessionMetadata resolved =
+        metadata ??
+        await _repo.list().then((all) => all.firstWhere((m) => m.id == id));
+    await _repo.delete(resolved);
+    notifyListeners();
+  }
+
   /// Creates a fresh session when the active one is closed and none remain.
   /// Used by the chat screen to guarantee an active session after deletion.
   Future<void> ensureActiveSession({

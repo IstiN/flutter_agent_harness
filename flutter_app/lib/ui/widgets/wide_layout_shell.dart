@@ -104,6 +104,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// reloaded whenever the manager changes (create/open/close).
   List<SessionMetadata> _persistedSessions = const [];
 
+  /// Lazily loaded session-title store when the host did not inject one
+  /// (the wide shell's boot path doesn't) — powers custom titles + rename.
+  SessionNamesStore? _namesStore;
+
   /// Width of the right-side apps panel (user-resizable via drag handle).
   double _appsPanelWidth = 380;
 
@@ -118,6 +122,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   void _onManagerChanged() {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
+    unawaited(_ensureNamesStore());
     if (mounted) setState(() {});
   }
 
@@ -126,6 +131,17 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final all = await widget.manager.listPersistedSessions();
     if (!mounted) return;
     setState(() => _persistedSessions = all);
+  }
+
+  /// Loads the session-title store from the shared env when the host did
+  /// not inject one — custom titles and the rename action need it.
+  Future<void> _ensureNamesStore() async {
+    if (widget.sessionNamesStore != null || _namesStore != null) return;
+    final service = widget.manager.active?.service;
+    if (service == null) return;
+    final store = await SessionNamesStore.load(service.env);
+    if (!mounted) return;
+    setState(() => _namesStore = store);
   }
 
   /// Rebuilds when the active service notifies (model change, reconfigure).
@@ -150,6 +166,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     widget.manager.addListener(_onManagerChanged);
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
+    unawaited(_ensureNamesStore());
   }
 
   @override
@@ -217,7 +234,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             Expanded(
               child: SidebarSessionsList(
                 manager: widget.manager,
-                sessionNamesStore: widget.sessionNamesStore,
+                sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
                 collapsed: _sidebarCollapsed,
                 onNewSession: _newSession,
                 onSessionTap: () => setState(() {}),

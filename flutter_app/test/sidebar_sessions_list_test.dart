@@ -184,4 +184,90 @@ void main() {
     expect(find.text('Shared chat'), findsOneWidget);
     expect(find.text('Today'), findsOneWidget);
   });
+
+  testWidgets('the tile menu offers rename and delete', (tester) async {
+    manager.addSession('live-1', _fakeService(env));
+    final names = SessionNamesStore.inMemory({'live-1': 'Live chat'});
+
+    await tester.pumpWidget(harness(names: names));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rename session'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+  });
+
+  testWidgets('rename from the tile menu writes the custom title', (
+    tester,
+  ) async {
+    manager.addSession('live-1', _fakeService(env));
+    final names = SessionNamesStore.inMemory();
+
+    await tester.pumpWidget(harness(names: names));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rename session'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'My chat');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(names.titleFor('live-1'), 'My chat');
+    expect(find.text('My chat'), findsOneWidget);
+  });
+
+  testWidgets('delete from the tile menu removes a persisted session', (
+    tester,
+  ) async {
+    manager.addSession('live-1', _fakeService(env));
+    final old = await ageSession(await persistSession(userText: 'hi'));
+
+    await tester.pumpWidget(
+      harness(
+        names: SessionNamesStore.inMemory({old.id: 'Old chat'}),
+        persisted: [old],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+
+    // Confirmation dialog names the session.
+    expect(find.text('Delete session?'), findsOneWidget);
+    expect(find.text('Old chat'), findsWidgets);
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    expect(await repo.list(), isEmpty);
+  });
+
+  testWidgets('deleting the active live session mints a fresh one', (
+    tester,
+  ) async {
+    final meta = await persistSession(userText: 'live session');
+    manager.addSession(meta.id, _fakeService(env));
+
+    await tester.pumpWidget(harness(persisted: [meta]));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    // File gone, and the shell is not stranded: a fresh session is active.
+    expect(await repo.list(), isEmpty);
+    expect(manager.active, isNotNull);
+    expect(manager.active!.id, isNot(meta.id));
+  });
 }

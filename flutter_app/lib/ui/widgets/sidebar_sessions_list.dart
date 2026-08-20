@@ -1,6 +1,7 @@
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
@@ -59,6 +60,21 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     super.initState();
     widget.manager.addListener(_onChanged);
     widget.sessionNamesStore?.addListener(_onChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant SidebarSessionsList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The wide shell loads the names store lazily — re-subscribe when it
+    // arrives (and when the manager instance is swapped).
+    if (oldWidget.manager != widget.manager) {
+      oldWidget.manager.removeListener(_onChanged);
+      widget.manager.addListener(_onChanged);
+    }
+    if (oldWidget.sessionNamesStore != widget.sessionNamesStore) {
+      oldWidget.sessionNamesStore?.removeListener(_onChanged);
+      widget.sessionNamesStore?.addListener(_onChanged);
+    }
   }
 
   @override
@@ -184,9 +200,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                           subtitle: _subtitleFor(entry),
                           isActive: widget.manager.active?.id == entry.id,
                           onTap: () => _openEntry(entry),
-                          onMenu: entry.live != null
-                              ? () => _showSessionMenu(entry.live!)
-                              : null,
+                          onMenu: (anchor) => _showSessionMenu(entry, anchor),
                         ),
                     ],
                   ],
@@ -254,9 +268,116 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     return '${months[created.month - 1]} ${created.day}';
   }
 
-  void _showSessionMenu(FlutterManagedSession session) {
-    // Placeholder: rename/delete menu.
-    // Will be wired to the real session manager actions.
+  /// The 3-dot tile menu: rename (via the shared rename dialog, like the
+  /// CLI `/rename`) and delete (with confirmation). Works for live and
+  /// persisted-only sessions alike.
+  Future<void> _showSessionMenu(_SessionEntry entry, Rect anchor) async {
+    final l10n = context.l10n;
+    final overlayBox =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(anchor, Offset.zero & overlayBox.size),
+      items: [
+        PopupMenuItem(
+          value: 'rename',
+          child: Row(
+            children: [
+              const Icon(Icons.edit_outlined, size: 16),
+              const SizedBox(width: 8),
+              Text(l10n.sidebarRenameDialogTitle),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              const Icon(Icons.delete_outline, size: 16),
+              const SizedBox(width: 8),
+              Text(l10n.sidebarDelete),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'rename':
+        await _renameEntry(entry);
+      case 'delete':
+        await _deleteEntry(entry);
+    }
+  }
+
+  Future<void> _renameEntry(_SessionEntry entry) async {
+    final store = widget.sessionNamesStore;
+    if (store == null) return;
+    await showRenameSessionDialog(
+      context,
+      store: store,
+      sessionId: entry.id,
+      createdAt: entry.createdAt,
+    );
+  }
+
+  Future<void> _deleteEntry(_SessionEntry entry) async {
+    final l10n = context.l10n;
+    final title = widget.sessionNamesStore?.titleFor(entry.id);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.sidebarDeleteSessionTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title ??
+                  l10n.sidebarDeletePersistedContent(entry.id.substring(0, 8)),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(l10n.sidebarDeleteSessionContent),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(l10n.commonCancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(l10n.sidebarDelete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.manager.deleteSession(entry.id, metadata: entry.persisted);
+      // Deleting the active (and only) session must not strand the shell on
+      // the "No active session" placeholder — mint a fresh one on the same
+      // connection, like the chat screen's ensureActiveSession path.
+      if (widget.manager.active == null) {
+        final service = entry.live?.service;
+        final config = service?.configForClone;
+        if (service != null && config != null) {
+          await widget.manager.ensureActiveSession(
+            config: config,
+            serviceFactory: () async => service.clone(),
+          );
+        }
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.sidebarDeleteSessionFailed(error.toString())),
+          ),
+        );
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -384,8 +505,9 @@ class _SessionTile extends StatelessWidget {
   final bool isActive;
   final VoidCallback onTap;
 
-  /// Called when the 3-dot menu button is tapped. When null, the menu is hidden.
-  final VoidCallback? onMenu;
+  /// Called with the menu button's global rect when the 3-dot menu button
+  /// is tapped (the popup anchors to it). When null, the menu is hidden.
+  final ValueChanged<Rect>? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -452,7 +574,10 @@ class _SessionTile extends StatelessWidget {
                 // 3-dot menu button (visible on the active tile or on hover).
                 if (onMenu != null)
                   InkWell(
-                    onTap: onMenu,
+                    onTap: () {
+                      final box = context.findRenderObject()! as RenderBox;
+                      onMenu!(box.localToGlobal(Offset.zero) & box.size);
+                    },
                     borderRadius: BorderRadius.circular(4),
                     child: Padding(
                       padding: const EdgeInsets.all(2),
