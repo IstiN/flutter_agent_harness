@@ -87,7 +87,7 @@ PreferredSizeWidget faAppBar({
     centerTitle: centerTitle,
   );
   if (!faIsMacOSDesktop) return bar;
-  const inset = 28.0;
+  const inset = 32.0;
   return PreferredSize(
     preferredSize: const Size.fromHeight(kToolbarHeight + inset),
     child: Padding(
@@ -284,8 +284,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
     return Padding(
       // macOS: extra top padding to clear the floating traffic lights
-      // (the content now extends to the window top — no global 28px strip).
-      padding: EdgeInsets.fromLTRB(16, _isMacOS ? 28 : 16, 8, 12),
+      // (the content now extends to the window top — no global strip).
+      padding: EdgeInsets.fromLTRB(16, _isMacOS ? 32 : 16, 8, 12),
       child: Row(
         children: [
           brandIcon,
@@ -354,7 +354,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         // Workspace header matching the prototype: name + dropdown arrow + edit icon.
         // No bottom border — the vertical dividers between panels run full height.
         Container(
-          padding: EdgeInsets.fromLTRB(20, _isMacOS ? 28 : 12, 12, 8),
+          padding: EdgeInsets.fromLTRB(20, _isMacOS ? 32 : 12, 12, 8),
           decoration: BoxDecoration(
             color: isLight ? colors.panel : colors.panel,
           ),

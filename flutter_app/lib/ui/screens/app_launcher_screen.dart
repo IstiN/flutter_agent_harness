@@ -29,7 +29,8 @@ import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/span_grid_delegate.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart'
+    show faAppBar, faIsMacOSDesktop;
 
 /// iOS-home-screen-style apps launcher: the app's home on narrow layouts
 /// (the wide layout keeps the classic chat home). A dynamic square grid of
@@ -845,7 +846,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+          // macOS: extra room so the floating traffic lights don't crowd
+          // the brand tile / session chip at the very top edge.
+          padding: EdgeInsets.fromLTRB(20, faIsMacOSDesktop ? 32 : 16, 20, 8),
           child: Row(
             children: [
               const FaBrandTile(size: 28),
