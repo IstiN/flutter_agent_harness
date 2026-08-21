@@ -14,7 +14,7 @@ void main() {
     test('completes with code and state on the callback', () async {
       final server = ChatGptOAuthLocalCallbackServer();
       final url = await server.start(timeout: const Duration(seconds: 5));
-      expect(url, startsWith('http://127.0.0.1:'));
+      expect(url, startsWith('http://localhost:'));
       expect(url, endsWith('/auth/callback'));
 
       final uri = Uri.parse(
