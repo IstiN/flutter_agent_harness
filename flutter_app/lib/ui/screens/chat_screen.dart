@@ -237,8 +237,8 @@ class _ChatScreenState extends State<ChatScreen> {
           SnackBar(
             content: Text(
               ok
-              ? 'Authorization successful — try sending your message again.'
-              : 'Authorization cancelled.',
+                  ? 'Authorization successful — try sending your message again.'
+                  : 'Authorization cancelled.',
             ),
             duration: const Duration(seconds: 4),
           ),

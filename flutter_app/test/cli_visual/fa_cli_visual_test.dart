@@ -954,11 +954,7 @@ Future<Process> _startAnsweringServer(
   final script = File('${Directory.systemTemp.path}/fa_answer_server_$port.py')
     ..writeAsStringSync(_answerServerPy);
   final server = (await tester.runAsync(
-    () => Process.start('python3', [
-      script.path,
-      ?answer,
-      '$port',
-    ]),
+    () => Process.start('python3', [script.path, ?answer, '$port']),
   ))!;
   final up = await tester.runAsync(() async {
     for (var i = 0; i < 50; i++) {

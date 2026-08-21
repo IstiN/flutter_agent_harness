@@ -129,7 +129,11 @@ void main() {
 
     test('the span is capped with head+tail', () async {
       String? seenPrompt;
-      AssistantMessageEventStream capture(Model model, Context context, {CancelToken? cancelToken}) {
+      AssistantMessageEventStream capture(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
         seenPrompt = context.systemPrompt;
         final message = _assistant('[]');
         final stream = AssistantMessageEventStream();
@@ -138,6 +142,7 @@ void main() {
         stream.end();
         return stream;
       }
+
       final huge = 'x' * (maxExtractionSpanChars + 1000);
       await extractDurableEntries(capture, _model, huge);
       // The rendered prompt stays well under span + prompt overhead.

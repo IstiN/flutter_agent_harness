@@ -173,138 +173,165 @@ final class AutoCompactor {
     final initial = estimateContextTokens(state.messages).tokens;
     if (!force && !shouldCompact(initial, window, settings)) return true;
 
-    final smolLabel = smolModel == null ? 'default' : _modelLabel(smolModel!);
-    final mainModel = state.model;
-    final smolEqualsMain =
-        smolModel != null &&
-        smolModel!.provider == mainModel.provider &&
-        smolModel!.id == mainModel.id;
-    // If no `smol` role is configured, `summary` and `mainSummary` point
-    // at the same stream (smolSummarizer falls back to mainSummarizer's
-    // model+stream). The fallback would just re-run the same call — skip
-    // it, and run only the main attempt.
-    final hasSmol = smolModel != null;
-    final runFallback = hasSmol && !smolEqualsMain;
+    final runFallback = _shouldRunFallback();
 
     for (var pass = 1; pass <= maxPasses; pass++) {
-      final tokensBefore = estimateContextTokens(state.messages).tokens;
-      String? fallbackUsed;
-      Object? lastError;
-      var noWork = false;
-
-      // Pick the summarizer for this pass: smol first, main as fallback.
-      if (runFallback) {
-        final smolOk = await _attempt(
-          'smol=$smolLabel',
-          summarize: summary,
-          pass: pass,
-        );
-        if (smolOk.ok) {
-          fallbackUsed = 'smol=$smolLabel';
-          noWork = smolOk.noWork;
-        } else {
-          lastError = smolOk.error;
-          final mainOk = await _attempt(
-            'main=${_modelLabel(mainModel)}',
-            summarize: mainSummary,
-            pass: pass,
-          );
-          if (mainOk.ok) {
-            fallbackUsed = 'main=${_modelLabel(mainModel)}';
-            noWork = mainOk.noWork;
-          } else {
-            lastError = mainOk.error ?? lastError;
-            hooks.onBothRolesFailed(lastError!);
-            hooks.onPass(
-              AutoCompactorPass(
-                pass: pass,
-                tokensBefore: tokensBefore,
-                tokensAfter: tokensBefore,
-                fallback: null,
-                ok: false,
-                error: lastError,
-              ),
-            );
-            hooks.onDone(pass, estimateContextTokens(state.messages).tokens);
-            return false;
-          }
-        }
-      } else {
-        // No smol role, or smol == main: single attempt on the main
-        // stream. (Fallback to the same call would just re-run it.)
-        final mainOk = await _attempt(
-          'main=${_modelLabel(mainModel)}',
-          summarize: mainSummary,
-          pass: pass,
-        );
-        if (mainOk.ok) {
-          fallbackUsed = 'main=${_modelLabel(mainModel)}';
-          noWork = mainOk.noWork;
-        } else {
-          lastError = mainOk.error;
-          hooks.onBothRolesFailed(lastError!);
-          hooks.onPass(
-            AutoCompactorPass(
-              pass: pass,
-              tokensBefore: tokensBefore,
-              tokensAfter: tokensBefore,
-              fallback: null,
-              ok: false,
-              error: lastError,
-            ),
-          );
-          hooks.onDone(pass, tokensBefore);
-          return false;
-        }
-      }
-
-      // A no-op pass (the branch is already compacted at the leaf): stop
-      // instead of spinning identical passes to maxPasses.
-      if (noWork) {
-        hooks.onPass(
-          AutoCompactorPass(
-            pass: pass,
-            tokensBefore: tokensBefore,
-            tokensAfter: tokensBefore,
-            fallback: fallbackUsed,
-            ok: true,
-          ),
-        );
-        hooks.onDone(pass, tokensBefore);
-        return true;
-      }
-
-      // Pass succeeded — re-stamp the in-memory transcript with the
-      // session's projected context, then re-estimate. The kept assistant
-      // messages carry generation-time usage from BEFORE the compaction —
-      // anchoring the estimator at it would keep reporting the
-      // pre-compaction size and retrigger the loop forever. Clear it; the
-      // next turn's usage report re-anchors the estimate.
-      state.messages = [
-        for (final message in await session.buildContextMessages())
-          if (message is AssistantMessage)
-            message.copyWith(usage: Usage.zero)
-          else
-            message,
-      ];
-      final tokensAfter = estimateContextTokens(state.messages).tokens;
-      hooks.onPass(
-        AutoCompactorPass(
-          pass: pass,
-          tokensBefore: tokensBefore,
-          tokensAfter: tokensAfter,
-          fallback: fallbackUsed,
-          ok: true,
-        ),
-      );
-      if (!shouldCompact(tokensAfter, window, settings)) {
-        hooks.onDone(pass, tokensAfter);
-        return true;
-      }
+      final result = await _runPass(pass, runFallback: runFallback);
+      if (result.done) return result.success;
     }
     final tokens = estimateContextTokens(state.messages).tokens;
     hooks.onDone(maxPasses, tokens);
     return false;
+  }
+
+  /// Whether the smol summarizer is distinct from the main one and should be
+  /// tried before falling back to main.
+  bool _shouldRunFallback() {
+    final smol = smolModel;
+    if (smol == null) return false;
+    final mainModel = state.model;
+    return smol.provider != mainModel.provider || smol.id != mainModel.id;
+  }
+
+  /// Runs one compaction pass. Returns `done: true` when the loop should
+  /// terminate (success or hard failure), `done: false` when another pass is
+  /// needed.
+  Future<({bool done, bool success})> _runPass(
+    int pass, {
+    required bool runFallback,
+  }) async {
+    final tokensBefore = estimateContextTokens(state.messages).tokens;
+    final mainModel = state.model;
+    final smolModel = this.smolModel;
+
+    final attempt = await _pickAttempt(
+      pass,
+      runFallback: runFallback,
+      mainLabel: _modelLabel(mainModel),
+      smolLabel: smolModel == null ? 'default' : _modelLabel(smolModel),
+    );
+
+    if (!attempt.ok) {
+      hooks.onBothRolesFailed(attempt.error!);
+      hooks.onPass(
+        AutoCompactorPass(
+          pass: pass,
+          tokensBefore: tokensBefore,
+          tokensAfter: tokensBefore,
+          fallback: null,
+          ok: false,
+          error: attempt.error,
+        ),
+      );
+      hooks.onDone(pass, estimateContextTokens(state.messages).tokens);
+      return (done: true, success: false);
+    }
+
+    // A no-op pass (the branch is already compacted at the leaf): stop
+    // instead of spinning identical passes to maxPasses.
+    if (attempt.noWork) {
+      hooks.onPass(
+        AutoCompactorPass(
+          pass: pass,
+          tokensBefore: tokensBefore,
+          tokensAfter: tokensBefore,
+          fallback: attempt.fallback,
+          ok: true,
+        ),
+      );
+      hooks.onDone(pass, tokensBefore);
+      return (done: true, success: true);
+    }
+
+    // Pass succeeded — re-stamp the in-memory transcript with the
+    // session's projected context, then re-estimate. The kept assistant
+    // messages carry generation-time usage from BEFORE the compaction —
+    // anchoring the estimator at it would keep reporting the
+    // pre-compaction size and retrigger the loop forever. Clear it; the
+    // next turn's usage report re-anchors the estimate.
+    state.messages = [
+      for (final message in await session.buildContextMessages())
+        if (message is AssistantMessage)
+          message.copyWith(usage: Usage.zero)
+        else
+          message,
+    ];
+    final tokensAfter = estimateContextTokens(state.messages).tokens;
+    hooks.onPass(
+      AutoCompactorPass(
+        pass: pass,
+        tokensBefore: tokensBefore,
+        tokensAfter: tokensAfter,
+        fallback: attempt.fallback,
+        ok: true,
+      ),
+    );
+    if (!shouldCompact(tokensAfter, window, settings)) {
+      hooks.onDone(pass, tokensAfter);
+      return (done: true, success: true);
+    }
+    return (done: false, success: false);
+  }
+
+  /// Picks the summarizer for this pass: smol first, main as fallback when
+  /// [runFallback] is true. Returns the outcome plus the fallback label used.
+  Future<({bool ok, Object? error, bool noWork, String? fallback})>
+  _pickAttempt(
+    int pass, {
+    required bool runFallback,
+    required String mainLabel,
+    required String smolLabel,
+  }) async {
+    if (runFallback) {
+      final smolOk = await _attempt(
+        'smol=$smolLabel',
+        summarize: summary,
+        pass: pass,
+      );
+      if (smolOk.ok) {
+        return (
+          ok: true,
+          error: null,
+          noWork: smolOk.noWork,
+          fallback: 'smol=$smolLabel',
+        );
+      }
+      final mainOk = await _attempt(
+        'main=$mainLabel',
+        summarize: mainSummary,
+        pass: pass,
+      );
+      if (mainOk.ok) {
+        return (
+          ok: true,
+          error: null,
+          noWork: mainOk.noWork,
+          fallback: 'main=$mainLabel',
+        );
+      }
+      return (
+        ok: false,
+        error: mainOk.error ?? smolOk.error,
+        noWork: false,
+        fallback: null,
+      );
+    }
+
+    // No smol role, or smol == main: single attempt on the main stream.
+    final mainOk = await _attempt(
+      'main=$mainLabel',
+      summarize: mainSummary,
+      pass: pass,
+    );
+    if (mainOk.ok) {
+      return (
+        ok: true,
+        error: null,
+        noWork: mainOk.noWork,
+        fallback: 'main=$mainLabel',
+      );
+    }
+    return (ok: false, error: mainOk.error, noWork: false, fallback: null);
   }
 
   /// Runs one pass with up to [maxAttempts] retries on transient errors.

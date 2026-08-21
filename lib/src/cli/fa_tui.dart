@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert' show latin1, utf8;
-import 'dart:io' show IOSink, Platform, Process, ProcessException, stdin;
+import 'dart:io'
+    show IOSink, Platform, Process, ProcessException, ProcessResult, stdin;
 
 import 'package:dart_tui/dart_tui.dart';
 
@@ -2125,19 +2126,29 @@ final class FaTuiController {
   /// for the TUI's lifetime; returns the saved termios string for
   /// [_restoreTermios], or null when there is no tty to fix.
   static Future<String?> _disableTerminalFlowControl() async {
-    if (Platform.isWindows || !stdin.hasTerminal) return null;
-    // BSD stty uses -f, GNU stty -F; both take the device path, so no tty
-    // stdin redirection is needed.
-    final deviceFlag = Platform.isMacOS ? '-f' : '-F';
+    if (Platform.isWindows) return null;
+    if (!stdin.hasTerminal) return null;
+    return sttyDisableFlowControl(
+      sttyDeviceFlag(),
+      runner: (args) => Process.run('stty', args),
+    );
+  }
+
+  /// The BSD/GNU device flag for `stty` (`-f` on macOS, `-F` elsewhere).
+  static String sttyDeviceFlag() => Platform.isMacOS ? '-f' : '-F';
+
+  /// Disables terminal flow control via `stty` and returns the saved termios
+  /// string. [runner] is injected so tests can avoid real subprocesses.
+  ///
+  /// Public (package-visible) only for testing; do not call directly.
+  static Future<String?> sttyDisableFlowControl(
+    String deviceFlag, {
+    required Future<ProcessResult> Function(List<String> args) runner,
+  }) async {
     try {
-      final saved = await Process.run('stty', [deviceFlag, '/dev/tty', '-g']);
+      final saved = await runner([deviceFlag, '/dev/tty', '-g']);
       if (saved.exitCode != 0) return null;
-      final cleared = await Process.run('stty', [
-        deviceFlag,
-        '/dev/tty',
-        '-ixon',
-        '-ixoff',
-      ]);
+      final cleared = await runner([deviceFlag, '/dev/tty', '-ixon', '-ixoff']);
       if (cleared.exitCode != 0) return null;
       return (saved.stdout as String).trim();
     } on ProcessException {

@@ -505,7 +505,6 @@ class _FaChatScreenState extends State<FaChatScreen>
     }
   }
 
-
   // Text and custom (tool/thinking/system) messages share one renderer —
   // see ChatMessageTile.
   Widget _buildTextMessage(

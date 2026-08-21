@@ -528,10 +528,7 @@ const _permissionToolNames = <String>{
 /// True for tool results that should render as the orange permission card:
 /// the tool is one that can require an OS permission AND the content text
 /// matches the permission-denial signature.
-bool _isPermissionError({
-  required String? toolName,
-  required String content,
-}) {
+bool _isPermissionError({required String? toolName, required String content}) {
   final isPermissionTool =
       toolName == null || _permissionToolNames.contains(toolName);
   if (!isPermissionTool) return false;

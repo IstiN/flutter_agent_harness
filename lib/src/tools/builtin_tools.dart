@@ -2367,44 +2367,55 @@ AgentTool bashJobTool(ShellJobRegistry jobs) {
     execute: (arguments, cancelToken, onUpdate) async {
       final action = arguments['action'] as String;
       final id = arguments['id'] as String?;
-      switch (action) {
-        case 'status':
-          if (id == null) {
-            if (jobs.jobs.isEmpty) {
-              return ToolExecutionResult.text(
-                'No background jobs this session.',
-              );
-            }
-            return ToolExecutionResult.text(
-              jobs.jobs.map(_shellJobStatusLine).join('\n'),
-            );
-          }
-          final entry = jobs.job(id);
-          if (entry == null) throw StateError('unknown background job: $id');
-          return ToolExecutionResult.text(_shellJobStatusLine(entry));
-        case 'output':
-          if (id == null) throw StateError('bash_job output requires an id');
-          final lines = (arguments['lines'] as num?)?.toInt() ?? 50;
-          final tail = await jobs.tail(id, maxLines: lines);
-          return ToolExecutionResult.text(
-            tail.isEmpty ? '(no output yet)' : tail,
-          );
-        case 'stop':
-          if (id == null) throw StateError('bash_job stop requires an id');
-          final entry = jobs.job(id);
-          if (entry == null) throw StateError('unknown background job: $id');
-          if (!entry.isRunning) {
-            return ToolExecutionResult.text(
-              '$id already finished (exit code ${entry.exitCode})',
-            );
-          }
-          await entry.stop();
-          return ToolExecutionResult.text('Stopped $id');
-        default:
-          throw StateError('unknown bash_job action: $action');
-      }
+      final lines = (arguments['lines'] as num?)?.toInt();
+      return switch (action) {
+        'status' => _bashJobStatusResult(jobs, id),
+        'output' => await _bashJobOutputResult(jobs, id, lines),
+        'stop' => await _bashJobStopResult(jobs, id),
+        _ => throw StateError('unknown bash_job action: $action'),
+      };
     },
   );
+}
+
+ToolExecutionResult _bashJobStatusResult(ShellJobRegistry jobs, String? id) {
+  if (id == null) {
+    if (jobs.jobs.isEmpty) {
+      return ToolExecutionResult.text('No background jobs this session.');
+    }
+    return ToolExecutionResult.text(
+      jobs.jobs.map(_shellJobStatusLine).join('\n'),
+    );
+  }
+  final entry = jobs.job(id);
+  if (entry == null) throw StateError('unknown background job: $id');
+  return ToolExecutionResult.text(_shellJobStatusLine(entry));
+}
+
+Future<ToolExecutionResult> _bashJobOutputResult(
+  ShellJobRegistry jobs,
+  String? id,
+  int? lines,
+) async {
+  if (id == null) throw StateError('bash_job output requires an id');
+  final tail = await jobs.tail(id, maxLines: lines ?? 50);
+  return ToolExecutionResult.text(tail.isEmpty ? '(no output yet)' : tail);
+}
+
+Future<ToolExecutionResult> _bashJobStopResult(
+  ShellJobRegistry jobs,
+  String? id,
+) async {
+  if (id == null) throw StateError('bash_job stop requires an id');
+  final entry = jobs.job(id);
+  if (entry == null) throw StateError('unknown background job: $id');
+  if (!entry.isRunning) {
+    return ToolExecutionResult.text(
+      '$id already finished (exit code ${entry.exitCode})',
+    );
+  }
+  await entry.stop();
+  return ToolExecutionResult.text('Stopped $id');
 }
 
 String _shellJobStatusLine(ShellJobEntry entry) {

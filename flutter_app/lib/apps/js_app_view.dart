@@ -571,7 +571,8 @@ class _JsAppViewState extends State<JsAppView> {
                       ),
                     ),
                   ),
-                if (widget.onSendToAgent != null && !widget.embeddedInPanel) ...[
+                if (widget.onSendToAgent != null &&
+                    !widget.embeddedInPanel) ...[
                   if (!_faChatExpanded)
                     Positioned(
                       right: 16,

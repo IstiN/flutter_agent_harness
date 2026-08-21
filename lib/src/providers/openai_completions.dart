@@ -379,45 +379,59 @@ final class _OpenAICompletionsSession {
   /// Drains the think-tag buffer as far as decidable: tags may split across
   /// deltas, so an ambiguous prefix stays buffered until [flush] (stream end).
   void _drainThinkTagBuffer({bool flush = false}) {
-    var text = _thinkTagBuf.toString();
+    final text = _thinkTagBuf.toString();
     if (text.isEmpty) return;
 
-    if (_thinkTagState == _ThinkTagState.deciding) {
-      final probe = text.trimLeft();
-      // Undecided while the probe could still grow into the open tag.
-      if (!flush && probe.length < 7 && '<think>'.startsWith(probe)) return;
-      if (probe.startsWith('<think>')) {
-        _thinkTagState = _ThinkTagState.inThink;
-        text = probe.substring(7);
-        _thinkTagBuf
-          ..clear()
-          ..write(text);
-      } else {
-        _thinkTagState = _ThinkTagState.plain;
+    switch (_thinkTagState) {
+      case _ThinkTagState.deciding:
+        _drainDecidingThinkTag(text, flush: flush);
+      case _ThinkTagState.inThink:
+        _drainInThinkTag(text, flush: flush);
+      case _ThinkTagState.plain:
         _thinkTagBuf.clear();
-        _emitText(text);
-        return;
-      }
     }
+  }
 
-    if (_thinkTagState == _ThinkTagState.inThink) {
-      final end = text.indexOf('</think>');
-      if (end >= 0) {
-        if (end > 0) _emitThinking(text.substring(0, end));
-        _thinkTagState = _ThinkTagState.plain;
-        _thinkTagBuf.clear();
-        final rest = text.substring(end + 8);
-        if (rest.isNotEmpty) _emitText(rest);
-        return;
-      }
-      // Hold back a potential partial `</think>` tail.
-      final hold = flush ? 0 : _partialTagTail(text);
-      final emit = hold == 0 ? text : text.substring(0, text.length - hold);
-      if (emit.isNotEmpty) _emitThinking(emit);
+  /// Decides whether the buffered text starts with `<think>`; if so, enters
+  /// the in-think state and continues draining, otherwise falls back to plain.
+  void _drainDecidingThinkTag(String text, {required bool flush}) {
+    final probe = text.trimLeft();
+    // Undecided while the probe could still grow into the open tag.
+    if (!flush && probe.length < 7 && '<think>'.startsWith(probe)) return;
+    if (probe.startsWith('<think>')) {
+      _thinkTagState = _ThinkTagState.inThink;
+      final inner = probe.substring(7);
       _thinkTagBuf
         ..clear()
-        ..write(hold == 0 ? '' : text.substring(text.length - hold));
+        ..write(inner);
+      _drainInThinkTag(inner, flush: false);
+    } else {
+      _thinkTagState = _ThinkTagState.plain;
+      _thinkTagBuf.clear();
+      _emitText(text);
     }
+  }
+
+  /// Emits completed thinking text and transitions back to plain when the
+  /// closing `</think>` tag is found; otherwise buffers a partial close-tag
+  /// tail.
+  void _drainInThinkTag(String text, {required bool flush}) {
+    final end = text.indexOf('</think>');
+    if (end >= 0) {
+      if (end > 0) _emitThinking(text.substring(0, end));
+      _thinkTagState = _ThinkTagState.plain;
+      _thinkTagBuf.clear();
+      final rest = text.substring(end + 8);
+      if (rest.isNotEmpty) _emitText(rest);
+      return;
+    }
+    // Hold back a potential partial `</think>` tail.
+    final hold = flush ? 0 : _partialTagTail(text);
+    final emit = hold == 0 ? text : text.substring(0, text.length - hold);
+    if (emit.isNotEmpty) _emitThinking(emit);
+    _thinkTagBuf
+      ..clear()
+      ..write(hold == 0 ? '' : text.substring(text.length - hold));
   }
 
   /// The length of the longest suffix of [text] that could grow into the

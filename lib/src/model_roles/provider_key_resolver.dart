@@ -36,28 +36,49 @@ String? resolveEndpointKey({
   String? activeCustomKeyName,
 }) {
   if (baseUrl == defaultBaseUrl) {
-    // 1. A genuine environment value (differs from the stored entry).
-    for (final name in envNames) {
-      final value = envRead(name);
-      if (value != null && value.isNotEmpty && value != storeRead?.call(name)) {
-        return value;
-      }
-    }
-    // 2. The endpoint-scoped store entry.
-    final scoped = storeRead?.call(CustomProviderRegistry.keyNameFor(baseUrl));
-    if (scoped != null && scoped.isNotEmpty) return scoped;
-    // 3. Legacy env-name store entries.
-    for (final name in envNames) {
-      final value = storeRead?.call(name);
-      if (value != null && value.isNotEmpty) return value;
-    }
-    return null;
+    return _genuineEnvValue(envNames, envRead, storeRead) ??
+        _storeValue(CustomProviderRegistry.keyNameFor(baseUrl), storeRead) ??
+        _firstStoreValue(envNames, storeRead);
   }
-  // Any other endpoint: only endpoint-scoped store keys.
   if (activeCustomKeyName != null) {
-    final value = storeRead?.call(activeCustomKeyName);
-    if (value != null && value.isNotEmpty) return value;
+    final value = _storeValue(activeCustomKeyName, storeRead);
+    if (value != null) return value;
   }
-  final scoped = storeRead?.call(CustomProviderRegistry.keyNameFor(baseUrl));
-  return scoped != null && scoped.isNotEmpty ? scoped : null;
+  return _storeValue(CustomProviderRegistry.keyNameFor(baseUrl), storeRead);
+}
+
+/// Returns the first non-empty environment value that differs from the
+/// matching store entry (i.e. a value that genuinely came from the process
+/// environment).
+String? _genuineEnvValue(
+  List<String> envNames,
+  String? Function(String name) envRead,
+  String? Function(String name)? storeRead,
+) {
+  for (final name in envNames) {
+    final value = envRead(name);
+    if (value != null && value.isNotEmpty && value != storeRead?.call(name)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/// Returns the first non-empty value from the secure store for the given
+/// [names], or null when the store is empty/unavailable.
+String? _firstStoreValue(
+  List<String> names,
+  String? Function(String name)? storeRead,
+) {
+  for (final name in names) {
+    final value = _storeValue(name, storeRead);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+/// Returns a single non-empty store value, or null.
+String? _storeValue(String name, String? Function(String name)? storeRead) {
+  final value = storeRead?.call(name);
+  return value != null && value.isNotEmpty ? value : null;
 }

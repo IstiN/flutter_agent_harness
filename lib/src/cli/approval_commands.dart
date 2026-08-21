@@ -682,17 +682,24 @@ extension on AgentCli {
       io.writeln('cancelled ${job.id}');
       return;
     }
-    final shellJob = _shellJobs.job(id);
-    if (shellJob != null) {
-      if (!shellJob.isRunning) {
-        io.writeln('$id already finished (exit code ${shellJob.exitCode})');
-        return;
-      }
-      unawaited(shellJob.stop());
-      io.writeln('stopped ${shellJob.id}');
+    final shellOutput = _cancelShellJobById(id, _shellJobs);
+    if (shellOutput != null) {
+      io.writeln(shellOutput);
       return;
     }
     io.writeln('unknown job: $id');
+  }
+
+  /// Stops the shell job [id] and returns the message to print, or null if
+  /// there is no such shell job.
+  String? _cancelShellJobById(String id, ShellJobRegistry jobs) {
+    final shellJob = jobs.job(id);
+    if (shellJob == null) return null;
+    if (!shellJob.isRunning) {
+      return '$id already finished (exit code ${shellJob.exitCode})';
+    }
+    unawaited(shellJob.stop());
+    return 'stopped ${shellJob.id}';
   }
 
   void _onAgentEvent(AgentEvent event, CancelToken cancelToken) {

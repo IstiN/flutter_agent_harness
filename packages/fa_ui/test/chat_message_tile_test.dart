@@ -144,10 +144,7 @@ void main() {
       expect(find.textContaining('[[auth-expired:codemie]]'), findsNothing);
 
       // The human-readable part is still shown.
-      expect(
-        find.textContaining('CodeMie session expired'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('CodeMie session expired'), findsOneWidget);
     },
   );
 
@@ -197,44 +194,43 @@ void main() {
     expect(identicalCopy.panel, stock.panel);
   });
 
-  testWidgets(
-    'a non-permission tool whose body text happens to mention '
-    '"X access required" stays on the normal collapsible tile',
-    (tester) async {
-      // Skill bodies (e.g. js-apps/SKILL.md) document the permission flows,
-      // so a `read` result containing the string "Calendar access required"
-      // used to be hijacked by the permission-card heuristic.
-      await tester.pumpWidget(
-        wrap(
-          ChatMessageTile(
-            message: FaChatMessage(
-              role: 'tool',
-              content:
-                  '1. Open the app.\n'
-                  '2. When prompted "Calendar access required", grant.\n'
-                  '3. Continue.\n'
-                  '${List.generate(15, (i) => 'step detail $i').join('\n')}',
-              toolName: 'read',
-              isError: false,
-            ),
-            images: images(),
+  testWidgets('a non-permission tool whose body text happens to mention '
+      '"X access required" stays on the normal collapsible tile', (
+    tester,
+  ) async {
+    // Skill bodies (e.g. js-apps/SKILL.md) document the permission flows,
+    // so a `read` result containing the string "Calendar access required"
+    // used to be hijacked by the permission-card heuristic.
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(
+            role: 'tool',
+            content:
+                '1. Open the app.\n'
+                '2. When prompted "Calendar access required", grant.\n'
+                '3. Continue.\n'
+                '${List.generate(15, (i) => 'step detail $i').join('\n')}',
+            toolName: 'read',
+            isError: false,
           ),
+          images: images(),
         ),
-      );
+      ),
+    );
 
-      // The orange permission badge must NOT appear (the tool isn't a
-      // permission-needing one).
-      expect(find.text('Calendar access required'), findsNothing);
+    // The orange permission badge must NOT appear (the tool isn't a
+    // permission-needing one).
+    expect(find.text('Calendar access required'), findsNothing);
 
-      // No permission action buttons.
-      expect(find.text('Open Settings'), findsNothing);
-      expect(find.text('Try again'), findsNothing);
+    // No permission action buttons.
+    expect(find.text('Open Settings'), findsNothing);
+    expect(find.text('Try again'), findsNothing);
 
-      // The collapsible tile stays — content is long, so the "Show all"
-      // affordance renders (we only show the first 8 lines by default).
-      expect(find.textContaining('Show all'), findsOneWidget);
-    },
-  );
+    // The collapsible tile stays — content is long, so the "Show all"
+    // affordance renders (we only show the first 8 lines by default).
+    expect(find.textContaining('Show all'), findsOneWidget);
+  });
 
   testWidgets(
     'a calendar_events result that is actually a permission denial still '

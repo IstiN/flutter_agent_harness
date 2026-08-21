@@ -15,7 +15,9 @@ void main() {
 
     test('no override enables the whole catalog', () {
       expect(providerFilterEnvOverride, isNull);
-      final visibleCount = providerCatalog.values.where((s) => s.visible).length;
+      final visibleCount = providerCatalog.values
+          .where((s) => s.visible)
+          .length;
       expect(enabledProviders(), hasLength(visibleCount));
       for (final entry in providerCatalog.entries) {
         final name = entry.key;
@@ -40,14 +42,12 @@ void main() {
     });
 
     test("'all' / '*' keep every visible provider", () {
-      final visibleCount = providerCatalog.values.where((s) => s.visible).length;
+      final visibleCount = providerCatalog.values
+          .where((s) => s.visible)
+          .length;
       for (final value in ['all', '*']) {
         providerFilterEnvOverride = value;
-        expect(
-          enabledProviders(),
-          hasLength(visibleCount),
-          reason: value,
-        );
+        expect(enabledProviders(), hasLength(visibleCount), reason: value);
       }
     });
 

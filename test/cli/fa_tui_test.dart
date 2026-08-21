@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert' show utf8;
+import 'dart:io' show Platform, ProcessException, ProcessResult;
 
 import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
@@ -1639,6 +1640,72 @@ void main() {
       );
       expect(slashMenu.menuOpen, isTrue);
       expect(slashMenu.view().content, contains('\x1b[?25h'));
+    });
+  });
+
+  group('terminal flow control helpers', () {
+    test('sttyDeviceFlag is -f on macOS and -F elsewhere', () {
+      expect(FaTuiController.sttyDeviceFlag(), Platform.isMacOS ? '-f' : '-F');
+    });
+
+    test('sttyDisableFlowControl returns trimmed saved termios', () async {
+      final calls = <List<String>>[];
+      Future<ProcessResult> runner(List<String> args) async {
+        calls.add(args);
+        if (args.last == '-g') {
+          return ProcessResult(0, 0, 'saved-string\n', '');
+        }
+        return ProcessResult(0, 0, '', '');
+      }
+
+      final result = await FaTuiController.sttyDisableFlowControl(
+        '-F',
+        runner: runner,
+      );
+
+      expect(result, 'saved-string');
+      expect(calls, hasLength(2));
+      expect(calls.first, ['-F', '/dev/tty', '-g']);
+      expect(calls.last, ['-F', '/dev/tty', '-ixon', '-ixoff']);
+    });
+
+    test('sttyDisableFlowControl returns null when saving fails', () async {
+      Future<ProcessResult> runner(List<String> args) async {
+        return ProcessResult(0, 1, '', 'stty error');
+      }
+
+      final result = await FaTuiController.sttyDisableFlowControl(
+        '-F',
+        runner: runner,
+      );
+      expect(result, isNull);
+    });
+
+    test('sttyDisableFlowControl returns null when clearing fails', () async {
+      Future<ProcessResult> runner(List<String> args) async {
+        if (args.last == '-g') {
+          return ProcessResult(0, 0, 'saved', '');
+        }
+        return ProcessResult(0, 1, '', 'stty error');
+      }
+
+      final result = await FaTuiController.sttyDisableFlowControl(
+        '-F',
+        runner: runner,
+      );
+      expect(result, isNull);
+    });
+
+    test('sttyDisableFlowControl returns null on ProcessException', () async {
+      Future<ProcessResult> runner(List<String> args) async {
+        throw ProcessException('stty', <String>[], 'not found');
+      }
+
+      final result = await FaTuiController.sttyDisableFlowControl(
+        '-F',
+        runner: runner,
+      );
+      expect(result, isNull);
     });
   });
 }

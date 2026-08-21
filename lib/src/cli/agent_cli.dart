@@ -2358,21 +2358,26 @@ class AgentCli {
   void _logDiagnostic(String message) {
     final path = _diagnosticLogPath;
     if (path == null) return;
+    unawaited(_appendDiagnosticLog(path, message));
+  }
+
+  /// Appends one timestamped [message] to [path], creating the log directory
+  /// on first use. Isolated from [_logDiagnostic] so the public entry point
+  /// stays small.
+  Future<void> _appendDiagnosticLog(String path, String message) async {
     final line = '${DateTime.now().toIso8601String()} $message\n';
-    unawaited(() async {
-      try {
-        if (!_diagnosticLogDirEnsured) {
-          _diagnosticLogDirEnsured = true;
-          await config.env.createDir(
-            '${config.homeDir}/.fah/logs',
-            recursive: true,
-          );
-        }
-        await config.env.appendFile(path, line);
-      } catch (_) {
-        // Diagnostics must never break the CLI.
+    try {
+      if (!_diagnosticLogDirEnsured) {
+        _diagnosticLogDirEnsured = true;
+        await config.env.createDir(
+          '${config.homeDir}/.fah/logs',
+          recursive: true,
+        );
       }
-    }());
+      await config.env.appendFile(path, line);
+    } catch (_) {
+      // Diagnostics must never break the CLI.
+    }
   }
 
   /// Returns a user-facing hint for a compaction failure, pointing at the

@@ -341,10 +341,7 @@ final class MediaGateway {
       cancelToken,
     );
     final bytes = await _videoBytes(job, endpoint, jobId);
-    final detail = [
-      if (usedSeconds != null) '${usedSeconds}s',
-      ?usedSize,
-    ];
+    final detail = [if (usedSeconds != null) '${usedSeconds}s', ?usedSize];
     return _save(
       'video',
       'mp4',
