@@ -175,6 +175,7 @@ Future<void> pushJsApp(
         onSendToAgent: (message) => forwardAppMessageToAgent(manager, message),
         fsRevision: service.fsRevision,
         agentService: appService,
+        embeddedInPanel: panelNavigator != null,
       ),
     ),
   );

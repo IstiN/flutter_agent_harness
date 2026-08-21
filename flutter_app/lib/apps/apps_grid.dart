@@ -13,6 +13,7 @@ import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_app_view.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatHost;
 
 /// Grid launcher for the JS apps living in the env's `apps/` folder.
 ///
@@ -147,6 +148,9 @@ class _AppsGridViewState extends State<AppsGridView> {
     final appService =
         (await widget.resolveAppService?.call(app.id)) ?? widget.agentService;
     if (!mounted) return;
+    // Wide screens: push inside the apps panel's nested Navigator and hide
+    // the in-app Fa chrome (the main chat is always visible alongside).
+    final inPanel = FaChatHost.jsAppNavigatorKey?.currentState != null;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => JsAppView(
@@ -158,6 +162,7 @@ class _AppsGridViewState extends State<AppsGridView> {
           onSendToAgent: widget.onSendToAgent,
           fsRevision: widget.fsRevision,
           agentService: appService,
+          embeddedInPanel: inPanel,
         ),
       ),
     );

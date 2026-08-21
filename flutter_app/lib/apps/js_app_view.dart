@@ -76,6 +76,7 @@ class JsAppView extends StatefulWidget {
     this.mediaGateway,
     this.videoReader,
     this.mapTileProvider,
+    this.embeddedInPanel = false,
   });
 
   final JsAppInfo app;
@@ -118,6 +119,13 @@ class JsAppView extends StatefulWidget {
   /// The active session's service — drives the compact [FaWorkBar] while
   /// the agent runs (status, stop, expand, inline follow-up).
   final AgentService? agentService;
+
+  /// Whether the app renders inside the wide-shell apps side panel instead
+  /// of a standalone full-screen route. When true the in-app Fa chrome
+  /// (floating button, work bar, reply sheet, chat overlay) is hidden —
+  /// the main chat is always visible alongside the panel, so the in-app
+  /// copy would just duplicate the same agent response.
+  final bool embeddedInPanel;
 
   @override
   State<JsAppView> createState() => _JsAppViewState();
@@ -563,7 +571,7 @@ class _JsAppViewState extends State<JsAppView> {
                       ),
                     ),
                   ),
-                if (widget.onSendToAgent != null) ...[
+                if (widget.onSendToAgent != null && !widget.embeddedInPanel) ...[
                   if (!_faChatExpanded)
                     Positioned(
                       right: 16,
