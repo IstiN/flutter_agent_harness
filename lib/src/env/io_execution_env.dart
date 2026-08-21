@@ -563,16 +563,30 @@ final class _LocalShellJob implements ShellJob {
     Duration? timeout,
     CancelToken? token,
   }) : _process = process {
-    // Collect stdout/stderr into the log file; await the stream futures so
-    // every byte is flushed before we mark the job settled.
-    final stdoutDone = process.stdout
+    // Collect stdout/stderr into the log file. A naturally exiting process
+    // closes the streams and we flush every byte; a killed/timed-out process
+    // may leave the streams dangling on some platforms, so we cap the drain
+    // wait and then cancel the subscriptions.
+    final stdoutDone = Completer<void>();
+    final stderrDone = Completer<void>();
+    _stdoutSub = process.stdout
         .transform(utf8.decoder)
-        .forEach(_logSink.write)
-        .catchError((_) {});
-    final stderrDone = process.stderr
+        .listen(
+          _logSink.write,
+          onError: (_) {},
+          onDone: () {
+            if (!stdoutDone.isCompleted) stdoutDone.complete();
+          },
+        );
+    _stderrSub = process.stderr
         .transform(utf8.decoder)
-        .forEach(_logSink.write)
-        .catchError((_) {});
+        .listen(
+          _logSink.write,
+          onError: (_) {},
+          onDone: () {
+            if (!stderrDone.isCompleted) stderrDone.complete();
+          },
+        );
     if (timeout != null) {
       _timer = Timer(timeout, () {
         _stopReason = 'timeout';
@@ -587,7 +601,14 @@ final class _LocalShellJob implements ShellJob {
       _process.exitCode.then((code) async {
         _exitCode = code;
         _timer?.cancel();
-        await Future.wait([stdoutDone, stderrDone]);
+        // Wait for the streams to drain, but cap it so a killed process
+        // cannot hang settled forever.
+        await Future.any([
+          Future.wait([stdoutDone.future, stderrDone.future]),
+          Future.delayed(const Duration(milliseconds: 500)),
+        ]);
+        await _stdoutSub.cancel();
+        await _stderrSub.cancel();
         await _logSink.flush();
         await _logSink.close();
         _settled.complete();
@@ -597,6 +618,8 @@ final class _LocalShellJob implements ShellJob {
 
   final Process _process;
   final IOSink _logSink;
+  late final StreamSubscription<void> _stdoutSub;
+  late final StreamSubscription<void> _stderrSub;
   Timer? _timer;
   final _settled = Completer<void>();
   int? _exitCode;
