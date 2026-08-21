@@ -120,6 +120,7 @@
   "filesEmptyFileName": "(пустое имя файла)",
   "filesEmptyFolder": "Пустая папка",
   "filesFolderAccessDenied": "Не удалось получить доступ к этой папке.",
+  "filesFolderPickerError": "Не удалось открыть выбор папки: {error}",
   "filesICloudSyncDone": "Синхронизировано файлов: {files} ({size}) — последняя синхронизация {when}",
   "filesICloudSyncFailed": "Ошибка синхронизации iCloud: {error}",
   "filesICloudSyncTooltip": "Синхронизировать сессии и приложения с iCloud",

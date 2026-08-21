@@ -743,15 +743,25 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             TextButton(
               onPressed: () async {
                 final messenger = ScaffoldMessenger.of(dialogContext);
-                final picked = await pickAndApplyProjectMount(
-                  env: env,
-                  onApplied: () => service?.refreshProjectMountPrompt(),
-                  onAccessDenied: () {
-                    messenger.showSnackBar(
-                      SnackBar(content: Text(l10n.filesFolderAccessDenied)),
-                    );
-                  },
-                );
+                final String? picked;
+                try {
+                  picked = await pickAndApplyProjectMount(
+                    env: env,
+                    onApplied: () => service?.refreshProjectMountPrompt(),
+                    onAccessDenied: () {
+                      messenger.showSnackBar(
+                        SnackBar(content: Text(l10n.filesFolderAccessDenied)),
+                      );
+                    },
+                  );
+                } on Object catch (e) {
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(l10n.filesFolderPickerError(e.toString())),
+                    ),
+                  );
+                  return;
+                }
                 if (picked != null && dialogContext.mounted) {
                   Navigator.pop(dialogContext);
                 }

@@ -430,6 +430,11 @@ class AppLocalizationsRu extends AppLocalizations {
       'Не удалось получить доступ к этой папке.';
 
   @override
+  String filesFolderPickerError(Object error) {
+    return 'Не удалось открыть выбор папки: $error';
+  }
+
+  @override
   String filesICloudSyncDone(Object files, Object size, Object when) {
     return 'Синхронизировано файлов: $files ($size) — последняя синхронизация $when';
   }

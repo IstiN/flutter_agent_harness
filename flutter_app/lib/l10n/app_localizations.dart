@@ -818,6 +818,12 @@ abstract class AppLocalizations {
   /// **'Could not get access to that folder.'**
   String get filesFolderAccessDenied;
 
+  /// No description provided for @filesFolderPickerError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open folder picker: {error}'**
+  String filesFolderPickerError(Object error);
+
   /// No description provided for @filesICloudSyncDone.
   ///
   /// In en, this message translates to:

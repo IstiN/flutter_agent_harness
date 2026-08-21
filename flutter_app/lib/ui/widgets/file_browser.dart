@@ -113,18 +113,30 @@ class _FileBrowserState extends State<FileBrowser> {
 
   Future<void> _pickProjectFolder() async {
     final ops = widget.projectFolderOps ?? _defaultProjectFolderOps();
-    final picked = await pickAndApplyProjectMount(
-      env: widget.env,
-      ops: ops,
-      onApplied: () => widget.onProjectMountChanged?.call(),
-      onAccessDenied: () {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(context.l10n.filesFolderAccessDenied)),
-          );
-        }
-      },
-    );
+    final String? picked;
+    try {
+      picked = await pickAndApplyProjectMount(
+        env: widget.env,
+        ops: ops,
+        onApplied: () => widget.onProjectMountChanged?.call(),
+        onAccessDenied: () {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(context.l10n.filesFolderAccessDenied)),
+            );
+          }
+        },
+      );
+    } on Object catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.filesFolderPickerError(e.toString())),
+          ),
+        );
+      }
+      return;
+    }
     if (picked == null) return;
     setState(() {});
     await _load();

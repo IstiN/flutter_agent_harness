@@ -123,6 +123,7 @@
   "filesEmptyFileName": "(empty file name)",
   "filesEmptyFolder": "Empty folder",
   "filesFolderAccessDenied": "Could not get access to that folder.",
+  "filesFolderPickerError": "Could not open folder picker: {error}",
   "filesICloudSyncDone": "Synced {files} files ({size}) — last sync {when}",
   "filesICloudSyncFailed": "iCloud sync failed: {error}",
   "filesICloudSyncTooltip": "Sync sessions and apps with iCloud",
