@@ -12,6 +12,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatHost;
 
 /// App-open navigation shared by the session sidebar's Apps section and the
 /// agent's `open_app` tool (see `open_app_tool.dart`): both push the same
@@ -158,7 +159,13 @@ Future<void> pushJsApp(
   final store = permissionsStore ?? await AppPermissionsStore.load(service.env);
   final appService = await resolveAppBoundSession(manager, app.id) ?? service;
   if (!context.mounted) return;
-  await Navigator.of(context).push(
+  // Wide screens: the apps side panel owns a nested Navigator registered on
+  // FaChatHost. Push there instead of over the whole shell — the agent's
+  // open_app then refreshes the panel's app in place (and shows the right
+  // panel layout with its own padding), never a full-screen takeover.
+  final panelNavigator = FaChatHost.jsAppNavigatorKey?.currentState;
+  final navigator = panelNavigator ?? Navigator.of(context);
+  await navigator.push(
     MaterialPageRoute<void>(
       builder: (_) => JsAppView(
         app: app,

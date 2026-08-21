@@ -75,6 +75,13 @@ abstract final class FaChatHost {
   /// Mini-app launcher for js-app tool results; null hides the affordance.
   static FaChatAppLauncher? appLauncher;
 
+  /// The Navigator key of the apps side panel on wide screens. Set by the
+  /// host's wide layout shell when it mounts the panel, cleared on dispose.
+  /// `pushJsApp` checks this first: when present, agent-launched apps open
+  /// inside the panel instead of pushing a full-screen route over the whole
+  /// shell.
+  static GlobalKey<NavigatorState>? jsAppNavigatorKey;
+
   /// Builder of the files side panel shown by the toolbar's files button;
   /// null hides the button regardless of [FaChatFeatures.fileBrowser].
   static WidgetBuilder? fileBrowserBuilder;

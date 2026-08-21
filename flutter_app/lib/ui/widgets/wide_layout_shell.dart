@@ -106,6 +106,12 @@ PreferredSizeWidget faAppBar({
 class _WideLayoutShellState extends State<WideLayoutShell> {
   bool _sidebarCollapsed = false;
 
+  /// The apps panel's nested Navigator — registered on [FaChatHost] so the
+  /// agent's `open_app` tool launches apps inside the panel instead of
+  /// pushing a full-screen route over the shell.
+  final GlobalKey<NavigatorState> _appsNavigatorKey =
+      GlobalKey<NavigatorState>();
+
   /// On-disk sessions (newest first) backing the sidebar's persisted tail —
   /// reloaded whenever the manager changes (create/open/close).
   List<SessionMetadata> _persistedSessions = const [];
@@ -198,12 +204,16 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
+    FaChatHost.jsAppNavigatorKey = _appsNavigatorKey;
   }
 
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
     _listenedService?.removeListener(_onServiceChanged);
+    if (FaChatHost.jsAppNavigatorKey == _appsNavigatorKey) {
+      FaChatHost.jsAppNavigatorKey = null;
+    }
     super.dispose();
   }
 
@@ -500,6 +510,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     // within the apps panel (app launches via pushJsApp, Settings/Files
     // tiles) push within this panel rather than replacing the whole shell.
     return Navigator(
+      key: _appsNavigatorKey,
       onGenerateRoute: (settings) => MaterialPageRoute(
         builder: (context) => ManagerScope(
           manager: widget.manager,
