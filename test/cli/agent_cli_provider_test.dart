@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -1392,6 +1393,62 @@ void main() {
       expect(registry.entries.single.modelId, 'codemie-model-1');
       expect(cli.agent.state.model.id, 'codemie-model-1');
     });
+
+    test(
+      'selecting a saved CodeMie provider with an expired cookie re-runs SSO',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'codemie.lab.epam.com',
+            apiType: 'openai',
+            baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+            modelId: 'codemie-model-1',
+            keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+          ),
+        ]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final expiredJwtPayload = base64Url.encode(utf8.encode('{"exp":1}'));
+        await cache.save(
+          'FA_KEY_CODEMIE_LAB_EPAM_COM',
+          'codemie_access_token=eyJhbGciOiJIUzI1NiJ9.$expiredJwtPayload.sig',
+        );
+        var ssoCalled = false;
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          codeMieSsoAuthenticateFn: (url, onStatus) async {
+            ssoCalled = true;
+            expect(url, 'https://codemie.lab.epam.com');
+            return const CodeMieSsoCredentials(
+              cookies: {'_oauth2_proxy': 'refreshed'},
+              apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+              expiresAt: 9999999999999,
+            );
+          },
+          codeMieGuidedSetupFn: (apiBase, cookie, pickOption, askLine) async {
+            return 'codemie-model-1';
+          },
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider codemie.lab.epam.com');
+        await waitForIt(
+          () =>
+              io.out.toString().contains('CodeMie session expired or missing'),
+        );
+        await waitForIt(() => io.out.toString().contains('saved provider'));
+        io.sendLine('/exit');
+        await run;
+
+        expect(ssoCalled, isTrue);
+        expect(cli.agent.state.model.id, 'codemie-model-1');
+      },
+    );
 
     test('/provider codemie sso rejects a bad org URL', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);

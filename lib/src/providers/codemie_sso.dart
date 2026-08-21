@@ -126,6 +126,26 @@ int deriveCodeMieExpiresAt(Map<String, String> cookies) {
   return DateTime.now().millisecondsSinceEpoch + 24 * 60 * 60 * 1000;
 }
 
+/// Parses a CodeMie cookie string (`k=v; k=v`) and checks whether the
+/// access-token JWT is past its `exp` claim. If parsing fails, treats the
+/// cookie as expired so the caller can force a fresh SSO login.
+bool codeMieCookieExpired(String cookie) {
+  try {
+    final cookies = <String, String>{};
+    for (final part in cookie.split(';')) {
+      final trimmed = part.trim();
+      if (trimmed.isEmpty) continue;
+      final eq = trimmed.indexOf('=');
+      if (eq <= 0) continue;
+      cookies[trimmed.substring(0, eq)] = trimmed.substring(eq + 1);
+    }
+    final expiresAt = deriveCodeMieExpiresAt(cookies);
+    return DateTime.now().millisecondsSinceEpoch > expiresAt;
+  } on Object {
+    return true;
+  }
+}
+
 /// Collects application names from the three known fields of the `/v1/user`
 /// response, trimming and deduplicating into a sorted list.
 List<String> _collectAppNames(Map decoded) {

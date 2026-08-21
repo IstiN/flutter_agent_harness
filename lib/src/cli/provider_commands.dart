@@ -373,12 +373,22 @@ extension on AgentCli {
   /// Switches to a saved registry entry (picker or typed `/provider <name>`):
   /// restores its last-used model and marks it active. CodeMie endpoints
   /// (detected by the `/code-assistant-api/` URL marker) use Cookie-header
-  /// auth instead of the default Bearer token.
+  /// auth instead of the default Bearer token. If the stored CodeMie cookie
+  /// has expired (or is missing), the SSO flow is restarted automatically,
+  /// matching the Flutter app's re-authenticate behaviour.
   Future<void> _switchToSavedProvider(CustomProviderEntry entry) async {
     final keyName = entry.keyName;
     final token = keyName != null ? config.secureKeys?.read(keyName) : null;
     _activeCustomName = entry.name;
-    if (token != null && entry.baseUrl.contains('/code-assistant-api/')) {
+    if (entry.baseUrl.contains('/code-assistant-api/')) {
+      if (token == null || token.isEmpty || codeMieCookieExpired(token)) {
+        final orgUrl = codeMieOrgUrl(entry.baseUrl);
+        io.writeln(
+          'CodeMie session expired or missing — restarting SSO for $orgUrl...',
+        );
+        await _handleCodeMieSsoCommand(orgUrl);
+        return;
+      }
       await _switchCodeMieProvider(
         entry.spec,
         entry.baseUrl,
