@@ -1,12 +1,11 @@
-/// CodeMie SSO helpers: browser-based login against a CodeMie organization
-/// (`/v1/auth/login/<port>` redirects to a localhost callback with a base64
-/// token carrying the session cookies) and the model list endpoint. The
-/// CodeMie API authenticates via the FULL cookie string (sent as a `Cookie:`
-/// header), not via a Bearer JWT — the SSO callback returns an
-/// `_oauth2_proxy` cookie (Keycloak OAuth2 proxy), and the API expects the
-/// entire cookie jar. The chat traffic rides the standard openai-completions
-/// adapter with a `cookie:` model header that suppresses the default
-/// `authorization` header.
+/// CodeMie authentication helpers: browser-based SSO (`/v1/auth/login/<port>`
+/// redirects to a localhost callback with a base64 token carrying session
+/// cookies) and JWT Bearer authorization. The CodeMie API accepts auth either
+/// via the FULL cookie string (sent as a `Cookie:` header) from SSO, or via
+/// an `Authorization: Bearer <jwt>` header for headless/CI use. The chat
+/// traffic rides the standard openai-completions adapter: SSO uses a `cookie:`
+/// model header that suppresses the default `authorization` header, while JWT
+/// uses the adapter's regular Bearer auth path.
 ///
 /// Pure Dart (no `dart:io`); the localhost callback server lives in
 /// `lib/src/cli/codemie_sso_server.dart` (exported from `lib/io.dart`).
@@ -146,6 +145,55 @@ bool codeMieCookieExpired(String cookie) {
   }
 }
 
+/// True when [token] looks like a JWT (`header.payload.signature`). This is a
+/// shallow format check; [codeMieJwtExpired] validates the payload too.
+/// Cookie strings (`k=v; k=v`) are rejected because they can also contain
+/// dots and split into three parts. JWT padding (`=`) is allowed and
+/// normalized during decoding.
+bool isCodeMieJwtToken(String token) {
+  final trimmed = token.trim();
+  if (trimmed.isEmpty) return false;
+  // Cookie-auth strings always contain `;`; a raw JWT never does.
+  if (trimmed.contains(';')) return false;
+  final parts = trimmed.split('.');
+  if (parts.length != 3 || parts.any((p) => p.isEmpty)) return false;
+  // Validate that the header decodes as base64url JSON.
+  try {
+    final header = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(parts[0]))),
+    );
+    return header is Map;
+  } on Object {
+    return false;
+  }
+}
+
+/// The expiry (ms epoch) of a CodeMie JWT Bearer token's `exp` claim, or null
+/// when the token is malformed or has no `exp`.
+int? codeMieJwtExpiresAtMs(String token) {
+  final parts = token.trim().split('.');
+  if (parts.length != 3) return null;
+  try {
+    final payload = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+    );
+    if (payload is Map && payload['exp'] is int) {
+      return (payload['exp'] as int) * 1000;
+    }
+  } on Object {
+    // Malformed JWT payload.
+  }
+  return null;
+}
+
+/// Whether a CodeMie JWT Bearer token is past its `exp` claim. Tokens without
+/// an `exp` claim are treated as non-expired.
+bool codeMieJwtExpired(String token) {
+  final expiresAt = codeMieJwtExpiresAtMs(token);
+  if (expiresAt == null) return false;
+  return DateTime.now().millisecondsSinceEpoch > expiresAt;
+}
+
 /// Collects application names from the three known fields of the `/v1/user`
 /// response, trimming and deduplicating into a sorted list.
 List<String> _collectAppNames(Map decoded) {
@@ -246,4 +294,42 @@ String? _modelId(Map<dynamic, dynamic> model) {
     if (value is String && value.trim().isNotEmpty) return value;
   }
   return null;
+}
+
+/// Fetches the model ids from `<apiBase>/llm_models?include_all=true` using
+/// JWT Bearer authorization (`Authorization: Bearer <jwtToken>`).
+Future<List<String>> fetchCodeMieModelsWithJwt(
+  String apiBase,
+  String jwtToken, {
+  http.Client? client,
+}) async {
+  final httpClient = client ?? http.Client();
+  final ownsClient = client == null;
+  try {
+    final response = await httpClient
+        .get(
+          Uri.parse('$apiBase/llm_models?include_all=true'),
+          headers: {'authorization': 'Bearer $jwtToken'},
+        )
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw ConfigException(
+        'CodeMie authentication failed — invalid or expired JWT token '
+        '(re-run /provider codemie jwt)',
+      );
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ConfigException(
+        'CodeMie models request failed (${response.statusCode})',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) return const [];
+    return [
+      for (final model in decoded)
+        if (model is Map) ?_modelId(model),
+    ];
+  } finally {
+    if (ownsClient) httpClient.close();
+  }
 }

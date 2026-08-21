@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -25,6 +27,7 @@ void main() {
     String? Function(String name)? envVarValue,
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
+    http.Client? modelsHttpClient,
     void Function(String providerKind, String apiKey)? onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
@@ -68,6 +71,7 @@ void main() {
         envVarIsSet: envVarIsSet,
         envVarValue: envVarValue,
         modelsFetcher: modelsFetcher,
+        modelsHttpClient: modelsHttpClient,
         onProviderChanged: onProviderChanged,
         secureKeys: secureKeys,
         customProviders: customProviders,
@@ -1462,5 +1466,318 @@ void main() {
       io.sendLine('/exit');
       await run;
     });
+
+    test('/provider codemie jwt rejects a bad org URL', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider codemie jwt not-a-url token');
+      await waitForIt(
+        () => io.out.toString().contains('usage: /provider codemie jwt'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('/provider codemie jwt rejects an invalid token format', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine(
+        '/provider codemie jwt https://codemie.lab.epam.com not-a-jwt',
+      );
+      await waitForIt(
+        () => io.out.toString().contains('Invalid JWT token format'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('/provider codemie jwt rejects an expired token', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final expiredToken = _makeJwtToken(exp: 1);
+      io.sendLine(
+        '/provider codemie jwt https://codemie.lab.epam.com $expiredToken',
+      );
+      await waitForIt(() => io.out.toString().contains('JWT token expired'));
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('/provider codemie jwt cancels on empty token', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider codemie jwt https://codemie.lab.epam.com');
+      await waitForIt(() => io.out.toString().contains('JWT token:'));
+      io.sendLine('');
+      await waitForIt(
+        () => io.out.toString().contains('CodeMie JWT setup cancelled'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('/provider codemie bogus shows usage', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider codemie bogus');
+      await waitForIt(
+        () => io.out.toString().contains(
+          'usage: /provider codemie [sso [orgUrl] | jwt [orgUrl] [token]]',
+        ),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test(
+      '/provider codemie jwt saves a custom provider, stores the token and switches',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry([]);
+        final jwtToken = _makeJwtToken(exp: 9999999999);
+        final mockClient = _codeMieJwtMockClient(jwtToken);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          modelsHttpClient: mockClient,
+        );
+        final run = cli.run();
+
+        io.sendLine(
+          '/provider codemie jwt https://codemie.lab.epam.com $jwtToken',
+        );
+        await waitForIt(() => io.out.toString().contains('CodeMie model'));
+        io.sendLine('1'); // pick codemie-model-jwt
+        await waitForIt(() => io.out.toString().contains('saved provider'));
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('JWT token expires in'));
+        final entry = registry.find('codemie.lab.epam.com');
+        expect(entry, isNotNull);
+        expect(entry!.authMethod, CustomProviderAuthMethod.jwt);
+        expect(
+          entry.baseUrl,
+          'https://codemie.lab.epam.com/code-assistant-api/v1',
+        );
+        expect(store.map[entry.keyName], jwtToken);
+        expect(cli.providerKind, 'openai-completions');
+        expect(cli.agent.state.model.baseUrl, entry.baseUrl);
+        // JWT uses regular Bearer auth, not a cookie header.
+        expect(cli.agent.state.model.headers, isNot(contains('cookie')));
+      },
+    );
+
+    test('/provider codemie shows auth-method picker', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([]);
+      final jwtToken = _makeJwtToken(exp: 9999999999);
+      final mockClient = _codeMieJwtMockClient(jwtToken);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+        modelsHttpClient: mockClient,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider codemie');
+      await waitForIt(
+        () => io.out.toString().contains('CodeMie sign-in method'),
+      );
+      io.sendLine('2'); // JWT option
+      await waitForIt(() => io.out.toString().contains('JWT token:'));
+      io.sendLine(jwtToken);
+      await waitForIt(() => io.out.toString().contains('CodeMie model'));
+      io.sendLine('1'); // pick codemie-model-jwt
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('CodeMie sign-in method'));
+      expect(output, contains('JWT token:'));
+      expect(registry.find('codemie.lab.epam.com'), isNotNull);
+    });
+
+    test(
+      'selecting a saved CodeMie JWT provider switches with Bearer auth',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final jwtToken = _makeJwtToken(exp: 9999999999);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        await cache.save('FA_KEY_CODEMIE_LAB_EPAM_COM', jwtToken);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'codemie.lab.epam.com',
+            apiType: 'openai',
+            baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+            modelId: 'codemie-model-jwt',
+            keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+            authMethod: CustomProviderAuthMethod.jwt,
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider codemie.lab.epam.com');
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to openai'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(cli.agent.state.model.id, 'codemie-model-jwt');
+        expect(cli.agent.state.model.headers, isNot(contains('cookie')));
+      },
+    );
+
+    test(
+      'selecting a saved CodeMie JWT provider with an expired token reports expiry',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final jwtToken = _makeJwtToken(exp: 1);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        await cache.save('FA_KEY_CODEMIE_LAB_EPAM_COM', jwtToken);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'codemie.lab.epam.com',
+            apiType: 'openai',
+            baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+            modelId: 'codemie-model-jwt',
+            keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+            authMethod: CustomProviderAuthMethod.jwt,
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider codemie.lab.epam.com');
+        await waitForIt(() => io.out.toString().contains('JWT token expired'));
+        io.sendLine('/exit');
+        await run;
+
+        expect(cli.agent.state.model.id, isNot('codemie-model-jwt'));
+      },
+    );
+
+    test(
+      'selecting a saved CodeMie JWT provider with a missing token reports it',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'codemie.lab.epam.com',
+            apiType: 'openai',
+            baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+            modelId: 'codemie-model-jwt',
+            keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+            authMethod: CustomProviderAuthMethod.jwt,
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          customProviders: registry,
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider codemie.lab.epam.com');
+        await waitForIt(
+          () => io.out.toString().contains('CodeMie JWT token missing'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(cli.agent.state.model.id, isNot('codemie-model-jwt'));
+      },
+    );
+  });
+
+  group('OpenRouter auth method picker', () {
+    test('/provider openrouter shows auth-method picker', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, envVarValue: (_) => null);
+      final run = cli.run();
+
+      io.sendLine('/provider openrouter');
+      await waitForIt(
+        () => io.out.toString().contains('OpenRouter sign-in method'),
+      );
+      io.sendLine('2'); // API key option
+      await waitForIt(() => io.out.toString().contains('OpenRouter API key:'));
+      io.sendLine('sk-or-test-key');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to openrouter'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(io.out.toString(), contains('OpenRouter sign-in method'));
+      expect(io.out.toString(), contains('key: provided'));
+    });
+  });
+}
+
+String _makeJwtToken({required int exp}) {
+  final header = base64Url.encode(utf8.encode('{"alg":"none"}'));
+  final payload = base64Url.encode(utf8.encode('{"exp":$exp}'));
+  return '$header.$payload.signature';
+}
+
+http.Client _codeMieJwtMockClient(String jwtToken) {
+  return http_testing.MockClient((request) async {
+    final auth = request.headers['authorization'];
+    if (auth == null || !auth.endsWith(jwtToken)) {
+      return http.Response('Unauthorized', 401);
+    }
+    final url = request.url.toString();
+    if (url.contains('/v1/user')) {
+      return http.Response(
+        jsonEncode({
+          'applications': ['demo'],
+        }),
+        200,
+      );
+    }
+    if (url.contains('/llm_models')) {
+      return http.Response(
+        jsonEncode([
+          {'id': 'codemie-model-jwt'},
+        ]),
+        200,
+      );
+    }
+    return http.Response('Not found', 404);
   });
 }

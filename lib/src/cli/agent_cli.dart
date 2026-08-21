@@ -101,7 +101,9 @@ import 'tui_repl.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
+part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'codemie_provider_commands.dart';
 part 'provider_keys.dart';
 part 'agent_cli_mcp.dart';
 part 'agent_cli_config.dart';

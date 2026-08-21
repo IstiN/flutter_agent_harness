@@ -90,147 +90,6 @@ extension on AgentCli {
     removeProvider(entry);
   }
 
-  /// The flow's free-form questions: a TUI text prompt when the controller
-  /// is up (masked input for secrets), a plain line prompt otherwise.
-  Future<String?> _askLine(String question, {bool secret = false}) async {
-    final tui = _tuiController;
-    if (_useTui && tui != null) {
-      return _askLineTui(tui, question, secret);
-    }
-    return _promptLine(question);
-  }
-
-  /// The TUI branch of [_askLine].
-  Future<String?> _askLineTui(
-    FaTuiController tui,
-    String question,
-    bool secret,
-  ) async {
-    final spec = TextPromptSpec(
-      question: question,
-      defaultValue: _extractDefault(question),
-      secret: secret,
-    );
-    final result = await tui.openPrompt(spec);
-    return result is TextPromptAnswer ? result.value : null;
-  }
-
-  /// Parses a `(empty = X):` or `(empty keeps 'X'):` hint from [question],
-  /// returning `X` so the TUI prompt can show it as the default value, or
-  /// null when no default hint is present.
-  String? _extractDefault(String question) => extractDefaultValue(question);
-
-  /// Reads one input line for a guided-flow prompt (printed inline).
-  /// Resolves to `null` on cancel (Ctrl-C interrupt or input shutdown),
-  /// which the flow maps to "setup cancelled". Answers buffered while no
-  /// prompt was pending (piped input) are drained synchronously.
-  Future<String?> _promptLine(String question) async {
-    // Guided flows run sequentially (one command at a time); complete a
-    // stray pending prompt defensively as cancelled.
-    final stray = _pendingPromptAnswer;
-    if (stray != null && !stray.isCompleted) stray.complete(null);
-    // Assign before writing/checking: the input gate routes lines to this
-    // completer from here on, so an answer arriving mid-setup can no
-    // longer fall between the buffer check and the assignment (deadlock).
-    final pending = Completer<String?>();
-    _pendingPromptAnswer = pending;
-    io.write(question);
-    if (_promptLineBuffer.isNotEmpty) {
-      final buffered = _promptLineBuffer.removeAt(0);
-      // Piped lines are not echoed by the terminal; keep the transcript
-      // readable like the interactively typed answers.
-      io.writeln(buffered);
-      pending.complete(buffered);
-    }
-    final interruptSub = io.interrupts.listen((_) {
-      if (!pending.isCompleted) pending.complete(null);
-    });
-    final line = await pending.future;
-    await interruptSub.cancel();
-    if (identical(_pendingPromptAnswer, pending)) {
-      _pendingPromptAnswer = null;
-    }
-    // The answer replaced the prompt line; keep output tidy.
-    if (line != null) io.writeln('');
-    return line;
-  }
-
-  /// The flow's multiple-choice questions: a TUI menu when the controller
-  /// is up (answer arrives via `_tuiPickerSelected` / cancel via
-  /// `_tuiPickerCancelled`), a numbered list plus line prompt otherwise.
-  Future<String?> _pickOption(
-    String title,
-    List<FlowOption> options, {
-    String? initialKey,
-  }) async {
-    final controller = _tuiController;
-    if (_useTui && controller != null) {
-      return _pickOptionTui(controller, title, options, initialKey: initialKey);
-    }
-    _printFlowOptions(title, options, initialKey);
-    return _promptOptionNumber(options);
-  }
-
-  /// The line-mode option list of [_pickOption]: the numbered options with
-  /// descriptions and a `(current)` marker on [initialKey].
-  void _printFlowOptions(
-    String title,
-    List<FlowOption> options,
-    String? initialKey,
-  ) {
-    io.writeln(title);
-    for (var i = 0; i < options.length; i++) {
-      final (key, label, description) = options[i];
-      final desc = description.isNotEmpty ? ' — $description' : '';
-      final current = key == initialKey ? ' (current)' : '';
-      io.writeln('  ${i + 1}) $label$desc$current');
-    }
-  }
-
-  /// The line-mode answer loop of [_pickOption]: re-prompts until a valid
-  /// 1-based number arrives; null on cancel.
-  Future<String?> _promptOptionNumber(List<FlowOption> options) async {
-    for (;;) {
-      final answer = await _promptLine('type a number: ');
-      if (answer == null) return null;
-      final number = int.tryParse(answer.trim());
-      if (number != null && number >= 1 && number <= options.length) {
-        return options[number - 1].$1;
-      }
-      io.writeln(
-        'invalid selection: ${answer.trim()} '
-        '(1-${options.length}, Ctrl-C to cancel)',
-      );
-    }
-  }
-
-  /// The TUI variant of [_pickOption]: opens the menu on the controller
-  /// and resolves with the picked key (or null on cancel). A stray pending
-  /// picker answer is completed defensively as cancelled.
-  Future<String?> _pickOptionTui(
-    FaTuiController controller,
-    String title,
-    List<FlowOption> options, {
-    String? initialKey,
-  }) {
-    final pending = _replaceWizardPickerAnswer();
-    controller.openPicker('wizard:$title', title, [
-      for (final (key, label, description) in options)
-        MenuItem(key: key, label: label, description: description),
-    ], initialKey: initialKey);
-    return pending.future;
-  }
-
-  /// Installs a fresh wizard-picker answer completer; a stray pending one is
-  /// completed defensively as cancelled.
-  Completer<String?> _replaceWizardPickerAnswer() {
-    final stray = _wizardPickerAnswer;
-    if (stray?.isCompleted == false) stray!.complete(null);
-    final pending = Completer<String?>();
-    _wizardPickerAnswer = pending;
-    return pending;
-  }
-
   /// The flow's `/models` fetch with the same key resolution the provider
   /// switch uses (explicit token, else env → endpoint-scoped → legacy store).
   /// Failures answer an empty list: the flow falls back to manual entry.
@@ -372,32 +231,17 @@ extension on AgentCli {
 
   /// Switches to a saved registry entry (picker or typed `/provider <name>`):
   /// restores its last-used model and marks it active. CodeMie endpoints
-  /// (detected by the `/code-assistant-api/` URL marker) use Cookie-header
-  /// auth instead of the default Bearer token. If the stored CodeMie cookie
-  /// has expired (or is missing), the SSO flow is restarted automatically,
-  /// matching the Flutter app's re-authenticate behaviour.
+  /// (detected by the `/code-assistant-api/` URL marker) are routed to
+  /// [_switchToSavedCodeMieProvider], which distinguishes SSO cookie auth from
+  /// JWT Bearer auth; other entries use the regular provider switch.
   Future<void> _switchToSavedProvider(CustomProviderEntry entry) async {
+    if (entry.baseUrl.contains('/code-assistant-api/')) {
+      await _switchToSavedCodeMieProvider(entry);
+      return;
+    }
     final keyName = entry.keyName;
     final token = keyName != null ? config.secureKeys?.read(keyName) : null;
     _activeCustomName = entry.name;
-    if (entry.baseUrl.contains('/code-assistant-api/')) {
-      if (token == null || token.isEmpty || codeMieCookieExpired(token)) {
-        final orgUrl = codeMieOrgUrl(entry.baseUrl);
-        io.writeln(
-          'CodeMie session expired or missing — restarting SSO for $orgUrl...',
-        );
-        await _handleCodeMieSsoCommand(orgUrl);
-        return;
-      }
-      await _switchCodeMieProvider(
-        entry.spec,
-        entry.baseUrl,
-        entry.modelId,
-        token,
-        keyName ?? '',
-      );
-      return;
-    }
     await _switchProvider(
       entry.spec,
       entry.baseUrl,
@@ -502,9 +346,9 @@ extension on AgentCli {
   /// handled it.
   bool _dispatchProviderSubcommand(List<String> args) {
     if (_startCustomProviderArg(args)) return true;
-    if (_startOpenRouterOAuthArg(args)) return true;
+    if (_startOpenRouterArg(args)) return true;
     if (_startChatGptOAuthArg(args)) return true;
-    if (_startCodeMieSsoArg(args)) return true;
+    if (_startCodeMieArg(args)) return true;
     if (_startDialSetupArg(args)) return true;
     return false;
   }
@@ -543,21 +387,84 @@ extension on AgentCli {
     String? label,
   }) => exchangeOpenRouterCode(code, codeVerifier: codeVerifier, label: label);
 
-  /// The `/provider openrouter oauth [headless]` branch: authenticates the
-  /// user with OpenRouter via PKCE and stores the resulting API key.
-  /// Returns true when the command targeted the OAuth flow.
-  bool _startOpenRouterOAuthArg(List<String> args) {
+  /// The `/provider openrouter ...` dispatcher. Supports:
+  ///
+  /// - `/provider openrouter` (no args) — asks whether to use OAuth or an API key.
+  /// - `/provider openrouter oauth [headless]` — browser OAuth flow.
+  /// - `/provider openrouter <baseUrl> [token]` — API-key flow.
+  ///
+  /// Returns true when the command targeted OpenRouter.
+  bool _startOpenRouterArg(List<String> args) {
     if (args.first != 'openrouter') return false;
-    if (args.length < 2 || args[1] != 'oauth') {
-      return false;
-    }
-    final headless = args.length > 2 && args[2] == 'headless';
-    if (args.length > 3 || (args.length == 3 && !headless)) {
-      io.writeln('usage: /provider openrouter oauth [headless]');
+
+    // Explicit OAuth subcommand.
+    if (args.length >= 2 && args[1] == 'oauth') {
+      final headless = args.length > 2 && args[2] == 'headless';
+      if (args.length > 3 || (args.length == 3 && !headless)) {
+        io.writeln('usage: /provider openrouter oauth [headless]');
+        return true;
+      }
+      unawaited(_handleOpenRouterOAuthCommand(headless: headless));
       return true;
     }
-    unawaited(_handleOpenRouterOAuthCommand(headless: headless));
-    return true;
+
+    // No args: show the OAuth vs API-key picker.
+    if (args.length == 1) {
+      unawaited(_handleOpenRouterAuthMethodChoice());
+      return true;
+    }
+
+    // API-key form: let the catalog switch handle <baseUrl> [token].
+    return false;
+  }
+
+  /// Prompts the user to pick OpenRouter OAuth or API-key auth, then runs the
+  /// chosen flow. The sub-flows manage [_providerFlowActive] themselves, so
+  /// this picker releases the gate before handing off.
+  Future<void> _handleOpenRouterAuthMethodChoice() async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      final choice = await _pickOption('OpenRouter sign-in method', [
+        ('oauth', 'Browser OAuth', 'authorize via openrouter.ai'),
+        ('key', 'API key', 'paste your OpenRouter API key'),
+      ]);
+      if (choice == null) {
+        io.writeln('OpenRouter setup cancelled');
+        return;
+      }
+      // Release the flow gate so the sub-flow can take its own lock.
+      _providerFlowActive = false;
+      if (choice == 'oauth') {
+        await _handleOpenRouterOAuthCommand(headless: false);
+      } else {
+        await _runOpenRouterApiKeyFlow();
+      }
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
+  /// The API-key branch of the OpenRouter auth-method picker: asks for an API
+  /// key and switches to the default OpenRouter endpoint with it.
+  Future<void> _runOpenRouterApiKeyFlow() async {
+    final spec = providerCatalog['openrouter'];
+    if (spec == null) {
+      io.writeln('OpenRouter provider not found in catalog');
+      return;
+    }
+    final key = await _askLine('OpenRouter API key: ', secret: true);
+    if (key == null || key.trim().isEmpty) {
+      io.writeln('OpenRouter setup cancelled');
+      return;
+    }
+    await _switchProvider(
+      spec,
+      spec.defaultBaseUrl,
+      _agent.state.model.id,
+      token: key.trim(),
+    );
   }
 
   /// Runs the OpenRouter OAuth flow and saves the resulting key.
@@ -891,26 +798,6 @@ extension on AgentCli {
     return _dialCacheModels.contains(_agent.state.model.id);
   }
 
-  /// The `/provider codemie sso [url]` branch: browser SSO against a
-  /// CodeMie organization (localhost callback), then the full cookie string
-  /// rides the standard openai-completions adapter via a `cookie:` model
-  /// header (suppressing the default Bearer auth). The org is saved as a
-  /// custom provider entry (host-derived name) so it shows up in the
-  /// /provider picker and re-login just refreshes its key. Returns true
-  /// when the command targeted the SSO flow.
-  bool _startCodeMieSsoArg(List<String> args) {
-    if (args.first != 'codemie') return false;
-    if (args.length < 2 || args[1] != 'sso') return false;
-    final url = args.length > 2 ? args[2] : defaultCodeMieBaseUrl;
-    if (args.length > 3 ||
-        (!url.startsWith('http://') && !url.startsWith('https://'))) {
-      io.writeln('usage: /provider codemie sso [orgUrl]');
-      return true;
-    }
-    unawaited(_handleCodeMieSsoCommand(url));
-    return true;
-  }
-
   /// Runs the CodeMie SSO flow and applies the resulting credentials.
   Future<void> _handleCodeMieSsoCommand(String codeMieUrl) async {
     if (_providerFlowActive) return;
@@ -974,6 +861,7 @@ extension on AgentCli {
           baseUrl: baseUrl,
           modelId: modelId,
           keyName: keyName,
+          authMethod: CustomProviderAuthMethod.sso,
         ),
       );
       _activeCustomName = name;

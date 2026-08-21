@@ -24,16 +24,32 @@ const customProviderApiTypes = [
   'minimax',
 ];
 
+/// How a saved custom provider authenticates. Distinguishes regular API-key
+/// entries from SSO/JWT-backed ones (e.g. CodeMie) so the CLI can pick the
+/// right auth path when switching to a saved entry.
+enum CustomProviderAuthMethod {
+  /// Regular API-key or env-resolved auth (default).
+  apiKey,
+
+  /// Browser-based SSO (CodeMie cookie auth).
+  sso,
+
+  /// JWT Bearer token (CodeMie headless auth).
+  jwt,
+}
+
 /// One saved custom provider.
 final class CustomProviderEntry {
   /// Creates an entry. [keyName] is the secure-store/env name holding the
   /// API key (null = keyless); [modelId] is the last-used model.
+  /// [authMethod] selects the auth path for SSO/JWT providers.
   CustomProviderEntry({
     required this.name,
     required this.apiType,
     required this.baseUrl,
     required this.modelId,
     this.keyName,
+    this.authMethod = CustomProviderAuthMethod.apiKey,
   });
 
   /// Parses one yaml map from the `customProviders:` list. Throws
@@ -61,13 +77,27 @@ final class CustomProviderEntry {
       );
     }
     final keyName = node['keyName'];
+    final authMethod = _parseAuthMethod(node['authMethod']);
     return CustomProviderEntry(
       name: requireString('name'),
       apiType: apiType,
       baseUrl: requireString('baseUrl'),
       modelId: requireString('modelId'),
       keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
+      authMethod: authMethod,
     );
+  }
+
+  static CustomProviderAuthMethod _parseAuthMethod(Object? value) {
+    if (value is! String) return CustomProviderAuthMethod.apiKey;
+    switch (value) {
+      case 'sso':
+        return CustomProviderAuthMethod.sso;
+      case 'jwt':
+        return CustomProviderAuthMethod.jwt;
+      default:
+        return CustomProviderAuthMethod.apiKey;
+    }
   }
 
   /// Display/lookup name (derived from the endpoint host at creation).
@@ -83,6 +113,10 @@ final class CustomProviderEntry {
   /// The secure-store/env name holding the API key, or null when keyless.
   String? keyName;
 
+  /// How this entry authenticates. Used to pick the right path when switching
+  /// to saved SSO/JWT providers.
+  CustomProviderAuthMethod authMethod;
+
   /// The last-used model id (rewritten on `/model` switches while active).
   String modelId;
 
@@ -93,6 +127,7 @@ final class CustomProviderEntry {
       'apiType': apiType,
       'baseUrl': baseUrl,
       'keyName': ?keyName,
+      'authMethod': authMethod.name,
       'modelId': modelId,
     };
   }
