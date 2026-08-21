@@ -5,7 +5,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
@@ -109,8 +108,8 @@ class JsAppEngine {
     this.keyRequestHandler,
     this.hostLocale = 'en',
     this.initialTheme = const {},
-    void Function(String line)? onLog,
-  }) : _onLog = onLog;
+    this._onLog,
+  });
 
   /// The JS entry file [start] runs when no override is given.
   static const String defaultEntryFile = 'widget.js';
@@ -502,6 +501,18 @@ Object.defineProperty(jsr, 'onBack', {
     jsr.fa.call('back.handler', {registered: jsr._onBackFn !== null});
   },
 });
+// `jsr.onKey(fn)` — the host forwards every keyboard event as a 'key'
+// action (payload = { key, modifiers, kind: 'down'|'up' }). Apps subscribe
+// here for shortcuts that have nothing to do with focusable text fields:
+// arrow-key 2048 moves, WASD movement in a game, Cmd+K command pallets.
+jsr._onKeyFn = null;
+Object.defineProperty(jsr, 'onKey', {
+  configurable: true,
+  get: function() { return jsr._onKeyFn; },
+  set: function(fn) {
+    jsr._onKeyFn = (typeof fn === 'function') ? fn : null;
+  },
+});
 (function() {
   var baseOnEvent = jsr.onEvent;
   jsr.onEvent = function(fn) {
@@ -517,6 +528,16 @@ Object.defineProperty(jsr, 'onBack', {
           catch (e) { console.error('jsr.onBack: ' + e); }
         }
         if (!consumed) jsr.fa.call('back.close');
+        return;
+      }
+      if (actionId === 'key') {
+        if (jsr._onKeyFn !== null) {
+          try {
+            jsr._onKeyFn(payload && payload.key, payload || {});
+          } catch (e) {
+            console.error('jsr.onKey: ' + e);
+          }
+        }
         return;
       }
       fn(actionId, payload);
