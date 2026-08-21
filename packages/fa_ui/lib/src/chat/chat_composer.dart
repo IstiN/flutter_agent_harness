@@ -459,9 +459,11 @@ class _ChatComposerState extends State<ChatComposer>
 
     return Container(
       decoration: BoxDecoration(
-        color: palette.bg,
-        // The ambient divider color (== the palette border in the stock Fa
-        // theme) so hosts with their own hairline color get a seamless join.
+        // Keep the composer transparent so it inherits the scaffold/sheet
+        // surface underneath. This avoids a color mismatch in the iOS/macOS
+        // overlay/bottom-sheet where the panel background is panelAlt, not
+        // palette.bg.
+        // The top hairline still visually separates it from the transcript.
         border: Border(top: BorderSide(color: theme.dividerColor)),
       ),
       child: SafeArea(
