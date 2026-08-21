@@ -578,21 +578,17 @@ void main() {
     expect((await run('cat /z_out/zdir/deep.txt')).stdout.trim(), 'deep');
   });
 
-  test(
-    'sqlite3 --version follows platform availability',
-    () async {
-      final r = await run('sqlite3 --version');
-      if (kIsWeb) {
-        // sql.js loads from the CDN in the browser.
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout, contains('3.'));
-      } else {
-        expect(r.exitCode, 127);
-        expect(r.stderr, contains('command not found'));
-      }
-    },
-    timeout: kIsWeb ? const Timeout(Duration(seconds: 180)) : null,
-  );
+  test('sqlite3 --version follows platform availability', () async {
+    final r = await run('sqlite3 --version');
+    if (kIsWeb) {
+      // sql.js loads from the CDN in the browser.
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('3.'));
+    } else {
+      expect(r.exitCode, 127);
+      expect(r.stderr, contains('command not found'));
+    }
+  }, timeout: kIsWeb ? const Timeout(Duration(seconds: 180)) : null);
 
   group('diff/patch', () {
     test('diff exits 0 with empty output for identical files', () async {

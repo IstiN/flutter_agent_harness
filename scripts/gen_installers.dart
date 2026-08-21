@@ -1,4 +1,5 @@
 #!/usr/bin/env dart
+
 // Generates site/install.sh and site/install.ps1 from site/install-config.yaml.
 //
 // Usage:

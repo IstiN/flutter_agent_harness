@@ -116,24 +116,7 @@ target="$install_dir/$BINARY"
 # ── 3. Resolve download URL ──────────────────────────────────────────────────
 download_url="https://github.com/$REPO/releases/latest/download/$asset"
 
-# ── 4. Helper: extract binary from macOS .app bundle .zip ────────────────────
-_extract_macos_zip() {
-  local zip="$1" out="$2"
-  local tmpdir
-  tmpdir="$(mktemp -d 2>/dev/null || mktemp -d -t fa-install)"
-  unzip -qo "$zip" -d "$tmpdir" 2>/dev/null || return 1
-  local binary="$tmpdir/Fa.app/Contents/MacOS/Fa"
-  if [ -f "$binary" ]; then
-    cp "$binary" "$out"
-    chmod +x "$out"
-    rm -rf "$tmpdir" "$zip"
-    return 0
-  fi
-  rm -rf "$tmpdir" "$zip"
-  return 1
-}
-
-# ── 5. Install bundle (or fall back to .zip, then Dart) ──────────────────────
+# ── 4. Install bundle (or fall back to Dart) ─────────────────────────────────
 info "Downloading Fa for ${os}-${arch}..."
 dl_ok=false
 tmp_archive="$(mktemp 2>/dev/null || mktemp -t fa-archive)"
@@ -164,28 +147,9 @@ if [ "$dl_ok" = true ]; then
       cp -r "$tmp_extract/bundle/lib/"* "$install_dir/lib/" 2>/dev/null || true
     fi
     rm -rf "$tmp_extract" "$tmp_archive"
-    ok "Installed $target"
   else
     rm -rf "$tmp_extract" "$tmp_archive"
     dl_ok=false
-  fi
-fi
-
-# macOS fallback: try the sandboxed .zip and extract the binary from the app bundle.
-if [ "$dl_ok" = false ] && [ "$os" = "macos" ]; then
-  zip_asset="fa-${os}-${arch}-mac.zip"
-  zip_url="https://github.com/$REPO/releases/latest/download/$zip_asset"
-  info "archive not found — trying ${zip_asset}…"
-  zip_tmp="$(mktemp 2>/dev/null || mktemp -t fa-zip)"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fSL --progress-bar "$zip_url" -o "$zip_tmp" 2>/dev/null
-  else
-    wget --show-progress -qO "$zip_tmp" "$zip_url" 2>/dev/null
-  fi
-  if [ -f "$zip_tmp" ] && [ -s "$zip_tmp" ]; then
-    if _extract_macos_zip "$zip_tmp" "$target"; then
-      dl_ok=true
-    fi
   fi
 fi
 
@@ -194,6 +158,20 @@ if [ "$dl_ok" = true ]; then
 else
   warn "No prebuilt binary found for ${os}-${arch} (or download failed). Falling back to Dart pub global activate."
   FALLBACK=true
+fi
+
+# macOS quarantine / signature hardening: downloaded executables are tagged by
+# Gatekeeper and will be killed on launch unless the quarantine attribute is
+# removed. Re-signing ad-hoc makes the binary runnable from any directory on
+# Apple Silicon, even without a paid Developer ID certificate.
+if [ "$os" = "macos" ]; then
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
+    xattr -dr com.apple.quarantine "$install_dir/lib" 2>/dev/null || true
+  fi
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --force --sign - "$target" 2>/dev/null || true
+  fi
 fi
 
 if [ "${FALLBACK:-}" = true ]; then
@@ -212,6 +190,7 @@ if [ "${FALLBACK:-}" = true ]; then
   dart pub global activate "$PACKAGE"
   install_dir="$PUB_CACHE_BIN"
   target="$install_dir/$BINARY"
+  ok "Installed $target"
 fi
 
 # ── 5. Ensure install directory is on PATH ───────────────────────────────────

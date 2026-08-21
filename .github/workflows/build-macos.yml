@@ -680,6 +680,61 @@ jobs:
           security delete-keychain build-${{ matrix.arch }}.keychain 2>/dev/null || true
           rm -f certificate.p12 installer.p12
 
+  build-macos-cli:
+    name: Build macOS CLI ${{ matrix.arch }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    if: inputs.create_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      - name: Build CLI bundle
+        run: |
+          version="${{ needs.version.outputs.version }}"
+          dart build cli --target=bin/fah.dart --output=build/out
+          mv build/out/bundle/bin/fah build/out/bundle/bin/fa
+          chmod +x build/out/bundle/bin/fa
+          echo "$version" > build/out/bundle/version.txt
+
+      - name: Ad-hoc sign CLI binary
+        run: |
+          codesign --force --sign - build/out/bundle/bin/fa
+
+      - name: Archive and upload CLI bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          asset="fa-macos-${{ matrix.arch }}.tar.gz"
+          tar -czf "$asset" -C build/out bundle
+          ls -lh "$asset"
+
+          # Ensure the release exists (race-safe with release-macos).
+          if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
+              --generate-notes \
+              --repo "${GITHUB_REPOSITORY}" || true
+          fi
+          gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+
   release-macos:
     name: Create macOS GitHub Release
     needs: [version, build-macos]

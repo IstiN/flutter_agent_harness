@@ -712,80 +712,65 @@ void main() {
 
     // Mirrors integration_test/sqlite_sandbox_test.dart (sql.js instead of
     // the WASI sqlite3 CLI binary).
-    test(
-      'sqlite3 works in the web sandbox via sql.js',
-      () async {
-        final env = await createPlatformEnv();
-        await env.exec('rm -f /demo.db');
+    test('sqlite3 works in the web sandbox via sql.js', () async {
+      final env = await createPlatformEnv();
+      await env.exec('rm -f /demo.db');
 
-        var r = await run(env, 'sqlite3 --version');
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout, contains('3.'));
+      var r = await run(env, 'sqlite3 --version');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('3.'));
 
-        r = await run(
-          env,
-          "sqlite3 /demo.db \"CREATE TABLE t(x TEXT, n INTEGER); "
-          "INSERT INTO t VALUES ('hello', 42), ('world', 7);\"",
-        );
-        expect(r.exitCode, 0, reason: r.stderr);
+      r = await run(
+        env,
+        "sqlite3 /demo.db \"CREATE TABLE t(x TEXT, n INTEGER); "
+        "INSERT INTO t VALUES ('hello', 42), ('world', 7);\"",
+      );
+      expect(r.exitCode, 0, reason: r.stderr);
 
-        r = await run(
-          env,
-          'sqlite3 /demo.db "SELECT x, n*n FROM t ORDER BY n;"',
-        );
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout, contains('world|49'));
-        expect(r.stdout, contains('hello|1764'));
+      r = await run(env, 'sqlite3 /demo.db "SELECT x, n*n FROM t ORDER BY n;"');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('world|49'));
+      expect(r.stdout, contains('hello|1764'));
 
-        // The database file persists across exec calls.
-        r = await run(env, 'sqlite3 /demo.db "SELECT count(*) FROM t;"');
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout.trim(), '2');
+      // The database file persists across exec calls.
+      r = await run(env, 'sqlite3 /demo.db "SELECT count(*) FROM t;"');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout.trim(), '2');
 
-        // SQL from stdin via a pipe (in-memory database).
-        r = await run(env, 'echo "SELECT 40 + 2;" | sqlite3');
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout.trim(), '42');
+      // SQL from stdin via a pipe (in-memory database).
+      r = await run(env, 'echo "SELECT 40 + 2;" | sqlite3');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout.trim(), '42');
 
-        // A syntax error surfaces with a non-zero exit code.
-        r = await run(env, 'sqlite3 /demo.db "SELEC nonsense;"');
-        expect(r.exitCode, isNot(0));
-        expect(r.stderr, contains('error'));
-      },
-      timeout: const Timeout(Duration(seconds: 180)),
-    );
+      // A syntax error surfaces with a non-zero exit code.
+      r = await run(env, 'sqlite3 /demo.db "SELEC nonsense;"');
+      expect(r.exitCode, isNot(0));
+      expect(r.stderr, contains('error'));
+    }, timeout: const Timeout(Duration(seconds: 180)));
 
     // Mirrors integration_test/qjs_sandbox_test.dart (smoke level; the full
     // coverage lives in web_interpreters_test.dart).
-    test(
-      'qjs smoke in the web sandbox',
-      () async {
-        final env = await createPlatformEnv();
-        var r = await run(env, "qjs -e 'console.log(6 * 7)'");
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout.trim(), '42');
+    test('qjs smoke in the web sandbox', () async {
+      final env = await createPlatformEnv();
+      var r = await run(env, "qjs -e 'console.log(6 * 7)'");
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout.trim(), '42');
 
-        r = await run(env, "js -e 'console.log(JSON.stringify({ok:true}))'");
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout, contains('"ok":true'));
-      },
-      timeout: const Timeout(Duration(seconds: 120)),
-    );
+      r = await run(env, "js -e 'console.log(JSON.stringify({ok:true}))'");
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('"ok":true'));
+    }, timeout: const Timeout(Duration(seconds: 120)));
 
     // Mirrors integration_test/python_sandbox_test.dart (smoke level).
-    test(
-      'python3 smoke in the web sandbox',
-      () async {
-        final env = await createPlatformEnv();
-        var r = await run(env, 'python3 --version');
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout, contains('3.'));
+    test('python3 smoke in the web sandbox', () async {
+      final env = await createPlatformEnv();
+      var r = await run(env, 'python3 --version');
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('3.'));
 
-        r = await run(env, "python3 -c 'print(6 * 7)'");
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout.trim(), '42');
-      },
-      timeout: const Timeout(Duration(seconds: 180)),
-    );
+      r = await run(env, "python3 -c 'print(6 * 7)'");
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout.trim(), '42');
+    }, timeout: const Timeout(Duration(seconds: 180)));
   });
 }
