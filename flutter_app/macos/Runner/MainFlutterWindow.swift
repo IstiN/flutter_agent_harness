@@ -119,7 +119,10 @@ private func pickDirectoryWithBookmark() -> [String: String]? {
     options: .withSecurityScope,
     includingResourceValuesForKeys: nil,
     relativeTo: nil,
-  ) else { return nil }
+  ) else {
+    NSLog("pickDirectoryWithBookmark: failed to create security-scoped bookmark for %@", url.path)
+    return nil
+  }
   return [
     "path": url.path,
     "bookmark": bookmark.base64EncodedString(),

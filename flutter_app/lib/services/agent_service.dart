@@ -19,6 +19,7 @@ import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/approval_mode_store.dart';
+import 'package:fa/services/platform_http_client.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/asr_tool.dart';
 import 'package:fa/services/background_execution.dart';
@@ -207,7 +208,8 @@ class AgentService extends ChangeNotifier
     TaskModelsStore? taskModelsStore,
     @visibleForTesting StreamFunction? streamFunction,
   }) async {
-    final resolvedEnv = env ?? await createPlatformEnv();
+    final resolvedEnv =
+        env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
     final secretsStore = createSecretsStore();
     final secrets = mergeSecrets(await secretsStore.readAll(), sessionKeys);
     final approvalModeStore = ApprovalModeStore(resolvedEnv);

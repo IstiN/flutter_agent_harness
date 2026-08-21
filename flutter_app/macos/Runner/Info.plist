@@ -60,6 +60,13 @@
 	<string>Fa uses the microphone only when you use voice input.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Allow plaintext HTTP loads from localhost (e.g. local Ollama) and
+	     the local network. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>FLTEnableImpeller</key>
 	<false/>
 	<key>FLTEnableFlutterGPU</key>
