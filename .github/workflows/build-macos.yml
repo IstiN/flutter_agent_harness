@@ -443,20 +443,18 @@ jobs:
               cp profile.provisionprofile "$APP_PATH/Contents/embedded.provisionprofile"
               APP_ID=$(security cms -D -i profile.provisionprofile | plutil -extract Entitlements xml1 -o - - | grep -A 1 'com.apple.application-identifier' | tail -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
               TEAM_ID="${APP_ID%%.*}"
-              printf '%s\n' \
-                '<?xml version="1.0" encoding="UTF-8"?>' \
-                '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
-                '<plist version="1.0">' \
-                '<dict>' \
-                '  <key>com.apple.security.app-sandbox</key>' \
-                '  <true/>' \
-                '  <key>com.apple.application-identifier</key>' \
-                "  <string>$APP_ID</string>" \
-                '  <key>com.apple.developer.team-identifier</key>' \
-                "  <string>$TEAM_ID</string>" \
-                '</dict>' \
-                '</plist>' \
-                > entitlements.plist
+              # Start from Release.entitlements (network client+server, file
+              # bookmarks, calendar, contacts, health, homekit, audio input)
+              # and inject the provisioning identity keys — do NOT collapse
+              # to a sandbox-only dict: the app needs every entitlement the
+              # sandbox declares, and dropping them breaks SSO callback
+              # servers, file access, and OS-level permission flows in the
+              # signed production build.
+              cp flutter_app/macos/Runner/Release.entitlements entitlements.plist
+              # PlistBuddy handles dotted top-level key names (plutil
+              # -insert/-replace treats dots as nested key separators).
+              /usr/libexec/PlistBuddy -c "Add :com.apple.application-identifier string $APP_ID" entitlements.plist
+              /usr/libexec/PlistBuddy -c "Add :com.apple.developer.team-identifier string $TEAM_ID" entitlements.plist
               ENTITLEMENTS="entitlements.plist"
             else
               ENTITLEMENTS="flutter_app/macos/Runner/Release.entitlements"
