@@ -409,7 +409,7 @@ class _FileBrowserState extends State<FileBrowser> {
               style: theme.textTheme.titleMedium,
             ),
           ),
-          if (_buildMountControl(context) case final control?) control,
+          ?_buildMountControl(context),
           if (_picker != null)
             IconButton(
               icon: const Icon(Icons.upload_file),

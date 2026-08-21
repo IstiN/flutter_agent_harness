@@ -91,8 +91,9 @@ int? _reportedWindow(Map<dynamic, dynamic> entry) {
       if (total is num && total > 0) total,
       if (prompt is num && prompt > 0) prompt,
     ];
-    if (candidates.isNotEmpty)
+    if (candidates.isNotEmpty) {
       return candidates.reduce((a, b) => a > b ? a : b).round();
+    }
   }
   return null;
 }

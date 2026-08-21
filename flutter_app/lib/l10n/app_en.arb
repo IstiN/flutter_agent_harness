@@ -380,6 +380,8 @@
   "settingsIconsPerRowAuto": "Auto",
   "settingsShowOnboarding": "Show welcome tour",
   "chatSteerTooltip": "Send now (interrupt)",
+  "bootstrapSessionStartError": "Could not start a session: {error}",
+  "bootstrapRetry": "Retry",
   "workspaceDialogTitle": "Working folder",
   "workspaceDialogChangeFolder": "Change folder…",
   "workspaceDialogClearFolder": "Use Personal folder",

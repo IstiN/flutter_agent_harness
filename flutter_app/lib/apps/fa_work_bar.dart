@@ -166,11 +166,16 @@ class _FaWorkBarState extends State<FaWorkBar>
         .toList();
     if (active.isEmpty) return '';
     final now = DateTime.now();
-    final shown = active.take(2).map((h) {
-      final created = DateTime.tryParse(h.createdAt);
-      final elapsed = created == null ? 0 : now.difference(created).inSeconds;
-      return '${h.agentType}:${h.id}(${elapsed}s)';
-    }).join(',');
+    final shown = active
+        .take(2)
+        .map((h) {
+          final created = DateTime.tryParse(h.createdAt);
+          final elapsed = created == null
+              ? 0
+              : now.difference(created).inSeconds;
+          return '${h.agentType}:${h.id}(${elapsed}s)';
+        })
+        .join(',');
     final overflow = active.length > 2 ? ',+${active.length - 2}' : '';
     return 'agents:$shown$overflow';
   }

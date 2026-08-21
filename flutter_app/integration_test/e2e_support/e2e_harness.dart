@@ -17,7 +17,6 @@
 /// ```
 library;
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/apps/app_icon.dart';

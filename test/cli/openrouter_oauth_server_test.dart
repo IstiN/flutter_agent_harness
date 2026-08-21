@@ -1,5 +1,5 @@
 @Tags(['io'])
-library openrouter_oauth_server_test;
+library;
 
 import 'dart:async';
 import 'dart:convert';

@@ -1323,10 +1323,14 @@ class _P2State extends State<_P2> {
   }
 
   Widget _cards() {
-    // The SAME list the app's "Add provider" picker shows.
+    // The SAME list the app's "Add provider" picker shows — filtered by
+    // the catalog visibility rules (hidden providers like ChatGPT Codex
+    // and the FA_PROVIDERS build filter never appear here).
     return Column(
       children: [
-        for (final preset in faui.defaultAddProviderPresets) ...[
+        for (final preset in faui.defaultAddProviderPresets.where(
+          faui.addProviderPresetEnabled,
+        )) ...[
           _ProviderCard(
             preset: preset,
             configured: widget.configuredKey == preset.key,
@@ -1418,8 +1422,10 @@ class _P2State extends State<_P2> {
       'dial' => faui.ProviderPreset.dial,
       _ => faui.ProviderPreset.custom,
     };
-    final editable =
-        preset.key != 'dial' && presetMode == faui.ProviderPreset.custom;
+    // Every key-based preset keeps an editable base URL in the editor —
+    // the preset endpoint is just the prefill (self-hosted DIAL/Ollama
+    // instances point at their own URL).
+    final editable = presetMode == faui.ProviderPreset.custom;
     final result = await faui.pushFaPage<faui.ProviderEditorResult>(
       context,
       faui.ProviderEditorPage(

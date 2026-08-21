@@ -110,8 +110,7 @@ final class _DialDialect extends ModelListDialect {
 
 final class _CodexDialect extends ModelListDialect {
   @override
-  bool matches(String baseUrl, String? provider) =>
-      provider == 'chatgpt-codex';
+  bool matches(String baseUrl, String? provider) => provider == 'chatgpt-codex';
 
   @override
   Future<ModelsEndpointInfo> fetch(
@@ -147,9 +146,7 @@ final class _GoogleDialect extends ModelListDialect {
     final gClient = client ?? http.Client();
     final gOwnsClient = client == null;
     try {
-      final uri = Uri.parse(
-        '${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models',
-      );
+      final uri = Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models');
       final response = await gClient
           .get(
             uri,
@@ -196,9 +193,7 @@ final class _OpenAiCompatibleDialect extends ModelListDialect {
     final httpClient = client ?? http.Client();
     final ownsClient = client == null;
     try {
-      final uri = Uri.parse(
-        '${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models',
-      );
+      final uri = Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models');
       final response = await httpClient
           .get(
             uri,

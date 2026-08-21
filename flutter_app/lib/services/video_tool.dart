@@ -10,7 +10,6 @@ import 'package:http/http.dart' as http;
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/video_service.dart';
-import 'package:fa/services/vision_models.dart';
 
 /// Name of the agent tool that reads a video through a vision model.
 const readVideoToolName = 'read_video';
@@ -28,20 +27,18 @@ const readVideoToolName = 'read_video';
 /// the model's description does. All failures surface as [StateError] with
 /// an actionable, user-readable message.
 final class VideoReader {
-  /// Creates a reader over [video] (frame extraction) and [gateway]
-  /// (endpoint resolution). [mainSupportsImages] decides whether the MAIN
+  /// Creates a reader over [video] (frame extraction) and [_gateway]
+  /// (endpoint resolution). [_mainSupportsImages] decides whether the MAIN
   /// connection's model accepts images when the `vision` slot has no
   /// override (defaults to the [modelIdSuggestsVision] heuristic); slot
-  /// overrides are trusted as configured. [httpClient] is injectable for
+  /// overrides are trusted as configured. [_httpClient] is injectable for
   /// tests.
   const VideoReader({
     required this.video,
-    required MediaGateway gateway,
-    bool Function()? mainSupportsImages,
-    http.Client? httpClient,
-  }) : _gateway = gateway,
-       _mainSupportsImages = mainSupportsImages,
-       _httpClient = httpClient;
+    required this._gateway,
+    this._mainSupportsImages,
+    this._httpClient,
+  });
 
   /// The frame-extraction backend.
   final VideoApi video;

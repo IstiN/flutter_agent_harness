@@ -5,7 +5,6 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/main.dart';

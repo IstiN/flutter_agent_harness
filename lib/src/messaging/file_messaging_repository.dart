@@ -4,10 +4,12 @@
 /// one project) exchange messages through the filesystem — no live process
 /// coupling needed.
 library;
+// ignore_for_file: prefer_initializing_formals
 
 import 'dart:convert';
 
 import '../env/execution_env.dart';
+import '../session/session_repo.dart';
 import 'agent_message.dart';
 import 'messaging_repository.dart';
 
@@ -21,12 +23,20 @@ import 'messaging_repository.dart';
 /// Message file names start with a UTC timestamp prefix so directory order
 /// is arrival order. Agent ids are sanitized for filesystem safety.
 final class FileMessagingRepository implements MessagingRepository {
-  FileMessagingRepository({required ExecutionEnv env, required String root})
-    : _env = env,
-      _root = root;
+  FileMessagingRepository({
+    required ExecutionEnv env,
+    required String root,
+    String? homeDir,
+    String? Function(String slug)? decodeSessionCwd,
+  }) : _env = env,
+       _root = root,
+       _homeDir = homeDir,
+       _decodeSessionCwd = decodeSessionCwd;
 
   final ExecutionEnv _env;
   final String _root;
+  final String? _homeDir;
+  final String? Function(String slug)? _decodeSessionCwd;
 
   static final _unsafeChars = RegExp(r'[^a-zA-Z0-9._-]');
 
@@ -47,6 +57,7 @@ final class FileMessagingRepository implements MessagingRepository {
     if ((await _env.exists(marker)).valueOrNull != true) {
       (await _env.writeFile(marker, agentId)).getOrThrow();
     }
+    await _recordRegistry(agentId);
   }
 
   @override
@@ -86,23 +97,68 @@ final class FileMessagingRepository implements MessagingRepository {
   }
 
   @override
-  Future<List<String>> directory() async {
-    final result = await _env.listDir(_root);
-    final entries = result.valueOrNull;
-    if (entries == null) return const [];
-    final ids = <String>[];
-    for (final entry in entries) {
-      if (entry.kind != FileKind.directory) continue;
-      // The `.id` marker carries the real mailbox id (sanitization is
-      // lossy); fall back to the directory name for foreign/corrupt dirs.
-      final marker = await _env.readTextFile('${entry.path}/.id');
-      ids.add(
-        marker.valueOrNull?.trim().isNotEmpty == true
-            ? marker.valueOrNull!.trim()
-            : entry.name,
-      );
+  Future<List<MailboxEntry>> directory() async {
+    final sessionRoot = _sessionRoot();
+    final entries = <MailboxEntry>[];
+    final slugDirs = (await _env.listDir(sessionRoot)).valueOrNull ?? const [];
+    for (final slugDir in slugDirs) {
+      if (slugDir.kind != FileKind.directory) continue;
+      final messagesDir = _peerMessagesRoot(slugDir);
+      final mbDirs = (await _env.listDir(messagesDir)).valueOrNull ?? const [];
+      for (final mbDir in mbDirs) {
+        if (mbDir.kind != FileKind.directory) continue;
+        final idMarker = (await _env.readTextFile(
+          '${mbDir.path}/.id',
+        )).valueOrNull?.trim();
+        final id = (idMarker != null && idMarker.isNotEmpty)
+            ? idMarker
+            : mbDir.name;
+        final cwd = _decodeSessionCwd?.call(slugDir.name);
+        entries.add(MailboxEntry(id: id, slug: _peerSlug(slugDir), cwd: cwd));
+      }
     }
-    return ids;
+    return entries;
+  }
+
+  /// The session root that contains all `<slug>/messages` directories.
+  String _sessionRoot() {
+    final parts = _root.split('/').where((s) => s.isNotEmpty).toList();
+    // _root is <sessionRoot>/<slug>/messages.
+    if (parts.length < 2) return '/';
+    return '/${parts.sublist(0, parts.length - 2).join('/')}';
+  }
+
+  /// The messages directory for a peer slug directory.
+  String _peerMessagesRoot(FileInfo slugDir) => '${slugDir.path}/messages';
+
+  /// The slug name for a peer slug directory.
+  String _peerSlug(FileInfo slugDir) => slugDir.name;
+
+  /// Best-effort registry write so tooling can look up cwd metadata for this
+  /// instance's mailboxes without scanning every slug directory.
+  Future<void> _recordRegistry(String agentId) async {
+    final home = _homeDir;
+    if (home == null || home.isEmpty) return;
+    final slug = encodeSessionCwd(_env.cwd);
+    final cwd = _decodeSessionCwd?.call(slug) ?? '';
+    final path = (await _env.joinPath([
+      home,
+      '.fah',
+      'messages-registry.json',
+    ])).getOrThrow();
+    var registry = <String, dynamic>{};
+    final existing = await _env.readTextFile(path);
+    final existingText = existing.valueOrNull;
+    if (existingText != null && existingText.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(existingText) as Map<String, dynamic>;
+        registry = Map<String, dynamic>.from(decoded);
+      } on FormatException {
+        registry = {};
+      }
+    }
+    registry[agentId] = {'slug': slug, 'cwd': cwd};
+    (await _env.writeFile(path, jsonEncode(registry))).getOrThrow();
   }
 
   /// Deterministic, collision-resistant file name: the message id already

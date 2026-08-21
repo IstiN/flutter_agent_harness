@@ -3,7 +3,6 @@ library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/task/agent_discovery.dart';
-import 'package:flutter_agent_harness/src/task/agent_registry.dart';
 import 'package:test/test.dart';
 
 void main() {

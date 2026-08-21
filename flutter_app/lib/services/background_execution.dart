@@ -5,5 +5,7 @@
 /// Conditional export: the IO implementation uses the `fah/background`
 /// method channel (iOS `beginBackgroundTask`); everywhere else the stub is
 /// a no-op (web has no such concept).
+library;
+
 export 'background_execution_stub.dart'
     if (dart.library.io) 'background_execution_io.dart';

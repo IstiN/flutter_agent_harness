@@ -1085,4 +1085,127 @@ void main() {
       expect(utf8.decode(r.stderr), contains('whois.iana.org'));
     });
   });
+
+  shellJobTests();
+}
+
+// ---------------------------------------------------------------------------
+// Background shell jobs (BackgroundShell): detached script runs on job-local
+// shell clones, output streaming into a log file.
+// ---------------------------------------------------------------------------
+
+/// Appends the job group to the suite; kept in a part function so the file's
+/// setup/teardown stay untouched.
+void shellJobTests() {
+  group('background jobs', () {
+    Future<ShellJob> startJob(
+      MemoryExecutionEnv env,
+      String command, {
+      String id = 'sh-1',
+      ShellExecOptions? options,
+    }) async {
+      final started = await env.startShellJob(
+        command,
+        id: id,
+        logPath: '/.fah/bash_jobs/$id.log',
+        options: options,
+      );
+      expect(started.isOk, isTrue, reason: '${started.errorOrNull}');
+      return started.valueOrNull!;
+    }
+
+    test('a job runs detached, writes its log, and settles with the exit '
+        'code', () async {
+      final shell = MemoryShell();
+      final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+      shell.attach(env);
+      await env.createDir('/.fah/bash_jobs');
+
+      // `cat` on a missing file exercises the stderr path into the log
+      // (`>&2` fd duplication is a known MemoryShell parser gap).
+      final job = await startJob(env, 'echo hello; cat /nope; echo done');
+      expect(job.isRunning, isTrue);
+      await job.settled;
+      expect(job.exitCode, 0);
+      expect(job.stopReason, isNull);
+      final log = (await env.readTextFile(job.logPath)).valueOrNull!;
+      expect(log, contains('hello'));
+      expect(log, contains('No such file'));
+      expect(log, contains('done'));
+    });
+
+    test(
+      'job cwd/vars are cloned from the parent but never leak back',
+      () async {
+        final shell = MemoryShell();
+        final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+        shell.attach(env);
+        await env.createDir('/.fah/bash_jobs');
+        await env.createDir('/a');
+        await env.exec('cd /a && export FROM_PARENT=yes');
+
+        // The clone inherits the parent's cwd and vars at spawn time…
+        final job = await startJob(env, 'pwd && echo \$FROM_PARENT && cd /b');
+        await job.settled;
+        final log = (await env.readTextFile(job.logPath)).valueOrNull!;
+        expect(log, contains('/a'));
+        expect(log, contains('yes'));
+
+        // …but its own `cd` never changes the foreground shell.
+        final pwd = await env.exec('pwd');
+        expect(pwd.valueOrNull!.stdout.trim(), '/a');
+      },
+    );
+
+    test('concurrent jobs keep separate logs (no output clobbering)', () async {
+      final shell = MemoryShell();
+      final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+      shell.attach(env);
+      await env.createDir('/.fah/bash_jobs');
+
+      final a = await startJob(env, 'echo from-a', id: 'sh-1');
+      final b = await startJob(env, 'echo from-b', id: 'sh-2');
+      await Future.wait([a.settled, b.settled]);
+      expect((await env.readTextFile(a.logPath)).valueOrNull!.trim(), 'from-a');
+      expect((await env.readTextFile(b.logPath)).valueOrNull!.trim(), 'from-b');
+    });
+
+    test('a foreground exec during a running job is unaffected', () async {
+      final shell = MemoryShell();
+      final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+      shell.attach(env);
+      await env.createDir('/.fah/bash_jobs');
+
+      final job = await startJob(env, 'for i in a b c d e; do echo \$i; done');
+      final foreground = await env.exec('echo foreground');
+      expect(foreground.valueOrNull!.stdout, 'foreground\n');
+      await job.settled;
+      expect(job.exitCode, 0);
+    });
+
+    test(
+      'stop aborts a long job mid-run; partial output stays in the log',
+      () async {
+        final shell = MemoryShell();
+        final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+        shell.attach(env);
+        await env.createDir('/.fah/bash_jobs');
+
+        // 9000 iterations: under the interpreter's 10000-iteration runaway
+        // guard. stop() lands before the job's first microtask, so the run is
+        // interrupted within the first iterations.
+        const total = 9000;
+        final words = List.generate(total, (i) => 'w$i').join(' ');
+        final job = await startJob(env, 'for w in $words; do echo \$w; done');
+        await job.stop();
+        await job.settled;
+        expect(job.isRunning, isFalse);
+        expect(job.stopReason, 'stopped');
+        expect(job.exitCode, 143); // aborted maps to SIGTERM's 128+15
+        final log = (await env.readTextFile(job.logPath)).valueOrNull!;
+        // Stopped at the very beginning: the tail of the word list never ran.
+        expect(log, isNot(contains('w${total - 1}')));
+      },
+    );
+  });
 }

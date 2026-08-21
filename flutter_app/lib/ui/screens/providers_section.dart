@@ -217,9 +217,7 @@ List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
       );
 
   bool visible(String kind) =>
-      !onlyConfigured ||
-      configStore == null ||
-      configStore.isConfigured(kind);
+      !onlyConfigured || configStore == null || configStore.isConfigured(kind);
 
   return [
     if (webLlmProviderVisible(isWeb: web) && visible(webLlmProviderKind))

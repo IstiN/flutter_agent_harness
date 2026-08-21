@@ -69,6 +69,7 @@ class FaChatScreen extends StatefulWidget {
     this.composerBuilder,
     this.avatarBuilder,
     this.onPermissionAction,
+    this.onAuthRecovery,
     this.audioControllerFactory,
     this.videoControllerFactory,
   });
@@ -110,6 +111,10 @@ class FaChatScreen extends StatefulWidget {
   /// Settings" or "Try again"). The host should open system settings or
   /// retry the permission request.
   final FaPermissionActionCallback? onPermissionAction;
+
+  /// Called when the user taps the "Authorize" button on an auth-expired
+  /// card. The host should launch the provider's SSO/re-authorization flow.
+  final FaAuthRecoveryCallback? onAuthRecovery;
 
   /// Playback engine factory for inline audio players; null uses the real
   /// `audioplayers`-backed controller. Tests/goldens inject fakes.
@@ -500,13 +505,6 @@ class _FaChatScreenState extends State<FaChatScreen>
     }
   }
 
-  /// Opens the host's settings route (gear icon).
-  Future<void> _openSettings() async {
-    final builder = widget.settingsBuilder;
-    if (builder == null) return;
-    FaChatHost.track('settings_opened');
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
-  }
 
   // Text and custom (tool/thinking/system) messages share one renderer —
   // see ChatMessageTile.
@@ -525,6 +523,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       images: _images,
       avatarBuilder: widget.avatarBuilder,
       onPermissionAction: widget.onPermissionAction,
+      onAuthRecovery: widget.onAuthRecovery,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
     );
@@ -614,6 +613,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       images: _images,
       avatarBuilder: widget.avatarBuilder,
       onPermissionAction: widget.onPermissionAction,
+      onAuthRecovery: widget.onAuthRecovery,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
     );

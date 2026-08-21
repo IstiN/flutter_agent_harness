@@ -13,6 +13,7 @@
 @Tags(['integration'])
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -211,6 +212,137 @@ void main() {
         );
         final deltas = events.whereType<TextDeltaEvent>().toList();
         expect(deltas, isNotEmpty, reason: 'expected at least one text delta');
+      },
+      skip: _skip,
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+
+    test(
+      'corrupt image: retries with a placeholder instead of dying with 400',
+      () async {
+        // Half of a valid PNG — undecodable. The adapter must catch the
+        // backend's 400 'Unable to process input image', retry once with
+        // the image replaced by placeholder text, and complete the turn.
+        const fullPngB64 =
+            'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC';
+        final truncated = base64Encode(base64Decode(fullPngB64).sublist(0, 30));
+        final stream = streamGoogle(
+          _model,
+          Context(
+            messages: [
+              UserMessage(
+                content: [
+                  TextContent(
+                    text:
+                        'If you cannot see any image, say exactly: NO IMAGE. '
+                        'Otherwise describe it.',
+                  ),
+                  ImageContent(data: truncated, mimeType: 'image/png'),
+                ],
+                timestamp: DateTime.now(),
+              ),
+            ],
+          ),
+          GoogleOptions(
+            apiKey: _apiKey!,
+            maxTokens: 128,
+            thinking: const GoogleThinking(enabled: false),
+          ),
+        );
+
+        final events = await stream.toList();
+        final error = events.whereType<ErrorEvent>().firstOrNull;
+        expect(
+          error,
+          isNull,
+          reason:
+              'the undecodable-image retry should have saved the turn: '
+              '${error?.error.errorMessage ?? 'none'}',
+        );
+        final done = events.last as DoneEvent;
+        expect(done.reason, StopReason.stop);
+        expect(
+          done.message.content
+              .whereType<TextContent>()
+              .map((b) => b.text)
+              .join(),
+          isNotEmpty,
+        );
+      },
+      skip: _skip,
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+
+    test(
+      'unsigned tool-call replay: retries with text notes instead of 400',
+      () async {
+        // Gemini 3 rejects replayed functionCall parts without a
+        // thoughtSignature (400 'missing a thought_signature'). The adapter
+        // must catch that, retry once with the call + result rewritten as
+        // plain text notes, and complete the turn. (On models that do not
+        // enforce signatures the first attempt just succeeds — either way
+        // the turn completes without an error event.)
+        final stream = streamGoogle(
+          _model,
+          Context(
+            messages: [
+              UserMessage.text(
+                'Call ls on the uploads directory.',
+                timestamp: DateTime.now(),
+              ),
+              AssistantMessage(
+                content: const [
+                  ToolCall(
+                    id: 'call_1',
+                    name: 'ls',
+                    arguments: {'path': 'uploads'},
+                  ),
+                ],
+                api: _model.api,
+                provider: _model.provider,
+                model: _model.id,
+                usage: Usage.zero,
+                stopReason: StopReason.toolUse,
+                timestamp: DateTime.now(),
+              ),
+              ToolResultMessage(
+                toolCallId: 'call_1',
+                toolName: 'ls',
+                content: const [TextContent(text: 'diagram.png')],
+                isError: false,
+                timestamp: DateTime.now(),
+              ),
+              UserMessage.text(
+                'What did you see? Answer in one sentence.',
+                timestamp: DateTime.now(),
+              ),
+            ],
+          ),
+          GoogleOptions(
+            apiKey: _apiKey!,
+            maxTokens: 256,
+            thinking: const GoogleThinking(enabled: false),
+          ),
+        );
+
+        final events = await stream.toList();
+        final error = events.whereType<ErrorEvent>().firstOrNull;
+        expect(
+          error,
+          isNull,
+          reason:
+              'the missing-signature retry should have saved the turn: '
+              '${error?.error.errorMessage ?? 'none'}',
+        );
+        final done = events.last as DoneEvent;
+        expect(done.reason, StopReason.stop);
+        expect(
+          done.message.content
+              .whereType<TextContent>()
+              .map((b) => b.text)
+              .join(),
+          isNotEmpty,
+        );
       },
       skip: _skip,
       timeout: const Timeout(Duration(minutes: 2)),

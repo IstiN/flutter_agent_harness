@@ -2,6 +2,8 @@
 library;
 
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
+import 'package:flutter_agent_harness/src/cancel_token.dart';
+import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/memory/compaction_memory_hook.dart';
@@ -127,7 +129,7 @@ void main() {
 
     test('the span is capped with head+tail', () async {
       String? seenPrompt;
-      StreamFunction capture = (model, context, {cancelToken}) {
+      AssistantMessageEventStream capture(Model model, Context context, {CancelToken? cancelToken}) {
         seenPrompt = context.systemPrompt;
         final message = _assistant('[]');
         final stream = AssistantMessageEventStream();
@@ -135,7 +137,7 @@ void main() {
         stream.push(DoneEvent(reason: StopReason.stop, message: message));
         stream.end();
         return stream;
-      };
+      }
       final huge = 'x' * (maxExtractionSpanChars + 1000);
       await extractDurableEntries(capture, _model, huge);
       // The rendered prompt stays well under span + prompt overhead.

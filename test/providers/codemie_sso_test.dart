@@ -42,7 +42,10 @@ void main() {
         isTrue,
       );
       expect(isCodeMieBaseUrl('https://h.example/v1'), isFalse);
-      expect(isCodeMieBaseUrl('https://code-assistant-api.example/v1'), isFalse);
+      expect(
+        isCodeMieBaseUrl('https://code-assistant-api.example/v1'),
+        isFalse,
+      );
     });
   });
 

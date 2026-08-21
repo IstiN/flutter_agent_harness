@@ -377,6 +377,8 @@
   "settingsIconsPerRowAuto": "Авто",
   "settingsShowOnboarding": "Показать приветствие",
   "chatSteerTooltip": "Отправить сейчас (прервать)",
+  "bootstrapSessionStartError": "Не удалось запустить сессию: {error}",
+  "bootstrapRetry": "Повторить",
   "workspaceDialogTitle": "Рабочая папка",
   "workspaceDialogChangeFolder": "Сменить папку…",
   "workspaceDialogClearFolder": "Использовать личную папку",

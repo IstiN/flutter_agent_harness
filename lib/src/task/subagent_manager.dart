@@ -119,7 +119,13 @@ final class SubagentManager {
     _rehydrated = false;
   }
 
-  /// Registers a new subagent, optionally creating a child session.
+  /// Registers a new subagent — NEVER creates a child session eagerly.
+  ///
+  /// The handle's [SubagentHandle.sessionId] is a synthetic
+  /// `<parentSessionId>/<id>` placeholder until the executor calls
+  /// [attachSession] with the real JSONL path (at completion). This keeps the
+  /// session repo free of empty `.jsonl` files for subagents that never run
+  /// to completion (fast-register path, steering aborts, etc.).
   Future<SubagentHandle> register({
     required String id,
     required String name,
@@ -127,17 +133,12 @@ final class SubagentManager {
     required String task,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
-    String? sessionId;
-    if (createChildSession != null) {
-      sessionId = await createChildSession!(parentSessionId, id);
-    } else {
-      sessionId = '$parentSessionId/$id';
-    }
     final handle = SubagentHandle(
       id: id,
       name: name,
       agentType: agentType,
-      sessionId: sessionId,
+      // Placeholder until the executor does the real attachSession call.
+      sessionId: '$parentSessionId/$id',
       createdAt: now,
       task: task,
     )..lastActivity = now;

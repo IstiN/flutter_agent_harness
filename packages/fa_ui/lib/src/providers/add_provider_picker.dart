@@ -4,6 +4,8 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart' as harness;
+
 import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/connection.dart' show FaChatModelConfig;
 import 'package:fa_ui/src/providers/default_chat_model.dart'
@@ -113,6 +115,15 @@ const defaultAddProviderPresets = <AddProviderPreset>[
     keyHelpUrl: 'https://www.kimi.com/code/console',
   ),
   AddProviderPreset(
+    key: 'minimax',
+    name: 'MiniMax',
+    description: 'MiniMax models — API key',
+    icon: Icons.cloud_outlined,
+    baseUrl: 'https://api.minimax.io/v1',
+    keyHelpUrl:
+        'https://platform.minimax.io/user-center/basic-information/interface-key',
+  ),
+  AddProviderPreset(
     key: 'zai',
     name: 'Z.AI',
     description: 'GLM models — API key',
@@ -134,6 +145,24 @@ const defaultAddProviderPresets = <AddProviderPreset>[
     icon: Icons.dns_outlined,
   ),
 ];
+
+/// Whether a quick-add preset is offered to the user right now.
+///
+/// Presets backed by the CLI provider catalog ([harness.providerCatalog])
+/// follow the catalog's visibility rules: a `visible: false` spec (ChatGPT
+/// Codex until its WebSocket adapter ships) is hidden, and the
+/// `FA_PROVIDERS` build/runtime filter ([harness.providerEnabledInBuild])
+/// drops filtered-out providers. App-only presets (Kimi, Z.AI, Ollama,
+/// Custom — no catalog entry) are always enabled.
+///
+/// Every surface listing [defaultAddProviderPresets] (the Add-provider
+/// picker, onboarding) must filter through this so the CLI and the app
+/// never drift apart.
+bool addProviderPresetEnabled(AddProviderPreset preset) {
+  final spec = harness.providerCatalog[preset.key];
+  if (spec == null) return true;
+  return spec.visible && harness.providerEnabledInBuild(spec.name);
+}
 
 /// The "Add provider" preset picker: a list of quick-add templates that
 /// route to the matching setup flow.
@@ -197,6 +226,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     final theme = Theme.of(context);
     final strings = FaUiStrings.of(context);
     final visiblePresets = presets.where((p) {
+      if (!addProviderPresetEnabled(p)) return false;
       if (p.key == 'codemie' && onCodeMieSso == null) return false;
       if (p.key == 'chatgpt' && onChatGptOAuth == null) return false;
       return true;
@@ -262,13 +292,15 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         if (context.mounted) Navigator.of(context).pop(true);
         return;
       default:
-        // Key-based preset. The dial preset keeps its fixed endpoint
-        // (read-only URL); other quick-adds (Kimi Code, Z.AI) open the
-        // editor with editable prefills — several instances of the same
+        // Key-based preset. Every quick-add keeps an editable base URL in
+        // the editor (the user may point DIAL/Ollama/… at another
+        // instance); the ProviderPreset-backed ones (OpenRouter, Ollama
+        // Cloud, Gemini, DIAL, MiniMax) open in preset mode so the model
+        // field seeds the preset default, the rest (Kimi Code, Z.AI)
+        // open with editable prefills — several instances of the same
         // provider with custom names are a first-class use case.
         final providerPreset = _matchProviderPreset(preset.key);
-        final editable =
-            preset.key != 'dial' && providerPreset == ProviderPreset.custom;
+        final editable = providerPreset == ProviderPreset.custom;
         // A key resolved through the host's chain (env / secure store /
         // saved keys) counts as saved — the editor shows the keep-note.
         final namedKey = editable
@@ -328,8 +360,8 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   }
 
   /// Maps a [AddProviderPreset.key] to the matching [ProviderPreset] for
-  /// the editor's preset-mode (read-only URL). Falls back to [custom]
-  /// (editable URL) for unknown keys.
+  /// the editor's preset-mode (preset-seeded model, keep-key note). Falls
+  /// back to [custom] (plain editable prefill) for unknown keys.
   static ProviderPreset _matchProviderPreset(String key) {
     switch (key) {
       case 'openrouter':
@@ -340,6 +372,8 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         return ProviderPreset.gemini;
       case 'dial':
         return ProviderPreset.dial;
+      case 'minimax':
+        return ProviderPreset.minimax;
       default:
         return ProviderPreset.custom;
     }

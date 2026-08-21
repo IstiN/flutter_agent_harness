@@ -99,8 +99,9 @@ void main() {
       await expectGolden(tester, 'onboarding_p4_dark_desktop');
     });
 
-    testWidgets('page 2 — mandatory gate: locked Continue, no Skip (phone)',
-        (tester) async {
+    testWidgets('page 2 — mandatory gate: locked Continue, no Skip (phone)', (
+      tester,
+    ) async {
       await _pumpOnboardingPage(
         tester,
         page: 1,
@@ -110,8 +111,9 @@ void main() {
       await expectGolden(tester, 'onboarding_p2_gated_phone');
     });
 
-    testWidgets('page 2 — mandatory gate: locked Continue, no Skip (desktop)',
-        (tester) async {
+    testWidgets('page 2 — mandatory gate: locked Continue, no Skip (desktop)', (
+      tester,
+    ) async {
       await _pumpOnboardingPage(
         tester,
         page: 1,

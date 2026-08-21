@@ -253,9 +253,7 @@ _systemAuthSessionSso(String orgUrl) async {
   final token = await server.waitForToken();
   // Dismiss the sheet (shows the "Authorized" page only for a split second).
   unawaited(
-    _webAuthSessionChannel
-        .invokeMethod<void>('cancel')
-        .onError((_, _) => null),
+    _webAuthSessionChannel.invokeMethod<void>('cancel').onError((_, _) => null),
   );
   if (sessionFailed) {
     return (credentials: null, sessionUnavailable: true);

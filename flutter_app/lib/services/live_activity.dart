@@ -5,4 +5,6 @@
 /// Conditional export: the IO implementation uses the `fah/live_activity`
 /// method channel (iOS ActivityKit Live Activity); everywhere else the stub
 /// is a no-op (web and desktop have no such concept).
+library;
+
 export 'live_activity_stub.dart' if (dart.library.io) 'live_activity_io.dart';

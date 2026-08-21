@@ -50,7 +50,7 @@ void main() {
   }
 
   Future<SecureKeyCache> cacheOf(FakeSecureKeyStore store, [String? also]) {
-    final names = {...store.map.keys, if (also != null) also};
+    final names = {...store.map.keys, ?also};
     return SecureKeyCache(store).preload(names).then((_) {
       final cache = SecureKeyCache(store);
       return cache.preload(names).then((_) => cache);

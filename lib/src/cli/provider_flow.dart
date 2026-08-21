@@ -125,6 +125,7 @@ const _apiTypes = [
   ('openai-like', 'openai'),
   ('anthropic-like', 'anthropic'),
   ('google-like', 'google'),
+  ('minimax-like', 'minimax'),
 ];
 
 /// Runs the guided setup to completion (or cancellation). Never throws:

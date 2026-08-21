@@ -51,7 +51,8 @@ void main() {
     expect(
       violations,
       isEmpty,
-      reason: 'Files touching dart:io Platform without a kIsWeb guard '
+      reason:
+          'Files touching dart:io Platform without a kIsWeb guard '
           '(crashes at runtime on the web). Add `if (kIsWeb) …` before the '
           'Platform access, make the file an _io conditional variant, or '
           'exempt it in test/web_safety_guard_test.dart with a reason:\n'

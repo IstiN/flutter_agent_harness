@@ -243,12 +243,9 @@ final class TaskExecutor {
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
-    // Crash-resilient transcript: the real session is created in the
-    // background at spawn time (never blocking the spawn), and turns are
-    // flushed incrementally — a mid-run crash keeps everything written so
-    // far (Phase 3a+). All persistence is fire-and-forget: transcript
-    // durability must never slow the completion delivery.
-    unawaited(_ensureChildSession(id));
+    // Crash-resilient transcript: the real JSONL session is created lazily
+    // on the FIRST transcript flush — never at spawn time. Subagents that
+    // finish with no transcript leave no session file behind.
     try {
       await child.prompt(await _buildUserPrompt(item, id));
       unawaited(_flushChildTranscript(id, child));
@@ -833,23 +830,6 @@ final class TaskExecutor {
   /// fire-and-forget flushes would otherwise interleave session records.
   final _childFlushChains = <String, Future<void>>{};
 
-  /// Creates the child's real JSONL session in the BACKGROUND at spawn time
-  /// (fire-and-forget — the spawn never waits on it, keeping the completion
-  /// steering race away) and attaches the path to the retained handle.
-  /// Crash resilience: any later [_flushChildTranscript] lands in this file.
-  Future<void> _ensureChildSession(String id) async {
-    final factory = childSessionFactory;
-    final manager = subagentManager;
-    if (factory == null || manager == null) return;
-    try {
-      final session = await factory(manager.parentSessionId, id);
-      _childSessions[id] = session;
-      manager.attachSession(id, (await session.getMetadata()).path);
-    } on Object {
-      // Session creation is best-effort; flushes become no-ops when it fails.
-    }
-  }
-
   /// Appends the child's NEW transcript messages (beyond the flush counter)
   /// to its session file, serialized per child so concurrent flushes never
   /// interleave records. Idempotent — safe to call at every turn boundary
@@ -862,8 +842,22 @@ final class TaskExecutor {
   }
 
   Future<void> _flushChildTranscriptNow(String id, Agent child) async {
-    final session = _childSessions[id];
-    if (session == null) return;
+    // Lazy-create the JSONL session on the FIRST flush — never on spawn.
+    // Subagents that finish with no transcript never leave an empty file.
+    var session = _childSessions[id];
+    if (session == null) {
+      final factory = childSessionFactory;
+      final manager = subagentManager;
+      if (factory == null || manager == null) return;
+      try {
+        session = await factory(manager.parentSessionId, id);
+        _childSessions[id] = session;
+        manager.attachSession(id, (await session.getMetadata()).path);
+      } on Object {
+        // Session creation is best-effort; flushes become no-ops when it fails.
+        return;
+      }
+    }
     final messages = child.state.messages;
     final written = _childSessionWrites[id] ?? 0;
     try {

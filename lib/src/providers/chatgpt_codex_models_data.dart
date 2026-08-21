@@ -27,13 +27,21 @@ class CodexModelData {
 /// <https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json>.
 const List<CodexModelData> chatGptCodexBundledModels = <CodexModelData>[
   CodexModelData(slug: 'gpt-5.6-sol', contextWindow: 272000, maxTokens: 16384),
-  CodexModelData(slug: 'gpt-5.6-terra', contextWindow: 272000, maxTokens: 16384),
+  CodexModelData(
+    slug: 'gpt-5.6-terra',
+    contextWindow: 272000,
+    maxTokens: 16384,
+  ),
   CodexModelData(slug: 'gpt-5.6-luna', contextWindow: 272000, maxTokens: 16384),
   CodexModelData(slug: 'gpt-5.5', contextWindow: 272000, maxTokens: 16384),
   CodexModelData(slug: 'gpt-5.4', contextWindow: 272000, maxTokens: 16384),
   CodexModelData(slug: 'gpt-5.4-mini', contextWindow: 272000, maxTokens: 16384),
   CodexModelData(slug: 'gpt-5.2', contextWindow: 272000, maxTokens: 16384),
-  CodexModelData(slug: 'codex-auto-review', contextWindow: 272000, maxTokens: 16384),
+  CodexModelData(
+    slug: 'codex-auto-review',
+    contextWindow: 272000,
+    maxTokens: 16384,
+  ),
 ];
 
 /// The Codex default model (the first [chatGptCodexBundledModels] entry, kept separate so the OAuth flow + the picker read the same answer).

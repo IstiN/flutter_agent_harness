@@ -5,12 +5,12 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa_ui/fa_ui.dart'
-    show AddProviderPresetPickerPage;
+import 'package:fa_ui/fa_ui.dart' show AddProviderPresetPickerPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fa_ui/fa_ui.dart' show MediaSlotModelPage, MediaSlotProviderPickerPage;
+import 'package:fa_ui/fa_ui.dart'
+    show MediaSlotModelPage, MediaSlotProviderPickerPage;
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {

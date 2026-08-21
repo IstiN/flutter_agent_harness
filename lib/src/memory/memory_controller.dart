@@ -67,12 +67,10 @@ final class MemoryController {
   MemoryController({
     required ExecutionEnv env,
     String? projectRoot,
-    String? userRoot,
-    LlmProvider? llmProvider,
+    this._userRoot,
+    this._llmProvider,
   }) : _env = env,
-       _projectRoot = projectRoot ?? env.cwd,
-       _userRoot = userRoot,
-       _llmProvider = llmProvider;
+       _projectRoot = projectRoot ?? env.cwd;
 
   final ExecutionEnv _env;
   final String _projectRoot;

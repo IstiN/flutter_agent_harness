@@ -200,7 +200,7 @@ class SpanGridDelegate extends SliverGridDelegate {
 }
 
 class _SpanGridLayout extends SliverGridLayout {
-  _SpanGridLayout(this._tiles);
+  const _SpanGridLayout(this._tiles);
 
   /// Per-child geometry: top-left offset + extent, in pixels. Note y is NOT
   /// monotonic in index (first-fit backfills holes), so the scroll-offset

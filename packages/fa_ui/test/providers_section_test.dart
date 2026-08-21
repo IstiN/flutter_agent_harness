@@ -403,15 +403,16 @@ void main() {
       await tester.tap(find.text('OpenRouter'));
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
-      // The name field is editable (multi-instance naming); the URL stays
-      // read-only for hosted presets.
+      // The name field is editable (multi-instance naming); the URL is
+      // editable too — the preset endpoint is just the prefill.
+      // (TextField.enabled is nullable: null means enabled.)
       expect(
         tester.widget<TextField>(_editorField('Name')).enabled ?? true,
         isTrue,
       );
       expect(
-        tester.widget<TextField>(_editorField('Base URL')).enabled,
-        isFalse,
+        tester.widget<TextField>(_editorField('Base URL')).enabled ?? true,
+        isTrue,
       );
       // The model field is editable (TextField.enabled is nullable — null
       // means the default, enabled) and prefilled with the preset default.

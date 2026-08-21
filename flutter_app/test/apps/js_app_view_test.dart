@@ -65,7 +65,7 @@ void main() {
                 theme: JsonWidgetTheme.fromAccent(
                   Theme.of(context).colorScheme.primary,
                 ),
-                onEvent: (_, __) {},
+                onEvent: (_, _) {},
               );
               return renderer.build(tree!, context);
             },

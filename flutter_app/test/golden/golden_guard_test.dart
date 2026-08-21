@@ -86,8 +86,7 @@ const _exempt = <String, String>{
       'launcher chat sheet tests in test/apps/',
   'lib/ui/screens/app_launcher_screen.dart':
       'test/golden/launcher_golden_test.dart',
-  'lib/ui/widgets/apps_panel.dart':
-      'test/golden/apps_panel_golden_test.dart',
+  'lib/ui/widgets/apps_panel.dart': 'test/golden/apps_panel_golden_test.dart',
   'lib/ui/widgets/provider_selection_list.dart':
       'list-based provider picker; rendered inside AgentSettingsForm (covered by settings goldens)',
   'lib/ui/screens/codemie_sso_webview.dart':

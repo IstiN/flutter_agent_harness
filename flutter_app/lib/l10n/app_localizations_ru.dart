@@ -1311,4 +1311,62 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get chatSteerTooltip => 'Отправить сейчас (прервать)';
+
+  @override
+  String bootstrapSessionStartError(Object error) {
+    return 'Не удалось запустить сессию: $error';
+  }
+
+  @override
+  String get bootstrapRetry => 'Повторить';
+
+  @override
+  String get workspaceDialogTitle => 'Рабочая папка';
+
+  @override
+  String get workspaceDialogChangeFolder => 'Сменить папку…';
+
+  @override
+  String get workspaceDialogClearFolder => 'Использовать личную папку';
+
+  @override
+  String get workspaceDialogClose => 'Закрыть';
+
+  @override
+  String get workspaceDialogCurrentFolder => 'Текущая папка';
+
+  @override
+  String get workspaceDialogHostPath => 'Путь на хосте';
+
+  @override
+  String get workspaceDialogMountHint =>
+      'Файлы по /project/... в агенте указывают на эту папку на вашем Mac.';
+
+  @override
+  String get workspaceDialogUnsupported =>
+      'Проектные папки сейчас доступны только на macOS.';
+
+  @override
+  String get workspaceDialogPersonal => 'Личная (папка не выбрана)';
+
+  @override
+  String get workspaceDialogMailbox => 'Ваш mailbox';
+
+  @override
+  String get workspaceDialogMailboxHint =>
+      'Другие инстансы Fa могут писать этой сессии на этот адрес.';
+
+  @override
+  String get workspaceDialogMailboxCopy => 'Копировать';
+
+  @override
+  String get workspaceDialogMailboxCopied => 'Адрес mailbox скопирован';
+
+  @override
+  String get workspaceDialogRestrictTools =>
+      'Ограничить инструменты этой папкой';
+
+  @override
+  String get workspaceDialogRestrictToolsHint =>
+      'Отключает всё, что читало или писало бы за пределами смонтированной папки. Попытки выйти за рамки будут блокироваться (и в будущем — просить вашего подтверждения через диалог).';
 }

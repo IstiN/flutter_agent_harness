@@ -2359,6 +2359,108 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Send now (interrupt)'**
   String get chatSteerTooltip;
+
+  /// No description provided for @bootstrapSessionStartError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not start a session: {error}'**
+  String bootstrapSessionStartError(Object error);
+
+  /// No description provided for @bootstrapRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get bootstrapRetry;
+
+  /// No description provided for @workspaceDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Working folder'**
+  String get workspaceDialogTitle;
+
+  /// No description provided for @workspaceDialogChangeFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Change folder…'**
+  String get workspaceDialogChangeFolder;
+
+  /// No description provided for @workspaceDialogClearFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Use Personal folder'**
+  String get workspaceDialogClearFolder;
+
+  /// No description provided for @workspaceDialogClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get workspaceDialogClose;
+
+  /// No description provided for @workspaceDialogCurrentFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Current folder'**
+  String get workspaceDialogCurrentFolder;
+
+  /// No description provided for @workspaceDialogHostPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Host path'**
+  String get workspaceDialogHostPath;
+
+  /// No description provided for @workspaceDialogMountHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Files at /project/... in the agent map to this folder on your Mac.'**
+  String get workspaceDialogMountHint;
+
+  /// No description provided for @workspaceDialogUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Project folders are only available on macOS right now.'**
+  String get workspaceDialogUnsupported;
+
+  /// No description provided for @workspaceDialogPersonal.
+  ///
+  /// In en, this message translates to:
+  /// **'Personal (no folder mounted)'**
+  String get workspaceDialogPersonal;
+
+  /// No description provided for @workspaceDialogMailbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Your mailbox'**
+  String get workspaceDialogMailbox;
+
+  /// No description provided for @workspaceDialogMailboxHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Other Fa agents can message this session at this address.'**
+  String get workspaceDialogMailboxHint;
+
+  /// No description provided for @workspaceDialogMailboxCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get workspaceDialogMailboxCopy;
+
+  /// No description provided for @workspaceDialogMailboxCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Mailbox address copied'**
+  String get workspaceDialogMailboxCopied;
+
+  /// No description provided for @workspaceDialogRestrictTools.
+  ///
+  /// In en, this message translates to:
+  /// **'Restrict tools to this folder'**
+  String get workspaceDialogRestrictTools;
+
+  /// No description provided for @workspaceDialogRestrictToolsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).'**
+  String get workspaceDialogRestrictToolsHint;
 }
 
 class _AppLocalizationsDelegate

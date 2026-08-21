@@ -4,7 +4,6 @@
 
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -84,9 +83,8 @@ class OnDeviceConfigScope extends InheritedWidget {
 
   final OnDeviceConfigStore store;
 
-  static OnDeviceConfigStore? maybeOf(BuildContext context) => context
-      .dependOnInheritedWidgetOfExactType<OnDeviceConfigScope>()
-      ?.store;
+  static OnDeviceConfigStore? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<OnDeviceConfigScope>()?.store;
 
   @override
   bool updateShouldNotify(OnDeviceConfigScope oldWidget) =>

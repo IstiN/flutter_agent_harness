@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'dart:async' show unawaited;
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
-import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
@@ -91,6 +90,13 @@ Future<void> main() async {
   } on Object {
     // .env is intentionally not committed. Values can be supplied via
     // --dart-define instead.
+  }
+  // The runtime FA_PROVIDERS override from `.env` (the --dart-define wins
+  // in the core) — filtered-out providers never appear in the pickers,
+  // the add-provider list, or onboarding.
+  final faProviders = dotenv.isInitialized ? dotenv.env['FA_PROVIDERS'] : null;
+  if (faProviders != null && faProviders.trim().isNotEmpty) {
+    providerFilterEnvOverride = faProviders;
   }
   // One env for the whole app: the provider registry, the last-connection
   // store, and the agent share it (on web all ride the same IndexedDB
@@ -811,14 +817,14 @@ class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
             children: [
               const FaBrandTile(size: 48),
               const SizedBox(height: 24),
-              Text('Could not start a session: $error'),
+              Text(context.l10n.bootstrapSessionStartError(error)),
               const SizedBox(height: 16),
               FilledButton(
                 onPressed: () {
                   setState(() => _error = null);
                   unawaited(_start());
                 },
-                child: const Text('Retry'),
+                child: Text(context.l10n.bootstrapRetry),
               ),
             ],
           ),

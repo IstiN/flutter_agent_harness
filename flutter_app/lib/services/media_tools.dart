@@ -63,23 +63,18 @@ final class GeneratedMediaFile {
 /// failures surface as [StateError] with an actionable, user-readable
 /// message (never a bare exception).
 final class MediaGateway {
-  /// Creates a gateway over [env]. [fallback] supplies the main
+  /// Creates a gateway over [env]. [_fallback] supplies the main
   /// connection's endpoint details (called per request, so provider
-  /// switches are picked up). [httpClient] is injectable for tests.
+  /// switches are picked up). [_httpClient] is injectable for tests.
   const MediaGateway({
     required this.env,
-    required MediaFallback Function() fallback,
-    MediaModelsStore? store,
-    MediaKeyResolver? resolveKey,
-    http.Client? httpClient,
-    Duration videoPollInterval = const Duration(seconds: 3),
-    Duration videoPollTimeout = const Duration(minutes: 4),
-  }) : _fallback = fallback,
-       _store = store,
-       _resolveKey = resolveKey,
-       _httpClient = httpClient,
-       _videoPollInterval = videoPollInterval,
-       _videoPollTimeout = videoPollTimeout;
+    required this._fallback,
+    this._store,
+    this._resolveKey,
+    this._httpClient,
+    this._videoPollInterval = const Duration(seconds: 3),
+    this._videoPollTimeout = const Duration(minutes: 4),
+  });
 
   /// The sandbox filesystem generated files land in.
   final ExecutionEnv env;
@@ -321,8 +316,8 @@ final class MediaGateway {
       {
         'model': endpoint.modelId,
         'prompt': trimmed,
-        if (usedSeconds != null) 'duration': usedSeconds,
-        if (usedSize != null) 'size': usedSize,
+        'duration': ?usedSeconds,
+        'size': ?usedSize,
       },
       what: 'Video generation',
       okStatuses: const {200, 202},
@@ -348,7 +343,7 @@ final class MediaGateway {
     final bytes = await _videoBytes(job, endpoint, jobId);
     final detail = [
       if (usedSeconds != null) '${usedSeconds}s',
-      if (usedSize != null) usedSize,
+      ?usedSize,
     ];
     return _save(
       'video',

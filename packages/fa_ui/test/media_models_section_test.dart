@@ -62,8 +62,8 @@ void main() {
       );
 
       // Media slots list connected providers only — give OpenRouter a key.
-      FaUiHost.keyResolver =
-          (name) => name == 'OPENROUTER_API_KEY' ? 'sk-or' : '';
+      FaUiHost.keyResolver = (name) =>
+          name == 'OPENROUTER_API_KEY' ? 'sk-or' : '';
       addTearDown(() => FaUiHost.keyResolver = null);
 
       await tester.tap(find.text('Image generation'));
@@ -94,8 +94,8 @@ void main() {
     });
 
     testWidgets('the Gemini preset saves its URL and key name', (tester) async {
-      FaUiHost.keyResolver =
-          (name) => name == 'GEMINI_API_KEY' ? 'sk-gemini' : '';
+      FaUiHost.keyResolver = (name) =>
+          name == 'GEMINI_API_KEY' ? 'sk-gemini' : '';
       addTearDown(() => FaUiHost.keyResolver = null);
 
       final store = MediaModelsStore.inMemory();

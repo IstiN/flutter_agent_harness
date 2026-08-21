@@ -106,7 +106,7 @@ final class MediaSlotOverride {
     'modelId': modelId,
     if (apiKeyName != null) 'apiKeyName': apiKeyName,
     if (voice != null && voice!.isNotEmpty) 'voice': voice,
-        'providerId': providerId,
+    'providerId': providerId,
   };
 
   @override

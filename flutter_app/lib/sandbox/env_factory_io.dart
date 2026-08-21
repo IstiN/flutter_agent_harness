@@ -89,7 +89,7 @@ bool get isWebPlatform => false;
 /// is indistinguishable from an already-mapped host path and is treated as
 /// the latter; both readings stay inside the sandbox, so the sandbox
 /// boundary is preserved either way.
-final class SandboxedExecutionEnv implements ExecutionEnv {
+final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   /// Creates an env mapping sandbox-absolute paths onto [_sandboxRoot],
   /// delegating everything else (relative paths, [exec]) to [_delegate].
   SandboxedExecutionEnv(this._delegate, this._sandboxRoot);
@@ -113,6 +113,44 @@ final class SandboxedExecutionEnv implements ExecutionEnv {
     String command, {
     ShellExecOptions? options,
   }) => _delegate.exec(command, options: options);
+
+  // Background shell jobs: the registry's log path is derived from [cwd]
+  // (already a host path), so it needs no mapping — just forward.
+
+  @override
+  bool get backgroundJobsSupported {
+    final delegate = _delegate;
+    if (delegate case final BackgroundShell bg) {
+      return bg.backgroundJobsSupported;
+    }
+    return false;
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) {
+    final delegate = _delegate;
+    if (delegate case final BackgroundShell bg) {
+      return bg.startShellJob(
+        command,
+        id: id,
+        logPath: logPath,
+        options: options,
+      );
+    }
+    return Future.value(
+      const Err(
+        ExecutionError(
+          ExecutionErrorCode.shellUnavailable,
+          'background shell jobs are not supported by this shell',
+        ),
+      ),
+    );
+  }
 
   @override
   Future<Result<String, FileError>> absolutePath(String path) =>

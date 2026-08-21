@@ -10,6 +10,35 @@ void main() {
     repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
   });
 
+  group('encodeSessionCwd / decodeSessionCwd', () {
+    test('decodes a slug back to its absolute path', () {
+      expect(
+        decodeSessionCwd('--Users-Uladzimir_Klyshevich-git-dm.ai--'),
+        '/Users/Uladzimir_Klyshevich/git/dm.ai',
+      );
+    });
+
+    test('round-trips typical absolute paths', () {
+      expect(decodeSessionCwd(encodeSessionCwd('/foo/bar')), '/foo/bar');
+      expect(
+        decodeSessionCwd(
+          encodeSessionCwd('/Users/Uladzimir_Klyshevich/git/dm.ai'),
+        ),
+        '/Users/Uladzimir_Klyshevich/git/dm.ai',
+      );
+      expect(decodeSessionCwd(encodeSessionCwd('/single')), '/single');
+    });
+
+    test('returns null for bad or empty slugs', () {
+      expect(decodeSessionCwd('Users-Uladzimir_Klyshevich-git-dm.ai'), isNull);
+      expect(decodeSessionCwd('--Users'), isNull);
+      expect(decodeSessionCwd('Users--'), isNull);
+      expect(decodeSessionCwd('--'), isNull);
+      expect(decodeSessionCwd(''), isNull);
+      expect(decodeSessionCwd('---foo---'), isNull);
+    });
+  });
+
   group('JsonlSessionRepo', () {
     test(
       'create lays out files per pi scheme: root/encoded-cwd/ts_id.jsonl',
@@ -207,5 +236,55 @@ void main() {
         ),
       );
     });
+
+    test(
+      'cleanupEmptySessions removes header-only .jsonl files and keeps the rest',
+      () async {
+        final envFs = MemoryFileSystem();
+        final cleanRepo = JsonlSessionRepo(
+          fs: envFs,
+          sessionsRoot: '/sessions',
+        );
+        // Empty session: header record only.
+        final empty = await cleanRepo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final emptyPath = (await empty.getMetadata()).path;
+        // Real session: header + at least one entry.
+        final real = await cleanRepo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final realPath = (await real.getMetadata()).path;
+        await real.appendMessage(UserMessage.text('hello'));
+
+        final removed = await cleanRepo.cleanupEmptySessions();
+        expect(removed, 1);
+        expect((await envFs.exists(emptyPath)).valueOrNull, isFalse);
+        expect((await envFs.exists(realPath)).valueOrNull, isTrue);
+      },
+    );
+
+    test(
+      'cleanupEmptySessions returns 0 and removes nothing when everything has '
+      'transcript',
+      () async {
+        final envFs = MemoryFileSystem();
+        final cleanRepo = JsonlSessionRepo(
+          fs: envFs,
+          sessionsRoot: '/sessions',
+        );
+        final s = await cleanRepo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        await s.appendMessage(UserMessage.text('one'));
+        await s.appendMessage(UserMessage.text('two'));
+        final removed = await cleanRepo.cleanupEmptySessions();
+        expect(removed, 0);
+        expect(
+          (await envFs.exists((await s.getMetadata()).path)).valueOrNull,
+          isTrue,
+        );
+      },
+    );
   });
 }

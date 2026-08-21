@@ -91,6 +91,21 @@ String _encodeCwd(String cwd) {
 /// fabric root) colocate with the project's sessions.
 String encodeSessionCwd(String cwd) => _encodeCwd(cwd);
 
+/// Reverses [encodeSessionCwd]: `--Users-Uladzimir_Klyshevich-git-dm.ai--`
+/// → `/Users/Uladzimir_Klyshevich/git/dm.ai`.
+///
+/// Returns `null` if [slug] is not wrapped in `--` or decodes to an empty path.
+String? decodeSessionCwd(String slug) {
+  if (slug.length < 4 || !slug.startsWith('--') || !slug.endsWith('--')) {
+    return null;
+  }
+  final inner = slug.substring(2, slug.length - 2);
+  if (inner.isEmpty) return null;
+  final parts = inner.split('-');
+  if (parts.isEmpty || parts.any((p) => p.isEmpty)) return null;
+  return '/${parts.join('/')}';
+}
+
 /// Creates a new session id (time-ordered uuidv7).
 String createSessionId() => uuidv7();
 
@@ -236,6 +251,52 @@ final class JsonlSessionRepo implements SessionRepo {
       await _fs.remove(metadata.path, force: true),
       'Failed to delete session ${metadata.path}',
     );
+  }
+
+  /// Removes every `.jsonl` session whose file contains **only the header
+  /// record** and no further entries.
+  ///
+  /// Used after the migrate-from-eager-creation change to clean up the
+  /// legacy empty files that the old `SubagentManager.register` /
+  /// `AgentService.initialize` paths left on disk. Returns the number of
+  /// files actually deleted (best-effort: a failed read or delete leaves the
+  /// file in place).
+  Future<int> cleanupEmptySessions() async {
+    var removed = 0;
+    final dirs = await _listSessionDirs();
+    for (final dir in dirs) {
+      final dirExists = _fsOrThrow(
+        await _fs.exists(dir),
+        'Failed to check session dir $dir',
+      );
+      if (!dirExists) continue;
+      final files = _fsOrThrow(
+        await _fs.listDir(dir),
+        'Failed to list session dir $dir',
+      );
+      for (final file in files) {
+        if (file.kind != FileKind.file) continue;
+        if (!file.name.endsWith('.jsonl')) continue;
+        final path = file.path;
+        final contents = _fsOrThrow(
+          await _fs.readTextFile(path),
+          'Failed to read $path',
+        );
+        // A session that holds only its header record has zero or one
+        // non-empty line; anything more means real transcript.
+        final nonEmpty = contents
+            .split('\n')
+            .where((line) => line.trim().isNotEmpty)
+            .length;
+        if (nonEmpty > 1) continue;
+        _fsOrThrow(
+          await _fs.remove(path, force: true),
+          'Failed to delete empty session $path',
+        );
+        removed++;
+      }
+    }
+    return removed;
   }
 
   @override

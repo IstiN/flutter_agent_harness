@@ -15,10 +15,16 @@ void main() {
 
     test('no override enables the whole catalog', () {
       expect(providerFilterEnvOverride, isNull);
-      expect(enabledProviders(), hasLength(providerCatalog.length));
-      for (final name in providerCatalog.keys) {
+      final visibleCount = providerCatalog.values.where((s) => s.visible).length;
+      expect(enabledProviders(), hasLength(visibleCount));
+      for (final entry in providerCatalog.entries) {
+        final name = entry.key;
+        final spec = entry.value;
         expect(providerEnabledInBuild(name), isTrue, reason: name);
+        // Hidden providers (e.g. chatgpt codex) resolve through the catalog
+        // but are not user-facing in pickers / status lists.
         expect(catalogProvider(name), isNotNull, reason: name);
+        expect(enabledProviders().contains(spec), spec.visible, reason: name);
       }
     });
 
@@ -33,12 +39,13 @@ void main() {
       expect(catalogProvider('dial'), isNotNull);
     });
 
-    test("'all' / '*' keep every provider", () {
+    test("'all' / '*' keep every visible provider", () {
+      final visibleCount = providerCatalog.values.where((s) => s.visible).length;
       for (final value in ['all', '*']) {
         providerFilterEnvOverride = value;
         expect(
           enabledProviders(),
-          hasLength(providerCatalog.length),
+          hasLength(visibleCount),
           reason: value,
         );
       }

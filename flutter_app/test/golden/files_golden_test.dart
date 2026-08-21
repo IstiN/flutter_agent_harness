@@ -9,7 +9,6 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';

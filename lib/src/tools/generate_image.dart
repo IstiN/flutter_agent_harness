@@ -147,8 +147,8 @@ final class OpenAiImageDialect extends ImageDialect {
       body: jsonEncode({
         'model': endpoint.modelId,
         'prompt': prompt,
-        if (size != null) 'size': size,
-        if (quality != null) 'quality': quality,
+        'size': ?size,
+        'quality': ?quality,
       }),
     );
     if (response.statusCode != 200) {
@@ -178,8 +178,7 @@ final class OpenAiImageDialect extends ImageDialect {
 /// `model: image-01`, `aspect_ratio`, `response_format: base64`).
 final class MiniMaxImageDialect extends ImageDialect {
   @override
-  bool matches(MediaEndpoint endpoint) =>
-      endpoint.baseUrl.contains('minimax');
+  bool matches(MediaEndpoint endpoint) => endpoint.baseUrl.contains('minimax');
 
   /// Maps an OpenAI-style `size` ("1024x1024") to a MiniMax `aspect_ratio`
   /// ("1:1"). Falls back to `1:1` for unknown sizes.

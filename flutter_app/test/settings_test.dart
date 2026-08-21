@@ -18,7 +18,8 @@ import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fa_ui/fa_ui.dart' show MediaSlotModelPage, MediaSlotProviderPickerPage;
+import 'package:fa_ui/fa_ui.dart'
+    show MediaSlotModelPage, MediaSlotProviderPickerPage;
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {

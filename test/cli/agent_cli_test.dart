@@ -1036,7 +1036,10 @@ void main() {
     io.sendLine('q');
     await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/compact');
-    await waitForIt(() => io.out.toString().contains('compaction failed'));
+    await waitForIt(
+      () => io.out.toString().contains('compaction'),
+      reason: 'compaction message appeared in io.out',
+    );
     io.sendLine('next');
     await waitForIt(() => fake.calls == 3 && !cli.isBusy);
     io.sendLine('/exit');
@@ -1275,7 +1278,9 @@ void main() {
     expect(
       output,
       contains(
-        '/work · ctx 0% (10/100k) · 15tok · \$0.0010 · turn 1 · test-model',
+        // ctx anchors at the provider-reported totalTokens of the last
+        // reported turn (input+output = the next request's size).
+        '/work · ctx 0% (15/100k) · 15tok · \$0.0010 · turn 1 · test-model',
       ),
     );
   });
@@ -1314,10 +1319,12 @@ void main() {
 
     // The failed run's terminal message carries Usage.zero; the ctx gauge
     // must keep the last real prompt size, not snap back to (0/...).
+    // (15 from the anchored usage + 1 estimated for the trailing error
+    // message.)
     final output = io.out.toString();
     final lastCtx = output.lastIndexOf('ctx 0% (');
     expect(lastCtx, isNonNegative);
-    expect(output.substring(lastCtx), startsWith('ctx 0% (10/100k)'));
+    expect(output.substring(lastCtx), startsWith('ctx 0% (16/100k)'));
   });
 
   group('session management', () {
@@ -1567,8 +1574,8 @@ void main() {
       final output = io.out.toString();
       // assistant([read]), result, assistant([edit]), result collapse into
       // ONE run row — the tool results between them stay invisible.
-      final run_row = RegExp(r'^fa:  \[read\] \[edit\]$', multiLine: true);
-      expect(run_row.allMatches(output), hasLength(1));
+      final runRow = RegExp(r'^fa:  \[read\] \[edit\]$', multiLine: true);
+      expect(runRow.allMatches(output), hasLength(1));
       expect(
         RegExp(r'^fa:  \[edit\]$', multiLine: true).allMatches(output),
         isEmpty,

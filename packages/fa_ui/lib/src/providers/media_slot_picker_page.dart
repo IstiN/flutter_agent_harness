@@ -8,8 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa_ui/src/host_config.dart';
-import 'package:fa_ui/src/providers/connection.dart'
-    show FaChatModelConfig;
+import 'package:fa_ui/src/providers/connection.dart' show FaChatModelConfig;
 import 'package:fa_ui/src/providers/default_chat_model.dart'
     show FaOnDeviceRoute;
 import 'package:fa_ui/src/providers/provider_editor_page.dart';

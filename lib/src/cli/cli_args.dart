@@ -17,7 +17,13 @@ library;
 /// `FA_PROVIDERS` dart-define rejects the filtered kinds at resolution
 /// time (buildCliDefaultModel resolves through the filtered
 /// [catalogProvider]).
-const cliProviderKinds = {'openai-completions', 'anthropic', 'google', 'dial'};
+const cliProviderKinds = {
+  'openai-completions',
+  'anthropic',
+  'google',
+  'dial',
+  'minimax',
+};
 
 /// Invalid command line: the executable prints [message] plus a usage hint
 /// to stderr and exits with code 64 (EX_USAGE).

@@ -17,6 +17,7 @@ import 'package:wasm_run/wasm_run.dart';
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_pip.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
+import 'package:fa/sandbox/shell_job.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/shell_script.dart';
 import 'package:fa/sandbox/wasm_shell_git.dart';
@@ -50,7 +51,7 @@ import 'package:fa/sandbox/wasm_shell_ssh.dart';
 /// redirects. Each stage runs in its own WASM instance, so there is no need
 /// for `fork`, `exec`, or process-level pipes — WASM does not expose those on
 /// iOS/Android/Web.
-final class WasiSandboxShell implements Shell {
+final class WasiSandboxShell implements Shell, BackgroundShell {
   /// Creates a shell backed by the provided WASM modules.
   WasiSandboxShell({
     required this.coreutils,
@@ -385,6 +386,88 @@ final class WasiSandboxShell implements Shell {
         exitCode: result.valueOrNull!,
       ),
     );
+  }
+
+  @override
+  bool get backgroundJobsSupported => true;
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async {
+    final token = options?.cancelToken;
+    if (token != null && token.isCancelled) {
+      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+    }
+    final io.IOSink sink;
+    try {
+      sink = io.File(logPath).openWrite(mode: io.FileMode.append);
+    } on Object catch (error) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'cannot open job log file $logPath: $error',
+          cause: error,
+        ),
+      );
+    }
+    final job = SandboxShellJob(
+      id: id,
+      command: command,
+      logPath: logPath,
+      logWriter: sink.write,
+      closeLog: () async {
+        await sink.flush();
+        await sink.close();
+      },
+    );
+    // An outer abort stops the job too (same contract as the local shell).
+    token?.onCancel.then((_) => job.stop());
+    unawaited(
+      _forJob()
+          .exec(
+            command,
+            options: ShellExecOptions(
+              cwd: options?.cwd,
+              env: options?.env,
+              timeout: options?.timeout,
+              cancelToken: job.cancelToken,
+              onStdout: job.writeLog,
+              onStderr: job.writeLog,
+            ),
+          )
+          .then(job.completeWith),
+    );
+    return Ok(job);
+  }
+
+  /// A job-local clone: shares the WASM modules, HTTP client, and sandbox
+  /// host path, owns the mutable interpreter state (cwd, shell vars, output
+  /// capture stack), so a detached job never clobbers the foreground shell
+  /// or a sibling job.
+  WasiSandboxShell _forJob() {
+    final clone = WasiSandboxShell(
+      coreutils: coreutils,
+      rg: rg,
+      find: find,
+      sed: sed,
+      awk: awk,
+      tar: tar,
+      gzip: gzip,
+      zip: zip,
+      python: python,
+      qjs: qjs,
+      sqlite3: sqlite3,
+      lua: lua,
+      workingDirectory: _currentDir,
+      sandboxHostPath: sandboxHostPath,
+      httpClient: _httpClient,
+    );
+    clone._shellEnv.addAll(_shellEnv);
+    return clone;
   }
 
   /// Script interpreter callbacks (control flow + command substitution are

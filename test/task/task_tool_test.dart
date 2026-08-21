@@ -1309,4 +1309,178 @@ void main() {
       );
     });
   });
+
+  group('steer-yield to background', () {
+    test('a blocking task moves still-running children to background jobs '
+        'untouched; completions still arrive via the job manager', () async {
+      final childStream = _GatedChildStream();
+      final config = TaskToolConfig(
+        childTools: _pool(),
+        streamFunction: childStream.call,
+        model: _model,
+      );
+      final tool = taskTool(config: config);
+      final yieldSource = CancelTokenSource();
+
+      final resultFuture = runZoned(
+        () => tool.execute(
+          {
+            'context': 'ctx',
+            'tasks': [
+              {'name': 'Long', 'task': 'long job'},
+            ],
+          },
+          null,
+          null,
+        ),
+        zoneValues: {yieldTokenZoneKey: yieldSource.token},
+      );
+
+      // Let the child spawn start, then yield.
+      while (childStream.calls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      yieldSource.cancel();
+
+      final result = await resultFuture;
+      final text = _resultText(result);
+      expect(text, contains('Moved 1 still-running agent'));
+      expect(text, contains('NOT aborted'));
+      expect(text, contains('`Long`'));
+
+      // The job is registered and still running (the child hangs).
+      final job = config.jobManager.job('Long');
+      expect(job, isNotNull);
+      expect(job!.status, TaskJobStatus.running);
+
+      // The child later finishes on its own → the job settles and the
+      // completion event fires (the host injects it as an async result).
+      final completion = config.jobManager.completions.first;
+      childStream.release.complete();
+      final settled = await completion;
+      expect(settled.id, 'Long');
+      expect(settled.status, TaskJobStatus.completed);
+      expect(settled.result!.output, contains('child done'));
+    });
+
+    test('without a yield the blocking result is unchanged', () async {
+      final h = _harness(
+        rules: [
+          (match: 'quick job', turns: [_textTurn('quick result')]),
+        ],
+      );
+      final result = await runZoned(
+        () => h.tool.execute(
+          {
+            'context': 'ctx',
+            'tasks': [
+              {'name': 'Quick', 'task': 'quick job'},
+            ],
+          },
+          null,
+          null,
+        ),
+        zoneValues: {yieldTokenZoneKey: CancelTokenSource().token},
+      );
+      final text = _resultText(result);
+      expect(text, contains('1 subagent finished'));
+      expect(text, contains('quick result'));
+      // Nothing leaked into the background registry.
+      expect(h.config.jobManager.jobs, isEmpty);
+    });
+
+    test('task_cancel aborts a running background job', () async {
+      final childStream = _GatedChildStream();
+      final config = TaskToolConfig(
+        childTools: _pool(),
+        streamFunction: childStream.call,
+        model: _model,
+      );
+      final spawn = taskTool(config: config);
+      final cancelTool = subagentMonitoringTools(
+        manager: SubagentManager(parentSessionId: 'p'),
+        jobs: config.jobManager,
+      ).firstWhere((t) => t.name == 'task_cancel');
+
+      final result = await spawn.execute(
+        {
+          'context': 'ctx',
+          'background': true,
+          'tasks': [
+            {'name': 'Bg', 'task': 'long job'},
+          ],
+        },
+        null,
+        null,
+      );
+      expect(_resultText(result), contains('Spawned 1 background'));
+      while (childStream.calls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      final cancelResult = await cancelTool.execute({'id': 'Bg'}, null, null);
+      expect(_resultText(cancelResult), 'cancelled job Bg');
+      final job = config.jobManager.job('Bg')!;
+      await job.settled;
+      expect(job.status, TaskJobStatus.aborted);
+
+      // A settled job reports its state instead of cancelling again.
+      final again = await cancelTool.execute({'id': 'Bg'}, null, null);
+      expect(_resultText(again), contains('already aborted'));
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Steer-yield: a blocking task converts still-running children to background
+// jobs (untouched) when the loop's soft-yield token fires.
+// ---------------------------------------------------------------------------
+
+/// A child stream function that hangs until [release] completes, then answers
+/// one text turn; honors the cancel token with an aborted end. Simulates a
+/// long-running subagent.
+final class _GatedChildStream {
+  final release = Completer<void>();
+  var calls = 0;
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    calls++;
+    final stream = AssistantMessageEventStream();
+    final empty = _assistant();
+    final partial = _assistant(content: [TextContent(text: 'child done')]);
+    stream.push(StartEvent(partial: empty));
+    unawaited(
+      release.future.then((_) {
+        stream
+          ..push(TextStartEvent(contentIndex: 0, partial: empty))
+          ..push(
+            TextDeltaEvent(
+              contentIndex: 0,
+              delta: 'child done',
+              partial: partial,
+            ),
+          )
+          ..push(DoneEvent(reason: StopReason.stop, message: partial))
+          ..end();
+      }),
+    );
+    cancelToken?.onCancel.then((_) {
+      stream
+        ..push(
+          ErrorEvent(
+            reason: StopReason.aborted,
+            error: _assistant(
+              stopReason: StopReason.aborted,
+              errorMessage: 'aborted',
+            ),
+          ),
+        )
+        ..end();
+    });
+    return stream;
+  }
 }

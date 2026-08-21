@@ -13,7 +13,6 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/task_models_store.dart';
-import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 
@@ -429,7 +428,12 @@ class _PresetCard extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final keyAvailable = modelPresetKeyAvailable(preset, keysStore);
-    final applied = modelPresetMatches(preset, service, store, taskStore: taskStore);
+    final applied = modelPresetMatches(
+      preset,
+      service,
+      store,
+      taskStore: taskStore,
+    );
     final providerLabel = switch (preset.target) {
       HostedModelPresetTarget(:final provider) => provider.labelFor(context),
     };
@@ -459,14 +463,16 @@ class _PresetCard extends StatelessWidget {
               context,
               icon: Icons.bolt_outlined,
               label: 'Quick model', // l10n:ignore
-              modelId: preset.taskSlots[TaskRole.smol] ??
+              modelId:
+                  preset.taskSlots[TaskRole.smol] ??
                   l10n.mediaModelsFallbackSummary,
             ),
             _comboRow(
               context,
               icon: Icons.groups_outlined,
               label: 'Subagents model', // l10n:ignore
-              modelId: preset.taskSlots[TaskRole.subagent] ??
+              modelId:
+                  preset.taskSlots[TaskRole.subagent] ??
                   l10n.mediaModelsFallbackSummary,
             ),
             for (final slot in MediaSlot.all)

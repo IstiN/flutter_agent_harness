@@ -159,7 +159,6 @@ class _AppsPanelState extends State<AppsPanel> {
   // [FileBrowser] / [SettingsScreen] from there — the apps panel no
   // longer surfaces grey placeholder tiles for them.
 
-
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);

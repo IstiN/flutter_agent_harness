@@ -16,6 +16,7 @@ import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
+import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -221,6 +222,27 @@ class _ChatScreenState extends State<ChatScreen> {
             ), // l10n:ignore — agent-facing text
           );
         }
+      },
+      onAuthRecovery: (providerId) async {
+        if (providerId != 'codemie') return;
+        final ok = await runCodemieSsoFlow(
+          context: context,
+          registry: widget.registry ?? ProviderRegistry.inMemory(),
+          service: service,
+          lastConnectionStore:
+              widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+        );
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              ok
+              ? 'Authorization successful — try sending your message again.'
+              : 'Authorization cancelled.',
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
       },
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,

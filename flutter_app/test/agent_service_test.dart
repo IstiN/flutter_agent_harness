@@ -854,6 +854,9 @@ void main() {
         );
         addTearDown(service.dispose);
         await service.initialize();
+        // Materialise the session file so the env var carries a real JSONL path.
+        await service.sendText('hello');
+        await service.waitForIdle();
 
         final bash = service.toolsForTest.whereType<AgentTool>().singleWhere(
           (tool) => tool.name == 'bash',
@@ -1116,6 +1119,9 @@ void main() {
 
       await service.reset();
       expect(service.messages, isEmpty);
+      // The new session is lazy; materialise it so it appears in the list.
+      await service.sendText('second');
+      await service.waitForIdle();
       expect((await service.listSessions()), hasLength(2));
 
       await service.loadSession(stored);
@@ -1480,6 +1486,9 @@ void main() {
       final stored = (await service.listSessions()).single;
 
       await service.reset();
+      // Materialise the new lazy session so both sessions appear on disk.
+      await service.sendText('second');
+      await service.waitForIdle();
       expect((await service.listSessions()), hasLength(2));
 
       await service.deleteSession(stored);
@@ -1508,7 +1517,10 @@ void main() {
 
       expect(service.messages, isEmpty);
       expect(service.currentSessionId, isNot(active.id));
-      // The fresh session replaces the deleted one on disk.
+      // The fresh session is lazy; materialise it to verify it replaces the
+      // deleted one on disk.
+      await service.sendText('fresh start');
+      await service.waitForIdle();
       final remaining = await service.listSessions();
       expect(remaining, hasLength(1));
       expect(remaining.single.id, service.currentSessionId);

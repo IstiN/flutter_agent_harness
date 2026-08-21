@@ -1301,4 +1301,61 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatSteerTooltip => 'Send now (interrupt)';
+
+  @override
+  String bootstrapSessionStartError(Object error) {
+    return 'Could not start a session: $error';
+  }
+
+  @override
+  String get bootstrapRetry => 'Retry';
+
+  @override
+  String get workspaceDialogTitle => 'Working folder';
+
+  @override
+  String get workspaceDialogChangeFolder => 'Change folder…';
+
+  @override
+  String get workspaceDialogClearFolder => 'Use Personal folder';
+
+  @override
+  String get workspaceDialogClose => 'Close';
+
+  @override
+  String get workspaceDialogCurrentFolder => 'Current folder';
+
+  @override
+  String get workspaceDialogHostPath => 'Host path';
+
+  @override
+  String get workspaceDialogMountHint =>
+      'Files at /project/... in the agent map to this folder on your Mac.';
+
+  @override
+  String get workspaceDialogUnsupported =>
+      'Project folders are only available on macOS right now.';
+
+  @override
+  String get workspaceDialogPersonal => 'Personal (no folder mounted)';
+
+  @override
+  String get workspaceDialogMailbox => 'Your mailbox';
+
+  @override
+  String get workspaceDialogMailboxHint =>
+      'Other Fa agents can message this session at this address.';
+
+  @override
+  String get workspaceDialogMailboxCopy => 'Copy';
+
+  @override
+  String get workspaceDialogMailboxCopied => 'Mailbox address copied';
+
+  @override
+  String get workspaceDialogRestrictTools => 'Restrict tools to this folder';
+
+  @override
+  String get workspaceDialogRestrictToolsHint =>
+      'Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).';
 }

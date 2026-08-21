@@ -489,6 +489,10 @@ void main() {
       late final String sessionId;
       await tester.runAsync(() async {
         await service.initialize();
+        // Materialise the session file so listSessions() returns metadata
+        // with a reachable creation time for the date-derived title.
+        await service.sendText('hello');
+        await service.waitForIdle();
         sessionId = service.currentSessionId!;
       });
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')

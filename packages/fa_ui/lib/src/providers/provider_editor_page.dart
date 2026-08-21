@@ -119,8 +119,9 @@ class ProviderEditorPage extends StatefulWidget {
   final String title;
 
   /// Hosted-preset view mode: the name field stays editable (the user names
-  /// each instance — the same preset may be added several times), the URL
-  /// field renders read-only.
+  /// each instance — the same preset may be added several times) and the
+  /// base-URL field is editable too, prefilled with the preset endpoint
+  /// (self-hosted DIAL/Ollama/… instances point at their own URL).
   final ProviderPreset? preset;
 
   /// The provider being edited; `null` when adding a new one.
@@ -321,11 +322,10 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
               const SizedBox(height: 12),
               TextField(
                 controller: _urlController,
-                enabled: !_isPreset,
                 decoration: InputDecoration(
                   labelText: strings.settingsBaseUrlLabel,
-                  hintText: _isPreset ? null : 'https://example.com/v1',
-                  helperText: _isPreset ? null : strings.settingsBaseUrlHelper,
+                  hintText: 'https://example.com/v1',
+                  helperText: strings.settingsBaseUrlHelper,
                 ),
               ),
               const SizedBox(height: 12),

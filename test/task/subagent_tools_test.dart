@@ -4,10 +4,42 @@ library;
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/messaging/agent_message.dart';
 import 'package:flutter_agent_harness/src/messaging/file_messaging_repository.dart';
+import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 import 'package:flutter_agent_harness/src/task/subagent.dart';
 import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
+import 'package:flutter_agent_harness/src/session/session_repo.dart'
+    show decodeSessionCwd;
 import 'package:flutter_agent_harness/src/task/subagent_tools.dart';
 import 'package:test/test.dart';
+
+/// Test-only messaging fabric that reports specific [MailboxEntry] values.
+final class _FakeMessagingRepository implements MessagingRepository {
+  _FakeMessagingRepository({required this.entries});
+
+  final List<MailboxEntry> entries;
+  final _inboxes = <String, List<AgentMessage>>{};
+
+  @override
+  Future<void> send(AgentMessage message) async {
+    _inboxes.putIfAbsent(message.toId, () => []).add(message);
+  }
+
+  @override
+  Future<void> register(String agentId) async {}
+
+  @override
+  Future<List<AgentMessage>> peek(String agentId) async =>
+      List.unmodifiable(_inboxes[agentId] ?? const []);
+
+  @override
+  Future<List<AgentMessage>> drain(String agentId) async {
+    final messages = _inboxes.remove(agentId) ?? const [];
+    return List.unmodifiable(messages);
+  }
+
+  @override
+  Future<List<MailboxEntry>> directory() async => List.unmodifiable(entries);
+}
 
 void main() {
   late SubagentManager mgr;
@@ -51,7 +83,11 @@ void main() {
 
     test('agent_directory lists fabric mailboxes and marks self', () async {
       final env = MemoryExecutionEnv(cwd: '/work');
-      final repo = FileMessagingRepository(env: env, root: '/mail');
+      final repo = FileMessagingRepository(
+        env: env,
+        root: '/sessions/--work--/messages',
+        decodeSessionCwd: decodeSessionCwd,
+      );
       final fabricMgr = SubagentManager(parentSessionId: 'p', messaging: repo)
         ..mailboxPrefix = 'sess1';
       await fabricMgr.register(
@@ -87,6 +123,36 @@ void main() {
       expect(text, contains('sess1/main — 1 pending'));
       expect(text, contains('← you'));
       expect(text, contains('sess1/a1 — 1 pending'));
+    });
+
+    test('agent_directory renders cwd tag for a remote mailbox', () async {
+      final fabricMgr = SubagentManager(
+        parentSessionId: 'p',
+        messaging: _FakeMessagingRepository(
+          entries: const [
+            MailboxEntry(id: 'sess1/main'),
+            MailboxEntry(id: 'sess2/main', cwd: '/work/project-b'),
+          ],
+        ),
+      )..mailboxPrefix = 'sess1';
+      await fabricMgr.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'a1',
+          text: 'self note',
+          sentAt: '2026-01-01T00:00:00Z',
+        ),
+      );
+
+      final tools = subagentMonitoringTools(manager: fabricMgr);
+      final directory = tools.firstWhere((t) => t.name == 'agent_directory');
+      final result = await directory.execute(const {}, null, null);
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('sess2/main — 0 pending  [/work/project-b]'));
+      expect(text, contains('sess1/main — 1 pending'));
+      expect(text, contains('← you'));
+      // Self entry has no cwd tag when cwd is null.
+      expect(text, isNot(contains('sess1/main — 1 pending  [')));
     });
 
     test(
@@ -182,7 +248,7 @@ void main() {
       await mgr.update('failed-1', status: SubagentStatus.failed, error: 'x');
       final tools = subagentMonitoringTools(
         manager: mgr,
-        sendToChild: (_, __) async {},
+        sendToChild: (_, _) async {},
       );
       final sendTool = tools.firstWhere((t) => t.name == 'task_send');
       final result = await sendTool.execute(
@@ -197,7 +263,7 @@ void main() {
     test('task_send empty message is error', () async {
       final tools = subagentMonitoringTools(
         manager: mgr,
-        sendToChild: (_, __) async {},
+        sendToChild: (_, _) async {},
       );
       final sendTool = tools.firstWhere((t) => t.name == 'task_send');
       final result = await sendTool.execute(

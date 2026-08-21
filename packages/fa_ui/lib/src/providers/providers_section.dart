@@ -241,12 +241,9 @@ class ProvidersSection extends StatelessWidget {
             SizedBox(
               width: 24,
               height: 24,
-              child: leading ??
-                  Icon(
-                    leadingIcon,
-                    size: 20,
-                    color: theme.colorScheme.primary,
-                  ),
+              child:
+                  leading ??
+                  Icon(leadingIcon, size: 20, color: theme.colorScheme.primary),
             ),
             const SizedBox(width: 12),
             Expanded(

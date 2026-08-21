@@ -6,9 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 /// Brand marks for the provider list (onboarding page 2). Real brand SVGs
-/// where a permissive source exists (simple-icons.org, CC0), hand-drawn
-/// marks for the in-house providers (CodeMie, DIAL) and the generic
-/// fallbacks (Z.AI lettermark, Custom server stack).
+/// where a permissive source exists (simple-icons.org, CC0) plus the
+/// official in-house marks (CodeMie — auth.codemie.lab.epam.com, DIAL —
+/// the epam/ai-dial favicon, the same mark dialx.ai uses) rendered
+/// full-color, and the generic fallbacks (Z.AI lettermark, Custom server
+/// stack).
 class ProviderMark extends StatelessWidget {
   const ProviderMark(this.presetKey, {super.key, this.size = 20});
 
@@ -19,36 +21,45 @@ class ProviderMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mark = _mark(presetKey);
+    final tint = mark.$2;
     return Container(
       width: size,
       height: size,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: mark.$3,
         borderRadius: BorderRadius.circular(size * 0.28),
       ),
-      padding: EdgeInsets.all(size * 0.24),
+      // Full-color marks (tint == null) carry their own background and
+      // bleed to the tile edge; monochrome marks get padded and tinted.
+      padding: tint == null ? EdgeInsets.zero : EdgeInsets.all(size * 0.24),
       child: SvgPicture.string(
         mark.$1,
-        colorFilter: ColorFilter.mode(mark.$2, BlendMode.srcIn),
+        colorFilter: tint == null
+            ? null
+            : ColorFilter.mode(tint, BlendMode.srcIn),
       ),
     );
   }
 
-  static (String, Color, Color) _mark(String key) => switch (key) {
+  /// (svg, tint, background) — a null tint renders the SVG as-is
+  /// (full-color official marks bleeding to the tile edge); otherwise the
+  /// SVG is monochrome-tinted with [BlendMode.srcIn].
+  static (String, Color?, Color) _mark(String key) => switch (key) {
     'openrouter' => (
       _openrouter,
       const Color(0xFF5B61F6),
       const Color(0xFFEEF1FE),
     ),
     'chatgpt' || 'openai' => (_openai, Colors.white, const Color(0xFF172033)),
-    'codemie' => (_codemie, const Color(0xFF3566FF), const Color(0xFFEAF1FF)),
+    'codemie' => (_codemie, null, const Color(0xFF230230)),
     'anthropic' => (
       _anthropic,
       const Color(0xFFD97757),
       const Color(0xFFF7EEE8),
     ),
     'google' => (_gemini, const Color(0xFF8E75B2), const Color(0xFFF3EEF9)),
-    'dial' => (_dial, const Color(0xFF47506B), const Color(0xFFECEFF5)),
+    'dial' => (_dial, null, const Color(0xFFFFFFFF)),
     'kimi' => (_kimi, const Color(0xFF172033), const Color(0xFFEEF0F4)),
     'zai' => (_zai, const Color(0xFF3566FF), const Color(0xFFE8EDFF)),
     'ollama' => (_ollama, const Color(0xFF172033), const Color(0xFFF0F0F2)),
@@ -88,15 +99,35 @@ final String _ollama = _svg24(
 final String _openai =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -.1 949.1 959.8"><path d="m925.8 456.3c10.4 23.2 17 48 19.7 73.3 2.6 25.3 1.3 50.9-4.1 75.8-5.3 24.9-14.5 48.8-27.3 70.8-8.4 14.7-18.3 28.5-29.7 41.2-11.3 12.6-23.9 24-37.6 34-13.8 10-28.5 18.4-44.1 25.3-15.5 6.8-31.7 12-48.3 15.4-7.8 24.2-19.4 47.1-34.4 67.7-14.9 20.6-33 38.7-53.6 53.6-20.6 15-43.4 26.6-67.6 34.4-24.2 7.9-49.5 11.8-75 11.8-16.9.1-33.9-1.7-50.5-5.1-16.5-3.5-32.7-8.8-48.2-15.7s-30.2-15.5-43.9-25.5c-13.6-10-26.2-21.5-37.4-34.2-25 5.4-50.6 6.7-75.9 4.1-25.3-2.7-50.1-9.3-73.4-19.7-23.2-10.3-44.7-24.3-63.6-41.4s-35-37.1-47.7-59.1c-8.5-14.7-15.5-30.2-20.8-46.3s-8.8-32.7-10.6-49.6c-1.8-16.8-1.7-33.8.1-50.7 1.8-16.8 5.5-33.4 10.8-49.5-17-18.9-31-40.4-41.4-63.6-10.3-23.3-17-48-19.6-73.3-2.7-25.3-1.3-50.9 4-75.8s14.5-48.8 27.3-70.8c8.4-14.7 18.3-28.6 29.6-41.2s24-24 37.7-34 28.5-18.5 44-25.3c15.6-6.9 31.8-12 48.4-15.4 7.8-24.3 19.4-47.1 34.3-67.7 15-20.6 33.1-38.7 53.7-53.7 20.6-14.9 43.4-26.5 67.6-34.4 24.2-7.8 49.5-11.8 75-11.7 16.9-.1 33.9 1.6 50.5 5.1s32.8 8.7 48.3 15.6c15.5 7 30.2 15.5 43.9 25.5 13.7 10.1 26.3 21.5 37.5 34.2 24.9-5.3 50.5-6.6 75.8-4s50 9.3 73.3 19.6c23.2 10.4 44.7 24.3 63.6 41.4 18.9 17 35 36.9 47.7 59 8.5 14.6 15.5 30.1 20.8 46.3 5.3 16.1 8.9 32.7 10.6 49.6 1.8 16.9 1.8 33.9-.1 50.8-1.8 16.9-5.5 33.5-10.8 49.6 17.1 18.9 31 40.3 41.4 63.6zm-333.2 426.9c21.8-9 41.6-22.3 58.3-39s30-36.5 39-58.4c9-21.8 13.7-45.2 13.7-68.8v-223q-.1-.3-.2-.7-.1-.3-.3-.6-.2-.3-.5-.5-.3-.3-.6-.4l-80.7-46.6v269.4c0 2.7-.4 5.5-1.1 8.1-.7 2.7-1.7 5.2-3.1 7.6s-3 4.6-5 6.5a32.1 32.1 0 0 1 -6.5 5l-191.1 110.3c-1.6 1-4.3 2.4-5.7 3.2 7.9 6.7 16.5 12.6 25.5 17.8 9.1 5.2 18.5 9.6 28.3 13.2 9.8 3.5 19.9 6.2 30.1 8 10.3 1.8 20.7 2.7 31.1 2.7 23.6 0 47-4.7 68.8-13.8zm-455.1-151.4c11.9 20.5 27.6 38.3 46.3 52.7 18.8 14.4 40.1 24.9 62.9 31s46.6 7.7 70 4.6 45.9-10.7 66.4-22.5l193.2-111.5.5-.5q.2-.2.3-.6.2-.3.3-.6v-94l-233.2 134.9c-2.4 1.4-4.9 2.4-7.5 3.2-2.7.7-5.4 1-8.2 1-2.7 0-5.4-.3-8.1-1-2.6-.8-5.2-1.8-7.6-3.2l-191.1-110.4c-1.7-1-4.2-2.5-5.6-3.4-1.8 10.3-2.7 20.7-2.7 31.1s1 20.8 2.8 31.1c1.8 10.2 4.6 20.3 8.1 30.1 3.6 9.8 8 19.2 13.2 28.2zm-50.2-417c-11.8 20.5-19.4 43.1-22.5 66.5s-1.5 47.1 4.6 70c6.1 22.8 16.6 44.1 31 62.9 14.4 18.7 32.3 34.4 52.7 46.2l193.1 111.6q.3.1.7.2h.7q.4 0 .7-.2.3-.1.6-.3l81-46.8-233.2-134.6c-2.3-1.4-4.5-3.1-6.5-5a32.1 32.1 0 0 1 -5-6.5c-1.3-2.4-2.4-4.9-3.1-7.6-.7-2.6-1.1-5.3-1-8.1v-227.1c-9.8 3.6-19.3 8-28.3 13.2-9 5.3-17.5 11.3-25.5 18-7.9 6.7-15.3 14.1-22 22.1-6.7 7.9-12.6 16.5-17.8 25.5zm663.3 154.4c2.4 1.4 4.6 3 6.6 5 1.9 1.9 3.6 4.1 5 6.5 1.3 2.4 2.4 5 3.1 7.6.6 2.7 1 5.4.9 8.2v227.1c32.1-11.8 60.1-32.5 80.8-59.7 20.8-27.2 33.3-59.7 36.2-93.7s-3.9-68.2-19.7-98.5-39.9-55.5-69.5-72.5l-193.1-111.6q-.3-.1-.7-.2h-.7q-.3.1-.7.2-.3.1-.6.3l-80.6 46.6 233.2 134.7zm80.5-121h-.1v.1zm-.1-.1c5.8-33.6 1.9-68.2-11.3-99.7-13.1-31.5-35-58.6-63-78.2-28-19.5-61-30.7-95.1-32.2-34.2-1.4-68 6.9-97.6 23.9l-193.1 111.5q-.3.2-.5.5l-.4.6q-.1.3-.2.7-.1.3-.1.7v93.2l233.2-134.7c2.4-1.4 5-2.4 7.6-3.2 2.7-.7 5.4-1 8.1-1 2.8 0 5.5.3 8.2 1 2.6.8 5.1 1.8 7.5 3.2l191.1 110.4c1.7 1 4.2 2.4 5.6 3.3zm-505.3-103.2c0-2.7.4-5.4 1.1-8.1.7-2.6 1.7-5.2 3.1-7.6 1.4-2.3 3-4.5 5-6.5 1.9-1.9 4.1-3.6 6.5-4.9l191.1-110.3c1.8-1.1 4.3-2.5 5.7-3.2-26.2-21.9-58.2-35.9-92.1-40.2-33.9-4.4-68.3 1-99.2 15.5-31 14.5-57.2 37.6-75.5 66.4-18.3 28.9-28 62.3-28 96.5v223q.1.4.2.7.1.3.3.6.2.3.5.6.2.2.6.4l80.7 46.6zm43.8 294.7 103.9 60 103.9-60v-119.9l-103.8-60-103.9 60z"/></svg>';
 
-/// Hand-drawn CodeMie mark: a shield with a check cut-out (SSO).
-final String _codemie = _svg24(
-  '<path fill-rule="evenodd" d="M12 1.8 20 5.2v6.1c0 5.1-3.4 8.7-8 10-4.6-1.3-8-4.9-8-10V5.2Zm3.7 7.4 1.3 1.3-5 5-2.8-2.8 1.3-1.3 1.5 1.5Z"/>',
-);
+/// Official CodeMie mark (auth.codemie.lab.epam.com): a gradient "C" with
+/// a white spark on the dark-purple brand tile. Full-color, full-bleed.
+final String _codemie =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640">'
+    '<rect width="640" height="640" fill="#230230"/>'
+    '<path d="M117 320.5C117 208.662 207.662 118 319.5 118C379.76 118 433.902 144.359 470.953 186.079L426.091 225.921C399.944 196.479 361.899 178 319.5 178C240.799 178 177 241.799 177 320.5C177 399.201 240.799 463 319.5 463C361.899 463 399.944 444.521 426.091 415.079L470.953 454.921C433.902 496.641 379.76 523 319.5 523C207.662 523 117 432.338 117 320.5Z" fill="url(#paint0)"/>'
+    '<path d="M229.277 320.785C285.131 324.684 315.286 354.311 319.716 409.723C319.744 410.092 320.256 410.092 320.284 409.723C324.742 354.311 354.869 324.655 410.723 320.785C411.092 320.785 411.092 320.244 410.723 320.215C354.869 316.316 324.714 286.689 320.284 231.277C320.256 230.908 319.744 230.908 319.716 231.277C315.258 286.689 285.131 316.345 229.277 320.215C228.908 320.215 228.908 320.756 229.277 320.785Z" fill="white"/>'
+    '<defs><linearGradient id="paint0" x1="410" y1="61.5" x2="-71.0294" y2="651.221" gradientUnits="userSpaceOnUse">'
+    '<stop offset="0.0192308" stop-color="#ECB1FF"/>'
+    '<stop offset="0.375" stop-color="#C447EB"/>'
+    '<stop offset="1" stop-color="#3E1866"/>'
+    '</linearGradient></defs></svg>';
 
-/// Hand-drawn DIAL mark: a gauge dial with a needle.
-final String _dial = _svg24(
-  '<path fill-rule="evenodd" d="M12 3a9 9 0 1 0 9 9h-2.2A6.8 6.8 0 0 1 12 18.8 6.8 6.8 0 0 1 5.2 12 6.8 6.8 0 0 1 12 5.2Zm0 3a3.8 3.8 0 0 0-.5.05L13.4 12l-1.9 1.1A3.8 3.8 0 1 0 15.8 12a3.8 3.8 0 0 0-.4-1.7l-1.9 1.1L12.4 6.3A3.8 3.8 0 0 0 12 6Z"/>',
-);
+/// Official DIAL mark (epam/ai-dial favicon — the same brand dialx.ai
+/// uses): a double "D" with the #00DBDE→#FC00FF gradient on white.
+/// Full-color, full-bleed.
+final String _dial =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">'
+    '<path d="M29.9982 22.6909C29.9982 28.3121 28.4144 32.6021 25.2471 35.5608C22.0798 38.5192 17.661 39.9986 11.9907 39.9986H2.43806C2.09472 39.9986 1.81641 39.7157 1.81641 39.3667V6.08505C1.81641 5.73604 2.09472 5.45312 2.43806 5.45312H11.3184C14.1768 5.45312 16.7339 5.79569 18.9897 6.48085C21.2455 7.15042 23.2 8.17815 24.8532 9.56401C26.5219 10.9343 27.7965 12.7328 28.6772 14.9596C29.5579 17.1708 29.9982 19.7478 29.9982 22.6909Z" fill="url(#dialBack)" fill-opacity="0.18"/>'
+    '<path d="M29.9982 22.6909C29.9982 28.3121 28.4144 32.6021 25.2471 35.5608C22.0798 38.5192 17.661 39.9986 11.9907 39.9986H2.43806C2.09472 39.9986 1.81641 39.7157 1.81641 39.3667V6.08505C1.81641 5.73604 2.09472 5.45312 2.43806 5.45312H11.3184C14.1768 5.45312 16.7339 5.79569 18.9897 6.48085C21.2455 7.15042 23.2 8.17815 24.8532 9.56401C26.5219 10.9343 27.7965 12.7328 28.6772 14.9596C29.5579 17.1708 29.9982 19.7478 29.9982 22.6909Z" fill="#7799FF" fill-opacity="0.22"/>'
+    '<path d="M38.3903 17.4646C38.3903 23.1598 36.7877 27.5062 33.5829 30.5038C30.3781 33.5012 25.9071 35 20.1696 35H10.504C10.1566 35 9.875 34.7134 9.875 34.3598V0.640244C9.875 0.286637 10.1566 0 10.504 0H19.4895C22.3817 0 24.969 0.347077 27.2515 1.04125C29.534 1.71963 31.5116 2.76088 33.1843 4.16498C34.8728 5.5533 36.1625 7.37548 37.0536 9.63151C37.9447 11.8718 38.3903 14.4827 38.3903 17.4646Z" fill="url(#dialFront)"/>'
+    '<defs>'
+    '<linearGradient id="dialBack" x1="1.81641" y1="2.68949" x2="1.81641" y2="39.9986" gradientUnits="userSpaceOnUse">'
+    '<stop stop-color="#00DBDE"/><stop offset="1" stop-color="#FC00FF"/>'
+    '</linearGradient>'
+    '<linearGradient id="dialFront" x1="9.875" y1="17.5" x2="38.3903" y2="17.5" gradientUnits="userSpaceOnUse">'
+    '<stop stop-color="#00DBDE"/><stop offset="1" stop-color="#FC00FF"/>'
+    '</linearGradient>'
+    '</defs></svg>';
 
 /// simple-icons Z.AI mark (CC0).
 final String _zai = _svg24(

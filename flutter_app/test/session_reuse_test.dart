@@ -113,9 +113,10 @@ void main() {
 
       expect(manager.sessions.map((s) => s.id), [result.id]);
       expect(manager.activeId, result.id);
-      // The fresh session was persisted to disk.
-      final stored = await repo.list();
-      expect(stored.map((m) => m.id), [result.id]);
+      // The id is allocated eagerly, but the session file materialises
+      // only on the first persist — an untouched session never hits disk.
+      expect(result.id, isNotEmpty);
+      expect(await repo.list(), isEmpty);
     });
 
     test(
@@ -126,11 +127,13 @@ void main() {
           config: _config,
           serviceFactory: () async => _fakeService(env),
         );
-        expect(await repo.list(), hasLength(2));
+        // No files yet: both sessions are untouched.
+        expect(await repo.list(), isEmpty);
 
         // The second session gets real content; the first stays untouched.
         await second.service.sendText('hi');
         await second.service.waitForIdle();
+        expect(await repo.list(), hasLength(1));
 
         await manager.closeSession(first.id);
         expect(await repo.list(), hasLength(1));
@@ -175,8 +178,9 @@ void main() {
 
       expect(result.id, isNot(existing.id));
       expect(manager.activeId, result.id);
-      // Both the old and the fresh session are on disk.
-      expect(await repo.list(), hasLength(2));
+      // Only the old session is on disk — the fresh one materialises its
+      // file on the first persist.
+      expect(await repo.list(), hasLength(1));
       expect(result.service.messages, isEmpty);
     });
 
@@ -213,7 +217,9 @@ void main() {
 
         expect(result.id, isNot(existing.id));
         expect(manager.activeId, result.id);
-        expect(await repo.list(), hasLength(2));
+        // Only the corrupt file is on disk — the fallback session has not
+        // persisted anything yet.
+        expect(await repo.list(), hasLength(1));
       },
     );
 

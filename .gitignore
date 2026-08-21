@@ -84,3 +84,5 @@ test/integration/screenshots/*.txt
 profile-reports/
 .crap_profile_temp/
 fa-local/
+# Runtime agent working directory (bash job logs, transient state).
+.fah/

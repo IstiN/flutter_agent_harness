@@ -21,6 +21,7 @@ const customProviderApiTypes = [
   'google',
   'dial',
   'openrouter',
+  'minimax',
 ];
 
 /// One saved custom provider.

@@ -193,7 +193,8 @@ void main() {
       expect(events.last.handle.status, SubagentStatus.completed);
     });
 
-    test('createChildSession is called for session id', () async {
+    test('register no longer calls createChildSession — the real session is '
+        'attached lazily by the executor', () async {
       String? capturedParent;
       String? capturedChild;
       final mgr = SubagentManager(
@@ -210,9 +211,15 @@ void main() {
         agentType: 'task',
         task: '',
       );
-      expect(capturedParent, 'parent');
-      expect(capturedChild, 'c1');
+      expect(capturedParent, isNull);
+      expect(capturedChild, isNull);
+      // Placeholder until the executor attaches the real session.
+      expect(handle.sessionId, 'parent/c1');
+
+      // Simulate executor wiring at completion.
+      await mgr.attachSession('c1', 'parent/subagents/c1');
       expect(handle.sessionId, 'parent/subagents/c1');
+      expect(handle.sessionId, isNot('parent/c1'));
     });
 
     group('messaging fabric', () {

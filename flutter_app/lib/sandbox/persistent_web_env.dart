@@ -26,7 +26,7 @@ import 'package:fa/sandbox/fs_persistence.dart';
 /// yields a clean filesystem — persistence problems must never crash boot.
 /// Persistence errors after boot are swallowed the same way: the sandbox
 /// keeps working in memory and the next mutation retries the save.
-final class PersistentWebExecutionEnv implements ExecutionEnv {
+final class PersistentWebExecutionEnv implements ExecutionEnv, BackgroundShell {
   PersistentWebExecutionEnv._(this._delegate, this._store, this._persistDelay);
 
   /// Schema version of the JSON snapshot envelope. Snapshots with a
@@ -169,6 +169,46 @@ final class PersistentWebExecutionEnv implements ExecutionEnv {
     // tree — schedule a snapshot regardless of the exit status.
     _schedulePersist();
     return result;
+  }
+
+  // Background shell jobs: forwarded to the delegate (the web MemoryShell
+  // supports them). A job's log writes land in the delegate's memory FS
+  // directly, so they join the next scheduled snapshot rather than
+  // triggering one per chunk — jobs are session-lifetime anyway.
+
+  @override
+  bool get backgroundJobsSupported {
+    final delegate = _delegate;
+    if (delegate case final BackgroundShell bg) {
+      return bg.backgroundJobsSupported;
+    }
+    return false;
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) {
+    final delegate = _delegate;
+    if (delegate case final BackgroundShell bg) {
+      return bg.startShellJob(
+        command,
+        id: id,
+        logPath: logPath,
+        options: options,
+      );
+    }
+    return Future.value(
+      const Err(
+        ExecutionError(
+          ExecutionErrorCode.shellUnavailable,
+          'background shell jobs are not supported by this shell',
+        ),
+      ),
+    );
   }
 
   @override

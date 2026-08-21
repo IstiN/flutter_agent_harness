@@ -37,7 +37,6 @@ import 'package:fa/services/theme_controller.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
-import 'package:fa/services/vision_models.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/model_presets.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
@@ -2050,7 +2049,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // has no saved providers — if the user already configured one
               // (just hasn't applied it yet) the hint is noise. Providers
               // section below carries its own Add-provider row.
-              if (service == null && (widget.registry?.providers.isEmpty ?? true)) ...[
+              if (service == null &&
+                  (widget.registry?.providers.isEmpty ?? true)) ...[
                 _NoServiceSettings(
                   onAddProvider: () async {
                     final registry = widget.registry;
@@ -2142,9 +2142,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // On-device rows appear only for engines the user has
                 // configured before; the rest are discovered via Add
                 // provider (the routes above feed the picker's tiles).
-                onDeviceRowVisible: onDeviceConfig == null
-                    ? null
-                    : onDeviceConfig.isConfigured,
+                onDeviceRowVisible: onDeviceConfig?.isConfigured,
                 onDeviceConnected: (config) async {
                   final agentConfig = agentConfigFrom(config);
                   const onDeviceKinds = {

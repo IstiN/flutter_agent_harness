@@ -14,7 +14,6 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';

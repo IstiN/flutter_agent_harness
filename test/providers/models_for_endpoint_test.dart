@@ -84,7 +84,8 @@ void main() {
 
     test(
       'dial hint: deployments from /openai/models with reported limits',
-      () async {        http.Request? seen;
+      () async {
+        http.Request? seen;
         final client = http_testing.MockClient((request) async {
           seen = request;
           return http.Response(

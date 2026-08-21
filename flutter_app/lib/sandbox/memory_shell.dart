@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -11,6 +12,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
+import 'package:fa/sandbox/shell_job.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/shell_script.dart';
 import 'package:fa/sandbox/web_git.dart';
@@ -45,7 +47,11 @@ import 'package:fa/sandbox/web_interpreters_stub.dart'
 /// `ssh`/`scp`/`sftp` are registered (so `which` finds them) but always fail
 /// with exit code 127 — browsers cannot open raw TCP connections.
 /// Everything else reports exit code 127, which the agent can react to.
-final class MemoryShell implements Shell {
+///
+/// Background jobs (`BackgroundShell`): a job is the script's Future running
+/// on a job-local clone (own cwd/shell-vars/output-capture, shared fs), so a
+/// detached run never clobbers the foreground shell or a sibling job.
+final class MemoryShell implements Shell, BackgroundShell {
   /// Creates a shell without a filesystem. Call [attach] before [exec]; this
   /// indirection lets the shell and the [MemoryExecutionEnv] that owns it
   /// reference each other.
@@ -118,6 +124,56 @@ final class MemoryShell implements Shell {
         exitCode: result.valueOrNull!,
       ),
     );
+  }
+
+  @override
+  bool get backgroundJobsSupported => true;
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async {
+    final token = options?.cancelToken;
+    if (token != null && token.isCancelled) {
+      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+    }
+    final job = SandboxShellJob(
+      id: id,
+      command: command,
+      logPath: logPath,
+      logWriter: (chunk) async => _fs.appendFile(logPath, chunk),
+    );
+    // An outer abort stops the job too (same contract as the local shell).
+    token?.onCancel.then((_) => job.stop());
+    unawaited(
+      _forJob()
+          .exec(
+            command,
+            options: ShellExecOptions(
+              cwd: options?.cwd,
+              env: options?.env,
+              timeout: options?.timeout,
+              cancelToken: job.cancelToken,
+              onStdout: job.writeLog,
+              onStderr: job.writeLog,
+            ),
+          )
+          .then(job.completeWith),
+    );
+    return Ok(job);
+  }
+
+  /// A job-local clone: shares the filesystem and HTTP client, owns the
+  /// mutable interpreter state (cwd, shell vars, output capture stack), so a
+  /// detached job never clobbers the foreground shell or a sibling job.
+  MemoryShell _forJob() {
+    final clone = MemoryShell(httpClient: _httpClient)..attach(_fs);
+    clone._currentDir = _currentDir;
+    clone._shellEnv.addAll(_shellEnv);
+    return clone;
   }
 
   /// Script interpreter callbacks (control flow + command substitution are

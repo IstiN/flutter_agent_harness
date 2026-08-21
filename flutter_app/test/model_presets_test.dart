@@ -10,7 +10,6 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/ui/screens/model_presets.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
-import 'package:fa_ui/fa_ui.dart' show HostedModelPresetTarget, ProviderPreset;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -313,49 +312,52 @@ void main() {
       expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
     });
 
-    test('applyModelPreset writes and clears the task-role overrides', () async {
-      final service = _fakeService();
-      final store = MediaModelsStore.inMemory();
-      final taskStore = TaskModelsStore.inMemory();
-      final keys = SessionKeysStore.inMemory({
-        'OPENROUTER_API_KEY': 'sk-or-saved',
-      });
+    test(
+      'applyModelPreset writes and clears the task-role overrides',
+      () async {
+        final service = _fakeService();
+        final store = MediaModelsStore.inMemory();
+        final taskStore = TaskModelsStore.inMemory();
+        final keys = SessionKeysStore.inMemory({
+          'OPENROUTER_API_KEY': 'sk-or-saved',
+        });
 
-      await applyModelPreset(
-        preset: _budget,
-        service: service,
-        store: store,
-        keysStore: keys,
-        taskStore: taskStore,
-      );
-      expect(
-        taskStore.overrideFor(TaskRole.smol)?.modelId,
-        'google/gemini-3.5-flash-lite',
-      );
-      expect(
-        taskStore.overrideFor(TaskRole.subagent)?.modelId,
-        'google/gemini-3.6-flash',
-      );
-      expect(
-        modelPresetMatches(_budget, service, store, taskStore: taskStore),
-        isTrue,
-      );
+        await applyModelPreset(
+          preset: _budget,
+          service: service,
+          store: store,
+          keysStore: keys,
+          taskStore: taskStore,
+        );
+        expect(
+          taskStore.overrideFor(TaskRole.smol)?.modelId,
+          'google/gemini-3.5-flash-lite',
+        );
+        expect(
+          taskStore.overrideFor(TaskRole.subagent)?.modelId,
+          'google/gemini-3.6-flash',
+        );
+        expect(
+          modelPresetMatches(_budget, service, store, taskStore: taskStore),
+          isTrue,
+        );
 
-      // A preset without taskSlots clears the roles back to the fallback.
-      await applyModelPreset(
-        preset: const ModelPreset(
-          id: 'bare',
-          target: HostedModelPresetTarget(ProviderPreset.openrouter),
-          chatModelId: 'openai/gpt-5-mini',
-        ),
-        service: service,
-        store: store,
-        keysStore: keys,
-        taskStore: taskStore,
-      );
-      expect(taskStore.overrideFor(TaskRole.smol), isNull);
-      expect(taskStore.overrideFor(TaskRole.subagent), isNull);
-    });
+        // A preset without taskSlots clears the roles back to the fallback.
+        await applyModelPreset(
+          preset: const ModelPreset(
+            id: 'bare',
+            target: HostedModelPresetTarget(ProviderPreset.openrouter),
+            chatModelId: 'openai/gpt-5-mini',
+          ),
+          service: service,
+          store: store,
+          keysStore: keys,
+          taskStore: taskStore,
+        );
+        expect(taskStore.overrideFor(TaskRole.smol), isNull);
+        expect(taskStore.overrideFor(TaskRole.subagent), isNull);
+      },
+    );
 
     testWidgets('a missing key shows the hint and applies nothing', (
       tester,

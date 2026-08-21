@@ -1,6 +1,4 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/cli/cli_args.dart';
-import 'package:flutter_agent_harness/src/cli/custom_providers.dart';
 import 'package:test/test.dart';
 
 /// Guard: adding a new provider to the catalog must wire it EVERYWHERE in

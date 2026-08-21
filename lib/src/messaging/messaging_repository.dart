@@ -11,6 +11,34 @@ library;
 
 import 'agent_message.dart';
 
+/// One entry in the messaging-fabric directory.
+class MailboxEntry {
+  /// Creates a directory entry with optional cwd and slug metadata.
+  const MailboxEntry({required this.id, this.cwd, this.slug});
+
+  /// The mailbox id (e.g. `a1`, `sess1/main`).
+  final String id;
+
+  /// The working directory this mailbox belongs to, when known.
+  final String? cwd;
+
+  /// The session slug this mailbox belongs to, when known.
+  final String? slug;
+
+  @override
+  String toString() => 'MailboxEntry($id, cwd: $cwd, slug: $slug)';
+
+  @override
+  bool operator ==(Object other) =>
+      other is MailboxEntry &&
+      other.id == id &&
+      other.cwd == cwd &&
+      other.slug == slug;
+
+  @override
+  int get hashCode => Object.hash(id, cwd, slug);
+}
+
 /// Isolated messaging backend for agent inboxes.
 abstract interface class MessagingRepository {
   /// Delivers [message] to the recipient's inbox. Implementations must
@@ -31,7 +59,6 @@ abstract interface class MessagingRepository {
   /// read). A drained message never appears again.
   Future<List<AgentMessage>> drain(String agentId);
 
-  /// The known agent ids that have any mail (read or unread) — the
-  /// directory of the messaging fabric.
-  Future<List<String>> directory();
+  /// The known mailboxes in the fabric, with optional cwd metadata.
+  Future<List<MailboxEntry>> directory();
 }

@@ -39,6 +39,7 @@ enum ProviderPreset {
     baseUrl: 'https://ai-proxy.lab.epam.com',
     defaultModel: 'anthropic.claude-sonnet-4-5-20250929-v1:0',
   ),
+  minimax(baseUrl: 'https://api.minimax.io/v1', defaultModel: 'MiniMax-M3'),
   custom(baseUrl: null, defaultModel: ''),
   webllm(baseUrl: null, defaultModel: ''),
   gemma(baseUrl: null, defaultModel: ''),
@@ -53,8 +54,11 @@ enum ProviderPreset {
   /// Model prefill applied while the user has not typed their own.
   final String defaultModel;
 
-  /// Whether the base-URL field is editable for this preset.
-  bool get hasEditableBaseUrl => this == ProviderPreset.custom;
+  /// Whether the base-URL field is editable for this preset. Every hosted
+  /// preset is editable (the [baseUrl] prefill is just a default — a
+  /// self-hosted DIAL/Ollama instance points at its own endpoint); the
+  /// on-device presets have no endpoint at all.
+  bool get hasEditableBaseUrl => !isOnDevice;
 
   /// Whether this preset is an on-device provider, which replaces the
   /// key/model/URL fields with a model picker and a download bar.
@@ -72,6 +76,7 @@ enum ProviderPreset {
     ProviderPreset.ollamaCloud => strings.settingsPresetOllama,
     ProviderPreset.gemini => strings.settingsPresetGemini,
     ProviderPreset.dial => strings.settingsPresetDial,
+    ProviderPreset.minimax => strings.settingsPresetMinimax,
     ProviderPreset.custom => strings.settingsPresetCustom,
     ProviderPreset.webllm => strings.settingsPresetWebllm,
     ProviderPreset.gemma => strings.settingsPresetGemma,
@@ -88,6 +93,7 @@ enum ProviderPreset {
     ProviderPreset.openrouter || ProviderPreset.gemini => null,
     ProviderPreset.ollamaCloud => strings.settingsCorsNoteOllama,
     ProviderPreset.dial => strings.settingsCorsNoteCustom,
+    ProviderPreset.minimax => strings.settingsCorsNoteCustom,
     ProviderPreset.custom => strings.settingsCorsNoteCustom,
     ProviderPreset.webllm ||
     ProviderPreset.gemma ||
@@ -102,6 +108,7 @@ enum ProviderPreset {
       return ProviderPreset.gemini;
     }
     if (_isDialBaseUrl(url)) return ProviderPreset.dial;
+    if (url.contains('minimax.io')) return ProviderPreset.minimax;
     return ProviderPreset.custom;
   }
 }
@@ -141,6 +148,7 @@ String? hostedProviderKeyName(ProviderPreset preset) => switch (preset) {
   ProviderPreset.ollamaCloud => 'OLLAMA_API_KEY',
   ProviderPreset.gemini => 'GEMINI_API_KEY',
   ProviderPreset.dial => 'DIAL_API_KEY',
+  ProviderPreset.minimax => 'MINIMAX_API_KEY',
   _ => null,
 };
 
@@ -157,6 +165,7 @@ const hostedProviderPresets = [
   ProviderPreset.ollamaCloud,
   ProviderPreset.gemini,
   ProviderPreset.dial,
+  ProviderPreset.minimax,
 ];
 
 /// The display name of a provider entry (a [ProviderPreset] or a
