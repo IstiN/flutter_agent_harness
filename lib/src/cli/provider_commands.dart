@@ -473,10 +473,18 @@ extension on AgentCli {
         ? config.customProviders?.find(args[0])
         : null;
     if (saved != null) {
-      await _switchToSavedProvider(saved);
+      try {
+        await _switchToSavedProvider(saved);
+      } on Object catch (error) {
+        io.writeln('provider switch failed: $error');
+      }
       return;
     }
-    await _switchToCatalogProvider(args);
+    try {
+      await _switchToCatalogProvider(args);
+    } on Object catch (error) {
+      io.writeln('provider switch failed: $error');
+    }
   }
 
   /// Dispatches the subcommand forms of `/provider` (custom, openrouter
@@ -1266,103 +1274,121 @@ extension on AgentCli {
     String? token,
     String? tokenKeyName,
   }) async {
-    final modelLine = modelId == _agent.state.model.id
-        ? '  model unchanged: $modelId — use /model to change'
-        : '  model: $modelId';
-    final rolesResolver = config.modelRolesResolver;
-    if (rolesResolver != null) {
-      // Roles mode: pin the default role to the new provider/endpoint (a
-      // single-entry chain for this session), mirroring `/model <id>`.
-      // The key name MUST survive the pin: a typed key is persisted to the
-      // secure store under it; without a token the existing chain entry's /
-      // registry entry's keyName carries over — otherwise the pin silently
-      // drops the scoped key and the next turn reads the (stale) catalog
-      // env name instead ("the provider key reset itself").
-      final preservedName =
-          tokenKeyName ?? _rolesKeyNameFor(spec.name, baseUrl);
-      final pinnedKeyName = token != null
-          ? (preservedName ?? CustomProviderRegistry.keyNameFor(baseUrl))
-          : preservedName;
-      if (token != null) {
-        await _storeProviderToken(spec, baseUrl, token, keyName: pinnedKeyName);
-        rolesResolver.addSecret(pinnedKeyName!, token);
-      }
-      try {
-        rolesResolver.setDefaultChain([
-          ModelRef(
-            provider: spec.name,
-            modelId: modelId,
-            baseUrl: baseUrl,
-            apiKeyName: pinnedKeyName,
-          ),
-        ]);
-        rolesResolver.applyToAgent(_agent);
-      } on ConfigException catch (error) {
-        io.writeln('cannot switch provider: ${error.message}');
+    try {
+      final modelLine = modelId == _agent.state.model.id
+          ? '  model unchanged: $modelId — use /model to change'
+          : '  model: $modelId';
+      final rolesResolver = config.modelRolesResolver;
+      if (rolesResolver != null) {
+        // Roles mode: pin the default role to the new provider/endpoint (a
+        // single-entry chain for this session), mirroring `/model <id>`.
+        // The key name MUST survive the pin: a typed key is persisted to the
+        // secure store under it; without a token the existing chain entry's /
+        // registry entry's keyName carries over — otherwise the pin silently
+        // drops the scoped key and the next turn reads the (stale) catalog
+        // env name instead ("the provider key reset itself").
+        final preservedName =
+            tokenKeyName ?? _rolesKeyNameFor(spec.name, baseUrl);
+        final pinnedKeyName = token != null
+            ? (preservedName ?? CustomProviderRegistry.keyNameFor(baseUrl))
+            : preservedName;
+        if (token != null) {
+          await _storeProviderToken(
+            spec,
+            baseUrl,
+            token,
+            keyName: pinnedKeyName,
+          );
+          rolesResolver.addSecret(pinnedKeyName!, token);
+        }
+        try {
+          rolesResolver.setDefaultChain([
+            ModelRef(
+              provider: spec.name,
+              modelId: modelId,
+              baseUrl: baseUrl,
+              apiKeyName: pinnedKeyName,
+            ),
+          ]);
+          rolesResolver.applyToAgent(_agent);
+        } on ConfigException catch (error) {
+          io.writeln('cannot switch provider: ${error.message}');
+          return;
+        }
+        _streamFunction = _agent.streamFunction;
+        _modelCache = const [];
+        _modelContextWindows = const {};
+        _modelMaxTokens = const {};
+        _lastModelList = null;
+        await _session?.appendModelChange(
+          provider: spec.name,
+          modelId: modelId,
+        );
+        io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
+        io.writeln(modelLine);
+        config.onModelChanged?.call(_agent.state.model);
         return;
       }
-      _streamFunction = _agent.streamFunction;
+      final key = token ?? _providerKeyFor(spec, baseUrl) ?? '';
+      _providerKind = spec.kind;
+      _apiKey = key;
+      _explicitToken = token != null;
+      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      _agent.streamFunction = _streamFunction;
+      final builtModel = buildCatalogModel(
+        spec.name,
+        modelId,
+        baseUrl: baseUrl,
+      );
+      _agent.state.model = Model(
+        id: builtModel.id,
+        name: builtModel.name,
+        api: builtModel.api,
+        provider: builtModel.provider,
+        baseUrl: builtModel.baseUrl,
+        reasoning: builtModel.reasoning,
+        // The catalog default claims ['text', 'image'] for every model of the
+        // provider — the shared heuristic is more accurate per id.
+        input: inputModalitiesFor(modelId),
+        cost: builtModel.cost,
+        contextWindow: builtModel.contextWindow,
+        maxTokens: builtModel.maxTokens,
+        headers: builtModel.headers,
+        compat: builtModel.compat,
+      );
+      // The cached model list belongs to the previous provider/endpoint.
       _modelCache = const [];
       _modelContextWindows = const {};
       _modelMaxTokens = const {};
       _lastModelList = null;
+      unawaited(_refreshModelCache());
       await _session?.appendModelChange(provider: spec.name, modelId: modelId);
-      io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
-      io.writeln(modelLine);
-      config.onModelChanged?.call(_agent.state.model);
-      return;
-    }
-    final key = token ?? _providerKeyFor(spec, baseUrl) ?? '';
-    _providerKind = spec.kind;
-    _apiKey = key;
-    _explicitToken = token != null;
-    _streamFunction = _catalogStreamFunction(spec.kind, key);
-    _agent.streamFunction = _streamFunction;
-    final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);
-    _agent.state.model = Model(
-      id: builtModel.id,
-      name: builtModel.name,
-      api: builtModel.api,
-      provider: builtModel.provider,
-      baseUrl: builtModel.baseUrl,
-      reasoning: builtModel.reasoning,
-      // The catalog default claims ['text', 'image'] for every model of the
-      // provider — the shared heuristic is more accurate per id.
-      input: inputModalitiesFor(modelId),
-      cost: builtModel.cost,
-      contextWindow: builtModel.contextWindow,
-      maxTokens: builtModel.maxTokens,
-      headers: builtModel.headers,
-      compat: builtModel.compat,
-    );
-    // The cached model list belongs to the previous provider/endpoint.
-    _modelCache = const [];
-    _modelContextWindows = const {};
-    _modelMaxTokens = const {};
-    _lastModelList = null;
-    unawaited(_refreshModelCache());
-    await _session?.appendModelChange(provider: spec.name, modelId: modelId);
-    var keyLine = _providerKeyLine(spec, baseUrl, explicit: token != null);
-    if (token != null) {
-      final savedTo = await _storeProviderToken(
-        spec,
-        baseUrl,
-        token,
-        keyName: tokenKeyName,
-      );
-      if (savedTo != null) {
-        final storeName =
-            tokenKeyName ?? CustomProviderRegistry.keyNameFor(baseUrl);
-        keyLine =
-            'key: provided (saved to $savedTo; '
-            'remove with /key delete $storeName)';
+      var keyLine = _providerKeyLine(spec, baseUrl, explicit: token != null);
+      if (token != null) {
+        final savedTo = await _storeProviderToken(
+          spec,
+          baseUrl,
+          token,
+          keyName: tokenKeyName,
+        );
+        if (savedTo != null) {
+          final storeName =
+              tokenKeyName ?? CustomProviderRegistry.keyNameFor(baseUrl);
+          keyLine =
+              'key: provided (saved to $savedTo; '
+              'remove with /key delete $storeName)';
+        }
       }
+      io.writeln('switched provider to ${spec.name} (${spec.api})');
+      io.writeln('  endpoint: $baseUrl');
+      io.writeln('  $keyLine');
+      io.writeln(modelLine);
+      config.onProviderChanged?.call(_providerKind, _apiKey);
+    } on ConfigException catch (error) {
+      io.writeln('cannot switch provider: ${error.message}');
+    } on Object catch (error) {
+      io.writeln('provider switch failed: $error');
     }
-    io.writeln('switched provider to ${spec.name} (${spec.api})');
-    io.writeln('  endpoint: $baseUrl');
-    io.writeln('  $keyLine');
-    io.writeln(modelLine);
-    config.onProviderChanged?.call(_providerKind, _apiKey);
   }
 
   static final _keyNamePattern = RegExp(r'^[A-Za-z0-9_]+$');

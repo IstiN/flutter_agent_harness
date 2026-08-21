@@ -131,6 +131,48 @@ Never _exitWithVersion(String version) {
   exit(0);
 }
 
+/// Writes an uncaught error to `~/.fah/crash.log` and stderr, then exits
+/// non-zero. This is the last-resort handler so users can report what
+/// happened instead of the CLI silently disappearing.
+void _handleUncaughtError(Object error, StackTrace stackTrace) {
+  final message = 'fa crashed: $error';
+  stderr.writeln(message);
+  try {
+    final home =
+        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+    if (home != null && home.isNotEmpty) {
+      final dir = Directory('$home/.fah');
+      dir.createSync(recursive: true);
+      final log = File('${dir.path}/crash.log');
+      final timestamp = DateTime.now().toUtc().toIso8601String();
+      final version = _packageVersion();
+      final buffer = StringBuffer()
+        ..writeln('timestamp: $timestamp')
+        ..writeln('version: $version')
+        ..writeln('error: $error')
+        ..writeln('stack:')
+        ..writeln(stackTrace);
+      log.writeAsStringSync('$buffer\n', mode: FileMode.append);
+      stderr.writeln('details appended to ${log.path}');
+    }
+  } on Object catch (e) {
+    stderr.writeln('could not write crash log: $e');
+  }
+  stderr.writeln('Run with --help for usage.');
+  exit(1);
+}
+
+Future<void> main(List<String> args) async {
+  await runZoned(
+    () => _runApp(args),
+    zoneSpecification: ZoneSpecification(
+      handleUncaughtError: (self, parent, zone, error, stackTrace) {
+        _handleUncaughtError(error, stackTrace);
+      },
+    ),
+  );
+}
+
 Model _buildModel(CliArgs args) {
   return buildCliDefaultModel(
     args.provider,
@@ -605,7 +647,7 @@ String? _serveFlagStr(List<String> args, String flag) {
   return args[idx + 1];
 }
 
-Future<void> main(List<String> args) async {
+Future<void> _runApp(List<String> args) async {
   final packageVersion = _packageVersion();
   _applyProviderFilterEnv();
 
