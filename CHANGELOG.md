@@ -1145,4 +1145,13 @@
   shared filesystem), so `bash background: true` + steer-yield work in the
   sandbox too
 
+## 0.1.191
+
+- feat(cli): add auth-method picker for CodeMie SSO/JWT and OpenRouter OAuth/key
+- feat(cli): auto-restart CodeMie SSO when the saved cookie expired
+- fix(cli): catch uncaught errors and harden provider switch against crashes
+- fix(ui): make ChatComposer transparent and regenerate goldens
+- fix(network): use platform HTTP client for sandbox env, allow local HTTP, log bookmark failures
+- fix(macos): add app-scope bookmark entitlement and surface folder picker errors
+
 ## Unreleased
