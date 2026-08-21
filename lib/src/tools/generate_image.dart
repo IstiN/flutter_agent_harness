@@ -267,7 +267,7 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
   try {
     for (final dialect in imageGenerationDialects) {
       if (dialect.matches(endpoint)) {
-        return dialect.generate(
+        return await dialect.generate(
           env: env,
           endpoint: endpoint,
           prompt: prompt,

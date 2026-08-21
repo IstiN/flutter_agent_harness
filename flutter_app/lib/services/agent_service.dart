@@ -2280,7 +2280,7 @@ class AgentService extends ChangeNotifier
         mainStream: _agent.streamFunction,
         mainModel: _agent.state.model,
       ),
-      hooks: _AutoCompactorFlutterHooks(this),
+      hooks: const _AutoCompactorFlutterHooks(),
       prompts: const CompactionPrompts(),
     ).run();
 
@@ -2299,9 +2299,7 @@ class AgentService extends ChangeNotifier
 /// hooks only need to drive per-pass UX (silent here — chat doesn't
 /// surface each pass).
 class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
-  _AutoCompactorFlutterHooks(this._service);
-
-  final AgentService _service;
+  const _AutoCompactorFlutterHooks();
 
   @override
   void onPass(AutoCompactorPass pass) {}
