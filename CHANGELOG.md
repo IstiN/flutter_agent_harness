@@ -1154,4 +1154,8 @@
 - fix(network): use platform HTTP client for sandbox env, allow local HTTP, log bookmark failures
 - fix(macos): add app-scope bookmark entitlement and surface folder picker errors
 
+## 0.1.194
+
+- fix(ci): merge Release.entitlements into the signed macOS build, don't strip them
+
 ## Unreleased
