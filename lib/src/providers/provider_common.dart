@@ -492,6 +492,14 @@ final class ProviderTimeoutsOverride {
 /// Null keeps [providerConnectTimeout]/[providerStreamIdleTimeout].
 ProviderTimeoutsOverride? providerTimeoutsOverride;
 
+/// Optional HTTP-client factory for platform-specific networking.
+///
+/// Hosts can inject this to use a native stack (e.g. `CupertinoClient` on
+/// iOS/macOS) instead of the default `dart:io` [HttpClient]. The factory is
+/// read every time [sharedProviderHttpClient] is called so it can be set
+/// once at app startup before any provider request runs.
+http.Client Function()? providerHttpClientFactory;
+
 http.Client? _sharedProviderClient;
 
 /// The shared keep-alive HTTP client for provider streams.
@@ -502,8 +510,11 @@ http.Client? _sharedProviderClient;
 /// stalls into the watchdog (kimi-cli/pi reuse one client for exactly this
 /// reason). The shared client is never closed per call — an aborted stream
 /// closes only its own response subscription.
-http.Client sharedProviderHttpClient() =>
-    _sharedProviderClient ??= http.Client();
+///
+/// If [providerHttpClientFactory] is set, its product is used and cached
+/// instead of the default [http.Client].
+http.Client sharedProviderHttpClient() => _sharedProviderClient ??=
+    (providerHttpClientFactory?.call() ?? http.Client());
 
 /// The effective connect watchdog: the config override or the default.
 Duration get effectiveProviderConnectTimeout =>

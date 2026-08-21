@@ -58,11 +58,16 @@ import 'package:fa/sandbox/wasm_setup_stub.dart'
 import 'package:fa/services/openrouter_oauth_links_stub.dart'
     if (dart.library.io) 'package:fa/services/openrouter_oauth_links_io.dart'
     if (dart.library.html) 'package:fa/services/openrouter_oauth_links_web.dart';
+import 'package:fa/services/platform_http_client.dart';
 
 import 'package:fa/firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Use NSURLSession on iOS/macOS instead of dart:io HttpClient; this fixes
+  // "Failed host lookup" failures on networks where the system resolver is
+  // required (DNS-over-HTTPS, content filters, per-app VPNs).
+  providerHttpClientFactory = createPlatformHttpClient;
   // The inter-agent inbox watcher (opt-in: never in tests).
   AgentService.enableInboxWatcher = true;
   // Tee debug output into the in-app log (settings → copy debug logs); the

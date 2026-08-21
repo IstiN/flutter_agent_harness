@@ -47,6 +47,7 @@ dependencies:
   flutter_markdown: ^0.7.7+1
   re_highlight: ^0.0.3
   http: ^1.6.0
+  cupertino_http: ^2.0.2
   uuid: ^4.6.0
   flutter_chat_core: ^2.9.0
   yaml: ^3.1.3

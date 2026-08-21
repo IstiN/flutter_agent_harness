@@ -1394,9 +1394,7 @@ class _P2State extends State<_P2> {
       debugPrint('[onboarding] provider flow failed: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not open the provider setup. Try again.'),
-          ),
+          SnackBar(content: Text('Could not open the provider setup: $e')),
         );
       }
     } finally {
