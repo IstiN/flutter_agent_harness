@@ -563,12 +563,16 @@ final class _LocalShellJob implements ShellJob {
     Duration? timeout,
     CancelToken? token,
   }) : _process = process {
-    _stdoutSub = process.stdout
+    // Collect stdout/stderr into the log file; await the stream futures so
+    // every byte is flushed before we mark the job settled.
+    final stdoutDone = process.stdout
         .transform(utf8.decoder)
-        .listen(_logSink.write, onError: (_) {});
-    _stderrSub = process.stderr
+        .forEach(_logSink.write)
+        .catchError((_) {});
+    final stderrDone = process.stderr
         .transform(utf8.decoder)
-        .listen(_logSink.write, onError: (_) {});
+        .forEach(_logSink.write)
+        .catchError((_) {});
     if (timeout != null) {
       _timer = Timer(timeout, () {
         _stopReason = 'timeout';
@@ -583,8 +587,7 @@ final class _LocalShellJob implements ShellJob {
       _process.exitCode.then((code) async {
         _exitCode = code;
         _timer?.cancel();
-        await _stdoutSub.cancel();
-        await _stderrSub.cancel();
+        await Future.wait([stdoutDone, stderrDone]);
         await _logSink.flush();
         await _logSink.close();
         _settled.complete();
@@ -594,8 +597,6 @@ final class _LocalShellJob implements ShellJob {
 
   final Process _process;
   final IOSink _logSink;
-  late final StreamSubscription<void> _stdoutSub;
-  late final StreamSubscription<void> _stderrSub;
   Timer? _timer;
   final _settled = Completer<void>();
   int? _exitCode;
