@@ -10,9 +10,7 @@ import 'dart:ui' as ui;
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart'
-    show HardwareKeyboard, KeyDownEvent, KeyEvent, LogicalKeyboardKey;
-import 'package:flutter_agent_harness/flutter_agent_harness.dart' hide KeyEvent;
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_map/flutter_map.dart' show TileProvider;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
@@ -472,82 +470,6 @@ class _JsAppViewState extends State<JsAppView> {
     unawaited(engine.callEvent('back'));
   }
 
-  /// Every hardware key event the host sees while this view is on top is
-  /// streamed into the JS app as the reserved 'key' action
-  /// ({ key, modifiers, kind: 'down'|'up' }). The widget subscribes via
-  /// `jsr.onKey(fn)` — used for app-level shortcuts (arrow-key 2048
-  /// moves, WASD movement, Cmd+K palettes). Text fields inside the app
-  /// still receive their own keys because we ignore the event after
-  /// dispatching, letting the standard focus chain continue.
-  KeyEventResult _onAppKeyEvent(FocusNode node, KeyEvent event) {
-    final engine = _engine;
-    if (engine == null) return KeyEventResult.ignored;
-    final key = event.logicalKey;
-    final keyName = _logicalKeyName(key);
-    if (keyName == null) return KeyEventResult.ignored;
-    final kind = event is KeyDownEvent ? 'down' : 'up';
-    final payload = <String, dynamic>{
-      'key': keyName,
-      'kind': kind,
-      'modifiers': _modifierFlags(),
-    };
-    unawaited(engine.callEvent('key', payload));
-    return KeyEventResult.ignored;
-  }
-
-  /// Map a [LogicalKeyboardKey] to the JS-facing name — mirrors the keys
-  /// the host can actually deliver: printable characters, named special
-  /// keys (ArrowUp, Enter, Backspace, Escape, Tab, Space) and a few common
-  /// function keys. Unmapped keys return null so the focus chain handles
-  /// them natively (text editing, accessibility shortcuts).
-  static String? _logicalKeyName(LogicalKeyboardKey key) {
-    final named = <LogicalKeyboardKey, String>{
-      LogicalKeyboardKey.arrowUp: 'ArrowUp',
-      LogicalKeyboardKey.arrowDown: 'ArrowDown',
-      LogicalKeyboardKey.arrowLeft: 'ArrowLeft',
-      LogicalKeyboardKey.arrowRight: 'ArrowRight',
-      LogicalKeyboardKey.enter: 'Enter',
-      LogicalKeyboardKey.numpadEnter: 'Enter',
-      LogicalKeyboardKey.escape: 'Escape',
-      LogicalKeyboardKey.tab: 'Tab',
-      LogicalKeyboardKey.backspace: 'Backspace',
-      LogicalKeyboardKey.delete: 'Delete',
-      LogicalKeyboardKey.home: 'Home',
-      LogicalKeyboardKey.end: 'End',
-      LogicalKeyboardKey.pageUp: 'PageUp',
-      LogicalKeyboardKey.pageDown: 'PageDown',
-      LogicalKeyboardKey.space: 'Space',
-      LogicalKeyboardKey.f1: 'F1',
-      LogicalKeyboardKey.f2: 'F2',
-      LogicalKeyboardKey.f3: 'F3',
-      LogicalKeyboardKey.f4: 'F4',
-      LogicalKeyboardKey.f5: 'F5',
-      LogicalKeyboardKey.f6: 'F6',
-      LogicalKeyboardKey.f7: 'F7',
-      LogicalKeyboardKey.f8: 'F8',
-      LogicalKeyboardKey.f9: 'F9',
-      LogicalKeyboardKey.f10: 'F10',
-      LogicalKeyboardKey.f11: 'F11',
-      LogicalKeyboardKey.f12: 'F12',
-    };
-    final namedHit = named[key];
-    if (namedHit != null) return namedHit;
-    final char = key.keyLabel;
-    if (char.isEmpty || char.length > 1) return null;
-    return char;
-  }
-
-  /// Synthesize a `ctrl/meta/alt/shift` flag bag from the hardware-keyboard
-  /// modifier state. Widget reads it as `payload.modifiers.ctrl` etc.
-  static Map<String, bool> _modifierFlags() {
-    return <String, bool>{
-      'ctrl': HardwareKeyboard.instance.isControlPressed,
-      'meta': HardwareKeyboard.instance.isMetaPressed,
-      'alt': HardwareKeyboard.instance.isAltPressed,
-      'shift': HardwareKeyboard.instance.isShiftPressed,
-    };
-  }
-
   /// The JS app declined to consume a back event — close the app. Uses
   /// [Navigator.pop], not maybePop: with canPop false maybePop would just
   /// re-enter the back flow it came from.
@@ -571,134 +493,130 @@ class _JsAppViewState extends State<JsAppView> {
           onPopInvokedWithResult: (didPop, _) {
             if (!didPop) _forwardBackToApp();
           },
-          // App-level keyboard capture. Autofocus: the JS app owns the
-          // screen and is the natural focus owner — pressing an arrow key
-          // should move the in-app cursor (or 2048 tile) without the user
-          // first having to tap anywhere. We return `ignored` after
-          // dispatching the event so the focus chain keeps delivering
-          // text editing to whatever widget is focused inside the engine.
-          child: Focus(
-            autofocus: true,
-            onKeyEvent: _onAppKeyEvent,
-            child: Scaffold(
-              appBar: fullChrome
-                  ? null
-                  : AppBar(
-                      title: Row(
-                        children: [
-                          AppIcon(app: widget.app, env: widget.env, size: 24),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              widget.app.name,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+          child: Scaffold(
+            appBar: fullChrome
+                ? null
+                : AppBar(
+                    title: Row(
+                      children: [
+                        AppIcon(app: widget.app, env: widget.env, size: 24),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            widget.app.name,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        ],
-                      ),
-                      actions: [
-                        IconButton(
-                          icon: const Icon(Icons.shield_outlined),
-                          tooltip: context.l10n.appsPermissionsTooltip,
-                          onPressed: _openPermissions,
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.refresh),
-                          tooltip: context.l10n.appsReloadTooltip,
-                          onPressed: () {
-                            AppAnalytics.instance.jsAppReloaded();
-                            unawaited(_restart());
-                          },
                         ),
                       ],
                     ),
-              body: Stack(
-                children: [
-                  Positioned.fill(
-                    child: RepaintBoundary(
-                      key: _boundaryKey,
-                      child: ColoredBox(
-                        color: theme.scaffoldBackgroundColor,
-                        // Chrome apps (with the AppBar) keep their content
-                        // above the home indicator — HUD rows at the very
-                        // bottom must not clip into it. Full-chrome apps (map)
-                        // stay edge-to-edge at the bottom but drop below the
-                        // status bar: they draw their own opaque header, and
-                        // edge-to-edge top slid it under the system tray.
-                        child: fullChrome
-                            ? SafeArea(bottom: false, child: _buildBody(theme))
-                            : SafeArea(top: false, child: _buildBody(theme)),
+                    actions: [
+                      IconButton(
+                        icon: const Icon(Icons.shield_outlined),
+                        tooltip: context.l10n.appsPermissionsTooltip,
+                        onPressed: _openPermissions,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.refresh),
+                        tooltip: context.l10n.appsReloadTooltip,
+                        onPressed: () {
+                          AppAnalytics.instance.jsAppReloaded();
+                          unawaited(_restart());
+                        },
+                      ),
+                    ],
+                  ),
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    key: _boundaryKey,
+                    child: ColoredBox(
+                      color: theme.scaffoldBackgroundColor,
+                      // Chrome apps (with the AppBar) keep their content
+                      // above the home indicator — HUD rows at the very
+                      // bottom must not clip into it. Full-chrome apps (map)
+                      // stay edge-to-edge at the bottom but drop below the
+                      // status bar: they draw their own opaque header, and
+                      // edge-to-edge top slid it under the system tray.
+                      child: fullChrome
+                          ? SafeArea(
+                              bottom: false,
+                              child: _keyboardWrappedBody(theme),
+                            )
+                          : SafeArea(
+                              top: false,
+                              child: _keyboardWrappedBody(theme),
+                            ),
+                    ),
+                  ),
+                ),
+                // Full chrome has no AppBar — permissions/reload live in a small
+                // floating menu so immersive apps (maps) keep the whole canvas.
+                if (fullChrome)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: _chromeMenu(theme),
                       ),
                     ),
                   ),
-                  // Full chrome has no AppBar — permissions/reload live in a small
-                  // floating menu so immersive apps (maps) keep the whole canvas.
-                  if (fullChrome)
+                if (widget.onSendToAgent != null) ...[
+                  if (!_faChatExpanded)
                     Positioned(
-                      top: 0,
-                      right: 0,
-                      child: SafeArea(
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: _chromeMenu(theme),
-                        ),
+                      right: 16,
+                      bottom: 16,
+                      child: FloatingActionButton.small(
+                        heroTag: 'fa-${widget.app.id}',
+                        tooltip: context.l10n.appsAskFaTooltip,
+                        onPressed: _openFaSheet,
+                        child: const FaMark(size: 18),
                       ),
                     ),
-                  if (widget.onSendToAgent != null) ...[
+                  if (_agentService != null) ...[
                     if (!_faChatExpanded)
                       Positioned(
-                        right: 16,
-                        bottom: 16,
-                        child: FloatingActionButton.small(
-                          heroTag: 'fa-${widget.app.id}',
-                          tooltip: context.l10n.appsAskFaTooltip,
-                          onPressed: _openFaSheet,
-                          child: const FaMark(size: 18),
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: FaWorkBar(
+                          service: _agentService!,
+                          onSend: _sendFaMessage,
+                          onExpand: () =>
+                              setState(() => _faChatExpanded = true),
                         ),
                       ),
-                    if (_agentService != null) ...[
-                      if (!_faChatExpanded)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: FaWorkBar(
-                            service: _agentService!,
-                            onSend: _sendFaMessage,
-                            onExpand: () =>
-                                setState(() => _faChatExpanded = true),
-                          ),
+                    if (!_faChatExpanded && _faReply != null)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: FaReplySheet(
+                          service: _agentService!,
+                          reply: _faReply!,
+                          onExpand: () =>
+                              setState(() => _faChatExpanded = true),
+                          onDismiss: _dismissFaReply,
                         ),
-                      if (!_faChatExpanded && _faReply != null)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: FaReplySheet(
-                            service: _agentService!,
-                            reply: _faReply!,
-                            onExpand: () =>
-                                setState(() => _faChatExpanded = true),
-                            onDismiss: _dismissFaReply,
-                          ),
+                      ),
+                    if (_faChatExpanded)
+                      Positioned.fill(
+                        child: FaChatOverlay(
+                          service: _agentService!,
+                          onSend: _sendFaMessage,
+                          onCollapse: () =>
+                              setState(() => _faChatExpanded = false),
+                          // Expand-to-full-chat always leaves the app (an
+                          // explicit tap, not a back gesture) — pop directly,
+                          // bypassing canPop.
+                          onOpenFullChat: () => Navigator.of(context).pop(),
                         ),
-                      if (_faChatExpanded)
-                        Positioned.fill(
-                          child: FaChatOverlay(
-                            service: _agentService!,
-                            onSend: _sendFaMessage,
-                            onCollapse: () =>
-                                setState(() => _faChatExpanded = false),
-                            // Expand-to-full-chat always leaves the app (an
-                            // explicit tap, not a back gesture) — pop directly,
-                            // bypassing canPop.
-                            onOpenFullChat: () => Navigator.of(context).pop(),
-                          ),
-                        ),
-                    ],
+                      ),
                   ],
                 ],
-              ),
+              ],
             ),
           ),
         );
@@ -769,6 +687,25 @@ class _JsAppViewState extends State<JsAppView> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Wraps the app body in the runtime's [JsKeyboardCapture] when an engine
+  /// is running: every hardware key becomes a `jsr.onKey` payload
+  /// (`{key, code, down, repeat}`) delivered via
+  /// `engine.dispatchHostEvent('key', ...)`. The capture yields to editable
+  /// text fields automatically, and claims keyboard focus on first tap so
+  /// embedded hosts (boards, panels) also receive keys.
+  ///
+  /// Falls back to the raw body before the engine starts or when the app
+  /// errors out — no engine, no listener.
+  Widget _keyboardWrappedBody(ThemeData theme) {
+    final body = _buildBody(theme);
+    final engine = _engine;
+    if (engine == null) return body;
+    return JsKeyboardCapture(
+      onEvent: (payload) => engine.dispatchHostEvent('key', payload),
+      child: body,
     );
   }
 
@@ -1072,7 +1009,6 @@ class _FaMessageSheetState extends State<_FaMessageSheet> {
 /// Per-app permission toggles; writes overrides to [AppPermissionsStore].
 class AppPermissionsDialog extends StatefulWidget {
   const AppPermissionsDialog({
-    super.key,
     required this.app,
     required this.env,
     required this.store,
