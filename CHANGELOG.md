@@ -1064,7 +1064,8 @@
 
 - refactor(ui): sane Settings structure — providers include on-device, one Models group
 
-## Unreleased
+## 0.1.188
+
 
 - feat(app): js_widget_runtime back on hosted pub (`^0.4.79`, the git pin
   dropped) — JS apps gain the Material 3 catalog: appBar/navigationBar/
@@ -1143,3 +1144,5 @@
   Futures on job-local interpreter clones (own cwd/vars/output capture,
   shared filesystem), so `bash background: true` + steer-yield work in the
   sandbox too
+
+## Unreleased
