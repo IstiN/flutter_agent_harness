@@ -297,7 +297,10 @@ void main() {
       () => io.out.toString().contains('media imageGeneration — provider'),
     );
     await waitForIt(() => io.out.toString().contains('1) my-ollama'));
-    io.sendLine('3'); // openai (after the saved entry and openrouter)
+    // Catalog order is openrouter, kimi, openai, ... — openai is #4 after
+    // the saved entry.
+    await waitForIt(() => io.out.toString().contains('4) openai'));
+    io.sendLine('4'); // openai
     await waitForIt(
       () => io.out.toString().contains("model id (empty keeps 'test-model')"),
     );

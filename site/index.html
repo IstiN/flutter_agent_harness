@@ -145,7 +145,7 @@
       "@type": "HowToStep",
       "position": 1,
       "name": "Run the installer",
-      "text": "macOS / Linux / WSL: curl -fsSL \"https://fa1.dev/install.sh\" | sh — Windows PowerShell: irm \"https://fa1.dev/install.ps1\" | iex. The non-interactive installer checks the Dart SDK, activates the pub.dev package, and puts fa/fah on your PATH."
+      "text": "macOS / Linux / WSL: curl -fsSL \"https://fa1.dev/install.sh\" | sh — Windows PowerShell: irm \"https://fa1.dev/install.ps1\" | iex. The non-interactive installer downloads a prebuilt binary from GitHub Releases, installs fa/fah to a directory on your PATH, and—on macOS—removes Gatekeeper quarantine and re-signs the binary ad-hoc."
     },
     {
       "@type": "HowToStep",
@@ -274,10 +274,13 @@
     <h2>Get the CLI.</h2>
     <p class="section-lede">
       Fa runs in your terminal on macOS, Windows, and Linux. The installer is
-      non-interactive: it checks for the Dart SDK, activates the package from
-      <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>,
-      adds the pub cache to your PATH, and exits. Run the separate setup wizard
-      afterward to configure your provider, model, and API key.
+      non-interactive: it detects your OS and architecture, downloads a
+      prebuilt binary from the latest
+      <a href="https://github.com/IstiN/flutter_agent_harness/releases/latest" rel="noopener">GitHub Release</a>,
+      puts it on your PATH, and exits. On macOS it also strips Gatekeeper
+      quarantine and re-signs the binary ad-hoc so it runs without a manual
+      security override. Run the separate setup wizard afterward to configure
+      your provider, model, and API key.
     </p>
     <div class="install-picker">
       <label class="install-label" for="install-method">Install method</label>
@@ -530,11 +533,12 @@ flutter run</pre>
       <details class="faq-item" id="faq-cli">
         <summary>How do I install the CLI?</summary>
         <p>One line: <code>curl -fsSL "https://fa1.dev/install.sh" | sh</code>
-        (macOS / Linux / WSL) or the PowerShell equivalent on Windows, then
-        run the setup wizard to pick a provider and key. Alternatively
+        (macOS / Linux / WSL) or the PowerShell equivalent on Windows. The
+        installer downloads a prebuilt binary from GitHub Releases and, on
+        macOS, removes Gatekeeper quarantine and re-signs it ad-hoc. Then run
+        the setup wizard to pick a provider and key. You can also install via
         <code>dart pub global activate flutter_agent_harness</code> from
-        pub.dev. Both give you the <code>fa</code> and <code>fah</code>
-        commands.</p>
+        pub.dev if you already have the Dart SDK.</p>
       </details>
     </div>
   </section>

@@ -308,4 +308,73 @@ extension on AgentCli {
       keyName ?? '',
     );
   }
+
+  /// Restores CodeMie SSO cookie auth on startup when the saved
+  /// provider/model/baseUrl triple points at a CodeMie custom provider.
+  /// Without this, the stored cookie is sent as `Authorization: Bearer`,
+  /// which CodeMie rejects with a 302 redirect to the SSO portal.
+  ///
+  /// If the cookie is expired, SSO is restarted immediately instead of
+  /// waiting for the first request to fail with a 302.
+  void _restoreCodeMieCookieAuthIfNeeded() {
+    final registry = config.customProviders;
+    if (registry == null) return;
+    final model = _agent.state.model;
+    final entry = registry.entries
+        .where(
+          (e) =>
+              e.baseUrl == model.baseUrl &&
+              e.authMethod == CustomProviderAuthMethod.sso,
+        )
+        .firstOrNull;
+    if (entry == null) return;
+    // The cookie lives in the secure store under the saved entry's keyName.
+    // Do NOT trust config.apiKey here: if the user has OPENAI_API_KEY (or
+    // another catalog env var) set, config.apiKey would be that key, and
+    // sending it as a Cookie: header would still get a 302 from CodeMie.
+    final keyName = entry.keyName;
+    String? cookie;
+    if (keyName != null) {
+      cookie = config.secureKeys?.read(keyName);
+    }
+    // Back-compat for tests/old entries that have no keyName: accept the
+    // apiKey only when it looks like a cookie (k=v[;...]), not a raw API key.
+    if (cookie == null || cookie.isEmpty) {
+      final fallback = config.apiKey;
+      if (fallback.contains('=') || fallback.contains(';')) {
+        cookie = fallback;
+      }
+    }
+    if (cookie == null || cookie.isEmpty) return;
+
+    if (codeMieCookieExpired(cookie)) {
+      final orgUrl = codeMieOrgUrl(entry.baseUrl);
+      io.writeln(
+        _style.yellow(
+          'CodeMie session expired — opening browser to re-authorize $orgUrl...',
+        ),
+      );
+      unawaited(_handleCodeMieSsoCommand(orgUrl));
+      return;
+    }
+
+    _apiKey = cookie;
+    _explicitToken = true;
+    _streamFunction = _catalogStreamFunction(entry.spec.kind, '');
+    _agent.streamFunction = _streamFunction;
+    _agent.state.model = Model(
+      id: model.id,
+      name: model.name,
+      api: model.api,
+      provider: model.provider,
+      baseUrl: model.baseUrl,
+      reasoning: model.reasoning,
+      input: model.input,
+      cost: model.cost,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+      headers: {'cookie': cookie},
+      compat: model.compat,
+    );
+  }
 } // extension on AgentCli

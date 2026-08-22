@@ -50,10 +50,12 @@ void main() {
       'Exit codes: 0 ok',
       // Providers and keys.
       'openai-completions',
+      'kimi',
       'anthropic',
       'google',
       'dial',
       'OPENROUTER_API_KEY',
+      'MOONSHOT_API_KEY',
       'OPENAI_API_KEY',
       'ANTHROPIC_API_KEY',
       'GOOGLE_API_KEY',

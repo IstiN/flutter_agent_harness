@@ -350,6 +350,7 @@ extension on AgentCli {
     if (_startChatGptOAuthArg(args)) return true;
     if (_startCodeMieArg(args)) return true;
     if (_startDialSetupArg(args)) return true;
+    if (_startKimiArg(args)) return true;
     return false;
   }
 
@@ -365,6 +366,21 @@ extension on AgentCli {
       return true;
     }
     unawaited(_startDialProviderSetup());
+    return true;
+  }
+
+  /// The `/provider kimi` branch: switches to the catalog Kimi provider
+  /// (Moonshot API). A saved custom provider named `kimi` from older builds
+  /// is intentionally bypassed — the catalog entry has the correct endpoint
+  /// and env-key name.
+  bool _startKimiArg(List<String> args) {
+    if (args.first != 'kimi') return false;
+    if (args.length > 2) {
+      io.writeln('usage: /provider kimi [baseUrl]');
+      return true;
+    }
+    final baseUrl = args.length == 2 ? args[1] : null;
+    unawaited(_handleKimiCommand(baseUrl: baseUrl));
     return true;
   }
 
@@ -1771,8 +1787,28 @@ extension on AgentCli {
     _modelCacheFuture = completer.future;
     try {
       await _fetchAllSavedProviderModels();
-      // Always include the active provider's fallback list.
+      // Also fetch the active catalog provider's live /models list (e.g.
+      // OpenRouter) so the model picker is never empty just because the user
+      // hasn't saved the provider as a custom entry.
       final activeProvider = _agent.state.model.provider;
+      final activeSpec = catalogProvider(activeProvider);
+      if (activeSpec != null &&
+          !_allProvidersModelCache.containsKey(activeProvider)) {
+        try {
+          final ids = await _fetchProviderModelIds(
+            activeSpec.name,
+            _agent.state.model.baseUrl,
+            _apiKey,
+          );
+          _allProvidersModelCache[activeProvider] = ids.isEmpty
+              ? (_knownModels[activeProvider] ?? [_agent.state.model.id])
+              : ids;
+        } on Object {
+          _allProvidersModelCache[activeProvider] =
+              _knownModels[activeProvider] ?? [_agent.state.model.id];
+        }
+      }
+      // Always include the active provider's fallback list.
       if (!_allProvidersModelCache.containsKey(activeProvider)) {
         _allProvidersModelCache[activeProvider] =
             _knownModels[activeProvider] ?? [_agent.state.model.id];
@@ -1839,12 +1875,16 @@ extension on AgentCli {
 
   /// Returns cross-provider model candidates as `(providerName, modelId)`
   /// pairs, optionally filtered by a lowercase substring match on either
-  /// the provider name or the model id.
+  /// the provider name or the model id. The active provider is always
+  /// included, even when the registry has other saved providers.
   List<(String, String)> _crossProviderCandidates([String filter = '']) {
     final registryEntries = _collectRegistryCandidates();
-    final entries = registryEntries.isEmpty
-        ? _activeProviderFallback()
-        : registryEntries;
+    final activeEntries = _activeProviderFallback();
+    final seen = <String>{};
+    final entries = <(String, String)>[
+      for (final e in [...registryEntries, ...activeEntries])
+        if (seen.add('${e.$1}|${e.$2}')) e,
+    ];
     return _filterCandidates(entries, filter);
   }
 
@@ -2472,6 +2512,7 @@ const _knownModels = <String, List<String>>{
     'anthropic/claude-opus-4',
     'openai/gpt-4.1-mini',
   ],
+  'kimi': ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'],
   'anthropic': ['claude-sonnet-4-5', 'claude-opus-4', 'claude-haiku-4'],
   'google': ['gemini-2.5-pro', 'gemini-2.0-flash'],
   'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],

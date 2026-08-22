@@ -67,7 +67,8 @@ OPTIONS
                                inspect_image, transcribe_audio
   --prompt-template-dir <path> Add a prompt template directory (repeatable)
   --cwd <dir>                  Working directory (default: current directory)
-  --session-root <dir>         Session storage root (default: ~/.fah/sessions)
+  --session-root <dir>         Session storage root (default: ~/.fah/sessions;
+                               macOS: ~/Library/Group Containers/group.dev.fa1.shared/fa/sessions)
   --session <name>             Resume or create a named session for this cwd
   --help, -h                   Show this help
   --version                    Print the version
@@ -104,7 +105,8 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
   LM Studio) need none, and no Authorization header is sent without one.
 
   In the REPL, /provider [name] [baseUrl] [token] switches the provider and
-  endpoint live (openrouter, openai, anthropic, google, or a saved custom
+  endpoint live (openrouter, kimi, openai, anthropic, google, codemie, dial,
+  minimax, or a saved custom
   provider by name): without a token the key resolves per below; an explicit
   token is persisted in the OS secure store when one is available — under an
   endpoint-scoped name (FA_KEY_<HOST>, the same scheme custom providers
@@ -246,7 +248,8 @@ APPROVALS
 
 SESSIONS AND COMPACTION
   Every run (REPL or headless) appends to a JSONL session under the session
-  root (--session-root, default ~/.fah/sessions), laid out per working
+  root (--session-root, default ~/.fah/sessions; macOS: ~/Library/Group
+  Containers/group.dev.fa1.shared/fa/sessions), laid out per working
   directory. Start with --session <name> or use /session, /session-new,
   /rename-session, and /sessions to manage named sessions. /reset starts a
   fresh session; /stats shows token/cost totals.
@@ -305,16 +308,31 @@ REPL COMMANDS
   /stats             show token and cost totals
   /tasks [cancel <id>] list (or cancel) background agents and shell jobs
   /skills            list discovered skills; /skill:<name> [args] invokes one
-  /agents             list available agent types (built-in + .fah/agents/*.md)
+                     (a bare /<name> works too); /skills reload re-scans,
+                     /skills access [ask|granted|denied] manages third-party
+                     consent, /skills import copies third-party skills into
+                     .fah/skills
+  /agents             list available agent types (built-in + discovered from
+                      .fah/.agents/.claude/.github/.codex agents dirs)
 
 SKILLS AND CONTEXT FILES
   Skills are SKILL.md files with YAML frontmatter (name, description),
   discovered from .fah/skills and .agents/skills under the project and the
-  home directory (project wins name clashes). Only metadata enters the
-  system prompt — the agent loads the body with the read tool when the
-  task matches (progressive disclosure). AGENTS.md, CLAUDE.md, GOAL.md and
-  DESIGN.md found from the working directory up to the git root (plus
-  ~/.fah/AGENTS.md) are merged into the system prompt, closest last, with
+  home directory (project wins name clashes). Claude Code (.claude/skills,
+  .claude/commands), GitHub Copilot (.github/skills) and OpenAI Codex
+  (.codex/skills) skills — plus their agent types (.claude/agents,
+  .github/agents/*.agent.md, .codex/agents) — are picked up too once you
+  grant access (startup dialog or /skills access; skills: section in
+  ~/.fah/config.yaml). The / menu and /help list skills alongside commands —
+  picking one fills the input with /skill:<name> ready for args. Invocation
+  renders \$ARGUMENTS/\$N/\${CLAUDE_*}
+  substitutions and !`cmd` shell injections, honors allowed-tools as
+  per-turn approval grants, and context: fork runs the skill as a subagent.
+  Only metadata enters the system prompt — the agent loads the body with
+  the read tool when the task matches (progressive disclosure). AGENTS.md,
+  CLAUDE.md, GEMINI.md, GOAL.md and DESIGN.md found from the working
+  directory up to the git root (plus ~/.fah/AGENTS.md and GitHub Copilot
+  instruction files) are merged into the system prompt, closest last, with
   a 32 KiB leaf-first budget.
   /model [id|?|N]    show model/roles, pick from known models, or switch
                      (a models.custom definition name switches provider,
@@ -335,12 +353,14 @@ SKILLS AND CONTEXT FILES
                      via roles yaml contextWindow:/maxTokens:)
   /provider [name] [baseUrl] [token] | custom | openrouter oauth [headless]
                      | chatgpt oauth [headless] | codemie sso [orgUrl]
-                     | dial setup
+                     | dial setup | kimi
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
                      a guided setup that saves the provider (api type, url,
                      key, model); openrouter oauth authenticates via OpenRouter
                      PKCE and stores the resulting key in the secure store;
+                     kimi switches to the Moonshot/Kimi OpenAI-compatible
+                     endpoint (api.moonshot.cn/v1, key: MOONSHOT_API_KEY);
                      chatgpt oauth signs in with a ChatGPT account (Codex
                      backend) and stores the OAuth credentials blob as
                      CHATGPT_OAUTH_CREDENTIALS — access tokens refresh
@@ -355,7 +375,7 @@ SKILLS AND CONTEXT FILES
   /mode [name]       show or switch the active mode
   /session [name]    show current or switch/create a named session
   /session-new <n>   create a new named session
-  /sessions          list named sessions for the current directory
+  /sessions          list all sessions across workspaces
   /resume            switch to the most recent session
   /rename-session <n> rename the current session
   /approval [mode]   show or set tool approval (always-ask|write|yolo)
@@ -391,7 +411,8 @@ CONFIGURATION FILES
   .fah/rules.yaml      project TTSR stream rules
   .fah/lsp.json        project LSP server map
   .fah/prompts/        project prompt templates (~/.fah/prompts/ for user)
-  ~/.fah/sessions/     session storage root
+  ~/.fah/sessions/     session storage root (Linux/Windows)
+  ~/Library/Group Containers/group.dev.fa1.shared/fa/sessions/  session storage root (macOS)
 ''';
 
 /// The build-time provider filter note (empty without `FA_PROVIDERS`).

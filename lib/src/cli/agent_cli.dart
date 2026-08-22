@@ -35,6 +35,7 @@ import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
 import '../task/subagent_tools.dart';
 import '../skills/skills.dart';
+import '../skills/skill_renderer.dart';
 import '../prompts/project_context.dart';
 import '../prompts/prompts.g.dart' show cliMessagingSectionPrompt;
 import '../approval/approval.dart';
@@ -43,6 +44,7 @@ import '../cancel_token.dart';
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
+import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
 import '../exceptions.dart';
@@ -57,6 +59,8 @@ import '../providers/codemie_sso.dart';
 import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
+import '../providers/provider_common.dart'
+    show authExpiredProvider, stripAuthExpiredMarker;
 import '../prompts/prompt_overrides.dart';
 import 'chatgpt_oauth_server.dart';
 import 'codemie_sso_server.dart';
@@ -110,6 +114,7 @@ part 'agent_cli_config.dart';
 part 'settings_flow.dart';
 part 'agent_commands.dart';
 part 'approval_commands.dart';
+part 'skill_commands.dart';
 
 /// Terminal IO abstracted for testability.
 ///
@@ -323,18 +328,16 @@ class AgentCli {
     this._version = '0.0.0',
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
-       _useTui = useTui && io.supportsRawMode,
-       _modes = builtInAgentModes(
-         config.env.cwd,
-         overrides: config.promptOverrides,
-       ) {
+       _useTui = useTui && io.supportsRawMode {
+    _env = CwdOverrideEnv(config.env);
+    _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
     final pluginTools = <AgentTool>[];
     for (final plugin in config.plugins) {
       final context = PluginContext(
-        env: config.env,
+        env: _env,
         io: _PluginIO(io),
         config: _pluginConfig(plugin.name),
       );
@@ -348,15 +351,15 @@ class AgentCli {
         _catalogStreamFunction(config.providerKind, config.apiKey);
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
-    _mcp = AgentCliMcpWiring(config: config.mcpConfig, cwd: config.env.cwd);
+    _mcp = AgentCliMcpWiring(config: config.mcpConfig, cwd: _env.cwd);
     // Long-term memory: controller owns project + user scope stores,
     // lazily initialized. Null when disabled (no LLM provider for search).
     _memory = MemoryController(
-      env: config.env,
-      projectRoot: config.env.cwd,
+      env: _env,
+      projectRoot: _env.cwd,
       userRoot: config.homeDir,
     );
-    final decoratedEnv = SessionVarsExecutionEnv(config.env, _sessionEnvVars);
+    final decoratedEnv = SessionVarsExecutionEnv(_env, _sessionEnvVars);
     // Session-scoped background shell jobs (bash background / steer-yield);
     // settle notifications re-enter the conversation like task completions.
     _shellJobs = ShellJobRegistry(
@@ -391,14 +394,14 @@ class AgentCli {
         callback: io.isInteractive ? _answerSecretRequest : null,
       ),
       if (config.visionConfig != null)
-        inspectImageTool(config.env, config.visionConfig!),
+        inspectImageTool(_env, config.visionConfig!),
       if (config.transcribeConfig != null)
-        transcribeAudioTool(config.env, config.transcribeConfig!),
+        transcribeAudioTool(_env, config.transcribeConfig!),
       // Image generation: resolves the `imageGeneration` slot from the
       // models config (or falls back to the main connection) lazily per
       // call, so `/models set imageGeneration ...` is picked up live.
       generateImageTool(
-        env: config.env,
+        env: _env,
         modelsConfig: config.modelsConfig,
         mainBaseUrl: () => _agent.state.model.baseUrl,
         mainModelId: () => _agent.state.model.id,
@@ -423,9 +426,12 @@ class AgentCli {
       // sessions (`<sessionRoot>/<cwd-slug>/messages`). Any Fa instance
       // sharing the repo can exchange messages with this one's agents.
       messaging: FileMessagingRepository(
-        env: config.env,
-        root:
-            '${config.sessionRoot}/${encodeSessionCwd(config.env.cwd)}/messages',
+        env: _env,
+        // Messaging is scoped to the *launch* cwd. Sessions are now flat and
+        // switchable, but the messaging fabric is initialized once; keeping it
+        // tied to the original folder avoids breaking the file-based directory
+        // layout. Each mailbox is still namespaced by session id.
+        root: '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
         decodeSessionCwd: decodeSessionCwd,
         homeDir: config.homeDir,
       ),
@@ -459,13 +465,20 @@ class AgentCli {
     // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
     // lazily per server (never blocks boot).
     _a2aManager = A2aManager(config.a2aConfig);
-    // Discover agent types from .fah/agents/ and .agents/agents/ (fire-and-forget;
-    // the registry starts with built-ins and merges discovered types when they arrive).
+    // Discover agent types from the agent roots (.fah/.agents/.claude/.github/
+    // .codex) — fire-and-forget; the registry starts with built-ins and merges
+    // discovered types when they arrive. Third-party roots ride the same
+    // consent gate as skills.
     final agentRoots = defaultAgentRoots(
-      cwd: config.env.cwd,
+      cwd: _env.cwd,
       homeDir: config.homeDir,
     );
-    unawaited(discoverAgentsFromRoots(agentRoots));
+    unawaited(
+      discoverAgentsFromRoots(
+        agentRoots,
+        allowedSources: _skillsAllowedSources,
+      ),
+    );
     _taskConfig = TaskToolConfig(
       childTools: coreTools,
       streamFunction: _streamFunction,
@@ -479,7 +492,7 @@ class AgentCli {
       childSessionFactory: (parentId, childId) async {
         final session = await _repo.create(
           JsonlSessionCreateOptions(
-            cwd: config.env.cwd,
+            cwd: _env.cwd,
             metadata: {
               'agent': 'subagent',
               'id': childId,
@@ -591,6 +604,10 @@ class AgentCli {
         );
       }
     }
+    // If the startup provider/model/baseUrl triple points to a saved CodeMie
+    // SSO custom provider, wire cookie-header auth instead of sending the
+    // stored cookie as an Authorization: Bearer token.
+    _restoreCodeMieCookieAuthIfNeeded();
   }
 
   /// The active mode.
@@ -616,11 +633,21 @@ class AgentCli {
   /// The static configuration.
   final AgentCliConfig config;
 
+  /// Mutable wrapper around [_env]. Its cwd is updated when the user
+  /// switches to a session that was created in another project folder, so
+  /// tools (read/edit/bash) operate in the session's directory without
+  /// restarting the process.
+  late final CwdOverrideEnv _env;
+
   /// Terminal IO.
   final CliIO io;
 
   /// The input prompt written when the agent is idle.
   final String prompt;
+
+  /// Built-in agent modes. Rebuilt when the effective cwd changes so the
+  /// system prompt's project context follows the active session.
+  late Map<String, AgentMode> _modes;
 
   /// The provider stream backing runs and (legacy) compaction. Mutable:
   /// model-roles wiring and `/model`/`/provider` switches replace it.
@@ -717,7 +744,7 @@ class AgentCli {
   (int, int)? _ctxCacheKey;
   int _ctxCacheValue = 0;
   late final _repo = JsonlSessionRepo(
-    fs: config.env,
+    fs: _env,
     sessionsRoot: config.sessionRoot,
   );
   Session? _session;
@@ -753,7 +780,6 @@ class AgentCli {
   /// cancel (Ctrl-C, input shutdown).
   Completer<String?>? _pendingPromptAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
-  final Map<String, AgentMode> _modes;
   late AgentMode _currentMode;
   List<PromptTemplate> _templates = [];
 
@@ -761,6 +787,20 @@ class AgentCli {
   /// prompt) and project context files, loaded once per CLI run.
   List<Skill> _skills = const [];
   List<ProjectContextFile> _contextFiles = const [];
+
+  /// Consent for third-party (Claude/Copilot/Codex) skill & agent roots.
+  /// Mutable: the startup consent dialog and `/skills access` change it;
+  /// the host persists it via [AgentCliConfig.onSkillsAccessChanged].
+  late SkillsAccess _skillsAccess = config.skillsAccess;
+
+  /// Whether any third-party skill/agent root exists on disk — drives the
+  /// one-time consent dialog and the "disabled" hint. Computed by
+  /// [_loadAgentContext] while access is not granted.
+  bool _thirdPartySkillDirsPresent = false;
+
+  /// Paths the agent touched this session (tool call args) — path-gated
+  /// skills (`paths:` frontmatter) enter the prompt once their globs match.
+  final Set<String> _touchedPaths = {};
 
   /// The MCP wiring (manager + re-registration) — see agent_cli_mcp.dart.
   late AgentCliMcpWiring _mcp;
@@ -778,7 +818,11 @@ class AgentCli {
     _agent.state.systemPrompt = _mcp.composePrompt(
       config.systemPrompt ?? _currentMode.systemPrompt,
       contextSection: formatProjectContext(_contextFiles),
-      skillsSection: formatSkillsForPrompt(_skills),
+      skillsSection: formatSkillsForPrompt(
+        _skills,
+        touchedPaths: _touchedPaths,
+        cwd: _env.cwd,
+      ),
       memorySection: _memorySection,
       messagingSection: _messagingSection(),
     );
@@ -909,23 +953,34 @@ class AgentCli {
   }
 
   /// Loads prompt templates, skills, and project context files, then applies
-  /// the prompt composition.
+  /// the prompt composition. Third-party (Claude/Copilot/Codex) roots are
+  /// gated behind the user's consent ([AgentCliConfig.skillsAccess]); while
+  /// access is not granted their presence is still detected (directory
+  /// metadata only) to drive the startup consent dialog / hint.
   Future<void> _loadAgentContext() async {
-    _templates = await loadPromptTemplates(
-      config.env,
-      config.promptTemplateDirs,
-    );
-    final roots = defaultSkillRoots(
-      cwd: config.env.cwd,
-      homeDir: config.homeDir,
-    );
+    _templates = await loadPromptTemplates(_env, config.promptTemplateDirs);
+    final roots = defaultSkillRoots(cwd: _env.cwd, homeDir: config.homeDir);
     _skills = await discoverSkills(
-      config.env,
+      _env,
       projectRoots: roots.projectRoots,
       userRoots: roots.userRoots,
+      allowedSources: _skillsAllowedSources,
     );
+    _thirdPartySkillDirsPresent = await _detectThirdPartySkillDirs();
+    if (_thirdPartySkillDirsPresent &&
+        _skillsAccess != SkillsAccess.granted &&
+        !(io.isInteractive && _skillsAccess == SkillsAccess.ask)) {
+      // Non-interactive (or already denied): the consent dialog cannot/will
+      // not appear — say why those skills are missing.
+      io.writeln(
+        _style.dim(
+          'Claude/Copilot/Codex skills or agents found but disabled — '
+          '/skills access granted to enable',
+        ),
+      );
+    }
     _contextFiles = await loadProjectContextFiles(
-      config.env,
+      _env,
       userFile: config.homeDir == null
           ? null
           : '${config.homeDir}/.fah/AGENTS.md',
@@ -953,8 +1008,11 @@ class AgentCli {
     if (resumedLabel != null) {
       _replayRestoredHistory(_agent.state.messages, resumedLabel);
     }
-    _writeIdlePrompt();
+    // One-time consent question for third-party skill roots: reads answers
+    // straight from the line stream (the dispatch loop is not running yet).
     final lineIterator = StreamIterator<String>(io.lines);
+    await _maybePromptSkillsAccess(lineIterator: lineIterator);
+    _writeIdlePrompt();
     while (await lineIterator.moveNext()) {
       var line = lineIterator.current;
       if (line.trim() == '/') {
@@ -1014,6 +1072,10 @@ class AgentCli {
     // Warm the model cache in the background so the first /models picker is
     // fast; failures are silent and the cache falls back to the hardcoded list.
     unawaited(_refreshModelCache());
+
+    // One-time consent question for third-party skill roots: a TUI picker
+    // over the first frame (Esc = "Not now", asked again next launch).
+    unawaited(_maybePromptSkillsAccess());
 
     await controller.run();
     _setTuiIo(null);
@@ -1129,6 +1191,7 @@ class AgentCli {
     slashCommands: builtinSlashCommands,
     pluginSlashCommands: _pluginSlashCommands,
     templates: _templates,
+    skills: _skills,
   );
 
   /// Routes a generic TUI picker selection (sessions/mode/approval) to the
@@ -1239,8 +1302,8 @@ class AgentCli {
       ),
       const MenuItem(
         key: 'preset:kimi',
-        label: 'Kimi Code',
-        description: 'api.kimi.com — key: kimi.com/code/console',
+        label: 'Kimi',
+        description: 'api.moonshot.cn — key: platform.moonshot.cn',
       ),
       const MenuItem(
         key: 'preset:zai',
@@ -1282,6 +1345,12 @@ class AgentCli {
     await _addProviderHandlers[key.substring('preset:'.length)]?.call();
   }
 
+  /// Switches to the catalog Kimi provider (Moonshot API).
+  Future<void> _handleKimiCommand({String? baseUrl}) async {
+    final spec = providerCatalog['kimi']!;
+    await _switchProvider(spec, baseUrl ?? spec.defaultBaseUrl, 'kimi-k3');
+  }
+
   /// Preset name → the setup flow it launches.
   late final Map<String, Future<void> Function()> _addProviderHandlers = {
     'openrouter': () => _handleOpenRouterAuthMethodChoice(),
@@ -1291,12 +1360,7 @@ class AgentCli {
     'openai': () async => _startProviderFlow(initialType: 'openai'),
     'anthropic': () async => _startProviderFlow(initialType: 'anthropic'),
     'google': () async => _startProviderFlow(initialType: 'google'),
-    'kimi': () async => _startProviderFlow(
-      initialType: 'openai',
-      initialBaseUrl: 'https://api.kimi.com/coding/v1',
-      initialName: 'kimi',
-      initialModelId: 'k3',
-    ),
+    'kimi': _handleKimiCommand,
     'zai': () async => _startProviderFlow(
       initialType: 'openai',
       initialBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
@@ -1341,7 +1405,9 @@ class AgentCli {
   Future<void> _openSessionsPicker() async {
     final List<SessionMetadata> sessions;
     try {
-      sessions = await _repo.list(cwd: config.env.cwd);
+      // List every session in the shared root, across all workspaces, so a
+      // session created in the Fa app or in another `fa` run is reachable.
+      sessions = await _repo.list();
     } on Object catch (error) {
       // A failing store must surface as an inline error, never kill the TUI
       // (a Cmd exception in dart_tui terminates the whole program silently).
@@ -1349,7 +1415,7 @@ class AgentCli {
       return;
     }
     if (sessions.isEmpty) {
-      io.writeln('no sessions for ${config.env.cwd}');
+      io.writeln('no sessions');
       return;
     }
     _lastSessionList = sessions;
@@ -1373,26 +1439,49 @@ class AgentCli {
   }
 
   /// One numbered sessions-picker row, marked when it is the active
-  /// session. An unreadable session file degrades to its id with an
-  /// "(unreadable)" note instead of failing the whole picker.
+  /// session. Kept shallow so the CRAP score stays low without a TUI
+  /// picker test harness.
   Future<MenuItem> _sessionPickerItem(
     int i,
     SessionMetadata metadata,
     SessionMetadata? current,
   ) async {
-    String label;
-    try {
-      final session = await _repo.open(metadata);
-      label = await session.getSessionName() ?? metadata.id;
-    } on Object {
-      label = '${metadata.id} (unreadable)';
-    }
-    final marker = current?.path == metadata.path ? ' (current)' : '';
+    final label = await _sessionPickerLabel(metadata);
+    final description = _sessionPickerDescription(metadata, current);
     return MenuItem(
       key: '$i',
       label: '${i + 1}) $label',
-      description: '${metadata.createdAt.toLocal().toIso8601String()}$marker',
+      description: description,
     );
+  }
+
+  /// Readable label for a session, degrading gracefully when the file is
+  /// unreadable.
+  Future<String> _sessionPickerLabel(SessionMetadata metadata) async {
+    try {
+      final session = await _repo.open(metadata);
+      return await session.getSessionName() ?? metadata.id;
+    } on Object {
+      return '${metadata.id} (unreadable)';
+    }
+  }
+
+  /// Folder + timestamp description for a sessions-picker row, marking the
+  /// active session.
+  String _sessionPickerDescription(
+    SessionMetadata metadata,
+    SessionMetadata? current,
+  ) {
+    final marker = current?.path == metadata.path ? ' (current)' : '';
+    final folder = _pathBasename(metadata.cwd);
+    final timestamp = metadata.createdAt.toLocal().toIso8601String();
+    return folder.isEmpty ? '$timestamp$marker' : '$folder · $timestamp$marker';
+  }
+
+  /// Last non-empty path segment, with a fallback for the filesystem root.
+  String _pathBasename(String path) {
+    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+    return parts.isEmpty ? path : parts.last;
   }
 
   void _openModePicker() {
@@ -1441,7 +1530,7 @@ class AgentCli {
   Future<Session> _createSession({String? name}) async {
     final session = await _repo.create(
       JsonlSessionCreateOptions(
-        cwd: config.env.cwd,
+        cwd: _env.cwd,
         metadata: {'agent': 'Fa', 'model': _agent.state.model.id},
       ),
     );
@@ -1451,10 +1540,11 @@ class AgentCli {
     return session;
   }
 
-  /// Finds a session by display name OR by exact id (the exit hint prints
-  /// `fa --session '<id>'` for unnamed sessions, so ids must resolve too).
+  /// Finds a session by display name OR by exact id across every workspace
+  /// (the exit hint prints `fa --session '<id>'` for unnamed sessions, so ids
+  /// must resolve too).
   Future<SessionMetadata?> _findSessionByName(String name) async {
-    final sessions = await _repo.list(cwd: config.env.cwd);
+    final sessions = await _repo.list();
     for (final metadata in sessions) {
       if (metadata.id == name.trim()) return metadata;
       final session = await _repo.open(metadata);
@@ -1471,6 +1561,16 @@ class AgentCli {
     final messages = await session.buildContextMessages();
     _agent.state.messages = messages;
     _persistedCount = messages.length;
+    // Adopt the session's original project folder. This matters both when
+    // switching mid-run and when the CLI starts with --session: tools like
+    // bash/read/edit must operate in the session's directory, not the launch
+    // directory.
+    if (_env.cwd != metadata.cwd) {
+      _env.cwd = metadata.cwd;
+      _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
+      _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
+      await _loadAgentContext();
+    }
     return session;
   }
 
@@ -1530,19 +1630,27 @@ class AgentCli {
     io.writeln("created session '$trimmed'");
   }
 
-  /// Switches to an existing session by metadata (picker, /resume).
+  /// Switches to an existing session by metadata (picker, /resume). Adopts
+  /// the session's original working directory so the agent keeps operating
+  /// in the project the session belongs to.
   Future<void> _switchToMetadata(SessionMetadata metadata, String label) async {
     await deleteSessionIfEmpty();
     _subagentManager.reset();
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
+    _env.cwd = metadata.cwd;
+    _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
+    _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
+    // Reload skills/project context for the new cwd so the system prompt
+    // matches the session's project.
+    await _loadAgentContext();
     _session = await _loadSession(metadata);
     _syncMailboxPrefix();
     // Now that `_session` is assigned, the registry source can read the
     // resumed session's `subagent_registry` records.
     unawaited(_subagentManager.rehydrate());
-    io.writeln("switched to session '$label'");
+    io.writeln("switched to session '$label' [${_pathBasename(metadata.cwd)}]");
     _replayRestoredHistory(_agent.state.messages, label);
   }
 
@@ -1573,12 +1681,12 @@ class AgentCli {
     io.writeln(_style.dim('─' * 20));
   }
 
-  /// `/resume`: switches to the most recently created session for the
-  /// current directory (the repo lists sessions newest-first).
+  /// `/resume`: switches to the most recently created session across every
+  /// workspace (the repo lists sessions newest-first).
   Future<void> _resumeLastSession() async {
-    final sessions = await _repo.list(cwd: config.env.cwd);
+    final sessions = await _repo.list();
     if (sessions.isEmpty) {
-      io.writeln('no sessions for ${config.env.cwd}');
+      io.writeln('no sessions');
       return;
     }
     final latest = sessions.first;
@@ -1604,21 +1712,25 @@ class AgentCli {
   }
 
   Future<void> _listSessions() async {
-    final sessions = await _repo.list(cwd: config.env.cwd);
+    // List every session in the shared root, across workspaces, so sessions
+    // created in the Fa app or in another `fa` run are visible here.
+    final sessions = await _repo.list();
     if (sessions.isEmpty) {
-      io.writeln('no sessions for ${config.env.cwd}');
+      io.writeln('no sessions');
       return;
     }
     final current = await _session?.getMetadata();
-    io.writeln('sessions for ${config.env.cwd}:');
+    io.writeln('sessions:');
     for (var i = 0; i < sessions.length; i++) {
       final metadata = sessions[i];
       final session = await _repo.open(metadata);
       final sessionName = await session.getSessionName();
       final label = sessionName ?? metadata.id;
       final marker = current?.path == metadata.path ? '*' : ' ';
+      final folder = _pathBasename(metadata.cwd);
+      final folderTag = folder.isEmpty ? '' : ' [$folder]';
       io.writeln(
-        '  $marker${i + 1}) $label  '
+        '  $marker${i + 1}) $label$folderTag  '
         '${_style.dim(metadata.createdAt.toLocal().toIso8601String())}',
       );
     }
@@ -1724,7 +1836,7 @@ class AgentCli {
     io.writeln(_style.dim('Press /help to show full commands and resources.'));
     io.writeln('');
     io.writeln(_style.bold('[Context]'));
-    io.writeln('  ${config.env.cwd}');
+    io.writeln('  ${_env.cwd}');
     io.writeln('');
     io.writeln(_style.bold('[Model]'));
     io.writeln('  ${model.id} (${model.api})');
@@ -2054,69 +2166,11 @@ class AgentCli {
       await _handleCommand(trimmed);
       return;
     }
+    // A new user message ends the previous turn: per-turn skill tool grants
+    // (`allowed-tools`) do not leak into it. The skill path re-grants after
+    // this clear (it goes through `/skill:` / the slash alias above).
+    _approval.clearTurnGrants();
     _startRun(line);
-  }
-
-  /// `/skill:<name> [args]` — explicit skill invocation (kimi's slash
-  /// runner): the skill body is injected as the user message, with the args
-  /// appended as the actual request.
-  Future<void> _runSkillCommand(String rest) async {
-    final (name, args) = _parseSkillInvocation(rest);
-    final skill = _skills
-        .where((s) => s.name.toLowerCase() == name.toLowerCase())
-        .firstOrNull;
-    if (skill == null) {
-      io.writeln(
-        'unknown skill: $name'
-        '${_skills.isEmpty ? ' (no skills discovered)' : ''}',
-      );
-      return;
-    }
-    final body = await _readSkillBody(skill);
-    if (body == null) {
-      io.writeln('cannot read skill file: ${skill.filePath}');
-      return;
-    }
-    io.writeln('skill ${skill.name} — ${skill.filePath}');
-    final message = args.isEmpty ? body : '$body\n\nUser request:\n$args';
-    if (isBusy) {
-      _agent.steer(UserMessage.text(message));
-    } else {
-      _startRun(message);
-    }
-  }
-
-  /// Splits `/skill:<name> [args]` into the skill name and its args.
-  (String, String) _parseSkillInvocation(String rest) {
-    final splitAt = rest.indexOf(RegExp(r'\s'));
-    final name = (splitAt < 0 ? rest : rest.substring(0, splitAt)).trim();
-    final args = splitAt < 0 ? '' : rest.substring(splitAt).trim();
-    return (name, args);
-  }
-
-  /// Reads a skill file and strips its YAML frontmatter.
-  Future<String?> _readSkillBody(Skill skill) async {
-    final text = (await config.env.readTextFile(skill.filePath)).valueOrNull;
-    if (text == null) return null;
-    if (!text.startsWith('---')) return text.trim();
-    final end = text.indexOf('\n---', 3);
-    if (end < 0) return text.trim();
-    return text.substring(end + 4).trim();
-  }
-
-  /// `/skills` — lists the discovered skills (name, description, location).
-  void _listSkills() {
-    if (_skills.isEmpty) {
-      io.writeln('no skills discovered (roots: .fah/skills, .agents/skills)');
-      return;
-    }
-    io.writeln('skills:');
-    for (final skill in _skills) {
-      io.writeln(
-        '  ${skill.name} — ${skill.description}  '
-        '${_style.dim('${skill.filePath} (${skill.scope.name})')}',
-      );
-    }
   }
 
   /// `/mcp`: prints the configured MCP servers and their live connection
@@ -2164,17 +2218,64 @@ class AgentCli {
   }
 
   void _startRun(String text) {
-    final settled = _agent.prompt(text).then((_) => _afterRun()).catchError((
-      Object error,
-    ) {
-      io.writeln(_errorLine('$error'));
-    });
+    // Path-gated skills (`paths:` frontmatter) join the prompt once the
+    // agent has touched a matching file; recomposing here is idempotent.
+    _applyPromptComposition();
+    final settled = _runPrompt(text);
     _settled = settled;
     unawaited(
       settled.then((_) {
         if (!_exited) _writeIdlePrompt();
       }),
     );
+  }
+
+  /// Runs one user prompt to completion. On a CodeMie auth-session expiry,
+  /// opens the browser SSO flow to refresh the token automatically. Other
+  /// provider errors are printed through [_errorLine].
+  Future<void> _runPrompt(String text) async {
+    try {
+      await _agent.prompt(text);
+
+      final lastMessage = _agent.state.messages.lastOrNull;
+      if (lastMessage is AssistantMessage &&
+          lastMessage.stopReason == StopReason.error) {
+        final errorMessage = lastMessage.errorMessage ?? '';
+        if (authExpiredProvider(errorMessage) == 'codemie') {
+          await _handleCodeMieAuthExpired(errorMessage);
+          return;
+        }
+      }
+
+      await _afterRun();
+    } catch (error) {
+      final message = '$error';
+      if (authExpiredProvider(message) == 'codemie') {
+        await _handleCodeMieAuthExpired(message);
+        return;
+      }
+      io.writeln(_errorLine(message));
+    }
+  }
+
+  /// Shared handler for a detected CodeMie auth-session expiry: strips the
+  /// machine marker, prints a short error, launches the browser SSO flow, and
+  /// tells the user to repeat the message.
+  Future<void> _handleCodeMieAuthExpired(String rawMessage) async {
+    final stripped = stripAuthExpiredMarker(compactProviderError(rawMessage));
+    io.writeln(_style.red('error: $stripped'));
+    io.writeln(
+      _style.yellow(
+        'CodeMie session expired — opening browser to re-authorize...',
+      ),
+    );
+    final orgUrl = codeMieOrgUrl(_agent.state.model.baseUrl);
+    await _handleCodeMieSsoCommand(orgUrl);
+    if (!_exited) {
+      io.writeln(
+        _style.green('Re-authorized. Repeat your message to continue.'),
+      );
+    }
   }
 
   /// Called when a background shell job settles (the same async-result flow
@@ -2371,12 +2472,9 @@ class AgentCli {
     try {
       if (!_diagnosticLogDirEnsured) {
         _diagnosticLogDirEnsured = true;
-        await config.env.createDir(
-          '${config.homeDir}/.fah/logs',
-          recursive: true,
-        );
+        await _env.createDir('${config.homeDir}/.fah/logs', recursive: true);
       }
-      await config.env.appendFile(path, line);
+      await _env.appendFile(path, line);
     } catch (_) {
       // Diagnostics must never break the CLI.
     }
@@ -2424,6 +2522,10 @@ class AgentCli {
       return true;
     }
     if (_handleInfoCommandBasic(command, rest)) return true;
+    if (command == '/skills') {
+      await _skillsSlash(rest);
+      return true;
+    }
     if (command == '/memory') {
       await _handleMemoryCommand(rest);
       return true;
@@ -2439,7 +2541,7 @@ class AgentCli {
     return _handleInfoCommandSession(command, rest);
   }
 
-  /// `/exit`, `/help`, `/stats`, `/tasks`, `/skills`.
+  /// `/exit`, `/help`, `/stats`, `/tasks`.
   bool _handleInfoCommandBasic(String command, String rest) {
     switch (command) {
       case '/exit':
@@ -2451,8 +2553,6 @@ class AgentCli {
         _printStats();
       case '/tasks':
         _listTaskJobs(rest);
-      case '/skills':
-        _listSkills();
       default:
         return false;
     }
@@ -2650,6 +2750,19 @@ class AgentCli {
     final expanded = expandPromptTemplate(trimmed, _templates);
     if (expanded != trimmed) {
       _startRun(expanded);
+      return;
+    }
+    // Claude/Copilot-style slash alias: `/<skill-name> [args]` invokes the
+    // skill directly (user-invocable skills only).
+    final alias = _skills
+        .where(
+          (s) =>
+              s.userInvocable &&
+              s.name.toLowerCase() == command.substring(1).toLowerCase(),
+        )
+        .firstOrNull;
+    if (alias != null) {
+      await _runSkillCommand('${alias.name}${rest.isEmpty ? '' : ' $rest'}');
       return;
     }
     // Unknown slash command: treat it as a filter for the command menu.

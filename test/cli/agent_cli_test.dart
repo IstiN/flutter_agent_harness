@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -367,9 +368,136 @@ void main() {
           .last;
       final text = lastUser.content as String;
       expect(text, contains('Deploy body here.'));
-      expect(text, contains('User request:\nship it'));
+      // The renderer appends the raw args when the body has no placeholder.
+      expect(text, contains('ARGUMENTS: ship it'));
     },
   );
+
+  group('third-party skills', () {
+    test(
+      'claude skills stay hidden until granted; startup prompt appears',
+      () async {
+        await env.createDir('/work/.claude/skills/review');
+        await env.writeFile(
+          '/work/.claude/skills/review/SKILL.md',
+          '---\nname: review\ndescription: Review code\n---\nReview body.\n',
+        );
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call);
+        final run = cli.run();
+        // The startup consent dialog appears (a third-party root exists).
+        await waitForIt(
+          () => io.out.toString().contains('Found Claude/Copilot/Codex'),
+        );
+        io.sendLine('2'); // "Not now" — stays undecided and hidden.
+        io.sendLine('/skills');
+        await waitForIt(
+          () => io.out.toString().contains('no skills discovered'),
+        );
+        expect(io.out.toString(), isNot(contains('review — Review code')));
+
+        io.sendLine('/skills access granted');
+        await waitForIt(
+          () => io.out.toString().contains('skills access: granted'),
+        );
+        io.sendLine('/skills');
+        await waitForIt(
+          () => io.out.toString().contains('review — Review code'),
+        );
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
+    test('/skills access denied keeps them hidden without asking', () async {
+      await env.createDir('/work/.codex/skills/release');
+      await env.writeFile(
+        '/work/.codex/skills/release/SKILL.md',
+        '---\nname: release\ndescription: Ship a release\n---\nBody.\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(
+        () => io.out.toString().contains('Found Claude/Copilot/Codex'),
+      );
+      io.sendLine('3'); // "Never".
+      await waitForIt(
+        () => io.out.toString().contains('skills access: denied'),
+      );
+      io.sendLine('/skills');
+      await waitForIt(() => io.out.toString().contains('no skills discovered'));
+      io.sendLine('/exit');
+      await run;
+      expect(io.out.toString(), isNot(contains('release — Ship a release')));
+    });
+
+    test('/skills import copies third-party skills into .fah/skills', () async {
+      await env.createDir('/work/.github/skills/triage');
+      await env.writeFile(
+        '/work/.github/skills/triage/SKILL.md',
+        '---\nname: triage\ndescription: Triage issues\n---\nTriage body.\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(
+        () => io.out.toString().contains('Found Claude/Copilot/Codex'),
+      );
+      io.sendLine('1'); // "Allow".
+      await waitForIt(
+        () => io.out.toString().contains('skills access: granted'),
+      );
+      io.sendLine('/skills import');
+      await waitForIt(() => io.out.toString().contains('imported triage'));
+      io.sendLine('/exit');
+      await run;
+
+      final copied = await env.readTextFile(
+        '/work/.fah/skills/triage/SKILL.md',
+      );
+      expect(copied.valueOrNull, contains('Triage body.'));
+    });
+
+    test('/<name> slash alias invokes a user-invocable skill', () async {
+      await env.createDir('/work/.fah/skills/deploy');
+      await env.writeFile(
+        '/work/.fah/skills/deploy/SKILL.md',
+        '---\nname: deploy\ndescription: Deploy\n---\nDeploy body.\n',
+      );
+      final fake = FakeStreamFunction([textTurn('done')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => cli.systemPrompt.contains('<name>deploy</name>'));
+      io.sendLine('/deploy now');
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      final lastUser = fake.contexts.last.messages
+          .whereType<UserMessage>()
+          .last;
+      expect(lastUser.content as String, contains('Deploy body.'));
+    });
+
+    test('user-invocable: false refuses explicit invocation', () async {
+      await env.createDir('/work/.fah/skills/hidden');
+      await env.writeFile(
+        '/work/.fah/skills/hidden/SKILL.md',
+        '---\nname: hidden\ndescription: Model only\nuser-invocable: false\n'
+            '---\nHidden body.\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => cli.systemPrompt.contains('<name>hidden</name>'));
+      io.sendLine('/skill:hidden');
+      await waitForIt(() => io.out.toString().contains('hidden is model-only'));
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+  });
 
   test('durable memory facts join the system prompt after startup', () async {
     // Seed a fact through the same store the CLI's controller will read
@@ -1405,6 +1533,7 @@ void main() {
       await waitForIt(
         () => io.out.toString().contains('rename: /rename-session'),
       );
+      expect(io.out.toString(), contains('sessions:'));
       io.sendLine('/session gamma');
       await waitForIt(
         () => io.out.toString().contains("created session 'gamma'"),
@@ -1425,6 +1554,233 @@ void main() {
       expect(sessions, hasLength(1));
       final kept = await repo.open(sessions.first);
       expect(await kept.getSessionName(), 'gamma');
+    });
+
+    test(
+      '/sessions lists sessions from every workspace with folder labels',
+      () async {
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final alpha = await repo.create(
+          JsonlSessionCreateOptions(
+            cwd: '/work',
+            id: 'alpha-id',
+            metadata: const {'agent': 'fa'},
+          ),
+        );
+        await alpha.appendSessionName('alpha');
+        final beta = await repo.create(
+          JsonlSessionCreateOptions(
+            cwd: '/other',
+            id: 'beta-id',
+            metadata: const {'agent': 'fa'},
+          ),
+        );
+        await beta.appendSessionName('beta');
+
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call);
+        final run = cli.run();
+
+        io.sendLine('/sessions');
+        await waitForIt(
+          () =>
+              io.out.toString().contains('alpha') &&
+              io.out.toString().contains('beta'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('sessions:'));
+        expect(output, contains('alpha'));
+        expect(output, contains('beta'));
+        expect(output, contains('[work]'));
+        expect(output, contains('[other]'));
+      },
+    );
+
+    test('switching to a session from another folder adopts its cwd', () async {
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final other = await repo.create(
+        JsonlSessionCreateOptions(
+          cwd: '/other',
+          id: 'other-id',
+          metadata: const {'agent': 'fa'},
+        ),
+      );
+      await other.appendSessionName('other-project');
+      await other.appendMessage(UserMessage.text('hello from other'));
+
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/session other-project');
+      await waitForIt(() => io.out.toString().contains('[other]'));
+      io.sendLine('/exit');
+      await run;
+
+      // The CLI's effective cwd moved to the session's project folder,
+      // so the system prompt (loaded from that project context) now
+      // references /other instead of the launch cwd /work.
+      expect(cli.systemPrompt, contains('/other'));
+      expect(cli.systemPrompt, isNot(contains('/work')));
+    });
+
+    test(
+      'CodeMie auth expiry auto-launches SSO and prompts to repeat the message',
+      () async {
+        final registry = CustomProviderRegistry([]);
+        var ssoCalls = 0;
+        const codeMieModel = Model(
+          id: 'gpt-4o-mini',
+          api: 'openai-completions',
+          provider: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          contextWindow: 100000,
+          maxTokens: 4096,
+        );
+        final cli = AgentCli(
+          config: AgentCliConfig(
+            model: codeMieModel,
+            apiKey: 'old-cookie',
+            env: env,
+            sessionRoot: '/sessions',
+            providerKind: 'openai-completions',
+            customProviders: registry,
+            codeMieSsoAuthenticateFn: (url, onStatus) async {
+              ssoCalls++;
+              return CodeMieSsoCredentials(
+                cookies: const {'session': 'new-cookie'},
+                apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+                expiresAt: DateTime.now().millisecondsSinceEpoch + 86400000,
+              );
+            },
+            codeMieGuidedSetupFn:
+                (apiBase, cookie, pickOption, askLine) async => 'gpt-4o-mini',
+          ),
+          io: io,
+          streamFunction: (model, context, {cancelToken}) {
+            throw Exception(
+              '302: CodeMie session expired — redirected to SSO portal. '
+              'Re-authorize to refresh the token. [[auth-expired:codemie]]',
+            );
+          },
+        );
+        final run = cli.run();
+        await waitForAsync(() async {
+          final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+          return (await repo.list(cwd: '/work')).isNotEmpty;
+        });
+        io.sendLine('hello');
+        await waitForIt(
+          () =>
+              io.out.toString().contains(
+                'CodeMie session expired — opening browser',
+              ) &&
+              io.out.toString().contains('Re-authorized. Repeat your message'),
+        );
+        expect(ssoCalls, 1);
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
+    test(
+      'startup with a saved CodeMie SSO provider sends the cookie as a header',
+      () async {
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'codemie.lab.epam.com',
+            apiType: 'openai',
+            baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+            modelId: 'gpt-4.1-mini',
+            keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+            authMethod: CustomProviderAuthMethod.sso,
+          ),
+        ]);
+        const codeMieModel = Model(
+          id: 'gpt-4.1-mini',
+          api: 'openai-completions',
+          provider: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          contextWindow: 200000,
+          maxTokens: 4096,
+        );
+        final store = FakeSecureKeyStore()
+          ..map['FA_KEY_CODEMIE_LAB_EPAM_COM'] = '_oauth2_proxy=abc123';
+        final secureKeys = SecureKeyCache(store);
+        await secureKeys.preload(['FA_KEY_CODEMIE_LAB_EPAM_COM']);
+        final cli = AgentCli(
+          config: AgentCliConfig(
+            model: codeMieModel,
+            apiKey: '',
+            env: env,
+            sessionRoot: '/sessions',
+            providerKind: 'openai-completions',
+            customProviders: registry,
+            secureKeys: secureKeys,
+          ),
+          io: io,
+        );
+        expect(
+          cli.agent.state.model.headers?['cookie'],
+          '_oauth2_proxy=abc123',
+        );
+      },
+    );
+
+    test('startup with an expired CodeMie SSO cookie triggers re-authorization '
+        'instead of restoring the stale cookie', () async {
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'codemie.lab.epam.com',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'gpt-4.1-mini',
+          keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+          authMethod: CustomProviderAuthMethod.sso,
+        ),
+      ]);
+      const codeMieModel = Model(
+        id: 'gpt-4.1-mini',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        contextWindow: 200000,
+        maxTokens: 4096,
+      );
+      // Build an expired codemie_access_token JWT so the cookie is treated
+      // as stale on startup.
+      final expiredExp = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 3600;
+      final payload = base64Url.encode(
+        utf8.encode(jsonEncode({'exp': expiredExp})),
+      );
+      final expiredJwt = 'h.$payload.s';
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_CODEMIE_LAB_EPAM_COM'] =
+            'codemie_access_token=$expiredJwt';
+      final secureKeys = SecureKeyCache(store);
+      await secureKeys.preload(['FA_KEY_CODEMIE_LAB_EPAM_COM']);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: codeMieModel,
+          apiKey: '',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          customProviders: registry,
+          secureKeys: secureKeys,
+        ),
+        io: io,
+      );
+      // The stale cookie must NOT be wired into the model; SSO is started
+      // asynchronously instead.
+      expect(cli.agent.state.model.headers?['cookie'], isNull);
+      expect(
+        io.out.toString(),
+        contains('CodeMie session expired — opening browser to re-authorize'),
+      );
     });
 
     test('switching back to a session replays its transcript', () async {
@@ -1750,7 +2106,10 @@ void main() {
 
       final output = io.out.toString();
       expect(output, contains('deploy — Deploy the app'));
-      expect(output, contains('/work/.fah/skills/deploy/SKILL.md (project)'));
+      expect(
+        output,
+        contains('/work/.fah/skills/deploy/SKILL.md (project, fah)'),
+      );
     });
   });
 }

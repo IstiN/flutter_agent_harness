@@ -96,6 +96,15 @@ const providerCatalog = <String, ProviderSpec>{
     contextWindow: 200000,
     maxTokens: 16384,
   ),
+  'kimi': ProviderSpec(
+    name: 'kimi',
+    kind: 'openai-completions',
+    api: 'openai-completions',
+    defaultBaseUrl: 'https://api.moonshot.cn/v1',
+    apiKeyEnvNames: ['MOONSHOT_API_KEY', 'OPENAI_API_KEY'],
+    contextWindow: 200000,
+    maxTokens: 16384,
+  ),
   'openai': ProviderSpec(
     name: 'openai',
     kind: 'openai-completions',

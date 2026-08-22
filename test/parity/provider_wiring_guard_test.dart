@@ -29,6 +29,7 @@ void main() {
     'openrouter': 'OAuth preset; custom openai-like endpoints cover it',
     'codemie': 'SSO preset that writes its own registry entry',
     'chatgpt': 'OAuth preset (Codex backend, no custom endpoints exist)',
+    'kimi': 'Dedicated /provider kimi preset uses the Moonshot endpoint',
   };
 
   test('every catalog provider is a legal custom-provider api type', () {
