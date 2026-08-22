@@ -211,11 +211,16 @@ jobs:
       # full pod install. Cache it keyed by the lockfile; $HOME-level caches
       # (pub-cache, CocoaPods download cache, Ruby gems, Flutter SDK) already
       # persist on the self-hosted runner.
+      # v2: bust the cache — the Podfile.lock was stale (cupertino_http added
+      # in 4bcac41 but the lockfile wasn't regenerated), so cached Pods were
+      # missing the plugin's native code entirely. The build step's
+      # `flutter build ios` runs `pod install` which regenerates the lockfile
+      # with all registered plugins.
       - name: Cache CocoaPods (iOS)
         uses: actions/cache@v4
         with:
           path: flutter_app/ios/Pods
-          key: ios-pods-${{ hashFiles('flutter_app/ios/Podfile.lock') }}
+          key: ios-pods-v2-${{ hashFiles('flutter_app/ios/Podfile.lock') }}
 
       - name: Restore vendored WasmRun iOS framework
         timeout-minutes: 15
