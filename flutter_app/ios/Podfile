@@ -44,23 +44,6 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
   end
 
-  # cupertino_http is a pure FFI plugin (no registrant class — nothing
-  # native references it). It is force-loaded into the Runner link below;
-  # the aggregate xcconfig ALSO adds `-framework "cupertino_http"`, which
-  # would pull the same static archive in twice — ld then fails with
-  # duplicate `_OBJC_CLASS_$_PodsDummy_cupertino_http` (verified locally).
-  # Drop the `-framework` flag from the aggregate configs so the archive
-  # is included exactly once, via force_load.
-  %w[debug release profile].each do |name|
-    %w[Pods-Runner Pods-RunnerTests].each do |agg|
-      xc = File.join('Pods', 'Target Support Files', agg, "#{agg}.#{name}.xcconfig")
-      next unless File.exist?(xc)
-      text = File.read(xc)
-      next unless text.include?('-framework "cupertino_http"')
-      File.write(xc, text.gsub(/\s*-framework "cupertino_http"/, ''))
-    end
-  end
-
   # wasm_run FFI symbols live in a static library inside WasmRun.xcframework.
   # They are referenced only from Dart via dlsym (DynamicLibrary.executable()),
   # so the linker never pulls them in: force_load alone is not enough because
@@ -105,20 +88,26 @@ post_install do |installer|
           # cupertino_http (the NSURLSession-backed HTTP client on iOS)
           # ships its FFI trampolines (_NativeCupertinoHttp_*) in a static
           # pod framework. Nothing native references them, so the Release
-          # link dead-strips the archive and Dart's dlsym/native-assets
-          # lookup fails at runtime ('No asset with id package:cupertino_http/
+          # link dead-strips the archive members and Dart's dlsym lookup
+          # fails at runtime ('No asset with id package:cupertino_http/
           # src/native_cupertino_bindings.dart found') — every network call
-          # errors out. Same failure class as the wasm_run white screen:
-          # force-load the pod binary so the symbols land in the exports
-          # trie (STRIP_STYLE=non-global above keeps them there).
+          # errors out. Same failure class as the wasm_run white screen.
+          #
+          # The fix is -exported_symbol, NOT force_load: an exported symbol
+          # must exist in the output, so ld pulls the defining archive
+          # member AND keeps it in the exports trie (which is what dlsym
+          # reads). force_load of the same archive the pod already links
+          # via -framework would double-include the dummy object
+          # (duplicate PodsDummy_cupertino_http) — and breaking the
+          # -framework flag instead would drop the pod-target build
+          # ordering ('Build input file cannot be found' under gym's
+          # archive build). Both failure modes seen on CI.
+          #
+          # The symbols are derived from the plugin's generated bindings
+          # source (C names gain one Mach-O underscore, hence the extra '_').
+          # Drop cupertino_http force_load flags injected by earlier
+          # Podfile revisions — exported_symbol alone is the fix now.
           ldflags.reject! { |f| f.include?('cupertino_http') && f.start_with?('-Wl,-force_load') }
-          ldflags << '-Wl,-force_load,$(BUILT_PRODUCTS_DIR)/cupertino_http/cupertino_http.framework/cupertino_http'
-          # force_load puts the archive's code in the binary, but the main
-          # executable's exports trie only lists symbols that are explicitly
-          # exported — and dlsym(RTLD_DEFAULT, ...) (what the Dart bindings
-          # use) only sees THAT trie. Export every _NativeCupertinoHttp_*
-          # C symbol, derived from the plugin's generated bindings source
-          # (C names gain one Mach-O underscore, hence the extra '_').
           cupertino_src = File.expand_path(
             '.symlinks/plugins/cupertino_http/darwin/cupertino_http/Sources/cupertino_http/native_cupertino_bindings.m',
             __dir__,
@@ -133,16 +122,11 @@ post_install do |installer|
           # into "export only these" mode, which hides the JIT entry point
           # (main) from the debug host — abort_could_not_find_entry_point
           # at launch. Debug exports all globals by default, so dlsym finds
-          # the wire_* symbols without any flags.
+          # the symbols without any flags.
           unless config.name == 'Debug'
             ldflags.reject! { |f| f.include?('_NativeCupertinoHttp_') }
             ldflags.concat(cupertino_export_flags)
           end
-          # Debug must NOT get -exported_symbol flags: giving any flips ld
-          # into "export only these" mode, which hides the JIT entry point
-          # (main) from the debug host — abort_could_not_find_entry_point
-          # at launch. Debug exports all globals by default, so dlsym finds
-          # the wire_* symbols without any flags.
           ldflags.concat(export_flags) unless config.name == 'Debug'
           config.build_settings[key] = ldflags
         end
