@@ -10,11 +10,11 @@ const projectMountSegment = '/project';
 /// Maps the `/project` mount segment onto a user-selected host directory,
 /// delegating everything else to the app-container env.
 ///
-/// The app shares ONE [ExecutionEnv] between the agent's tools, the Files
-/// panel, and the internal stores (sessions, settings, caches) — the mount
-/// keeps that single-instance design: setting [mountedRoot] makes the
-/// project visible everywhere the env flows, without recreating the agent
-/// service, and app data never leaks into the user's folder.
+/// When a project folder is mounted, the agent's working directory becomes
+/// `/project` and shell executions run inside the host directory. Sessions
+/// (and any other cwd-relative state) are therefore scoped to the mounted
+/// folder, matching the CLI behavior where each workspace has its own
+/// `sessions/` directory.
 ///
 /// Path mapping is idempotent: host paths already under the mounted
 /// directory pass through unchanged, so values the env itself hands out
@@ -55,13 +55,26 @@ final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
   }
 
   @override
-  String get cwd => _delegate.cwd;
+  String get cwd => _mountedRoot != null ? projectMountSegment : _delegate.cwd;
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
     String command, {
     ShellExecOptions? options,
-  }) => _delegate.exec(command, options: options);
+  }) {
+    final root = _mountedRoot;
+    if (root == null) return _delegate.exec(command, options: options);
+    final cwd = options?.cwd ?? root;
+    final mappedOptions = ShellExecOptions(
+      cwd: cwd,
+      env: options?.env,
+      timeout: options?.timeout,
+      cancelToken: options?.cancelToken,
+      onStdout: options?.onStdout,
+      onStderr: options?.onStderr,
+    );
+    return _delegate.exec(command, options: mappedOptions);
+  }
 
   // Background shell jobs (desktop: the delegate is the real host shell).
   // The log path comes from the registry under env.cwd — already a host path,
@@ -83,13 +96,24 @@ final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
     required String logPath,
     ShellExecOptions? options,
   }) {
+    final root = _mountedRoot;
+    final mappedOptions = root == null
+        ? options
+        : ShellExecOptions(
+            cwd: options?.cwd ?? root,
+            env: options?.env,
+            timeout: options?.timeout,
+            cancelToken: options?.cancelToken,
+            onStdout: options?.onStdout,
+            onStderr: options?.onStderr,
+          );
     final delegate = _delegate;
     if (delegate case final BackgroundShell bg) {
       return bg.startShellJob(
         command,
         id: id,
         logPath: logPath,
-        options: options,
+        options: mappedOptions,
       );
     }
     return Future.value(
