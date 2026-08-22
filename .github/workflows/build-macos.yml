@@ -455,6 +455,21 @@ jobs:
               # -insert/-replace treats dots as nested key separators).
               /usr/libexec/PlistBuddy -c "Add :com.apple.application-identifier string $APP_ID" entitlements.plist
               /usr/libexec/PlistBuddy -c "Add :com.apple.developer.team-identifier string $TEAM_ID" entitlements.plist
+              # The profile may not grant every entitlement the app declares
+              # (e.g. homekit needs a separate Apple Developer capability).
+              # TestFlight rejects entitlements the profile doesn't include
+              # ('Invalid Code Signing Entitlements', error 90285). Filter
+              # our plist against the profile's own entitlement set.
+              PROFILE_ENTS=$(security cms -D -i profile.provisionprofile | plutil -extract Entitlements json -o - 2>/dev/null || echo '{}')
+              for KEY in $(plutil -extract xml1 -o - entitlements.plist | grep -o '<key>[^<]*</key>' | sed 's/<[^>]*>//g'); do
+                case "$KEY" in
+                  com.apple.application-identifier|com.apple.developer.team-identifier) continue ;;
+                esac
+                if ! echo "$PROFILE_ENTS" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if '$KEY' in d else 1)" 2>/dev/null; then
+                  echo "Dropping entitlement not granted by profile: $KEY"
+                  /usr/libexec/PlistBuddy -c "Delete :$KEY" entitlements.plist 2>/dev/null || true
+                fi
+              done
               ENTITLEMENTS="entitlements.plist"
             else
               ENTITLEMENTS="flutter_app/macos/Runner/Release.entitlements"
