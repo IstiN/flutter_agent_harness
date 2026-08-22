@@ -1172,4 +1172,8 @@
 - fix(ios): force-load cupertino_http pod binary + CI gate on its FFI symbols
 - fix(flutter_app): project mount sets agent cwd to /project so sessions are folder-scoped
 
+## 0.1.202
+
+- fix(install): remove broken Dart fallback, respect FA_INSTALL_DIR, sign macOS CLI in CI
+
 ## Unreleased
