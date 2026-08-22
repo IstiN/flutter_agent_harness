@@ -85,6 +85,17 @@ post_install do |installer|
           # Drop stale wasm_run flags from earlier pod installs.
           ldflags.reject! { |f| f == '-force_load' || f.include?('wasm_run_dart.a') || f.start_with?('-Wl,-exported_symbol,') }
           ldflags << "-Wl,-force_load,#{slice}"
+          # cupertino_http (the NSURLSession-backed HTTP client on iOS)
+          # ships its FFI trampolines (_NativeCupertinoHttp_*) in a static
+          # pod framework. Nothing native references them, so the Release
+          # link dead-strips the archive and Dart's dlsym/native-assets
+          # lookup fails at runtime ('No asset with id package:cupertino_http/
+          # src/native_cupertino_bindings.dart found') — every network call
+          # errors out. Same failure class as the wasm_run white screen:
+          # force-load the pod binary so the symbols land in the exports
+          # trie (STRIP_STYLE=non-global above keeps them there).
+          ldflags.reject! { |f| f.include?('cupertino_http.framework/cupertino_http') }
+          ldflags << '-Wl,-force_load,$(BUILT_PRODUCTS_DIR)/cupertino_http.framework/cupertino_http'
           # Debug must NOT get -exported_symbol flags: giving any flips ld
           # into "export only these" mode, which hides the JIT entry point
           # (main) from the debug host — abort_could_not_find_entry_point

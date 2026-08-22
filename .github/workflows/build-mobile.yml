@@ -372,7 +372,7 @@ jobs:
           path: flutter_app/build/ios/ipa/*.ipa
           retention-days: 14
 
-      - name: Verify IPA and wasm_run symbols
+      - name: Verify IPA and FFI symbols
         run: |
           set -euo pipefail
           IPA_PATH=$(find flutter_app/build/ios -name "*.ipa" -type f | head -1)
@@ -402,6 +402,20 @@ jobs:
             fi
           done
           echo "✅ wasm_run FFI symbols are exported"
+
+          # cupertino_http trampolines (_NativeCupertinoHttp_*) live in a
+          # static pod framework nothing native references; without the
+          # Podfile force_load the Release link drops them and every network
+          # call fails at runtime ('No asset with id package:cupertino_http/
+          # src/native_cupertino_bindings.dart found'). Gate on it here so a
+          # broken IPA never reaches TestFlight again.
+          CUPERTINO_COUNT=$(echo "$EXPORTS" | grep -c " __NativeCupertinoHttp_" || true)
+          echo "cupertino_http _NativeCupertinoHttp_* exports in binary: $CUPERTINO_COUNT"
+          if [ "$CUPERTINO_COUNT" -eq 0 ]; then
+            echo "::error::no _NativeCupertinoHttp_* symbols exported from the app binary — networking via NSURLSession would fail at runtime"
+            exit 1
+          fi
+          echo "✅ cupertino_http FFI symbols are exported"
           rm -rf "$CHECK_DIR"
 
       - name: Cleanup
