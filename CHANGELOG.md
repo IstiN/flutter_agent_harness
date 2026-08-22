@@ -1162,4 +1162,8 @@
 
 - fix(install): macOS CLI bundle + quarantine/sign handling
 
+## 0.1.199
+
+- fix(cli): show auth-method picker when adding openrouter/codemie from TUI
+
 ## Unreleased
