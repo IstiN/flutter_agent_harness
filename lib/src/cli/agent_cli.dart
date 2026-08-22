@@ -1284,9 +1284,9 @@ class AgentCli {
 
   /// Preset name → the setup flow it launches.
   late final Map<String, Future<void> Function()> _addProviderHandlers = {
-    'openrouter': () => _handleOpenRouterOAuthCommand(headless: false),
+    'openrouter': () => _handleOpenRouterAuthMethodChoice(),
     'chatgpt': () => _handleChatGptOAuthCommand(headless: false),
-    'codemie': () => _handleCodeMieSsoCommand(defaultCodeMieBaseUrl),
+    'codemie': () => _handleCodeMieAuthMethodChoice(),
     'dial': () => _startDialProviderSetup(),
     'openai': () async => _startProviderFlow(initialType: 'openai'),
     'anthropic': () async => _startProviderFlow(initialType: 'anthropic'),
