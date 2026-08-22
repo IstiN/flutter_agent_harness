@@ -465,16 +465,21 @@ jobs:
               # com.apple.security.* sandbox entitlements (network, files,
               # personal-information) are NOT in the profile by design — any
               # sandboxed app may declare them — so they must survive.
-              PROFILE_ENTS=$(security cms -D -i profile.provisionprofile | plutil -extract Entitlements json -o - 2>/dev/null || echo '{}')
-              for KEY in $(plutil -extract xml1 -o - entitlements.plist | grep -o '<key>[^<]*</key>' | sed 's/<[^>]*>//g'); do
+              #
+              # NOTE: `plutil -extract ... -o -` (stdout form) is not
+              # supported on every macOS the runner may have; use real temp
+              # files so the extraction can't silently produce nothing.
+              security cms -D -i profile.provisionprofile -o profile_decoded.plist
+              plutil -extract Entitlements json profile_decoded.plist -o profile_ents.json
+              for KEY in $(plutil -convert xml1 entitlements.plist -o - | grep -o '<key>[^<]*</key>' | sed 's/<[^>]*>//g'); do
                 case "$KEY" in
                   com.apple.application-identifier|com.apple.developer.team-identifier) continue ;;
                   com.apple.developer.*) ;;
                   *) continue ;; # sandbox + misc entitlements are not profile-gated
                 esac
-                if ! echo "$PROFILE_ENTS" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if '$KEY' in d else 1)" 2>/dev/null; then
+                if ! python3 -c "import json; d=json.load(open('profile_ents.json')); raise SystemExit(0 if '$KEY' in d else 1)"; then
                   echo "Dropping capability not granted by profile: $KEY"
-                  /usr/libexec/PlistBuddy -c "Delete :$KEY" entitlements.plist 2>/dev/null || true
+                  /usr/libexec/PlistBuddy -c "Delete :$KEY" entitlements.plist
                 fi
               done
               ENTITLEMENTS="entitlements.plist"
