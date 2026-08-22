@@ -9,9 +9,6 @@
 #   3. Installs it to a directory on your PATH.
 #   4. Prints a concise setup recipe and exits.
 #
-# Fallback: if the binary is unavailable for this platform, the script falls
-# back to `dart pub global activate`, which requires the Dart SDK.
-#
 # For interactive configuration (provider, model, API key), run:
 #   curl -fsSL "https://fa1.dev/setup.sh" | sh
 #
@@ -91,11 +88,16 @@ asset="fa-${os}-${arch}.tar.gz"
 # Prefer a directory already on PATH, falling back to ~/.local/bin.
 # (POSIX-only syntax below: Ubuntu's /bin/sh is dash, no arrays/[[]]/pipefail.)
 install_dir="${FA_INSTALL_DIR:-$HOME/.local/bin}"
-case ":${PATH}:" in
-  *":$install_dir:"*) ;;
-  *":$HOME/.local/bin:"*) install_dir="$HOME/.local/bin" ;;
-  *":$HOME/bin:"*) install_dir="$HOME/bin" ;;
-esac
+# Only auto-switch to a PATH directory when the user did not explicitly pick
+# an install directory. FA_INSTALL_DIR must win so CI/tests can install to a
+# temp location without adding it to PATH first.
+if [ -z "${FA_INSTALL_DIR:-}" ]; then
+  case ":${PATH}:" in
+    *":$install_dir:"*) ;;
+    *":$HOME/.local/bin:"*) install_dir="$HOME/.local/bin" ;;
+    *":$HOME/bin:"*) install_dir="$HOME/bin" ;;
+  esac
+fi
 
 mkdir -p "$install_dir"
 target="$install_dir/$BINARY"
@@ -103,49 +105,67 @@ target="$install_dir/$BINARY"
 # ── 3. Resolve download URL ──────────────────────────────────────────────────
 download_url="https://github.com/$REPO/releases/latest/download/$asset"
 
-# ── 4. Install bundle (or fall back to Dart) ─────────────────────────────────
+# ── 4. Download and install bundle ───────────────────────────────────────────
 info "Downloading Fa for ${os}-${arch}..."
 dl_ok=false
 tmp_archive="$(mktemp 2>/dev/null || mktemp -t fa-archive)"
 if command -v curl >/dev/null 2>&1; then
   if curl -fSL --progress-bar "$download_url" -o "$tmp_archive" 2>/dev/null; then
     dl_ok=true
+  else
+    curl_status=$?
+    warn "Download failed (curl exit $curl_status): $download_url"
   fi
 else
   if wget --show-progress -qO "$tmp_archive" "$download_url" 2>/dev/null; then
     dl_ok=true
-  fi
-fi
-
-if [ "$dl_ok" = true ]; then
-  # dart build cli produces a bundle/ dir: bundle/bin/fa + bundle/lib/*.dylib
-  # Extract the bundle, copy bin/ and lib/ into the install dir.
-  tmp_extract="$(mktemp -d 2>/dev/null || mktemp -d -t fa-extract)"
-  if tar -xzf "$tmp_archive" -C "$tmp_extract" 2>/dev/null; then
-    mkdir -p "$install_dir/lib"
-    rm -f "$target"  # break any pre-existing symlink so cp writes the real file
-    cp "$tmp_extract/bundle/bin/fa" "$target"
-    chmod +x "$target"
-    # Copy version.txt so the binary can report its version.
-    if [ -f "$tmp_extract/bundle/version.txt" ]; then
-      cp "$tmp_extract/bundle/version.txt" "$install_dir/version.txt"
-    fi
-    if [ -d "$tmp_extract/bundle/lib" ]; then
-      cp -r "$tmp_extract/bundle/lib/"* "$install_dir/lib/" 2>/dev/null || true
-    fi
-    rm -rf "$tmp_extract" "$tmp_archive"
   else
-    rm -rf "$tmp_extract" "$tmp_archive"
-    dl_ok=false
+    warn "Download failed: $download_url"
   fi
 fi
 
-if [ "$dl_ok" = true ]; then
-  ok "Installed $target"
-else
-  warn "No prebuilt binary found for ${os}-${arch} (or download failed). Falling back to Dart pub global activate."
-  FALLBACK=true
+if [ "$dl_ok" != true ]; then
+  err "No prebuilt binary is available for ${os}-${arch} right now."
+  say ""
+  say "  The installer tried to fetch:"
+  say "    $download_url"
+  say ""
+  say "  Common causes:"
+  say "    • A release is still building — wait a minute and retry."
+  say "    • This platform is not yet supported."
+  say ""
+  say "  To build from source (requires the Dart SDK):"
+  say "    git clone https://github.com/$REPO"
+  say "    cd flutter_agent_harness"
+  say "    dart build cli --target=bin/fah.dart --output=build/out"
+  say "    cp build/out/bundle/bin/fah ~/.local/bin/fa"
+  say ""
+  exit 1
 fi
+
+# dart build cli produces a bundle/ dir: bundle/bin/fa + bundle/lib/*.dylib
+# Extract the bundle, copy bin/ and lib/ into the install dir.
+tmp_extract="$(mktemp -d 2>/dev/null || mktemp -d -t fa-extract)"
+if ! tar -xzf "$tmp_archive" -C "$tmp_extract" 2>/dev/null; then
+  err "Downloaded archive is corrupt or empty."
+  rm -rf "$tmp_extract" "$tmp_archive"
+  exit 1
+fi
+
+mkdir -p "$install_dir/lib"
+rm -f "$target"  # break any pre-existing symlink so cp writes the real file
+cp "$tmp_extract/bundle/bin/fa" "$target"
+chmod +x "$target"
+# Copy version.txt so the binary can report its version.
+if [ -f "$tmp_extract/bundle/version.txt" ]; then
+  cp "$tmp_extract/bundle/version.txt" "$install_dir/version.txt"
+fi
+if [ -d "$tmp_extract/bundle/lib" ]; then
+  cp -r "$tmp_extract/bundle/lib/"* "$install_dir/lib/" 2>/dev/null || true
+fi
+rm -rf "$tmp_extract" "$tmp_archive"
+
+ok "Installed $target"
 
 # macOS quarantine / signature hardening: downloaded executables are tagged by
 # Gatekeeper and will be killed on launch unless the quarantine attribute is
@@ -159,25 +179,6 @@ if [ "$os" = "macos" ]; then
   if command -v codesign >/dev/null 2>&1; then
     codesign --force --sign - "$target" 2>/dev/null || true
   fi
-fi
-
-if [ "${FALLBACK:-}" = true ]; then
-  if ! command -v dart >/dev/null 2>&1; then
-    err "the Dart SDK ('dart') is not on your PATH, and no prebuilt binary is available for ${os}-${arch}."
-    say ""
-    say "  Install Flutter (includes Dart) from:"
-    say ""
-    say "    https://docs.flutter.dev/get-started/install"
-    say ""
-    exit 1
-  fi
-  PACKAGE="flutter_agent_harness"
-  PUB_CACHE_BIN="${PUB_CACHE_BIN:-$HOME/.pub-cache/bin}"
-  info "Activating $PACKAGE from pub.dev..."
-  dart pub global activate "$PACKAGE"
-  install_dir="$PUB_CACHE_BIN"
-  target="$install_dir/$BINARY"
-  ok "Installed $target"
 fi
 
 # ── 5. Ensure install directory is on PATH ───────────────────────────────────

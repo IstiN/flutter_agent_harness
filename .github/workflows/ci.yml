@@ -222,6 +222,11 @@ jobs:
           fi
           echo "$version" > build/out/bundle/version.txt
 
+      - name: Ad-hoc sign CLI binary (macOS)
+        if: matrix.os == 'macos'
+        shell: bash
+        run: codesign --force --sign - build/out/bundle/bin/fa
+
       - name: Archive bundle
         shell: bash
         run: |
