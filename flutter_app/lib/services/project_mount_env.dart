@@ -187,3 +187,18 @@ final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
     bool force = false,
   }) => _delegate.remove(_map(path), recursive: recursive, force: force);
 }
+
+/// The directory used for session scoping.
+///
+/// When a project folder is mounted this is the host path, so sessions and
+/// messaging are stored at the same physical location as the CLI uses for the
+/// same workspace. Otherwise it falls back to [ExecutionEnv.cwd].
+extension SessionCwd on ExecutionEnv {
+  String get sessionCwd {
+    if (this case final ProjectMountEnv mountEnv) {
+      final root = mountEnv.mountedRoot;
+      if (root != null) return root;
+    }
+    return cwd;
+  }
+}

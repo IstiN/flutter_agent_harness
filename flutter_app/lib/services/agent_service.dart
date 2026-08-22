@@ -331,8 +331,8 @@ class AgentService extends ChangeNotifier
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
-       sessionsRoot = '${env.cwd}/sessions',
-       _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.cwd}/sessions') {
+       sessionsRoot = '${env.sessionCwd}/sessions',
+       _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.sessionCwd}/sessions') {
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
     _activeApiKey = config.apiKey;
@@ -385,7 +385,7 @@ class AgentService extends ChangeNotifier
       parentSessionId: '',
       messaging: FileMessagingRepository(
         env: env,
-        root: '$sessionsRoot/${encodeSessionCwd(env.cwd)}/messages',
+        root: '$sessionsRoot/${encodeSessionCwd(env.sessionCwd)}/messages',
         decodeSessionCwd: decodeSessionCwd,
         homeDir: null,
       ),
@@ -396,7 +396,7 @@ class AgentService extends ChangeNotifier
     Future<Session> childSessionFactory(String parentId, String childId) async {
       return _repo.create(
         JsonlSessionCreateOptions(
-          cwd: env.cwd,
+          cwd: env.sessionCwd,
           metadata: {
             'agent': 'subagent',
             'id': childId,
@@ -906,7 +906,7 @@ class AgentService extends ChangeNotifier
       final metadata = SessionMetadata(
         id: handle.sessionId,
         createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-        cwd: env.cwd,
+        cwd: env.sessionCwd,
         path: handle.sessionId,
       );
       final exists = await env.fileInfo(handle.sessionId);
@@ -941,7 +941,7 @@ class AgentService extends ChangeNotifier
       final metadata = SessionMetadata(
         id: handle.sessionId,
         createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-        cwd: env.cwd,
+        cwd: env.sessionCwd,
         path: handle.sessionId,
       );
       final session = await _repo.open(metadata);
