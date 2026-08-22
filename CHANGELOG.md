@@ -1158,4 +1158,8 @@
 
 - fix(ci): merge Release.entitlements into the signed macOS build, don't strip them
 
+## 0.1.195
+
+- fix(install): macOS CLI bundle + quarantine/sign handling
+
 ## Unreleased
