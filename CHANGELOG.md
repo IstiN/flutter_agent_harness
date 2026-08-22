@@ -1166,4 +1166,10 @@
 
 - fix(cli): show auth-method picker when adding openrouter/codemie from TUI
 
+## 0.1.200
+
+- fix(ios): correct force_load path — pod products live in a per-pod subdir
+- fix(ios): force-load cupertino_http pod binary + CI gate on its FFI symbols
+- fix(flutter_app): project mount sets agent cwd to /project so sessions are folder-scoped
+
 ## Unreleased
