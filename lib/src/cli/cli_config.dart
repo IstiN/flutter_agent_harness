@@ -17,6 +17,7 @@ import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../providers/provider_common.dart';
+import '../skills/skills_access.dart';
 import '../ttsr/ttsr.dart';
 import 'custom_providers.dart';
 
@@ -67,9 +68,12 @@ final class CliConfig {
     this.mcp,
     this.a2a,
     this.providerTimeouts,
+    this.skillsAccess = SkillsAccess.ask,
+    this.skillsDisableShellExecution = false,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
+    final skillsSection = _parseSkillsSection(map['skills']);
     return CliConfig(
       providerKind: map['provider'] as String? ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
@@ -120,7 +124,47 @@ final class CliConfig {
       // The providerTimeouts section (provider watchdog overrides) is strict
       // too.
       providerTimeouts: _parseProviderTimeouts(map['providerTimeouts']),
+      // The skills section (third-party skills access consent + shell
+      // execution toggle) is strict too.
+      skillsAccess:
+          skillsSection['skillsAccess'] as SkillsAccess? ?? SkillsAccess.ask,
+      skillsDisableShellExecution:
+          skillsSection['skillsDisableShellExecution'] as bool? ?? false,
     );
+  }
+
+  /// Parses the `skills:` section: `access` (ask/granted/denied — consent
+  /// to read third-party `.claude`/`.github`/`.codex` skill directories)
+  /// and `disableShellExecution` (Claude-style `!`cmd`` skill injections).
+  static Map<String, Object?> _parseSkillsSection(Object? node) {
+    if (node == null) return const {};
+    if (node is! YamlMap) {
+      throw ConfigException('skills must be a map, got: $node');
+    }
+    final result = <String, Object?>{};
+    for (final key in node.keys) {
+      switch (key) {
+        case 'access':
+          final value = '${node[key]}'.trim();
+          if (!{'ask', 'granted', 'denied'}.contains(value)) {
+            throw ConfigException(
+              'skills.access must be ask, granted or denied, got: $value',
+            );
+          }
+          result['skillsAccess'] = skillsAccessFromLabel(value);
+        case 'disableShellExecution':
+          final value = node[key];
+          if (value is! bool) {
+            throw ConfigException(
+              'skills.disableShellExecution must be a boolean, got: $value',
+            );
+          }
+          result['skillsDisableShellExecution'] = value;
+        default:
+          throw ConfigException('unknown "skills" key: $key');
+      }
+    }
+    return result;
   }
 
   final String providerKind;
@@ -177,6 +221,18 @@ final class CliConfig {
   /// `bin/fah.dart` publishes it to [providerTimeoutsOverride] at startup.
   final ProviderTimeoutsOverride? providerTimeouts;
 
+  /// Consent to read third-party skill/agent directories
+  /// (`.claude`/`.github`/`.codex` + their `~/` mirrors), from the
+  /// `skills.access` yaml key. [SkillsAccess.ask] (default) means the
+  /// interactive REPL asks once and persists the answer; headless runs
+  /// skip third-party discovery until configured.
+  final SkillsAccess skillsAccess;
+
+  /// When true, Claude-style `!`cmd`` / ```` ```! ```` shell injections in
+  /// skill bodies render as a disabled placeholder instead of executing
+  /// (the `skills.disableShellExecution` yaml key).
+  final bool skillsDisableShellExecution;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -207,6 +263,15 @@ final class CliConfig {
       final streamIdle = timeouts.streamIdle;
       if (streamIdle != null) {
         buffer.write('  streamIdleTimeoutMs: ${streamIdle.inMilliseconds}\n');
+      }
+    }
+    if (skillsAccess != SkillsAccess.ask || skillsDisableShellExecution) {
+      buffer.write('skills:\n');
+      if (skillsAccess != SkillsAccess.ask) {
+        buffer.write('  access: ${skillsAccessLabel(skillsAccess)}\n');
+      }
+      if (skillsDisableShellExecution) {
+        buffer.write('  disableShellExecution: true\n');
       }
     }
     return buffer.toString();

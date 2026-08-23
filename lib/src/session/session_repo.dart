@@ -83,7 +83,8 @@ abstract interface class SessionRepo {
 }
 
 String _encodeCwd(String cwd) {
-  return '--${cwd.replaceFirst(RegExp(r'^[/\\]'), '').replaceAll(RegExp(r'[/\\:]'), '-')}--';
+  final normalized = cwd.replaceAll(RegExp(r'[/\\]+$'), '');
+  return '--${normalized.replaceFirst(RegExp(r'^[/\\]'), '').replaceAll(RegExp(r'[/\\:]'), '-')}--';
 }
 
 /// The per-project directory slug used under the sessions root
@@ -111,7 +112,12 @@ String createSessionId() => uuidv7();
 
 /// JSONL session repository on top of a [FileSystem].
 ///
-/// Ported from pi's `JsonlSessionRepo`.
+/// Ported from pi's `JsonlSessionRepo`. Layout: sessions are stored under
+/// [sessionsRoot] grouped by working directory:
+/// `<sessionsRoot>/<--encoded-cwd-->/<timestamp>_<sessionId>.jsonl`.
+/// The session's original working directory is kept in the file header
+/// ([SessionMetadata.cwd]) so a session can be resumed from any launch folder
+/// while preserving its project scope.
 final class JsonlSessionRepo implements SessionRepo {
   /// Creates a [JsonlSessionRepo] storing sessions under [sessionsRoot].
   JsonlSessionRepo({required this._fs, required String sessionsRoot})
@@ -132,17 +138,10 @@ final class JsonlSessionRepo implements SessionRepo {
     return resolved;
   }
 
-  Future<String> _getSessionDir(String cwd) async {
-    return _fsOrThrow(
-      await _fs.joinPath([await _getSessionsRoot(), _encodeCwd(cwd)]),
-      'Failed to resolve session directory for $cwd',
-    );
-  }
-
   Future<String> _createSessionFilePath(
-    String cwd,
     String sessionId,
     DateTime timestamp,
+    String cwd,
   ) async {
     final safeTimestamp = timestamp.toIso8601String().replaceAll(
       RegExp(r'[:.]'),
@@ -150,7 +149,8 @@ final class JsonlSessionRepo implements SessionRepo {
     );
     return _fsOrThrow(
       await _fs.joinPath([
-        await _getSessionDir(cwd),
+        await _getSessionsRoot(),
+        encodeSessionCwd(cwd),
         '${safeTimestamp}_$sessionId.jsonl',
       ]),
       'Failed to resolve session file path for $sessionId',
@@ -175,12 +175,16 @@ final class JsonlSessionRepo implements SessionRepo {
   Future<Session> create(JsonlSessionCreateOptions options) async {
     final id = options.id ?? createSessionId();
     final createdAt = DateTime.now();
-    final sessionDir = await _getSessionDir(options.cwd);
-    _fsOrThrow(
-      await _fs.createDir(sessionDir, recursive: true),
-      'Failed to create session directory $sessionDir',
+    final sessionsRoot = await _getSessionsRoot();
+    final cwdDir = _fsOrThrow(
+      await _fs.joinPath([sessionsRoot, encodeSessionCwd(options.cwd)]),
+      'Failed to resolve session directory for ${options.cwd}',
     );
-    final filePath = await _createSessionFilePath(options.cwd, id, createdAt);
+    _fsOrThrow(
+      await _fs.createDir(cwdDir, recursive: true),
+      'Failed to create session directory for ${options.cwd}',
+    );
+    final filePath = await _createSessionFilePath(id, createdAt, options.cwd);
     final storage = await JsonlSessionStorage.create(
       _fs,
       filePath,
@@ -209,40 +213,22 @@ final class JsonlSessionRepo implements SessionRepo {
 
   @override
   Future<List<SessionMetadata>> list({String? cwd}) async {
-    final dirs = cwd != null
-        ? [await _getSessionDir(cwd)]
-        : await _listSessionDirs();
-    final sessions = <SessionMetadata>[];
-    for (final dir in dirs) {
-      await _collectDirSessions(dir, sessions);
+    final sessions = await _collectRootSessions();
+    if (cwd != null) {
+      sessions.retainWhere((m) => m.cwd == cwd);
     }
-    sessions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    sessions.sort(_compareSessionActivity);
     return sessions;
   }
 
-  Future<void> _collectDirSessions(
-    String dir,
-    List<SessionMetadata> sessions,
-  ) async {
-    final exists = _fsOrThrow(
-      await _fs.exists(dir),
-      'Failed to check session directory $dir',
-    );
-    if (!exists) return;
-    final files = _fsOrThrow(
-      await _fs.listDir(dir),
-      'Failed to list sessions in $dir',
-    );
-    for (final file in files) {
-      if (file.kind == FileKind.directory || !file.name.endsWith('.jsonl')) {
-        continue;
-      }
-      try {
-        sessions.add(await loadJsonlSessionMetadata(_fs, file.path));
-      } on SessionException catch (error) {
-        if (error.code != SessionErrorCode.invalidSession) rethrow;
-      }
-    }
+  /// Sort sessions by latest activity (file mtime), falling back to creation
+  /// time so stable ordering is guaranteed even when mtimes are equal.
+  int _compareSessionActivity(SessionMetadata a, SessionMetadata b) {
+    final aTime = a.lastUpdatedAt ?? a.createdAt;
+    final bTime = b.lastUpdatedAt ?? b.createdAt;
+    final result = bTime.compareTo(aTime);
+    if (result != 0) return result;
+    return b.createdAt.compareTo(a.createdAt);
   }
 
   @override
@@ -263,40 +249,48 @@ final class JsonlSessionRepo implements SessionRepo {
   /// file in place).
   Future<int> cleanupEmptySessions() async {
     var removed = 0;
-    final dirs = await _listSessionDirs();
-    for (final dir in dirs) {
-      final dirExists = _fsOrThrow(
-        await _fs.exists(dir),
-        'Failed to check session dir $dir',
+    final root = await _getSessionsRoot();
+    final rootExists = _fsOrThrow(
+      await _fs.exists(root),
+      'Failed to check sessions root $root',
+    );
+    if (!rootExists) return 0;
+    final files = await _collectJsonlFiles(root);
+    for (final path in files) {
+      final contents = _fsOrThrow(
+        await _fs.readTextFile(path),
+        'Failed to read $path',
       );
-      if (!dirExists) continue;
-      final files = _fsOrThrow(
-        await _fs.listDir(dir),
-        'Failed to list session dir $dir',
+      // A session that holds only its header record has zero or one
+      // non-empty line; anything more means real transcript.
+      final nonEmpty = contents
+          .split('\n')
+          .where((line) => line.trim().isNotEmpty)
+          .length;
+      if (nonEmpty > 1) continue;
+      _fsOrThrow(
+        await _fs.remove(path, force: true),
+        'Failed to delete empty session $path',
       );
-      for (final file in files) {
-        if (file.kind != FileKind.file) continue;
-        if (!file.name.endsWith('.jsonl')) continue;
-        final path = file.path;
-        final contents = _fsOrThrow(
-          await _fs.readTextFile(path),
-          'Failed to read $path',
-        );
-        // A session that holds only its header record has zero or one
-        // non-empty line; anything more means real transcript.
-        final nonEmpty = contents
-            .split('\n')
-            .where((line) => line.trim().isNotEmpty)
-            .length;
-        if (nonEmpty > 1) continue;
-        _fsOrThrow(
-          await _fs.remove(path, force: true),
-          'Failed to delete empty session $path',
-        );
-        removed++;
-      }
+      removed++;
     }
     return removed;
+  }
+
+  Future<List<String>> _collectJsonlFiles(String dirPath) async {
+    final entries = _fsOrThrow(
+      await _fs.listDir(dirPath),
+      'Failed to list session directory $dirPath',
+    );
+    final files = <String>[];
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory) {
+        files.addAll(await _collectJsonlFiles(entry.path));
+        continue;
+      }
+      if (entry.name.endsWith('.jsonl')) files.add(entry.path);
+    }
+    return files;
   }
 
   @override
@@ -317,14 +311,18 @@ final class JsonlSessionRepo implements SessionRepo {
     );
     final sessionId = id ?? createSessionId();
     final createdAt = DateTime.now();
-    final sessionDir = await _getSessionDir(cwd);
+    final sessionsRoot = await _getSessionsRoot();
+    final cwdDir = _fsOrThrow(
+      await _fs.joinPath([sessionsRoot, encodeSessionCwd(cwd)]),
+      'Failed to resolve session directory for $cwd',
+    );
     _fsOrThrow(
-      await _fs.createDir(sessionDir, recursive: true),
-      'Failed to create session directory $sessionDir',
+      await _fs.createDir(cwdDir, recursive: true),
+      'Failed to create session directory for $cwd',
     );
     final storage = await JsonlSessionStorage.create(
       _fs,
-      await _createSessionFilePath(cwd, sessionId, createdAt),
+      await _createSessionFilePath(sessionId, createdAt, cwd),
       cwd: cwd,
       sessionId: sessionId,
       parentSessionPath: parentSessionPath ?? source.path,
@@ -336,21 +334,48 @@ final class JsonlSessionRepo implements SessionRepo {
     return Session(storage);
   }
 
-  Future<List<String>> _listSessionDirs() async {
+  Future<List<SessionMetadata>> _collectRootSessions() async {
     final root = await _getSessionsRoot();
     final exists = _fsOrThrow(
       await _fs.exists(root),
       'Failed to check sessions root $root',
     );
     if (!exists) return [];
+    final sessions = <SessionMetadata>[];
+    await _collectSessionsInDir(root, sessions);
+    return sessions;
+  }
+
+  Future<void> _collectSessionsInDir(
+    String dirPath,
+    List<SessionMetadata> out,
+  ) async {
     final entries = _fsOrThrow(
-      await _fs.listDir(root),
-      'Failed to list sessions root $root',
+      await _fs.listDir(dirPath),
+      'Failed to list session directory $dirPath',
     );
-    return [
-      for (final entry in entries)
-        if (entry.kind == FileKind.directory) entry.path,
-    ];
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory) {
+        await _collectSessionsInDir(entry.path, out);
+        continue;
+      }
+      if (!entry.name.endsWith('.jsonl')) continue;
+      final metadata = await _tryLoadSessionMetadata(entry);
+      if (metadata != null) out.add(metadata);
+    }
+  }
+
+  Future<SessionMetadata?> _tryLoadSessionMetadata(FileInfo entry) async {
+    try {
+      return await loadJsonlSessionMetadata(
+        _fs,
+        entry.path,
+        lastUpdatedAt: DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs),
+      );
+    } on SessionException catch (error) {
+      if (error.code != SessionErrorCode.invalidSession) rethrow;
+      return null;
+    }
   }
 
   Future<List<SessionRecord>> _entriesToFork(

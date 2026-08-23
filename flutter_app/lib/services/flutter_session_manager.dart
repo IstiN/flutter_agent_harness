@@ -18,7 +18,9 @@ final class FlutterManagedSession {
     required this.id,
     required this.service,
     DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.now();
+    DateTime? lastUpdatedAt,
+  }) : createdAt = createdAt ?? DateTime.now(),
+       lastUpdatedAt = lastUpdatedAt ?? createdAt ?? DateTime.now();
 
   /// Session id (uuidv7).
   final String id;
@@ -28,6 +30,10 @@ final class FlutterManagedSession {
 
   /// When the session was created (drives the date-derived display title).
   final DateTime createdAt;
+
+  /// When the session was last modified on disk. For live sessions this is
+  /// captured from [SessionMetadata] on open, or [createdAt] for fresh ones.
+  final DateTime lastUpdatedAt;
 }
 
 /// Manages several concurrent [AgentService] sessions for the Flutter chat
@@ -59,16 +65,17 @@ final class FlutterSessionManager extends ChangeNotifier {
 
   String? _restoredLastActiveId;
 
+  /// Path to the global last-active marker, kept inside the shared sessions
+  /// root so it survives app-container restarts.
+  String get _lastActivePath => '$sessionsRoot/$lastActiveFile';
+
   /// Persists [id] as the last active session (fire-and-forget, best effort).
   void _rememberActive(String? id) {
     if (id == null || id == _restoredLastActiveId) return;
     _restoredLastActiveId = id;
     unawaited(
       env
-          .writeFile(
-            '${env.cwd}/$lastActiveFile',
-            '{"version":1,"id":${jsonEncode(id)}}',
-          )
+          .writeFile(_lastActivePath, '{"version":1,"id":${jsonEncode(id)}}')
           .then((_) {})
           .catchError((Object _) {}),
     );
@@ -77,7 +84,7 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// Reads the persisted last-active session id (null when none/unreadable).
   Future<String?> _readLastActiveId() async {
     try {
-      final result = await env.readTextFile('${env.cwd}/$lastActiveFile');
+      final result = await env.readTextFile(_lastActivePath);
       final raw = result.valueOrNull;
       if (raw == null) return null;
       final decoded = jsonDecode(raw);
@@ -138,6 +145,7 @@ final class FlutterSessionManager extends ChangeNotifier {
         id: metadata.id,
         service: service,
         createdAt: metadata.createdAt,
+        lastUpdatedAt: metadata.lastUpdatedAt ?? metadata.createdAt,
       );
       // Do NOT set _activeId or _rememberActive — this is background work.
       notifyListeners();
@@ -160,7 +168,13 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (id == null) {
       throw StateError('AgentService did not initialize a session id');
     }
-    final managed = FlutterManagedSession(id: id, service: service);
+    final now = DateTime.now();
+    final managed = FlutterManagedSession(
+      id: id,
+      service: service,
+      createdAt: now,
+      lastUpdatedAt: now,
+    );
     _sessions[id] = managed;
     _activeId = id;
     _rememberActive(id);
@@ -169,9 +183,20 @@ final class FlutterSessionManager extends ChangeNotifier {
   }
 
   /// Adds an existing [AgentService] as a managed session, making it active.
-  /// Used in tests where the service is already initialized.
-  void addSession(String id, AgentService service) {
-    _sessions[id] = FlutterManagedSession(id: id, service: service);
+  /// Used in tests where the service is already initialized. [createdAt]
+  /// pins the tile subtitle (goldens need deterministic timestamps).
+  void addSession(
+    String id,
+    AgentService service, {
+    DateTime? createdAt,
+    DateTime? lastUpdatedAt,
+  }) {
+    _sessions[id] = FlutterManagedSession(
+      id: id,
+      service: service,
+      createdAt: createdAt,
+      lastUpdatedAt: lastUpdatedAt,
+    );
     _activeId = id;
     _rememberActive(id);
     notifyListeners();
@@ -196,6 +221,7 @@ final class FlutterSessionManager extends ChangeNotifier {
       id: metadata.id,
       service: service,
       createdAt: metadata.createdAt,
+      lastUpdatedAt: metadata.lastUpdatedAt ?? metadata.createdAt,
     );
     _sessions[metadata.id] = managed;
     _activeId = metadata.id;

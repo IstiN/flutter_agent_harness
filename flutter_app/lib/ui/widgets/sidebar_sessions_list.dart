@@ -1,5 +1,6 @@
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -90,54 +91,6 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
         derivedSessionTitle(context, id: entry.id, createdAt: entry.createdAt);
   }
 
-  /// Short timestamp for the session subtitle (e.g. "12:34 PM" or "May 7").
-  String _subtitleFor(_SessionEntry entry) {
-    final created = entry.createdAt;
-    final now = DateTime.now();
-    final diff = now.difference(created);
-    if (diff.inDays == 0) {
-      // Today: show time.
-      final h = created.hour == 0
-          ? 12
-          : (created.hour > 12 ? created.hour - 12 : created.hour);
-      final m = created.minute.toString().padLeft(2, '0');
-      final ampm = created.hour >= 12 ? 'PM' : 'AM';
-      return '$h:$m $ampm';
-    }
-    if (diff.inDays == 1) return 'Yesterday';
-    if (diff.inDays < 7) {
-      final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      return weekdays[created.weekday - 1];
-    }
-    final months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return '${months[created.month - 1]} ${created.day}';
-  }
-
-  /// The folder label rendered next to the title — the last path segment
-  /// of the session's working directory so the user can scan which project
-  /// each session belongs to at a glance. Null when the cwd is missing
-  /// or looks like an unscoped sandbox root (no useful basename).
-  String? _cwdLabel(_SessionEntry entry) {
-    final cwd = entry.cwd;
-    if (cwd == null || cwd.isEmpty) return null;
-    final name = p.basename(cwd);
-    if (name.isEmpty || name == '/' || name == '.') return null;
-    return name;
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -160,7 +113,8 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
         _SessionEntry(
           id: session.id,
           createdAt: session.createdAt,
-          cwd: session.service.env.cwd,
+          lastUpdatedAt: session.lastUpdatedAt,
+          cwd: session.service.env.sessionCwd,
           live: session,
         ),
       for (final metadata in widget.persistedSessions)
@@ -168,10 +122,11 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
           _SessionEntry(
             id: metadata.id,
             createdAt: metadata.createdAt,
+            lastUpdatedAt: metadata.lastUpdatedAt ?? metadata.createdAt,
             cwd: metadata.cwd,
             persisted: metadata,
           ),
-    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    ]..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
     final grouped = _groupEntriesByDate(entries);
     return Column(
       children: [
@@ -210,10 +165,10 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                     for (final group in grouped) ...[
                       _DateHeader(label: group.label, colors: colors),
                       for (final entry in group.entries)
-                        _SessionTile(
+                        SessionTile(
                           title: _titleFor(entry),
-                          subtitle: _subtitleFor(entry),
-                          cwd: _cwdLabel(entry),
+                          subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
+                          cwd: sessionTileCwdLabel(entry.cwd),
                           isActive: widget.manager.active?.id == entry.id,
                           onTap: () => _openEntry(entry),
                           onMenu: (anchor) => _showSessionMenu(entry, anchor),
@@ -257,15 +212,16 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   }
 
   /// Date group label for an entry: "Today", "Yesterday", or a date.
+  /// Groups by last activity so recently updated sessions bubble up.
   String _groupLabel(_SessionEntry entry) {
-    final created = entry.createdAt;
+    final updated = entry.lastUpdatedAt;
     final now = DateTime.now();
-    final diff = now.difference(created);
+    final diff = now.difference(updated);
     if (diff.inDays == 0) return 'Today';
     if (diff.inDays == 1) return 'Yesterday';
     if (diff.inDays < 7) {
       final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      return weekdays[created.weekday - 1];
+      return weekdays[updated.weekday - 1];
     }
     final months = [
       'Jan',
@@ -281,120 +237,24 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       'Nov',
       'Dec',
     ];
-    return '${months[created.month - 1]} ${created.day}';
+    return '${months[updated.month - 1]} ${updated.day}';
   }
 
   /// The 3-dot tile menu: rename (via the shared rename dialog, like the
   /// CLI `/rename`) and delete (with confirmation). Works for live and
-  /// persisted-only sessions alike.
-  Future<void> _showSessionMenu(_SessionEntry entry, Rect anchor) async {
-    final l10n = context.l10n;
-    final overlayBox =
-        Overlay.of(context).context.findRenderObject()! as RenderBox;
-    final action = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromRect(anchor, Offset.zero & overlayBox.size),
-      items: [
-        PopupMenuItem(
-          value: 'rename',
-          child: Row(
-            children: [
-              const Icon(Icons.edit_outlined, size: 16),
-              const SizedBox(width: 8),
-              Text(l10n.sidebarRenameDialogTitle),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'delete',
-          child: Row(
-            children: [
-              const Icon(Icons.delete_outline, size: 16),
-              const SizedBox(width: 8),
-              Text(l10n.sidebarDelete),
-            ],
-          ),
-        ),
-      ],
-    );
-    if (!mounted || action == null) return;
-    switch (action) {
-      case 'rename':
-        await _renameEntry(entry);
-      case 'delete':
-        await _deleteEntry(entry);
-    }
-  }
-
-  Future<void> _renameEntry(_SessionEntry entry) async {
-    final store = widget.sessionNamesStore;
-    if (store == null) return;
-    await showRenameSessionDialog(
-      context,
-      store: store,
-      sessionId: entry.id,
-      createdAt: entry.createdAt,
-    );
-  }
-
-  Future<void> _deleteEntry(_SessionEntry entry) async {
-    final l10n = context.l10n;
-    final title = widget.sessionNamesStore?.titleFor(entry.id);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.sidebarDeleteSessionTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title ??
-                  l10n.sidebarDeletePersistedContent(entry.id.substring(0, 8)),
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Text(l10n.sidebarDeleteSessionContent),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(l10n.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(l10n.sidebarDelete),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await widget.manager.deleteSession(entry.id, metadata: entry.persisted);
-      // Deleting the active (and only) session must not strand the shell on
-      // the "No active session" placeholder — mint a fresh one on the same
-      // connection, like the chat screen's ensureActiveSession path.
-      if (widget.manager.active == null) {
-        final service = entry.live?.service;
-        final config = service?.configForClone;
-        if (service != null && config != null) {
-          await widget.manager.ensureActiveSession(
-            config: config,
-            serviceFactory: () async => service.clone(),
-          );
-        }
-      }
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.sidebarDeleteSessionFailed(error.toString())),
-          ),
-        );
-      }
-    }
-  }
+  /// persisted-only sessions alike — the implementation is shared with the
+  /// mobile chat sheet's sessions drawer (see [showSessionActionsMenu]).
+  Future<void> _showSessionMenu(_SessionEntry entry, Rect anchor) =>
+      showSessionActionsMenu(
+        context,
+        anchor: anchor,
+        manager: widget.manager,
+        namesStore: widget.sessionNamesStore,
+        sessionId: entry.id,
+        createdAt: entry.createdAt,
+        live: entry.live,
+        persisted: entry.persisted,
+      );
 
   // ---------------------------------------------------------------------------
   // Collapsed (icon rail)
@@ -427,6 +287,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                         _SessionEntry(
                           id: session.id,
                           createdAt: session.createdAt,
+                          lastUpdatedAt: session.lastUpdatedAt,
                           live: session,
                         ),
                       ),
@@ -466,6 +327,7 @@ final class _SessionEntry {
   const _SessionEntry({
     required this.id,
     required this.createdAt,
+    required this.lastUpdatedAt,
     this.cwd,
     this.live,
     this.persisted,
@@ -473,6 +335,10 @@ final class _SessionEntry {
 
   final String id;
   final DateTime createdAt;
+
+  /// When the session was last modified. Drives sorting and the "Today /
+  /// Yesterday / May 7" group headers so active sessions stay on top.
+  final DateTime lastUpdatedAt;
 
   /// The session's working directory at creation time (CLI sessions store
   /// the host cwd; macOS app sessions store the Fa sandbox root). Drives
@@ -514,8 +380,198 @@ class _DateHeader extends StatelessWidget {
   }
 }
 
-class _SessionTile extends StatelessWidget {
-  const _SessionTile({
+/// Short timestamp for a session tile's subtitle (e.g. "12:34 PM" or
+/// "May 7"). Shared by the wide sidebar and the mobile sessions drawer so
+/// both render an identical row. Pass the session's last activity time to
+/// reflect recent updates.
+String sessionTileSubtitle(DateTime updated) {
+  final now = DateTime.now();
+  final diff = now.difference(updated);
+  if (diff.inDays == 0) {
+    // Today: show time.
+    final h = updated.hour == 0
+        ? 12
+        : (updated.hour > 12 ? updated.hour - 12 : updated.hour);
+    final m = updated.minute.toString().padLeft(2, '0');
+    final ampm = updated.hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m $ampm';
+  }
+  if (diff.inDays == 1) return 'Yesterday';
+  if (diff.inDays < 7) {
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return weekdays[updated.weekday - 1];
+  }
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${months[updated.month - 1]} ${updated.day}';
+}
+
+/// The folder label rendered next to the title — the last path segment of
+/// the session's working directory so the user can scan which project each
+/// session belongs to at a glance. Null when the cwd is missing or looks
+/// like an unscoped sandbox root (no useful basename).
+String? sessionTileCwdLabel(String? cwd) {
+  if (cwd == null || cwd.isEmpty) return null;
+  final name = p.basename(cwd);
+  if (name.isEmpty || name == '/' || name == '.') return null;
+  return name;
+}
+
+/// The session tile's 3-dot menu, shared by the wide sidebar and the
+/// mobile chat sheet's sessions drawer: rename (via the shared rename
+/// dialog, like the CLI `/rename`) and delete (with confirmation). Works
+/// for live and persisted-only sessions alike. [onDeleted] fires after a
+/// successful delete so hosts listing on-disk sessions can resync.
+Future<void> showSessionActionsMenu(
+  BuildContext context, {
+  required Rect anchor,
+  required FlutterSessionManager manager,
+  required SessionNamesStore? namesStore,
+  required String sessionId,
+  required DateTime createdAt,
+  FlutterManagedSession? live,
+  SessionMetadata? persisted,
+  VoidCallback? onDeleted,
+}) async {
+  final l10n = context.l10n;
+  final overlayBox =
+      Overlay.of(context).context.findRenderObject()! as RenderBox;
+  final action = await showMenu<String>(
+    context: context,
+    position: RelativeRect.fromRect(anchor, Offset.zero & overlayBox.size),
+    items: [
+      PopupMenuItem(
+        value: 'rename',
+        child: Row(
+          children: [
+            const Icon(Icons.edit_outlined, size: 16),
+            const SizedBox(width: 8),
+            Text(l10n.sidebarRenameDialogTitle),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: 'delete',
+        child: Row(
+          children: [
+            const Icon(Icons.delete_outline, size: 16),
+            const SizedBox(width: 8),
+            Text(l10n.sidebarDelete),
+          ],
+        ),
+      ),
+    ],
+  );
+  if (!context.mounted || action == null) return;
+  switch (action) {
+    case 'rename':
+      final store = namesStore;
+      if (store == null) return;
+      await showRenameSessionDialog(
+        context,
+        store: store,
+        sessionId: sessionId,
+        createdAt: createdAt,
+      );
+    case 'delete':
+      await _deleteSession(
+        context,
+        manager: manager,
+        namesStore: namesStore,
+        sessionId: sessionId,
+        live: live,
+        persisted: persisted,
+        onDeleted: onDeleted,
+      );
+  }
+}
+
+Future<void> _deleteSession(
+  BuildContext context, {
+  required FlutterSessionManager manager,
+  required SessionNamesStore? namesStore,
+  required String sessionId,
+  required FlutterManagedSession? live,
+  required SessionMetadata? persisted,
+  VoidCallback? onDeleted,
+}) async {
+  final l10n = context.l10n;
+  final title = namesStore?.titleFor(sessionId);
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(l10n.sidebarDeleteSessionTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title ??
+                l10n.sidebarDeletePersistedContent(sessionId.substring(0, 8)),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Text(l10n.sidebarDeleteSessionContent),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: Text(l10n.commonCancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: Text(l10n.sidebarDelete),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  try {
+    await manager.deleteSession(sessionId, metadata: persisted);
+    onDeleted?.call();
+    // Deleting the active (and only) session must not strand the shell on
+    // the "No active session" placeholder — mint a fresh one on the same
+    // connection, like the chat screen's ensureActiveSession path.
+    if (manager.active == null) {
+      final service = live?.service;
+      final config = service?.configForClone;
+      if (service != null && config != null) {
+        await manager.ensureActiveSession(
+          config: config,
+          serviceFactory: () async => service.clone(),
+        );
+      }
+    }
+  } on Object catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.sidebarDeleteSessionFailed(error.toString())),
+        ),
+      );
+    }
+  }
+}
+
+/// One row in a session list — the wide sidebar and the mobile sessions
+/// drawer render the SAME tile: an active dot, the title, a relative-time
+/// subtitle, the working-folder label, and a 3-dot actions menu.
+class SessionTile extends StatelessWidget {
+  const SessionTile({
+    super.key,
     required this.title,
     required this.subtitle,
     required this.isActive,

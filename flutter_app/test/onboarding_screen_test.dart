@@ -10,9 +10,11 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,6 +25,7 @@ import 'package:flutter_test/flutter_test.dart';
 Future<void> _pumpOnboarding(
   WidgetTester tester, {
   OnboardingStore? onboardingStore,
+  SkillsAccessStore? skillsAccessStore,
   SessionKeysStore? keysStore,
   int initialPage = 0,
   void Function({required bool skipped})? onFinished,
@@ -38,6 +41,7 @@ Future<void> _pumpOnboarding(
         store: keysStore ?? SessionKeysStore.inMemory(),
         child: OnboardingScreen(
           onboardingStore: onboardingStore,
+          skillsAccessStore: skillsAccessStore,
           initialPage: initialPage,
           onFinished: onFinished,
           registry: registry,
@@ -46,6 +50,19 @@ Future<void> _pumpOnboarding(
       ),
     ),
   );
+}
+
+/// Runs [body] with the desktop platform override — the skills-consent
+/// surfaces are desktop-only and widget tests default to android. The
+/// override is reset before the binding's invariant check (it runs ahead
+/// of addTearDown).
+Future<void> _onDesktop(Future<void> Function() body) async {
+  debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+  try {
+    await body();
+  } finally {
+    debugDefaultTargetPlatformOverride = null;
+  }
 }
 
 void main() {
@@ -93,28 +110,37 @@ void main() {
 
     tearDown(() => AppAnalytics.install(null));
 
-    testWidgets('swipes and Continues through all four pages', (tester) async {
-      await _pumpOnboarding(tester);
-      await tester.pumpAndSettle();
-      expect(find.text('Start with an idea.'), findsOneWidget);
+    testWidgets('swipes and Continues through all five pages', (tester) async {
+      await _onDesktop(() async {
+        await _pumpOnboarding(tester);
+        await tester.pumpAndSettle();
+        expect(find.text('Start with an idea.'), findsOneWidget);
 
-      // A horizontal fling on page 1 turns the page.
-      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
-      await tester.pumpAndSettle();
-      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+        // A horizontal fling on page 1 turns the page.
+        await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+        await tester.pumpAndSettle();
+        expect(find.text('Choose how Fa thinks.'), findsOneWidget);
 
-      // The primary button advances too.
-      await tester.tap(find.text('Continue'));
-      await tester.pumpAndSettle();
-      expect(find.text('Give access only when it helps.'), findsOneWidget);
+        // The primary button advances too.
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+        expect(find.text('Give access only when it helps.'), findsOneWidget);
 
-      await tester.tap(find.text('Continue without access'));
-      await tester.pumpAndSettle();
-      expect(find.text('Your sandbox is ready.'), findsOneWidget);
-      expect(find.text('Open Fa'), findsOneWidget);
+        await tester.tap(find.text('Continue without access'));
+        await tester.pumpAndSettle();
+        expect(find.text('Reuse your existing skills.'), findsOneWidget);
 
-      // Analytics: only the started + screen events so far (no finish yet).
-      expect(events.map((e) => e.$1), ['onboarding_started', 'screen_opened']);
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+        expect(find.text('Your sandbox is ready.'), findsOneWidget);
+        expect(find.text('Open Fa'), findsOneWidget);
+
+        // Analytics: only the started + screen events so far (no finish yet).
+        expect(events.map((e) => e.$1), [
+          'onboarding_started',
+          'screen_opened',
+        ]);
+      });
     });
 
     testWidgets('provider step is mandatory when a registry is wired', (
@@ -213,49 +239,122 @@ void main() {
     testWidgets(
       'Skip works from the last page too (skippable from every page)',
       (tester) async {
-        final store = OnboardingStore.inMemory();
-        bool? skippedFlag;
-        await _pumpOnboarding(
-          tester,
-          onboardingStore: store,
-          initialPage: 3,
-          onFinished: ({required bool skipped}) => skippedFlag = skipped,
-        );
-        await tester.pumpAndSettle();
+        await _onDesktop(() async {
+          final store = OnboardingStore.inMemory();
+          bool? skippedFlag;
+          await _pumpOnboarding(
+            tester,
+            onboardingStore: store,
+            initialPage: 4,
+            onFinished: ({required bool skipped}) => skippedFlag = skipped,
+          );
+          await tester.pumpAndSettle();
 
-        await tester.tap(find.text('Skip'));
-        await tester.pumpAndSettle();
+          await tester.tap(find.text('Skip'));
+          await tester.pumpAndSettle();
 
-        expect(store.seen, isTrue);
-        expect(skippedFlag, isTrue);
-        expect(events.last.$1, 'onboarding_skipped');
-        expect(events.last.$2['page'], 3);
+          expect(store.seen, isTrue);
+          expect(skippedFlag, isTrue);
+          expect(events.last.$1, 'onboarding_skipped');
+          expect(events.last.$2['page'], 4);
+        });
       },
     );
 
     testWidgets('Get started completes the flow and sets the flag', (
       tester,
     ) async {
-      final store = OnboardingStore.inMemory();
-      bool? skippedFlag;
-      await _pumpOnboarding(
-        tester,
-        onboardingStore: store,
-        initialPage: 3,
-        onFinished: ({required bool skipped}) => skippedFlag = skipped,
-      );
-      await tester.pumpAndSettle();
+      await _onDesktop(() async {
+        final store = OnboardingStore.inMemory();
+        bool? skippedFlag;
+        await _pumpOnboarding(
+          tester,
+          onboardingStore: store,
+          initialPage: 4,
+          onFinished: ({required bool skipped}) => skippedFlag = skipped,
+        );
+        await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Open Fa'));
-      await tester.pumpAndSettle();
+        await tester.tap(find.text('Open Fa'));
+        await tester.pumpAndSettle();
 
-      expect(store.seen, isTrue);
-      expect(skippedFlag, isFalse);
-      expect(events.map((e) => e.$1), [
-        'onboarding_started',
-        'screen_opened',
-        'onboarding_completed',
-      ]);
+        expect(store.seen, isTrue);
+        expect(skippedFlag, isFalse);
+        expect(events.map((e) => e.$1), [
+          'onboarding_started',
+          'screen_opened',
+          'onboarding_completed',
+        ]);
+      });
+    });
+
+    testWidgets('skills page: Allow persists granted and advances', (
+      tester,
+    ) async {
+      await _onDesktop(() async {
+        final env = MemoryExecutionEnv();
+        final skillsStore = SkillsAccessStore(env);
+        await _pumpOnboarding(
+          tester,
+          initialPage: 3,
+          skillsAccessStore: skillsStore,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Reuse your existing skills.'), findsOneWidget);
+
+        await tester.tap(find.text('Allow'));
+        await tester.pumpAndSettle();
+
+        expect(await skillsStore.load(), SkillsAccess.granted);
+        // The answer auto-advances to the last page.
+        expect(find.text('Your sandbox is ready.'), findsOneWidget);
+        expect(events.map((e) => e.$1), contains('skills_access_changed'));
+      });
+    });
+
+    testWidgets('skills page: Not now leaves the consent undecided', (
+      tester,
+    ) async {
+      await _onDesktop(() async {
+        final env = MemoryExecutionEnv();
+        final skillsStore = SkillsAccessStore(env);
+        await _pumpOnboarding(
+          tester,
+          initialPage: 3,
+          skillsAccessStore: skillsStore,
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Not now'));
+        await tester.pumpAndSettle();
+
+        // Nothing written: the one-time boot dialog can still ask.
+        expect(await skillsStore.load(), isNull);
+        expect(find.text('Your sandbox is ready.'), findsOneWidget);
+      });
+    });
+
+    testWidgets('mobile flow: four pages, no skills step', (tester) async {
+      // The default widget-test platform is android — the skills-consent
+      // page is not part of the flow there.
+      await _pumpOnboarding(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('Start with an idea.'), findsOneWidget);
+
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Give access only when it helps.'), findsOneWidget);
+
+      await tester.tap(find.text('Continue without access'));
+      await tester.pumpAndSettle();
+      // No skills page — straight to the last page.
+      expect(find.text('Reuse your existing skills.'), findsNothing);
+      expect(find.text('Your sandbox is ready.'), findsOneWidget);
+      expect(find.text('Open Fa'), findsOneWidget);
     });
   });
 
@@ -315,6 +414,124 @@ void main() {
       expect(find.byType(OnboardingScreen), findsNothing);
       expect(find.byType(SetupScreen), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets(
+      'seen onboarding + undecided skills consent shows the one-time dialog',
+      (tester) async {
+        await _onDesktop(() async {
+          final env = MemoryExecutionEnv();
+          final skillsStore = SkillsAccessStore(env);
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: buildFahTheme(),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: BootstrapScreen(
+                env: env,
+                lastConnectionStore: LastConnectionStore.inMemory(),
+                onboardingStore: OnboardingStore.inMemory(seen: true),
+                skillsAccessStore: skillsStore,
+                sessionKeysStore: SessionKeysStore.inMemory(),
+              ),
+            ),
+          );
+          // First frame + the post-frame store read + the dialog animation.
+          // No pumpAndSettle: the empty-manager home never settles in a
+          // fake-async test zone (asset loads never complete).
+          await tester.pump();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(find.text('Reuse existing agent skills?'), findsOneWidget);
+
+          await tester.tap(find.text('Allow'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(await skillsStore.load(), SkillsAccess.granted);
+        });
+      },
+    );
+
+    testWidgets('the dialog Not now persists denied (never asks again)', (
+      tester,
+    ) async {
+      await _onDesktop(() async {
+        final env = MemoryExecutionEnv();
+        final skillsStore = SkillsAccessStore(env);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: BootstrapScreen(
+              env: env,
+              lastConnectionStore: LastConnectionStore.inMemory(),
+              onboardingStore: OnboardingStore.inMemory(seen: true),
+              skillsAccessStore: skillsStore,
+              sessionKeysStore: SessionKeysStore.inMemory(),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.text('Reuse existing agent skills?'), findsOneWidget);
+
+        await tester.tap(find.text('Not now'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(await skillsStore.load(), SkillsAccess.denied);
+      });
+    });
+
+    testWidgets('a decided consent never triggers the dialog', (tester) async {
+      await _onDesktop(() async {
+        final env = MemoryExecutionEnv();
+        await SkillsAccessStore(env).save(SkillsAccess.denied);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: BootstrapScreen(
+              env: env,
+              lastConnectionStore: LastConnectionStore.inMemory(),
+              onboardingStore: OnboardingStore.inMemory(seen: true),
+              skillsAccessStore: SkillsAccessStore(env),
+              sessionKeysStore: SessionKeysStore.inMemory(),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Reuse existing agent skills?'), findsNothing);
+      });
+    });
+
+    testWidgets('mobile never shows the skills-consent dialog', (tester) async {
+      // Default widget-test platform is android: the consent question has no
+      // meaning there (the third-party roots don't exist), so the dialog
+      // must not fire even with an undecided store.
+      final env = MemoryExecutionEnv();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BootstrapScreen(
+            env: env,
+            lastConnectionStore: LastConnectionStore.inMemory(),
+            onboardingStore: OnboardingStore.inMemory(seen: true),
+            skillsAccessStore: SkillsAccessStore(env),
+            sessionKeysStore: SessionKeysStore.inMemory(),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Reuse existing agent skills?'), findsNothing);
     });
 
     testWidgets(

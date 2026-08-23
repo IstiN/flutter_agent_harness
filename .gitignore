@@ -37,6 +37,12 @@ GoogleService-Info.plist
 # firebase_options.dart is checked in for CI builds (public API keys only).
 
 
+# Local development helpers / scratch files.
+/generated/
+install_local.sh
+test_tool_call.sh
+/tool/
+
 # Visual-test screen-text twins (contain timestamps, regenerated each run).
 test/integration/screenshots/*.txt
 # Dart / Flutter

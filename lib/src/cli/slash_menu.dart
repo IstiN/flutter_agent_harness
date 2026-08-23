@@ -1,14 +1,18 @@
 import '../plugins/plugin.dart';
+import '../skills/skills.dart';
 import 'prompt_templates.dart';
 import 'tui_repl.dart';
 
 /// Builds the slash-menu items for [prefix]: builtin commands (matched on
-/// name or description), plugin commands (name only), and prompt templates.
+/// name or description), plugin commands (name only), prompt templates, and
+/// user-invocable skills (name or description). A skill's key carries a
+/// trailing space so accepting it leaves the cursor ready for args.
 List<MenuItem> buildSlashMenuItems(
   String prefix, {
   required Map<String, String> slashCommands,
   required Map<String, SlashCommand> pluginSlashCommands,
   required List<PromptTemplate> templates,
+  List<Skill> skills = const [],
 }) {
   final lower = prefix.toLowerCase();
   final items = <MenuItem>[];
@@ -33,8 +37,30 @@ List<MenuItem> buildSlashMenuItems(
       );
     }
   }
+  for (final skill in userInvocableSkills(skills)) {
+    final hint = skill.manifest.argumentHint;
+    final description = hint == null || hint.isEmpty
+        ? skill.description
+        : '${skill.description} $hint';
+    // The prefix carries the leading slash — match it like templates do.
+    if ('/${skill.name}'.toLowerCase().contains(lower) ||
+        skill.description.toLowerCase().contains(lower)) {
+      items.add(
+        MenuItem(
+          key: '/skill:${skill.name} ',
+          label: '/${skill.name}',
+          description: description,
+        ),
+      );
+    }
+  }
   return items;
 }
+
+/// The skills offered by the slash menu / line-mode menu: explicit
+/// invocation requires the manifest's `user-invocable` (default true).
+Iterable<Skill> userInvocableSkills(List<Skill> skills) =>
+    skills.where((s) => s.userInvocable);
 
 /// The builtin slash commands, in help/menu order.
 const builtinSlashCommands = <String, String>{
@@ -53,11 +79,12 @@ const builtinSlashCommands = <String, String>{
       '[contextWindow|maxTokens <n>] — show or override token limits',
   '/provider':
       '[name] [baseUrl] [token] | add | custom — switch or add provider',
+  '/providers': 'alias for /provider',
   // /provider-edit removed — edit/delete is now inline in /provider picker.
   '/mode': '[name] — show or switch the active mode',
   '/session': '[name] — show current or switch/create a named session',
   '/session-new': '<name> — create a new named session',
-  '/sessions': 'list named sessions for the current directory',
+  '/sessions': 'list all sessions across workspaces',
   '/resume': 'switch to the most recent session',
   '/rename-session': '<name> — rename the current session',
   '/approval': '[mode] — show or set tool approval',
@@ -73,12 +100,13 @@ const builtinSlashCommands = <String, String>{
 
 /// The `/help` listing as styled lines: the (optionally filtered) builtin
 /// commands, then — for the full listing only — plugin commands, prompt
-/// templates, and the steer hint.
+/// templates, skills, and the steer hint.
 List<String> helpLines({
   String filter = '',
   required Map<String, SlashCommand> pluginSlashCommands,
   required List<PromptTemplate> templates,
   required TuiStyle style,
+  List<Skill> skills = const [],
 }) {
   final lower = filter.toLowerCase();
   final entries = builtinSlashCommands.entries
@@ -94,10 +122,13 @@ List<String> helpLines({
     for (final entry in entries)
       '  ${style.cyan(entry.key.padRight(18))} ${entry.value}',
   ];
-  // Plugin commands, prompt templates, and the steer hint are part of the
-  // full listing only, never of a filtered one.
+  // Plugin commands, prompt templates, skills, and the steer hint are part
+  // of the full listing only, never of a filtered one.
   if (filter.isNotEmpty) return lines;
-  return [...lines, ..._helpExtrasLines(pluginSlashCommands, templates, style)];
+  return [
+    ...lines,
+    ..._helpExtrasLines(pluginSlashCommands, templates, style, skills),
+  ];
 }
 
 /// The no-match line for a filtered `/help`.
@@ -105,12 +136,13 @@ String _helpEmptyLine(String filter) => filter.isNotEmpty
     ? 'unknown command: /$filter (try /help)'
     : 'no commands match "$filter"';
 
-/// The full-listing appendix: plugin commands, prompt templates, and the
-/// steer hint.
+/// The full-listing appendix: plugin commands, prompt templates, skills,
+/// and the steer hint.
 List<String> _helpExtrasLines(
   Map<String, SlashCommand> pluginSlashCommands,
   List<PromptTemplate> templates,
   TuiStyle style,
+  List<Skill> skills,
 ) {
   return [
     if (pluginSlashCommands.isNotEmpty) ...[
@@ -125,19 +157,42 @@ List<String> _helpExtrasLines(
       for (final t in templates)
         '  ${style.cyan('/${t.name}')} ${t.argumentHint ?? ''}',
     ],
+    if (skills.isNotEmpty) ...[
+      '',
+      style.bold('[Skills]'),
+      for (final s in skills) '  ${style.cyan('/${s.name}')} ${s.description}',
+    ],
     '',
     style.dim('While a run streams, type to steer the agent; Ctrl-C aborts.'),
   ];
 }
 
+/// The numbered entries of the line-mode menu: builtin commands, then
+/// user-invocable skills (a skill choice resolves to `/skill:<name>`).
+List<MenuItem> lineModeMenuEntries(List<Skill> skills) {
+  return [
+    for (final entry in builtinSlashCommands.entries)
+      MenuItem(key: entry.key, label: entry.key, description: entry.value),
+    for (final skill in userInvocableSkills(skills))
+      MenuItem(
+        key: '/skill:${skill.name}',
+        label: '/${skill.name}',
+        description: skill.description,
+      ),
+  ];
+}
+
 /// The numbered command list of the line-mode menu, as styled lines.
-List<String> lineModeMenuLines(TuiStyle style) {
-  final commands = builtinSlashCommands.entries.toList();
+List<String> lineModeMenuLines(
+  TuiStyle style, {
+  List<Skill> skills = const [],
+}) {
+  final entries = lineModeMenuEntries(skills);
   return [
     '',
     style.bold('[Commands]'),
-    for (var i = 0; i < commands.length; i++)
-      '  ${i + 1}) ${style.cyan(commands[i].key)} ${commands[i].value}',
+    for (var i = 0; i < entries.length; i++)
+      '  ${i + 1}) ${style.cyan(entries[i].label)} ${entries[i].description}',
     '',
   ];
 }

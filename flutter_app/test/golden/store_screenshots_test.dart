@@ -911,16 +911,18 @@ Widget _weatherCanvas(String lang) {
 
 /// A JsAppView-like scaffold for the weather app with the session chat
 /// sheet hosted over the canvas (the launcher pattern, reused in-app).
-/// The sheet sizes itself off `MediaQuery` (expanded = 92% of the reported
-/// height), so the inner MediaQuery reports a height that lands the
-/// expanded sheet's top edge right below the canvas's hourly strip
-/// ([_kSheetTopInset] px from the body top) — the hero block and the
-/// hourly forecast stay fully visible above the sheet on every device.
+/// The sheet sizes its expanded panel off its LayoutBuilder constraints
+/// (expanded = [SessionChatSheet.panelFraction] of the available height),
+/// so the fraction is picked to land the expanded panel's top edge right
+/// below the canvas's hourly strip ([_kSheetTopInset] px from the body
+/// top) — the hero block and the hourly forecast stay fully visible above
+/// the sheet on every device, under the sheet's full-area scrim.
 Widget _weatherAppHost(
   MemoryExecutionEnv env,
   FlutterSessionManager manager,
-  String lang,
-) {
+  String lang, {
+  GlobalKey<SessionChatSheetState>? sheetKey,
+}) {
   final weatherApp = JsAppInfo.fromManifest(
     {'id': 'weather', 'name': 'Weather', 'icon': _weatherSvgIcon},
     bundled: false,
@@ -944,22 +946,22 @@ Widget _weatherAppHost(
     ),
     body: LayoutBuilder(
       builder: (context, constraints) {
-        // expandedH = 0.92 * reported height = body height minus the inset.
-        final mediaHeight = (constraints.maxHeight - _kSheetTopInset) / 0.92;
+        // Panel height = fraction * body height = body height minus the
+        // inset, so the expanded panel's top edge parks _kSheetTopInset px
+        // below the body top.
+        final fraction =
+            (constraints.maxHeight - _kSheetTopInset) / constraints.maxHeight;
         return Stack(
           children: [
             Positioned.fill(child: _weatherCanvas(lang)),
             Positioned.fill(
-              child: MediaQuery(
-                data: MediaQuery.of(
-                  context,
-                ).copyWith(size: Size(constraints.maxWidth, mediaHeight)),
-                child: SessionChatSheet(
-                  manager: manager,
-                  sessionNamesStore: SessionNamesStore.inMemory(
-                    _sessionNames(lang),
-                  ),
+              child: SessionChatSheet(
+                key: sheetKey,
+                manager: manager,
+                sessionNamesStore: SessionNamesStore.inMemory(
+                  _sessionNames(lang),
                 ),
+                panelFraction: fraction < 0 ? 0.0 : fraction,
               ),
             ),
           ],
@@ -987,18 +989,20 @@ Future<void> _inappShot(
   service.messages.addAll(_inappConversation(lang));
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
     ..addSession(_weatherSessionId, service);
+  final sheetKey = GlobalKey<SessionChatSheetState>();
 
   await _pumpStore(
     tester,
-    _weatherAppHost(env, manager, lang),
+    _weatherAppHost(env, manager, lang, sheetKey: sheetKey),
     device: device,
     locale: locale,
     screen: 'store_inapp',
   );
   await tester.pumpAndSettle();
-  // From the mini bar (the default resting state), a tap opens the sheet —
-  // the mini bar has no handle, the drag zone key is a stable tap target.
-  await tester.tap(find.byKey(const ValueKey('sessionChatMiniDragZone')));
+  // The new session-chat sheet starts with the panel closed; expand it
+  // programmatically so the in-app screenshot shows the transcript over the
+  // weather canvas (same visual intent as the old mini-bar tap).
+  sheetKey.currentState?.expand();
   await tester.pumpAndSettle();
   _jumpScrollablesToTail(tester);
   await tester.pump();

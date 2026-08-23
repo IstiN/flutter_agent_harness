@@ -23,6 +23,8 @@ dependencies:
   # Mobile-friendly filesystem root and image picking.
   path_provider: ^2.1.6
   image_picker: ^1.2.3
+  # Clipboard images for the composer's smart paste (Cmd/Ctrl+V).
+  pasteboard: ^0.5.0
   # Image decode/encode for the Gemini adapter (PNG → JPEG conversion
   # strips alpha/EXIF that Gemini's vision encoder rejects).
   image: ^4.5.4

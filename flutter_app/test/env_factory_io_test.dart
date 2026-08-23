@@ -80,7 +80,8 @@ void main() {
         ),
       );
 
-      // The session file lands directly under the sandbox host directory…
+      // The session file lands under an encoded-cwd directory inside the
+      // sandbox host directory…
       final sessionsDir = Directory('${hostRoot.path}/sessions');
       expect(sessionsDir.existsSync(), isTrue);
       final jsonlFiles = sessionsDir

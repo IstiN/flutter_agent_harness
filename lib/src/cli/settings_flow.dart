@@ -149,10 +149,14 @@ extension SettingsFlow on AgentCli {
     List<String> models,
     String currentModelId,
   ) {
-    return _pickOption('$title — model', [
-      for (final id in models) (id, id, visionMarker(id)),
-      ('', '+ enter manually', ''),
-    ], initialKey: models.contains(currentModelId) ? currentModelId : null);
+    return _pickOption(
+      '$title — model',
+      [
+        for (final id in models) (id, id, visionMarker(id)),
+        ('', '+ enter manually', ''),
+      ],
+      initialKey: models.contains(currentModelId) ? currentModelId : null,
+    );
   }
 
   /// The manual-entry fallback of [_pickModelStep]: an empty answer keeps

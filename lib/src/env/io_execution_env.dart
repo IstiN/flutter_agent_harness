@@ -457,6 +457,9 @@ final class LocalShell implements Shell, BackgroundShell {
     final stdout = StringBuffer();
     final stderr = StringBuffer();
     ExecutionError? callbackError;
+    // Close stdin immediately so tools like ripgrep/grep that fall back to
+    // stdin when no paths are given do not hang waiting for terminal input.
+    unawaited(process.stdin.close());
     final stdoutDone = process.stdout
         .transform(utf8.decoder)
         .forEach(
@@ -524,6 +527,8 @@ final class LocalShell implements Shell, BackgroundShell {
     final started = await _start(command, options);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
+    // Background jobs get no stdin either — they are not interactive.
+    unawaited(process.stdin.close());
     final IOSink logSink;
     try {
       logSink = File(logPath).openWrite(mode: FileMode.append);

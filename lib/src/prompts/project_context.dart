@@ -1,6 +1,6 @@
-/// Project context files (`AGENTS.md`, `CLAUDE.md`, `GOAL.md`, `DESIGN.md`)
-/// auto-included in the system prompt (ported, reduced, from pi's
-/// `core/resource-loader.ts` and kimi-cli's `load_agents_md`).
+/// Project context files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `GOAL.md`,
+/// `DESIGN.md`) auto-included in the system prompt (ported, reduced, from
+/// pi's `core/resource-loader.ts` and kimi-cli's `load_agents_md`).
 ///
 /// Discovery walks the working directory upward to the git root (a directory
 /// containing `.git`; the filesystem root is the hard stop), collecting every
@@ -9,15 +9,27 @@
 /// merge farthest-first so the closest (most specific) instructions read
 /// last. Reads go through [ExecutionEnv], so the feature works on every
 /// host (desktop, mobile, web sandbox).
+///
+/// Per walked directory the GitHub Copilot files are collected too:
+/// `.github/copilot-instructions.md` (unscoped) and every
+/// `.github/instructions/*.instructions.md` file. The instructions files'
+/// YAML frontmatter `applyTo` globs are NOT evaluated (there is no
+/// touched-file context at prompt-build time): an `applyTo`-less file (or
+/// `applyTo: "**"`) is included verbatim, a scoped one is included with an
+/// `<!-- applies to: ... -->` marker so the model sees the scoping.
+/// `excludeAgent` is accepted but ignored — the merged prompt serves every
+/// agent role.
 library;
 
 import '../env/execution_env.dart';
+import '../utils/frontmatter_parser.dart';
 
 /// The context filenames collected per directory, in priority order (all
 /// present files are included, each as its own block).
 const projectContextFileNames = [
   'AGENTS.md',
   'CLAUDE.md',
+  'GEMINI.md',
   'GOAL.md',
   'DESIGN.md',
 ];
@@ -70,7 +82,9 @@ Future<List<ProjectContextFile>> loadProjectContextFiles(
 }
 
 /// Collects the present, non-empty [projectContextFileNames] files of one
-/// directory.
+/// directory, followed by the GitHub Copilot files
+/// (`.github/copilot-instructions.md`, then `.github/instructions/
+/// *.instructions.md` sorted by name).
 Future<List<ProjectContextFile>> _contextFilesInDir(
   ExecutionEnv env,
   String dir,
@@ -83,7 +97,58 @@ Future<List<ProjectContextFile>> _contextFilesInDir(
       dirFiles.add(ProjectContextFile(path: path, content: content));
     }
   }
+
+  final copilotPath = '$dir/.github/copilot-instructions.md';
+  final copilot = (await env.readTextFile(copilotPath)).valueOrNull;
+  if (copilot != null && copilot.trim().isNotEmpty) {
+    dirFiles.add(ProjectContextFile(path: copilotPath, content: copilot));
+  }
+
+  final instructionsDir = '$dir/.github/instructions';
+  final entries = (await env.listDir(instructionsDir)).valueOrNull ?? const [];
+  final names = [
+    for (final entry in entries)
+      if (entry.kind == FileKind.file &&
+          entry.name.endsWith('.instructions.md'))
+        entry.name,
+  ]..sort();
+  for (final name in names) {
+    final path = '$instructionsDir/$name';
+    final content = (await env.readTextFile(path)).valueOrNull;
+    if (content == null || content.trim().isEmpty) continue;
+    dirFiles.add(
+      ProjectContextFile(path: path, content: _copilotInstructions(content)),
+    );
+  }
   return dirFiles;
+}
+
+/// Renders one `.github/instructions/*.instructions.md` file: the body with
+/// frontmatter stripped, prefixed with an `<!-- applies to: ... -->` marker
+/// when `applyTo` scopes it (a YAML list or a comma-separated glob string).
+/// No `applyTo` (or `applyTo: "**"`) includes the body unmarked.
+/// `excludeAgent` is accepted but ignored (see the library doc).
+String _copilotInstructions(String content) {
+  final (frontmatter, body) = parseFrontmatterTyped(content);
+  final applyTo = _applyToPatterns(frontmatter['applyTo']);
+  if (applyTo.isEmpty || (applyTo.length == 1 && applyTo.single == '**')) {
+    return body;
+  }
+  return '<!-- applies to: ${applyTo.join(', ')} -->\n$body';
+}
+
+/// Normalizes an `applyTo` value (YAML list or comma-separated string) into
+/// a list of glob patterns.
+List<String> _applyToPatterns(Object? applyTo) {
+  final raw = switch (applyTo) {
+    List() => [for (final item in applyTo) '$item'],
+    String() => applyTo.split(','),
+    _ => const <String>[],
+  };
+  return [
+    for (final pattern in raw)
+      if (pattern.trim().isNotEmpty) pattern.trim(),
+  ];
 }
 
 /// Loads the user-level context file (e.g. `~/.fah/AGENTS.md`, pi's global

@@ -1164,11 +1164,24 @@ private func healthSleepSeries(
 
 
 /// Shared manager for the `fah/home` channel (HMHomeManager is meant to be
-/// long-lived; creating it is also what triggers the OS home-data prompt).
+/// long-lived). Created LAZILY on the first home call: instantiating
+/// HMHomeManager is what triggers the OS home-data prompt, and that prompt
+/// must never appear at app start before the user has touched anything
+/// home-related (the home JS app, a home agent tool). The channel
+/// registration itself must not force this property.
 /// NOT named `homeManager`: HMHomeManagerDelegate's members
 /// (`homeManager(_:didAdd:…)`) shadow a global with that name inside the
 /// delegate class — Swift then fails with "cannot find in scope".
-fileprivate let homeKitManager = HMHomeManager()
+private var _homeKitManager: HMHomeManager?
+
+private var homeKitManager: HMHomeManager {
+  if let manager = _homeKitManager { return manager }
+  NSLog("[fah/home] creating HMHomeManager (first home call)")
+  let manager = HMHomeManager()
+  manager.delegate = homeChannelDelegate
+  _homeKitManager = manager
+  return manager
+}
 
 /// Delegate for the `fah/home` channel: homes load asynchronously after the
 /// user answers the access prompt, so pending Flutter results wait here for
@@ -1295,15 +1308,13 @@ private func registerHomeChannel(messenger: FlutterBinaryMessenger) {
     name: "fah/home",
     binaryMessenger: messenger,
   )
-  homeKitManager.delegate = homeChannelDelegate
+  // Do NOT touch homeKitManager here: creating it prompts for home-data
+  // access, and the prompt must wait for the first real home call.
   channel.setMethodCallHandler { call, result in
     let args = call.arguments as? [String: Any] ?? [:]
     switch call.method {
     case "isAvailable":
-      NSLog(
-        "[fah/home] isAvailable: "
-          + "authorizationStatus=\(homeKitManager.authorizationStatus.rawValue)",
-      )
+      // Pure capability answer — no manager access (that would prompt).
       result(true)
     case "requestAccess":
       homeRequestAccess(result: result)

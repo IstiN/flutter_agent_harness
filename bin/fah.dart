@@ -374,6 +374,9 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
 
 String _defaultSessionRoot() {
   final home = _homeDir();
+  if (Platform.isMacOS) {
+    return '$home/Library/Group Containers/group.dev.fa1.shared/fa/sessions';
+  }
   return '$home/.fah/sessions';
 }
 
@@ -968,6 +971,10 @@ Future<void> _runApp(List<String> args) async {
   // `late` so the onProviderChanged closure can reach the agent (to attach
   // the secret redactor on a runtime token) before the variable is assigned.
   late final AgentCli cli;
+  // The live third-party skills consent (`skills:` config section): the
+  // startup dialog and `/skills access` change it — persisted via
+  // persistConfig.
+  var skillsAccess = saved.skillsAccess;
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
@@ -1080,6 +1087,15 @@ Future<void> _runApp(List<String> args) async {
       },
       onModeChanged: (_) async => persistConfig(),
       onApprovalChanged: () async => persistConfig(),
+      // Third-party skills consent (`skills:` config section): the startup
+      // dialog and `/skills access` set it; shell `!`cmd`` injections in
+      // skill bodies follow `disableShellExecution`.
+      skillsAccess: saved.skillsAccess,
+      skillsDisableShellExecution: saved.skillsDisableShellExecution,
+      onSkillsAccessChanged: (access) async {
+        skillsAccess = access;
+        await persistConfig();
+      },
       // Shift+Enter in the TUI: terminals that do not encode the modifier
       // still expose it through the HID state (macOS only; null elsewhere).
       isShiftPressed: Platform.isMacOS ? _isShiftPressed : null,
@@ -1119,6 +1135,10 @@ Future<void> _runApp(List<String> args) async {
         models: cli.config.modelsConfig ?? saved.models,
         // MCP servers (the live config — re-read on `/mcp reload`).
         mcp: cli.config.mcpConfig?.config ?? saved.mcp,
+        // Third-party skills consent (mutable via the startup dialog and
+        // `/skills access`); shell-execution policy is static per session.
+        skillsAccess: skillsAccess,
+        skillsDisableShellExecution: saved.skillsDisableShellExecution,
       ),
     );
   };

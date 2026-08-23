@@ -1,6 +1,8 @@
 import 'package:flutter_agent_harness/src/cli/prompt_templates.dart';
 import 'package:flutter_agent_harness/src/cli/slash_menu.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
+import 'package:flutter_agent_harness/src/skills/skill_manifest.dart';
+import 'package:flutter_agent_harness/src/skills/skills.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -18,6 +20,19 @@ void main() {
         content: 'body',
         filePath: '/tmp/$name.md',
       );
+
+  Skill skill(
+    String name, {
+    String description = 'skill description',
+    SkillManifest manifest = SkillManifest.empty,
+  }) => Skill(
+    name: name,
+    description: description,
+    filePath: '/tmp/skills/$name/SKILL.md',
+    scope: SkillScope.project,
+    source: SkillSource.fah,
+    manifest: manifest,
+  );
 
   group('buildSlashMenuItems', () {
     test('matches builtin commands by key and description', () {
@@ -88,6 +103,66 @@ void main() {
       );
       expect(items.single.description, '');
     });
+
+    test('skills match by name or description and insert /skill:<name>', () {
+      final items = buildSlashMenuItems(
+        '/dep',
+        slashCommands: slashCommands,
+        pluginSlashCommands: const {},
+        templates: const [],
+        skills: [skill('deploy', description: 'Deploy the app')],
+      );
+      // The trailing space leaves the cursor ready for the skill's args.
+      expect(items.single.key, '/skill:deploy ');
+      expect(items.single.label, '/deploy');
+      expect(items.single.description, 'Deploy the app');
+
+      final byDescription = buildSlashMenuItems(
+        'the app',
+        slashCommands: slashCommands,
+        pluginSlashCommands: const {},
+        templates: const [],
+        skills: [skill('deploy', description: 'Deploy the app')],
+      );
+      expect(byDescription.single.label, '/deploy');
+    });
+
+    test('model-only skills (user-invocable: false) are not offered', () {
+      final items = buildSlashMenuItems(
+        '/hid',
+        slashCommands: slashCommands,
+        pluginSlashCommands: const {},
+        templates: const [],
+        skills: [
+          skill(
+            'hidden',
+            manifest: SkillManifest.fromFrontmatter(const {
+              'user-invocable': false,
+            }),
+          ),
+        ],
+      );
+      expect(items, isEmpty);
+    });
+
+    test('the skill description carries the argument hint when present', () {
+      final items = buildSlashMenuItems(
+        '/dep',
+        slashCommands: slashCommands,
+        pluginSlashCommands: const {},
+        templates: const [],
+        skills: [
+          skill(
+            'deploy',
+            description: 'Deploy the app',
+            manifest: SkillManifest.fromFrontmatter(const {
+              'argument-hint': '[env]',
+            }),
+          ),
+        ],
+      );
+      expect(items.single.description, 'Deploy the app [env]');
+    });
   });
 
   group('helpLines', () {
@@ -153,8 +228,20 @@ void main() {
         expect(lines.last, contains('type to steer the agent'));
         expect(lines, isNot(contains('[Plugin commands]')));
         expect(lines, isNot(contains('[Prompt templates]')));
+        expect(lines, isNot(contains('[Skills]')));
       },
     );
+
+    test('the full listing includes the skills section', () {
+      final lines = helpLines(
+        pluginSlashCommands: const {},
+        templates: const [],
+        style: style,
+        skills: [skill('deploy', description: 'Deploy the app')],
+      );
+      expect(lines, contains('[Skills]'));
+      expect(lines, contains('  /deploy Deploy the app'));
+    });
   });
 
   group('lineModeMenuLines', () {
@@ -165,6 +252,21 @@ void main() {
       expect(lines[2], startsWith('  1) /exit'));
       expect(lines, hasLength(builtinSlashCommands.length + 3));
       expect(lines.last, '');
+    });
+
+    test('skills continue the numbering after the builtin commands', () {
+      final lines = lineModeMenuLines(
+        _PlainStyle(),
+        skills: [skill('deploy', description: 'Deploy the app')],
+      );
+      expect(lines, hasLength(builtinSlashCommands.length + 4));
+      expect(
+        lines[builtinSlashCommands.length + 2],
+        '  ${builtinSlashCommands.length + 1}) /deploy Deploy the app',
+      );
+      // The menu entry resolves to the explicit invocation form.
+      final entries = lineModeMenuEntries([skill('deploy')]);
+      expect(entries.last.key, '/skill:deploy');
     });
   });
 }

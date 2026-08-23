@@ -118,13 +118,18 @@ post_install do |installer|
             .sort
           raise "no _NativeCupertinoHttp_* symbols found in #{cupertino_src}" if cupertino_symbols.empty?
           cupertino_export_flags = cupertino_symbols.map { |s| "-Wl,-exported_symbol,_#{s}" }
-          # Debug must NOT get -exported_symbol flags: giving any flips ld
-          # into "export only these" mode, which hides the JIT entry point
-          # (main) from the debug host — abort_could_not_find_entry_point
-          # at launch. Debug exports all globals by default, so dlsym finds
-          # the symbols without any flags.
-          unless config.name == 'Debug'
-            ldflags.reject! { |f| f.include?('_NativeCupertinoHttp_') }
+          ldflags.reject! { |f| f.include?('_NativeCupertinoHttp_') }
+          if config.name == 'Debug'
+            # Debug must NOT get -exported_symbol flags: giving any flips ld
+            # into "export only these" mode, which hides the JIT entry point
+            # (main) from the debug host — abort_could_not_find_entry_point
+            # at launch. But WITHOUT any flag the trampoline archive members
+            # are never pulled either (nothing native references them), so
+            # Dart's dlsym fallback fails at runtime even in Debug.
+            # -Wl,-u,<sym> forces the defining members into the link while
+            # leaving the default "export all globals" trie intact.
+            ldflags.concat(cupertino_symbols.map { |s| "-Wl,-u,_#{s}" })
+          else
             ldflags.concat(cupertino_export_flags)
           end
           ldflags.concat(export_flags) unless config.name == 'Debug'

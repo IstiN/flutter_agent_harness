@@ -25,6 +25,7 @@ final class SessionMetadata {
     required this.createdAt,
     required this.cwd,
     required this.path,
+    this.lastUpdatedAt,
     this.parentSessionPath,
     this.metadata,
   });
@@ -40,6 +41,12 @@ final class SessionMetadata {
 
   /// Path of the JSONL file in the environment's filesystem.
   final String path;
+
+  /// When the session file was last modified, if known.
+  ///
+  /// Populated from the filesystem when sessions are listed; it lets the UI
+  /// sort and display by latest activity rather than creation time.
+  final DateTime? lastUpdatedAt;
 
   /// Path of the session this one was forked from, if any.
   final String? parentSessionPath;
@@ -182,12 +189,17 @@ SessionRecord _parseEntryLine(String line, String filePath, int lineNumber) {
   }
 }
 
-SessionMetadata _headerToMetadata(SessionHeader header, String path) {
+SessionMetadata _headerToMetadata(
+  SessionHeader header,
+  String path, {
+  DateTime? lastUpdatedAt,
+}) {
   return SessionMetadata(
     id: header.id,
     createdAt: header.timestamp,
     cwd: header.cwd,
     path: path,
+    lastUpdatedAt: lastUpdatedAt,
     parentSessionPath: header.parentSessionPath,
     metadata: header.metadata,
   );
@@ -195,18 +207,26 @@ SessionMetadata _headerToMetadata(SessionHeader header, String path) {
 
 /// Reads just the header of a session file and returns its metadata.
 ///
+/// [lastUpdatedAt] is populated from the filesystem entry when sessions are
+/// listed so callers can sort by latest activity without a separate stat.
+///
 /// Ported from pi's `loadJsonlSessionMetadata`.
 Future<SessionMetadata> loadJsonlSessionMetadata(
   FileSystem fs,
-  String filePath,
-) async {
+  String filePath, {
+  DateTime? lastUpdatedAt,
+}) async {
   final lines = _fsOrThrow(
     await fs.readTextLines(filePath, maxLines: 1),
     'Failed to read session header $filePath',
   );
   final line = lines.firstOrNull;
   if (line != null && line.trim().isNotEmpty) {
-    return _headerToMetadata(_parseHeaderLine(line, filePath), filePath);
+    return _headerToMetadata(
+      _parseHeaderLine(line, filePath),
+      filePath,
+      lastUpdatedAt: lastUpdatedAt,
+    );
   }
   _invalidSession(filePath, 'missing session header');
 }

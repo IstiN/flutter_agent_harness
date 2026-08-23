@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
@@ -87,16 +88,17 @@ void main() {
     return session.getMetadata();
   }
 
-  /// Rewrites the session file header so the session looks created yesterday.
+  /// Rewrites the session file header so the session looks created yesterday,
+  /// and backdates its mtime so it sorts into the "Yesterday" group.
   Future<SessionMetadata> ageSession(SessionMetadata metadata) async {
     final content = (await env.readTextFile(metadata.path)).getOrThrow();
     final lines = content.split('\n');
     final header = jsonDecode(lines.first) as Map<String, dynamic>;
-    header['timestamp'] = DateTime.now()
-        .subtract(const Duration(days: 1))
-        .toIso8601String();
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    header['timestamp'] = yesterday.toIso8601String();
     lines[0] = jsonEncode(header);
     (await env.writeFile(metadata.path, lines.join('\n'))).getOrThrow();
+    env.setMtime(metadata.path, yesterday.millisecondsSinceEpoch);
     return (await repo.list()).firstWhere((m) => m.id == metadata.id);
   }
 
@@ -297,6 +299,71 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('my-project'), findsOneWidget);
+    expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
+  });
+
+  testWidgets('a mounted project folder shows the host folder basename', (
+    tester,
+  ) async {
+    final baseEnv = MemoryExecutionEnv();
+    await baseEnv.createDir('/host/repo');
+    final mountEnv = ProjectMountEnv(baseEnv)..mountedRoot = '/host/repo';
+    final scopedManager = FlutterSessionManager(
+      env: mountEnv,
+      sessionsRoot: '/sessions',
+    );
+    scopedManager.addSession('live-1', _fakeService(mountEnv));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: SidebarSessionsList(
+            manager: scopedManager,
+            sessionNamesStore: SessionNamesStore.inMemory(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('repo'), findsOneWidget);
+    expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
+  });
+
+  testWidgets('a wrapped mounted env still shows the host folder basename', (
+    tester,
+  ) async {
+    final baseEnv = MemoryExecutionEnv();
+    await baseEnv.createDir('/host/repo');
+    final mountEnv = ProjectMountEnv(baseEnv)..mountedRoot = '/host/repo';
+    // The real app wraps the mount env in SecretsExecutionEnv; the sidebar
+    // must unwrap it to find the host path.
+    final wrappedEnv = SecretsExecutionEnv(mountEnv, const {});
+    final scopedManager = FlutterSessionManager(
+      env: wrappedEnv,
+      sessionsRoot: '/sessions',
+    );
+    scopedManager.addSession('live-1', _fakeService(wrappedEnv));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: SidebarSessionsList(
+            manager: scopedManager,
+            sessionNamesStore: SessionNamesStore.inMemory(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('repo'), findsOneWidget);
     expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
   });
 

@@ -5,14 +5,18 @@ part of 'agent_cli.dart';
 
 /// Implementation members of [AgentCli] for agent-type discovery and listing.
 extension AgentCliAgentExt on AgentCli {
-  /// Fire-and-forget discovery: scans project + user roots for agent .md files.
+  /// Fire-and-forget discovery: scans project + user roots for agent .md
+  /// files. [allowedSources] restricts which root sources are scanned
+  /// (the third-party consent gate; `null` = all).
   Future<void> discoverAgentsFromRoots(
-    ({List<String> projectRoots, List<String> userRoots}) roots,
-  ) async {
+    ({List<AgentRoot> projectRoots, List<AgentRoot> userRoots}) roots, {
+    Set<SkillSource>? allowedSources,
+  }) async {
     final result = await discoverTaskAgents(
       config.env,
       projectRoots: roots.projectRoots,
       userRoots: roots.userRoots,
+      allowedSources: allowedSources,
     );
     _discoveredAgents = result.agents;
     for (final note in result.notes) {
@@ -28,8 +32,8 @@ extension AgentCliAgentExt on AgentCli {
   }
 
   void _listBuiltinAgentTypes() {
-    for (final name in ['task', 'explore', 'review']) {
-      io.writeln('  $name (built-in)');
+    for (final agent in builtinTaskAgentTypes) {
+      io.writeln('  ${agent.name} (built-in)');
     }
   }
 

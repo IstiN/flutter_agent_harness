@@ -140,6 +140,7 @@ void main() {
       '/model',
       '/model-edit',
       '/provider',
+      '/providers',
       'openrouter oauth',
       'codemie sso',
       'dial setup',

@@ -462,5 +462,16 @@ void main() {
 
       await expectGolden(tester, 'settings_keys_theme_light');
     });
+
+    testWidgets('skills access section', (tester) async {
+      final service = _fakeService();
+      await _pumpSettingsFrame(
+        tester,
+        child: SkillsAccessSection(service: service),
+      );
+
+      // Icon + title + hint, dropdown at the default (undecided = Ask).
+      await expectGolden(tester, 'settings_skills_access');
+    });
   });
 }

@@ -46,7 +46,9 @@ import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/secrets_store.dart';
@@ -173,6 +175,8 @@ class AgentService extends ChangeNotifier
        _sessionKeys = null,
        _taskModelsStore = null,
        _approvalModeStore = null,
+       _skillsAccessStore = null,
+       _skillsAccess = SkillsAccess.ask,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
@@ -207,6 +211,7 @@ class AgentService extends ChangeNotifier
     ProviderRegistry? providerRegistry,
     TaskModelsStore? taskModelsStore,
     @visibleForTesting StreamFunction? streamFunction,
+    String? sessionsRoot,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -214,6 +219,8 @@ class AgentService extends ChangeNotifier
     final secrets = mergeSecrets(await secretsStore.readAll(), sessionKeys);
     final approvalModeStore = ApprovalModeStore(resolvedEnv);
     final savedApprovalMode = await approvalModeStore.load();
+    final skillsAccessStore = SkillsAccessStore(resolvedEnv);
+    final savedSkillsAccess = await skillsAccessStore.load();
     final redactor = SecretRedactor.fromSecrets(secrets);
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
@@ -227,23 +234,16 @@ class AgentService extends ChangeNotifier
     } on Object {
       // Best-effort seeding — continue without it.
     }
-    final roots = defaultSkillRoots(cwd: resolvedEnv.cwd, homeDir: null);
-    final skills = await discoverSkills(
+    final promptSuffix = await _discoverPromptSuffix(
       resolvedEnv,
-      projectRoots: roots.projectRoots,
-      userRoots: roots.userRoots,
+      savedSkillsAccess ?? SkillsAccess.ask,
     );
-    final contextFiles = await loadProjectContextFiles(resolvedEnv);
-    final promptSuffix = [
-      if (formatProjectContext(contextFiles).isNotEmpty)
-        formatProjectContext(contextFiles),
-      if (formatSkillsForPrompt(skills).isNotEmpty)
-        formatSkillsForPrompt(skills),
-    ].join('\n\n');
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
     // must be in place even when the boot-time secret set is empty.
     final secretsEnv = SecretsExecutionEnv(resolvedEnv, secrets);
+    final resolvedSessionsRoot =
+        sessionsRoot ?? defaultSessionsRoot(resolvedEnv.sessionCwd);
     return AgentService._withEnv(
       env: secretsEnv,
       secretsEnv: secretsEnv,
@@ -252,9 +252,12 @@ class AgentService extends ChangeNotifier
       redactor: redactor,
       streamFunction: streamFunction,
       taskModelsStore: taskModelsStore,
+      sessionsRoot: resolvedSessionsRoot,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
       initialApprovalMode: savedApprovalMode,
       approvalModeStore: approvalModeStore,
+      initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.ask,
+      skillsAccessStore: skillsAccessStore,
       // Live stores FIRST: a key edited in Settings must win over the
       // boot-time snapshot (the keychain write updates the registry, not
       // this map — boot map last so edited provider keys apply
@@ -313,9 +316,37 @@ class AgentService extends ChangeNotifier
     }
   }
 
+  /// Discovers agent skills + project context files (AGENTS.md & friends)
+  /// and renders the system-prompt suffix. Third-party skill roots
+  /// (`.claude`, `.github/skills`, `.codex`) are read only when [access] is
+  /// [SkillsAccess.granted] — anything else (ask/denied) restricts
+  /// discovery to the first-party roots (`.fah/skills`, `.agents/skills`).
+  static Future<String> _discoverPromptSuffix(
+    ExecutionEnv env,
+    SkillsAccess access,
+  ) async {
+    final roots = defaultSkillRoots(cwd: env.cwd, homeDir: null);
+    final skills = await discoverSkills(
+      env,
+      projectRoots: roots.projectRoots,
+      userRoots: roots.userRoots,
+      allowedSources: skillsAccessAllowsDiscovery(access, interactive: false)
+          ? null
+          : const {SkillSource.fah, SkillSource.agents},
+    );
+    final contextFiles = await loadProjectContextFiles(env);
+    return [
+      if (formatProjectContext(contextFiles).isNotEmpty)
+        formatProjectContext(contextFiles),
+      if (formatSkillsForPrompt(skills).isNotEmpty)
+        formatSkillsForPrompt(skills),
+    ].join('\n\n');
+  }
+
   AgentService._withEnv({
     required this.env,
     required AgentConfig config,
+    required String sessionsRoot,
     SecretRedactor? redactor,
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
@@ -326,13 +357,16 @@ class AgentService extends ChangeNotifier
     this._promptSuffix = '',
     ApprovalMode? initialApprovalMode,
     this._approvalModeStore,
+    SkillsAccess? initialSkillsAccess,
+    this._skillsAccessStore,
   }) : _config = config,
+       _skillsAccess = initialSkillsAccess ?? SkillsAccess.ask,
        _resolveSecretName = resolveSecretName,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
-       sessionsRoot = '${env.sessionCwd}/sessions',
-       _repo = JsonlSessionRepo(fs: env, sessionsRoot: '${env.sessionCwd}/sessions') {
+       sessionsRoot = sessionsRoot,
+       _repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
     _activeApiKey = config.apiKey;
@@ -687,6 +721,14 @@ class AgentService extends ChangeNotifier
   /// [setApprovalMode] writes through fire-and-forget.
   final ApprovalModeStore? _approvalModeStore;
 
+  /// The current third-party skills consent ([AgentService.create] seeds it
+  /// from [SkillsAccessStore]; the pre-constructed-Agent path stays `ask`).
+  SkillsAccess _skillsAccess;
+
+  /// The persisted skills-access store ([AgentService.create] path only);
+  /// [setSkillsAccess] writes through fire-and-forget.
+  final SkillsAccessStore? _skillsAccessStore;
+
   /// UI hook rendering the approval prompt (the chat screen installs a
   /// Material dialog). `null` → prompt-policy calls are denied.
   @override
@@ -866,6 +908,32 @@ class AgentService extends ChangeNotifier
     if (store != null) unawaited(store.save(mode));
   }
 
+  /// The current consent for third-party skill discovery (`.claude`,
+  /// `.github/skills`, `.codex`). [SkillsAccess.ask] = undecided.
+  SkillsAccess get skillsAccess => _skillsAccess;
+
+  /// Switches the third-party skills consent (the settings "Skills access"
+  /// section, the onboarding page, the boot dialog), persists it when a
+  /// store is wired (fire-and-forget), then re-discovers skills under the
+  /// new consent and recomposes the system prompt — like
+  /// [_refreshMemorySection], no [reconfigure] needed. Services built from
+  /// a pre-constructed [Agent] (tests) have no config: they record the
+  /// choice but skip the re-discovery.
+  Future<void> setSkillsAccess(SkillsAccess access) async {
+    if (access == _skillsAccess) return;
+    _skillsAccess = access;
+    notifyListeners();
+    final store = _skillsAccessStore;
+    if (store != null) unawaited(store.save(access));
+    final config = _config;
+    if (config == null) return;
+    final suffix = await _discoverPromptSuffix(env, access);
+    // A newer choice made while discovery ran wins — don't clobber it.
+    if (access != _skillsAccess) return;
+    _promptSuffix = suffix;
+    _agent.state.systemPrompt = _composeSystemPrompt(config);
+  }
+
   late final Agent _agent;
 
   /// Response deadline for one agent run; 10 minutes for the on-device
@@ -1010,8 +1078,9 @@ class AgentService extends ChangeNotifier
   SecretRedactor? _redactor;
 
   /// Rendered skills + project-context sections appended to the composed
-  /// system prompt (discovered in [AgentService.create]).
-  final String _promptSuffix;
+  /// system prompt (discovered in [AgentService.create]; re-discovered by
+  /// [setSkillsAccess] when the third-party consent changes).
+  String _promptSuffix;
 
   /// The base system prompt plus the skills/context suffix (kept as one
   /// place so model/provider switches preserve the sections).
@@ -1307,7 +1376,7 @@ class AgentService extends ChangeNotifier
     if (_session != null) return;
     final session = await _repo.create(
       JsonlSessionCreateOptions(
-        cwd: _agent.state.model.provider,
+        cwd: env.sessionCwd,
         // Allocated eagerly in [initialize] — the file adopts it so the
         // id the host already keyed this session by stays stable.
         id: _sessionId,
@@ -1830,6 +1899,7 @@ class AgentService extends ChangeNotifier
     return AgentService._withEnv(
       env: env,
       config: config,
+      sessionsRoot: sessionsRoot,
       redactor: _redactor,
       streamFunction: _agent.streamFunction,
       resolveSecretName: _resolveSecretName,
@@ -1842,6 +1912,9 @@ class AgentService extends ChangeNotifier
       // share the store so their mode changes persist too.
       initialApprovalMode: approval.mode,
       approvalModeStore: _approvalModeStore,
+      // Same for the skills-access consent: the live choice + shared store.
+      initialSkillsAccess: _skillsAccess,
+      skillsAccessStore: _skillsAccessStore,
     );
   }
 

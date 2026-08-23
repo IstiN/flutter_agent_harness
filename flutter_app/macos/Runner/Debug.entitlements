@@ -20,5 +20,9 @@
 	<true/>
 	<key>com.apple.security.personal-information.addressbook</key>
 	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.dev.fa1.shared</string>
+	</array>
 </dict>
 </plist>

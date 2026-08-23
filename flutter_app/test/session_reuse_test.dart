@@ -228,7 +228,7 @@ void main() {
       await _persistSession(repo, userText: 'a later empty-ish chat');
       // The user last worked in the OLDER session.
       (await env.writeFile(
-        '${env.cwd}/last_active_session.json',
+        '/sessions/last_active_session.json',
         '{"version":1,"id":"${older.id}"}',
       )).getOrThrow();
 

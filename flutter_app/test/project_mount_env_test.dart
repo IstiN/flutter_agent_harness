@@ -70,4 +70,103 @@ void main() {
     expect(env.mountedRoot, isNull);
     expect((await env.exists(projectMountSegment)).valueOrNull, isFalse);
   });
+
+  test('exec maps /project cwd to the mounted host root', () async {
+    final shell = RecordingShell();
+    final base = MemoryExecutionEnv(shell: shell);
+    final env = ProjectMountEnv(base)..mountedRoot = '/host/repo';
+
+    await env.exec('pwd', options: ShellExecOptions(cwd: projectMountSegment));
+    expect(shell.lastOptions?.cwd, '/host/repo');
+
+    await env.exec(
+      'pwd',
+      options: ShellExecOptions(cwd: '$projectMountSegment/src'),
+    );
+    expect(shell.lastOptions?.cwd, '/host/repo/src');
+  });
+
+  test('exec uses the host root when cwd is omitted', () async {
+    final shell = RecordingShell();
+    final base = MemoryExecutionEnv(shell: shell);
+    final env = ProjectMountEnv(base)..mountedRoot = '/host/repo';
+
+    await env.exec('pwd');
+    expect(shell.lastOptions?.cwd, '/host/repo');
+  });
+
+  test('startShellJob maps /project cwd to the mounted host root', () async {
+    final shell = RecordingShell();
+    final base = MemoryExecutionEnv(shell: shell);
+    final env = ProjectMountEnv(base)..mountedRoot = '/host/repo';
+
+    await env.startShellJob(
+      'pwd',
+      id: 'job-1',
+      logPath: '/log',
+      options: ShellExecOptions(cwd: projectMountSegment),
+    );
+    expect(shell.lastOptions?.cwd, '/host/repo');
+  });
+
+  test(
+    'startShellJob maps /project log path to the mounted host root',
+    () async {
+      final shell = RecordingShell();
+      final base = MemoryExecutionEnv(shell: shell);
+      final env = ProjectMountEnv(base)..mountedRoot = '/host/repo';
+
+      await env.startShellJob(
+        'pwd',
+        id: 'job-1',
+        logPath: '$projectMountSegment/.fah/bash_jobs/job-1.log',
+      );
+      expect(shell.lastLogPath, '/host/repo/.fah/bash_jobs/job-1.log');
+    },
+  );
+
+  test('sessionCwd unwraps secrets and session-vars decorators', () async {
+    final base = MemoryExecutionEnv();
+    final mountEnv = ProjectMountEnv(base)..mountedRoot = '/host/repo';
+    final secretsEnv = SecretsExecutionEnv(mountEnv, const {});
+    final varsEnv = SessionVarsExecutionEnv(secretsEnv, () => const {});
+
+    expect(varsEnv.sessionCwd, '/host/repo');
+    expect(secretsEnv.sessionCwd, '/host/repo');
+    expect(mountEnv.sessionCwd, '/host/repo');
+  });
+}
+
+final class RecordingShell implements Shell, BackgroundShell {
+  ShellExecOptions? lastOptions;
+  String? lastLogPath;
+
+  @override
+  bool get backgroundJobsSupported => true;
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    lastOptions = options;
+    return Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async {
+    lastOptions = options;
+    lastLogPath = logPath;
+    return const Err(
+      ExecutionError(
+        ExecutionErrorCode.shellUnavailable,
+        'recording shell does not run jobs',
+      ),
+    );
+  }
 }

@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
@@ -23,29 +25,39 @@ import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
-import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
+import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 
-/// The session chat bottom sheet floating over the apps launcher (narrow
-/// home). One continuous component driven by a single animation value:
+/// The session chat overlay floating over the apps launcher, iMessage-style.
+/// Three layers bottom→top (above the app grid):
 ///
-/// - **Mini** (default): a compact bottom bar — drag handle, the Fa mark,
-///   an inline input and send/expand buttons. Always visible, so a quick
-///   message never needs the full sheet; pull up (or tap the expand icon)
-///   to grow.
-/// - **Expanded**: the same panel grown to 92% — drag-handle header with
-///   the session title (via [SessionNamesStore]) and a 3-dots menu (New
-///   session / Rename session / Open full chat / Collapse), a horizontal
-///   [PageView] paging live AND persisted sessions (page change →
-///   `manager.switchTo`, or opens a persisted one lazily), the embedded
-///   [FaWorkBar] status row, and the shared [ChatComposer].
+/// - **Session panel**: the active session's transcript (the shared
+///   [ChatMessageTile] renderer) under a slim header (drag handle, a
+///   sessions-drawer button with the stacked-bubbles glyph, title via
+///   [SessionNamesStore], 3-dots menu: New session / Rename / Open full
+///   chat / Copy / Close). Slides up from the bottom to 92% and parks
+///   UNDER the input bar; a pull-down on the header zone or the menu's
+///   Close dismisses it. Focusing the input field opens the panel
+///   immediately (typing never happens blind).
+/// - **Sessions drawer**: the session list (live first, then
+///   disk-persisted) sliding in from the LEFT — a New-session tile on top,
+///   then rows rendered with the SAME [SessionTile] the wide sidebar uses
+///   (active dot, title, relative-time subtitle, working-folder label,
+///   3-dot rename/delete menu); tapping a row switches (persisted sessions
+///   open lazily). It slides out under the input bar too: layer-wise both
+///   the panel and the drawer sit between the app grid and the bar.
+/// - **Input bar** (always visible, docked to the bottom edge): the shared
+///   [ChatComposer] — leading slot is the sessions-drawer toggle while no
+///   session is open and turns into the attach button once the panel is
+///   up; the trailing slot is exactly ONE action (mic / stop / send,
+///   scale+fade swap) — `hideMicWhenNotEmpty`. While the agent streams
+///   with the panel closed, a slim [FaWorkBar] status row sits above the
+///   composer.
 ///
-/// The transition is physics-y: the mini bar and the full sheet are two
-/// layers — the sheet slides up from below while the mini bar fades — so
-/// expand/collapse is a smooth animated morph, and a vertical drag on the
-/// handle zone moves the whole thing with the finger (release flings to
-/// the nearest state).
+/// Sending a message from the bar opens the panel automatically (the user
+/// just asked something — the answer should be visible).
 class SessionChatSheet extends StatefulWidget {
   const SessionChatSheet({
     super.key,
@@ -58,9 +70,10 @@ class SessionChatSheet extends StatefulWidget {
     this.asrTranscriber,
     this.audioControllerFactory,
     this.videoControllerFactory,
+    this.panelFraction = SessionChatSheetState.defaultPanelFraction,
   });
 
-  /// The multi-session manager paged by the expanded sheet.
+  /// The multi-session manager the drawer and the panel are driven by.
   final FlutterSessionManager manager;
 
   /// Forwarded to the full chat screen ("Open full chat" menu action).
@@ -75,6 +88,12 @@ class SessionChatSheet extends StatefulWidget {
 
   /// Forwarded to the composer (and the full chat screen).
   final UploadPicker? uploadPicker;
+
+  /// Open panel height as a fraction of the sheet's laid-out height.
+  /// Hosts that want the expanded panel to park lower (e.g. to keep an
+  /// app's own header or hero content visible above it) pass a smaller
+  /// fraction; defaults to [SessionChatSheetState.defaultPanelFraction].
+  final double panelFraction;
 
   /// Microphone backend override for the composer (tests).
   final AsrApi? asr;
@@ -93,56 +112,42 @@ class SessionChatSheet extends StatefulWidget {
 }
 
 class SessionChatSheetState extends State<SessionChatSheet>
-    with SingleTickerProviderStateMixin {
-  /// Diameter of the fully-collapsed round Fa button.
-  static const double _iconSize = 56;
+    with TickerProviderStateMixin {
+  /// Default open panel height as a fraction of the sheet's height.
+  static const double defaultPanelFraction = 0.92;
 
-  /// Height of the mini state (handle + composer row) without safe area —
-  /// only the initial estimate; the real natural height is measured live
-  /// into `_measuredMiniH`.
-  static const double _miniHeight = 110;
-
-  /// Expanded height as a fraction of the screen.
-  static const double _expandedFraction = 0.92;
-
-  /// Animation value where the mini state sits (icon 0 → mini → sheet 1).
-  static const double _miniValue = 0.3;
-
-  /// Below this value the sheet is the round 56px Fa icon; between
-  /// [_iconMaxV] and [_miniValue] the full-size mini bar cross-fades in.
-  static const double _iconMaxV = _miniValue * 0.5;
-
-  /// Downward/upward fling velocity (px/s) that completes the gesture.
+  /// Fling velocity (px/s) that completes a panel drag.
   static const double _flingVelocity = 300;
 
-  late final AnimationController _anim;
-  late final PageController _pager;
+  /// The sessions drawer width cap; narrow screens get 82% instead.
+  static const double _drawerWidth = 320;
+
+  late final AnimationController _panelAnim;
+  late final AnimationController _drawerAnim;
   SessionNamesStore? _namesStore;
 
-  /// Persisted (on-disk, not live) sessions merged into the pager after the
-  /// live ones, so swiping reaches every session.
+  /// Disk-persisted sessions minus the live ones, listed in the drawer.
   List<SessionMetadata> _persisted = const [];
 
   /// Session id → creation time from the last listing, driving the
   /// date-based derived titles (see [derivedSessionTitle]).
   Map<String, DateTime> _createdAtById = const {};
-  var _openingPersisted = false;
 
-  /// Ids of persisted sessions that have been pre-cached or are in flight,
-  /// so we don't kick off duplicate speculative loads.
-  final Set<String> _preCached = {};
+  /// Persisted sessions with an open in flight (drawer double-tap guard).
+  final Set<String> _opening = {};
 
-  /// One-shot guard for the stream-start auto-grow to the mini state.
-  var _autoMini = false;
+  /// Last seen live-session count — drives the persisted-list resync in
+  /// [_onManagerChanged].
+  var _lastLiveCount = -1;
 
-  /// Key on the always-rendered body column — its natural height is
-  /// measured live ([_measuredMiniH]) so the icon↔mini pixel lerp targets
-  /// the REAL mini height in the current environment (composer + safe-area
-  /// + optional status row), making state switches pixel-continuous.
-  final GlobalKey _miniBodyKey = GlobalKey();
+  /// Key on the always-rendered bar column — its natural height is measured
+  /// live into [_barHeight] so the drawer list and the panel transcript can
+  /// pad their bottoms by the REAL bar height (composer + safe area +
+  /// optional streaming status row) in the current environment.
+  final GlobalKey _barKey = GlobalKey();
 
-  /// Last measured natural mini-body height; seeded with an estimate.
-  double _measuredMiniH = _miniHeight;
+  /// Last measured natural bar height; seeded with an estimate.
+  double _barHeight = 96;
 
   List<FlutterManagedSession> get _liveSessions => widget.manager.sessions;
 
@@ -151,28 +156,43 @@ class SessionChatSheetState extends State<SessionChatSheet>
   @override
   void initState() {
     super.initState();
-    // The MINI bar (handle + composer) is the default resting state — the
-    // composer is one tap away and the grid above stays fully visible. A
-    // pull-down still collapses it to the round Fa icon (value 0).
-    _anim = AnimationController(
+    _panelAnim = AnimationController(
       vsync: this,
-      value: _miniValue,
       duration: const Duration(milliseconds: 260),
     );
-    _pager = PageController(initialPage: _activeIndex());
+    _drawerAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
     _namesStore = widget.sessionNamesStore;
     _namesStore?.addListener(_onChanged);
     if (_namesStore == null) unawaited(_loadNamesStore());
     widget.manager.addListener(_onManagerChanged);
     unawaited(_reloadPersisted());
+    // SizeChangedLayoutNotifier does NOT fire for the FIRST layout — it
+    // only reports changes against the baseline — so measure the bar once
+    // up front; later changes (streaming row, multiline field) come through
+    // the notification.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measureBarHeight());
+  }
+
+  /// Reads the bar's real laid-out height into [_barHeight] (no-op when
+  /// unchanged). Must run post-frame — during layout the render object is
+  /// still dirty.
+  void _measureBarHeight() {
+    if (!mounted) return;
+    final h = _barKey.currentContext?.size?.height;
+    if (h != null && (h - _barHeight).abs() > 0.5) {
+      setState(() => _barHeight = h);
+    }
   }
 
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
     _namesStore?.removeListener(_onChanged);
-    _pager.dispose();
-    _anim.dispose();
+    _panelAnim.dispose();
+    _drawerAnim.dispose();
     super.dispose();
   }
 
@@ -188,8 +208,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
     setState(() => _namesStore = store..addListener(_onChanged));
   }
 
-  /// The disk-persisted sessions minus the live ones, oldest-positioned
-  /// after the live pages.
+  /// The disk-persisted sessions minus the live ones, for the drawer list.
   Future<void> _reloadPersisted() async {
     final service = _activeService;
     if (service == null) return;
@@ -205,32 +224,17 @@ class SessionChatSheetState extends State<SessionChatSheet>
           _persisted = persisted;
           _createdAtById = {for (final m in all) m.id: m.createdAt};
         });
-        // Pre-cache the first persisted neighbor after the live sessions
-        // so the user's first swipe into the persisted tail is instant.
-        _preCacheNeighbors(_activeIndex());
       }
     } on Object {
       // A broken sessions dir must not break the sheet.
     }
   }
 
-  /// Pager entries: live sessions first, then persisted-only metadata.
-  int get _pageCount => _liveSessions.length + _persisted.length;
-
-  int _activeIndex() {
-    final activeId = widget.manager.activeId;
-    final index = _liveSessions.indexWhere((s) => s.id == activeId);
-    return index < 0 ? 0 : index;
-  }
-
-  /// External active-session changes (menu New session, another surface's
-  /// switch) keep the pager on the active session.
+  /// External session changes (drawer open, another surface's switch):
+  /// drop persisted entries that went live, resync the list on live-count
+  /// changes (closed sessions reappear there) and rebuild.
   void _onManagerChanged() {
     if (!mounted) return;
-    // A persisted page the pager just opened went LIVE: drop its duplicate
-    // persisted entry immediately. Without this the session appears TWICE
-    // (live + persisted), page indices shift, and _onManagerChanged's jump
-    // bounces the user off the rightmost page — it looks unreachable.
     final liveIds = _liveSessions.map((s) => s.id).toSet();
     final filtered = [
       for (final m in _persisted)
@@ -238,117 +242,130 @@ class SessionChatSheetState extends State<SessionChatSheet>
     ];
     if (filtered.length != _persisted.length) {
       _persisted = filtered;
-      // A pre-cached session just became live — clean up the tracking set.
-      _preCached.removeAll(liveIds);
+      _opening.removeAll(liveIds);
     }
-    // Live count changes (session opened/closed) also re-sync the
-    // persisted tail from disk (closed sessions reappear there).
     if (liveIds.length != _lastLiveCount) {
       _lastLiveCount = liveIds.length;
       unawaited(_reloadPersisted());
     }
-    final index = _activeIndex();
-    if (_pager.hasClients && _liveSessions.isNotEmpty) {
-      final current = _pager.page?.round() ?? _pager.initialPage;
-      if (current != index && index < _liveSessions.length) {
-        _pager.jumpToPage(index);
-      }
-    }
     setState(() {});
   }
 
-  /// Last seen live-session count — drives the persisted-tail resync in
-  /// [_onManagerChanged].
-  var _lastLiveCount = -1;
+  // --- panel open/close ------------------------------------------------------
 
-  void _onPageChanged(int index) {
-    if (index < _liveSessions.length) {
-      widget.manager.switchTo(_liveSessions[index].id);
-      _preCacheNeighbors(index);
-      return;
+  /// Opens the session panel programmatically (the launcher's session chip,
+  /// the composer's onSent, the streaming status row).
+  void expand() => unawaited(_openPanel());
+
+  Future<void> _openPanel() {
+    AppAnalytics.instance.chatSheetState('expanded');
+    if (_drawerAnim.value > 0) {
+      unawaited(
+        _drawerAnim.animateTo(
+          0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInCubic,
+        ),
+      );
     }
-    final metadata = _persisted[index - _liveSessions.length];
-    if (_openingPersisted) return;
-    _openingPersisted = true;
-    () async {
-      try {
-        final active = _activeService;
-        if (active == null) return;
-        await widget.manager.openSession(
-          metadata,
-          config:
-              active.configForClone ??
-              AgentConfig(
-                providerKind: active.providerKind,
-                modelId: active.modelId,
-                baseUrl: '',
-                apiKey: '',
-              ),
-          serviceFactory: () async => active.clone(),
-        );
-      } finally {
-        _openingPersisted = false;
-      }
-    }();
-    _preCacheNeighbors(index);
+    return _panelAnim.animateTo(1, curve: Curves.easeOutCubic);
   }
 
-  /// Speculatively opens the persisted sessions at [index] ± 1 in the
-  /// background so the next swipe into a neighbor is instant. Live
-  /// sessions are already in memory and need no pre-caching.
-  void _preCacheNeighbors(int currentIndex) {
-    final active = _activeService;
-    if (active == null) return;
-    final config =
-        active.configForClone ??
-        AgentConfig(
-          providerKind: active.providerKind,
-          modelId: active.modelId,
-          baseUrl: '',
-          apiKey: '',
-        );
-    for (final delta in [1, -1]) {
-      final neighborIndex = currentIndex + delta;
-      if (neighborIndex < 0 || neighborIndex >= _pageCount) continue;
-      // Only persisted sessions (beyond the live range) need pre-caching.
-      if (neighborIndex < _liveSessions.length) continue;
-      final metadata = _persisted[neighborIndex - _liveSessions.length];
-      if (_preCached.add(metadata.id)) {
-        unawaited(
-          widget.manager.preCacheSession(
-            metadata,
-            config: config,
-            serviceFactory: () async => active.clone(),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _toMini() => _animateToState(_miniValue);
-
-  /// Expands the sheet programmatically (e.g. the launcher's session chip).
-  void expand() => unawaited(_expand());
-
-  Future<void> _expand() => _animateToState(1);
-
-  Future<void> _collapse() => _animateToState(
-    0,
-    duration: const Duration(milliseconds: 220),
-    curve: Curves.easeInCubic,
-  );
-
-  /// Animates to a snap target (0 collapsed icon / [_miniValue] mini bar /
-  /// 1 expanded sheet), logging the state transition once per gesture.
-  Future<void> _animateToState(
-    double target, {
-    Duration duration = const Duration(milliseconds: 260),
-    Curve curve = Curves.easeOutCubic,
-  }) {
-    AppAnalytics.instance.chatSheetState(
-      target <= 0 ? 'collapsed' : (target >= 1 ? 'expanded' : 'mini'),
+  Future<void> _closePanel() {
+    AppAnalytics.instance.chatSheetState('collapsed');
+    // Dismiss the keyboard together with the panel: a still-focused
+    // composer in the docked bar would keep the keyboard floating over the
+    // app grid with no visible way to get rid of it.
+    FocusManager.instance.primaryFocus?.unfocus();
+    return _panelAnim.animateTo(
+      0,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInCubic,
     );
-    return _anim.animateTo(target, duration: duration, curve: curve);
+  }
+
+  /// The laid-out height of the sheet's stack (below the status bar, above
+  /// the keyboard), updated from the [LayoutBuilder] on every layout. Drives
+  /// the drag math via [_panelPixels].
+  double _stackHeight = 0;
+
+  double get _panelPixels => _stackHeight * widget.panelFraction;
+
+  void _onPanelDragUpdate(DragUpdateDetails details) {
+    final pixels = _panelPixels;
+    if (pixels <= 0) return; // not laid out yet — ignore the drag
+    _panelAnim.stop();
+    _panelAnim.value = (_panelAnim.value - details.delta.dy / pixels).clamp(
+      0.0,
+      1.0,
+    );
+  }
+
+  void _onPanelDragEnd(DragEndDetails details) {
+    final velocity = details.velocity.pixelsPerSecond.dy;
+    if (velocity >= _flingVelocity) {
+      unawaited(_closePanel());
+    } else if (velocity <= -_flingVelocity) {
+      unawaited(_openPanel());
+    } else {
+      unawaited(_panelAnim.value < 0.5 ? _closePanel() : _openPanel());
+    }
+  }
+
+  void _onPanelDragCancel() {
+    // A canceled gesture (the arena was lost mid-drag) must still settle on
+    // a real state — never leave the panel hanging between states.
+    unawaited(_panelAnim.value < 0.5 ? _closePanel() : _openPanel());
+  }
+
+  // --- drawer ----------------------------------------------------------------
+
+  Future<void> _toggleDrawer() {
+    if (_drawerAnim.value > 0.5) {
+      return _drawerAnim.animateTo(
+        0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInCubic,
+      );
+    }
+    unawaited(_reloadPersisted());
+    return _drawerAnim.animateTo(1, curve: Curves.easeOutCubic);
+  }
+
+  /// Drawer row tap: live sessions switch in place, persisted ones open
+  /// lazily — either way the drawer closes and the panel opens.
+  Future<void> _openSessionFromDrawer(String id) async {
+    unawaited(_toggleDrawer());
+    if (_liveSessions.any((s) => s.id == id)) {
+      widget.manager.switchTo(id);
+    } else {
+      final metadata = _persisted.where((m) => m.id == id).firstOrNull;
+      if (metadata != null) await _openPersisted(metadata);
+    }
+    if (mounted) unawaited(_openPanel());
+  }
+
+  /// Lazily opens a persisted session (same config path the old pager used).
+  Future<void> _openPersisted(SessionMetadata metadata) async {
+    if (!_opening.add(metadata.id)) return;
+    try {
+      final active = _activeService;
+      if (active == null) return;
+      await widget.manager.openSession(
+        metadata,
+        config:
+            active.configForClone ??
+            AgentConfig(
+              providerKind: active.providerKind,
+              modelId: active.modelId,
+              baseUrl: '',
+              apiKey: '',
+            ),
+        serviceFactory: () async => active.clone(),
+      );
+    } finally {
+      _opening.remove(metadata.id);
+    }
   }
 
   Future<void> _newSession() async {
@@ -362,6 +379,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
       config: config,
       serviceFactory: () async => source.clone(),
     );
+  }
+
+  /// Drawer "New session" tile: create, then open the panel on it.
+  Future<void> _newSessionFromDrawer() async {
+    unawaited(_toggleDrawer());
+    await _newSession();
+    if (mounted) unawaited(_openPanel());
   }
 
   Future<void> _openFullChat() async {
@@ -381,54 +405,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
-  // --- the drag: the whole panel follows the finger ------------------------
-
-  double get _sheetPixels {
-    final screenH = MediaQuery.sizeOf(context).height;
-    return screenH * _expandedFraction;
-  }
-
-  void _onDragUpdate(DragUpdateDetails details) {
-    _anim.stop();
-    _anim.value = (_anim.value - details.delta.dy / _sheetPixels).clamp(
-      0.0,
-      1.0,
-    );
-  }
-
-  /// The snap target nearest to the current value: icon (0), mini bar
-  /// (_miniValue), full sheet (1).
-  double get _nearestSnap {
-    final v = _anim.value;
-    return v < _miniValue / 2
-        ? 0.0
-        : (v < (_miniValue + 1) / 2 ? _miniValue : 1.0);
-  }
-
-  Future<void> _snapTo(double target) =>
-      _animateToState(target, duration: const Duration(milliseconds: 220));
-
-  void _onDragEnd(DragEndDetails details) {
-    final velocity = details.velocity.pixelsPerSecond.dy;
-    final v = _anim.value;
-    if (velocity <= -_flingVelocity) {
-      // Fling UP: settle into the next LARGER state (icon → mini → sheet).
-      unawaited(_snapTo(v < _miniValue - 0.001 ? _miniValue : 1.0));
-    } else if (velocity >= _flingVelocity) {
-      // Fling DOWN: settle into the next SMALLER state (sheet → mini →
-      // icon) — a swipe down from the full sheet stops at the mini bar,
-      // it never skips straight to the icon.
-      unawaited(_snapTo(v > _miniValue + 0.001 ? _miniValue : 0.0));
-    } else {
-      unawaited(_snapTo(_nearestSnap));
-    }
-  }
-
-  void _onDragCancel() {
-    // A canceled gesture (the arena was lost mid-drag) must still settle on
-    // a real state — never leave the panel hanging between states.
-    unawaited(_snapTo(_nearestSnap));
-  }
+  // --- build -----------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -436,356 +413,403 @@ class SessionChatSheetState extends State<SessionChatSheet>
     if (service == null) return const SizedBox.shrink();
     final colors = FahColors.of(context);
     final size = MediaQuery.sizeOf(context);
-    // viewPadding survives the outer SafeArea (which only consumes
-    // `padding`), so the real display cutouts (Dynamic Island, home
-    // indicator) are always known here.
-    final viewPad = MediaQuery.viewPaddingOf(context);
-    // The keyboard shrinks the host Scaffold's body (resizeToAvoidBottomInset,
-    // which also CONSUMES the inset from the inherited MediaQuery) — read the
-    // true inset from the platform view so the expanded sheet keeps its
-    // header (drag handle + title) ON screen when the keyboard opens.
-    final keyboardH = MediaQueryData.fromView(
-      View.of(context),
-    ).viewInsets.bottom;
-    // Expanded sheet: 92% of the height BELOW the top cutout — the panel
-    // top (and its drag handle) never slides under the Dynamic Island.
-    final expandedH =
-        (size.height - viewPad.top - keyboardH) * _expandedFraction;
-    // ONE panel, three states driven by a single value: round Fa button
-    // (0) ↔ mini bar (handle + status + composer, _miniValue) ↔ full sheet
-    // (1). The container's height/width/radius lerp; the body inside is an
-    // OverflowBox pinned to the BOTTOM, so the composer row never moves —
-    // only the messages area above it stretches.
+    final drawerW = math.min(_drawerWidth, size.width * 0.82);
     return SafeArea(
-      // Never let the sheet (or its drag handle) slide under the status bar.
+      // Never let the panel/drawer slide under the status bar.
       bottom: false,
-      child: Align(
-        alignment: Alignment.bottomRight,
-        child: AnimatedBuilder(
-          animation: _anim,
-          builder: (context, _) {
-            final v = _anim.value;
-            final sheetT = ((v - _miniValue) / (1 - _miniValue)).clamp(
-              0.0,
-              1.0,
-            );
-            // States: round Fa icon (v < _iconMaxV) → mini bar (_miniValue)
-            // → full sheet (1). The icon↔mini transition is a CROSS-FADE,
-            // not a size morph: the 56px circle hard-switches to the
-            // full-size mini bar fading in (bodyT) — no squeezed-composer
-            // frames. The mini bar always shrink-wraps its natural content
-            // height (height == null), so it never covers the grid; the
-            // sheet uses explicit heights targeting the MEASURED mini
-            // height, and its body is bottom-pinned, so nothing jumps.
-            final miniH = _measuredMiniH;
-            final isIcon = v < _iconMaxV && !service.isStreaming;
-            final bodyT = ((v - _iconMaxV) / (_miniValue - _iconMaxV)).clamp(
-              0.0,
-              1.0,
-            );
-            final double? height;
-            if (isIcon) {
-              height = _iconSize;
-            } else if (sheetT > 0) {
-              height = miniH + (expandedH - miniH) * sheetT;
-            } else {
-              height = null; // mini: natural shrink-wrap, always
-            }
-            // The mini bar is DOCKED to the bottom edge (full width, top
-            // corners rounded, panel color running into the home-indicator
-            // zone — one continuous iOS-style surface, no hanging card);
-            // only the round Fa icon floats.
-            const barRadius = BorderRadius.vertical(top: Radius.circular(16));
-            final sideInset = isIcon ? 16.0 : 0.0;
-            final bottomInset = isIcon ? viewPad.bottom + 16 : 0.0;
-            final width = isIcon ? _iconSize : size.width;
-            final radius = isIcon ? BorderRadius.circular(28) : barRadius;
-            return Padding(
-              padding: EdgeInsets.only(
-                left: sideInset,
-                right: sideInset,
-                bottom: bottomInset,
-              ),
-              child: Container(
-                width: width,
-                height: height,
-                clipBehavior: Clip.antiAlias,
-                decoration: BoxDecoration(
-                  color: colors.panelAlt.withValues(alpha: 0.97),
-                  borderRadius: radius,
-                  // Docked bar/sheet: the top hairline where the panel meets
-                  // the grid. The floating icon is borderless (iOS-style,
-                  // separates by its shadow alone).
-                  border: isIcon
-                      ? null
-                      : Border(top: BorderSide(color: colors.border)),
-                  boxShadow: isIcon
-                      ? const [
-                          BoxShadow(
-                            color: Colors.black26,
-                            blurRadius: 18,
-                            offset: Offset(0, 6),
-                          ),
-                        ]
-                      : const [
-                          BoxShadow(
-                            color: Colors.black38,
-                            blurRadius: 12,
-                            offset: Offset(0, -2),
-                          ),
-                        ],
-                ),
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: ClipRect(
-                    // Rebuild on service events too (streaming flips the
-                    // status row and hides the collapsed icon).
-                    child: ListenableBuilder(
-                      listenable: service,
-                      builder: (context, _) {
-                        // Fa starts working while hidden: grow to the mini
-                        // state so the status row and composer are usable.
-                        if (service.isStreaming &&
-                            _anim.value < _miniValue - 0.01 &&
-                            !_autoMini) {
-                          _autoMini = true;
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted) unawaited(_animateToState(_miniValue));
-                          });
-                        } else if (!service.isStreaming) {
-                          _autoMini = false;
-                        }
-                        return Stack(
-                          // Passthrough: with an explicit container height
-                          // (icon/sheet) the children fill it; in the mini
-                          // region (height == null) the stack — and with it
-                          // the whole panel — shrink-wraps the natural body
-                          // height, so the panel NEVER covers the app grid
-                          // behind it.
-                          fit: StackFit.passthrough,
-                          children: [
-                            Opacity(
-                              opacity: sheetT > 0 ? 1.0 : bodyT,
-                              child: _panelContent(
-                                colors,
-                                service,
-                                v,
-                                sheetT,
-                                expandedH,
-                                viewPad.bottom,
-                              ),
-                            ),
-                            // The round Fa button (collapsed state): fills
-                            // the 56px circle.
-                            if (isIcon)
-                              GestureDetector(
-                                key: const ValueKey('sessionChatFaButton'),
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () => unawaited(_toMini()),
-                                onVerticalDragUpdate: _onDragUpdate,
-                                onVerticalDragEnd: _onDragEnd,
-                                onVerticalDragCancel: _onDragCancel,
-                                child: const Center(child: FaMark(size: 26)),
-                              ),
-                          ],
-                        );
-                      },
+      // LayoutBuilder, NOT MediaQuery/view insets: the host Scaffold's
+      // resizeToAvoidBottomInset shrinks the body around the keyboard, so
+      // the laid-out height already excludes it — and constraint changes
+      // REBUILD us, while `View.of(context)` never notifies on viewInsets
+      // changes (`_ViewScope.updateShouldNotify` compares the view instance
+      // only). Reading the inset statically kept the keyboard-less panel
+      // height after the keyboard opened and pushed the panel header off
+      // the top edge.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final panelH = constraints.maxHeight * widget.panelFraction;
+          _stackHeight = constraints.maxHeight;
+          return AnimatedBuilder(
+            animation: Listenable.merge([_panelAnim, _drawerAnim]),
+            builder: (context, _) {
+              final panelV = _panelAnim.value;
+              final drawerV = _drawerAnim.value;
+              final scrimV = math.max(panelV, drawerV);
+              return Stack(
+                children: [
+                  // Scrim over the app grid while a layer is open; a tap on
+                  // the exposed part dismisses the top layer. The bar sits
+                  // ABOVE the scrim and stays interactive.
+                  if (scrimV > 0)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _onScrimTap,
+                        child: ColoredBox(
+                          color: Colors.black.withValues(alpha: 0.30 * scrimV),
+                        ),
+                      ),
                     ),
+                  // The session panel slides up from the bottom and parks
+                  // under the input bar (the bar overlaps its bottom edge).
+                  if (panelV > 0)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: panelH,
+                      child: Transform.translate(
+                        offset: Offset(0, (1 - panelV) * panelH),
+                        child: _buildPanel(colors, service),
+                      ),
+                    ),
+                  // The sessions drawer slides in from the left, under the
+                  // bar. Its scrim sits ABOVE the panel: the grid-level
+                  // scrim is unreachable while the panel covers it, so
+                  // without this layer an outside tap would hit the panel
+                  // and leave the drawer open.
+                  if (drawerV > 0)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => unawaited(_toggleDrawer()),
+                        child: ColoredBox(
+                          color: Colors.black.withValues(alpha: 0.15 * drawerV),
+                        ),
+                      ),
+                    ),
+                  if (drawerV > 0)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: drawerW,
+                      child: Transform.translate(
+                        offset: Offset(-(1 - drawerV) * drawerW, 0),
+                        child: _buildDrawer(colors),
+                      ),
+                    ),
+                  // The always-visible input bar — the top layer.
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _buildBar(colors, service),
                   ),
-                ),
-              ),
-            );
-          },
-        ),
+                ],
+              );
+            },
+          );
+        },
       ),
     );
   }
 
-  /// The one continuous body: drag handle, the expanded zone (header +
-  /// session pager, appearing with [sheetT]), the streaming status row, and
-  /// the always-fixed [ChatComposer] at the bottom.
-  Widget _panelContent(
-    FahColors colors,
-    AgentService service,
-    double v,
-    double sheetT,
-    double expandedH,
-    double bottomSafeInset,
-  ) {
-    // No body in the icon state (the 56px circle only holds the glyph);
-    // the mini bar cross-fades in above _iconMaxV, and while Fa starts
-    // working the auto-grow animates the panel to the mini state.
-    if (v < _iconMaxV) {
-      return const SizedBox.shrink();
+  void _onScrimTap() {
+    if (_drawerAnim.value > 0.5) {
+      unawaited(_toggleDrawer());
+    } else if (_panelAnim.value > 0.5) {
+      unawaited(_closePanel());
     }
-    final column = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // The drag handle belongs to the EXPANDED sheet only — the mini
-        // bar is a clean composer surface with no handle strip or seam
-        // (drags work anywhere on the bar anyway).
-        if (sheetT > 0) ...[
-          Opacity(opacity: sheetT, child: _handle(colors)),
-          Opacity(opacity: sheetT, child: _buildHeader(colors, service)),
-          Divider(height: 1, color: colors.border),
-          Expanded(child: _buildPager()),
-          Divider(height: 1, color: colors.border),
-        ] else
-          // The mini bar shows just the slim drag pill (no seam/strip) as
-          // the "you can drag this" affordance; drags work anywhere on the
-          // bar. Keyed for tests.
-          Padding(
-            key: const ValueKey('sessionChatMiniDragZone'),
-            padding: const EdgeInsets.only(top: 5, bottom: 2),
-            child: Center(child: _handle(colors)),
-          ),
-        // The status row belongs to the mini state; the expanded sheet
-        // shows the streaming progress inside the transcript itself.
-        if (service.isStreaming && sheetT == 0)
-          FaWorkBar(
-            service: service,
-            onExpand: _expand,
-            onCollapse: _collapse,
-            embedded: true,
-          ),
-        // Idle mini bar: a one-line tail of the last assistant message so
-        // the user sees the LLM actually answered (and what) without
-        // opening the sheet — streaming swaps it for the status row above.
-        if (!service.isStreaming && sheetT == 0)
-          _lastMessageStrip(colors, service),
-        ChatComposer(
-          service: service,
-          uploadPicker: widget.uploadPicker,
-          asr: widget.asr,
-          asrTranscriber: widget.asrTranscriber,
-        ),
-        // The docked bar/sheet reaches the screen's bottom edge: lift the
-        // composer above the home indicator — the panel color runs through
-        // the indicator zone, one continuous surface. Part of the mini
-        // bar's natural height (measured), so transitions stay continuous.
-        SizedBox(height: bottomSafeInset),
-      ],
-    );
-    // Measure the natural mini-body height on every layout (mini states
-    // only — in the sheet the column is stretched to expandedH): the
-    // sheet↔mini height formula targets this exact value, so landing on
-    // the natural-height mini bar is pixel-continuous in any environment
-    // (safe-area bottom, with/without the streaming status row).
-    final body = NotificationListener<SizeChangedLayoutNotification>(
-      onNotification: (_) {
-        if (sheetT != 0) return true;
-        // The notification fires DURING layout — reading the size right
-        // here is illegal (render object still dirty), so defer it.
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          final h = _miniBodyKey.currentContext?.size?.height;
-          if (h != null && (h - _measuredMiniH).abs() > 0.5) {
-            _measuredMiniH = h;
-          }
-        });
-        return true;
-      },
-      child: SizeChangedLayoutNotifier(key: _miniBodyKey, child: column),
-    );
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      // A tap anywhere outside the interactive children opens the sheet.
-      onTap: () => unawaited(_expand()),
-      onVerticalDragUpdate: _onDragUpdate,
-      onVerticalDragEnd: _onDragEnd,
-      onVerticalDragCancel: _onDragCancel,
-      // Mini region: the container has no explicit height, so the plain
-      // natural-height body shrink-wraps it — the panel covers ONLY its
-      // own bar and the app grid behind stays fully visible. Sheet: the
-      // body is laid out at the full expanded height and pinned to the
-      // BOTTOM of the container, so mid-gesture the top clips instead of
-      // overflowing and the composer and messages never reflow or jump.
-      child: sheetT > 0
-          ? Align(
-              alignment: Alignment.bottomCenter,
-              child: OverflowBox(
-                alignment: Alignment.bottomCenter,
-                maxHeight: expandedH,
-                child: SizedBox(height: expandedH, child: body),
-              ),
-            )
-          : body,
-    );
   }
 
-  /// One plain-text line for the mini strip: newlines collapsed, markdown
-  /// emphasis/backtick markers removed (raw `**bold**` reads as noise in a
-  /// one-line preview).
-  static String _stripLine(String content) => content
-      .trim()
-      .replaceAll('\n', ' ')
-      .replaceAll('**', '')
-      .replaceAll('`', '');
-
-  /// The idle mini bar's one-line tail of the last assistant message
-  /// (empty when there is nothing to show).
-  Widget _lastMessageStrip(FahColors colors, AgentService service) {
-    String? text;
-    var isError = false;
-    for (final message in service.messages.reversed) {
-      if (message.role == 'assistant' && message.content.trim().isNotEmpty) {
-        text = _stripLine(message.content);
-        break;
-      }
-      if (message.role == 'tool' && message.isError) {
-        text = _stripLine(message.content);
-        isError = true;
-        break;
-      }
-    }
-    if (text == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 2, 14, 2),
-      child: Row(
-        children: [
-          Icon(
-            isError ? Icons.error_outline : Icons.auto_awesome,
-            size: 13,
-            color: isError ? colors.error : colors.dim,
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontSize: 12,
-                color: isError ? colors.error : colors.dim,
-              ),
-            ),
+  /// The docked input bar: the streaming status row (panel closed only)
+  /// over the composer — one continuous surface into the home-indicator zone.
+  Widget _buildBar(FahColors colors, AgentService service) {
+    final panelOpen = _panelAnim.value > 0.5;
+    return Container(
+      key: const ValueKey('sessionChatBar'),
+      decoration: BoxDecoration(
+        color: colors.panelAlt.withValues(alpha: 0.97),
+        border: Border(top: BorderSide(color: colors.border)),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black38,
+            blurRadius: 12,
+            offset: Offset(0, -2),
           ),
         ],
       ),
+      child: Material(
+        type: MaterialType.transparency,
+        // Measure the natural bar height on every layout: the panel
+        // transcript and the drawer list pad their bottoms by this exact
+        // value, so content never hides under the floating bar.
+        child: NotificationListener<SizeChangedLayoutNotification>(
+          onNotification: (_) {
+            // The notification fires DURING layout — defer the read.
+            WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _measureBarHeight(),
+            );
+            return true;
+          },
+          child: SizeChangedLayoutNotifier(
+            key: _barKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // The streaming status row belongs to the closed-panel bar;
+                // the open panel shows the progress inside the transcript.
+                if (!panelOpen)
+                  FaWorkBar(service: service, onExpand: expand, embedded: true),
+                ChatComposer(
+                  // The status row above appears/disappears with the panel
+                  // and the streaming state — WITHOUT a stable key the
+                  // column child matching would recreate the composer on
+                  // every toggle, killing its FocusNode (the field lost
+                  // focus right after send, forcing a re-tap per message).
+                  key: const ValueKey('sessionChatComposer'),
+                  service: service,
+                  uploadPicker: widget.uploadPicker,
+                  asr: widget.asr,
+                  asrTranscriber: widget.asrTranscriber,
+                  hideMicWhenNotEmpty: true,
+                  // The always-visible bar must not pop the keyboard at
+                  // app start — focus comes from a deliberate tap.
+                  autofocus: false,
+                  onSent: expand,
+                  // Typing never happens blind: focusing the field opens
+                  // the current session's panel right away.
+                  onFocusChanged: (focused) {
+                    if (focused) expand();
+                  },
+                  // Panel closed: the leading slot opens the sessions
+                  // drawer. Panel open: null → the composer's own attach
+                  // button (the "+" of the iMessage bar).
+                  leadingBuilder: panelOpen
+                      ? null
+                      : (context) => IconButton(
+                          key: const ValueKey('sessionChatDrawerButton'),
+                          icon: _drawerAnim.value > 0.5
+                              ? const Icon(Icons.close)
+                              : SessionsGlyph(
+                                  color: colors.dim,
+                                  background: colors.panelAlt,
+                                ),
+                          tooltip: context.l10n.sidebarSessionsHeader,
+                          onPressed: () => unawaited(_toggleDrawer()),
+                        ),
+                ),
+                // The composer's own SafeArea lifts the field above the home
+                // indicator; the bar's panel color runs through the
+                // indicator zone — one continuous surface.
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
-  /// The session pager (live + persisted sessions) — the expanded zone.
-  Widget _buildPager() {
-    return PageView.builder(
-      key: const ValueKey('sessionChatPager'),
-      controller: _pager,
-      itemCount: _pageCount,
-      onPageChanged: _onPageChanged,
-      itemBuilder: (context, index) => index < _liveSessions.length
-          ? _SessionTranscript(
-              key: ValueKey('sessionTranscript:${_liveSessions[index].id}'),
-              service: _liveSessions[index].service,
-              audioControllerFactory: widget.audioControllerFactory,
-              videoControllerFactory: widget.videoControllerFactory,
-            )
-          : _PersistedPage(
-              key: ValueKey(
-                'persistedPage:${_persisted[index - _liveSessions.length].id}',
+  /// The session panel: drag handle + header (draggable), divider, and the
+  /// active session's transcript padded above the floating bar.
+  Widget _buildPanel(FahColors colors, AgentService service) {
+    final activeId = widget.manager.activeId ?? '';
+    return Container(
+      key: const ValueKey('sessionChatPanel'),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: colors.panelAlt.withValues(alpha: 0.97),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        border: Border(top: BorderSide(color: colors.border)),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black38,
+            blurRadius: 12,
+            offset: Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(
+          children: [
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onVerticalDragUpdate: _onPanelDragUpdate,
+              onVerticalDragEnd: _onPanelDragEnd,
+              onVerticalDragCancel: _onPanelDragCancel,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: Center(child: _handle(colors)),
+                  ),
+                  _buildHeader(colors, service),
+                ],
               ),
-              metadata: _persisted[index - _liveSessions.length],
-              namesStore: _namesStore,
             ),
+            Divider(height: 1, color: colors.border),
+            Expanded(
+              child: _SessionTranscript(
+                key: ValueKey('sessionTranscript:$activeId'),
+                service: service,
+                bottomPadding: _barHeight,
+                audioControllerFactory: widget.audioControllerFactory,
+                videoControllerFactory: widget.videoControllerFactory,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The sessions drawer: a "New session" tile over the live + persisted
+  /// session list (the SAME [SessionTile] the wide sidebar renders),
+  /// sliding in from the left under the input bar.
+  Widget _buildDrawer(FahColors colors) {
+    final l10n = context.l10n;
+    final activeId = widget.manager.activeId;
+    final entries =
+        <
+            ({
+              String id,
+              DateTime createdAt,
+              DateTime lastUpdatedAt,
+              String? cwd,
+              FlutterManagedSession? live,
+              SessionMetadata? persisted,
+            })
+          >[
+            for (final s in _liveSessions)
+              (
+                id: s.id,
+                createdAt: s.createdAt,
+                lastUpdatedAt: s.lastUpdatedAt,
+                cwd: s.service.env.sessionCwd,
+                live: s,
+                persisted: null,
+              ),
+            for (final m in _persisted)
+              (
+                id: m.id,
+                createdAt: m.createdAt,
+                lastUpdatedAt: m.lastUpdatedAt ?? m.createdAt,
+                cwd: m.cwd,
+                live: null,
+                persisted: m,
+              ),
+          ]
+          ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+    return Container(
+      key: const ValueKey('sessionChatDrawer'),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: colors.panelAlt.withValues(alpha: 0.97),
+        borderRadius: const BorderRadius.horizontal(right: Radius.circular(16)),
+        border: Border(right: BorderSide(color: colors.border)),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black38,
+            blurRadius: 12,
+            offset: Offset(2, 0),
+          ),
+        ],
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              // macOS: the unified titlebar's traffic lights float over the
+              // drawer's top edge — clear them (each screen handles its own
+              // clearance, see main.dart's _MacOSDragStrip).
+              padding: EdgeInsets.fromLTRB(
+                16,
+                faIsMacOSDesktop ? 30 : 12,
+                8,
+                4,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      l10n.sidebarSessionsHeader,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    tooltip: l10n.appsCollapseChatTooltip,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => unawaited(_toggleDrawer()),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              key: const ValueKey('sessionChatNewSession'),
+              leading: const Icon(Icons.add),
+              title: Text(l10n.sidebarNewSessionTooltip),
+              onTap: () => unawaited(_newSessionFromDrawer()),
+            ),
+            Divider(height: 1, color: colors.border),
+            Expanded(
+              child: entries.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          l10n.sidebarNoSessions,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      // The drawer slides out UNDER the input bar: pad the
+                      // list tail so the last row clears it. Horizontal
+                      // insets match the wide sidebar's list.
+                      padding: EdgeInsets.fromLTRB(8, 4, 8, _barHeight + 8),
+                      itemCount: entries.length,
+                      itemBuilder: (context, index) {
+                        final entry = entries[index];
+                        final isActive =
+                            entry.live != null && entry.id == activeId;
+                        final title =
+                            _namesStore?.titleFor(entry.id) ??
+                            derivedSessionTitle(
+                              context,
+                              id: entry.id,
+                              createdAt: entry.createdAt,
+                            );
+                        return SessionTile(
+                          key: ValueKey('sessionChatDrawerEntry:${entry.id}'),
+                          title: title,
+                          subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
+                          cwd: sessionTileCwdLabel(entry.cwd),
+                          isActive: isActive,
+                          onTap: () =>
+                              unawaited(_openSessionFromDrawer(entry.id)),
+                          onMenu: (anchor) => unawaited(
+                            showSessionActionsMenu(
+                              context,
+                              anchor: anchor,
+                              manager: widget.manager,
+                              namesStore: _namesStore,
+                              sessionId: entry.id,
+                              createdAt: entry.createdAt,
+                              live: entry.live,
+                              persisted: entry.persisted,
+                              // Persisted-only deletes don't notify the
+                              // manager — resync the drawer's list.
+                              onDeleted: () => unawaited(_reloadPersisted()),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -841,8 +865,19 @@ class SessionChatSheetState extends State<SessionChatSheet>
         children: [
           Row(
             children: [
-              const FaMark(size: 18),
-              const SizedBox(width: 8),
+              // Sessions button — opens the drawer over the panel so the
+              // user can switch conversations without closing the session.
+              IconButton(
+                key: const ValueKey('sessionChatPanelSessions'),
+                icon: SessionsGlyph(
+                  color: colors.dim,
+                  background: colors.panelAlt,
+                ),
+                tooltip: context.l10n.sidebarSessionsHeader,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => unawaited(_toggleDrawer()),
+              ),
+              const SizedBox(width: 4),
               Expanded(
                 child: Text(
                   title,
@@ -877,7 +912,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
                     child: Text(context.l10n.chatCopySessionTooltip),
                   ),
                   PopupMenuItem(
-                    value: 'collapse',
+                    value: 'close',
                     child: Text(context.l10n.appsCollapseChatTooltip),
                   ),
                 ],
@@ -891,8 +926,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
                       unawaited(_openFullChat());
                     case 'copy':
                       unawaited(_copyActiveSession());
-                    case 'collapse':
-                      unawaited(_collapse());
+                    case 'close':
+                      unawaited(_closePanel());
                   }
                 },
               ),
@@ -916,56 +951,23 @@ class SessionChatSheetState extends State<SessionChatSheet>
   }
 }
 
-/// A pager page for a persisted (not yet opened) session: opening it is in
-/// flight (the page change opens it lazily via the manager).
-class _PersistedPage extends StatelessWidget {
-  const _PersistedPage({super.key, required this.metadata, this.namesStore});
-
-  final SessionMetadata metadata;
-  final SessionNamesStore? namesStore;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final id = metadata.id;
-    final title =
-        namesStore?.titleFor(id) ??
-        derivedSessionTitle(context, id: id, createdAt: metadata.createdAt);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(height: 12),
-          Text(title, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 4),
-          Text(
-            context.l10n.appsFaStatusWorking,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: colors.dim),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// One session's transcript page inside the pager: the shared
-/// [ChatMessageTile] renderer, pinned to the tail on new content.
+/// One session's transcript inside the panel: the shared [ChatMessageTile]
+/// renderer, pinned to the tail on new content.
 class _SessionTranscript extends StatefulWidget {
   const _SessionTranscript({
     super.key,
     required this.service,
+    this.bottomPadding = 0,
     this.audioControllerFactory,
     this.videoControllerFactory,
   });
 
   final AgentService service;
+
+  /// Extra bottom clearance lifting the messages above the floating input
+  /// bar that overlaps the panel's bottom edge.
+  final double bottomPadding;
+
   final SandboxAudioControllerFactory? audioControllerFactory;
   final SandboxVideoControllerFactory? videoControllerFactory;
 
@@ -994,7 +996,7 @@ class _SessionTranscriptState extends State<_SessionTranscript>
   void initState() {
     super.initState();
     widget.service.addListener(_scrollToEnd);
-    // First build (e.g. the sheet just expanded): land on the LATEST
+    // First build (e.g. the panel just opened): land on the LATEST
     // message, not the top of the transcript.
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
   }
@@ -1033,7 +1035,12 @@ class _SessionTranscriptState extends State<_SessionTranscript>
         if (messages.isEmpty) {
           return Center(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.fromLTRB(
+                24,
+                24,
+                24,
+                24 + widget.bottomPadding,
+              ),
               child: Text(
                 context.l10n.launcherChatEmptyHint,
                 textAlign: TextAlign.center,
@@ -1044,11 +1051,11 @@ class _SessionTranscriptState extends State<_SessionTranscript>
         }
         return ListView.builder(
           controller: _scrollController,
-          // reverse: content stays pinned to the BOTTOM (composer) — a short
-          // transcript no longer flies up and out of view when the keyboard
-          // opens and shrinks the viewport.
+          // reverse: content stays pinned to the BOTTOM (the input bar) — a
+          // short transcript no longer flies up and out of view when the
+          // keyboard opens and shrinks the viewport.
           reverse: true,
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          padding: EdgeInsets.fromLTRB(12, 12, 12, 8 + widget.bottomPadding),
           itemCount: messages.length,
           itemBuilder: (context, index) {
             final message = messages[messages.length - 1 - index];
@@ -1064,4 +1071,88 @@ class _SessionTranscriptState extends State<_SessionTranscript>
       },
     );
   }
+}
+
+/// The sessions-list glyph: a deck of two chat bubbles — a dimmer one
+/// behind, the current conversation in front with a speech tail and two
+/// text lines. Used wherever a "list of sessions" affordance appears (the
+/// input bar's drawer toggle, the panel header). Deliberately NOT a stock
+/// list/forum icon.
+class SessionsGlyph extends StatelessWidget {
+  const SessionsGlyph({
+    super.key,
+    required this.color,
+    required this.background,
+    this.size = 22,
+  });
+
+  /// The stroke color of the front bubble and text lines.
+  final Color color;
+
+  /// The fill of the front bubble — pass the surface the glyph sits on so
+  /// the back bubble's edge does not show through.
+  final Color background;
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size.square(size),
+      painter: _SessionsGlyphPainter(color, background),
+    );
+  }
+}
+
+class _SessionsGlyphPainter extends CustomPainter {
+  const _SessionsGlyphPainter(this.color, this.background);
+
+  final Color color;
+  final Color background;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Drawn on a 24x24 design grid, scaled to the requested size.
+    canvas.save();
+    canvas.scale(size.width / 24);
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.7
+      ..strokeCap = StrokeCap.round
+      ..color = color;
+    // The back bubble: dimmer, peeking out top-left.
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTWH(1.6, 2.6, 13, 9.4),
+        const Radius.circular(3.4),
+      ),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.7
+        ..color = color.withValues(alpha: 0.5),
+    );
+    // The front bubble: filled first so it reads as ON TOP of the deck.
+    final front = RRect.fromRectAndRadius(
+      const Rect.fromLTWH(8.8, 9.4, 13.6, 10.2),
+      const Radius.circular(3.6),
+    );
+    canvas.drawRRect(front, Paint()..color = background);
+    canvas.drawRRect(front, stroke);
+    // Speech tail, bottom-left of the front bubble.
+    canvas.drawPath(
+      Path()
+        ..moveTo(11.4, 19.4)
+        ..lineTo(9.8, 22.6)
+        ..lineTo(14.2, 19.4),
+      stroke,
+    );
+    // Two text lines inside the front bubble.
+    canvas.drawLine(const Offset(12.2, 13.2), const Offset(19.2, 13.2), stroke);
+    canvas.drawLine(const Offset(12.2, 16.2), const Offset(17, 16.2), stroke);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_SessionsGlyphPainter old) =>
+      old.color != color || old.background != background;
 }

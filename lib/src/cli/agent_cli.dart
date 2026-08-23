@@ -428,10 +428,10 @@ class AgentCli {
       // sharing the repo can exchange messages with this one's agents.
       messaging: FileMessagingRepository(
         env: _env,
-        // Messaging is scoped to the *launch* cwd. Sessions are now flat and
-        // switchable, but the messaging fabric is initialized once; keeping it
-        // tied to the original folder avoids breaking the file-based directory
-        // layout. Each mailbox is still namespaced by session id.
+        // Messaging is scoped to the *launch* cwd. Sessions are grouped by cwd
+        // under the shared root, but the messaging fabric is initialized once;
+        // keeping it tied to the original folder avoids breaking the file-based
+        // directory layout. Each mailbox is still namespaced by session id.
         root: '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
         decodeSessionCwd: decodeSessionCwd,
         homeDir: config.homeDir,
@@ -1367,15 +1367,17 @@ class AgentCli {
     }
   }
 
-  /// Folder + timestamp description for a sessions-picker row, marking the
-  /// active session.
+  /// Folder + last-update timestamp description for a sessions-picker row,
+  /// marking the active session.
   String _sessionPickerDescription(
     SessionMetadata metadata,
     SessionMetadata? current,
   ) {
     final marker = current?.path == metadata.path ? ' (current)' : '';
     final folder = _pathBasename(metadata.cwd);
-    final timestamp = metadata.createdAt.toLocal().toIso8601String();
+    final timestamp = (metadata.lastUpdatedAt ?? metadata.createdAt)
+        .toLocal()
+        .toIso8601String();
     return folder.isEmpty ? '$timestamp$marker' : '$folder · $timestamp$marker';
   }
 
@@ -2535,6 +2537,7 @@ class AgentCli {
       case '/model-edit':
         await _handleModelEdit(rest);
       case '/provider':
+      case '/providers':
         await _providerSlash(rest);
       case '/key':
         await _handleKeyCommand(rest);

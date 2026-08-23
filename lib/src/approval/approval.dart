@@ -24,6 +24,10 @@
 ///   pattern forces a prompt regardless of mode or allow-policy (omp
 ///   auto-approves those in yolo). Only an explicit per-tool `deny` outranks
 ///   the interceptor.
+/// - Turn-scoped grants: an invoked skill's `allowed-tools` auto-allows the
+///   named tools and `disallowed-tools` denies them for the current turn
+///   only ([ApprovalManager.grantForTurn]/[ApprovalManager.clearTurnGrants];
+///   the critical `bash` interceptor still outranks a grant).
 library;
 
 import 'dart:async';
@@ -132,10 +136,12 @@ final class ApprovalOutcome {
 /// Resolution order (see the library doc for the model):
 ///
 /// 1. An explicit per-tool `deny` override refuses the call.
-/// 2. A critical `bash` pattern forces a prompt (even under yolo).
-/// 3. A per-tool `allow`/`prompt` override applies.
-/// 4. The session always-allow set (from "approve always" answers) applies.
-/// 5. The session [mode] compares against the tool's tier.
+/// 2. A skill's `disallowed-tools` (turn-scoped) refuses the call.
+/// 3. A critical `bash` pattern forces a prompt (even under yolo).
+/// 4. A per-tool `allow`/`prompt` override applies.
+/// 5. A skill's `allowed-tools` (turn-scoped) auto-allows the call.
+/// 6. The session always-allow set (from "approve always" answers) applies.
+/// 7. The session [mode] compares against the tool's tier.
 ///
 /// When resolution lands on [ApprovalPolicy.prompt] and no [prompt] callback
 /// is installed, the call is DENIED with a "no approval UI" reason — the
@@ -160,6 +166,32 @@ final class ApprovalManager {
 
   final Map<String, ApprovalPolicy> _overrides;
   final Set<String> _alwaysAllow;
+
+  /// Turn-scoped skill grants (`allowed-tools`) / revocations
+  /// (`disallowed-tools`) from an invoked skill's frontmatter. They apply to
+  /// the current turn only and are cleared by [clearTurnGrants] when the
+  /// user sends the next message (Claude semantics). A turn DENY outranks
+  /// mode and grants but never an explicit per-tool `deny`; the critical
+  /// `bash` interceptor still outranks a turn grant.
+  final Set<String> _turnAllow = {};
+  final Set<String> _turnDeny = {};
+
+  /// Grants/revokes tool permissions for the current turn (skill
+  /// `allowed-tools`/`disallowed-tools`).
+  void grantForTurn({
+    Iterable<String> allow = const [],
+    Iterable<String> deny = const [],
+  }) {
+    _turnAllow.addAll(allow);
+    _turnDeny.addAll(deny);
+  }
+
+  /// Clears the turn-scoped grants (called when the user sends a new
+  /// message).
+  void clearTurnGrants() {
+    _turnAllow.clear();
+    _turnDeny.clear();
+  }
 
   /// Names in the session always-allow set, sorted.
   List<String> get alwaysAllowedTools =>
@@ -197,6 +229,13 @@ final class ApprovalManager {
     final denied = _denyOverrideOutcome(toolName);
     if (denied != null) return denied;
 
+    // 1b. A skill's disallowed-tools (turn-scoped) blocks the call.
+    if (_turnDeny.contains(toolName)) {
+      return ApprovalOutcome.denied(
+        'Tool "$toolName" is disallowed by the active skill for this turn.',
+      );
+    }
+
     // 2. Critical bash patterns force a prompt regardless of mode or
     //    allow-policy — even under yolo and after "approve always".
     final critical = await _criticalBashOutcome(
@@ -214,12 +253,17 @@ final class ApprovalManager {
     );
     if (overridden != null) return overridden;
 
-    // 4. Session always-allow ("approve always" answers, `/allow`).
+    // 4. A skill's allowed-tools (turn-scoped) auto-allows the call.
+    if (_turnAllow.contains(toolName)) {
+      return const ApprovalOutcome.allowed();
+    }
+
+    // 5. Session always-allow ("approve always" answers, `/allow`).
     if (_alwaysAllow.contains(toolName)) {
       return const ApprovalOutcome.allowed();
     }
 
-    // 5. Session mode vs. tool tier.
+    // 6. Session mode vs. tool tier.
     return _modeOutcome(toolName: toolName, tier: tier, arguments: arguments);
   }
 

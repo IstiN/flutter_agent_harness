@@ -277,6 +277,19 @@ void main() {
     },
   );
 
+  test('headless session is visible in the shared all-sessions list', () async {
+    final fake = _FakeStreamFunction([_textTurn('hello')]);
+    final cli = cliFor(fake.call);
+
+    final code = await cli.runHeadless('hi');
+    expect(code, 0);
+
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final all = await repo.list();
+    expect(all, hasLength(1));
+    expect(all.single.cwd, '/work');
+  });
+
   test('Ctrl-C abort exits 130', () async {
     final fake = _AbortableStreamFunction();
     final cli = cliFor(fake.call);

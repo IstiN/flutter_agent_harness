@@ -2012,6 +2012,60 @@ abstract class AppLocalizations {
   /// **'The previously used model ({model}) was removed from this device — pick a model to download it again.'**
   String settingsStaleModelDevice(Object model);
 
+  /// No description provided for @settingsSkillsAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Skills access'**
+  String get settingsSkillsAccess;
+
+  /// No description provided for @settingsSkillsAccessHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)'**
+  String get settingsSkillsAccessHint;
+
+  /// No description provided for @skillsAccessAsk.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask'**
+  String get skillsAccessAsk;
+
+  /// No description provided for @skillsAccessAllowed.
+  ///
+  /// In en, this message translates to:
+  /// **'Allowed'**
+  String get skillsAccessAllowed;
+
+  /// No description provided for @skillsAccessDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Denied'**
+  String get skillsAccessDenied;
+
+  /// No description provided for @skillsAccessDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reuse existing agent skills?'**
+  String get skillsAccessDialogTitle;
+
+  /// No description provided for @skillsAccessDialogBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This project may contain skills from Claude, Copilot or Codex (.claude, .github, .codex folders) — instructions other tools placed on this machine. Fa can reuse them for your tasks.'**
+  String get skillsAccessDialogBody;
+
+  /// No description provided for @skillsAccessAllow.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow'**
+  String get skillsAccessAllow;
+
+  /// No description provided for @skillsAccessNotNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get skillsAccessNotNow;
+
   /// No description provided for @settingsThemeDark.
   ///
   /// In en, this message translates to:

@@ -9,7 +9,11 @@ factual: paths, commands, invariants — no essays.
   mirrors it. `prompts/` — all LLM prompts as Markdown (see rules below).
 - `lib/src/approval/` — tool approval gate: tiers (read/write/exec),
   session modes (always-ask/write/yolo), per-tool overrides, critical-pattern
-  `bash` interceptor. Wired via `attachApproval` into `beforeToolCall` (runs
+  `bash` interceptor, per-turn grants (`grantForTurn(allow:, deny:)` —
+  skill `allowed-tools`/`disallowed-tools` manifest keys ride these for one
+  turn; explicit deny > turnDeny > critical bash > per-tool override >
+  turnAllow > alwaysAllow > mode; `clearTurnGrants()` on every new user
+  message). Wired via `attachApproval` into `beforeToolCall` (runs
   first); prompt UI is an injectable `ApprovalPrompt` (null + prompt policy
   = deny).
 - `lib/src/tools/ask_tool.dart` — `ask` tool: structured mid-turn questions
@@ -116,18 +120,43 @@ factual: paths, commands, invariants — no essays.
   `<system-interrupt>` message, retry after 50ms. Persisted via
   `TtsrSessionSink`; guards: once-per-session, `maxInjectionsPerTurn`.
   Config: `ttsr:` in `~/.fah/config.yaml` + project `.fah/rules.yaml`.
-- `lib/src/skills/skills.dart` — agent skills: `<root>/<name>/SKILL.md`,
-  roots project (`.fah/skills`, `.agents/skills`) > user (`~/.fah/skills`,
-  `~/.agents/skills`), first-name-wins. Only metadata enters the system
-  prompt; bodies loaded with `read` through the env.
-- `lib/src/prompts/project_context.dart` — `AGENTS.md`/`CLAUDE.md`/`GOAL.md`/
-  `DESIGN.md` auto-merged into the system prompt: cwd → git root,
-  farthest-first, `<!-- From: -->` annotations, 32 KiB leaf-first budget;
-  optional `~/.fah/AGENTS.md` first. CLI: `/skill:<name> [args]`, `/skills`.
+- `lib/src/skills/skills.dart` — agent skills: `<root>/<name>/SKILL.md` plus
+  Claude/Copilot/Codex layouts (`.claude/skills` + `.claude/commands`,
+  `.github/skills`, `.codex/skills`, user-level equivalents incl.
+  `~/.copilot/skills`), each root tagged with a `SkillSource`; project >
+  user, first-name-wins. Third-party roots are gated behind the user's
+  consent (`skills_access.dart` `SkillsAccess` ask/granted/denied —
+  `allowedSources` on `discoverSkills`/`discoverTaskAgents`; CLI `skills:`
+  config section + startup dialog + `/skills access`, app
+  `SkillsAccessStore` + onboarding/settings). Typed frontmatter lives in
+  `skill_manifest.dart` (`SkillManifest` — allowed-tools, context: fork,
+  paths, user/model-invocable …; unknown keys = notes). Only metadata
+  enters the system prompt (path-gated `paths:` skills appear once a
+  matching file was touched); bodies loaded with `read` or rendered for
+  invocation by `skill_renderer.dart` (`$ARGUMENTS`/`$N`/`${CLAUDE_*}`,
+  `` !`cmd` `` shell injections through the env, `allowed-tools` →
+  per-turn approval grants, `context: fork` → the task tool). Migration
+  guide: `docs/migrating-from-claude-copilot-codex.md`.
+- `lib/src/prompts/project_context.dart` — `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/
+  `GOAL.md`/`DESIGN.md` plus per-directory GitHub Copilot files
+  (`.github/copilot-instructions.md` and `.github/instructions/
+  *.instructions.md` — `applyTo` globs not evaluated, scoped files get an
+  `<!-- applies to: ... -->` marker, `excludeAgent` ignored) auto-merged into
+  the system prompt: cwd → git root, farthest-first, `<!-- From: -->`
+  annotations, 32 KiB leaf-first budget; optional `~/.fah/AGENTS.md` first.
+  CLI: `/skill:<name> [args]`, the `/<name>` alias,
+  `/skills [reload|access|import]`.
 - `lib/src/task/` — `task` tool: parallel subagents, batch form
   `{context, tasks[]}` + `background` flag; children never get `task` (no
-  nesting); roles: `explore`→`smol`, `review`→`slow`; `outputSchema` with
+  nesting); roles: `explore`→`smol`, `review`→`slow`, `plan`→`plan`;
+  `outputSchema` with
   ONE fix retry; child failure = per-item error, never batch failure.
+  Agent types: built-ins (`task`/`explore`/`review`/`plan`) plus discovered
+  `.md`/`.agent.md` files (`agent_discovery.dart` — roots `.fah/agents`,
+  `.agents/agents`, `.claude/agents`, `.github/agents`, `.codex/agents` +
+  user-level, gated by the skills consent; `canonicalTaskAgentName` folds
+  Claude/Copilot names like `general-purpose`/`Explore`/`Reviewer` onto the
+  built-ins).
   `/tasks` lists jobs (background agents AND background shell jobs),
   `/tasks cancel <id>` routes by id; completions re-enter the parent
   as async-result messages (`agent://<id>` refs). Subagents are retained &
@@ -333,12 +362,20 @@ factual: paths, commands, invariants — no essays.
   transcript message tile (`chat_message_tile.dart`), the composer
   (`chat_composer.dart` — file/gallery/camera picking through the
   `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks, voice
-  input through `FaChatHost.voiceInput`), and the single-service chat
+  input through `FaChatHost.voiceInput`; desktop keys: Shift+Enter inserts
+  a newline (a Focus ancestor swallows the key before the text-input plugin
+  turns it into `send`), Cmd/Ctrl+V is smart paste — a clipboard image
+  (via the `FaChatHost.clipboardImageReader` hook) or long/multi-line text
+  is staged as an `uploads/` attachment chip, short single-line text pastes
+  inline), and the single-service chat
   screen (`fa_chat_screen.dart` — `FaChatScreen(service:, features:,
   title:, settingsBuilder:, fileBrowserBuilder:, composerBuilder:)`),
   plus the upload helpers
-  (`upload_utils.dart`) and the media tool-name constants
-  (`media_tool_names.dart`) —
+  (`upload_utils.dart`), the media tool-name constants
+  (`media_tool_names.dart`), and the brand glyphs
+  (`fa_glyphs.dart` — `FaAttachGlyph`, the SVG attach icon used by the
+  composer, and `FaAiAvatar`, the `>_` squircle used as the assistant
+  avatar in `chat_message_tile.dart`) —
   localized via `FaChatStrings` (en/ru defaults, `FaChatStringsScope`
   override), analytics via the `FaChatHost.track` hook, backend surface is
   the `FaChatService` interface (which `AgentService` implements;
@@ -406,11 +443,14 @@ factual: paths, commands, invariants — no essays.
 - `flutter_app/lib/ui/widgets/chat_composer.dart` (ADAPTER over
   `packages/fa_ui/lib/src/chat/chat_composer.dart`) — keeps the app's
   constructor surface (`AgentService` + injectable `uploadPicker`/`asr`/
-  `asrTranscriber` test fakes) and bridges it to the shared composer's
-  hooks: the `UploadPicker` becomes a `FaChatUploadPicker`, gallery/camera
-  come from `image_picker`, and the ASR stack is wrapped in a
+  `asrTranscriber`/`clipboardImageReader` test fakes) and bridges it to the
+  shared composer's hooks: the `UploadPicker` becomes a `FaChatUploadPicker`,
+  gallery/camera come from `image_picker`, the ASR stack is wrapped in a
   `FaChatVoiceInput` (transcriber resolved per take via the session's
-  media gateway, falling back to the active provider).
+  media gateway, falling back to the active provider), and the smart-paste
+  clipboard image probe rides `pasteboard` (`Pasteboard.image` → PNG bytes;
+  native plugin — the desktop/mobile apps need a REBUILD, not a hot reload,
+  to register it).
 - `flutter_app/lib/ui/screens/app_launcher_screen.dart` — THE app home on
   every layout (`faHomeScreen` in main.dart always returns it; the classic
   sidebar chat home is legacy and `session_sidebar.dart` no longer exists —
@@ -432,16 +472,49 @@ factual: paths, commands, invariants — no essays.
   re-read live on fsRevision; v1 migrates, corrupt file → defaults;
   `syncApps` reconciles with installed apps). Its Stack hosts the
   `SessionChatSheet`.
-- `flutter_app/lib/apps/session_chat_sheet.dart` — the session chat bottom
-  sheet over the launcher (FaChatOverlay pattern/constants): collapsed =
-  floating Fa button bottom-right (the `FaWorkBar` takes its place while
-  streaming); expanded = 92% sheet with drag-handle header (session title
-  via `SessionNamesStore`, 3-dots menu: New session / Rename session /
-  Open full chat / Collapse — Rename opens the shared rename dialog
-  `showRenameSessionDialog`), a horizontal PageView over `manager.sessions` wired to
-  `manager.switchTo`, `FaWorkBar(embedded:)`, and the shared
-  `ChatMessageTile` transcript + `ChatComposer`. Pull-down (48px / 300px/s)
-  collapses.
+- `flutter_app/lib/apps/session_chat_sheet.dart` — the iMessage-style
+  session chat overlay over the launcher, three layers above the app grid:
+  the always-visible docked input bar (the shared `ChatComposer` with
+  `autofocus: false` — the bar never pops the keyboard at app start;
+  leading slot = sessions-drawer toggle with the custom `SessionsGlyph`
+  stacked-bubbles icon, turning into the attach button once a session is
+  open; trailing = exactly ONE action — the mic while the field is empty
+  and idle, stop while streaming-empty, send once text is entered, swapped
+  via AnimatedSwitcher scale+fade (the composer's `hideMicWhenNotEmpty`;
+  the idle mic sits in the same pill-colored circle the send/stop button
+  occupies); the composer carries a stable key so the status-row slot
+  toggling never recreates it (that killed the field's focus after send),
+  and `_send` restores focus past the IME send action's own unfocus —
+  the keyboard stays up for the follow-up message. Focusing the field
+  opens the panel right away via
+  `onFocusChanged`, `onSent` does too), the sessions drawer sliding in from
+  the LEFT (New-session tile + live then persisted sessions rendered with
+  the SAME `SessionTile`/`sessionTileSubtitle`/`sessionTileCwdLabel`/
+  `showSessionActionsMenu` the wide sidebar exports from
+  `sidebar_sessions_list.dart`, persisted open lazily via
+  `manager.openSession`; its header clears the floating macOS traffic
+  lights via `faIsMacOSDesktop`; a scrim tap on the exposed part dismisses
+  the top layer, and the drawer carries its OWN scrim ABOVE the panel so an
+  outside tap still closes it while a session is open), and the session
+  panel sliding up UNDER
+  the bar to 92% (drag-handle header: sessions-drawer button with the
+  `SessionsGlyph`, title via `SessionNamesStore`, 3-dots menu New / Rename /
+  Open full chat / Copy / Close — Rename opens the shared
+  `showRenameSessionDialog`; the shared `ChatMessageTile` transcript padded
+  above the bar by its measured height; pull-down on the header zone or a
+  scrim tap closes). While streaming with the panel closed a slim
+  `FaWorkBar(embedded:)` status row sits above the composer. There is no
+  collapsed/mini state and no pager — session switching is the drawer.
+  Sizing: the expanded panel height and all drag math come from the sheet's
+  own `LayoutBuilder` constraints (`panelFraction`, default
+  `defaultPanelFraction` 0.92 — hosts like the store-inapp shot pass a
+  smaller fraction to park the panel lower), NEVER from
+  `MediaQueryData.fromView(View.of(...))` — `View.of` subscribes to
+  `_ViewScope`, whose `updateShouldNotify` compares only the view instance,
+  so it never rebuilds on viewInsets changes and the keyboard opening used
+  to push the panel header off the top edge; the host Scaffold's
+  `resizeToAvoidBottomInset` shrinks the body constraints around the
+  keyboard, which DOES rebuild the LayoutBuilder.
 - `flutter_app/lib/ui/screens/chat_screen.dart` (ADAPTER over
   `packages/fa_ui/lib/src/chat/fa_chat_screen.dart`; also re-exports
   `chatImageMessageSource`/`kWideLayoutBreakpoint`) — keeps the app's
@@ -488,7 +561,10 @@ factual: paths, commands, invariants — no essays.
   renders from it. Never list commands in prompt text or UI by hand.
 - `flutter_app/lib/services/project_mount_env.dart` — macOS project-folder
   mount (`/project` → user-picked host dir; security-scoped bookmarks in
-  `project_mount.json`; stale bookmark = "pick again" warning).
+  `project_mount.json`; stale bookmark = "pick again" warning). Sessions on
+  macOS are stored in the shared App Group container
+  (`~/Library/Group Containers/group.dev.fa1.shared/fa/sessions`) so the Fa
+  CLI and the sandboxed Fa macOS app see the same workspace-scoped sessions.
 - `flutter_app/lib/apps/` — JS apps platform on `package:js_widget_runtime`
   (hosted `^0.4.79` — ships the queued-callEvent-after-dispose guard +
   restart-safe bridge channels that the old git pin carried, plus the M3
@@ -563,7 +639,11 @@ factual: paths, commands, invariants — no essays.
   ownership-aware seeding skips modified files, `storage.json` untouched).
 - `flutter_app/lib/services/home_service.dart` — smart home: `HomeApi` over
   the `fah/home` MethodChannel (HomeKit in `AppDelegate.swift`, iOS only;
-  the macOS channel answers unsupported): `listHomes`/`listRooms`/
+  the macOS channel answers unsupported): the HMHomeManager is created
+  LAZILY on the first home call — instantiating it is what triggers the OS
+  home-data prompt, so the channel registration never touches it (the prompt
+  waits for the home JS app / a home tool, never app start). `listHomes`/
+  `listRooms`/
   `listAccessories` (with the full services/characteristics breakdown +
   isOn/brightness/targetTemperature conveniences), `readAccessory`,
   `writeCharacteristic` (ANY writable characteristic by HomeKit type
@@ -643,9 +723,13 @@ factual: paths, commands, invariants — no essays.
   re-exported by the `lib/ui/app_theme.dart` shim), widgets read colors via
   `FahColors.of(context)` (never `FahPalette` directly in widgets).
 - `flutter_app/lib/ui/screens/onboarding_screen.dart` — first-launch
-  onboarding: 4 pages (welcome + AI disclaimer, permissions explainer, model
-  preset mini-wizard reusing `kModelPresets`/`applyModelPreset` with a null
-  service — the combo persists as the last connection boot restores, privacy
+  onboarding: 5 pages on desktop, 4 on mobile — the third-party skills
+  consent page is omitted on Android/iOS (`skillsConsentSurfacesVisible`,
+  see `skills_access_store.dart`), the step header/footer adapt. Pages:
+  welcome + AI disclaimer, permissions explainer,
+  third-party skills consent — Allow persists `granted` via
+  `skills_access_store.dart`, "Not now" leaves it undecided so the boot
+  dialog still asks, privacy
   + policy link via `url_launcher`), page dots, Skip on every page.
   `BootstrapScreen` shows it once only when there is NO restorable
   connection; the seen flag lives in
@@ -680,6 +764,21 @@ factual: paths, commands, invariants — no essays.
   mode persisted as `approval_mode.json`; `AgentService.create` seeds
   `approval` from it, `setApprovalMode` writes through (fire-and-forget),
   `clone()` inherits the CURRENT mode (never a fresh read).
+- `flutter_app/lib/services/skills_access_store.dart` — the third-party
+  skills consent persisted as `skills_access.json` (same tiny-store
+  pattern); `null`/`ask` = undecided (never reads `.claude`/`.github/skills`/
+  `.codex`). `AgentService.create` gates `discoverSkills` on it
+  (`allowedSources: {SkillSource.fah, SkillSource.agents}` unless granted),
+  `setSkillsAccess` writes through (fire-and-forget) AND re-discovers the
+  prompt's skills section live (no reconfigure needed), `clone()` inherits
+  the CURRENT consent. UI: the settings `SkillsAccessSection` dropdown
+  (ask/allowed/denied), onboarding page 4 (Allow persists granted, "Not
+  now" stays undecided), and the one-time boot dialog in `main.dart`'s
+  `BootstrapScreen` (seen-onboarding + undecided only; Not now persists
+  DENIED there so it never re-asks). All three surfaces are desktop-only:
+  `skillsConsentSurfacesVisible` (same file, off `defaultTargetPlatform` so
+  widget tests can flip it) hides them on Android/iOS — the third-party
+  roots don't exist there; discovery gating itself is unaffected.
 - `flutter_app/lib/services/analytics.dart` — `AppAnalytics` facade over
   Firebase Analytics (global instance, noop without Firebase; tests install
   a recorder sink): app start, bootstrap outcome, setup shown, connect

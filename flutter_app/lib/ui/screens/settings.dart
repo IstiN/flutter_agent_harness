@@ -32,6 +32,7 @@ import 'package:fa/services/openrouter_oauth_links_stub.dart'
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
@@ -2256,6 +2257,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 16),
+                // Third-party skills consent — the roots don't exist on
+                // mobile, so the section hides there entirely.
+                if (skillsConsentSurfacesVisible) ...[
+                  SkillsAccessSection(service: service),
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                ],
               ],
               WebLlmCacheSection(engine: widget.webLlmEngine),
               // The transformers.js section is web-only (its provider is);
@@ -2352,6 +2361,72 @@ class HomeGridSection extends StatelessWidget {
                   AppAnalytics.instance.launcherGridColumns(value);
                 }
                 layoutStore.setGridColumns(value);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// The settings "Skills access" row: whether Fa may read THIRD-PARTY agent
+/// skills (`.claude`, `.github/skills`, `.codex` — instructions other tools
+/// placed on this machine) from the project folder. First-party roots
+/// (`.fah/skills`, `.agents/skills`) are always read. The choice persists
+/// via `SkillsAccessStore` and re-discovers the prompt's skills section
+/// live through [AgentService.setSkillsAccess] — same shape as the
+/// approval-mode row next to it.
+class SkillsAccessSection extends StatelessWidget {
+  const SkillsAccessSection({super.key, required this.service});
+
+  /// The service carrying (and persisting) the consent.
+  final AgentService service;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    String label(SkillsAccess access) => switch (access) {
+      SkillsAccess.ask => context.l10n.skillsAccessAsk,
+      SkillsAccess.granted => context.l10n.skillsAccessAllowed,
+      SkillsAccess.denied => context.l10n.skillsAccessDenied,
+    };
+    return ListenableBuilder(
+      listenable: service,
+      builder: (context, _) {
+        return Row(
+          children: [
+            Icon(Icons.extension_outlined, size: 20, color: colors.dim),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    context.l10n.settingsSkillsAccess,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  Text(
+                    context.l10n.settingsSkillsAccessHint,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                  ),
+                ],
+              ),
+            ),
+            DropdownButton<SkillsAccess>(
+              value: service.skillsAccess,
+              underline: const SizedBox.shrink(),
+              items: [
+                for (final access in SkillsAccess.values)
+                  DropdownMenuItem(value: access, child: Text(label(access))),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                // The enum name only — never paths or skill content.
+                AppAnalytics.instance.skillsAccessChanged(value.name);
+                unawaited(service.setSkillsAccess(value));
               },
             ),
           ],

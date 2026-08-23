@@ -98,12 +98,39 @@ final builtinReviewAgent = TaskAgentDefinition(
   modelRole: 'slow',
 );
 
+/// The read-only planning specialist on the `plan` role.
+final builtinPlanAgent = TaskAgentDefinition(
+  name: 'plan',
+  description:
+      'Read-only planning specialist that produces implementation plans '
+      'without editing code',
+  systemPrompt: taskAgentPlanPrompt,
+  readOnly: true,
+  modelRole: 'plan',
+);
+
 /// The built-in agent types, in registry order.
 final builtinTaskAgentTypes = [
   builtinTaskAgent,
   builtinExploreAgent,
   builtinReviewAgent,
+  builtinPlanAgent,
 ];
+
+/// Canonicalizes a task-agent type name: lowercase, with the Claude Code /
+/// omp naming aliases folded onto the built-in type they alias
+/// (`general-purpose`→`task`, `scout`→`explore`, `reviewer`→`review`,
+/// `planner`→`plan`).
+String canonicalTaskAgentName(String name) {
+  final lower = name.trim().toLowerCase();
+  return switch (lower) {
+    'general-purpose' || 'general' => defaultTaskAgentName,
+    'explore' || 'scout' => 'explore',
+    'review' || 'reviewer' => 'review',
+    'plan' || 'planner' => 'plan',
+    _ => lower,
+  };
+}
 
 /// Resolves agent types for `task` calls: [TaskAgentRegistry.resolve] finds a
 /// type by name, [TaskAgentRegistry.toolSurfaceFor] computes a type's
@@ -114,13 +141,13 @@ final class TaskAgentRegistry {
   /// project-over-bundled precedence).
   TaskAgentRegistry([Iterable<TaskAgentDefinition> overrides = const []]) {
     for (final agent in builtinTaskAgentTypes) {
-      _agents[agent.name] = agent;
+      _agents[canonicalTaskAgentName(agent.name)] = agent;
     }
     for (final agent in overrides) {
       if (agent.name.trim().isEmpty) {
         throw ArgumentError.value(agent.name, 'agentTypes', 'empty agent name');
       }
-      _agents[agent.name] = agent;
+      _agents[canonicalTaskAgentName(agent.name)] = agent;
     }
   }
 
@@ -129,8 +156,10 @@ final class TaskAgentRegistry {
   /// All registered types, built-ins first, in registration order.
   List<TaskAgentDefinition> get agents => List.unmodifiable(_agents.values);
 
-  /// Looks up a type by [name]; `null` when unknown.
-  TaskAgentDefinition? resolve(String name) => _agents[name];
+  /// Looks up a type by [name] (case-insensitive, Claude Code aliases
+  /// folded via [canonicalTaskAgentName]); `null` when unknown.
+  TaskAgentDefinition? resolve(String name) =>
+      _agents[canonicalTaskAgentName(name)];
 
   /// Computes [agent]'s child tool surface from the parent [pool]
   /// (omp's child-tool wiring, reduced): the `task` tool is ALWAYS stripped

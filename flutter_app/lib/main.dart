@@ -31,8 +31,11 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/sessions_root.dart';
+import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
@@ -119,6 +122,7 @@ Future<void> main() async {
   debugPrint('[fah] last connection loaded');
   final themeController = await ThemeController.load(env);
   final onboardingStore = await OnboardingStore.load(env);
+  final skillsAccessStore = SkillsAccessStore(env);
   final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
   final mediaModels = await MediaModelsStore.load(env);
   final taskModels = await TaskModelsStore.load(env);
@@ -203,6 +207,7 @@ Future<void> main() async {
       lastConnectionStore: lastConnection,
       themeController: themeController,
       onboardingStore: onboardingStore,
+      skillsAccessStore: skillsAccessStore,
       sessionKeysStore: sessionKeys,
       mediaModelsStore: mediaModels,
       taskModelsStore: taskModels,
@@ -237,6 +242,7 @@ class MyApp extends StatelessWidget {
     this.lastConnectionStore,
     this.themeController,
     this.onboardingStore,
+    this.skillsAccessStore,
     this.sessionKeysStore,
     this.mediaModelsStore,
     this.taskModelsStore,
@@ -266,6 +272,10 @@ class MyApp extends StatelessWidget {
   /// The persisted first-launch onboarding flag; `null` skips onboarding
   /// entirely (tests, and any host that never shows it).
   final OnboardingStore? onboardingStore;
+
+  /// The persisted third-party skills consent store; `null` skips the
+  /// one-time boot dialog (tests).
+  final SkillsAccessStore? skillsAccessStore;
 
   /// The persisted saved-keys store; `null` skips the scope (the settings
   /// Keys section and form prefill hide, tests).
@@ -347,6 +357,7 @@ class MyApp extends StatelessWidget {
             registry: registry,
             lastConnectionStore: lastConnectionStore,
             onboardingStore: onboardingStore,
+            skillsAccessStore: skillsAccessStore,
             sessionKeysStore: sessionKeys,
             taskModelsStore: taskModelsStore,
             webLlmEngine: webLlmEngine,
@@ -526,6 +537,7 @@ class BootstrapScreen extends StatefulWidget {
     this.registry,
     this.lastConnectionStore,
     this.onboardingStore,
+    this.skillsAccessStore,
     this.sessionKeysStore,
     this.taskModelsStore,
     this.webLlmEngine,
@@ -546,6 +558,11 @@ class BootstrapScreen extends StatefulWidget {
   /// The persisted first-launch onboarding flag; `null` never shows
   /// onboarding (tests).
   final OnboardingStore? onboardingStore;
+
+  /// The persisted third-party skills consent store; when onboarding was
+  /// already seen and no consent is recorded, the boot flow asks once
+  /// (non-blocking, after the first frame). `null` never asks (tests).
+  final SkillsAccessStore? skillsAccessStore;
 
   /// The persisted saved-keys store (hosted key resolution).
   final SessionKeysStore? sessionKeysStore;
@@ -571,6 +588,12 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// boot continues to the setup form or the auto-connect.
   var _onboardingDone = false;
 
+  /// The boot-time read of the third-party skills consent (started in
+  /// [initState], so the one-time dialog never waits on disk); `null` when
+  /// the dialog must not fire this run (first launch — onboarding's skills
+  /// page owns the question — or no store wired).
+  Future<SkillsAccess?>? _skillsAccessFuture;
+
   /// First-launch onboarding shows only when nothing can be restored
   /// (upgraders with a saved connection never see it) and the persisted
   /// flag is still unseen.
@@ -587,9 +610,65 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       registry: widget.registry,
       sessionKeysStore: widget.sessionKeysStore,
     );
+    // The one-time skills-consent dialog only fires when onboarding was
+    // ALREADY seen at boot (upgraders, or a "Not now" on the onboarding
+    // skills page) — a first launch answers on the onboarding page instead.
+    // Mobile never asks: the third-party roots don't exist there.
+    final onboarding = widget.onboardingStore;
+    final skillsStore = widget.skillsAccessStore;
+    if (skillsConsentSurfacesVisible &&
+        onboarding != null &&
+        onboarding.seen &&
+        skillsStore != null) {
+      _skillsAccessFuture = skillsStore.load();
+      if (_config == null) {
+        // No navigation ahead (the empty-manager home renders in place) —
+        // ask right after the first frame, never blocking the build.
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => unawaited(_maybeAskSkillsAccess(context)),
+        );
+      }
+    }
     if (_config != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_boot()));
     }
+  }
+
+  /// Shows the one-time third-party skills consent dialog when the store is
+  /// still undecided (no `granted`/`denied` recorded). Fires once per boot:
+  /// Allow persists `granted`, Not now persists `denied` (unlike the
+  /// onboarding page's deferred "Not now", a boot-dialog answer must stick
+  /// or the dialog would fire on every launch); a dismissed dialog stays
+  /// undecided and asks again next launch. Boot is never blocked on it.
+  Future<void> _maybeAskSkillsAccess(BuildContext dialogContext) async {
+    final future = _skillsAccessFuture;
+    final store = widget.skillsAccessStore;
+    if (future == null || store == null) return;
+    _skillsAccessFuture = null;
+    if (await future != null) return; // already decided — never pester again
+    if (!dialogContext.mounted) return;
+    AppAnalytics.instance.screenOpened('skills_access_dialog');
+    final allow = await showDialog<bool>(
+      context: dialogContext,
+      builder: (context) => AlertDialog(
+        title: Text(context.l10n.skillsAccessDialogTitle),
+        content: Text(context.l10n.skillsAccessDialogBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(context.l10n.skillsAccessNotNow),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(context.l10n.skillsAccessAllow),
+          ),
+        ],
+      ),
+    );
+    if (allow == null) return; // dismissed — ask again next launch
+    final access = allow ? SkillsAccess.granted : SkillsAccess.denied;
+    AppAnalytics.instance.skillsAccessChanged(access.name);
+    await store.save(access);
   }
 
   Future<void> _boot() async {
@@ -598,7 +677,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       final env = widget.env ?? await createPlatformEnv();
       final manager = FlutterSessionManager(
         env: env,
-        sessionsRoot: '${env.cwd}/sessions',
+        sessionsRoot: defaultSessionsRoot(env.sessionCwd),
       );
       // Resume the day's session (or an untouched empty one) instead of
       // stacking a fresh empty session on every cold launch.
@@ -624,16 +703,23 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       // Use the Navigator's context, not the State's — after a hot restart
       // the State is defunct but the Navigator's context stays valid.
       final navigator = Navigator.of(context);
+      final navigatorContext = navigator.context;
       await navigator.pushReplacement(
         MaterialPageRoute(
           builder: (_) => faHomeScreen(
-            context: navigator.context,
+            context: navigatorContext,
             manager: manager,
             registry: widget.registry,
             lastConnectionStore: widget.lastConnectionStore,
           ),
         ),
       );
+      // The skills-consent dialog (undecided upgraders) rides above the
+      // freshly pushed home — the BootstrapScreen state is defunct by now,
+      // so the Navigator's context is the valid one.
+      if (navigatorContext.mounted) {
+        unawaited(_maybeAskSkillsAccess(navigatorContext));
+      }
     } on Object catch (error, stack) {
       // A failed restore (endpoint down, key rejected) lands on the setup
       // form — prefilled by the same last-connection record. Log it: a
@@ -681,6 +767,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   Widget _buildOnboardingScreen() {
     return OnboardingScreen(
       onboardingStore: widget.onboardingStore,
+      skillsAccessStore: widget.skillsAccessStore,
       registry: widget.registry,
       lastConnectionStore: widget.lastConnectionStore,
       onFinished: ({required bool skipped}) => _onboardingFinished(),
@@ -781,7 +868,7 @@ class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
       final env = widget.env ?? await createPlatformEnv();
       final manager = FlutterSessionManager(
         env: env,
-        sessionsRoot: '${env.cwd}/sessions',
+        sessionsRoot: defaultSessionsRoot(env.sessionCwd),
       );
       await manager.createSession(
         config: _EmptyManagerHome.placeholderConfig,
@@ -909,9 +996,10 @@ class SetupScreen extends StatelessWidget {
         context,
       )?.markConfigured(config.providerKind);
     }
+    final resolvedEnv = env ?? await createPlatformEnv();
     final manager = FlutterSessionManager(
-      env: env ?? await createPlatformEnv(),
-      sessionsRoot: '${(env ?? await createPlatformEnv()).cwd}/sessions',
+      env: resolvedEnv,
+      sessionsRoot: defaultSessionsRoot(resolvedEnv.sessionCwd),
     );
     await manager.createOrResumeSession(
       config: config,

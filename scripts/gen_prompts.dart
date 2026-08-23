@@ -166,6 +166,10 @@ const rootSpecs = <PromptSpec>[
     constName: 'taskAgentReviewPrompt',
   ),
   PromptSpec(
+    source: 'prompts/task/agent_plan.md',
+    constName: 'taskAgentPlanPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/task/assignment.md',
     constName: 'taskAssignmentPrompt',
     requiredToken: '{{task}}',

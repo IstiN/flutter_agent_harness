@@ -7,6 +7,8 @@
 import 'dart:async' show Timer, unawaited;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show SkillsAccess;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa_ui/fa_ui.dart' as faui;
@@ -17,18 +19,22 @@ import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
+import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 
 part 'onboarding_mockups.dart';
 
 /// Onboarding matching the reference prototype pixel-by-pixel.
-/// Four pages: welcome (chat/apps mockups), provider picker, permissions,
-/// ready. Light marketing design on both platforms (the reference is
-/// light-only).
+/// Five pages: welcome (chat/apps mockups), provider picker, permissions,
+/// third-party skills consent, ready. Light marketing design on both
+/// platforms (the reference is light-only). On mobile the skills-consent
+/// page is omitted ([skillsConsentSurfacesVisible]) — Claude/Copilot/Codex
+/// are desktop tools, so there is nothing to consent to on a phone.
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({
     super.key,
     this.onboardingStore,
+    this.skillsAccessStore,
     this.initialPage = 0,
     this.onFinished,
     this.registry,
@@ -36,6 +42,11 @@ class OnboardingScreen extends StatefulWidget {
   });
 
   final OnboardingStore? onboardingStore;
+
+  /// Where the page-4 third-party skills consent is persisted. Null (tests)
+  /// keeps the choice in memory only.
+  final SkillsAccessStore? skillsAccessStore;
+
   final int initialPage;
   final void Function({required bool skipped})? onFinished;
 
@@ -68,11 +79,31 @@ const _kCardShadow = [
 ];
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  static const _labels = ['Ask', 'Think', 'Act', 'Make it yours'];
+  /// Whether the third-party skills consent page is part of the flow
+  /// (desktop only — see [skillsConsentSurfacesVisible]).
+  bool get _showSkillsPage => skillsConsentSurfacesVisible;
+
+  /// Step labels in page order.
+  List<String> get _labels => [
+    'Ask',
+    'Think',
+    'Act',
+    if (_showSkillsPage) 'Skills',
+    'Make it yours',
+  ];
+
+  int get _pageCount => _labels.length;
+
   late final PageController _pc = PageController(
     initialPage: widget.initialPage,
   );
   late var _page = widget.initialPage;
+
+  /// The page-4 choice: true = third-party skills allowed (persisted),
+  /// false = "Not now". "Not now" deliberately leaves the store UNDECIDED
+  /// (nothing is written) so the one-time boot dialog can still ask — an
+  /// explicit "Denied" would lock the user out of that prompt.
+  bool? _skillsAllowed;
 
   /// Set when the user finished a provider config flow on page 2 — the
   /// provider step is mandatory: Continue/Skip stay locked until then.
@@ -132,14 +163,29 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     if (_page == 1) _next();
   }
 
+  /// Skills page answered: Allow persists `granted` (fire-and-forget) and
+  /// both choices slide on. "Not now" writes NOTHING — the store stays
+  /// undecided so the one-time boot dialog still asks.
+  void _skillsAnswered({required bool allowed}) {
+    setState(() => _skillsAllowed = allowed);
+    if (allowed) {
+      AppAnalytics.instance.skillsAccessChanged(SkillsAccess.granted.name);
+      unawaited(
+        widget.skillsAccessStore?.save(SkillsAccess.granted) ??
+            Future<void>.value(),
+      );
+    }
+    if (_showSkillsPage && _page == 3) _next();
+  }
+
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 920;
-    final last = _page == 3;
+    final last = _page == _pageCount - 1;
     final gated = _page == 1 && _providerGateActive;
     final primaryLabel = switch (_page) {
       2 => 'Continue without access',
-      3 => 'Open Fa',
+      _ when last => 'Open Fa',
       _ => 'Continue',
     };
     return Scaffold(
@@ -168,12 +214,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     onConfigured: _providerDone,
                   ),
                   _P3(wide: wide),
+                  if (_showSkillsPage)
+                    _PSkills(
+                      wide: wide,
+                      allowed: _skillsAllowed,
+                      onAnswered: _skillsAnswered,
+                    ),
                   _P4(wide: wide),
                 ],
               ),
             ),
             _Footer(
               page: _page,
+              pageCount: _pageCount,
               wide: wide,
               primaryLabel: primaryLabel,
               primaryEnabled: !gated,
@@ -339,14 +392,21 @@ class _Steps extends StatelessWidget {
                                 : null,
                           ),
                           const SizedBox(height: 6),
-                          Text(
-                            labels[i],
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: i == page
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
-                              color: i == page ? _kPrimary : _kGrayLight,
+                          // Long labels ("Make it yours") shrink to fit
+                          // the narrower 5-step segments.
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                labels[i],
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: i == page
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: i == page ? _kPrimary : _kGrayLight,
+                                ),
+                              ),
                             ),
                           ),
                         ],
@@ -369,6 +429,7 @@ class _Steps extends StatelessWidget {
 class _Footer extends StatelessWidget {
   const _Footer({
     required this.page,
+    required this.pageCount,
     required this.wide,
     required this.primaryLabel,
     required this.onPrimary,
@@ -377,6 +438,7 @@ class _Footer extends StatelessWidget {
   });
 
   final int page;
+  final int pageCount;
   final bool wide;
   final String primaryLabel;
   final VoidCallback onPrimary;
@@ -388,7 +450,7 @@ class _Footer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final counter = Text(
-      '${page + 1} of 4',
+      '${page + 1} of $pageCount',
       style: const TextStyle(
         fontSize: 12.5,
         fontWeight: FontWeight.w600,
@@ -417,7 +479,7 @@ class _Footer extends StatelessWidget {
               children: [
                 counter,
                 const SizedBox(width: 14),
-                _ProgressBar(fraction: (page + 1) / 4, width: 200),
+                _ProgressBar(fraction: (page + 1) / pageCount, width: 200),
                 const Spacer(),
                 if (onBack != null) ...[back, const SizedBox(width: 16)],
                 SizedBox(
@@ -442,7 +504,7 @@ class _Footer extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            '${page + 1} of 4',
+            '${page + 1} of $pageCount',
             style: const TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
@@ -1830,7 +1892,239 @@ class _P3 extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Page 4: Your sandbox is ready
+// Page 4: Reuse existing agent skills (third-party skills consent)
+// ---------------------------------------------------------------------------
+
+class _PSkills extends StatelessWidget {
+  const _PSkills({
+    required this.wide,
+    required this.allowed,
+    required this.onAnswered,
+  });
+
+  final bool wide;
+
+  /// The choice already made on this page (null = unanswered); the chosen
+  /// button stays highlighted when the user swipes back.
+  final bool? allowed;
+
+  /// `allowed: true` = Allow (persisted), `false` = Not now (undecided).
+  final void Function({required bool allowed}) onAnswered;
+
+  @override
+  Widget build(BuildContext context) {
+    final body = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(height: wide ? 20 : 12),
+        _TitleBlock(
+          'Reuse your existing skills.',
+          'Claude, Copilot and Codex drop reusable skills into the '
+              'project folder — Fa can pick them up.',
+          compact: !wide,
+        ),
+        SizedBox(height: wide ? 24 : 16),
+        _card(
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _SkillSourceRow(
+                icon: Icons.auto_awesome,
+                tint: Color(0xFFD97757),
+                tintBg: Color(0xFFFBEEE8),
+                title: 'Claude',
+                detail: '.claude/skills · .claude/commands',
+              ),
+              SizedBox(height: 12),
+              _SkillSourceRow(
+                icon: Icons.hub_outlined,
+                tint: Color(0xFF3B82F6),
+                tintBg: Color(0xFFEAF2FE),
+                title: 'GitHub Copilot',
+                detail: '.github/skills',
+              ),
+              SizedBox(height: 12),
+              _SkillSourceRow(
+                icon: Icons.terminal,
+                tint: Color(0xFF10B981),
+                tintBg: Color(0xFFE3F7EE),
+                title: 'Codex',
+                detail: '.codex/skills',
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: wide ? 18 : 12),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.lock_outline, size: 16, color: Color(0xFF5B63F0)),
+            SizedBox(width: 8),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Nothing is read until you allow it.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: _kInk,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'These folders carry instructions other tools placed '
+                    'here. You can change this anytime in Settings.',
+                    style: TextStyle(fontSize: 11, color: _kGray),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: wide ? 22 : 14),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _SkillsChoiceButton(
+              label: 'Not now',
+              selected: allowed == false,
+              primary: false,
+              onTap: () => onAnswered(allowed: false),
+            ),
+            const SizedBox(width: 12),
+            _SkillsChoiceButton(
+              label: 'Allow',
+              selected: allowed == true,
+              primary: true,
+              onTap: () => onAnswered(allowed: true),
+            ),
+          ],
+        ),
+        SizedBox(height: wide ? 28 : 20),
+      ],
+    );
+    if (!wide) return _NarrowFit(child: body);
+    return _WideFit(child: body);
+  }
+}
+
+/// One third-party skill source row on page 4.
+class _SkillSourceRow extends StatelessWidget {
+  const _SkillSourceRow({
+    required this.icon,
+    required this.tint,
+    required this.tintBg,
+    required this.title,
+    required this.detail,
+  });
+
+  final IconData icon;
+  final Color tint;
+  final Color tintBg;
+  final String title;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: tintBg,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 18, color: tint),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _kInk,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(detail, style: const TextStyle(fontSize: 11, color: _kGray)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The Allow / Not now choice buttons on page 4; the answered one stays
+/// highlighted (check icon) when the user swipes back to this page.
+class _SkillsChoiceButton extends StatelessWidget {
+  const _SkillsChoiceButton({
+    required this.label,
+    required this.selected,
+    required this.primary,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final bool primary;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: primary ? _kPrimary : (selected ? _kSelBg : Colors.white),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: 150,
+          height: 48,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: primary ? _kPrimary : (selected ? _kPrimary : _kBorder),
+              width: selected && !primary ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (selected) ...[
+                Icon(
+                  Icons.check,
+                  size: 15,
+                  color: primary ? Colors.white : _kPrimary,
+                ),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: primary ? Colors.white : _kInk,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Page 5: Your sandbox is ready
 // ---------------------------------------------------------------------------
 
 class _P4 extends StatelessWidget {

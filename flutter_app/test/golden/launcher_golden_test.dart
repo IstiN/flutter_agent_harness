@@ -1,8 +1,8 @@
 /// Golden (screenshot) tests for the apps launcher home:
 /// `lib/ui/screens/app_launcher_screen.dart` (grid, folders, system tiles)
-/// and, hosted over it, `lib/apps/session_chat_sheet.dart` — whose expanded
-/// and mini states also exercise the shared `ChatComposer`
-/// (`lib/ui/widgets/chat_composer.dart`).
+/// and, hosted over it, `lib/apps/session_chat_sheet.dart` — whose input
+/// bar, sessions drawer and session panel states also exercise the shared
+/// `ChatComposer` (`lib/ui/widgets/chat_composer.dart`).
 ///
 /// Apps are seeded straight into a `MemoryExecutionEnv` (no bundled-asset
 /// seeding) with inline-SVG manifest icons — the golden font sandbox renders
@@ -393,13 +393,17 @@ Future<void> _pumpLauncher(
       in (sessions ?? const {'fake-session': <FahChatMessage>[]}).entries) {
     final service = _fakeService(env, streamFunction);
     service.messages.addAll(entry.value);
-    manager.addSession(entry.key, service);
+    // Pinned creation time (deep in the past → the "Jan 5"-style branch):
+    // the session tile's relative-time subtitle must not stamp the golden
+    // with the RUN's clock.
+    manager.addSession(entry.key, service, createdAt: DateTime(2026, 1, 5));
   }
   // Deterministic session chip in the header: the date-derived fallback
-  // title would stamp every golden with the RUN's date (and the pager can
-  // swipe to ANY of the sessions).
+  // title would stamp every golden with the RUN's date. The manager lists
+  // the ACTIVE session (sess-b, the dice-roller chat) first, so the canned
+  // titles land in that order.
   final namesStore = await SessionNamesStore.load(env);
-  final chipTitles = ['Weather app', 'Second chat', 'Third chat'];
+  final chipTitles = ['Dice roller', 'Weather app', 'Third chat'];
   for (final (i, session) in manager.sessions.indexed) {
     await namesStore.rename(session.id, chipTitles[i % chipTitles.length]);
   }
@@ -537,7 +541,7 @@ void main() {
 
   group('SessionChatSheet state matrix (launcher/sheet_*)', () {
     /// The seeded conversation driving every sheet-state shot: sess-b
-    /// (active, a finished dice-roller exchange) and sess-a (pager page 2).
+    /// (active, a finished dice-roller exchange) and sess-a (drawer row 2).
     Map<String, List<FahChatMessage>> twoSessions() => {
       'sess-a': [
         FahChatMessage(role: 'user', content: 'remind me what we decided'),
@@ -565,34 +569,30 @@ void main() {
       ],
     };
 
-    /// From the mini bar (the default resting state), a tap on the bar
-    /// opens the full sheet (the mini bar has no handle — the drag zone
-    /// key is a stable tap target).
-    Future<void> expandSheet(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('sessionChatMiniDragZone')));
+    /// The sessions button in the bar's leading slot opens the drawer.
+    Future<void> openDrawer(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('sessionChatDrawerButton')));
       await tester.pumpAndSettle();
     }
 
-    /// Same as [expandSheet] but with timed pumps — usable while the
+    /// Same as [openDrawer] but with timed pumps — usable while the
     /// streaming orbit animation keeps the tree from ever settling.
-    Future<void> expandSheetWhileStreaming(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('sessionChatMiniDragZone')));
+    Future<void> openDrawerWhileStreaming(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('sessionChatDrawerButton')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
     }
 
-    /// From the default mini bar, one strong pull-down collapses the sheet
-    /// to the round Fa icon.
-    Future<void> pullDownToIcon(WidgetTester tester) async {
-      await tester.drag(
-        find.byKey(const ValueKey('sessionChatMiniDragZone')),
-        const Offset(0, 400),
-      );
+    /// The real user flow into a session: drawer → row tap → the panel
+    /// slides up under the input bar.
+    Future<void> openSessionPanel(WidgetTester tester, String id) async {
+      await openDrawer(tester);
+      await tester.tap(find.byKey(ValueKey('sessionChatDrawerEntry:$id')));
       await tester.pumpAndSettle();
     }
 
-    /// Starts a hung run and pumps fixed frames until the stream-start
-    /// auto-grow settles into the mini state (the orbit repeats forever, so
+    /// Starts a hung run and pumps fixed frames until the streaming status
+    /// row settles above the bar (the orbit repeats forever, so
     /// pumpAndSettle would time out).
     Future<void> startHungRun(WidgetTester tester) async {
       final service = tester
@@ -609,48 +609,34 @@ void main() {
       }
     }
 
-    testWidgets('collapsed — round Fa button (dark)', (tester) async {
+    testWidgets('input bar — dark', (tester) async {
+      // The bar IS the default resting state — no gestures needed.
       await _pumpLauncher(tester, sessions: twoSessions());
-      await pullDownToIcon(tester);
-      await expectGolden(tester, 'launcher/sheet_icon_dark');
+      await expectGolden(tester, 'launcher/sheet_bar_dark');
     });
 
-    testWidgets('collapsed — round Fa button (light)', (tester) async {
+    testWidgets('input bar — light', (tester) async {
       await _pumpLauncher(
         tester,
         sessions: twoSessions(),
         theme: buildFahThemeLight(),
       );
-      await pullDownToIcon(tester);
-      await expectGolden(tester, 'launcher/sheet_icon_light');
+      await expectGolden(tester, 'launcher/sheet_bar_light');
     });
 
-    testWidgets('mini bar — dark', (tester) async {
-      // The mini bar IS the default resting state — no gestures needed.
-      await _pumpLauncher(tester, sessions: twoSessions());
-      await expectGolden(tester, 'launcher/sheet_mini_dark');
-    });
-
-    testWidgets('mini bar — light', (tester) async {
-      await _pumpLauncher(
-        tester,
-        sessions: twoSessions(),
-        theme: buildFahThemeLight(),
-      );
-      await expectGolden(tester, 'launcher/sheet_mini_light');
-    });
-
-    testWidgets('mini bar streaming — dark', (tester) async {
+    testWidgets('input bar streaming status row — dark', (tester) async {
+      // Started outside the bar (no composer onSent): the panel stays
+      // closed and the slim FaWorkBar status row sits above the composer.
       await _pumpLauncher(
         tester,
         sessions: {'sess-b': twoSessions()['sess-b']!},
         streamFunction: _hungResponse(),
       );
       await startHungRun(tester);
-      await expectGolden(tester, 'launcher/sheet_mini_streaming_dark');
+      await expectGolden(tester, 'launcher/sheet_bar_streaming_dark');
     });
 
-    testWidgets('mini bar streaming — light', (tester) async {
+    testWidgets('input bar streaming status row — light', (tester) async {
       await _pumpLauncher(
         tester,
         sessions: {'sess-b': twoSessions()['sess-b']!},
@@ -658,91 +644,98 @@ void main() {
         theme: buildFahThemeLight(),
       );
       await startHungRun(tester);
-      await expectGolden(tester, 'launcher/sheet_mini_streaming_light');
+      await expectGolden(tester, 'launcher/sheet_bar_streaming_light');
     });
 
-    testWidgets('expanded — dark', (tester) async {
+    testWidgets('sessions drawer — dark', (tester) async {
       await _pumpLauncher(tester, sessions: twoSessions());
-      await expandSheet(tester);
-      await expectGolden(tester, 'launcher/sheet_expanded_dark');
+      await openDrawer(tester);
+      await expectGolden(tester, 'launcher/sheet_drawer_dark');
     });
 
-    testWidgets('expanded — ru', (tester) async {
+    testWidgets('sessions drawer — light', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        theme: buildFahThemeLight(),
+      );
+      await openDrawer(tester);
+      await expectGolden(tester, 'launcher/sheet_drawer_light');
+    });
+
+    testWidgets('session panel — dark', (tester) async {
+      await _pumpLauncher(tester, sessions: twoSessions());
+      await openSessionPanel(tester, 'sess-b');
+      await expectGolden(tester, 'launcher/sheet_session_dark');
+    });
+
+    testWidgets('session panel — ru', (tester) async {
       await _pumpLauncher(
         tester,
         locale: const Locale('ru'),
         sessions: twoSessions(),
       );
-      await expandSheet(tester);
-      await expectGolden(tester, 'launcher/sheet_expanded_ru');
+      await openSessionPanel(tester, 'sess-b');
+      await expectGolden(tester, 'launcher/sheet_session_ru');
     });
 
-    testWidgets('expanded — light', (tester) async {
+    testWidgets('session panel — light', (tester) async {
       await _pumpLauncher(
         tester,
         sessions: twoSessions(),
         theme: buildFahThemeLight(),
       );
-      await expandSheet(tester);
-      await expectGolden(tester, 'launcher/sheet_expanded_light');
+      await openSessionPanel(tester, 'sess-b');
+      await expectGolden(tester, 'launcher/sheet_session_light');
     });
 
-    testWidgets('expanded streaming — dark', (tester) async {
+    testWidgets('session panel streaming — dark', (tester) async {
       await _pumpLauncher(
         tester,
         sessions: {'sess-b': twoSessions()['sess-b']!},
         streamFunction: _hungResponse(),
       );
       await startHungRun(tester);
-      await expandSheetWhileStreaming(tester);
-      await expectGolden(tester, 'launcher/sheet_expanded_streaming_dark');
-    });
-
-    testWidgets('pager — second session', (tester) async {
-      await _pumpLauncher(tester, sessions: twoSessions());
-      await expandSheet(tester);
-      await tester.fling(
-        find.byKey(const ValueKey('sessionChatPager')),
-        const Offset(-300, 0),
-        1000,
+      await openDrawerWhileStreaming(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
       );
-      await tester.pumpAndSettle();
-      // The sheet header AND the launcher's session chip both show it.
-      expect(find.text('Second chat'), findsWidgets);
-      await expectGolden(tester, 'launcher/sheet_pager2_dark');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await expectGolden(tester, 'launcher/sheet_session_streaming_dark');
     });
 
     // iPhone 16 Pro insets: 59pt island top, 34pt home indicator bottom.
     const phoneInsets = EdgeInsets.only(top: 59, bottom: 34);
 
-    testWidgets('mini bar on a notched phone — dark', (tester) async {
+    testWidgets('input bar on a notched phone — dark', (tester) async {
       await _pumpLauncher(
         tester,
         sessions: twoSessions(),
         viewPadding: phoneInsets,
       );
-      await expectGolden(tester, 'launcher/sheet_mini_insets_dark');
+      await expectGolden(tester, 'launcher/sheet_bar_insets_dark');
     });
 
-    testWidgets('expanded sheet on a notched phone — dark', (tester) async {
+    testWidgets('session panel on a notched phone — dark', (tester) async {
       await _pumpLauncher(
         tester,
         sessions: twoSessions(),
         viewPadding: phoneInsets,
       );
-      await expandSheet(tester);
-      await expectGolden(tester, 'launcher/sheet_expanded_insets_dark');
+      await openSessionPanel(tester, 'sess-b');
+      await expectGolden(tester, 'launcher/sheet_session_insets_dark');
     });
 
-    testWidgets('expanded sheet on a notched phone — light', (tester) async {
+    testWidgets('session panel on a notched phone — light', (tester) async {
       await _pumpLauncher(
         tester,
         sessions: twoSessions(),
         theme: buildFahThemeLight(),
         viewPadding: phoneInsets,
       );
-      await expandSheet(tester);
-      await expectGolden(tester, 'launcher/sheet_expanded_insets_light');
+      await openSessionPanel(tester, 'sess-b');
+      await expectGolden(tester, 'launcher/sheet_session_insets_light');
     });
   });
 }

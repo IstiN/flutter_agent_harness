@@ -6,6 +6,7 @@ import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:pasteboard/pasteboard.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
@@ -28,6 +29,12 @@ class ChatComposer extends StatelessWidget {
     this.uploadPicker,
     this.asr,
     this.asrTranscriber,
+    this.clipboardImageReader = _readClipboardImage,
+    this.leadingBuilder,
+    this.hideMicWhenNotEmpty = false,
+    this.onSent,
+    this.onFocusChanged,
+    this.autofocus = true,
   });
 
   /// The session this composer sends to.
@@ -46,6 +53,30 @@ class ChatComposer extends StatelessWidget {
   /// provider config at stop time (an OpenAI-compatible endpoint). Tests
   /// inject a fake.
   final AsrTranscriber? asrTranscriber;
+
+  /// Clipboard image probe for smart paste (Cmd/Ctrl+V). Defaults to the
+  /// super_clipboard-backed reader; tests inject a fake or null.
+  final fa_ui.FaClipboardImageReader? clipboardImageReader;
+
+  /// Replaces the built-in attach button in the leading slot (the session
+  /// chat bar's sessions-drawer toggle). Null keeps the attach button.
+  final Widget Function(BuildContext context)? leadingBuilder;
+
+  /// iMessage-style trailing slot: exactly one action (mic / stop / send),
+  /// swapped with a scale+fade as the field content changes.
+  final bool hideMicWhenNotEmpty;
+
+  /// Fired after a message was sent successfully.
+  final VoidCallback? onSent;
+
+  /// Fired when the input field's focus changes (the session chat sheet
+  /// opens its panel on focus).
+  final ValueChanged<bool>? onFocusChanged;
+
+  /// Whether the field grabs focus on mount/session switch. The always-
+  /// visible launcher bar passes false so the keyboard stays down until
+  /// the user actually taps the field.
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) {
@@ -74,6 +105,12 @@ class ChatComposer extends StatelessWidget {
         asr: asr,
         transcriber: asrTranscriber,
       ),
+      clipboardImageReader: clipboardImageReader,
+      leadingBuilder: leadingBuilder,
+      hideMicWhenNotEmpty: hideMicWhenNotEmpty,
+      onSent: onSent,
+      onFocusChanged: onFocusChanged,
+      autofocus: autofocus,
     );
   }
 
@@ -90,6 +127,22 @@ class ChatComposer extends StatelessWidget {
         mimeType: mimeTypeForUploadName(picked.name),
       ),
     ];
+  }
+
+  /// Smart paste's image probe (the YoLoIT ClipboardFileService pattern):
+  /// reads image bytes off the system pasteboard, null when it holds no
+  /// image. Returns a generated name — the composer's staging turns it into
+  /// an `uploads/` chip.
+  static Future<fa_ui.FaChatUploadFile?> _readClipboardImage() async {
+    Uint8List? bytes;
+    try {
+      bytes = await Pasteboard.image;
+    } on Object {
+      // Clipboard access is best effort — a failure just means "no image".
+    }
+    if (bytes == null || bytes.isEmpty) return null;
+    final name = 'clipboard-${DateTime.now().millisecondsSinceEpoch}.png';
+    return (name: name, bytes: bytes, mimeType: mimeTypeForUploadName(name));
   }
 }
 

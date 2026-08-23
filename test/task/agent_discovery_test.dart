@@ -15,6 +15,8 @@ void main() {
   Future<void> writeFile(String path, String content) =>
       env.writeFile(path, content);
 
+  AgentRoot fahRoot(String path) => AgentRoot(path, SkillSource.fah);
+
   group('discoverTaskAgents', () {
     test('parses a valid agent file', () async {
       await writeFile('/work/.fah/agents/security-review.md', '''
@@ -29,7 +31,7 @@ You are a security reviewer. Focus on injection and auth issues.
 ''');
       final result = await discoverTaskAgents(
         env,
-        projectRoots: ['/work/.fah/agents'],
+        projectRoots: [fahRoot('/work/.fah/agents')],
       );
       expect(result.agents, hasLength(1));
       final agent = result.agents.single;
@@ -50,7 +52,7 @@ Lint the code.
 ''');
       final result = await discoverTaskAgents(
         env,
-        projectRoots: ['/work/.fah/agents'],
+        projectRoots: [fahRoot('/work/.fah/agents')],
       );
       expect(result.agents.single.name, 'linter');
     });
@@ -65,7 +67,7 @@ Body.
 ''');
       final result = await discoverTaskAgents(
         env,
-        projectRoots: ['/work/.fah/agents'],
+        projectRoots: [fahRoot('/work/.fah/agents')],
       );
       expect(result.agents, isEmpty);
       expect(result.notes, hasLength(1));
@@ -89,8 +91,8 @@ User.
 ''');
       final result = await discoverTaskAgents(
         env,
-        projectRoots: ['/work/.fah/agents'],
-        userRoots: ['/home/.fah/agents'],
+        projectRoots: [fahRoot('/work/.fah/agents')],
+        userRoots: [fahRoot('/home/.fah/agents')],
       );
       expect(result.agents, hasLength(1));
       expect(result.agents.single.description, 'project version');
@@ -99,28 +101,236 @@ User.
     test('missing roots are silently skipped', () async {
       final result = await discoverTaskAgents(
         env,
-        projectRoots: ['/nonexistent'],
+        projectRoots: [fahRoot('/nonexistent')],
       );
       expect(result.agents, isEmpty);
     });
 
-    test('defaultAgentRoots returns expected paths', () {
+    test('defaultAgentRoots returns expected paths and sources', () {
       final roots = defaultAgentRoots(cwd: '/work', homeDir: '/home');
       expect(roots.projectRoots, [
-        '/work/.fah/agents',
-        '/work/.agents/agents',
-        '/work/.claude/agents',
+        isA<AgentRoot>()
+            .having((r) => r.path, 'path', '/work/.fah/agents')
+            .having((r) => r.source, 'source', SkillSource.fah),
+        isA<AgentRoot>()
+            .having((r) => r.path, 'path', '/work/.agents/agents')
+            .having((r) => r.source, 'source', SkillSource.agents),
+        isA<AgentRoot>()
+            .having((r) => r.path, 'path', '/work/.claude/agents')
+            .having((r) => r.source, 'source', SkillSource.claude),
+        isA<AgentRoot>()
+            .having((r) => r.path, 'path', '/work/.github/agents')
+            .having((r) => r.source, 'source', SkillSource.copilot),
+        isA<AgentRoot>()
+            .having((r) => r.path, 'path', '/work/.codex/agents')
+            .having((r) => r.source, 'source', SkillSource.codex),
       ]);
-      expect(roots.userRoots, [
+      expect(roots.userRoots.map((r) => r.path), [
         '/home/.fah/agents',
         '/home/.agents/agents',
         '/home/.claude/agents',
+        '/home/.copilot/agents',
+        '/home/.codex/agents',
+      ]);
+      expect(roots.userRoots.map((r) => r.source), [
+        SkillSource.fah,
+        SkillSource.agents,
+        SkillSource.claude,
+        SkillSource.copilot,
+        SkillSource.codex,
       ]);
     });
 
     test('defaultAgentRoots without home returns empty user roots', () {
       final roots = defaultAgentRoots(cwd: '/work');
       expect(roots.userRoots, isEmpty);
+    });
+
+    test('allowedSources filters roots by source', () async {
+      await writeFile('/work/.fah/agents/mine.md', '''
+---
+name: mine
+---
+Mine.
+''');
+      await writeFile('/work/.claude/agents/theirs.md', '''
+---
+name: theirs
+---
+Theirs.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [
+          fahRoot('/work/.fah/agents'),
+          AgentRoot('/work/.claude/agents', SkillSource.claude),
+        ],
+        allowedSources: {SkillSource.fah},
+      );
+      expect(result.agents.map((a) => a.name), ['mine']);
+    });
+  });
+
+  group('file names', () {
+    test('accepts the Copilot <name>.agent.md convention', () async {
+      await writeFile('/work/.github/agents/security.agent.md', '''
+---
+description: Copilot security agent
+---
+Review for security.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [AgentRoot('/work/.github/agents', SkillSource.copilot)],
+      );
+      expect(result.agents, hasLength(1));
+      expect(result.agents.single.name, 'security');
+    });
+
+    test('ignores non-markdown files', () async {
+      await writeFile('/work/.fah/agents/notes.txt', 'not an agent');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [fahRoot('/work/.fah/agents')],
+      );
+      expect(result.agents, isEmpty);
+    });
+  });
+
+  group('tools frontmatter', () {
+    test('tools: ["*"] means the full parent tool surface', () async {
+      await writeFile('/work/.fah/agents/star-list.md', '''
+---
+name: star-list
+tools: ["*"]
+---
+Body.
+''');
+      await writeFile('/work/.fah/agents/star-string.md', '''
+---
+name: star-string
+tools: "*"
+---
+Body.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [fahRoot('/work/.fah/agents')],
+      );
+      expect(result.agents, hasLength(2));
+      for (final agent in result.agents) {
+        expect(agent.toolNames, isNull, reason: agent.name);
+      }
+    });
+
+    test('tools: [] means no tools', () async {
+      await writeFile('/work/.fah/agents/empty.md', '''
+---
+name: empty
+tools: []
+---
+Body.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [fahRoot('/work/.fah/agents')],
+      );
+      expect(result.agents.single.toolNames, isEmpty);
+    });
+
+    test('the comma-separated string form parses', () async {
+      await writeFile('/work/.fah/agents/csv.md', '''
+---
+name: csv
+tools: read, grep
+---
+Body.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [fahRoot('/work/.fah/agents')],
+      );
+      expect(result.agents.single.toolNames, {'read', 'grep'});
+    });
+
+    test('server/tool entries are kept verbatim', () async {
+      await writeFile('/work/.fah/agents/mcp.md', '''
+---
+name: mcp
+tools: [read, github/*, github/get_issue]
+---
+Body.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [fahRoot('/work/.fah/agents')],
+      );
+      expect(result.agents.single.toolNames, {
+        'read',
+        'github/*',
+        'github/get_issue',
+      });
+    });
+  });
+
+  group('Copilot compat keys', () {
+    test('mcp-servers is accepted with a not-supported note', () async {
+      await writeFile('/work/.github/agents/helper.agent.md', '''
+---
+name: helper
+mcp-servers:
+  github:
+    command: github-mcp-server
+---
+Help out.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [AgentRoot('/work/.github/agents', SkillSource.copilot)],
+      );
+      expect(result.agents, hasLength(1));
+      expect(result.notes, hasLength(1));
+      expect(
+        result.notes.single,
+        contains('mcp-servers in agent profiles not supported yet'),
+      );
+    });
+
+    test('target: vscode skips the agent with a note', () async {
+      await writeFile('/work/.github/agents/vscode-only.agent.md', '''
+---
+name: vscode-only
+target: vscode
+---
+VS Code only.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [AgentRoot('/work/.github/agents', SkillSource.copilot)],
+      );
+      expect(result.agents, isEmpty);
+      expect(result.notes, hasLength(1));
+      expect(result.notes.single, contains('vscode'));
+      expect(result.notes.single, contains('skipped'));
+    });
+
+    test('argument-hint and handoffs are accepted silently', () async {
+      await writeFile('/work/.github/agents/ide.agent.md', '''
+---
+name: ide
+argument-hint: Provide a file path
+handoffs:
+  - label: Done
+    agent: default
+---
+IDE keys.
+''');
+      final result = await discoverTaskAgents(
+        env,
+        projectRoots: [AgentRoot('/work/.github/agents', SkillSource.copilot)],
+      );
+      expect(result.agents, hasLength(1));
+      expect(result.notes, isEmpty);
     });
   });
 
@@ -168,7 +378,7 @@ You write concise documentation.
 ''');
         final result = await discoverTaskAgents(
           env,
-          projectRoots: ['/work/.claude/agents'],
+          projectRoots: [AgentRoot('/work/.claude/agents', SkillSource.claude)],
         );
         expect(result.agents, hasLength(1));
         final agent = result.agents.single;
@@ -191,7 +401,7 @@ Write poems.
 ''');
       final result = await discoverTaskAgents(
         env,
-        projectRoots: ['/work/.claude/agents'],
+        projectRoots: [AgentRoot('/work/.claude/agents', SkillSource.claude)],
       );
       final agent = result.agents.single;
       expect(agent.modelRole, isNull);
@@ -211,15 +421,65 @@ Do the thing.
 ''');
       final result = await discoverTaskAgents(
         env,
-        projectRoots: ['/work/.claude/agents'],
+        projectRoots: [AgentRoot('/work/.claude/agents', SkillSource.claude)],
       );
       expect(result.agents.single.modelRole, 'slow');
     });
 
     test('defaultAgentRoots include .claude/agents on both scopes', () {
       final roots = defaultAgentRoots(cwd: '/work', homeDir: '/home/me');
-      expect(roots.projectRoots, contains('/work/.claude/agents'));
-      expect(roots.userRoots, contains('/home/me/.claude/agents'));
+      expect(
+        roots.projectRoots.map((r) => r.path),
+        contains('/work/.claude/agents'),
+      );
+      expect(
+        roots.userRoots.map((r) => r.path),
+        contains('/home/me/.claude/agents'),
+      );
+    });
+  });
+
+  group('canonicalTaskAgentName aliases', () {
+    test('folds the Claude Code naming aliases onto built-ins', () {
+      expect(canonicalTaskAgentName('general-purpose'), 'task');
+      expect(canonicalTaskAgentName('general'), 'task');
+      expect(canonicalTaskAgentName('Explore'), 'explore');
+      expect(canonicalTaskAgentName('scout'), 'explore');
+      expect(canonicalTaskAgentName('Reviewer'), 'review');
+      expect(canonicalTaskAgentName('planner'), 'plan');
+      expect(canonicalTaskAgentName('security-audit'), 'security-audit');
+    });
+
+    test('resolve is case-insensitive and alias-aware', () {
+      final registry = TaskAgentRegistry();
+      expect(registry.resolve('Explore'), isNotNull);
+      expect(registry.resolve('Explore')!.name, 'explore');
+      expect(registry.resolve('general-purpose')!.name, 'task');
+      expect(registry.resolve('SCOUT')!.name, 'explore');
+      expect(registry.resolve('Planner')!.name, 'plan');
+    });
+
+    test('a discovered agent named via an alias overrides the built-in', () {
+      final discovered = TaskAgentDefinition(
+        name: 'Reviewer',
+        description: 'custom reviewer',
+        systemPrompt: 'Custom review prompt',
+      );
+      final registry = TaskAgentRegistry([discovered]);
+      final resolved = registry.resolve('review')!;
+      expect(resolved.description, 'custom reviewer');
+    });
+  });
+
+  group('plan built-in', () {
+    test('is registered as a read-only agent on the plan role', () {
+      final registry = TaskAgentRegistry();
+      final plan = registry.resolve('plan')!;
+      expect(plan.name, 'plan');
+      expect(plan.readOnly, isTrue);
+      expect(plan.modelRole, 'plan');
+      expect(plan.description, contains('planning'));
+      expect(plan.systemPrompt, contains('planning subagent'));
     });
   });
 }

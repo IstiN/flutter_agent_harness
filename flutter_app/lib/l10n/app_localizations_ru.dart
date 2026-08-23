@@ -1125,6 +1125,36 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get settingsSkillsAccess => 'Доступ к навыкам';
+
+  @override
+  String get settingsSkillsAccessHint =>
+      'Использовать навыки Claude, Copilot или Codex из папки проекта (.claude, .github, .codex)';
+
+  @override
+  String get skillsAccessAsk => 'Спрашивать';
+
+  @override
+  String get skillsAccessAllowed => 'Разрешено';
+
+  @override
+  String get skillsAccessDenied => 'Запрещено';
+
+  @override
+  String get skillsAccessDialogTitle =>
+      'Использовать существующие навыки агентов?';
+
+  @override
+  String get skillsAccessDialogBody =>
+      'В проекте могут быть навыки Claude, Copilot или Codex (папки .claude, .github, .codex) — инструкции, оставленные другими инструментами на этом устройстве. Fa может использовать их в ваших задачах.';
+
+  @override
+  String get skillsAccessAllow => 'Разрешить';
+
+  @override
+  String get skillsAccessNotNow => 'Не сейчас';
+
+  @override
   String get settingsThemeDark => 'Тёмная';
 
   @override

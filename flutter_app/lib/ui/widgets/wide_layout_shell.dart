@@ -395,46 +395,62 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         // Workspace header matching the prototype: name + dropdown arrow + edit icon.
         // No bottom border — the vertical dividers between panels run full height.
         Container(
-          padding: EdgeInsets.fromLTRB(20, _isMacOS ? 32 : 12, 12, 8),
+          // Chip inner padding (8h) is compensated here so the label/icon
+          // glyphs keep their old 20px edge alignment while the hover/focus
+          // pill hugs each chip instead of smearing across the header.
+          padding: EdgeInsets.fromLTRB(12, _isMacOS ? 28 : 8, 12, 4),
           decoration: BoxDecoration(
             color: isLight ? colors.panel : colors.panel,
           ),
           child: Row(
             children: [
+              // The Expanded keeps the model chip pushed to the right edge
+              // (a Flexible + Spacer combo breaks hot-reload layouts); the
+              // Align loosens the width so the InkWell pill shrink-wraps the
+              // chip instead of smearing across the whole header.
               Expanded(
-                child: Material(
-                  color: Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  child: InkWell(
-                    onTap: _openWorkspaceDialog,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Material(
+                    color: Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.folder_outlined,
-                          size: 16,
-                          color: _mountedPath == null
-                              ? colors.dim
-                              : colors.indigo,
+                    child: InkWell(
+                      onTap: _openWorkspaceDialog,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
                         ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            _mountedFolderLabel(),
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.folder_outlined,
+                              size: 16,
+                              color: _mountedPath == null
+                                  ? colors.dim
+                                  : colors.indigo,
                             ),
-                          ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _mountedFolderLabel(),
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.keyboard_arrow_down,
+                              size: 16,
+                              color: colors.dim,
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 4),
-                        Icon(
-                          Icons.keyboard_arrow_down,
-                          size: 16,
-                          color: colors.dim,
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),

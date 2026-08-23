@@ -417,7 +417,7 @@ extension on AgentCli {
     final model = _agent.state.model;
     final total = _usage.total;
     final cost = total.cost.total.toStringAsFixed(4);
-    final cwd = config.env.cwd;
+    final cwd = _env.cwd;
     // Live context pressure: provider-reported usage up to the last reported
     // turn plus an estimate of the trailing messages (what the NEXT request
     // carries) — moves mid-run as tool results and the stream land, instead
@@ -503,10 +503,12 @@ extension on AgentCli {
   }
 
   /// Prompt-based slash menu for terminals that cannot enter raw/ANSI mode.
-  /// Shows a numbered list of commands and reads the user's choice from the
-  /// same [lineIterator] that drives the REPL loop.
+  /// Shows a numbered list of commands and skills, and reads the user's
+  /// choice from the same [lineIterator] that drives the REPL loop. A skill
+  /// choice resolves to `/skill:<name>` (line mode has no input field to
+  /// pre-fill, so the skill runs immediately, without args).
   Future<String?> _showLineModeMenu(StreamIterator<String> lineIterator) async {
-    for (final line in lineModeMenuLines(_style)) {
+    for (final line in lineModeMenuLines(_style, skills: _skills)) {
       io.writeln(line);
     }
     io.write('Pick a command (number or name), or press Enter to cancel: ');
@@ -518,18 +520,24 @@ extension on AgentCli {
     return choice;
   }
 
-  /// Resolves a line-mode menu answer: a 1-based number, or a command name
-  /// with or without the leading slash. Null when neither matches.
+  /// Resolves a line-mode menu answer: a 1-based number over the builtin
+  /// commands + skills, or a command/skill name with or without the leading
+  /// slash. Null when neither matches.
   String? _resolveMenuChoice(String trimmed) {
-    final commands = builtinSlashCommands.entries.toList();
+    final entries = lineModeMenuEntries(_skills);
     // Numeric choice.
     final index = int.tryParse(trimmed);
-    if (index != null && index >= 1 && index <= commands.length) {
-      return commands[index - 1].key;
+    if (index != null && index >= 1 && index <= entries.length) {
+      return entries[index - 1].key;
     }
-    // Name choice; accept with or without leading slash.
+    // Name choice; accept with or without leading slash. Builtins first.
     final name = trimmed.startsWith('/') ? trimmed : '/$trimmed';
     if (builtinSlashCommands.containsKey(name)) return name;
+    for (final skill in userInvocableSkills(_skills)) {
+      if ('/${skill.name}'.toLowerCase() == name.toLowerCase()) {
+        return '/skill:${skill.name}';
+      }
+    }
     return null;
   }
 
@@ -540,6 +548,7 @@ extension on AgentCli {
       pluginSlashCommands: _pluginSlashCommands,
       templates: _templates,
       style: _style,
+      skills: _skills,
     )) {
       io.writeln(line);
     }
@@ -734,8 +743,14 @@ extension on AgentCli {
     _onAssistantMessageEnd(message);
   }
 
-  /// Tool call header line: the bold indigo name plus dimmed args.
+  /// Tool call header line: the bold indigo name plus dimmed args. Also
+  /// records file-path args into [_touchedPaths] so path-gated skills
+  /// (`paths:` frontmatter) join the prompt on the next turn.
   void _onToolExecutionStart(String toolName, Map<String, dynamic> args) {
+    for (final key in const ['path', 'file', 'filePath', 'target']) {
+      final value = args[key];
+      if (value is String && value.isNotEmpty) _touchedPaths.add(value);
+    }
     io.writeln(
       '${_style.bold(_style.indigo('[$toolName]'))} '
       '${_style.dim(formatArgs(args))}',
@@ -773,6 +788,12 @@ extension on AgentCli {
     }
     switch (message.stopReason) {
       case StopReason.error:
+        // The CLI auto-reauthorizes CodeMie sessions after expiry; skip the
+        // generic error line here so [_runPrompt] can print the actionable
+        // prompt and launch the browser SSO flow instead.
+        if (authExpiredProvider(message.errorMessage ?? '') == 'codemie') {
+          return;
+        }
         io.writeln(_errorLine(message.errorMessage ?? 'unknown error'));
       case StopReason.aborted:
         // A TTSR abort is a rule trigger, not a failure — the

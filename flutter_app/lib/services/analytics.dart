@@ -166,6 +166,10 @@ final class AppAnalytics {
   void approvalModeChanged(String mode) =>
       _log('approval_mode_changed', {'mode': mode});
 
+  /// The third-party skills access consent changed (ask/granted/denied).
+  void skillsAccessChanged(String access) =>
+      _log('skills_access_changed', {'access': access});
+
   /// A model preset was applied from the presets section.
   void modelPresetApplied(String presetId) =>
       _log('model_preset_applied', {'preset_id': presetId});

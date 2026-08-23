@@ -3,15 +3,18 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
 import 'chat_strings.dart';
 import 'fa_chat_features.dart';
 import 'fa_chat_host.dart';
 import 'fa_chat_service.dart';
+import 'fa_glyphs.dart';
 import 'upload_utils.dart';
 
 /// The chat composer: attachment chips + staging into the sandbox `uploads/`
@@ -31,6 +34,12 @@ class ChatComposer extends StatefulWidget {
     this.galleryPicker,
     this.cameraPicker,
     this.voiceInput,
+    this.clipboardImageReader,
+    this.leadingBuilder,
+    this.hideMicWhenNotEmpty = false,
+    this.onSent,
+    this.onFocusChanged,
+    this.autofocus = true,
   });
 
   /// The session this composer sends to.
@@ -56,6 +65,37 @@ class ChatComposer extends StatefulWidget {
   /// Voice-input backend for the mic button; overrides
   /// [FaChatHost.voiceInput]. Null (with no host hook) hides the mic.
   final FaChatVoiceInput? voiceInput;
+
+  /// Clipboard image reader for smart paste; overrides
+  /// [FaChatHost.clipboardImageReader]. Null (with no host hook) pastes
+  /// text only.
+  final FaClipboardImageReader? clipboardImageReader;
+
+  /// Replaces the built-in attach button in the leading slot (e.g. the
+  /// launcher's sessions-drawer toggle). Null keeps the default attach
+  /// button (shown when a picker is wired).
+  final Widget Function(BuildContext context)? leadingBuilder;
+
+  /// iMessage-style trailing slot with exactly ONE action: the mic while
+  /// the field is empty and idle, stop while streaming with an empty field,
+  /// send as soon as the field has text (the swap runs through an
+  /// [AnimatedSwitcher] — a quick scale+fade). Default false keeps the mic
+  /// and the send/stop button both always visible (full chat screen
+  /// behavior).
+  final bool hideMicWhenNotEmpty;
+
+  /// Fired after a message was sent successfully (the launcher's bar uses
+  /// it to open the session panel).
+  final VoidCallback? onSent;
+
+  /// Fired when the input field's focus changes (the launcher's bar opens
+  /// the session panel the moment the user starts typing).
+  final ValueChanged<bool>? onFocusChanged;
+
+  /// Whether the field grabs focus on mount and on session switch (the
+  /// full chat screen wants that; the launcher's always-visible bar must
+  /// NOT pop the keyboard at app start). Default true.
+  final bool autofocus;
 
   @override
   State<ChatComposer> createState() => _ChatComposerState();
@@ -89,6 +129,10 @@ class _ChatComposerState extends State<ChatComposer>
   late final FaChatVoiceInput? _voiceInput =
       widget.voiceInput ?? FaChatHost.voiceInput;
 
+  /// Clipboard image reader for smart paste (Cmd/Ctrl+V).
+  late final FaClipboardImageReader? _clipboardImageReader =
+      widget.clipboardImageReader ?? FaChatHost.clipboardImageReader;
+
   /// Voice-input state: idle → recording → transcribing → idle.
   bool _micRecording = false;
   bool _micTranscribing = false;
@@ -111,10 +155,13 @@ class _ChatComposerState extends State<ChatComposer>
     widget.service.addListener(_onServiceChanged);
     // The send/stop button's look depends on the field being non-empty.
     _textController.addListener(_onTextChanged);
+    _focusNode.addListener(_onFocusChange);
     // Auto-focus the input when a session opens (first mount or switch).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focusNode.requestFocus();
-    });
+    if (widget.autofocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
+    }
   }
 
   @override
@@ -125,14 +172,17 @@ class _ChatComposerState extends State<ChatComposer>
       _isStreaming = widget.service.isStreaming;
       widget.service.addListener(_onServiceChanged);
       // Session switched — focus the input so the user can type immediately.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _focusNode.requestFocus();
-      });
+      if (widget.autofocus) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _focusNode.requestFocus();
+        });
+      }
     }
   }
 
   @override
   void dispose() {
+    _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
     widget.service.removeListener(_onServiceChanged);
     _textController.removeListener(_onTextChanged);
@@ -154,6 +204,10 @@ class _ChatComposerState extends State<ChatComposer>
 
   void _onTextChanged() {
     if (mounted) setState(() {});
+  }
+
+  void _onFocusChange() {
+    widget.onFocusChanged?.call(_focusNode.hasFocus);
   }
 
   /// Mic button tap: idle starts a recording (after the OS permission
@@ -255,9 +309,110 @@ class _ChatComposerState extends State<ChatComposer>
     unawaited(widget.service.discardStagedAttachment(removed.path));
   }
 
+  /// Shift+Enter inserts a newline instead of sending. The key event is
+  /// handled here (a Focus ancestor) so the macOS/Windows/Linux text-input
+  /// plugin never sees it — left alone it treats Enter-with-modifiers as the
+  /// `send` action. Bare Enter still flows to the IME and sends.
+  ///
+  /// Cmd/Ctrl+V is smart paste (the YoLoIT pattern): a clipboard image is
+  /// staged as an upload chip, long or multi-line text becomes a staged
+  /// `.txt` chip, and only short single-line text is pasted inline.
+  KeyEventResult _handleComposerKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.enter &&
+        HardwareKeyboard.instance.isShiftPressed) {
+      _insertTextAtSelection('\n');
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyV &&
+        (HardwareKeyboard.instance.isMetaPressed ||
+            HardwareKeyboard.instance.isControlPressed)) {
+      unawaited(_handleSmartPaste());
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// Smart paste: clipboard image → staged upload chip; long/multi-line
+  /// text → staged `.txt` chip; short single-line text → inserted inline at
+  /// the cursor. Mirrors YoLoIT's SmartClipboardPasteService, except staged
+  /// content lands in the sandbox `uploads/` as an attachment chip instead
+  /// of a pasted temp-file path.
+  Future<void> _handleSmartPaste() async {
+    final imageReader = _clipboardImageReader;
+    if (imageReader != null) {
+      try {
+        final image = await imageReader();
+        if (image != null) {
+          if (mounted) await _stagePending(image.name, image.bytes);
+          return;
+        }
+      } on Object {
+        // Clipboard probing is best effort — fall through to text.
+      }
+    }
+    String? text;
+    try {
+      text = (await Clipboard.getData('text/plain'))?.text;
+    } on Object {
+      // No clipboard access (web denial) — nothing to paste.
+    }
+    if (text == null || text.isEmpty || !mounted) return;
+    if (_isSafeInlinePaste(text) || _looksLikeUrl(text)) {
+      _insertTextAtSelection(text);
+    } else {
+      await _stagePending(
+        'pasted-${DateTime.now().millisecondsSinceEpoch}.txt',
+        Uint8List.fromList(utf8.encode(text)),
+      );
+    }
+  }
+
+  /// Short, single-line, control-character-free text pastes inline;
+  /// anything longer or multi-line becomes a staged file chip.
+  static bool _isSafeInlinePaste(String text) {
+    if (text.length > 1000) return false;
+    if (text.contains('\n') || text.contains('\r')) return false;
+    for (final codeUnit in text.codeUnits) {
+      if (codeUnit < 32 && codeUnit != 9) return false;
+    }
+    return true;
+  }
+
+  /// Single-line URLs paste inline, never as a file chip.
+  static bool _looksLikeUrl(String text) {
+    final trimmed = text.trim();
+    if (trimmed.contains('\n') || trimmed.contains('\r')) return false;
+    final lower = trimmed.toLowerCase();
+    return lower.startsWith('http://') ||
+        lower.startsWith('https://') ||
+        lower.startsWith('file://');
+  }
+
+  void _insertTextAtSelection(String insert) {
+    final value = _textController.value;
+    final selection = value.selection;
+    final start = selection.isValid ? selection.start : value.text.length;
+    final end = selection.isValid ? selection.end : value.text.length;
+    _textController.value = TextEditingValue(
+      text: value.text.replaceRange(start, end, insert),
+      selection: TextSelection.collapsed(offset: start + insert.length),
+    );
+  }
+
   Future<void> _send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && _pendingAttachments.isEmpty) return;
+    // The IME's send action UNFOCUSES the field (EditableText finalizes
+    // editing with shouldUnfocus for send/done/go/search). A chat composer
+    // keeps the keyboard up instead — the follow-up message must not need a
+    // re-tap. Defer past performAction's own unfocus (end of this frame).
+    final restoreFocus = _focusNode.hasFocus;
+    if (restoreFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
+    }
     final pending = List.of(_pendingAttachments);
     setState(() => _pendingAttachments.clear());
     _textController.clear();
@@ -297,6 +452,7 @@ class _ChatComposerState extends State<ChatComposer>
       // the lifecycle ends (AgentEndEvent → continueRun), instead of
       // waiting out a long turn.
       if (wasStreaming) widget.service.abort();
+      widget.onSent?.call();
     } on Object catch (e) {
       // The send itself failed before the run started: hand the chips and
       // the typed text back so nothing the user composed is lost.
@@ -456,6 +612,19 @@ class _ChatComposerState extends State<ChatComposer>
         widget.features.voiceInput &&
         _voiceInput != null &&
         _voiceInput.isAvailable;
+    // iMessage-style trailing slot: exactly one action — the mic while the
+    // field is empty and idle, stop while streaming with an empty field,
+    // send as soon as the field has text. A recording/transcribing mic
+    // never disappears mid-take. Default mode keeps both always visible.
+    final hasText = _textController.text.trim().isNotEmpty;
+    final micBusy = _micRecording || _micTranscribing;
+    final showSendStop =
+        !widget.hideMicWhenNotEmpty ||
+        hasText ||
+        (!micBusy && (_isStreaming || !showMic));
+    final micVisible =
+        showMic &&
+        (!widget.hideMicWhenNotEmpty || micBusy || (!hasText && !_isStreaming));
 
     return Container(
       decoration: BoxDecoration(
@@ -543,92 +712,144 @@ class _ChatComposerState extends State<ChatComposer>
                 ),
               ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              // The one-action slot mode gives the row more air: wider
+              // margins plus gaps between the buttons and the field.
+              padding: widget.hideMicWhenNotEmpty
+                  ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
+                  : const EdgeInsets.fromLTRB(8, 8, 8, 8),
               child: Row(
                 children: [
-                  if (showAttach)
+                  if (widget.leadingBuilder != null)
+                    widget.leadingBuilder!(context)
+                  else if (showAttach)
                     IconButton(
-                      // A paperclip — the universal "attach a file"
-                      // affordance. The previous sparkle was the AI
-                      // prototype's placeholder; users expect this.
-                      icon: const Icon(Icons.attach_file),
+                      // The modern "add content" mark: a rounded plus in a
+                      // hairline circle (see [FaAttachGlyph]) — rhymes with
+                      // the mic circle in the one-action slot.
+                      icon: FaAttachGlyph(color: palette.dim),
                       tooltip: strings.chatAttachTooltip,
                       onPressed: _showAttachmentSheet,
                     ),
                   Expanded(
-                    child: TextField(
-                      controller: _textController,
-                      focusNode: _focusNode,
-                      decoration: InputDecoration(
-                        hintText: 'Ask anything…',
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        border: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(24)),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(24)),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(24)),
-                          borderSide: BorderSide.none,
-                        ),
-                        filled: true,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: widget.hideMicWhenNotEmpty ? 6 : 0,
                       ),
-                      maxLines: 5,
-                      minLines: 1,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: _send,
-                    ),
-                  ),
-                  if (showMic) _buildMicButton(context),
-                  const SizedBox(width: 4),
-                  Container(
-                    decoration: BoxDecoration(
-                      // Light theme: solid indigo circle; dark theme: brand gradient.
-                      color: Theme.of(context).brightness == Brightness.light
-                          ? palette.indigo
-                          : null,
-                      gradient: Theme.of(context).brightness == Brightness.dark
-                          ? palette.brandGradient
-                          : null,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Builder(
-                      builder: (context) {
-                        // Stop only while streaming AND nothing typed; with
-                        // text in the field the button is a steer-send
-                        // (interrupt the turn and run the message).
-                        final showStop =
-                            _isStreaming && _textController.text.trim().isEmpty;
-                        return IconButton(
-                          icon: Icon(
-                            // Prototype uses an up-arrow (send-up) icon.
-                            showStop ? Icons.stop : Icons.arrow_upward,
-                            size: 20,
+                      child: Focus(
+                        onKeyEvent: _handleComposerKey,
+                        child: TextField(
+                          controller: _textController,
+                          focusNode: _focusNode,
+                          decoration: InputDecoration(
+                            hintText: 'Ask anything…',
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            border: const OutlineInputBorder(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(24),
+                              ),
+                              borderSide: BorderSide.none,
+                            ),
+                            enabledBorder: const OutlineInputBorder(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(24),
+                              ),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: const OutlineInputBorder(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(24),
+                              ),
+                              borderSide: BorderSide.none,
+                            ),
+                            filled: true,
                           ),
-                          color: palette.onAccent,
-                          tooltip: showStop
-                              ? strings.chatAbortTooltip
-                              : (_isStreaming
-                                    ? strings.chatSteerTooltip
-                                    : strings.chatSendTooltip),
-                          onPressed: showStop
-                              ? widget.service.abort
-                              : () => _send(_textController.text),
-                        );
-                      },
+                          maxLines: 5,
+                          minLines: 1,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: _send,
+                        ),
+                      ),
                     ),
                   ),
+                  if (widget.hideMicWhenNotEmpty)
+                    // One-action slot: mic ↔ send/stop swap with a quick
+                    // scale+fade instead of a hard cut.
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        child: ScaleTransition(scale: animation, child: child),
+                      ),
+                      child: micVisible
+                          ? KeyedSubtree(
+                              key: const ValueKey('composerTrailingMic'),
+                              child: _buildMicButton(context),
+                            )
+                          : showSendStop
+                          ? KeyedSubtree(
+                              key: const ValueKey('composerTrailingSend'),
+                              child: _buildSendStopButton(palette, strings),
+                            )
+                          : const SizedBox(
+                              key: ValueKey('composerTrailingNone'),
+                            ),
+                    )
+                  else ...[
+                    if (micVisible) _buildMicButton(context),
+                    if (micVisible && showSendStop) const SizedBox(width: 4),
+                    if (showSendStop) _buildSendStopButton(palette, strings),
+                  ],
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// The circular send/stop button: stop while streaming with an empty
+  /// field, send (or steer-send mid-stream) otherwise. Light theme paints
+  /// a solid indigo circle; dark theme the brand gradient.
+  Widget _buildSendStopButton(FahColors palette, FaChatStrings strings) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).brightness == Brightness.light
+            ? palette.indigo
+            : null,
+        gradient: Theme.of(context).brightness == Brightness.dark
+            ? palette.brandGradient
+            : null,
+        shape: BoxShape.circle,
+      ),
+      child: Builder(
+        builder: (context) {
+          // Stop only while streaming AND nothing typed; with text in the
+          // field the button is a steer-send (interrupt the turn and run
+          // the message).
+          final showStop = _isStreaming && _textController.text.trim().isEmpty;
+          return IconButton(
+            icon: Icon(
+              // Prototype uses an up-arrow (send-up) icon.
+              showStop ? Icons.stop : Icons.arrow_upward,
+              size: 20,
+            ),
+            color: palette.onAccent,
+            tooltip: showStop
+                ? strings.chatAbortTooltip
+                : (_isStreaming
+                      ? strings.chatSteerTooltip
+                      : strings.chatSendTooltip),
+            onPressed: showStop
+                ? widget.service.abort
+                : () => _send(_textController.text),
+          );
+        },
       ),
     );
   }
@@ -667,10 +888,27 @@ class _ChatComposerState extends State<ChatComposer>
         ),
       );
     }
-    return IconButton(
-      icon: const Icon(Icons.mic_none),
+    final idle = IconButton(
+      icon: Icon(
+        Icons.mic_none,
+        // Match the send/stop circle's icon size in the one-action slot.
+        size: widget.hideMicWhenNotEmpty ? 20 : null,
+      ),
       tooltip: strings.chatMicTooltip,
       onPressed: _toggleMic,
+    );
+    if (!widget.hideMicWhenNotEmpty) return idle;
+    // iMessage-style slot: the idle mic sits in the same 48px circle the
+    // send button occupies, filled with the text field's pill color plus a
+    // hairline border so the two states of the slot read as one control.
+    final palette = fahChatColorsOf(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.panelAlt,
+        border: Border.all(color: palette.border),
+        shape: BoxShape.circle,
+      ),
+      child: idle,
     );
   }
 }

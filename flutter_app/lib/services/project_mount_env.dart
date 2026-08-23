@@ -64,7 +64,8 @@ final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
   }) {
     final root = _mountedRoot;
     if (root == null) return _delegate.exec(command, options: options);
-    final cwd = options?.cwd ?? root;
+    final optsCwd = options?.cwd;
+    final cwd = optsCwd == null ? root : _map(optsCwd);
     final mappedOptions = ShellExecOptions(
       cwd: cwd,
       env: options?.env,
@@ -100,7 +101,7 @@ final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
     final mappedOptions = root == null
         ? options
         : ShellExecOptions(
-            cwd: options?.cwd ?? root,
+            cwd: options?.cwd == null ? root : _map(options!.cwd!),
             env: options?.env,
             timeout: options?.timeout,
             cancelToken: options?.cancelToken,
@@ -112,7 +113,9 @@ final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
       return bg.startShellJob(
         command,
         id: id,
-        logPath: logPath,
+        // Log paths computed from env.cwd may use the virtual /project segment;
+        // the delegate (real host shell) needs the physical host path.
+        logPath: root == null ? logPath : _map(logPath),
         options: mappedOptions,
       );
     }
@@ -195,7 +198,19 @@ final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
 /// same workspace. Otherwise it falls back to [ExecutionEnv.cwd].
 extension SessionCwd on ExecutionEnv {
   String get sessionCwd {
-    if (this case final ProjectMountEnv mountEnv) {
+    var env = this;
+    // Unwrap decorators (secrets/session-vars) that sit between callers
+    // and the mount env so the mounted host path is found reliably.
+    while (true) {
+      if (env is SecretsExecutionEnv) {
+        env = env.delegate;
+      } else if (env is SessionVarsExecutionEnv) {
+        env = env.delegate;
+      } else {
+        break;
+      }
+    }
+    if (env case final ProjectMountEnv mountEnv) {
       final root = mountEnv.mountedRoot;
       if (root != null) return root;
     }

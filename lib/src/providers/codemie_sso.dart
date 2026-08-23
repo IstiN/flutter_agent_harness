@@ -103,26 +103,37 @@ Map<String, String> decodeCodeMieSsoToken(String raw) {
   };
 }
 
-/// The expiry (ms epoch) of the `codemie_access_token` JWT's `exp` claim,
-/// falling back to 24h from now when the cookie is absent or undecodable.
+/// The expiry (ms epoch) of the first JWT cookie's `exp` claim.
+///
+/// CodeMie instances have been observed using `codemie_access_token`,
+/// `access_token`, and other cookie names, so every cookie value that looks
+/// like a JWT is inspected. When no JWT with an `exp` claim is found, falls
+/// back to 24h from now.
 int deriveCodeMieExpiresAt(Map<String, String> cookies) {
-  final jwt = cookies['codemie_access_token'];
-  if (jwt != null) {
-    final parts = jwt.split('.');
-    if (parts.length == 3) {
-      try {
-        final payload = jsonDecode(
-          utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
-        );
-        if (payload is Map && payload['exp'] is int) {
-          return (payload['exp'] as int) * 1000;
-        }
-      } on Object {
-        // Malformed JWT — fall through to the default TTL.
-      }
-    }
+  for (final value in cookies.values) {
+    final expiresAt = _codeMieJwtExpMs(value);
+    if (expiresAt != null) return expiresAt;
   }
   return DateTime.now().millisecondsSinceEpoch + 24 * 60 * 60 * 1000;
+}
+
+/// Extracts the `exp` claim from [value] when it is a JWT, or null otherwise.
+int? _codeMieJwtExpMs(String value) {
+  final trimmed = value.trim();
+  if (trimmed.contains(';')) return null;
+  final parts = trimmed.split('.');
+  if (parts.length != 3) return null;
+  try {
+    final payload = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+    );
+    if (payload is Map && payload['exp'] is int) {
+      return (payload['exp'] as int) * 1000;
+    }
+  } on Object {
+    // Not a decodable JWT.
+  }
+  return null;
 }
 
 /// Parses a CodeMie cookie string (`k=v; k=v`) and checks whether the

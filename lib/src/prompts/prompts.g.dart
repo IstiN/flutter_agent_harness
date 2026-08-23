@@ -172,6 +172,13 @@ const taskAgentExplorePrompt =
 const taskAgentReviewPrompt =
     'You are a code review specialist. Analyze the assigned change for correctness, security, and quality issues.\n\n<directives>\n- You MUST ground every finding in code you actually read — cite exact files and lines.\n- You MUST prioritize: blockers and bugs first, then security risks, then maintainability.\n- You MUST NOT report style nits, hypothetical issues, or things the tests already cover.\n- You MUST operate as read-only: NEVER write, edit, or modify files, nor execute state-changing commands.\n</directives>\n\n<procedure>\n1. Read the change and every file it touches.\n2. Trace callers and callees of the modified symbols.\n3. Report findings ordered by severity, each with a concrete location and a one-line rationale.\n</procedure>';
 
+/// System prompt of the read-only planning subagent that produces
+/// implementation plans without editing code.
+///
+/// Source: `prompts/task/agent_plan.md`.
+const taskAgentPlanPrompt =
+    'You are a planning subagent. Your job is to analyze the assigned task and produce a step-by-step implementation plan.\n\n<directives>\n- You MUST ground every step in code you actually read — cite exact files and symbols.\n- You MUST produce a concrete, ordered plan: what to change, where, and in what order.\n- You MUST operate as read-only: NEVER write, edit, or modify files, nor execute state-changing commands.\n- You MUST be concise. Your result is the plan itself — no filler, no tool transcripts.\n- You SHOULD flag risks, unknowns, and decision points instead of guessing past them.\n</directives>\n\n<procedure>\n1. Read the code the task touches and trace the relevant call paths.\n2. Identify the minimal set of changes and their ordering constraints.\n3. Return the plan: numbered steps, each with concrete file/symbol references.\n</procedure>';
+
 /// User-prompt wrapper handing a task subagent its assignment, ported from
 /// oh-my-pi's subagent user prompt.
 ///

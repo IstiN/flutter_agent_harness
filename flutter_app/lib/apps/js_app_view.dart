@@ -25,6 +25,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart' show faAppBar;
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/fa_chat_overlay.dart';
@@ -504,7 +505,9 @@ class _JsAppViewState extends State<JsAppView> {
           child: Scaffold(
             appBar: fullChrome
                 ? null
-                : AppBar(
+                // faAppBar bakes in the macOS traffic-light clearance —
+                // a plain AppBar renders the back button under them.
+                : faAppBar(
                     title: Row(
                       children: [
                         AppIcon(app: widget.app, env: widget.env, size: 24),

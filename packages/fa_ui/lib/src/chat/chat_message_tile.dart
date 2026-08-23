@@ -10,6 +10,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
 import '../theme/app_theme.dart';
 import 'chat_strings.dart';
 import 'fa_chat_service.dart';
+import 'fa_glyphs.dart';
 import 'markdown_style.dart';
 import 'media_player.dart';
 import 'media_tool_names.dart';
@@ -178,17 +179,11 @@ class ChatMessageTile extends StatelessWidget {
     );
   }
 
-  /// The default AI avatar: a small indigo circle with a white sparkle/star
-  /// icon, matching the prototype design. Shown when no [avatarBuilder]
-  /// is provided.
+  /// The default AI avatar: the Fa brand `>_` tile ([FaAiAvatar]) — the
+  /// launcher brand-tile language, not a stock sparkle. Shown when no
+  /// [avatarBuilder] is provided.
   Widget _defaultAiAvatar(BuildContext context) {
-    final palette = fahChatColorsOf(context);
-    return Container(
-      width: 28,
-      height: 28,
-      decoration: BoxDecoration(color: palette.indigo, shape: BoxShape.circle),
-      child: const Icon(Icons.auto_awesome, size: 14, color: Colors.white),
-    );
+    return const FaAiAvatar(size: 28);
   }
 
   /// `onTapLink` for chat Markdown: audio/video sandbox links open a small

@@ -6,6 +6,9 @@ PODS:
     - FlutterMacOS
   - background_downloader (0.0.1):
     - Flutter
+  - cupertino_http (0.0.1):
+    - Flutter
+    - FlutterMacOS
   - Firebase/CoreOnly (12.15.0):
     - FirebaseCore (~> 12.15.0)
   - Firebase/Crashlytics (12.15.0):
@@ -73,7 +76,7 @@ PODS:
     - nanopb (~> 3.30910.0)
     - PromisesSwift (~> 2.1)
   - Flutter (1.0.0)
-  - flutter_gemma (1.5.2):
+  - flutter_gemma (1.5.5):
     - Flutter
   - flutter_js (0.1.0):
     - Flutter
@@ -165,6 +168,7 @@ DEPENDENCIES:
   - app_links (from `.symlinks/plugins/app_links/ios`)
   - audioplayers_darwin (from `.symlinks/plugins/audioplayers_darwin/darwin`)
   - background_downloader (from `.symlinks/plugins/background_downloader/ios`)
+  - cupertino_http (from `.symlinks/plugins/cupertino_http/darwin`)
   - firebase_analytics (from `.symlinks/plugins/firebase_analytics/ios`)
   - firebase_core (from `.symlinks/plugins/firebase_core/ios`)
   - firebase_crashlytics (from `.symlinks/plugins/firebase_crashlytics/ios`)
@@ -206,6 +210,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/audioplayers_darwin/darwin"
   background_downloader:
     :path: ".symlinks/plugins/background_downloader/ios"
+  cupertino_http:
+    :path: ".symlinks/plugins/cupertino_http/darwin"
   firebase_analytics:
     :path: ".symlinks/plugins/firebase_analytics/ios"
   firebase_core:
@@ -239,6 +245,7 @@ SPEC CHECKSUMS:
   app_links: 3dbc685f76b1693c66a6d9dd1e9ab6f73d97dc0a
   audioplayers_darwin: 835ced6edd4c9fc8ebb0a7cc9e294a91d99917d5
   background_downloader: 50e91d979067b82081aba359d7d916b3ba5fadad
+  cupertino_http: 94ac07f5ff090b8effa6c5e2c47871d48ab7c86c
   Firebase: a8539b633d474fbeb654c7043f9c1649e274045b
   firebase_analytics: eb8345c126a25cd1914597079faf3e64c2e6835f
   firebase_core: 1c1e250a77e2df9e80bb8bf0875c8b427044a697
@@ -252,7 +259,7 @@ SPEC CHECKSUMS:
   FirebaseRemoteConfigInterop: 7e3d57ce4b1e958bb1d15403faa7178f46bbb5b7
   FirebaseSessions: acfe7eadca47cda94ac86592737204581bb1abf6
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  flutter_gemma: b409e06cff863403c3fecbd6fda11b35156da88a
+  flutter_gemma: 784bc012e1ea4adeb0a2e883558ed8953834d06c
   flutter_js: 867813c1830e1d9b2c5d547cdb6f61801e2f2145
   GoogleAdsOnDeviceConversion: e3b71da24ff4cf01cf520756ac1c2b93c07b86ff
   GoogleAppMeasurement: a6d37949071d456e9147dac6789c4342e0e7a8c5
@@ -270,6 +277,6 @@ SPEC CHECKSUMS:
   wasm_run_flutter: 2f91e8869ddce786e92e3ec99175647fea2284a4
   webview_flutter_wkwebview: 8ebf4fded22593026f7dbff1fbff31ea98573c8d
 
-PODFILE CHECKSUM: 3be8155d902a62ce2e80d17d4a49aee50e5d8640
+PODFILE CHECKSUM: 7e3b4ad792c2347b84ee9d762160de2a26f76ac2
 
-COCOAPODS: 1.16.2
+COCOAPODS: 1.17.0

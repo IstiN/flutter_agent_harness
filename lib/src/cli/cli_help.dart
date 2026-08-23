@@ -371,6 +371,7 @@ SKILLS AND CONTEXT FILES
                      OpenAI-compatible adapter; dial setup runs the guided
                      DIAL Core flow (base URL, Api key, deployment) and
                      saves the org as a dial custom provider
+  /providers         alias for /provider
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
   /session [name]    show current or switch/create a named session

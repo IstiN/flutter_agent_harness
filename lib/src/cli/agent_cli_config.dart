@@ -45,6 +45,9 @@ final class AgentCliConfig {
     this.onSecretGranted,
     this.onModeChanged,
     this.onApprovalChanged,
+    this.skillsAccess = SkillsAccess.ask,
+    this.skillsDisableShellExecution = false,
+    this.onSkillsAccessChanged,
     this.isShiftPressed,
     this.homeDir,
     this.tuiProgramHooks,
@@ -191,6 +194,21 @@ final class AgentCliConfig {
   /// Called when the approval state changes (`/approval`, `/allow`, or an
   /// "approve always" prompt answer) so the executable can persist it.
   final void Function()? onApprovalChanged;
+
+  /// Consent for discovering third-party skill roots (Claude/Copilot/Codex
+  /// directories). [SkillsAccess.ask] means the host has not decided yet:
+  /// an interactive host asks once at startup (then persists via
+  /// [onSkillsAccessChanged]); a headless run treats it as denied. Own roots
+  /// (`.fah/skills`, `.agents/skills`) are always discovered.
+  final SkillsAccess skillsAccess;
+
+  /// When true, `!`command`` shell injections inside skill bodies are not
+  /// executed; the placeholder renders as a disabled note instead.
+  final bool skillsDisableShellExecution;
+
+  /// Called when the skills-access consent changes (startup prompt,
+  /// `/skills access ...`) so the executable can persist it.
+  final void Function(SkillsAccess access)? onSkillsAccessChanged;
 
   /// Host-provided Shift modifier check (e.g. macOS Core Graphics via FFI).
   /// When null, Shift+Enter is not specially handled.

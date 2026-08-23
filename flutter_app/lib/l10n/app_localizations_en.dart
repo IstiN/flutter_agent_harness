@@ -1115,6 +1115,35 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get settingsSkillsAccess => 'Skills access';
+
+  @override
+  String get settingsSkillsAccessHint =>
+      'Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)';
+
+  @override
+  String get skillsAccessAsk => 'Ask';
+
+  @override
+  String get skillsAccessAllowed => 'Allowed';
+
+  @override
+  String get skillsAccessDenied => 'Denied';
+
+  @override
+  String get skillsAccessDialogTitle => 'Reuse existing agent skills?';
+
+  @override
+  String get skillsAccessDialogBody =>
+      'This project may contain skills from Claude, Copilot or Codex (.claude, .github, .codex folders) — instructions other tools placed on this machine. Fa can reuse them for your tasks.';
+
+  @override
+  String get skillsAccessAllow => 'Allow';
+
+  @override
+  String get skillsAccessNotNow => 'Not now';
+
+  @override
   String get settingsThemeDark => 'Dark';
 
   @override

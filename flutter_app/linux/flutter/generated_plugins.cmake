@@ -8,6 +8,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_gemma
   flutter_js
   gtk
+  pasteboard
   url_launcher_linux
 )
 

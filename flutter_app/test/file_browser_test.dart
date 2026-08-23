@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa_ui/fa_ui.dart' show FaAttachGlyph;
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
@@ -763,7 +764,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.attach_file));
+      await tester.tap(find.byType(FaAttachGlyph));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
@@ -817,7 +818,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.attach_file));
+      await tester.tap(find.byType(FaAttachGlyph));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
@@ -852,7 +853,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.attach_file));
+      await tester.tap(find.byType(FaAttachGlyph));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
@@ -895,7 +896,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.attach_file));
+      await tester.tap(find.byType(FaAttachGlyph));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();
@@ -928,7 +929,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.attach_file));
+      await tester.tap(find.byType(FaAttachGlyph));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Attach file'));
       await tester.pumpAndSettle();

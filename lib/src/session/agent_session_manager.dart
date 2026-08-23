@@ -50,14 +50,18 @@ final class AgentSessionManager {
   AgentSessionManager({
     required this.env,
     required this.sessionsRoot,
+    String? cwd,
     JsonlSessionRepo? repo,
-  }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot);
+  }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot),
+       _cwd = cwd ?? env.cwd;
 
   /// The execution environment shared by all sessions.
   final ExecutionEnv env;
 
   /// Root directory for JSONL sessions.
   final String sessionsRoot;
+
+  final String _cwd;
 
   final JsonlSessionRepo _repo;
 
@@ -88,10 +92,7 @@ final class AgentSessionManager {
   }) async {
     final agent = agentFactory();
     final session = await _repo.create(
-      JsonlSessionCreateOptions(
-        cwd: agent.state.model.provider,
-        metadata: metadata,
-      ),
+      JsonlSessionCreateOptions(cwd: _cwd, metadata: metadata),
     );
     final id = (await session.getMetadata()).id;
     final managed = ManagedSession(id: id, agent: agent, session: session);

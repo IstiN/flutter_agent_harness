@@ -157,6 +157,15 @@ final class MemoryFileSystem implements FileSystem {
     return const Ok(null);
   }
 
+  /// Test-only: updates the modification time of [path] to [mtimeMs].
+  /// No-op when the file does not exist.
+  void setMtime(String path, int mtimeMs) {
+    final resolved = _normalize(path);
+    final file = _files[resolved];
+    if (file == null) return;
+    _files[resolved] = _MemoryFile(file.bytes, mtimeMs);
+  }
+
   @override
   Future<Result<FileInfo, FileError>> fileInfo(String path) async {
     final resolved = _normalize(path);

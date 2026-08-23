@@ -6,7 +6,9 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
+import 'package:fa_ui/fa_ui.dart' show FaClipboardImageReader;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -79,18 +81,40 @@ AgentService _fakeService(ExecutionEnv env, StreamFunction streamFunction) {
   );
 }
 
-Future<void> _pumpComposer(WidgetTester tester, AgentService service) async {
+Future<void> _pumpComposer(
+  WidgetTester tester,
+  AgentService service, {
+  FaClipboardImageReader? clipboardImageReader,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildFahTheme(),
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(body: ChatComposer(service: service)),
+      home: Scaffold(
+        body: ChatComposer(
+          service: service,
+          clipboardImageReader: clipboardImageReader,
+        ),
+      ),
     ),
   );
   await tester.pumpAndSettle();
 }
+
+/// Simulates Cmd+V: the composer's Focus handler reads meta/control from
+/// HardwareKeyboard, so the modifier must be held across the key event.
+Future<void> _pressPaste(WidgetTester tester) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+  await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+  // The smart-paste chain is async (clipboard channel + staging).
+  await tester.runAsync(() => Future<void>.delayed(_pasteSettle));
+  await tester.pump();
+}
+
+const _pasteSettle = Duration(milliseconds: 100);
 
 Future<void> _typeAndSend(WidgetTester tester, String text) async {
   await tester.enterText(find.byType(TextField), text);
@@ -180,5 +204,156 @@ void main() {
     expect(call, 2);
     expect(service.messages.last.role, 'assistant');
     expect(service.messages.last.content, 'follow-up answer');
+  });
+
+  testWidgets('Shift+Enter inserts a newline instead of sending (desktop '
+      'composer regression)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final service = _fakeService(env, _singleTextResponse('ok'));
+    addTearDown(service.dispose);
+    await service.initialize();
+    await _pumpComposer(tester, service);
+
+    await tester.enterText(find.byType(TextField), 'hello');
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'hello\n');
+    // Nothing was sent — the newline never reaches the IME's send action.
+    expect(service.messages.where((m) => m.role == 'user'), isEmpty);
+
+    // Bare Enter (the IME send action) still sends.
+    await tester.runAsync(() async {
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pump();
+      for (
+        var i = 0;
+        i < 100 && service.messages.where((m) => m.role == 'assistant').isEmpty;
+        i++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await tester.pump();
+      }
+    });
+    expect(
+      service.messages.where((m) => m.role == 'user').map((m) => m.content),
+      contains('hello'),
+    );
+  });
+
+  group('smart paste (Cmd/Ctrl+V)', () {
+    // flutter_test has no clipboard mock — an unanswered
+    // Clipboard.setData/getData future never completes (the methods ride
+    // SystemChannels.platform here), so the group installs an in-memory
+    // handler.
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    String? clipText;
+
+    setUp(() {
+      clipText = null;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        switch (call.method) {
+          case 'Clipboard.setData':
+            clipText = (call.arguments as Map)['text'] as String?;
+            return null;
+          case 'Clipboard.getData':
+            return <String, Object?>{'text': clipText};
+        }
+        return null;
+      });
+    });
+    tearDown(() {
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    testWidgets('short single-line text pastes inline at the cursor', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(
+        tester,
+        service,
+        clipboardImageReader: () async => null,
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await Clipboard.setData(const ClipboardData(text: 'short snippet'));
+      await _pressPaste(tester);
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, 'short snippet');
+      // No attachment chip, nothing sent.
+      expect(find.textContaining('pasted-'), findsNothing);
+      expect(service.messages.where((m) => m.role == 'user'), isEmpty);
+    });
+
+    testWidgets('long multi-line text becomes a staged .txt chip instead of '
+        'flooding the field', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(
+        tester,
+        service,
+        clipboardImageReader: () async => null,
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      final longText = List.generate(50, (i) => 'log line $i').join('\n');
+      await Clipboard.setData(ClipboardData(text: longText));
+      await _pressPaste(tester);
+
+      // The field stays clean; the text landed in a staged uploads/ chip.
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, isEmpty);
+      expect(find.textContaining('pasted-'), findsOneWidget);
+      expect(find.textContaining('.txt'), findsOneWidget);
+      // Staged under uploads/ in the sandbox env.
+      final staged = await env.listDir('uploads');
+      expect(staged.valueOrNull, isNotEmpty);
+      expect(service.messages.where((m) => m.role == 'user'), isEmpty);
+    });
+
+    testWidgets('a clipboard image becomes a staged image chip', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(
+        tester,
+        service,
+        clipboardImageReader: () async => (
+          name: 'clipboard-shot.png',
+          bytes: Uint8List.fromList(const [1, 2, 3]),
+          mimeType: 'image/png',
+        ),
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await _pressPaste(tester);
+
+      // Image chips render a thumbnail without the name text — assert the
+      // chip via its remove button and the staged uploads/ file.
+      expect(find.byIcon(Icons.close), findsOneWidget);
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, isEmpty);
+      final staged = await env.listDir('uploads');
+      expect(staged.valueOrNull, isNotEmpty);
+    });
   });
 }

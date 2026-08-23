@@ -13,6 +13,12 @@ typedef FaChatUploadFile = ({String name, Uint8List bytes, String mimeType});
 /// when the user cancels.
 typedef FaChatUploadPicker = Future<List<FaChatUploadFile>> Function();
 
+/// Reads an image from the system clipboard for smart paste (host
+/// capability — fa backs it with super_clipboard). Returns null when the
+/// clipboard holds no image. Null hook = clipboard images are ignored and
+/// paste falls back to text.
+typedef FaClipboardImageReader = Future<FaChatUploadFile?> Function();
+
 /// Analytics sink for chat events (`message_sent`, `approval_mode_changed`,
 /// `voice_input_used`, ...). Optional; events are dropped when unset.
 typedef FaChatAnalytics =
@@ -68,6 +74,10 @@ abstract final class FaChatHost {
   /// Camera picker for the composer attach sheet; null hides the "Camera"
   /// entry.
   static FaChatUploadPicker? cameraPicker;
+
+  /// Clipboard image reader for the composer's smart paste (Cmd/Ctrl+V);
+  /// null skips the image probe and pastes text only.
+  static FaClipboardImageReader? clipboardImageReader;
 
   /// Voice input for the composer mic button; null hides the mic.
   static FaChatVoiceInput? voiceInput;

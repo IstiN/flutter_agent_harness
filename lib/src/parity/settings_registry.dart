@@ -44,6 +44,9 @@ enum SharedSetting {
 
   /// Prompt template overrides (system prompt, mode prompts, compaction prompts).
   promptOverrides,
+
+  /// Consent for reading third-party skill roots (Claude/Copilot/Codex).
+  skillsAccess,
 }
 
 /// Settings that are currently CLI-only.
@@ -117,6 +120,11 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     cliRef: 'promptOverrides',
     appRef: null, // app does not expose prompt overrides yet — CLI-only.
     description: 'Prompt template overrides.',
+  ),
+  SharedSetting.skillsAccess: _SettingMeta(
+    cliRef: 'skillsAccess',
+    appRef: 'SkillsAccessStore',
+    description: 'Consent for reading third-party skill roots.',
   ),
 };
 

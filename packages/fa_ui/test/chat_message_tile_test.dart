@@ -49,8 +49,8 @@ void main() {
       ),
     );
     expect(find.text('hello'), findsOneWidget);
-    // The stock avatar is the small indigo circle with the sparkle icon.
-    expect(find.byIcon(Icons.auto_awesome), findsOneWidget);
+    // The stock avatar is the Fa brand `>_` tile.
+    expect(find.byType(FaAiAvatar), findsOneWidget);
   });
 
   testWidgets('surface tokens re-seat the bubble and keep the stock border', (

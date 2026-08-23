@@ -808,8 +808,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         child: Stack(
           children: [
             _buildGridArea(colors),
-            // The collapsed session chat (Fa button / streaming work bar)
-            // and, expanded, the 92% session sheet with the pager.
+            // The iMessage-style session chat overlay: the always-visible
+            // input bar, the sessions drawer (from the left) and the session
+            // panel sliding up under the bar.
             if (!widget.hideChatSheet)
               SessionChatSheet(
                 key: _sheetKey,

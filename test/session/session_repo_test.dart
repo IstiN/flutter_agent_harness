@@ -29,6 +29,11 @@ void main() {
       expect(decodeSessionCwd(encodeSessionCwd('/single')), '/single');
     });
 
+    test('ignores trailing slashes when encoding', () {
+      expect(encodeSessionCwd('/foo/bar/'), encodeSessionCwd('/foo/bar'));
+      expect(encodeSessionCwd('/foo/bar//'), encodeSessionCwd('/foo/bar'));
+    });
+
     test('returns null for bad or empty slugs', () {
       expect(decodeSessionCwd('Users-Uladzimir_Klyshevich-git-dm.ai'), isNull);
       expect(decodeSessionCwd('--Users'), isNull);
@@ -40,21 +45,19 @@ void main() {
   });
 
   group('JsonlSessionRepo', () {
-    test(
-      'create lays out files per pi scheme: root/encoded-cwd/ts_id.jsonl',
-      () async {
-        final session = await repo.create(
-          JsonlSessionCreateOptions(cwd: '/work/dir', id: 'sess-1'),
-        );
-        final metadata = await session.getMetadata();
-        expect(metadata.id, 'sess-1');
-        expect(
-          metadata.path,
-          matches(r'^/sessions/--work-dir--/.+_sess-1\.jsonl$'),
-        );
-        expect((await fs.exists(metadata.path)).valueOrNull, isTrue);
-      },
-    );
+    test('create lays out files under an encoded cwd directory', () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work/dir', id: 'sess-1'),
+      );
+      final metadata = await session.getMetadata();
+      expect(metadata.id, 'sess-1');
+      expect(metadata.cwd, '/work/dir');
+      expect(
+        metadata.path,
+        matches(r'^/sessions/--work-dir--/.+_sess-1\.jsonl$'),
+      );
+      expect((await fs.exists(metadata.path)).valueOrNull, isTrue);
+    });
 
     test(
       'create rejects nothing; ids default to unique generated values',
@@ -95,34 +98,39 @@ void main() {
       );
     });
 
-    test('list returns sessions newest first, filtered by cwd', () async {
-      final a = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work', id: 'a'),
-      );
-      final b = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/other', id: 'b'),
-      );
-      final c = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work', id: 'c'),
-      );
+    test(
+      'list returns sessions most recently updated first, filtered by cwd',
+      () async {
+        final a = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work', id: 'a'),
+        );
+        final b = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/other', id: 'b'),
+        );
+        final c = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work', id: 'c'),
+        );
 
-      final all = await repo.list();
-      expect(
-        all.map((m) => m.id),
-        containsAll([
-          (await a.getMetadata()).id,
-          (await b.getMetadata()).id,
-          (await c.getMetadata()).id,
-        ]),
-      );
-      final createdAts = all.map((m) => m.createdAt).toList();
-      final sorted = [...createdAts]..sort((x, y) => y.compareTo(x));
-      expect(createdAts, sorted);
+        final all = await repo.list();
+        expect(
+          all.map((m) => m.id),
+          containsAll([
+            (await a.getMetadata()).id,
+            (await b.getMetadata()).id,
+            (await c.getMetadata()).id,
+          ]),
+        );
+        final activityTimes = all
+            .map((m) => m.lastUpdatedAt ?? m.createdAt)
+            .toList();
+        final sorted = [...activityTimes]..sort((x, y) => y.compareTo(x));
+        expect(activityTimes, sorted);
 
-      final workOnly = await repo.list(cwd: '/work');
-      expect(workOnly.map((m) => m.cwd).toSet(), {'/work'});
-      expect(workOnly, hasLength(2));
-    });
+        final workOnly = await repo.list(cwd: '/work');
+        expect(workOnly.map((m) => m.cwd).toSet(), {'/work'});
+        expect(workOnly, hasLength(2));
+      },
+    );
 
     test('list skips corrupt session files', () async {
       final session = await repo.create(

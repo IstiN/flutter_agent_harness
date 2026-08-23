@@ -24,8 +24,8 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
     return MemoryExecutionEnv(cwd: '/');
   }
 
-  final appDir = await getApplicationDocumentsDirectory();
   if (Platform.isAndroid || Platform.isIOS) {
+    final appDir = await getApplicationDocumentsDirectory();
     final sandbox = Directory('${appDir.path}/fah_sandbox');
     await sandbox.create(recursive: true);
 
@@ -42,9 +42,11 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
     );
   }
 
-  // Desktop: the container env, plus (macOS) the project-folder mount when
-  // one was picked before. A stale bookmark (folder moved/deleted) is
-  // remembered for the UI's "pick again" warning instead of mounted.
+  // Desktop: use the application-support directory as the container cwd so
+  // settings/stores live inside the app sandbox and do not trigger a
+  // permission prompt on macOS. macOS additionally layers the optional
+  // project-folder mount on top via [ProjectMountEnv].
+  final appDir = await getApplicationSupportDirectory();
   final baseEnv = LocalExecutionEnv(cwd: appDir.path);
   if (!Platform.isMacOS) return baseEnv;
   final mountEnv = ProjectMountEnv(baseEnv);
