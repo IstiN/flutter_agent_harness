@@ -1183,4 +1183,8 @@
 - fix(providers): restore Kimi endpoint (api.kimi.com/coding/v1) and default model k3
 - fix(cli): auto-refresh expired CodeMie SSO cookie on startup
 
+## 0.1.204
+
+- fix(providers): do not close shared HTTP client during OpenRouter OAuth exchange
+
 ## Unreleased
