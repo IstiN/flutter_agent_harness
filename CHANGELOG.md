@@ -1176,4 +1176,11 @@
 
 - fix(install): remove broken Dart fallback, respect FA_INSTALL_DIR, sign macOS CLI in CI
 
+## 0.1.203
+
+- fix(cli): provider picker, CodeMie auth refresh, skills access
+- feat(session): unify CLI and macOS app session storage
+- fix(providers): restore Kimi endpoint (api.kimi.com/coding/v1) and default model k3
+- fix(cli): auto-refresh expired CodeMie SSO cookie on startup
+
 ## Unreleased
