@@ -299,6 +299,97 @@ prompts:
         ),
       );
     });
+
+    group('skills section', () {
+      test('defaults to ask and shell execution enabled', () {
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.skillsAccess, SkillsAccess.ask);
+        expect(loaded.skillsDisableShellExecution, isFalse);
+      });
+
+      test('parses granted access', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('skills:\n  access: granted\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.skillsAccess, SkillsAccess.granted);
+      });
+
+      test('parses denied access and disabled shell execution', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'skills:\n  access: denied\n  disableShellExecution: true\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.skillsAccess, SkillsAccess.denied);
+        expect(loaded.skillsDisableShellExecution, isTrue);
+      });
+
+      test('rejects a non-map skills section', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('skills: not-a-map\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('skills must be a map'),
+            ),
+          ),
+        );
+      });
+
+      test('rejects an invalid access value', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('skills:\n  access: maybe\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('skills.access must be ask'),
+            ),
+          ),
+        );
+      });
+
+      test('rejects a non-boolean disableShellExecution value', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('skills:\n  disableShellExecution: "yes"\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('skills.disableShellExecution must be a boolean'),
+            ),
+          ),
+        );
+      });
+
+      test('rejects unknown skills keys', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('skills:\n  bogus: 1\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('unknown "skills" key'),
+            ),
+          ),
+        );
+      });
+    });
   });
 
   group('provider watchdog overrides', () {

@@ -412,25 +412,21 @@ void main() {
                   OpenPickerMsg('m', 'chat model — model', const [
                     MenuItem(key: 'gpt-4o', label: 'gpt-4o'),
                     MenuItem(key: 'claude-sonnet', label: 'claude-sonnet'),
-                    MenuItem(
-                      key: 'kimi-k3',
-                      label: 'kimi-k3',
-                      description: 'fast',
-                    ),
+                    MenuItem(key: 'k3', label: 'k3', description: 'fast'),
                   ]),
                 )
                 .$1
             as FaTuiModel;
 
     // Typing filters locally (label + description, case-insensitive).
-    for (final rune in 'KIMI'.split('')) {
+    for (final rune in 'K3'.split('')) {
       model =
           model.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: rune))).$1
               as FaTuiModel;
     }
-    expect(model.modelFilter, 'KIMI');
-    expect(model.menuItems.map((i) => i.key), ['kimi-k3']);
-    expect(model.view().content, contains('[chat model — model: KIMI]'));
+    expect(model.modelFilter, 'K3');
+    expect(model.menuItems.map((i) => i.key), ['k3']);
+    expect(model.view().content, contains('[chat model — model: K3]'));
 
     // Backspace restores the full list; the filter echo disappears.
     for (var i = 0; i < 4; i++) {

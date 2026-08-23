@@ -2512,7 +2512,7 @@ const _knownModels = <String, List<String>>{
     'anthropic/claude-opus-4',
     'openai/gpt-4.1-mini',
   ],
-  'kimi': ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'],
+  'kimi': ['k3', 'kimi-for-coding', 'kimi-for-coding-highspeed', 'k3-256k'],
   'anthropic': ['claude-sonnet-4-5', 'claude-opus-4', 'claude-haiku-4'],
   'google': ['gemini-2.5-pro', 'gemini-2.0-flash'],
   'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],

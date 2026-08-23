@@ -359,8 +359,8 @@ SKILLS AND CONTEXT FILES
                      a guided setup that saves the provider (api type, url,
                      key, model); openrouter oauth authenticates via OpenRouter
                      PKCE and stores the resulting key in the secure store;
-                     kimi switches to the Moonshot/Kimi OpenAI-compatible
-                     endpoint (api.moonshot.cn/v1, key: MOONSHOT_API_KEY);
+                     kimi switches to the Kimi Code OpenAI-compatible
+                     endpoint (api.kimi.com/coding/v1, key: KIMI_API_KEY);
                      chatgpt oauth signs in with a ChatGPT account (Codex
                      backend) and stores the OAuth credentials blob as
                      CHATGPT_OAUTH_CREDENTIALS — access tokens refresh

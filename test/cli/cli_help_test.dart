@@ -55,7 +55,7 @@ void main() {
       'google',
       'dial',
       'OPENROUTER_API_KEY',
-      'MOONSHOT_API_KEY',
+      'KIMI_API_KEY',
       'OPENAI_API_KEY',
       'ANTHROPIC_API_KEY',
       'GOOGLE_API_KEY',
