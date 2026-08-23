@@ -14,7 +14,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/ui/screens/codemie_sso_webview.dart';
 import 'package:fa/services/provider_registry.dart';
-import 'package:fa_ui/fa_ui.dart' show pushFaPage;
+import 'package:fa_ui/fa_ui.dart' show FaModelListPicker, pushFaPage;
 
 /// Runs the full CodeMie SSO flow:
 ///
@@ -314,12 +314,12 @@ Future<CodeMieSsoCredentials?> _desktopSso(
 /// Shows a model picker page (dialog on wide, full page on narrow) and
 /// returns the chosen model id.
 ///
-/// When [models] is non-empty, a list of radio tiles is shown with a manual
-/// entry field at the bottom. When [models] is empty, only the manual entry
-/// field is shown.
+/// The shared quick-filter pattern ([FaModelListPicker]): the field is the
+/// value AND the live filter over the fetched [models]; when the list is
+/// empty (fetch failed), a note says the id must be typed manually.
 ///
-/// [preselected] highlights the current model. When [allowCancel] is true,
-/// the user can dismiss the page without picking (returns null).
+/// [preselected] seeds the field with the current model. When [allowCancel]
+/// is true, the user can dismiss the page without picking (returns null).
 Future<String?> _pickModel(
   BuildContext context,
   List<String> models, {
@@ -405,98 +405,55 @@ class _ModelPickerPage extends StatefulWidget {
 }
 
 class _ModelPickerPageState extends State<_ModelPickerPage> {
-  late final TextEditingController _manualController;
-  String? _selected;
+  late final TextEditingController _modelController;
 
   @override
   void initState() {
     super.initState();
-    _manualController = TextEditingController();
-    _selected = widget.preselected;
+    _modelController = TextEditingController(text: widget.preselected ?? '');
   }
 
   @override
   void dispose() {
-    _manualController.dispose();
+    _modelController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('Select Model')),
       body: SafeArea(
         child: Column(
           children: [
+            // The same quick-filter pattern every model picker uses: the
+            // field is the value AND the live filter over the fetched list.
             Expanded(
-              child: ListView(
-                children: [
-                  if (widget.models.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        'Could not fetch the model list. Enter a model id manually.',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    )
-                  else
-                    for (final model in widget.models)
-                      ListTile(
-                        title: Text(model),
-                        dense: true,
-                        trailing: _selected == model
-                            ? Icon(
-                                Icons.check_circle,
-                                size: 20,
-                                color: theme.colorScheme.primary,
-                              )
-                            : Icon(
-                                Icons.radio_button_unchecked,
-                                size: 20,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                        onTap: () => setState(() => _selected = model),
-                      ),
-                ],
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: FaModelListPicker(
+                  controller: _modelController,
+                  models: widget.models,
+                  loading: false,
+                ),
               ),
             ),
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  TextField(
-                    controller: _manualController,
-                    decoration: const InputDecoration(
-                      labelText: 'Or enter model id',
-                      isDense: true,
-                      border: OutlineInputBorder(),
+                  if (widget.allowCancel)
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
                     ),
-                    onChanged: (value) {
-                      if (value.trim().isNotEmpty) {
-                        setState(() => _selected = value.trim());
-                      }
+                  FilledButton(
+                    onPressed: () {
+                      final id = _modelController.text.trim();
+                      Navigator.of(context).pop(id.isNotEmpty ? id : null);
                     },
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      if (widget.allowCancel)
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Cancel'),
-                        ),
-                      FilledButton(
-                        onPressed: () {
-                          final manual = _manualController.text.trim();
-                          Navigator.of(
-                            context,
-                          ).pop(manual.isNotEmpty ? manual : _selected);
-                        },
-                        child: const Text('Connect'),
-                      ),
-                    ],
+                    child: const Text('Connect'),
                   ),
                 ],
               ),

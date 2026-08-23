@@ -91,6 +91,9 @@ void main() {
         'beta-2',
       );
 
+      // The quick-select list pushes the actions below the fold.
+      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
       expect((await result.future)?.modelId, 'beta-2');
@@ -120,6 +123,9 @@ void main() {
       // The discoverable manual row shows for a query with no exact match.
       expect(find.text('Use "custom-x"'), findsOneWidget);
 
+      // The quick-select list pushes the actions below the fold.
+      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
       expect((await result.future)?.modelId, 'custom-x');

@@ -44,13 +44,25 @@ List<String> splitSkillArguments(String args) {
   final current = StringBuffer();
   var inQuotes = false;
   var hasToken = false;
+
+  void flushToken() {
+    if (hasToken || current.isNotEmpty) {
+      result.add(current.toString());
+      current.clear();
+      hasToken = false;
+    }
+  }
+
   for (var i = 0; i < args.length; i++) {
     final char = args[i];
     if (inQuotes) {
+      final consumed = _handleQuotedChar(char, args, i, current);
+      if (consumed != null) {
+        i = consumed;
+        continue;
+      }
       if (char == '"') {
         inQuotes = false;
-      } else if (char == '\\' && i + 1 < args.length) {
-        current.write(args[++i]);
       } else {
         current.write(char);
       }
@@ -58,17 +70,28 @@ List<String> splitSkillArguments(String args) {
       inQuotes = true;
       hasToken = true;
     } else if (char.trim().isEmpty) {
-      if (hasToken || current.isNotEmpty) {
-        result.add(current.toString());
-        current.clear();
-        hasToken = false;
-      }
+      flushToken();
     } else {
       current.write(char);
     }
   }
-  if (hasToken || current.isNotEmpty) result.add(current.toString());
+  flushToken();
   return result;
+}
+
+/// Handles one character while inside double quotes. Returns the new index
+/// when a backslash escape consumed an extra character, null otherwise.
+int? _handleQuotedChar(
+  String char,
+  String args,
+  int index,
+  StringBuffer current,
+) {
+  if (char == '\\' && index + 1 < args.length) {
+    current.write(args[index + 1]);
+    return index + 1;
+  }
+  return null;
 }
 
 /// Renders [skill]'s body for one invocation.

@@ -320,31 +320,9 @@ extension on AgentCli {
     final registry = config.customProviders;
     if (registry == null) return;
     final model = _agent.state.model;
-    final entry = registry.entries
-        .where(
-          (e) =>
-              e.baseUrl == model.baseUrl &&
-              e.authMethod == CustomProviderAuthMethod.sso,
-        )
-        .firstOrNull;
+    final entry = _findCodeMieSsoEntry(registry, model.baseUrl);
     if (entry == null) return;
-    // The cookie lives in the secure store under the saved entry's keyName.
-    // Do NOT trust config.apiKey here: if the user has OPENAI_API_KEY (or
-    // another catalog env var) set, config.apiKey would be that key, and
-    // sending it as a Cookie: header would still get a 302 from CodeMie.
-    final keyName = entry.keyName;
-    String? cookie;
-    if (keyName != null) {
-      cookie = config.secureKeys?.read(keyName);
-    }
-    // Back-compat for tests/old entries that have no keyName: accept the
-    // apiKey only when it looks like a cookie (k=v[;...]), not a raw API key.
-    if (cookie == null || cookie.isEmpty) {
-      final fallback = config.apiKey;
-      if (fallback.contains('=') || fallback.contains(';')) {
-        cookie = fallback;
-      }
-    }
+    final cookie = _resolveCodeMieCookie(entry.keyName);
     if (cookie == null || cookie.isEmpty) return;
 
     if (codeMieCookieExpired(cookie)) {
@@ -358,6 +336,40 @@ extension on AgentCli {
       return;
     }
 
+    _applyCodeMieCookieAuth(entry, cookie);
+  }
+
+  CustomProviderEntry? _findCodeMieSsoEntry(
+    CustomProviderRegistry registry,
+    String baseUrl,
+  ) {
+    return registry.entries
+        .where(
+          (e) =>
+              e.baseUrl == baseUrl &&
+              e.authMethod == CustomProviderAuthMethod.sso,
+        )
+        .firstOrNull;
+  }
+
+  String? _resolveCodeMieCookie(String? keyName) {
+    // The cookie lives in the secure store under the saved entry's keyName.
+    // Do NOT trust config.apiKey here: if the user has OPENAI_API_KEY (or
+    // another catalog env var) set, config.apiKey would be that key, and
+    // sending it as a Cookie: header would still get a 302 from CodeMie.
+    if (keyName != null) {
+      final stored = config.secureKeys?.read(keyName);
+      if (stored != null && stored.isNotEmpty) return stored;
+    }
+    // Back-compat for tests/old entries that have no keyName: accept the
+    // apiKey only when it looks like a cookie (k=v[;...]), not a raw API key.
+    final fallback = config.apiKey;
+    if (fallback.contains('=') || fallback.contains(';')) return fallback;
+    return null;
+  }
+
+  void _applyCodeMieCookieAuth(CustomProviderEntry entry, String cookie) {
+    final model = _agent.state.model;
     _apiKey = cookie;
     _explicitToken = true;
     _streamFunction = _catalogStreamFunction(entry.spec.kind, '');

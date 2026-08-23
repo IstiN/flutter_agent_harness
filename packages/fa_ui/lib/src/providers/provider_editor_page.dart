@@ -2,14 +2,19 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
+import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/model_list_picker.dart';
 
 /// Pushes the [ProviderEditorPage] in create mode and saves the result to
 /// [registry] (definition + session key). Returns the added provider, or
@@ -113,6 +118,7 @@ class ProviderEditorPage extends StatefulWidget {
     this.prefillModelId,
     this.keyHelpUrl,
     this.onReauthenticate,
+    this.modelsFetcher,
   });
 
   /// App bar title (`Add provider` / `Edit provider` / the preset label).
@@ -169,6 +175,11 @@ class ProviderEditorPage extends StatefulWidget {
   /// the save). Null hides the button.
   final Future<bool> Function(BuildContext context)? onReauthenticate;
 
+  /// `/models` fetch override (tests); production goes through the core
+  /// [fetchModelsForEndpoint] dispatch (DIAL deployments, the CodeMie
+  /// marker, the OpenAI-compatible fallback).
+  final ModelsEndpointFetcher? modelsFetcher;
+
   @override
   State<ProviderEditorPage> createState() => _ProviderEditorPageState();
 }
@@ -182,6 +193,16 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
   String? _error;
   var _presetSeeded = false;
   var _reauthRunning = false;
+
+  /// The endpoint's `/models` ids feeding the model field's quick select.
+  List<String> _endpointModels = const [];
+  var _modelsLoading = false;
+
+  /// Monotonic fetch generation — a late answer never overwrites a newer
+  /// one.
+  var _fetchSeq = 0;
+  var _modelsFetchStarted = false;
+  Timer? _modelsDebounce;
 
   bool get _isPreset => widget.preset != null;
 
@@ -224,15 +245,88 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
         }
       }
     }
+    if (!_modelsFetchStarted) {
+      _modelsFetchStarted = true;
+      // The model list follows the endpoint (and the key authenticating
+      // it): either change re-fetches, debounced so typing doesn't spray
+      // requests. Listeners attach only now — after the preset seeding —
+      // so the seed itself doesn't schedule a redundant second fetch.
+      _urlController.addListener(_scheduleModelsFetch);
+      _keyController.addListener(_scheduleModelsFetch);
+      // Key resolution reads inherited stores — unavailable in initState.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_fetchEndpointModels());
+      });
+    }
   }
 
   @override
   void dispose() {
+    _modelsDebounce?.cancel();
     _nameController.dispose();
     _urlController.dispose();
     _modelController.dispose();
     _keyController.dispose();
     super.dispose();
+  }
+
+  void _scheduleModelsFetch() {
+    _modelsDebounce?.cancel();
+    _modelsDebounce = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_fetchEndpointModels());
+    });
+  }
+
+  /// Fetches the endpoint's model list for the model field's quick select.
+  /// The [ProviderEditorPage.modelsFetcher] override (tests) wins;
+  /// otherwise the core [fetchModelsForEndpoint] dispatch handles the DIAL
+  /// deployments endpoint and the CodeMie marker itself. Silent on
+  /// failure — free-text entry always works, the picker just shows the
+  /// manual-entry note.
+  Future<void> _fetchEndpointModels() async {
+    final baseUrl = _urlController.text.trim();
+    if (baseUrl.isEmpty) {
+      // Invalidate any in-flight fetch and drop the stale list.
+      _fetchSeq++;
+      if (_endpointModels.isNotEmpty) {
+        setState(() => _endpointModels = const []);
+      }
+      return;
+    }
+    final seq = ++_fetchSeq;
+    setState(() => _modelsLoading = true);
+    try {
+      // A freshly typed key wins; otherwise fall back to whatever the
+      // provider already has (session key, host key chain, saved keys).
+      final typed = _keyController.text.trim();
+      final provider = widget.initial ?? widget.preset;
+      final key = typed.isNotEmpty
+          ? typed
+          : provider != null
+          ? resolveProviderKey(
+              provider,
+              registry: widget.registry,
+              keysStore: SessionKeysScope.maybeOf(context),
+            )
+          : '';
+      final override = widget.modelsFetcher;
+      final (ids, _, _) = override != null
+          ? await override(baseUrl, apiKey: key)
+          : await fetchModelsForEndpoint(
+              baseUrl,
+              apiKey: key,
+              provider:
+                  ProviderPreset.fromBaseUrl(baseUrl) == ProviderPreset.dial
+                  ? 'dial'
+                  : null,
+            );
+      if (!mounted || seq != _fetchSeq) return;
+      setState(() => _endpointModels = ids);
+    } finally {
+      if (mounted && seq == _fetchSeq) {
+        setState(() => _modelsLoading = false);
+      }
+    }
   }
 
   void _save() {
@@ -329,13 +423,13 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
+              FaModelListPicker(
                 controller: _modelController,
-                decoration: InputDecoration(
-                  labelText: _isPreset
-                      ? strings.settingsModelIdLabel
-                      : strings.settingsModelIdOptionalLabel,
-                ),
+                models: _endpointModels,
+                loading: _modelsLoading,
+                label: _isPreset
+                    ? strings.settingsModelIdLabel
+                    : strings.settingsModelIdOptionalLabel,
               ),
               const SizedBox(height: 12),
               TextField(

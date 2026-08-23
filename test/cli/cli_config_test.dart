@@ -389,6 +389,32 @@ prompts:
           ),
         );
       });
+
+      test('omits skills section with default settings', () {
+        expect(CliConfig().toYaml(), isNot(contains('skills:')));
+      });
+
+      test('emits skills access when not ask', () {
+        final yaml = CliConfig(skillsAccess: SkillsAccess.granted).toYaml();
+        expect(yaml, contains('skills:\n  access: granted'));
+        expect(yaml, isNot(contains('disableShellExecution')));
+      });
+
+      test('emits disabled shell execution alone when access is ask', () {
+        final yaml = CliConfig(skillsDisableShellExecution: true).toYaml();
+        expect(yaml, contains('skills:\n  disableShellExecution: true'));
+        expect(yaml, isNot(contains('access:')));
+      });
+
+      test('emits both skills fields when changed', () {
+        final yaml = CliConfig(
+          skillsAccess: SkillsAccess.denied,
+          skillsDisableShellExecution: true,
+        ).toYaml();
+        expect(yaml, contains('skills:'));
+        expect(yaml, contains('access: denied'));
+        expect(yaml, contains('disableShellExecution: true'));
+      });
     });
   });
 

@@ -343,7 +343,13 @@ factual: paths, commands, invariants — no essays.
   live quick-search, and a `Use "<query>"` row keeps manual entry —
   `FaModelListPicker` (`src/widgets/model_list_picker.dart`, the initial /
   tap-picked value shows the FULL list with a check, only user typing
-  filters) for the form pages, the same `Use "<filter>"` row inside
+  filters) for the form pages — media slots, agent roles, AND the
+  `ProviderEditorPage`'s model id (the endpoint's `/models` fetch is
+  debounced on URL/key edits through the same core dispatch, a typed key
+  wins over the provider's resolved key, `modelsFetcher` is the test
+  seam) — and the CodeMie SSO model step
+  (`flutter_app/lib/services/codemie_sso_flow.dart`) renders the same
+  picker; the same `Use "<filter>"` row lives inside
   `UnifiedModelPickerPage` (applies on the ACTIVE provider, key resolved
   via the registry). The media slots AND the agent-role rows
   (`TaskModelsSection`: Quick model / Subagents model) share the ONE

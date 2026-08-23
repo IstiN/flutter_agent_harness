@@ -238,7 +238,7 @@ Set<String>? _parseAgentTools(Object? toolsValue) {
   }
   final names = entries.where((s) => s.isNotEmpty).toSet();
   if (names.contains('*')) return null;
-  return names.isEmpty ? null : names;
+  return names;
 }
 
 /// `modelRole` wins; `model` (Claude Code) acts as its alias when it names

@@ -21,6 +21,7 @@ import 'package:http/http.dart' as http;
 import 'package:yaml/yaml.dart';
 
 import '../agent/agent.dart';
+import 'agent_event_handler.dart';
 import 'key_event.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';

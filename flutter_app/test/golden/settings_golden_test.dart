@@ -337,10 +337,11 @@ void main() {
         tester,
         size: goldenSizeDesktop,
         wrap: _wrapPage,
-        const ProviderEditorPage(
+        ProviderEditorPage(
           title: 'Edit provider',
           initial: provider,
           hasSavedKey: true,
+          modelsFetcher: _editorModels,
         ),
       );
       await tester.pumpAndSettle();

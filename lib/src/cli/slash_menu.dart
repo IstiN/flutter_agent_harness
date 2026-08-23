@@ -15,6 +15,18 @@ List<MenuItem> buildSlashMenuItems(
   List<Skill> skills = const [],
 }) {
   final lower = prefix.toLowerCase();
+  return [
+    ..._builtinMenuItems(slashCommands, lower),
+    ..._pluginMenuItems(pluginSlashCommands, lower),
+    ..._templateMenuItems(templates, lower),
+    ..._skillMenuItems(skills, lower),
+  ];
+}
+
+List<MenuItem> _builtinMenuItems(
+  Map<String, String> slashCommands,
+  String lower,
+) {
   final items = <MenuItem>[];
   for (final entry in slashCommands.entries) {
     if (entry.key.toLowerCase().contains(lower) ||
@@ -24,11 +36,27 @@ List<MenuItem> buildSlashMenuItems(
       );
     }
   }
+  return items;
+}
+
+List<MenuItem> _pluginMenuItems(
+  Map<String, SlashCommand> pluginSlashCommands,
+  String lower,
+) {
+  final items = <MenuItem>[];
   for (final entry in pluginSlashCommands.entries) {
     if (entry.key.toLowerCase().contains(lower)) {
       items.add(MenuItem(key: entry.key, label: entry.key));
     }
   }
+  return items;
+}
+
+List<MenuItem> _templateMenuItems(
+  List<PromptTemplate> templates,
+  String lower,
+) {
+  final items = <MenuItem>[];
   for (final t in templates) {
     final name = '/${t.name}';
     if (name.toLowerCase().contains(lower)) {
@@ -37,6 +65,11 @@ List<MenuItem> buildSlashMenuItems(
       );
     }
   }
+  return items;
+}
+
+List<MenuItem> _skillMenuItems(List<Skill> skills, String lower) {
+  final items = <MenuItem>[];
   for (final skill in userInvocableSkills(skills)) {
     final hint = skill.manifest.argumentHint;
     final description = hint == null || hint.isEmpty
@@ -195,4 +228,25 @@ List<String> lineModeMenuLines(
       '  ${i + 1}) ${style.cyan(entries[i].label)} ${entries[i].description}',
     '',
   ];
+}
+
+/// Resolves a line-mode menu answer: a 1-based number over the builtin
+/// commands + skills, or a command/skill name with or without the leading
+/// slash. Null when neither matches.
+String? resolveLineModeMenuChoice(String trimmed, List<Skill> skills) {
+  final entries = lineModeMenuEntries(skills);
+  // Numeric choice.
+  final index = int.tryParse(trimmed);
+  if (index != null && index >= 1 && index <= entries.length) {
+    return entries[index - 1].key;
+  }
+  // Name choice; accept with or without leading slash. Builtins first.
+  final name = trimmed.startsWith('/') ? trimmed : '/$trimmed';
+  if (builtinSlashCommands.containsKey(name)) return name;
+  for (final skill in userInvocableSkills(skills)) {
+    if ('/${skill.name}'.toLowerCase() == name.toLowerCase()) {
+      return '/skill:${skill.name}';
+    }
+  }
+  return null;
 }

@@ -253,28 +253,47 @@ final class CliConfig {
     }
     final mcpConfig = mcp;
     if (mcpConfig != null) buffer.write(mcpConfig.toYaml());
+    buffer.write(_providerTimeoutsYaml());
+    buffer.write(_skillsYaml());
+    return buffer.toString();
+  }
+
+  String _providerTimeoutsYaml() {
     final timeouts = providerTimeouts;
-    if (timeouts != null) {
-      buffer.write('providerTimeouts:\n');
-      final connect = timeouts.connect;
-      if (connect != null) {
-        buffer.write('  connectTimeoutMs: ${connect.inMilliseconds}\n');
-      }
-      final streamIdle = timeouts.streamIdle;
-      if (streamIdle != null) {
-        buffer.write('  streamIdleTimeoutMs: ${streamIdle.inMilliseconds}\n');
-      }
+    if (timeouts == null) return '';
+    final buffer = StringBuffer('providerTimeouts:\n');
+    final connect = timeouts.connect;
+    if (connect != null) {
+      buffer.write('  connectTimeoutMs: ${connect.inMilliseconds}\n');
     }
-    if (skillsAccess != SkillsAccess.ask || skillsDisableShellExecution) {
-      buffer.write('skills:\n');
-      if (skillsAccess != SkillsAccess.ask) {
-        buffer.write('  access: ${skillsAccessLabel(skillsAccess)}\n');
-      }
-      if (skillsDisableShellExecution) {
-        buffer.write('  disableShellExecution: true\n');
-      }
+    final streamIdle = timeouts.streamIdle;
+    if (streamIdle != null) {
+      buffer.write('  streamIdleTimeoutMs: ${streamIdle.inMilliseconds}\n');
     }
     return buffer.toString();
+  }
+
+  String _skillsYaml() {
+    if (!_skillsSectionNeeded) return '';
+    final buffer = StringBuffer('skills:\n');
+    _writeSkillsAccess(buffer);
+    _writeSkillsDisableShellExecution(buffer);
+    return buffer.toString();
+  }
+
+  bool get _skillsSectionNeeded =>
+      skillsAccess != SkillsAccess.ask || skillsDisableShellExecution;
+
+  void _writeSkillsAccess(StringBuffer buffer) {
+    if (skillsAccess != SkillsAccess.ask) {
+      buffer.write('  access: ${skillsAccessLabel(skillsAccess)}\n');
+    }
+  }
+
+  void _writeSkillsDisableShellExecution(StringBuffer buffer) {
+    if (skillsDisableShellExecution) {
+      buffer.write('  disableShellExecution: true\n');
+    }
   }
 
   String _allowedToolsYaml() {

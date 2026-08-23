@@ -520,26 +520,8 @@ extension on AgentCli {
     return choice;
   }
 
-  /// Resolves a line-mode menu answer: a 1-based number over the builtin
-  /// commands + skills, or a command/skill name with or without the leading
-  /// slash. Null when neither matches.
-  String? _resolveMenuChoice(String trimmed) {
-    final entries = lineModeMenuEntries(_skills);
-    // Numeric choice.
-    final index = int.tryParse(trimmed);
-    if (index != null && index >= 1 && index <= entries.length) {
-      return entries[index - 1].key;
-    }
-    // Name choice; accept with or without leading slash. Builtins first.
-    final name = trimmed.startsWith('/') ? trimmed : '/$trimmed';
-    if (builtinSlashCommands.containsKey(name)) return name;
-    for (final skill in userInvocableSkills(_skills)) {
-      if ('/${skill.name}'.toLowerCase() == name.toLowerCase()) {
-        return '/skill:${skill.name}';
-      }
-    }
-    return null;
-  }
+  String? _resolveMenuChoice(String trimmed) =>
+      resolveLineModeMenuChoice(trimmed, _skills);
 
   /// The numbered command list of the line-mode menu.
   void _printHelp({String filter = ''}) {
@@ -712,23 +694,14 @@ extension on AgentCli {
   }
 
   void _onAgentEvent(AgentEvent event, CancelToken cancelToken) {
-    switch (event) {
-      case MessageStartEvent(:final message) || MessageEndEvent(:final message):
-        _onMessageLifecycle(message, start: event is MessageStartEvent);
-      case MessageUpdateEvent(:final assistantMessageEvent):
-        _onMessageUpdate(assistantMessageEvent);
-      case ToolExecutionStartEvent(:final toolName, :final args):
-        _onToolExecutionStart(toolName, args);
-      case ToolExecutionEndEvent(
-        :final toolName,
-        :final result,
-        :final isError,
-      ):
-        _onToolExecutionEnd(toolName, result, isError: isError);
-      case TurnEndEvent(:final message):
-        _usage.add(message.usage);
-      default:
-    }
+    handleAgentEvent(
+      event,
+      onMessageLifecycle: _onMessageLifecycle,
+      onMessageUpdate: _onMessageUpdate,
+      onToolExecutionStart: _onToolExecutionStart,
+      onToolExecutionEnd: _onToolExecutionEnd,
+      onTurnEnd: (message) => _usage.add(message.usage),
+    );
   }
 
   /// Message lifecycle for assistant turns: a start re-arms the

@@ -269,6 +269,43 @@ void main() {
       expect(entries.last.key, '/skill:deploy');
     });
   });
+
+  group('resolveLineModeMenuChoice', () {
+    test('a valid number returns the matching entry key', () {
+      expect(
+        resolveLineModeMenuChoice('1', []),
+        builtinSlashCommands.entries.first.key,
+      );
+    });
+
+    test('a number out of range returns null', () {
+      expect(resolveLineModeMenuChoice('0', []), isNull);
+      expect(
+        resolveLineModeMenuChoice('${builtinSlashCommands.length + 1}', []),
+        isNull,
+      );
+    });
+
+    test('a builtin command name resolves with or without slash', () {
+      expect(resolveLineModeMenuChoice('/help', []), '/help');
+      expect(resolveLineModeMenuChoice('help', []), '/help');
+    });
+
+    test('a skill name resolves to /skill:<name>', () {
+      expect(
+        resolveLineModeMenuChoice('/deploy', [skill('deploy')]),
+        '/skill:deploy',
+      );
+      expect(
+        resolveLineModeMenuChoice('deploy', [skill('deploy')]),
+        '/skill:deploy',
+      );
+    });
+
+    test('unknown input returns null', () {
+      expect(resolveLineModeMenuChoice('zzz', []), isNull);
+    });
+  });
 }
 
 class _PlainStyle implements TuiStyle {

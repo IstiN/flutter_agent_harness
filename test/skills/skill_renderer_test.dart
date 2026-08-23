@@ -199,5 +199,17 @@ void main() {
       expect(splitSkillArguments('"a b" c'), ['a b', 'c']);
       expect(splitSkillArguments(''), isEmpty);
     });
+
+    test('backslash escapes inside quotes', () {
+      expect(splitSkillArguments(r'"a\"b" c'), ['a"b', 'c']);
+    });
+
+    test('empty quotes and multiple spaces produce expected tokens', () {
+      expect(splitSkillArguments('""  x   y '), ['', 'x', 'y']);
+    });
+
+    test('trailing backslash inside quotes is preserved', () {
+      expect(splitSkillArguments('"a\\'), [r'a\']);
+    });
   });
 }
