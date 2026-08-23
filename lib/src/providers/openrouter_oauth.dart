@@ -12,7 +12,6 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import '../exceptions.dart';
-import 'provider_common.dart';
 
 /// The OpenRouter authorization endpoint.
 const openRouterAuthEndpoint = 'https://openrouter.ai/auth';
@@ -136,7 +135,7 @@ Future<OpenRouterOAuthKey> exchangeOpenRouterCode(
   http.Client? client,
   String? label,
 }) async {
-  final httpClient = client ?? sharedProviderHttpClient();
+  final httpClient = client ?? http.Client();
   final ownsClient = client == null;
   try {
     final response = await httpClient

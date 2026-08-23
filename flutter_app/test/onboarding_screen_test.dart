@@ -25,7 +25,6 @@ import 'package:flutter_test/flutter_test.dart';
 Future<void> _pumpOnboarding(
   WidgetTester tester, {
   OnboardingStore? onboardingStore,
-  SkillsAccessStore? skillsAccessStore,
   SessionKeysStore? keysStore,
   int initialPage = 0,
   void Function({required bool skipped})? onFinished,
@@ -41,7 +40,6 @@ Future<void> _pumpOnboarding(
         store: keysStore ?? SessionKeysStore.inMemory(),
         child: OnboardingScreen(
           onboardingStore: onboardingStore,
-          skillsAccessStore: skillsAccessStore,
           initialPage: initialPage,
           onFinished: onFinished,
           registry: registry,
@@ -285,52 +283,6 @@ void main() {
           'screen_opened',
           'onboarding_completed',
         ]);
-      });
-    });
-
-    testWidgets('skills page: Allow persists granted and advances', (
-      tester,
-    ) async {
-      await _onDesktop(() async {
-        final env = MemoryExecutionEnv();
-        final skillsStore = SkillsAccessStore(env);
-        await _pumpOnboarding(
-          tester,
-          initialPage: 3,
-          skillsAccessStore: skillsStore,
-        );
-        await tester.pumpAndSettle();
-        expect(find.text('Reuse your existing skills.'), findsOneWidget);
-
-        await tester.tap(find.text('Allow'));
-        await tester.pumpAndSettle();
-
-        expect(await skillsStore.load(), SkillsAccess.granted);
-        // The answer auto-advances to the last page.
-        expect(find.text('Your sandbox is ready.'), findsOneWidget);
-        expect(events.map((e) => e.$1), contains('skills_access_changed'));
-      });
-    });
-
-    testWidgets('skills page: Not now leaves the consent undecided', (
-      tester,
-    ) async {
-      await _onDesktop(() async {
-        final env = MemoryExecutionEnv();
-        final skillsStore = SkillsAccessStore(env);
-        await _pumpOnboarding(
-          tester,
-          initialPage: 3,
-          skillsAccessStore: skillsStore,
-        );
-        await tester.pumpAndSettle();
-
-        await tester.tap(find.text('Not now'));
-        await tester.pumpAndSettle();
-
-        // Nothing written: the one-time boot dialog can still ask.
-        expect(await skillsStore.load(), isNull);
-        expect(find.text('Your sandbox is ready.'), findsOneWidget);
       });
     });
 
