@@ -176,6 +176,7 @@ class AgentService extends ChangeNotifier
        _taskModelsStore = null,
        _approvalModeStore = null,
        _skillsAccessStore = null,
+       _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -237,6 +238,7 @@ class AgentService extends ChangeNotifier
     final promptSuffix = await _discoverPromptSuffix(
       resolvedEnv,
       savedSkillsAccess ?? SkillsAccess.granted,
+      homeDir: desktopHomeDir(),
     );
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
@@ -258,6 +260,7 @@ class AgentService extends ChangeNotifier
       approvalModeStore: approvalModeStore,
       initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,
       skillsAccessStore: skillsAccessStore,
+      skillsHomeDir: desktopHomeDir(),
       // Live stores FIRST: a key edited in Settings must win over the
       // boot-time snapshot (the keychain write updates the registry, not
       // this map — boot map last so edited provider keys apply
@@ -324,9 +327,16 @@ class AgentService extends ChangeNotifier
   /// the first-party roots (`.fah/skills`, `.agents/skills`).
   static Future<String> _discoverPromptSuffix(
     ExecutionEnv env,
-    SkillsAccess access,
-  ) async {
-    final roots = defaultSkillRoots(cwd: env.cwd, homeDir: null);
+    SkillsAccess access, {
+    String? homeDir,
+  }) async {
+    // User-level roots (~/.claude/skills, ~/.copilot/skills, ...) need the
+    // real home directory - without it the desktop app only ever saw
+    // project-local skills no matter what the consent said.
+    final roots = defaultSkillRoots(
+      cwd: env.cwd,
+      homeDir: homeDir ?? desktopHomeDir(),
+    );
     final skills = await discoverSkills(
       env,
       projectRoots: roots.projectRoots,
@@ -360,7 +370,9 @@ class AgentService extends ChangeNotifier
     this._approvalModeStore,
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
-  }) : _config = config,
+    String? skillsHomeDir,
+  }) : _skillsHomeDir = skillsHomeDir,
+       _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _resolveSecretName = resolveSecretName,
        approval = ApprovalManager(
@@ -730,6 +742,10 @@ class AgentService extends ChangeNotifier
   /// [setSkillsAccess] writes through fire-and-forget.
   final SkillsAccessStore? _skillsAccessStore;
 
+  /// Home directory for user-level skill roots (desktop only; null on
+  /// mobile/web). Null in tests keeps discovery deterministic.
+  final String? _skillsHomeDir;
+
   /// UI hook rendering the approval prompt (the chat screen installs a
   /// Material dialog). `null` → prompt-policy calls are denied.
   @override
@@ -928,7 +944,11 @@ class AgentService extends ChangeNotifier
     if (store != null) unawaited(store.save(access));
     final config = _config;
     if (config == null) return;
-    final suffix = await _discoverPromptSuffix(env, access);
+    final suffix = await _discoverPromptSuffix(
+      env,
+      access,
+      homeDir: _skillsHomeDir ?? desktopHomeDir(),
+    );
     // A newer choice made while discovery ran wins — don't clobber it.
     if (access != _skillsAccess) return;
     _promptSuffix = suffix;

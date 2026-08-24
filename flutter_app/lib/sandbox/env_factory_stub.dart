@@ -16,6 +16,9 @@ import 'package:fa/sandbox/persistent_web_env.dart';
 /// mutation into IndexedDB and restores the last snapshot here — before the
 /// `AgentService` is built — so uploaded files (and the agent's own work,
 /// including sessions under `/sessions`) survive a page reload.
+/// Web has no home directory concept - user-level skill roots do not apply.
+String? desktopHomeDir() => null;
+
 Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
   final shell = MemoryShell(httpClient: httpClient);
   final env = MemoryExecutionEnv(cwd: '/', shell: shell);

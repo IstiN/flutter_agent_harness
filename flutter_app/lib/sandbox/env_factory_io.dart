@@ -17,6 +17,14 @@ import 'package:fa/sandbox/wasm_shell.dart';
 /// uses a sandboxed host directory and a WasiSandboxShell backed by
 /// MIT-licensed uutils/ripgrep WASM binaries so the agent has a working shell
 /// on iOS and Android.
+/// The user's home directory on desktop (for user-level skill roots like
+/// `~/.claude/skills`, `~/.copilot/skills`); null on mobile/web where those
+/// directories do not exist.
+String? desktopHomeDir() {
+  if (kIsWeb || Platform.isAndroid || Platform.isIOS) return null;
+  return Platform.environment['HOME'];
+}
+
 Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
   if (kIsWeb) {
     // Fallback for the unlikely case this file is compiled for web; the stub
