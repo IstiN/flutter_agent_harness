@@ -192,7 +192,7 @@ bool isToolCallOnlyAssistant(Message message) {
   required bool tui,
   required int width,
   required String Function(String) dim,
-  int rowBudget = 190,
+  int rowBudget = 1900,
   int maxRowsPerMessage = 2,
   int maxCollapsedCalls = 12,
 }) {

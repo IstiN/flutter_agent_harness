@@ -258,7 +258,12 @@ class FakeSecureKeyStore implements SecureKeyStore {
 }
 
 Future<void> waitForIt(bool Function() condition, {String? reason}) async {
-  for (var i = 0; i < 400; i++) {
+  // Generous budget: startup discovery + prompt composition must finish
+  // within this window even on a LOADED machine (coverage instrumentation
+  // roughly doubles run time; parallel builds/other projects' test runners
+  // eat the rest). 25s of polling; the condition is checked every 5ms so
+  // tests still finish as soon as the awaited state actually appears.
+  for (var i = 0; i < 5000; i++) {
     if (condition()) return;
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }

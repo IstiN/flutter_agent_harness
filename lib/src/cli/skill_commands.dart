@@ -40,6 +40,23 @@ extension AgentCliSkillsExt on AgentCli {
     return false;
   }
 
+  /// Prints why third-party skills are missing, when the consent dialog
+  /// cannot or will not appear: non-interactive runs, and interactive runs
+  /// whose access is already denied. In line mode this prints right after
+  /// discovery; in TUI mode `_runTuiRepl` re-prints it after the banner —
+  /// the alternate screen would wipe the original line.
+  void _printThirdPartySkillsDisabledHint() {
+    if (!_thirdPartySkillDirsPresent) return;
+    if (_skillsAccess == SkillsAccess.granted) return;
+    if (io.isInteractive && _skillsAccess == SkillsAccess.ask) return;
+    io.writeln(
+      _style.dim(
+        'Claude/Copilot/Codex skills or agents found but disabled — '
+        '/skills access granted to enable',
+      ),
+    );
+  }
+
   /// Re-runs skill discovery with the current access gate and recomposes the
   /// system prompt (`/skills reload`, consent changes, `/skills import`).
   Future<void> _reloadSkills() async {
@@ -266,6 +283,10 @@ extension AgentCliSkillsExt on AgentCli {
   }
 
   /// `/skills [reload|access [ask|granted|denied]|import]`.
+  ///
+  /// Dispatch only — each branch body lives in its own CC≤2 helper so every
+  /// piece stays under the CRAP ratchet even where only the line-mode paths
+  /// are test-covered.
   Future<void> _skillsSlash(String rest) async {
     final parts = rest
         .split(RegExp(r'\s+'))
@@ -274,16 +295,11 @@ extension AgentCliSkillsExt on AgentCli {
     final sub = parts.isEmpty ? '' : parts.first;
     switch (sub) {
       case '':
-        _listSkills();
+        await _skillsListOrMenu();
       case 'reload':
-        await _reloadSkills();
-        await _reloadAgents();
-        io.writeln(
-          'reloaded: ${_skills.length} skill(s), '
-          '${_discoveredAgents.length} discovered agent type(s)',
-        );
+        await _skillsReloadSlash();
       case 'access':
-        await _skillsAccessSlash(parts.length > 1 ? parts[1] : '');
+        await _skillsAccessEntry(parts);
       case 'import':
         await _importThirdPartySkills();
       default:
@@ -293,17 +309,53 @@ extension AgentCliSkillsExt on AgentCli {
     }
   }
 
-  /// `/skills access [ask|granted|denied]`: prints or changes the
-  /// third-party consent.
+  /// The bare `/skills` branch: the plain text list (line mode manages via
+  /// `/skills access`; a TUI management menu is a follow-up).
+  Future<void> _skillsListOrMenu() async {
+    _listSkills();
+  }
+
+  /// The `/skills reload` branch: re-scan skills + agent types and report.
+  Future<void> _skillsReloadSlash() async {
+    await _reloadSkills();
+    await _reloadAgents();
+    io.writeln(
+      'reloaded: ${_skills.length} skill(s), '
+      '${_discoveredAgents.length} discovered agent type(s)',
+    );
+  }
+
+  /// The `/skills access` entry: a bare interactive line-mode invocation
+  /// runs DETACHED — the sequential REPL loop awaits each command, so an
+  /// awaited line-prompted flow would deadlock on its own answer (guided
+  /// provider flows use the same pattern; answers arrive through
+  /// `_pendingPromptAnswer` from the loop's next reads).
+  Future<void> _skillsAccessEntry(List<String> parts) async {
+    final bareInteractiveLine =
+        parts.length == 1 &&
+        io.isInteractive &&
+        !(_useTui && _tuiController != null);
+    if (bareInteractiveLine) {
+      unawaited(_openSkillsAccessPicker());
+      return;
+    }
+    await _skillsAccessSlash(parts.length > 1 ? parts[1] : '');
+  }
+
+  /// `/skills access [ask|granted|denied]`: bare opens the interactive
+  /// picker; a level label changes the consent directly.
   Future<void> _skillsAccessSlash(String arg) async {
     if (arg.isEmpty) {
-      io.writeln('skills access: ${skillsAccessLabel(_skillsAccess)}');
-      io.writeln(
-        _style.dim(
-          '  granted — read Claude/Copilot/Codex skill & agent dirs; '
-          'denied — never; ask — prompt at startup',
-        ),
-      );
+      // Headless/piped input cannot answer an interactive picker — print
+      // the current consent and the way to change it instead.
+      if (!io.isInteractive) {
+        io.writeln('skills access: ${skillsAccessLabel(_skillsAccess)}');
+        io.writeln(
+          _style.dim('  change with /skills access ask|granted|denied'),
+        );
+        return;
+      }
+      await _openSkillsAccessPicker();
       return;
     }
     final normalized = arg.trim().toLowerCase();
@@ -314,6 +366,27 @@ extension AgentCliSkillsExt on AgentCli {
       return;
     }
     await _setSkillsAccess(skillsAccessFromLabel(normalized));
+  }
+
+  /// The bare `/skills access` picker: the three consent levels with the
+  /// current one marked, through the shared guided-flow option picker (TUI
+  /// picker or a numbered line-mode list).
+  Future<void> _openSkillsAccessPicker() async {
+    const title = 'Third-party skills access';
+    const options = <FlowOption>[
+      ('ask', 'Ask', 'Prompt at startup when third-party roots are found'),
+      ('granted', 'Granted', 'Read Claude/Copilot/Codex skill and agent dirs'),
+      ('denied', 'Disabled', "Never read other tools' directories"),
+    ];
+    final choice = await _pickOption(
+      title,
+      options,
+      initialKey: skillsAccessLabel(_skillsAccess),
+    );
+    if (choice == null) return;
+    final access = skillsAccessFromLabel(choice);
+    if (access == _skillsAccess) return;
+    await _setSkillsAccess(access);
   }
 
   /// `/skills import`: copies the discovered third-party skills into
@@ -382,6 +455,16 @@ extension AgentCliSkillsExt on AgentCli {
         '  ${skill.name} — ${skill.description}  '
         '${_style.dim('${skill.filePath} (${skill.scope.name}, ${skill.source.name}'
         '${flags.isEmpty ? '' : '; ${flags.join(', ')}'})')}',
+      );
+    }
+    // A non-empty own-skills list still explains missing third-party skills
+    // and shows the way out.
+    if (_skillsAccess != SkillsAccess.granted && _thirdPartySkillDirsPresent) {
+      io.writeln(
+        _style.dim(
+          'Claude/Copilot/Codex skills are disabled — '
+          'enable via /skills access granted',
+        ),
       );
     }
   }

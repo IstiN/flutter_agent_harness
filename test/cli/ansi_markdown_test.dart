@@ -1,4 +1,5 @@
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -150,6 +151,64 @@ void main() {
           rows.join().replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
           line.replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
         );
+      });
+
+      test('wide characters count as two cells so rows never overflow', () {
+        // ✅ occupies 2 terminal cells (dart_tui's renderer measures
+        // grapheme clusters) but 1 UTF-16 unit. Column math by code units
+        // packed 10 of them into a width-10 row and the renderer desynced —
+        // the "formatting slides after an emoji" corruption.
+        const check = '✅';
+        final rows = wrapAnsiLine('${check * 5} tail', 10);
+        for (final row in rows) {
+          expect(
+            tuiTextWidth(row),
+            lessThanOrEqualTo(10),
+            reason: 'row overflows: $row',
+          );
+        }
+        // Reassembled visible text is unchanged except an edge-boundary
+        // space, which stays dropped by design.
+        expect(rows.join(), '${check * 5}tail');
+      });
+
+      test('a wide word longer than the width hard-cuts on cell columns', () {
+        final rows = wrapAnsiLine('✅✅✅✅✅✅', 7);
+        for (final row in rows) {
+          expect(
+            tuiTextWidth(row),
+            lessThanOrEqualTo(7),
+            reason: 'row overflows: $row',
+          );
+        }
+        expect(rows.join(), '✅' * 6);
+      });
+
+      test('cyrillic text wraps by cells exactly like latin', () {
+        // Cyrillic is narrow (1 cell per char) — width math must not treat
+        // it as wide or wrapping regresses for Russian transcripts.
+        final rows = wrapAnsiLine('дом лес озеро', 5);
+        for (final row in rows) {
+          expect(
+            row.replaceAll(AnsiMarkdown.ansiSgrPattern, '').length,
+            lessThanOrEqualTo(5),
+          );
+        }
+        expect(rows.join(), 'дом лес озеро');
+      });
+    });
+
+    group('cell widths (tui_text_width)', () {
+      test('emoji measure two cells, cyrillic one, combining zero', () {
+        expect(tuiTextWidth('a'), 1);
+        expect(tuiTextWidth('✅'), 2);
+        expect(tuiTextWidth('🎉'), 2);
+        expect(tuiTextWidth('ж'), 1);
+        expect(tuiTextWidth('中'), 2);
+        expect(tuiTextWidth('─'), 1);
+        expect(tuiTextWidth('e\u0301'), 1); // e + combining acute
+        expect(tuiPadRight('ab✅', 8), 'ab✅    ');
+        expect(tuiFitWidth('abc✅def', 6), 'abc✅…');
       });
     });
 

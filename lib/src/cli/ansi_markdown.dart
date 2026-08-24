@@ -19,6 +19,8 @@
 /// horizontal rules capped at 80 columns.
 library;
 
+import 'tui_text_width.dart' show tuiTextWidth;
+
 /// One formatter per render pass; feed the whole output buffer via
 /// [formatAll] (or single lines in order via [formatLine]).
 final class AnsiMarkdown {
@@ -107,11 +109,13 @@ final class AnsiMarkdown {
   }
 
   /// Pre-styled background lines padded to the current width; null for
-  /// ordinary lines.
+  /// ordinary lines. Padding is cell-width aware: the renderer measures
+  /// grapheme clusters, so `padRight` (UTF-16 units) underpads any echo
+  /// carrying wide characters and stale cells survive on the right.
   String? _formatPreStyled(String line) {
     if (!line.startsWith('\x1b[48')) return null;
     final visible = line.replaceAll(_ansiRe, '');
-    final pad = width - visible.length;
+    final pad = width - tuiTextWidth(visible);
     if (pad <= 0) return line;
     final body = line.endsWith(_reset)
         ? line.substring(0, line.length - _reset.length)
@@ -342,7 +346,12 @@ final class AnsiMarkdown {
     return out;
   }
 
-  static int _visibleLength(String text) => text.replaceAll(_ansiRe, '').length;
+  /// Visible cell width of a styled fragment: ANSI stripped, then measured
+  /// in terminal cells (grapheme clusters — an emoji is 2 cells even though
+  /// it is 1–2 UTF-16 units). Table column sizing must match the renderer
+  /// or the grid separators drift out of alignment.
+  static int _visibleLength(String text) =>
+      tuiTextWidth(text.replaceAll(_ansiRe, ''));
 }
 
 /// Tokenizer for [wrapAnsiLine] — hoisted: it runs per wrapped line, and
@@ -352,9 +361,15 @@ final _ansiTokenRe = RegExp(r'\x1b\[[0-9;]*m|.', unicode: true);
 /// First-byte markers for markdown block candidates (#, >, -, *, +, space).
 const _blockMarkerChars = {0x23, 0x3E, 0x2D, 0x2A, 0x2B, 0x20};
 
-/// Wraps one ANSI-styled line to [width] visible columns WITHOUT cutting
-/// inside SGR escape sequences — dart_tui's viewport wrap slices raw text
-/// and leaks escape tails (e.g. `212m`) as visible text.
+/// Wraps one ANSI-styled line to [width] visible CELL columns WITHOUT
+/// cutting inside SGR escape sequences — dart_tui's viewport wrap slices raw
+/// text and leaks escape tails (e.g. `212m`) as visible text.
+///
+/// Widths are measured in terminal cells (grapheme clusters, see
+/// [tuiTextWidth]) so the rows we emit never exceed what the renderer can
+/// place: an emoji or CJK character occupies 2 cells despite being 1–2
+/// UTF-16 units, and counting it as one column overflowed every wrapped row
+/// that contained one (the "markdown breaks after emoji" corruption).
 ///
 /// Two correctness rules beyond the escape safety:
 ///
@@ -373,8 +388,8 @@ List<String> wrapAnsiLine(String line, int width) {
   // Skip the ANSI strip on plain-text lines (the common case).
   final hasAnsi = line.codeUnits.any((c) => c == 0x1b);
   final visible = hasAnsi
-      ? line.replaceAll(AnsiMarkdown.ansiSgrPattern, '').length
-      : line.length;
+      ? tuiTextWidth(line.replaceAll(AnsiMarkdown.ansiSgrPattern, ''))
+      : tuiTextWidth(line);
   if (visible <= width) return [line];
 
   final rows = <String>[];
@@ -414,14 +429,18 @@ List<String> wrapAnsiLine(String line, int width) {
       // A single word longer than the width: hard-cut it across rows.
       if (col > 0) closeRow();
       for (final token in wordTokens) {
-        final isSgr = token.startsWith('\x1b');
-        if (!isSgr && col >= width) closeRow();
-        writeToken(token, isSgr ? 0 : 1);
+        final tokenWidth = _tokenWidth(token);
+        // Close before an overflowing token, but never emit an empty row
+        // (a single wide token on a 1-cell row just overflows as-is).
+        if (col > 0 && !token.startsWith('\x1b') && col + tokenWidth > width) {
+          closeRow();
+        }
+        writeToken(token, tokenWidth);
       }
     } else {
       if (col > 0 && col + wordVisible > width) closeRow();
       for (final token in wordTokens) {
-        writeToken(token, token.startsWith('\x1b') ? 0 : 1);
+        writeToken(token, _tokenWidth(token));
       }
     }
     wordTokens.clear();
@@ -442,10 +461,25 @@ List<String> wrapAnsiLine(String line, int width) {
       continue;
     }
     wordTokens.add(token);
-    if (!token.startsWith('\x1b')) wordVisible++;
+    if (!token.startsWith('\x1b')) wordVisible += _tokenWidth(token);
   }
   flushWord();
   // A row holding only re-emitted SGR codes (no visible columns) is dropped.
   if (col > 0) closeRow();
   return rows;
+}
+
+/// The cell width of one wrap token: SGR escapes take no columns, anything
+/// else is measured by grapheme cluster (fast path: a single ASCII rune).
+int _tokenWidth(String token) {
+  if (token.startsWith('\x1b')) return 0;
+  if (token.length == 1) {
+    final unit = token.codeUnitAt(0);
+    // ASCII fast path: C0 controls are zero-width, printable ASCII is one
+    // cell; everything wider/combining falls to the full measurement.
+    if (unit < 0x80) {
+      return (unit < 0x20 || unit == 0x7f) ? 0 : 1;
+    }
+  }
+  return tuiTextWidth(token);
 }
