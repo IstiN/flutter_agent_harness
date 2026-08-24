@@ -1213,4 +1213,9 @@
 
 - fix(providers): do not close shared HTTP client during OpenRouter OAuth exchange
 
+## 0.1.206
+
+- fix(app): skill discovery scans user-level roots (~/.claude, ~/.copilot, ...)
+- ci(macos): tolerate an existing keychain when packaging the TestFlight PKG
+
 ## Unreleased
