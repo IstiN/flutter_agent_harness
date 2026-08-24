@@ -577,7 +577,10 @@ jobs:
           # from the signing step when SIGNED=true; create it otherwise).
           KEYCHAIN_PASS="${MACOS_KEYCHAIN_PASSWORD:-}"
           if ! security list-keychains | grep -q build-${{ matrix.arch }}.keychain; then
-            security create-keychain -p "$KEYCHAIN_PASS" build-${{ matrix.arch }}.keychain
+            # create-keychain fails with "already exists" when the keychain
+            # exists but is not in the search list (grep above missed it) —
+            # tolerate that and just add it to the search list.
+            security create-keychain -p "$KEYCHAIN_PASS" build-${{ matrix.arch }}.keychain || true
             security default-keychain -s build-${{ matrix.arch }}.keychain
             security unlock-keychain -p "$KEYCHAIN_PASS" build-${{ matrix.arch }}.keychain
             security list-keychains -d user -s build-${{ matrix.arch }}.keychain ~/Library/Keychains/login.keychain-db
