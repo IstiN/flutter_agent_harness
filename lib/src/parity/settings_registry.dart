@@ -18,7 +18,7 @@ library;
 /// Every shared settings concept that must exist on both platforms unless
 /// explicitly exempted.
 enum SharedSetting {
-  /// Tool-approval mode (always-ask / write / yolo).
+  /// Tool-approval mode (always-ask / write / yolo / unattended).
   approvalMode,
 
   /// The default chat model (provider, modelId, baseUrl, apiKey).
@@ -79,7 +79,7 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
   SharedSetting.approvalMode: _SettingMeta(
     cliRef: 'approvalMode',
     appRef: 'ApprovalModeStore',
-    description: 'Tool-approval mode (always-ask / write / yolo).',
+    description: 'Tool-approval mode (always-ask / write / yolo / unattended).',
   ),
   SharedSetting.modelDefault: _SettingMeta(
     cliRef: 'providerKind',

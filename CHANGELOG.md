@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.205
+
+- fix(cli): TUI renders rows in terminal cells (grapheme clusters) - markdown
+  no longer slides after emoji/CJK; status row padding and menu truncation are
+  cell-width aware; output history cap raised 200 -> 2000 (fence-safe replay).
+- feat(cli): `unattended` approval mode - auto-approve everything including
+  critical bash patterns, for runs without a user present; yolo regains its
+  critical-pattern safety net.
+- feat(cli): approval prompts accept a typed note and deliver it to the agent
+  as steering feedback alongside the decision.
+- fix(cli): empty assistant responses retry once with a 'continue' nudge
+  (loop-level `maxEmptyRetries`); errors/aborts never trigger it.
+- feat(session): incremental message persistence (crash-safe appends);
+  sessions with persisted records survive empty-session cleanup.
+- fix(cli): status meter tracks streaming thinking/tool-call sizes; session
+  switches reset tok/cost/turn; failed runs keep the last real ctx anchor.
+- feat(cli): skills access defaults to granted (opt-out); bare `/skills
+  access` opens an interactive picker; disabled-skills hints on listings;
+  `/skills` dispatch decomposed for the CRAP ratchet.
+- fix(providers): OpenRouter OAuth keys persist endpoint-scoped
+  (`FA_KEY_OPENROUTER_AI`) and the auth picker offers the stored key first.
+- feat(tui): mouse capture defaults ON (two-finger scroll); `FA_TUI_MOUSE=0`
+  opts out.
+- test(cli): waitForIt poll budget 2s -> 25s (coverage runs on loaded boxes).
+
+
 ## 0.1.0
 
 - Initial project setup: package skeleton, quality gates (analyze, tests,
