@@ -1218,4 +1218,8 @@
 - fix(app): skill discovery scans user-level roots (~/.claude, ~/.copilot, ...)
 - ci(macos): tolerate an existing keychain when packaging the TestFlight PKG
 
+## 0.1.207
+
+- fix(app): explain empty responses that follow an image-bearing prompt
+
 ## Unreleased
