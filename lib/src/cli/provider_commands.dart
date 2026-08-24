@@ -435,26 +435,49 @@ extension on AgentCli {
   }
 
   /// Prompts the user to pick OpenRouter OAuth or API-key auth, then runs the
-  /// chosen flow. The sub-flows manage [_providerFlowActive] themselves, so
-  /// this picker releases the gate before handing off.
+  /// chosen flow. A key that already resolves for the default endpoint
+  /// (environment value, endpoint-scoped store entry, or legacy env-name
+  /// store entry — the same chain startup uses) is offered first: opening a
+  /// fresh session and running `/provider openrouter` must not force a
+  /// re-auth when a stored key works. The sub-flows manage
+  /// [_providerFlowActive] themselves, so this picker releases the gate
+  /// before handing off.
   Future<void> _handleOpenRouterAuthMethodChoice() async {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     try {
-      final choice = await _pickOption('OpenRouter sign-in method', [
+      final spec = providerCatalog['openrouter'];
+      final storedKey = spec == null
+          ? null
+          : _providerKeyFor(spec, spec.defaultBaseUrl);
+      final choices = [
+        if (storedKey != null)
+          (
+            'stored',
+            'Use stored key',
+            'already saved — no need to authorize again',
+          ),
         ('oauth', 'Browser OAuth', 'authorize via openrouter.ai'),
         ('key', 'API key', 'paste your OpenRouter API key'),
-      ]);
+      ];
+      final choice = await _pickOption('OpenRouter sign-in method', choices);
       if (choice == null) {
         io.writeln('OpenRouter setup cancelled');
         return;
       }
       // Release the flow gate so the sub-flow can take its own lock.
       _providerFlowActive = false;
-      if (choice == 'oauth') {
-        await _handleOpenRouterOAuthCommand(headless: false);
-      } else {
-        await _runOpenRouterApiKeyFlow();
+      switch (choice) {
+        case 'stored':
+          await _switchProvider(
+            spec!,
+            spec.defaultBaseUrl,
+            _agent.state.model.id,
+          );
+        case 'oauth':
+          await _handleOpenRouterOAuthCommand(headless: false);
+        default:
+          await _runOpenRouterApiKeyFlow();
       }
     } finally {
       _providerFlowActive = false;
@@ -573,12 +596,20 @@ extension on AgentCli {
   /// in the `/provider` picker and survive restarts like every other one
   /// (CodeMie/dial already do); without the entry the key was only stored
   /// and OpenRouter stayed invisible in the list.
+  ///
+  /// The key persists under the ENDPOINT-SCOPED store name
+  /// (`FA_KEY_OPENROUTER_AI`), the same slot the registry entry references
+  /// and the first store slot startup resolution reads. Storing under the
+  /// spec's env name (`OPENROUTER_API_KEY`, the legacy fallback) kept a
+  /// stale scoped entry from an older manual paste SHADOWING the fresh
+  /// OAuth key in every new session — the new window resolved the old,
+  /// often revoked, key and looked "logged out".
   Future<void> _applyOpenRouterOAuthKey(
     ProviderSpec spec,
     OpenRouterOAuthKey key,
   ) async {
     io.writeln('OpenRouter authorized');
-    final keyName = spec.apiKeyEnvNames.first;
+    final keyName = CustomProviderRegistry.keyNameFor(spec.defaultBaseUrl);
     await _storeProviderToken(
       spec,
       spec.defaultBaseUrl,

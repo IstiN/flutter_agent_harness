@@ -59,6 +59,26 @@ final class UsageAccumulator {
     _turns += 1;
   }
 
+  /// Zeroes every accumulator (session switches start a fresh meter —
+  /// otherwise tok/cost/turn keep counting the previous session's usage).
+  void reset() {
+    _input = 0;
+    _output = 0;
+    _cacheRead = 0;
+    _cacheWrite = 0;
+    _cacheWrite1h = 0;
+    _hasCacheWrite1h = false;
+    _reasoning = 0;
+    _hasReasoning = false;
+    _totalTokens = 0;
+    _costInput = 0;
+    _costOutput = 0;
+    _costCacheRead = 0;
+    _costCacheWrite = 0;
+    _costTotal = 0;
+    _turns = 0;
+  }
+
   /// The accumulated totals as an immutable [Usage].
   Usage get total => Usage(
     input: _input,

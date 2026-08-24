@@ -100,6 +100,7 @@ void main() {
       // Approvals.
       'always-ask',
       'yolo',
+      'unattended',
       '/approval',
       '/settings',
       '/allow',

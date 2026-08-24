@@ -301,9 +301,9 @@ prompts:
     });
 
     group('skills section', () {
-      test('defaults to ask and shell execution enabled', () {
+      test('defaults to granted and shell execution enabled', () {
         final loaded = loadCliConfig(tmp.path);
-        expect(loaded.skillsAccess, SkillsAccess.ask);
+        expect(loaded.skillsAccess, SkillsAccess.granted);
         expect(loaded.skillsDisableShellExecution, isFalse);
       });
 
@@ -394,9 +394,9 @@ prompts:
         expect(CliConfig().toYaml(), isNot(contains('skills:')));
       });
 
-      test('emits skills access when not ask', () {
-        final yaml = CliConfig(skillsAccess: SkillsAccess.granted).toYaml();
-        expect(yaml, contains('skills:\n  access: granted'));
+      test('emits skills access when not granted (the default)', () {
+        final yaml = CliConfig(skillsAccess: SkillsAccess.denied).toYaml();
+        expect(yaml, contains('skills:\n  access: denied'));
         expect(yaml, isNot(contains('disableShellExecution')));
       });
 

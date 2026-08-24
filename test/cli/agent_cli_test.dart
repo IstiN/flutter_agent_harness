@@ -30,6 +30,7 @@ void main() {
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
     String? providerKind,
+    SkillsAccess? skillsAccess,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -45,6 +46,9 @@ void main() {
         customProviders: customProviders,
         onSecretStored: onSecretStored,
         providerKind: providerKind ?? 'openai-completions',
+        // Matches AgentCliConfig's own default: third-party discovery is ON
+        // (opt-out); consent-dialog tests pass SkillsAccess.ask explicitly.
+        skillsAccess: skillsAccess ?? SkillsAccess.granted,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -189,6 +193,33 @@ void main() {
       'Hello world',
     );
   });
+
+  test(
+    'empty assistant response is auto-continued once before giving up',
+    () async {
+      final fake = FakeStreamFunction([textTurn(''), textTurn('finally')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      io.sendLine('hi');
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+      expect(io.out.toString(), contains('finally'));
+    },
+  );
+
+  test(
+    'second consecutive empty response stops without further retry',
+    () async {
+      final fake = FakeStreamFunction([textTurn(''), textTurn('')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      io.sendLine('hi');
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 
   test('banner shows the endpoint and the set key env var name', () async {
     final fake = FakeStreamFunction([textTurn('ok')]);
@@ -375,7 +406,7 @@ void main() {
 
   group('third-party skills', () {
     test(
-      'claude skills stay hidden until granted; startup prompt appears',
+      'ask consent: claude skills stay hidden until granted; startup prompt',
       () async {
         await env.createDir('/work/.claude/skills/review');
         await env.writeFile(
@@ -383,7 +414,7 @@ void main() {
           '---\nname: review\ndescription: Review code\n---\nReview body.\n',
         );
         final fake = FakeStreamFunction([textTurn('ok')]);
-        final cli = cliFor(fake.call);
+        final cli = cliFor(fake.call, skillsAccess: SkillsAccess.ask);
         final run = cli.run();
         // The startup consent dialog appears (a third-party root exists).
         await waitForIt(
@@ -409,14 +440,14 @@ void main() {
       },
     );
 
-    test('/skills access denied keeps them hidden without asking', () async {
+    test('ask consent: /skills access denied keeps them hidden', () async {
       await env.createDir('/work/.codex/skills/release');
       await env.writeFile(
         '/work/.codex/skills/release/SKILL.md',
         '---\nname: release\ndescription: Ship a release\n---\nBody.\n',
       );
       final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call);
+      final cli = cliFor(fake.call, skillsAccess: SkillsAccess.ask);
       final run = cli.run();
       await waitForIt(
         () => io.out.toString().contains('Found Claude/Copilot/Codex'),
@@ -432,6 +463,89 @@ void main() {
       expect(io.out.toString(), isNot(contains('release — Ship a release')));
     });
 
+    test(
+      'granted by default: third-party skills discovered, no prompt',
+      () async {
+        await env.createDir('/work/.claude/skills/review');
+        await env.writeFile(
+          '/work/.claude/skills/review/SKILL.md',
+          '---\nname: review\ndescription: Review code\n---\nReview body.\n',
+        );
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call); // default consent: granted
+        final run = cli.run();
+        // Discovery is opt-out: the skill lands with zero questions asked.
+        await waitForIt(() => cli.systemPrompt.contains('<name>review</name>'));
+        expect(
+          io.out.toString(),
+          isNot(contains('Found Claude/Copilot/Codex')),
+        );
+        io.sendLine('/skills');
+        await waitForIt(
+          () => io.out.toString().contains('review — Review code'),
+        );
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
+    test('bare /skills access opens the interactive consent picker', () async {
+      await env.createDir('/work/.claude/skills/review');
+      await env.writeFile(
+        '/work/.claude/skills/review/SKILL.md',
+        '---\nname: review\ndescription: Review code\n---\nReview body.\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call); // granted by default
+      final run = cli.run();
+      await waitForIt(() => cli.systemPrompt.contains('<name>review</name>'));
+
+      io.sendLine('/skills access');
+      await waitForIt(
+        () => io.out.toString().contains('Third-party skills access'),
+      );
+      expect(io.out.toString(), contains('(current)'));
+      io.sendLine('3'); // "Disabled".
+      await waitForIt(
+        () => io.out.toString().contains('skills access: denied'),
+      );
+      io.sendLine('/skills');
+      await waitForIt(() => io.out.toString().contains('no skills discovered'));
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('denied from config: no dialog, but the disabled hint is visible — '
+        'even with a non-empty /skills list', () async {
+      await env.createDir('/work/.claude/skills/review');
+      await env.writeFile(
+        '/work/.claude/skills/review/SKILL.md',
+        '---\nname: review\ndescription: Review code\n---\nReview body.\n',
+      );
+      await env.createDir('/work/.fah/skills/deploy');
+      await env.writeFile(
+        '/work/.fah/skills/deploy/SKILL.md',
+        '---\nname: deploy\ndescription: Deploy the app\n---\nDeploy body.\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, skillsAccess: SkillsAccess.denied);
+      final run = cli.run();
+      // No consent dialog (denied), but the startup hint explains why the
+      // Claude skills are missing.
+      await waitForIt(() => io.out.toString().contains('found but disabled'));
+      expect(io.out.toString(), isNot(contains('Found Claude/Copilot/Codex')));
+
+      io.sendLine('/skills');
+      await waitForIt(
+        () => io.out.toString().contains('deploy — Deploy the app'),
+      );
+      // The non-empty list still carries the hint + the way out.
+      expect(io.out.toString(), contains('enable via /skills'));
+      expect(io.out.toString(), isNot(contains('review — Review code')));
+      io.sendLine('/exit');
+      await run;
+    });
+
     test('/skills import copies third-party skills into .fah/skills', () async {
       await env.createDir('/work/.github/skills/triage');
       await env.writeFile(
@@ -439,15 +553,9 @@ void main() {
         '---\nname: triage\ndescription: Triage issues\n---\nTriage body.\n',
       );
       final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call);
+      final cli = cliFor(fake.call); // granted by default — no dialog
       final run = cli.run();
-      await waitForIt(
-        () => io.out.toString().contains('Found Claude/Copilot/Codex'),
-      );
-      io.sendLine('1'); // "Allow".
-      await waitForIt(
-        () => io.out.toString().contains('skills access: granted'),
-      );
+      await waitForIt(() => cli.systemPrompt.contains('<name>triage</name>'));
       io.sendLine('/skills import');
       await waitForIt(() => io.out.toString().contains('imported triage'));
       io.sendLine('/exit');
@@ -1453,6 +1561,42 @@ void main() {
     final lastCtx = output.lastIndexOf('ctx 0% (');
     expect(lastCtx, isNonNegative);
     expect(output.substring(lastCtx), startsWith('ctx 0% (16/100k)'));
+  });
+
+  test('session switch resets the status meter (tok/cost/turn)', () async {
+    // The tok/cost/turn readout belongs to the CURRENT session: switching
+    // to a fresh one must zero it, not keep counting the previous
+    // session's usage.
+    const usage = Usage(
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: UsageCost(input: 0.0006, output: 0.0004, total: 0.001),
+    );
+    final fake = FakeStreamFunction([textTurn('hi', usage: usage)]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('q');
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+    expect(io.out.toString(), contains('15tok'));
+    io.sendLine('/session fresh');
+    await waitForIt(
+      () => io.out.toString().contains("created session 'fresh'"),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    final lastStatus = output.lastIndexOf('· ctx ');
+    expect(lastStatus, isNonNegative);
+    // After the switch the meter reads zero — not the carried-over 15.
+    expect(
+      output.substring(lastStatus),
+      startsWith('· ctx 0% (0/100k) · 0tok'),
+    );
   });
 
   group('session management', () {

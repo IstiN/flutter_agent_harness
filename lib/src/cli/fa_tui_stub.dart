@@ -58,7 +58,7 @@ final class FaTuiController {
     // Ignored on web (the TUI never runs there); kept for signature parity
     // with the dart_tui controller in fa_tui.dart.
     TuiProgramHooks? programHooks,
-    bool mouseCapture = false,
+    bool mouseCapture = true,
   });
 
   final FaTuiCallbacks callbacks;
@@ -78,6 +78,8 @@ final class FaTuiController {
   }) {}
 
   void sendQuit() {}
+
+  void sendInputText(String text) {}
 
   void sendBusy(bool busy) {}
 

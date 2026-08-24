@@ -8,6 +8,7 @@ import 'package:dart_tui/dart_tui.dart';
 import 'ansi_markdown.dart';
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
+import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -95,8 +96,16 @@ final class FaTuiCallbacks {
 /// Message carrying host output into the TUI.
 final class OutputMsg extends Msg {
   OutputMsg(this.text, {this.newline = false});
+
   final String text;
   final bool newline;
+}
+
+/// Message replacing the composer text (the `/skills` menu prefills
+/// `/skill:<name> ` so the user can add arguments before sending).
+final class _SetInputTextMsg extends Msg {
+  _SetInputTextMsg(this.text);
+  final String text;
 }
 
 /// Message asking the model picker to refresh its items.
@@ -193,7 +202,7 @@ final class FaTuiModel extends Model {
     this.termHeight = 24,
     this.busy = false,
     this.busyStartedAtMs = -1,
-    this.mouseCapture = false,
+    this.mouseCapture = true,
     this.spinnerFrame = 0,
     this.stickyLines = const [],
     this.stickyIndex = -1,
@@ -261,9 +270,10 @@ final class FaTuiModel extends Model {
   final int busyStartedAtMs;
 
   /// Whether the TUI captures the mouse (wheel scrolling) instead of
-  /// leaving it to the terminal's native text selection. Default off:
-  /// select-to-copy beats wheel scrolling for most users; `FA_TUI_MOUSE=1`
-  /// opts back into capture.
+  /// leaving it to the terminal's native text selection. Default on: the
+  /// session lives in the alternate screen with no terminal scrollback, so
+  /// without capture a two-finger scroll does nothing. Selection still
+  /// works through the bypass modifier (Shift); `FA_TUI_MOUSE=0` opts out.
   final bool mouseCapture;
   final int spinnerFrame;
 
@@ -321,12 +331,10 @@ final class FaTuiModel extends Model {
   /// ellipsis. Every chrome row (status, menu items) must fit on one
   /// terminal row: a soft-wrapped chrome line desyncs the renderer's row
   /// math and smears the frame on every repaint.
-  String _fitWidth(String text, [int? maxWidth]) {
-    final limit = maxWidth ?? termWidth;
-    if (text.length <= limit) return text;
-    if (limit <= 1) return text.substring(0, limit);
-    return '${text.substring(0, limit - 1)}…';
-  }
+  /// Truncates [text] to the terminal width in terminal cells (not UTF-16
+  /// units) so wide characters cannot push chrome rows past the width.
+  String _fitWidth(String text, [int? maxWidth]) =>
+      tuiFitWidth(text, maxWidth ?? termWidth);
 
   /// Whether the sticky user echo is pinned right now: a run is streaming
   /// and the echo has FULLY scrolled above the visible window. Rows are
@@ -601,6 +609,12 @@ final class FaTuiModel extends Model {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
+    if (msg is _SetInputTextMsg) {
+      return (
+        copyWith(inputText: msg.text, cursor: msg.text.length, menuOpen: false),
+        null,
+      );
+    }
     if (msg is _QuitRequestedMsg) return (this, () => quit());
     return _handleTerminalMsg(msg);
   }
@@ -1835,7 +1849,7 @@ final class FaTuiModel extends Model {
     // desyncs the renderer's row math and smears frames on every key.
     final full = '${item.label}$desc';
     final prefix = selected ? '${_accent('▸')} ' : '  ';
-    if (full.length <= termWidth - 2) {
+    if (tuiTextWidth(full) <= termWidth - 2) {
       if (selected) {
         return '$prefix${_accent(item.label)}${_dim(desc)}';
       }
@@ -1876,9 +1890,12 @@ final class FaTuiModel extends Model {
   /// The status row, fitted AND padded to the terminal width: a shorter new
   /// status (e.g. switching from a long model id to a short one) must
   /// overwrite the previous row's tail — the renderer only rewrites the
-  /// cells the new content covers.
-  String _statusRow() =>
-      _dim(_fitWidth(callbacks.statusLine()).padRight(termWidth));
+  /// cells the new content covers. Both operations are cell-width aware
+  /// (grapheme clusters): UTF-16 padding underpads any status carrying wide
+  /// characters and stale cells survive on the right.
+  String _statusRow() => _dim(
+    tuiPadRight(tuiFitWidth(callbacks.statusLine(), termWidth), termWidth),
+  );
 
   /// The framed input lines with horizontal cursor-window scrolling; returns
   /// the cursor's input line index and screen column for the cursor home.
@@ -1957,8 +1974,13 @@ final class FaTuiModel extends Model {
       result.add(parts[i]);
     }
     if (newline) result.add('');
-    // Keep the history bounded.
-    const maxLines = 200;
+    // Keep the history bounded. The cap must stay generous: trimming drops
+    // the OLDEST lines permanently, and a trim that lands inside a fenced
+    // code block leaves the buffer starting mid-fence — every following
+    // line then renders as (un)styled markdown wrongly ("the formatting
+    // slid"). 2000 raw lines ≈ a very long answer; the per-append
+    // reformat+rewrap stays fast at this size.
+    const maxLines = 2000;
     if (result.length > maxLines) {
       return result.sublist(result.length - maxLines);
     }
@@ -1973,7 +1995,7 @@ final class FaTuiController {
     required this.callbacks,
     required this.isExited,
     this.programHooks,
-    this.mouseCapture = false,
+    this.mouseCapture = true,
   });
 
   final FaTuiCallbacks callbacks;
@@ -2078,6 +2100,12 @@ final class FaTuiController {
 
   void sendQuit() {
     _send(_QuitRequestedMsg());
+  }
+
+  /// Replaces the composer text (the `/skills` menu prefills `/skill:<name> `
+  /// so the user can type arguments before pressing Enter).
+  void sendInputText(String text) {
+    _send(_SetInputTextMsg(text));
   }
 
   /// Opens the interactive prompt zone (ask/secret/approval) and resolves

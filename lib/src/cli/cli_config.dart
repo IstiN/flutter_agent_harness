@@ -68,7 +68,7 @@ final class CliConfig {
     this.mcp,
     this.a2a,
     this.providerTimeouts,
-    this.skillsAccess = SkillsAccess.ask,
+    this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
   });
 
@@ -127,7 +127,8 @@ final class CliConfig {
       // The skills section (third-party skills access consent + shell
       // execution toggle) is strict too.
       skillsAccess:
-          skillsSection['skillsAccess'] as SkillsAccess? ?? SkillsAccess.ask,
+          skillsSection['skillsAccess'] as SkillsAccess? ??
+          SkillsAccess.granted,
       skillsDisableShellExecution:
           skillsSection['skillsDisableShellExecution'] as bool? ?? false,
     );
@@ -172,7 +173,8 @@ final class CliConfig {
   final String baseUrl;
   final String mode;
 
-  /// Approval mode label (`always-ask`, `write`, `yolo`); parsed with
+  /// Approval mode label (`always-ask`, `write`, `yolo`, `unattended`);
+  /// parsed with
   /// `approvalModeFromLabel` from `lib/src/approval/`.
   final String approvalMode;
 
@@ -223,9 +225,9 @@ final class CliConfig {
 
   /// Consent to read third-party skill/agent directories
   /// (`.claude`/`.github`/`.codex` + their `~/` mirrors), from the
-  /// `skills.access` yaml key. [SkillsAccess.ask] (default) means the
-  /// interactive REPL asks once and persists the answer; headless runs
-  /// skip third-party discovery until configured.
+  /// `skills.access` yaml key. [SkillsAccess.granted] is the default —
+  /// discovery is opt-out so migrating users get their existing skills with
+  /// zero setup; `ask` makes the interactive REPL prompt once at startup.
   final SkillsAccess skillsAccess;
 
   /// When true, Claude-style `!`cmd`` / ```` ```! ```` shell injections in
@@ -282,10 +284,10 @@ final class CliConfig {
   }
 
   bool get _skillsSectionNeeded =>
-      skillsAccess != SkillsAccess.ask || skillsDisableShellExecution;
+      skillsAccess != SkillsAccess.granted || skillsDisableShellExecution;
 
   void _writeSkillsAccess(StringBuffer buffer) {
-    if (skillsAccess != SkillsAccess.ask) {
+    if (skillsAccess != SkillsAccess.granted) {
       buffer.write('  access: ${skillsAccessLabel(skillsAccess)}\n');
     }
   }

@@ -1021,7 +1021,11 @@ void main() {
           output,
           contains('key settings: https://openrouter.ai/keys/abc123'),
         );
-        expect(store.map['OPENROUTER_API_KEY'], 'sk-or-oauth-123');
+        // The key persists under the ENDPOINT-SCOPED store name — the slot
+        // the saved registry entry references and the first store slot boot
+        // resolution reads. The legacy env name would let a stale scoped
+        // entry shadow the fresh OAuth key in every new session.
+        expect(store.map['FA_KEY_OPENROUTER_AI'], 'sk-or-oauth-123');
         expect(cli.agent.state.model.provider, 'openrouter');
         expect(cli.providerKind, 'openai-completions');
       },
@@ -1072,8 +1076,102 @@ void main() {
         expect(entry, isNotNull, reason: 'connected provider saved');
         expect(entry!.apiType, 'openrouter');
         expect(entry.baseUrl, 'https://openrouter.ai/api/v1');
+        // The stored key lands under the SAME name the entry references —
+        // the mismatch sent new sessions to an empty/stale slot.
+        expect(store.map[entry.keyName], 'sk-or-9');
         // /provider status lists it among the saved providers.
         expect(io.out.toString(), contains('openrouter.ai —'));
+      },
+    );
+
+    test(
+      '/provider openrouter picker offers the already-stored key first',
+      () async {
+        // Regression: opening a fresh session and running /provider
+        // openrouter forced OAuth/key re-entry even when a working key was
+        // already in the secure store.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        await store.write('FA_KEY_OPENROUTER_AI', 'sk-or-stored');
+        final cache = SecureKeyCache(store);
+        // Boot preload semantics: probe + load the names resolution reads.
+        await cache.preload(['FA_KEY_OPENROUTER_AI']);
+        var oauthStarted = false;
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          openRouterOAuthExchangeFn:
+              ({
+                required String code,
+                required String codeVerifier,
+                String? label,
+              }) async {
+                oauthStarted = true;
+                return const OpenRouterOAuthKey(key: 'x', keyHash: 'h');
+              },
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider openrouter');
+        await waitForIt(
+          () => io.out.toString().contains('OpenRouter sign-in method'),
+        );
+        // The stored-key option is offered first in the list.
+        expect(io.out.toString(), contains('1) Use stored key'));
+        io.sendLine('1'); // accept the stored key
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to openrouter'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(oauthStarted, isFalse, reason: 'no re-auth needed');
+        expect(cli.agent.state.model.baseUrl, contains('openrouter.ai'));
+      },
+    );
+
+    test(
+      'oauth overwrites a stale endpoint-scoped key so it cannot shadow it',
+      () async {
+        // Regression: an old manual key under FA_KEY_OPENROUTER_AI (e.g.
+        // revoked) used to win startup resolution over the fresh OAuth key
+        // stored under OPENROUTER_API_KEY — new sessions came up "logged
+        // out". The OAuth flow now writes the scoped slot itself.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        await store.write('FA_KEY_OPENROUTER_AI', 'sk-or-stale');
+        final cache = SecureKeyCache(store);
+        await cache.preload(['FA_KEY_OPENROUTER_AI']);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          openRouterOAuthExchangeFn:
+              ({
+                required String code,
+                required String codeVerifier,
+                String? label,
+              }) async => const OpenRouterOAuthKey(key: 'sk-or-fresh'),
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider openrouter oauth headless');
+        await waitForIt(
+          () => io.out.toString().contains('authorization code:'),
+        );
+        io.sendLine('auth-code-123');
+        await waitForIt(
+          () => io.out.toString().contains('OpenRouter authorized'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(
+          store.map['FA_KEY_OPENROUTER_AI'],
+          'sk-or-fresh',
+          reason: 'stale key replaced by the fresh OAuth key',
+        );
       },
     );
 

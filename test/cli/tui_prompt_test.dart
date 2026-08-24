@@ -498,10 +498,29 @@ void main() {
       );
     });
 
-    test('other chars do nothing', () {
+    test('unrecognized char is echoed into approvalInput', () {
       final state = TuiPromptState(spec);
       final result = handleTuiPromptKey(state, PromptChar('x'));
       expect(result.resolved, isNull);
+      expect(result.state.approvalInput, 'x');
+    });
+
+    test('PromptEnter does not resolve while approvalInput is non-empty', () {
+      final state = TuiPromptState(spec).copyWith(approvalInput: 'ф');
+      final result = handleTuiPromptKey(state, const PromptEnter());
+      expect(result.resolved, isNull);
+      expect(result.state.approvalInput, 'ф');
+    });
+
+    test('recognized answer key clears a stale approvalInput buffer', () {
+      final state = TuiPromptState(spec).copyWith(approvalInput: 'ф');
+      final result = handleTuiPromptKey(state, PromptChar('y'));
+      expect(result.resolved, isA<ApprovalPromptAnswer>());
+      expect(
+        (result.resolved as ApprovalPromptAnswer).value,
+        ApprovalDecision.approveOnce,
+      );
+      expect(result.state.approvalInput, '');
     });
   });
 

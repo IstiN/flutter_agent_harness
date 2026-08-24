@@ -3,20 +3,21 @@
 /// (`.claude/`, `.github/`, `.codex/`, `.agents/`, `~/.claude/` …).
 ///
 /// These directories contain instructions AND scripts that other tools
-/// (Claude Code, GitHub Copilot, OpenAI Codex) drop onto the machine. Reading
-/// them hands that content to the model, so discovery only runs after the
-/// user opts in — see `skills_access.md` docs. [ask] means "no decision yet":
-/// interactive hosts show a one-time dialog, non-interactive runs skip
-/// discovery (safe default).
+/// (Claude Code, GitHub Copilot, OpenAI Codex) drop onto the machine.
+/// Discovery is ON BY DEFAULT ([granted]) so migrating users get their
+/// existing skills with zero setup; [denied] opts out (settings / config),
+/// and [ask] makes interactive hosts prompt at startup (headless runs treat
+/// it as denied rather than silently reading third-party instruction files).
 library;
 
 /// The consent state for third-party skill/agent discovery.
 enum SkillsAccess {
-  /// No decision recorded yet: interactive hosts ask once, headless runs
-  /// behave like [denied] until the user answers.
+  /// Interactive hosts ask once at startup; headless runs behave like
+  /// [denied] until the user answers. Never the default — only an explicit
+  /// user choice.
   ask,
 
-  /// Discovery is enabled.
+  /// Discovery is enabled. This is the DEFAULT.
   granted,
 
   /// Discovery is disabled: no third-party skill/agent file is read.
@@ -24,12 +25,12 @@ enum SkillsAccess {
 }
 
 /// Parses a persisted label (`ask`/`granted`/`denied`); null/unknown →
-/// [SkillsAccess.ask].
+/// [SkillsAccess.granted] (discovery is opt-out, not opt-in).
 SkillsAccess skillsAccessFromLabel(String? label) {
   return switch (label?.trim()) {
-    'granted' => SkillsAccess.granted,
+    'ask' => SkillsAccess.ask,
     'denied' => SkillsAccess.denied,
-    _ => SkillsAccess.ask,
+    _ => SkillsAccess.granted,
   };
 }
 

@@ -326,13 +326,17 @@ void main() {
   });
 
   group('skills access', () {
-    test('label round-trip', () {
-      expect(skillsAccessFromLabel('granted'), SkillsAccess.granted);
-      expect(skillsAccessFromLabel('denied'), SkillsAccess.denied);
-      expect(skillsAccessFromLabel(null), SkillsAccess.ask);
-      expect(skillsAccessFromLabel('junk'), SkillsAccess.ask);
-      expect(skillsAccessLabel(SkillsAccess.granted), 'granted');
-    });
+    test(
+      'label round-trip (unknown/absent → granted, discovery is opt-out)',
+      () {
+        expect(skillsAccessFromLabel('granted'), SkillsAccess.granted);
+        expect(skillsAccessFromLabel('denied'), SkillsAccess.denied);
+        expect(skillsAccessFromLabel('ask'), SkillsAccess.ask);
+        expect(skillsAccessFromLabel(null), SkillsAccess.granted);
+        expect(skillsAccessFromLabel('junk'), SkillsAccess.granted);
+        expect(skillsAccessLabel(SkillsAccess.granted), 'granted');
+      },
+    );
 
     test('discovery allowed only when granted', () {
       expect(

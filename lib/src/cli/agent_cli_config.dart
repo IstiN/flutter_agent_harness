@@ -17,7 +17,7 @@ final class AgentCliConfig {
     this.envVarValue,
     this.modelsFetcher,
     this.modelsHttpClient,
-    this.tuiMouseCapture = false,
+    this.tuiMouseCapture = true,
     this.systemPrompt,
     this.promptOverrides,
     this.visionConfig,
@@ -45,7 +45,7 @@ final class AgentCliConfig {
     this.onSecretGranted,
     this.onModeChanged,
     this.onApprovalChanged,
-    this.skillsAccess = SkillsAccess.ask,
+    this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
     this.onSkillsAccessChanged,
     this.isShiftPressed,
@@ -122,6 +122,8 @@ final class AgentCliConfig {
   /// Initial approval mode (`/approval` switches it at runtime). Defaults to
   /// [ApprovalMode.yolo] — pre-approval-model CLI behavior — while critical
   /// `bash` patterns still prompt (or are denied when non-interactive).
+  /// [ApprovalMode.unattended] additionally skips the critical interceptor:
+  /// the session never blocks, for runs without a user present.
   final ApprovalMode approvalMode;
 
   /// Tools always-allowed from previous sessions (`/allow`, "approve always"
@@ -196,10 +198,12 @@ final class AgentCliConfig {
   final void Function()? onApprovalChanged;
 
   /// Consent for discovering third-party skill roots (Claude/Copilot/Codex
-  /// directories). [SkillsAccess.ask] means the host has not decided yet:
-  /// an interactive host asks once at startup (then persists via
-  /// [onSkillsAccessChanged]); a headless run treats it as denied. Own roots
-  /// (`.fah/skills`, `.agents/skills`) are always discovered.
+  /// directories). [SkillsAccess.granted] is the default (opt-out discovery —
+  /// migrating users keep their existing skills with zero setup);
+  /// [SkillsAccess.ask] makes an interactive host prompt once at startup
+  /// (persisted via [onSkillsAccessChanged]); a headless run treats `ask` as
+  /// denied. Own roots (`.fah/skills`, `.agents/skills`) are always
+  /// discovered.
   final SkillsAccess skillsAccess;
 
   /// When true, `!`command`` shell injections inside skill bodies are not
@@ -263,9 +267,12 @@ final class AgentCliConfig {
   /// the fetchers create their own client; tests inject a `MockClient`.
   final http.Client? modelsHttpClient;
 
-  /// Whether the TUI captures the mouse for wheel scrolling. Default false:
-  /// the terminal keeps its native text selection (select-to-copy). The
-  /// executable sets this from `FA_TUI_MOUSE=1`.
+  /// Whether the TUI captures the mouse for wheel scrolling. Default true:
+  /// the session renders in the alternate screen, where the terminal has no
+  /// native scrollback — without capture a two-finger scroll does nothing
+  /// and the user cannot reach earlier output. Selection still works via
+  /// the terminal's bypass modifier (Shift in most). `FA_TUI_MOUSE=0` opts
+  /// out for always-on native select-to-copy.
   final bool tuiMouseCapture;
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].

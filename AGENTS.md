@@ -8,11 +8,15 @@ factual: paths, commands, invariants — no essays.
 - `lib/` — the `flutter_agent_harness` package (pure Dart core). `test/`
   mirrors it. `prompts/` — all LLM prompts as Markdown (see rules below).
 - `lib/src/approval/` — tool approval gate: tiers (read/write/exec),
-  session modes (always-ask/write/yolo), per-tool overrides, critical-pattern
+  session modes (always-ask/write/yolo/unattended), per-tool overrides,
+  critical-pattern
   `bash` interceptor, per-turn grants (`grantForTurn(allow:, deny:)` —
   skill `allowed-tools`/`disallowed-tools` manifest keys ride these for one
-  turn; explicit deny > turnDeny > critical bash > per-tool override >
-  turnAllow > alwaysAllow > mode; `clearTurnGrants()` on every new user
+  turn; explicit deny > turnDeny > per-tool override > turnAllow >
+  alwaysAllow > mode (critical bash outranks mode in always-ask/write/yolo,
+  but is skipped in unattended so the mode never blocks — for runs with no
+  user present); `clearTurnGrants()`
+  on every new user
   message). Wired via `attachApproval` into `beforeToolCall` (runs
   first); prompt UI is an injectable `ApprovalPrompt` (null + prompt policy
   = deny).
@@ -124,11 +128,13 @@ factual: paths, commands, invariants — no essays.
   Claude/Copilot/Codex layouts (`.claude/skills` + `.claude/commands`,
   `.github/skills`, `.codex/skills`, user-level equivalents incl.
   `~/.copilot/skills`), each root tagged with a `SkillSource`; project >
-  user, first-name-wins. Third-party roots are gated behind the user's
-  consent (`skills_access.dart` `SkillsAccess` ask/granted/denied —
-  `allowedSources` on `discoverSkills`/`discoverTaskAgents`; CLI `skills:`
-  config section + startup dialog + `/skills access`, app
-  `SkillsAccessStore` + onboarding/settings). Typed frontmatter lives in
+  user, first-name-wins. Third-party roots are discovered BY DEFAULT
+  (opt-out): `skills_access.dart` `SkillsAccess` ask/granted/denied with
+  `granted` as the zero-config default — `allowedSources` on
+  `discoverSkills`/`discoverTaskAgents`; CLI `skills:` config section,
+  the TUI `/skills` management menu + `/skills access`, startup dialog
+  only for an explicit `ask`; app `SkillsAccessStore` + settings/boot
+  dialog). Typed frontmatter lives in
   `skill_manifest.dart` (`SkillManifest` — allowed-tools, context: fork,
   paths, user/model-invocable …; unknown keys = notes). Only metadata
   enters the system prompt (path-gated `paths:` skills appear once a
@@ -144,8 +150,12 @@ factual: paths, commands, invariants — no essays.
   `<!-- applies to: ... -->` marker, `excludeAgent` ignored) auto-merged into
   the system prompt: cwd → git root, farthest-first, `<!-- From: -->`
   annotations, 32 KiB leaf-first budget; optional `~/.fah/AGENTS.md` first.
-  CLI: `/skill:<name> [args]`, the `/<name>` alias,
-  `/skills [reload|access|import]`.
+  CLI: `/skill:<name> [args]`, the `/<name>` alias, `/skills` (TUI: a
+  management menu — picking a skill prefills `/skill:<name> ` into the
+  composer via `FaTuiController.sendInputText`, plus access/import rows;
+  line mode: plain list) with `[reload|access [ask|granted|denied]|import]`
+  subcommands (bare `/skills access` opens an interactive picker, run
+  detached from the sequential line REPL like the guided provider flows).
 - `lib/src/task/` — `task` tool: parallel subagents, batch form
   `{context, tasks[]}` + `background` flag; children never get `task` (no
   nesting); roles: `explore`→`smol`, `review`→`slow`, `plan`→`plan`;
@@ -154,7 +164,7 @@ factual: paths, commands, invariants — no essays.
   Agent types: built-ins (`task`/`explore`/`review`/`plan`) plus discovered
   `.md`/`.agent.md` files (`agent_discovery.dart` — roots `.fah/agents`,
   `.agents/agents`, `.claude/agents`, `.github/agents`, `.codex/agents` +
-  user-level, gated by the skills consent; `canonicalTaskAgentName` folds
+  user-level, gated by the skills access setting; `canonicalTaskAgentName` folds
   Claude/Copilot names like `general-purpose`/`Explore`/`Reviewer` onto the
   built-ins).
   `/tasks` lists jobs (background agents AND background shell jobs),
@@ -227,10 +237,11 @@ factual: paths, commands, invariants — no essays.
   EXISTING file is the prompt source (`.md`/`.txt` inlined, others attached
   by reference; `-p` is verbatim). Args parsed in `lib/src/cli/cli_args.dart`
   (pure Dart). Headless: exit 0/1/130; `CliIO` contract — `write` = primary
-  stream, `writeln` = diagnostics (stderr headless). The TUI leaves the
-  mouse to the terminal by default (native select-to-copy);
-  `FA_TUI_MOUSE=1` (`AgentCliConfig.tuiMouseCapture`) captures it for
-  wheel scrolling.
+  stream, `writeln` = diagnostics (stderr headless). The TUI captures the
+  mouse by default (wheel scrolling — the alternate screen has no native
+  scrollback); selection works via the terminal's bypass modifier (Shift),
+  and `FA_TUI_MOUSE=0` (`AgentCliConfig.tuiMouseCapture`) hands the mouse
+  back for always-on native select-to-copy.
 - `lib/src/cli/` — REPL machinery: `/provider [name] [baseUrl] [token] |
   custom` (guided wizard in `provider_flow.dart` + `provider_commands.dart`;
   `/models` fetched for openai-like endpoints), custom providers in the
@@ -343,15 +354,27 @@ factual: paths, commands, invariants — no essays.
   live quick-search, and a `Use "<query>"` row keeps manual entry —
   `FaModelListPicker` (`src/widgets/model_list_picker.dart`, the initial /
   tap-picked value shows the FULL list with a check, only user typing
-  filters) for the form pages — media slots, agent roles, AND the
-  `ProviderEditorPage`'s model id (the endpoint's `/models` fetch is
-  debounced on URL/key edits through the same core dispatch, a typed key
-  wins over the provider's resolved key, `modelsFetcher` is the test
-  seam) — and the CodeMie SSO model step
-  (`flutter_app/lib/services/codemie_sso_flow.dart`) renders the same
-  picker; the same `Use "<filter>"` row lives inside
+  filters) for the form pages — media slots, agent roles, and the CodeMie
+  SSO model step
+  (`flutter_app/lib/services/codemie_sso_flow.dart`); the same
+  `Use "<filter>"` row lives inside
   `UnifiedModelPickerPage` (applies on the ACTIVE provider, key resolved
-  via the registry). The media slots AND the agent-role rows
+  via the registry). The `ProvidersSection` rows carry the SAME brand mark
+  the add-provider picker shows — `providerMarkKey` (preset) /
+  `providerMarkKeyForBaseUrl` (custom provider, URL-matched: codemie
+  marker, openrouter.ai, ollama.com, generativelanguage…, else `custom`) in
+  `provider_marks.dart` — and never a current-provider check; every row
+  trails a chevron into the editor. The provider editor
+  (`ProviderEditorPage`) owns
+  name/URL/key; the model id is a button-style row (icon + current model +
+  chevron, mirroring the `TaskModelsSection` rows) opening
+  `MediaSlotModelPage` with `slot: null` DIRECTLY (no provider-picker step)
+  for a transient provider entry built from the CURRENT form values — the
+  edited provider keeps its id so the stored key resolves, and a freshly
+  typed (unsaved) key rides the page's `apiKeyOverride` (preset mode falls
+  back to the stored preset key). The editor's `modelsFetcher` is a test
+  seam threaded through `ProvidersSection`/`AddProviderPresetPickerPage`/
+  `pushProviderEditor`. The media slots AND the agent-role rows
   (`TaskModelsSection`: Quick model / Subagents model) share the ONE
   two-step flow — `MediaSlotProviderPickerPage` → `MediaSlotModelPage`
   with `slot: null` for roles (no voice field, no capability chips,
@@ -380,7 +403,8 @@ factual: paths, commands, invariants — no essays.
   (`upload_utils.dart`), the media tool-name constants
   (`media_tool_names.dart`), and the brand glyphs
   (`fa_glyphs.dart` — `FaAttachGlyph`, the SVG attach icon used by the
-  composer, and `FaAiAvatar`, the `>_` squircle used as the assistant
+  composer, `FaModelGlyph`, the AI-chip icon leading the provider editor's
+  model row, and `FaAiAvatar`, the `>_` squircle used as the assistant
   avatar in `chat_message_tile.dart`) —
   localized via `FaChatStrings` (en/ru defaults, `FaChatStringsScope`
   override), analytics via the `FaChatHost.track` hook, backend surface is
@@ -498,7 +522,11 @@ factual: paths, commands, invariants — no essays.
   the SAME `SessionTile`/`sessionTileSubtitle`/`sessionTileCwdLabel`/
   `showSessionActionsMenu` the wide sidebar exports from
   `sidebar_sessions_list.dart`, persisted open lazily via
-  `manager.openSession`; its header clears the floating macOS traffic
+  `manager.openSession`; a tile's folder label always comes from the
+  session's OWN on-disk metadata cwd — a live session's env reports the
+  app's CURRENT mount for every session, so reading
+  `service.env.sessionCwd` would flip the label the moment a persisted
+  session opens; its header clears the floating macOS traffic
   lights via `faIsMacOSDesktop`; a scrim tap on the exposed part dismisses
   the top layer, and the drawer carries its OWN scrim ABOVE the panel so an
   outside tap still closes it while a session is open), and the session
@@ -561,7 +589,17 @@ factual: paths, commands, invariants — no essays.
   jump to `ProviderEditorPage`, nothing applied). Add a preset by appending a
   `ModelPreset` to `kModelPresets` (doc comment there) plus its
   `modelPreset<Id>Name`/`...Description` arb keys; `ModelPresetTarget` is
-  sealed for future custom/on-device targets.
+  sealed for future custom/on-device targets. The presets headline the
+  dedicated **Models** settings page
+  (`flutter_app/lib/ui/screens/models_settings_page.dart` —
+  `ModelsSettingsPage`: presets → `DefaultChatModelSection` →
+  `TaskModelsSection` → `MediaModelsSection`), opened from the "Models"
+  row on `SettingsScreen` (chip icon + chevron, ABOVE the Agents section)
+  via `pushFaPage` — a centered dialog on wide canvases, full-screen on
+  the phone — so the settings top level stays provider-focused; same
+  layout on phone and macOS. The sections need the `MediaModelsScope`/`TaskModelsScope`
+  from the app shell (tests: wrap ABOVE the MaterialApp — pushed routes
+  build inside the Navigator, above `home:`).
 - `flutter_app/lib/sandbox/sandbox_registry.dart` — central registry of
   sandbox shell commands per platform; the Fa system prompt's `{{commands}}`
   renders from it. Never list commands in prompt text or UI by hand.
@@ -729,13 +767,9 @@ factual: paths, commands, invariants — no essays.
   re-exported by the `lib/ui/app_theme.dart` shim), widgets read colors via
   `FahColors.of(context)` (never `FahPalette` directly in widgets).
 - `flutter_app/lib/ui/screens/onboarding_screen.dart` — first-launch
-  onboarding: 5 pages on desktop, 4 on mobile — the third-party skills
-  consent page is omitted on Android/iOS (`skillsConsentSurfacesVisible`,
-  see `skills_access_store.dart`), the step header/footer adapt. Pages:
-  welcome + AI disclaimer, permissions explainer,
-  third-party skills consent — Allow persists `granted` via
-  `skills_access_store.dart`, "Not now" leaves it undecided so the boot
-  dialog still asks, privacy
+  onboarding: 4 pages on every platform (third-party skills are discovered
+  by default, so there is no consent page). Pages:
+  welcome + AI disclaimer, permissions explainer, privacy
   + policy link via `url_launcher`), page dots, Skip on every page.
   `BootstrapScreen` shows it once only when there is NO restorable
   connection; the seen flag lives in
@@ -771,17 +805,20 @@ factual: paths, commands, invariants — no essays.
   `approval` from it, `setApprovalMode` writes through (fire-and-forget),
   `clone()` inherits the CURRENT mode (never a fresh read).
 - `flutter_app/lib/services/skills_access_store.dart` — the third-party
-  skills consent persisted as `skills_access.json` (same tiny-store
-  pattern); `null`/`ask` = undecided (never reads `.claude`/`.github/skills`/
-  `.codex`). `AgentService.create` gates `discoverSkills` on it
+  skills access setting persisted as `skills_access.json` (same tiny-store
+  pattern); `null` = never chose = **granted by default** (opt-out
+  discovery — a fresh install reads `.claude`/`.github/skills`/`.codex`
+  without asking); a persisted `ask` round-trips verbatim (it is the
+  boot-dialog state), `denied` opts out. `AgentService.create` gates
+  `discoverSkills` on it
   (`allowedSources: {SkillSource.fah, SkillSource.agents}` unless granted),
   `setSkillsAccess` writes through (fire-and-forget) AND re-discovers the
   prompt's skills section live (no reconfigure needed), `clone()` inherits
-  the CURRENT consent. UI: the settings `SkillsAccessSection` dropdown
-  (ask/allowed/denied), onboarding page 4 (Allow persists granted, "Not
-  now" stays undecided), and the one-time boot dialog in `main.dart`'s
-  `BootstrapScreen` (seen-onboarding + undecided only; Not now persists
-  DENIED there so it never re-asks). All three surfaces are desktop-only:
+  the CURRENT setting. UI: the settings `SkillsAccessSection` dropdown
+  (ask/allowed/denied), and the one-time boot dialog in `main.dart`'s
+  `BootstrapScreen` (seen-onboarding + explicit `ask` only; Allow persists
+  granted, Not now persists DENIED so it never re-asks, a dismissed dialog
+  stays `ask`). Both surfaces are desktop-only:
   `skillsConsentSurfacesVisible` (same file, off `defaultTargetPlatform` so
   widget tests can flip it) hides them on Android/iOS — the third-party
   roots don't exist there; discovery gating itself is unaffected.

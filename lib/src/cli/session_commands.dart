@@ -1,0 +1,198 @@
+/// Session management commands split from [AgentCli] to keep agent_cli.dart
+/// under the repo's 2800-line size gate. Same library (a `part of`), so the
+/// extension sees the class's private members.
+part of 'agent_cli.dart';
+
+/// Implementation members of [AgentCli] for named sessions: switching,
+/// creating, renaming, listing, and the empty-session cleanup.
+extension on AgentCli {
+  Future<void> _switchSession(String name) async {
+    final trimmed = name.trim();
+    await deleteSessionIfEmpty();
+    _subagentManager.reset();
+    // The status meter belongs to the session (see _switchToMetadata).
+    _usage.reset();
+    final metadata = await _findSessionByName(trimmed);
+    if (metadata != null) {
+      await _switchToMetadata(metadata, trimmed);
+      return;
+    }
+    _agent.reset();
+    _checkpoints.clear();
+    _ttsr?.reset();
+    _session = await _createSession(name: trimmed);
+    _syncMailboxPrefix();
+    _persistedCount = 0;
+    io.writeln("created session '$trimmed'");
+  }
+
+  /// Switches to an existing session by metadata (picker, /resume). Adopts
+  /// the session's original working directory so the agent keeps operating
+  /// in the project the session belongs to.
+  Future<void> _switchToMetadata(SessionMetadata metadata, String label) async {
+    await deleteSessionIfEmpty();
+    _subagentManager.reset();
+    // The status meter belongs to the session: tok/cost/turn must not carry
+    // the previous session's totals into the new one.
+    _usage.reset();
+    _agent.reset();
+    _checkpoints.clear();
+    _ttsr?.reset();
+    _env.cwd = metadata.cwd;
+    _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
+    _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
+    // Reload skills/project context for the new cwd so the system prompt
+    // matches the session's project.
+    await _loadAgentContext();
+    _session = await _loadSession(metadata);
+    _syncMailboxPrefix();
+    // Now that `_session` is assigned, the registry source can read the
+    // resumed session's `subagent_registry` records.
+    unawaited(_subagentManager.rehydrate());
+    io.writeln("switched to session '$label' [${_pathBasename(metadata.cwd)}]");
+    _replayRestoredHistory(_agent.state.messages, label);
+  }
+
+  /// Replays a restored session's transcript into the output so a resume
+  /// doesn't look empty: compact per-message rows filling a row budget from
+  /// the END (see [buildReplayEntries] — a typical session replays in full,
+  /// only marathon ones truncate, and the header says so).
+  void _replayRestoredHistory(List<Message> messages, String label) {
+    if (messages.isEmpty) return;
+    // Below the TUI history cap (2000 lines) so the replay never trims its
+    // own head in TUI mode.
+    final width = io.columns > 0 ? io.columns : 80;
+    final (entries, firstIndex) = buildReplayEntries(
+      messages,
+      tui: _useTui,
+      width: width,
+      dim: _style.dim,
+    );
+    final count = firstIndex > 0
+        ? 'last ${messages.length - firstIndex} of ${messages.length}'
+        : '${messages.length}';
+    io.writeln(_style.dim('─── restored session: $label ($count messages)'));
+    for (final entry in entries) {
+      for (final line in entry) {
+        io.writeln(line);
+      }
+    }
+    io.writeln(_style.dim('─' * 20));
+  }
+
+  /// `/resume`: switches to the most recently created session across every
+  /// workspace (the repo lists sessions newest-first).
+  Future<void> _resumeLastSession() async {
+    final sessions = await _repo.list();
+    if (sessions.isEmpty) {
+      io.writeln('no sessions');
+      return;
+    }
+    final latest = sessions.first;
+    final current = await _session?.getMetadata();
+    final session = await _repo.open(latest);
+    final label = await session.getSessionName() ?? latest.id;
+    if (current?.path == latest.path) {
+      io.writeln("already on the latest session '$label'");
+      return;
+    }
+    await _switchToMetadata(latest, label);
+  }
+
+  Future<void> _renameSession(String name) async {
+    final trimmed = name.trim();
+    final session = _session;
+    if (session == null) {
+      io.writeln('no active session');
+      return;
+    }
+    await session.appendSessionName(trimmed);
+    io.writeln("renamed current session to '$trimmed'");
+  }
+
+  Future<void> _listSessions() async {
+    // List every session in the shared root, across workspaces, so sessions
+    // created in the Fa app or in another `fa` run are visible here.
+    final sessions = await _repo.list();
+    if (sessions.isEmpty) {
+      io.writeln('no sessions');
+      return;
+    }
+    final current = await _session?.getMetadata();
+    io.writeln('sessions:');
+    for (var i = 0; i < sessions.length; i++) {
+      final metadata = sessions[i];
+      final session = await _repo.open(metadata);
+      final sessionName = await session.getSessionName();
+      final label = sessionName ?? metadata.id;
+      final marker = current?.path == metadata.path ? '*' : ' ';
+      final folder = _pathBasename(metadata.cwd);
+      final folderTag = folder.isEmpty ? '' : ' [$folder]';
+      io.writeln(
+        '  $marker${i + 1}) $label$folderTag  '
+        '${_style.dim(metadata.createdAt.toLocal().toIso8601String())}',
+      );
+    }
+    io.writeln(
+      _style.dim('switch: /session <name> · rename: /rename-session <name>'),
+    );
+  }
+
+  Future<void> _createNamedSession(String name) async {
+    final trimmed = name.trim();
+    final existing = await _findSessionByName(trimmed);
+    if (existing != null) {
+      io.writeln("session '$trimmed' already exists");
+      return;
+    }
+    await deleteSessionIfEmpty();
+    _subagentManager.reset();
+    _agent.reset();
+    _checkpoints.clear();
+    _ttsr?.reset();
+    _session = await _createSession(name: trimmed);
+    _syncMailboxPrefix();
+    _persistedCount = 0;
+    io.writeln("created session '$trimmed'");
+  }
+
+  /// `/sessions`: a bare command opens the TUI picker; anything else prints
+  /// the session list.
+  Future<void> _sessionsSlash(String rest) async {
+    if (rest.isEmpty && _useTui && _tuiController != null) {
+      await _openSessionsPicker();
+    } else {
+      await _listSessions();
+    }
+  }
+
+  /// A `/session-new`-style command requiring a name argument.
+  Future<void> _namedSessionSlash(
+    String rest,
+    String command,
+    Future<void> Function(String) action,
+  ) async {
+    if (rest.trim().isEmpty) {
+      io.writeln('usage: /$command <name>');
+    } else {
+      await action(rest.trim());
+    }
+  }
+
+  Future<void> _handleSessionCommand(String rest) async {
+    final trimmed = rest.trim();
+    if (trimmed.isEmpty) {
+      final session = _session;
+      if (session == null) {
+        io.writeln('no active session');
+        return;
+      }
+      final metadata = await session.getMetadata();
+      final name = await session.getSessionName();
+      io.writeln('session: ${name ?? '(unnamed)'}  ${metadata.path}');
+      io.writeln(_style.dim('rename: /rename-session <name>'));
+      return;
+    }
+    await _switchSession(trimmed);
+  }
+}

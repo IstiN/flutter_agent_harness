@@ -188,6 +188,7 @@ class Agent {
     QueueMode steeringMode = QueueMode.oneAtATime,
     QueueMode followUpMode = QueueMode.oneAtATime,
     this.toolExecution = ToolExecutionMode.parallel,
+    this.maxEmptyRetries = 1,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -249,6 +250,10 @@ class Agent {
   /// Tool execution strategy for assistant messages that contain multiple
   /// tool calls.
   ToolExecutionMode toolExecution;
+
+  /// How many times a degenerate-empty assistant response is retried within
+  /// the loop before the turn is accepted. Default: 1.
+  final int maxEmptyRetries;
 
   /// Current agent state.
   AgentState get state => _state;
@@ -446,6 +451,7 @@ class Agent {
       hasPendingSteering: externalSteeringProbe == null
           ? null
           : () => externalSteeringProbe!(),
+      maxEmptyRetries: maxEmptyRetries,
     );
   }
 

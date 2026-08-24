@@ -150,8 +150,13 @@ final class SecretPromptAnswer extends TuiPromptAnswer {
 }
 
 final class ApprovalPromptAnswer extends TuiPromptAnswer {
-  const ApprovalPromptAnswer(this.value);
+  const ApprovalPromptAnswer(this.value, {this.note = ''});
   final ApprovalDecision value;
+
+  /// Text the user typed before answering (chars that are not y/a/n).
+  /// Delivered to the agent as feedback alongside the decision; empty when
+  /// the user only pressed an answer key.
+  final String note;
 }
 
 /// The typed line from a [TextPromptSpec].
@@ -178,7 +183,8 @@ final class TuiPromptState {
       secretCursor = switch (spec) {
         SecretPromptSpec _ => -1, // -1 = focus on name field
         _ => 0,
-      };
+      },
+      approvalInput = '';
 
   final TuiPromptSpec spec;
   final Set<int> askSelected;
@@ -187,6 +193,11 @@ final class TuiPromptState {
   final String secretName;
   final String secretValue;
   final int secretCursor;
+
+  /// Text typed into an approval prompt that is not a y/a/n answer: the
+  /// user can leave a note for the agent alongside the decision. Any
+  /// recognized answer key submits the decision and clears the buffer.
+  final String approvalInput;
 
   bool get hasOptions {
     final s = spec;
@@ -210,6 +221,7 @@ final class TuiPromptState {
     String? secretName,
     String? secretValue,
     int? secretCursor,
+    String? approvalInput,
   }) {
     return TuiPromptState._raw(
       spec,
@@ -219,6 +231,7 @@ final class TuiPromptState {
       secretName: secretName ?? this.secretName,
       secretValue: secretValue ?? this.secretValue,
       secretCursor: secretCursor ?? this.secretCursor,
+      approvalInput: approvalInput ?? this.approvalInput,
     );
   }
 
@@ -230,6 +243,7 @@ final class TuiPromptState {
     required this.secretName,
     required this.secretValue,
     required this.secretCursor,
+    this.approvalInput = '',
   });
 }
 
@@ -741,35 +755,55 @@ _PromptKeyResult _handleApprovalKey(TuiPromptState state, PromptKey key) {
       (state: state, resolved: null);
 }
 
-/// The y/a/n answer keys (any other char is ignored); null when the key is
-/// not a char.
+/// The y/a/n answer keys resolve the decision (carrying the typed note) and
+/// clear the note buffer; any other char is appended to the note buffer
+/// instead (the user can leave a message for the agent alongside the
+/// answer); null when the key is not a char.
 _PromptKeyResult? _handleApprovalAnswerKey(
   TuiPromptState state,
   PromptKey key,
 ) {
   if (key is! PromptChar) return null;
+  final note = state.approvalInput;
   return switch (key.text.toLowerCase()) {
     'y' => (
-      state: state,
-      resolved: const ApprovalPromptAnswer(ApprovalDecision.approveOnce),
+      state: state.copyWith(approvalInput: ''),
+      resolved: ApprovalPromptAnswer(ApprovalDecision.approveOnce, note: note),
     ),
     'a' => (
-      state: state,
-      resolved: const ApprovalPromptAnswer(ApprovalDecision.approveAlways),
+      state: state.copyWith(approvalInput: ''),
+      resolved: ApprovalPromptAnswer(
+        ApprovalDecision.approveAlways,
+        note: note,
+      ),
     ),
     'n' => (
-      state: state,
-      resolved: const ApprovalPromptAnswer(ApprovalDecision.deny),
+      state: state.copyWith(approvalInput: ''),
+      resolved: ApprovalPromptAnswer(ApprovalDecision.deny, note: note),
     ),
-    _ => (state: state, resolved: null),
+    _ => (
+      state: state.copyWith(approvalInput: state.approvalInput + key.text),
+      resolved: null,
+    ),
   };
 }
 
-/// Enter and Esc both deny; null when the key belongs to another cluster.
+/// Enter denies on an empty note buffer — with typed text the prompt stays
+/// open (Enter does not submit a decision while the user is writing).
+/// Escape always denies (the typed note rides along); null when the key
+/// belongs to another cluster.
 _PromptKeyResult? _handleApprovalDenyKey(TuiPromptState state, PromptKey key) {
   switch (key) {
-    case PromptEnter():
     case PromptEscape():
+      return (
+        state: state.copyWith(approvalInput: ''),
+        resolved: ApprovalPromptAnswer(
+          ApprovalDecision.deny,
+          note: state.approvalInput,
+        ),
+      );
+    case PromptEnter():
+      if (state.approvalInput.isNotEmpty) return (state: state, resolved: null);
       return (
         state: state,
         resolved: const ApprovalPromptAnswer(ApprovalDecision.deny),
@@ -848,7 +882,7 @@ List<String> _bodyRows(TuiPromptState state, int inner) {
   return switch (state.spec) {
     AskPromptSpec spec => _askBodyRows(state, spec, inner),
     SecretPromptSpec spec => _secretBodyRows(spec, inner),
-    ApprovalPromptSpec spec => _approvalBodyRows(spec, inner),
+    ApprovalPromptSpec spec => _approvalBodyRows(state, spec, inner),
     TextPromptSpec spec => _textBodyRows(spec, inner),
   };
 }
@@ -873,7 +907,11 @@ List<String> _secretBodyRows(SecretPromptSpec spec, int inner) {
   return rows;
 }
 
-List<String> _approvalBodyRows(ApprovalPromptSpec spec, int inner) {
+List<String> _approvalBodyRows(
+  TuiPromptState state,
+  ApprovalPromptSpec spec,
+  int inner,
+) {
   final req = spec.request;
   final rows = <String>[
     _wrapBodyLine('Tool: ${req.toolName}', inner, bold: true),
@@ -1010,7 +1048,7 @@ List<String> _inputRows(TuiPromptState state, int inner, int width) {
   return switch (state.spec) {
     AskPromptSpec() => _askInputRows(state, inner),
     SecretPromptSpec() => _secretInputRows(state, inner),
-    ApprovalPromptSpec() => _approvalInputRows(inner),
+    ApprovalPromptSpec() => _approvalInputRows(state, inner),
     TextPromptSpec() => _textInputRows(state, inner),
   };
 }
@@ -1076,14 +1114,21 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
   return rows;
 }
 
-List<String> _approvalInputRows(int inner) {
+List<String> _approvalInputRows(TuiPromptState state, int inner) {
+  final hasNote = state.approvalInput.isNotEmpty;
   return [
     _wrapBodyLine(
-      _dim('[y] once  [a] always  [n] deny  · Enter/Esc = deny'),
+      _dim(
+        '[y] once  [a] always  [n] deny  · other keys type a note  · '
+        'Enter/Esc = deny',
+      ),
       inner,
       dim: true,
     ),
-    _wrapBodyLine('', inner),
+    if (hasNote)
+      _wrapBodyLine(_yellow('note: ${state.approvalInput}'), inner)
+    else
+      _wrapBodyLine('', inner),
     _wrapBodyLine(_yellow('Awaiting decision…'), inner),
   ];
 }

@@ -1167,21 +1167,21 @@ void main() {
       expect(model.followTail, isTrue);
     });
 
-    test(
-      'the view leaves the mouse to the terminal unless capture opts in',
-      () {
-        // Default: no capture — native select-to-copy in the terminal.
-        final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-        expect(model.view().mouseMode, MouseMode.none);
-        // FA_TUI_MOUSE=1 wiring: wheel scrolling gets the mouse instead.
-        final capturing = FaTuiModel(
-          callbacks: callbacks(),
-          isExited: () => false,
-          mouseCapture: true,
-        );
-        expect(capturing.view().mouseMode, MouseMode.cellMotion);
-      },
-    );
+    test('the view captures the mouse by default; FA_TUI_MOUSE=0 opts out', () {
+      // Default: captured — wheel scrolling reaches the session view
+      // (the alternate screen has no terminal scrollback, so without
+      // capture two-finger scroll does nothing).
+      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      expect(model.view().mouseMode, MouseMode.cellMotion);
+      // FA_TUI_MOUSE=0 wiring: the terminal keeps the mouse for
+      // always-on native select-to-copy instead.
+      final released = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        mouseCapture: false,
+      );
+      expect(released.view().mouseMode, MouseMode.none);
+    });
   });
 
   group('input kill keys', () {

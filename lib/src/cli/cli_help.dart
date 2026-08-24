@@ -241,6 +241,8 @@ APPROVALS
     write        auto-approve read+write, prompt for exec
     yolo         auto-approve everything (default) — except critical bash
                  patterns (e.g. rm -rf /, force pushes), which still prompt
+    unattended   auto-approve everything, critical patterns included — never
+                 asks; for runs without a user present (overnight/automation)
   /approval [mode] shows or sets the mode (persisted); /allow <tool>
   always-allows one tool (persisted). Prompt answers: y = once, n = deny,
   a = always for that tool. Non-interactive runs (headless or piped stdin)
@@ -307,7 +309,9 @@ REPL COMMANDS
   /compact           summarize history to free context
   /stats             show token and cost totals
   /tasks [cancel <id>] list (or cancel) background agents and shell jobs
-  /skills            list discovered skills; /skill:<name> [args] invokes one
+  /skills            skills menu (TUI): pick a skill to prefill /skill:<name>
+                     in the input, manage third-party access, or import; in
+                     line mode lists skills. /skill:<name> [args] invokes one
                      (a bare /<name> works too); /skills reload re-scans,
                      /skills access [ask|granted|denied] manages third-party
                      consent, /skills import copies third-party skills into
@@ -321,9 +325,10 @@ SKILLS AND CONTEXT FILES
   home directory (project wins name clashes). Claude Code (.claude/skills,
   .claude/commands), GitHub Copilot (.github/skills) and OpenAI Codex
   (.codex/skills) skills — plus their agent types (.claude/agents,
-  .github/agents/*.agent.md, .codex/agents) — are picked up too once you
-  grant access (startup dialog or /skills access; skills: section in
-  ~/.fah/config.yaml). The / menu and /help list skills alongside commands —
+  .github/agents/*.agent.md, .codex/agents) — are picked up BY DEFAULT
+  (opt-out: /skills access denied, or the skills: section in
+  ~/.fah/config.yaml; `ask` restores the startup prompt). The / menu,
+  /skills and /help list skills alongside commands —
   picking one fills the input with /skill:<name> ready for args. Invocation
   renders \$ARGUMENTS/\$N/\${CLAUDE_*}
   substitutions and !`cmd` shell injections, honors allowed-tools as
@@ -379,7 +384,7 @@ SKILLS AND CONTEXT FILES
   /sessions          list all sessions across workspaces
   /resume            switch to the most recent session
   /rename-session <n> rename the current session
-  /approval [mode]   show or set tool approval (always-ask|write|yolo)
+  /approval [mode]   show or set tool approval (always-ask|write|yolo|unattended)
   /settings          settings hub: provider, model, approval, keys, MCP
                      (interactive picker in the TUI, summary in line mode)
   /allow [tool]      always-allow a tool (or list them)
@@ -393,10 +398,11 @@ SKILLS AND CONTEXT FILES
   While a run is streaming, typed input steers the agent; Ctrl-C aborts.
 
 TERMINAL
-  The TUI leaves the mouse to the terminal: native select-to-copy works
-  everywhere (hold your terminal's bypass modifier — Shift in most — to
-  be sure). FA_TUI_MOUSE=1 switches to mouse capture for wheel scrolling
-  instead.
+  The TUI captures the mouse so two-finger scroll scrolls the session
+  (the alternate screen has no native scrollback). Select-to-copy still
+  works through your terminal's bypass modifier — hold Shift and drag
+  in most terminals. FA_TUI_MOUSE=0 hands the mouse back to the
+  terminal for always-on native selection instead.
   While a run streams, Enter queues the message (❯ rows above the input);
   ↑ pops the last queued message back for editing. With an empty input
   ↑/↓ browses the submitted-message history (shell-style); PgUp/PgDn

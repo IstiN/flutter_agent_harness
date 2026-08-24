@@ -116,6 +116,7 @@ part 'settings_flow.dart';
 part 'agent_commands.dart';
 part 'approval_commands.dart';
 part 'skill_commands.dart';
+part 'session_commands.dart';
 part 'agent_cli_provider_presets.dart';
 
 /// Terminal IO abstracted for testability.
@@ -520,6 +521,9 @@ class AgentCli {
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
       streamFunction: _streamFunction,
       toolRegistry: _toolRegistry,
+      // The CLI handles empty-response retries itself with a 'continue' nudge
+      // so the transcript reflects the retry explicitly.
+      maxEmptyRetries: 0,
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
@@ -743,7 +747,7 @@ class AgentCli {
   /// Memo fields for the status line's live context estimate
   /// (see `_liveContextTokens` in approval_commands.dart): keyed on the
   /// transcript size plus the in-flight stream's text length.
-  (int, int)? _ctxCacheKey;
+  (Object, int, int)? _ctxCacheKey;
   int _ctxCacheValue = 0;
   late final _repo = JsonlSessionRepo(
     fs: _env,
@@ -969,18 +973,10 @@ class AgentCli {
       allowedSources: _skillsAllowedSources,
     );
     _thirdPartySkillDirsPresent = await _detectThirdPartySkillDirs();
-    if (_thirdPartySkillDirsPresent &&
-        _skillsAccess != SkillsAccess.granted &&
-        !(io.isInteractive && _skillsAccess == SkillsAccess.ask)) {
-      // Non-interactive (or already denied): the consent dialog cannot/will
-      // not appear — say why those skills are missing.
-      io.writeln(
-        _style.dim(
-          'Claude/Copilot/Codex skills or agents found but disabled — '
-          '/skills access granted to enable',
-        ),
-      );
-    }
+    // Line mode / headless: this print is visible as-is. TUI: the terminal
+    // is not ours yet — the alternate screen would wipe this line, so
+    // `_runTuiRepl` re-prints the hint right after the banner.
+    _printThirdPartySkillsDisabledHint();
     _contextFiles = await loadProjectContextFiles(
       _env,
       userFile: config.homeDir == null
@@ -1045,11 +1041,14 @@ class AgentCli {
 
   /// Deletes the active session's file when nothing was ever said in it:
   /// opening the CLI and leaving (or only poking slash commands) must not
-  /// litter the sessions list with empty files. Best-effort — exit and
+  /// litter the sessions list with empty files. Best-effort - exit and
   /// session switching never fail on it. A session that owns subagents is
-  /// NOT empty: its `subagent_registry` record is real content.
+  /// NOT empty: its `subagent_registry` record is real content. A session
+  /// that already has persisted records (e.g. a user message saved before a
+  /// run that was interrupted) is also kept.
   Future<void> deleteSessionIfEmpty() async {
     if (_agent.state.messages.isNotEmpty) return;
+    if (_persistedCount > 0) return;
     if (_subagentManager.handles.isNotEmpty) return;
     final session = _session;
     if (session == null) return;
@@ -1069,6 +1068,9 @@ class AgentCli {
     // The banner is part of the TUI output history so it stays visible above
     // the input line inside the alternate screen.
     await _printBanner();
+    // The first _loadAgentContext() ran before the TUI owned the terminal —
+    // its "found but disabled" hint never reached the transcript. Re-print.
+    _printThirdPartySkillsDisabledHint();
     await _replayRestoredSession();
 
     // Warm the model cache in the background so the first /models picker is
@@ -1404,7 +1406,9 @@ class AgentCli {
     const descriptions = {
       'always-ask': 'prompt before every write/exec tool call',
       'write': 'auto-approve writes, prompt for exec',
-      'yolo': 'auto-approve everything',
+      'yolo': 'auto-approve everything (critical bash still prompts)',
+      'unattended':
+          'auto-approve everything, never asks — for runs without a user',
     };
     final items = [
       for (final mode in ApprovalMode.values)
@@ -1514,151 +1518,6 @@ class AgentCli {
     final session = _session;
     if (session == null) return null;
     return await session.getSessionName() ?? (await session.getMetadata()).id;
-  }
-
-  Future<void> _switchSession(String name) async {
-    final trimmed = name.trim();
-    await deleteSessionIfEmpty();
-    _subagentManager.reset();
-    final metadata = await _findSessionByName(trimmed);
-    if (metadata != null) {
-      await _switchToMetadata(metadata, trimmed);
-      return;
-    }
-    _agent.reset();
-    _checkpoints.clear();
-    _ttsr?.reset();
-    _session = await _createSession(name: trimmed);
-    _syncMailboxPrefix();
-    _persistedCount = 0;
-    io.writeln("created session '$trimmed'");
-  }
-
-  /// Switches to an existing session by metadata (picker, /resume). Adopts
-  /// the session's original working directory so the agent keeps operating
-  /// in the project the session belongs to.
-  Future<void> _switchToMetadata(SessionMetadata metadata, String label) async {
-    await deleteSessionIfEmpty();
-    _subagentManager.reset();
-    _agent.reset();
-    _checkpoints.clear();
-    _ttsr?.reset();
-    _env.cwd = metadata.cwd;
-    _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
-    _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
-    // Reload skills/project context for the new cwd so the system prompt
-    // matches the session's project.
-    await _loadAgentContext();
-    _session = await _loadSession(metadata);
-    _syncMailboxPrefix();
-    // Now that `_session` is assigned, the registry source can read the
-    // resumed session's `subagent_registry` records.
-    unawaited(_subagentManager.rehydrate());
-    io.writeln("switched to session '$label' [${_pathBasename(metadata.cwd)}]");
-    _replayRestoredHistory(_agent.state.messages, label);
-  }
-
-  /// Replays a restored session's transcript into the output so a resume
-  /// doesn't look empty: compact per-message rows filling a row budget from
-  /// the END (see [buildReplayEntries] — a typical session replays in full,
-  /// only marathon ones truncate, and the header says so).
-  void _replayRestoredHistory(List<Message> messages, String label) {
-    if (messages.isEmpty) return;
-    // Below the TUI history cap (200 lines) so the replay never trims its
-    // own head in TUI mode.
-    final width = io.columns > 0 ? io.columns : 80;
-    final (entries, firstIndex) = buildReplayEntries(
-      messages,
-      tui: _useTui,
-      width: width,
-      dim: _style.dim,
-    );
-    final count = firstIndex > 0
-        ? 'last ${messages.length - firstIndex} of ${messages.length}'
-        : '${messages.length}';
-    io.writeln(_style.dim('─── restored session: $label ($count messages)'));
-    for (final entry in entries) {
-      for (final line in entry) {
-        io.writeln(line);
-      }
-    }
-    io.writeln(_style.dim('─' * 20));
-  }
-
-  /// `/resume`: switches to the most recently created session across every
-  /// workspace (the repo lists sessions newest-first).
-  Future<void> _resumeLastSession() async {
-    final sessions = await _repo.list();
-    if (sessions.isEmpty) {
-      io.writeln('no sessions');
-      return;
-    }
-    final latest = sessions.first;
-    final current = await _session?.getMetadata();
-    final session = await _repo.open(latest);
-    final label = await session.getSessionName() ?? latest.id;
-    if (current?.path == latest.path) {
-      io.writeln("already on the latest session '$label'");
-      return;
-    }
-    await _switchToMetadata(latest, label);
-  }
-
-  Future<void> _renameSession(String name) async {
-    final trimmed = name.trim();
-    final session = _session;
-    if (session == null) {
-      io.writeln('no active session');
-      return;
-    }
-    await session.appendSessionName(trimmed);
-    io.writeln("renamed current session to '$trimmed'");
-  }
-
-  Future<void> _listSessions() async {
-    // List every session in the shared root, across workspaces, so sessions
-    // created in the Fa app or in another `fa` run are visible here.
-    final sessions = await _repo.list();
-    if (sessions.isEmpty) {
-      io.writeln('no sessions');
-      return;
-    }
-    final current = await _session?.getMetadata();
-    io.writeln('sessions:');
-    for (var i = 0; i < sessions.length; i++) {
-      final metadata = sessions[i];
-      final session = await _repo.open(metadata);
-      final sessionName = await session.getSessionName();
-      final label = sessionName ?? metadata.id;
-      final marker = current?.path == metadata.path ? '*' : ' ';
-      final folder = _pathBasename(metadata.cwd);
-      final folderTag = folder.isEmpty ? '' : ' [$folder]';
-      io.writeln(
-        '  $marker${i + 1}) $label$folderTag  '
-        '${_style.dim(metadata.createdAt.toLocal().toIso8601String())}',
-      );
-    }
-    io.writeln(
-      _style.dim('switch: /session <name> · rename: /rename-session <name>'),
-    );
-  }
-
-  Future<void> _createNamedSession(String name) async {
-    final trimmed = name.trim();
-    final existing = await _findSessionByName(trimmed);
-    if (existing != null) {
-      io.writeln("session '$trimmed' already exists");
-      return;
-    }
-    await deleteSessionIfEmpty();
-    _subagentManager.reset();
-    _agent.reset();
-    _checkpoints.clear();
-    _ttsr?.reset();
-    _session = await _createSession(name: trimmed);
-    _syncMailboxPrefix();
-    _persistedCount = 0;
-    io.writeln("created session '$trimmed'");
   }
 
   /// Runs a single non-interactive prompt (headless mode: `fah "<prompt>"`)
@@ -2137,29 +1996,80 @@ class AgentCli {
   /// Runs one user prompt to completion. On a CodeMie auth-session expiry,
   /// opens the browser SSO flow to refresh the token automatically. Other
   /// provider errors are printed through [_errorLine].
-  Future<void> _runPrompt(String text) async {
+  ///
+  /// If the assistant returns an empty message (no text and no tool calls),
+  /// the prompt is automatically retried once with a 'continue' nudge before
+  /// giving up, so the user does not have to type it manually.
+  Future<void> _runPrompt(String text, {bool isAutoContinue = false}) async {
     try {
       await _agent.prompt(text);
 
       final lastMessage = _agent.state.messages.lastOrNull;
       if (lastMessage is AssistantMessage &&
           lastMessage.stopReason == StopReason.error) {
-        final errorMessage = lastMessage.errorMessage ?? '';
-        if (authExpiredProvider(errorMessage) == 'codemie') {
-          await _handleCodeMieAuthExpired(errorMessage);
+        if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
           return;
         }
       }
 
-      await _afterRun();
-    } catch (error) {
-      final message = '$error';
-      if (authExpiredProvider(message) == 'codemie') {
-        await _handleCodeMieAuthExpired(message);
+      if (!isAutoContinue &&
+          lastMessage is AssistantMessage &&
+          lastMessage.stopReason != StopReason.error &&
+          lastMessage.stopReason != StopReason.aborted &&
+          _assistantMessageIsEmpty(lastMessage)) {
+        await _runPrompt('continue', isAutoContinue: true);
         return;
       }
-      io.writeln(_errorLine(message));
+
+      await _afterRun();
+    } catch (error) {
+      await _handleRunError(error);
     }
+  }
+
+  /// Persists a single message as soon as the agent adds it to the transcript.
+  /// Keeps [_persistedCount] aligned so [_afterRun] only writes anything the
+  /// listener may have missed (e.g. a crash between the append and the await).
+  Future<void> _persistIncremental(AgentEvent event) async {
+    if (event is! MessageEndEvent) return;
+    final message = event.message;
+    // Aborted assistant streams are incomplete; TTSR's discard mode prunes
+    // them from memory and they should not survive in the session either.
+    if (message is AssistantMessage &&
+        message.stopReason == StopReason.aborted) {
+      return;
+    }
+    final session = _session;
+    if (session == null) return;
+    final messages = _agent.state.messages;
+    if (_persistedCount >= messages.length) return;
+    await session.appendMessage(message);
+    _persistedCount++;
+  }
+
+  /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
+  /// `true` when the expiry was handled and the turn is finished.
+  Future<bool> _maybeHandleCodeMieError(String message) async {
+    if (authExpiredProvider(message) != 'codemie') return false;
+    await _handleCodeMieAuthExpired(message);
+    return true;
+  }
+
+  /// Handles provider/runtime errors thrown outside the assistant stream.
+  Future<void> _handleRunError(Object error) async {
+    final message = '$error';
+    if (await _maybeHandleCodeMieError(message)) return;
+    io.writeln(_errorLine(message));
+  }
+
+  /// Whether the assistant message produced nothing actionable: no non-empty
+  /// text content and no tool calls.
+  bool _assistantMessageIsEmpty(AssistantMessage message) {
+    final hasText = message.content.any(
+      (c) => c is TextContent && c.text.trim().isNotEmpty,
+    );
+    final hasToolCalls = message.content.any((c) => c is ToolCall);
+    return !hasText && !hasToolCalls;
   }
 
   /// Shared handler for a detected CodeMie auth-session expiry: strips the
@@ -2580,29 +2490,6 @@ class AgentCli {
     return true;
   }
 
-  /// `/sessions`: a bare command opens the TUI picker; anything else prints
-  /// the session list.
-  Future<void> _sessionsSlash(String rest) async {
-    if (rest.isEmpty && _useTui && _tuiController != null) {
-      await _openSessionsPicker();
-    } else {
-      await _listSessions();
-    }
-  }
-
-  /// A `/session-new`-style command requiring a name argument.
-  Future<void> _namedSessionSlash(
-    String rest,
-    String command,
-    Future<void> Function(String) action,
-  ) async {
-    if (rest.trim().isEmpty) {
-      io.writeln('usage: /$command <name>');
-    } else {
-      await action(rest.trim());
-    }
-  }
-
   /// Mode and approval commands. Returns whether [command] was handled.
   Future<bool> _handleModeCommand(String command, String rest) async {
     switch (command) {
@@ -2685,23 +2572,6 @@ class AgentCli {
       return;
     }
     await _switchMode(rest);
-  }
-
-  Future<void> _handleSessionCommand(String rest) async {
-    final trimmed = rest.trim();
-    if (trimmed.isEmpty) {
-      final session = _session;
-      if (session == null) {
-        io.writeln('no active session');
-        return;
-      }
-      final metadata = await session.getMetadata();
-      final name = await session.getSessionName();
-      io.writeln('session: ${name ?? '(unnamed)'}  ${metadata.path}');
-      io.writeln(_style.dim('rename: /rename-session <name>'));
-      return;
-    }
-    await _switchSession(trimmed);
   }
 
   /// Whether a guided flow is between prompts.

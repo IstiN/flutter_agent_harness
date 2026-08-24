@@ -1,7 +1,6 @@
 import 'package:flutter_agent_harness/src/cli/prompt_templates.dart';
 import 'package:flutter_agent_harness/src/cli/slash_menu.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
-import 'package:flutter_agent_harness/src/skills/skill_manifest.dart';
 import 'package:flutter_agent_harness/src/skills/skills.dart';
 import 'package:test/test.dart';
 

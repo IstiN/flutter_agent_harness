@@ -399,9 +399,11 @@ void _applyProviderFilterEnv() {
 }
 
 /// Truthy env-var check (`1`/`true`/`yes`/`on`, case-insensitive).
-bool _envTruthy(String name) {
+/// The inverse default for flags that are ON unless explicitly disabled:
+/// unset or a truthy value → true; only `0`/`false`/`no`/`off` → false.
+bool _envNotFalsy(String name) {
   final value = Platform.environment[name]?.trim().toLowerCase();
-  return value == '1' || value == 'true' || value == 'yes' || value == 'on';
+  return value != '0' && value != 'false' && value != 'no' && value != 'off';
 }
 
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
@@ -1099,10 +1101,11 @@ Future<void> _runApp(List<String> args) async {
       // Shift+Enter in the TUI: terminals that do not encode the modifier
       // still expose it through the HID state (macOS only; null elsewhere).
       isShiftPressed: Platform.isMacOS ? _isShiftPressed : null,
-      // FA_TUI_MOUSE=1: capture the mouse for wheel scrolling instead of
-      // the terminal's native text selection (select-to-copy wins by
-      // default).
-      tuiMouseCapture: _envTruthy('FA_TUI_MOUSE'),
+      // Mouse capture is ON by default (wheel scrolls the session view —
+      // in the alternate screen the terminal has no native scrollback, so
+      // without capture two-finger scroll does nothing). FA_TUI_MOUSE=0
+      // opts out for always-on native select-to-copy.
+      tuiMouseCapture: _envNotFalsy('FA_TUI_MOUSE'),
     ),
     io: io,
   );

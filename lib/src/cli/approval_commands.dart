@@ -12,13 +12,22 @@ extension on AgentCli {
   }
 
   /// The TUI branch of [_promptForApproval]: the on-screen approval zone;
-  /// a cancel (Esc) or an unexpected answer type denies.
+  /// a cancel (Esc) or an unexpected answer type denies. A typed note rides
+  /// along as steering feedback so the model sees it at the next step.
   Future<ApprovalDecision> _promptForApprovalTui(
     FaTuiController tui,
     ApprovalRequest request,
   ) async {
     final result = await tui.openPrompt(ApprovalPromptSpec(request: request));
     if (result is! ApprovalPromptAnswer) return ApprovalDecision.deny;
+    final note = result.note.trim();
+    if (note.isNotEmpty) {
+      _agent.steer(
+        UserMessage.text(
+          'Note from the user while approving "${request.toolName}": $note',
+        ),
+      );
+    }
     _noteApproveAlwaysAnswer(result.value);
     return result.value;
   }
@@ -335,7 +344,7 @@ extension on AgentCli {
   void _handleApprovalMode(String rest) {
     if (rest.isEmpty) {
       io.writeln('approval mode: ${_approval.mode.label}');
-      io.writeln('approval modes: always-ask, write, yolo');
+      io.writeln('approval modes: always-ask, write, yolo, unattended');
       final allowed = _approval.alwaysAllowedTools;
       io.writeln(
         'always-allowed tools: ${allowed.isEmpty ? '(none)' : allowed.join(', ')}',
@@ -344,7 +353,10 @@ extension on AgentCli {
     }
     final mode = approvalModeFromLabel(rest);
     if (mode == null) {
-      io.writeln('unknown approval mode: $rest (want always-ask|write|yolo)');
+      io.writeln(
+        'unknown approval mode: $rest '
+        '(want always-ask|write|yolo|unattended)',
+      );
       return;
     }
     _approval.mode = mode;
@@ -445,19 +457,30 @@ extension on AgentCli {
   /// (what the NEXT request carries) — moves mid-run as tool results and
   /// the stream land, instead of freezing at the last turn's prompt size.
   /// Memoized (the memo fields live on [AgentCli]): the status line runs on
-  /// every rendered frame.
+  /// every rendered frame. The cache key must cover EVERYTHING the value
+  /// depends on: message list identity (compaction/session switches can
+  /// replace it with a same-length list) and the streaming message's full
+  /// content length — text AND thinking (a reasoning model's long thinking
+  /// phase grows the context while text length stays 0, which used to pin a
+  /// stale ctx%/tok read for the whole phase).
   int _liveContextTokens() {
     final messages = _agent.state.messages;
     final streaming = _agent.state.streamingMessage;
     final streamLen = switch (streaming) {
-      AssistantMessage(:final content) =>
-        content.whereType<TextContent>().fold<int>(
-          0,
-          (sum, b) => sum + b.text.length,
-        ),
+      AssistantMessage(:final content) => content.fold<int>(0, (sum, block) {
+        // Cheap per-block size: text/thinking char counts, tool calls via
+        // name only (arguments rarely stream mid-flight).
+        return sum +
+            switch (block) {
+              TextContent(:final text) => text.length,
+              ThinkingContent(:final thinking) => thinking.length,
+              ToolCall(:final name) => name.length,
+              _ => 0,
+            };
+      }),
       _ => 0,
     };
-    final key = (messages.length, streamLen);
+    final key = (identityHashCode(messages), messages.length, streamLen);
     if (key == _ctxCacheKey) return _ctxCacheValue;
     var tokens = estimateContextTokens(messages).tokens;
     if (streaming != null) tokens += estimateTokens(streaming);
@@ -693,7 +716,8 @@ extension on AgentCli {
     return 'stopped ${shellJob.id}';
   }
 
-  void _onAgentEvent(AgentEvent event, CancelToken cancelToken) {
+  Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
+    await _persistIncremental(event);
     handleAgentEvent(
       event,
       onMessageLifecycle: _onMessageLifecycle,

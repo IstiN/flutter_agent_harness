@@ -354,7 +354,7 @@ final class ToolCall extends ContentBlock {
     'type': 'toolCall',
     'id': id,
     'name': name,
-    'arguments': arguments,
+    'arguments': _sanitizeJsonValue(arguments),
     if (thoughtSignature != null) 'thoughtSignature': thoughtSignature,
   };
 
@@ -762,4 +762,19 @@ final class ErrorEvent extends AssistantMessageEvent {
 
   @override
   AssistantMessage get partial => error;
+}
+
+/// Recursively replaces values that [jsonEncode] cannot handle (cyclic
+/// references, Dart objects, etc.) with the string `'[unserializable]'`.
+Object? _sanitizeJsonValue(Object? value) {
+  if (value == null || value is bool || value is num || value is String) {
+    return value;
+  }
+  if (value is List<dynamic>) {
+    return value.map(_sanitizeJsonValue).toList();
+  }
+  if (value is Map<String, dynamic>) {
+    return value.map((key, child) => MapEntry(key, _sanitizeJsonValue(child)));
+  }
+  return '[unserializable]';
 }

@@ -351,6 +351,39 @@ void main() {
       expect(outcome.allowed, isTrue);
     });
 
+    test(
+      'unattended auto-allows critical commands without prompting',
+      () async {
+        // The whole point of unattended mode: there is no user to answer a
+        // prompt, so even a critical-pattern command must not block. An
+        // explicit per-tool deny still outranks the mode.
+        final manager = ApprovalManager(
+          mode: ApprovalMode.unattended,
+          prompt: (request) => fail('unattended must never prompt'),
+        );
+        final outcome = await manager.authorize(
+          toolName: 'bash',
+          tier: ApprovalTier.exec,
+          arguments: const {'command': 'rm -rf /'},
+        );
+        expect(outcome.allowed, isTrue);
+      },
+    );
+
+    test('unattended still honors an explicit per-tool deny', () async {
+      final manager = ApprovalManager(
+        mode: ApprovalMode.unattended,
+        overrides: const {'bash': ApprovalPolicy.deny},
+        prompt: (request) => fail('deny needs no prompt'),
+      );
+      final outcome = await manager.authorize(
+        toolName: 'bash',
+        tier: ApprovalTier.exec,
+        arguments: const {'command': 'ls'},
+      );
+      expect(outcome.allowed, isFalse);
+    });
+
     test('an explicit deny override outranks the interceptor', () async {
       final manager = ApprovalManager(
         mode: ApprovalMode.yolo,

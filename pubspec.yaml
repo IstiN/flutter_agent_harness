@@ -29,6 +29,7 @@ executables:
 
 dependencies:
   archive: ^4.0.9
+  characters: ^1.4.0
   crypto: ^3.0.3
   dart_tui: ^2.0.0
   flutter_agent_memory: ^0.0.6

@@ -16,18 +16,20 @@
 /// - The session runs in one [ApprovalMode]:
 ///   [ApprovalMode.alwaysAsk] prompts for every call, [ApprovalMode.write]
 ///   auto-allows read-tier and prompts for write/exec, [ApprovalMode.yolo]
-///   auto-allows everything.
+///   auto-allows everything, and [ApprovalMode.unattended] is yolo plus
+///   critical-pattern pass-through (for runs with no user present).
 /// - Per-tool [ApprovalPolicy] overrides (`allow`/`deny`/`prompt`) and the
 ///   session always-allow set (filled by "approve always" decisions) take
 ///   precedence over the mode.
-/// - Deliberate deviation from omp: a `bash` command matching a critical
-///   pattern forces a prompt regardless of mode or allow-policy (omp
-///   auto-approves those in yolo). Only an explicit per-tool `deny` outranks
-///   the interceptor.
+/// - A `bash` command matching a critical pattern forces a prompt in every
+///   interactive mode ([ApprovalMode.alwaysAsk], [ApprovalMode.write],
+///   [ApprovalMode.yolo]) — even a per-tool `allow` cannot silence it. Only
+///   [ApprovalMode.unattended] skips the interceptor, because an unattended
+///   session has nobody to answer a prompt; an explicit per-tool `deny` or
+///   turn-scoped `disallowed-tools` still outranks it there.
 /// - Turn-scoped grants: an invoked skill's `allowed-tools` auto-allows the
 ///   named tools and `disallowed-tools` denies them for the current turn
-///   only ([ApprovalManager.grantForTurn]/[ApprovalManager.clearTurnGrants];
-///   the critical `bash` interceptor still outranks a grant).
+///   only ([ApprovalManager.grantForTurn]/[ApprovalManager.clearTurnGrants]).
 library;
 
 import 'dart:async';
@@ -70,6 +72,11 @@ enum ApprovalMode {
 
   /// Auto-allow every call (critical `bash` patterns still prompt).
   yolo,
+
+  /// Auto-allow every call, critical `bash` patterns included — the session
+  /// NEVER blocks on an interactive prompt. For runs without a user present
+  /// (overnight/automation); there is nobody to answer a prompt.
+  unattended,
 }
 
 /// The user's answer to an approval prompt.
@@ -137,7 +144,8 @@ final class ApprovalOutcome {
 ///
 /// 1. An explicit per-tool `deny` override refuses the call.
 /// 2. A skill's `disallowed-tools` (turn-scoped) refuses the call.
-/// 3. A critical `bash` pattern forces a prompt (even under yolo).
+/// 3. A critical `bash` pattern forces a prompt — except in `unattended`
+///    mode, where there is no user to answer one.
 /// 4. A per-tool `allow`/`prompt` override applies.
 /// 5. A skill's `allowed-tools` (turn-scoped) auto-allows the call.
 /// 6. The session always-allow set (from "approve always" answers) applies.
@@ -236,14 +244,17 @@ final class ApprovalManager {
       );
     }
 
-    // 2. Critical bash patterns force a prompt regardless of mode or
-    //    allow-policy — even under yolo and after "approve always".
-    final critical = await _criticalBashOutcome(
-      toolName: toolName,
-      tier: tier,
-      arguments: arguments,
-    );
-    if (critical != null) return critical;
+    // 2. Critical bash patterns force a prompt in interactive modes
+    //    (always-ask/write/yolo). In `unattended` the mode wins: there is
+    //    no user to answer, so the session must never block.
+    if (mode != ApprovalMode.unattended) {
+      final critical = await _criticalBashOutcome(
+        toolName: toolName,
+        tier: tier,
+        arguments: arguments,
+      );
+      if (critical != null) return critical;
+    }
 
     // 3. Remaining per-tool overrides.
     final overridden = await _overrideOutcome(
@@ -319,7 +330,7 @@ final class ApprovalManager {
     required Map<String, dynamic> arguments,
   }) async {
     switch (mode) {
-      case ApprovalMode.yolo:
+      case ApprovalMode.yolo || ApprovalMode.unattended:
         return const ApprovalOutcome.allowed();
       case ApprovalMode.write:
         if (tier == ApprovalTier.read) return const ApprovalOutcome.allowed();
@@ -375,13 +386,14 @@ final class ApprovalManager {
 }
 
 /// The CLI/config spelling of an [ApprovalMode] (`always-ask`, `write`,
-/// `yolo`).
+/// `yolo`, `unattended`).
 extension ApprovalModeLabel on ApprovalMode {
   /// The stable lowercase label used in config files and slash commands.
   String get label => switch (this) {
     ApprovalMode.alwaysAsk => 'always-ask',
     ApprovalMode.write => 'write',
     ApprovalMode.yolo => 'yolo',
+    ApprovalMode.unattended => 'unattended',
   };
 }
 
@@ -391,6 +403,7 @@ ApprovalMode? approvalModeFromLabel(String? value) {
     'always-ask' || 'alwaysAsk' => ApprovalMode.alwaysAsk,
     'write' => ApprovalMode.write,
     'yolo' => ApprovalMode.yolo,
+    'unattended' => ApprovalMode.unattended,
     _ => null,
   };
 }
