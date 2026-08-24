@@ -2204,6 +2204,25 @@ class AgentService extends ChangeNotifier
       // A completed turn with neither text nor tool calls (small on-device
       // models do this) must not render as a blank bubble.
       text = emptyResponsePlaceholder;
+      // An empty completion right after an image-bearing prompt usually
+      // means the model silently ignored/rejected image input - say so
+      // instead of a bare retry suggestion.
+      // UserMessage.content is Object: a plain String or a block list.
+      final lastUserContent = _agent.state.messages.reversed
+          .whereType<UserMessage>()
+          .firstOrNull
+          ?.content;
+      final lastUserBlocks = switch (lastUserContent) {
+        final List blocks => blocks,
+        _ => const <Object>[],
+      };
+      final hadImage = lastUserBlocks.any((b) => b is ImageContent);
+      if (hadImage) {
+        text =
+            '$text\n\nThe model returned nothing for a message with '
+            'an image attachment - it likely does not support image input. '
+            'Try a vision-capable model or resend without the attachment.';
+      }
     }
     final target = _currentAssistantMessage;
     if (target == null) {
