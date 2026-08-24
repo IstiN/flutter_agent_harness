@@ -6,7 +6,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show isCodeMieBaseUrl;
+    show ModelsEndpointFetcher, isCodeMieBaseUrl;
 
 import 'package:fa_ui/src/providers/add_provider_picker.dart';
 import 'package:fa_ui/src/providers/connection.dart';
@@ -34,7 +34,6 @@ import 'package:fa_ui/src/utils/page_presentation.dart';
 class ProvidersSection extends StatelessWidget {
   const ProvidersSection({
     super.key,
-    this.service,
     this.registry,
     this.onDeviceProviders = const [],
     this.onDeviceRowVisible,
@@ -44,11 +43,8 @@ class ProvidersSection extends StatelessWidget {
     this.onCodeMieSso,
     this.onChatGptOAuth,
     this.onProviderReauthenticate,
+    this.modelsFetcher,
   });
-
-  /// The active connection, for the current-provider mark. `null` renders
-  /// the list without marks (tests, hosts without a live connection).
-  final FaChatConnection? service;
 
   /// The user-added providers; `null` falls back to a non-persisting
   /// in-memory registry (tests, previews).
@@ -94,28 +90,9 @@ class ProvidersSection extends StatelessWidget {
   final Future<bool> Function(BuildContext context, CustomProvider provider)?
   onProviderReauthenticate;
 
-  bool _isCurrent(Object provider) {
-    final service = this.service;
-    if (service == null || service.providerKind != 'openai-completions') {
-      return false;
-    }
-    // A host that tracks provider ids disambiguates providers sharing one
-    // base URL (two custom endpoints on one host); others match by URL.
-    final activeId = service.activeProviderId;
-    if (activeId != null) {
-      return switch (provider) {
-        CustomProvider custom => custom.id == activeId,
-        ProviderPreset preset => preset.name == activeId,
-        _ => false,
-      };
-    }
-    final baseUrl = switch (provider) {
-      ProviderPreset preset => preset.baseUrl,
-      CustomProvider custom => custom.baseUrl,
-      _ => null,
-    };
-    return baseUrl != null && service.activeBaseUrl == baseUrl;
-  }
+  /// `/models` fetch override (tests), forwarded to the provider editor's
+  /// model selector (preset, edit, and add flows).
+  final ModelsEndpointFetcher? modelsFetcher;
 
   @override
   Widget build(BuildContext context) {
@@ -157,8 +134,8 @@ class ProvidersSection extends StatelessWidget {
                   subtitle:
                       '${registry.presetModelOverride(preset.name) ?? preset.defaultModel} · '
                       '${providerHostOf(preset.baseUrl!)}',
-                  current: _isCurrent(preset),
-                  leading: ProviderMark(preset.name),
+                  // The same branded mark the add-provider picker shows.
+                  leading: ProviderMark(providerMarkKey(preset)),
                   onTap: () => _editPreset(context, registry, preset),
                 ),
             for (final provider in registry.providers)
@@ -172,12 +149,10 @@ class ProvidersSection extends StatelessWidget {
                         provider.modelId,
                         providerHostOf(provider.baseUrl),
                       ),
-                current: _isCurrent(provider),
-                // The same branded mark the onboarding list shows — for
-                // custom providers keyed by the baseUrl host we map back
-                // to a preset name (OpenAI-compatible baseUrl → 'openai').
+                // The picker-matching branded mark, keyed by the baseUrl
+                // host (CodeMie/DIAL/OpenRouter/… detected by URL).
                 leading: ProviderMark(
-                  ProviderPreset.fromBaseUrl(provider.baseUrl).name,
+                  providerMarkKeyForBaseUrl(provider.baseUrl),
                 ),
                 onTap: () => _editCustom(context, registry, provider),
               ),
@@ -227,7 +202,6 @@ class ProvidersSection extends StatelessWidget {
     ThemeData theme, {
     required String label,
     String? subtitle,
-    bool current = false,
     Widget? leading,
     IconData? leadingIcon = Icons.cloud_outlined,
     required VoidCallback onTap,
@@ -260,14 +234,11 @@ class ProvidersSection extends StatelessWidget {
                 ],
               ),
             ),
-            if (current)
-              Icon(Icons.check, size: 20, color: theme.colorScheme.primary)
-            else
-              Icon(
-                Icons.chevron_right,
-                size: 18,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -292,6 +263,7 @@ class ProvidersSection extends StatelessWidget {
         registry: registry,
         openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
         openRouterOAuthCapture: openRouterOAuthCapture,
+        modelsFetcher: modelsFetcher,
       ),
     );
     if (result == null || result.deleted) return;
@@ -334,11 +306,14 @@ class ProvidersSection extends StatelessWidget {
         title: FaUiStrings.of(context).settingsEditProviderTitle,
         initial: provider,
         hasSavedKey: (registry.keyFor(provider.id) ?? '').isNotEmpty,
+        // The model selector resolves the provider's stored key through it.
+        registry: registry,
         // SSO-backed providers (CodeMie) get a Re-authenticate button:
         // the cookie key expires and cannot be refreshed by re-typing.
         onReauthenticate: reauth != null && isCodeMieBaseUrl(provider.baseUrl)
             ? (ctx) => reauth(ctx, provider)
             : null,
+        modelsFetcher: modelsFetcher,
       ),
     );
     if (result == null) return;
@@ -372,6 +347,7 @@ class ProvidersSection extends StatelessWidget {
         openRouterOAuthCapture: openRouterOAuthCapture,
         onDeviceRoutes: onDeviceProviders,
         onOnDeviceConnected: onDeviceConnected,
+        modelsFetcher: modelsFetcher,
       ),
     );
   }

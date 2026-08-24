@@ -121,6 +121,7 @@ const _barKey = ValueKey('sessionChatBar');
 const _drawerButtonKey = ValueKey('sessionChatDrawerButton');
 const _drawerKey = ValueKey('sessionChatDrawer');
 const _panelKey = ValueKey('sessionChatPanel');
+const _panelSessionsKey = ValueKey('sessionChatPanelSessions');
 const _handleKey = ValueKey('sessionChatSheetHandle');
 const _menuKey = ValueKey('sessionChatMenu');
 const _newSessionKey = ValueKey('sessionChatNewSession');
@@ -286,6 +287,69 @@ void main() {
       expect(manager.sessions, hasLength(2));
       expect(find.byKey(_panelKey), findsOneWidget);
       expect(find.text('old chat'), findsOneWidget);
+    });
+
+    testWidgets('an opened session keeps its own folder label in the drawer', (
+      tester,
+    ) async {
+      // Seed an on-disk session created in /work/alpha…
+      final seedEnv = MemoryExecutionEnv(cwd: '/work/alpha');
+      final seed = _fakeService(seedEnv);
+      late final SessionMetadata persistedMeta;
+      late final String sessionFile;
+      await tester.runAsync(() async {
+        await seed.initialize();
+        await seed.sendText('old chat');
+        await seed.waitForIdle();
+        persistedMeta = (await seed.listSessions()).single;
+        sessionFile = (await seedEnv.readTextFile(
+          persistedMeta.path,
+        )).getOrThrow();
+      });
+      seed.dispose();
+
+      // …then mount a DIFFERENT working directory: the live env reports
+      // /work/beta for every session, so without the metadata lookup the
+      // tile's folder label would flip from alpha to beta on open.
+      final liveEnv = MemoryExecutionEnv(cwd: '/work/beta');
+      await tester.runAsync(() async {
+        (await liveEnv.writeFile(persistedMeta.path, sessionFile)).getOrThrow();
+      });
+      final live = _fakeService(liveEnv);
+      addTearDown(live.dispose);
+      final manager = FlutterSessionManager(
+        env: liveEnv,
+        sessionsRoot: '/sessions',
+      )..addSession('sess-live', live);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      Finder cwdLabel(String text) => find.descendant(
+        of: find.byKey(ValueKey('sessionChatDrawerEntry:${persistedMeta.id}')),
+        matching: find.text(text),
+      );
+
+      await _openDrawer(tester);
+      expect(cwdLabel('alpha'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(ValueKey('sessionChatDrawerEntry:${persistedMeta.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      // Live now — the label must NOT flip to the current mount's folder.
+      await tester.tap(find.byKey(_panelSessionsKey));
+      await tester.pumpAndSettle();
+      expect(find.byKey(_drawerKey), findsOneWidget);
+      expect(cwdLabel('alpha'), findsOneWidget);
+      expect(cwdLabel('beta'), findsNothing);
     });
 
     testWidgets('the drawer New session tile creates, activates and opens '

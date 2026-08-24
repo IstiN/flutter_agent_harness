@@ -2,191 +2,187 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'dart:async';
-
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Pumps a host page, pushes the editor from it and returns the completer
-/// receiving the editor's result on pop.
-Future<Completer<ProviderEditorResult?>> _pushEditor(
-  WidgetTester tester,
-  ProviderEditorPage page,
-) async {
-  final result = Completer<ProviderEditorResult?>();
-  await tester.pumpWidget(
-    MaterialApp(
-      home: Builder(
-        builder: (context) => Scaffold(
-          body: FilledButton(
-            onPressed: () async {
-              result.complete(
-                await Navigator.of(context).push<ProviderEditorResult>(
-                  MaterialPageRoute(builder: (_) => page),
-                ),
-              );
-            },
-            child: const Text('open'),
-          ),
-        ),
-      ),
-    ),
-  );
-  await tester.tap(find.text('open'));
-  await tester.pumpAndSettle();
-  expect(find.byType(ProviderEditorPage), findsOneWidget);
-  return result;
-}
+/// A `/models` fetch recording its calls and reporting two models.
+final class _RecordingFetcher {
+  final calls = <(String, String)>[];
 
-/// Lets the debounced `/models` fetch fire and land.
-Future<void> _settleFetch(WidgetTester tester) async {
-  await tester.pump(const Duration(milliseconds: 600));
-  await tester.pumpAndSettle();
+  Future<ModelsEndpointInfo> call(
+    String baseUrl, {
+    required String apiKey,
+  }) async {
+    calls.add((baseUrl, apiKey));
+    return (
+      const ['acme-1', 'acme-9'],
+      const <String, int>{},
+      const <String, int>{},
+    );
+  }
 }
-
-Finder _modelField() => find.descendant(
-  of: find.byType(FaModelListPicker),
-  matching: find.byType(TextField),
-);
 
 void main() {
-  group('ProviderEditorPage model quick select', () {
-    testWidgets('the fetched list filters live and a tap picks the id', (
-      tester,
+  group('ProviderEditorPage model row', () {
+    ProviderEditorResult? result;
+
+    Future<void> openEditor(
+      WidgetTester tester,
+      ProviderEditorPage page,
     ) async {
-      final result = await _pushEditor(
-        tester,
-        ProviderEditorPage(
-          title: 'Add provider',
-          modelsFetcher: (baseUrl, {required apiKey}) async => (
-            const ['alpha-1', 'beta-2', 'gamma-3'],
-            const <String, int>{},
-            const <String, int>{},
+      result = null;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: FilledButton(
+                onPressed: () {
+                  Navigator.of(context)
+                      .push<ProviderEditorResult>(
+                        MaterialPageRoute(builder: (_) => page),
+                      )
+                      .then((value) => result = value);
+                },
+                child: const Text('open'),
+              ),
+            ),
           ),
         ),
       );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+    }
 
-      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Acme');
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Base URL'),
-        'https://acme.example/v1',
+    testWidgets('shows the current model; the picked model saves', (
+      tester,
+    ) async {
+      final fetcher = _RecordingFetcher();
+      await openEditor(
+        tester,
+        ProviderEditorPage(
+          title: 'Add provider',
+          prefillName: 'Acme',
+          prefillBaseUrl: 'https://acme.example/v1',
+          prefillModelId: 'acme-1',
+          modelsFetcher: fetcher.call,
+        ),
       );
-      await _settleFetch(tester);
-      expect(find.text('alpha-1'), findsOneWidget);
-      expect(find.text('beta-2'), findsOneWidget);
 
-      // Typing narrows the list; the field text doubles as the query.
-      await tester.enterText(_modelField(), 'bet');
-      await tester.pumpAndSettle();
-      expect(find.text('alpha-1'), findsNothing);
-      expect(find.text('beta-2'), findsOneWidget);
-
-      // A tap writes the id back as the value.
-      await tester.tap(find.text('beta-2'));
-      await tester.pumpAndSettle();
+      // The row shows the current model; there is no model text field.
+      expect(find.text('acme-1'), findsOneWidget);
       expect(
-        tester.widget<TextField>(_modelField()).controller!.text,
-        'beta-2',
+        find.descendant(
+          of: find.byType(ProviderEditorPage),
+          matching: find.widgetWithText(TextField, 'Model id (optional)'),
+        ),
+        findsNothing,
       );
 
-      // The quick-select list pushes the actions below the fold.
-      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Save'));
+      // The selector opens against the typed URL and lists the fetched ids.
+      await tester.tap(find.widgetWithText(InkWell, 'Model id (optional)'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      expect(fetcher.calls.single.$1, 'https://acme.example/v1');
+      await tester.tap(find.widgetWithText(ListTile, 'acme-9'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
-      expect((await result.future)?.modelId, 'beta-2');
+
+      // Back on the editor the row follows the pick, and Save reports it.
+      expect(find.text('acme-9'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(result, isNotNull);
+      expect(result!.modelId, 'acme-9');
     });
 
-    testWidgets('manual entry stays valid: an unknown id saves as typed', (
-      tester,
-    ) async {
-      final result = await _pushEditor(
+    testWidgets('an empty model shows the choose hint', (tester) async {
+      await openEditor(
         tester,
         ProviderEditorPage(
           title: 'Add provider',
-          modelsFetcher: (baseUrl, {required apiKey}) async =>
-              (const ['alpha-1'], const <String, int>{}, const <String, int>{}),
+          modelsFetcher: _RecordingFetcher().call,
         ),
       );
-
-      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Acme');
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Base URL'),
-        'https://acme.example/v1',
-      );
-      await _settleFetch(tester);
-
-      await tester.enterText(_modelField(), 'custom-x');
-      await tester.pumpAndSettle();
-      // The discoverable manual row shows for a query with no exact match.
-      expect(find.text('Use "custom-x"'), findsOneWidget);
-
-      // The quick-select list pushes the actions below the fold.
-      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
-      expect((await result.future)?.modelId, 'custom-x');
+      expect(find.text('Tap to choose'), findsOneWidget);
     });
 
-    testWidgets('changing the endpoint re-fetches the list (debounced)', (
+    testWidgets('the freshly typed key authorizes the selector fetch', (
       tester,
     ) async {
-      final fetchedUrls = <String>[];
-      await _pushEditor(
+      final fetcher = _RecordingFetcher();
+      await openEditor(
         tester,
         ProviderEditorPage(
           title: 'Add provider',
-          modelsFetcher: (baseUrl, {required apiKey}) async {
-            fetchedUrls.add(baseUrl);
-            return (
-              const <String>[],
-              const <String, int>{},
-              const <String, int>{},
-            );
-          },
+          prefillName: 'Acme',
+          prefillBaseUrl: 'https://acme.example/v1',
+          modelsFetcher: fetcher.call,
         ),
       );
 
       await tester.enterText(
-        find.widgetWithText(TextField, 'Base URL'),
-        'https://a.example/v1',
+        find.widgetWithText(TextField, 'API key (optional)'),
+        'sk-typed',
       );
-      await _settleFetch(tester);
-      expect(fetchedUrls, ['https://a.example/v1']);
+      await tester.tap(find.widgetWithText(InkWell, 'Model id (optional)'));
+      await tester.pumpAndSettle();
 
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Base URL'),
-        'https://b.example/v1',
-      );
-      await _settleFetch(tester);
-      expect(fetchedUrls, ['https://a.example/v1', 'https://b.example/v1']);
+      expect(fetcher.calls.single.$2, 'sk-typed');
     });
 
-    testWidgets('preset mode fetches the seeded endpoint on open', (
+    testWidgets('preset mode falls back to the stored preset key', (
       tester,
     ) async {
-      final fetchedUrls = <String>[];
-      await _pushEditor(
+      FaUiHost.keyResolver = (name) =>
+          name == 'OPENROUTER_API_KEY' ? 'sk-stored' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+      final fetcher = _RecordingFetcher();
+      await openEditor(
         tester,
         ProviderEditorPage(
           title: 'OpenRouter',
           preset: ProviderPreset.openrouter,
-          modelsFetcher: (baseUrl, {required apiKey}) async {
-            fetchedUrls.add(baseUrl);
-            return (
-              const ['openrouter/auto'],
-              const <String, int>{},
-              const <String, int>{},
-            );
-          },
+          modelsFetcher: fetcher.call,
         ),
       );
-      await _settleFetch(tester);
-      expect(fetchedUrls, ['https://openrouter.ai/api/v1']);
-      expect(find.text('openrouter/auto'), findsOneWidget);
+
+      // The key field stays empty (a key is saved): the selector must
+      // authorize with the stored preset key, resolved through the host.
+      await tester.tap(find.widgetWithText(InkWell, 'Model id'));
+      await tester.pumpAndSettle();
+
+      expect(fetcher.calls.single.$1, ProviderPreset.openrouter.baseUrl);
+      expect(fetcher.calls.single.$2, 'sk-stored');
+    });
+
+    testWidgets("edit mode resolves the provider's stored key", (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      registry.rememberKey(provider.id, 'sk-kept');
+      final fetcher = _RecordingFetcher();
+      await openEditor(
+        tester,
+        ProviderEditorPage(
+          title: 'Edit provider',
+          initial: provider,
+          hasSavedKey: true,
+          registry: registry,
+          modelsFetcher: fetcher.call,
+        ),
+      );
+
+      await tester.tap(find.widgetWithText(InkWell, 'Model id (optional)'));
+      await tester.pumpAndSettle();
+
+      expect(fetcher.calls.single.$2, 'sk-kept');
     });
   });
 }

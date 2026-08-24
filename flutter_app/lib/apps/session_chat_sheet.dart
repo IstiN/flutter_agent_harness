@@ -133,6 +133,12 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// date-based derived titles (see [derivedSessionTitle]).
   Map<String, DateTime> _createdAtById = const {};
 
+  /// Session id → the cwd the session was created in, from the last
+  /// listing. A live session's env reports the app's CURRENT mount for
+  /// every session, so the tile's folder label must come from here —
+  /// otherwise it flips when the session opens.
+  Map<String, String?> _cwdById = const {};
+
   /// Persisted sessions with an open in flight (drawer double-tap guard).
   final Set<String> _opening = {};
 
@@ -223,6 +229,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
         setState(() {
           _persisted = persisted;
           _createdAtById = {for (final m in all) m.id: m.createdAt};
+          _cwdById = {for (final m in all) m.id: m.cwd};
         });
       }
     } on Object {
@@ -678,7 +685,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 id: s.id,
                 createdAt: s.createdAt,
                 lastUpdatedAt: s.lastUpdatedAt,
-                cwd: s.service.env.sessionCwd,
+                cwd: _cwdById[s.id] ?? s.service.env.sessionCwd,
                 live: s,
                 persisted: null,
               ),

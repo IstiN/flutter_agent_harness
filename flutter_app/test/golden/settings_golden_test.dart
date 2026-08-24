@@ -21,8 +21,10 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
+import 'package:fa/services/task_models_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
+import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -312,7 +314,7 @@ void main() {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            ProvidersSection(service: service, registry: registry),
+            ProvidersSection(registry: registry),
             const SizedBox(height: 24),
             const Divider(),
             const SizedBox(height: 16),
@@ -321,8 +323,8 @@ void main() {
         ),
       );
 
-      // The Providers section on top (the OpenRouter preset marked current,
-      // one saved provider, the add row) and the Default chat model row.
+      // The Providers section on top (brand-marked rows, no current check,
+      // the add row) and the Default chat model row.
       await expectGolden(tester, 'settings_providers');
     });
 
@@ -337,11 +339,10 @@ void main() {
         tester,
         size: goldenSizeDesktop,
         wrap: _wrapPage,
-        ProviderEditorPage(
+        const ProviderEditorPage(
           title: 'Edit provider',
           initial: provider,
           hasSavedKey: true,
-          modelsFetcher: _editorModels,
         ),
       );
       await tester.pumpAndSettle();
@@ -349,6 +350,38 @@ void main() {
       // Full-screen editor: prefilled fields, the write-only key field with
       // the keep-key note, and the Delete/Save actions.
       await expectGolden(tester, 'settings_provider_editor');
+    });
+
+    testWidgets('models settings page', (tester) async {
+      final service = _fakeService();
+      final mediaStore = MediaModelsStore.inMemory();
+      await mediaStore.setOverride(
+        MediaSlot.imageGeneration,
+        const MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          modelId: 'gpt-image-1',
+        ),
+      );
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: _wrapPage,
+        MediaModelsScope(
+          store: mediaStore,
+          child: ModelsSettingsPage(
+            service: service,
+            registry: ProviderRegistry.inMemory(),
+            taskModelsStore: TaskModelsStore.inMemory(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The dedicated Models page: presets carousel, the default chat
+      // model row, the task-role rows and the media slots (image slot
+      // overridden).
+      await expectGolden(tester, 'settings_models_page');
     });
 
     testWidgets('media slot provider picker page', (tester) async {
@@ -471,7 +504,7 @@ void main() {
         child: SkillsAccessSection(service: service),
       );
 
-      // Icon + title + hint, dropdown at the default (undecided = Ask).
+      // Icon + title + hint, dropdown at the default (granted = Allowed).
       await expectGolden(tester, 'settings_skills_access');
     });
   });

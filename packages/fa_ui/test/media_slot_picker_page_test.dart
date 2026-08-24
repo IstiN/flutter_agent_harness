@@ -140,10 +140,31 @@ void main() {
         find.widgetWithText(TextField, 'Base URL'),
         'https://acme.example/v1',
       );
+      // The model row opens the shared model selector (the editor itself
+      // has no model text field anymore).
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ProviderEditorPage),
+          matching: find.widgetWithText(InkWell, 'Model id (optional)'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final editorPicker = find.byType(MediaSlotModelPage);
+      expect(editorPicker, findsOneWidget);
       await tester.enterText(
-        find.widgetWithText(TextField, 'Model id (optional)'),
+        find.descendant(
+          of: editorPicker,
+          matching: find.widgetWithText(TextField, 'Model id'),
+        ),
         'acme-img',
       );
+      await tester.tap(
+        find.descendant(
+          of: editorPicker,
+          matching: find.widgetWithText(FilledButton, 'Save'),
+        ),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
@@ -556,6 +577,48 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(result!.override!.voice, isNull);
+    });
+
+    testWidgets('a CodeMie custom provider fetches with its remembered key', (
+      tester,
+    ) async {
+      // The SSO flow stores the org JWT via ProviderRegistry.rememberKey —
+      // the model page must resolve it so the /llm_models list loads.
+      final registry = ProviderRegistry.inMemory();
+      final codemie = await registry.add(
+        name: 'CodeMie',
+        baseUrl: 'https://codemie.example.com/code-assistant-api/v1',
+        modelId: 'gpt-4o',
+      );
+      registry.rememberKey(codemie.id, 'codemie-jwt');
+
+      String? fetchedUrl;
+      String? fetchedKey;
+      await _pumpWithOpener(
+        tester,
+        MediaSlotModelPage(
+          slot: MediaSlot.imageGeneration,
+          provider: codemie,
+          registry: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async {
+            fetchedUrl = baseUrl;
+            fetchedKey = apiKey;
+            return (
+              const ['gpt-4o', 'claude-sonnet'],
+              const <String, int>{},
+              const <String, int>{},
+            );
+          },
+        ),
+        (_) {},
+      );
+      await _open(tester);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      expect(fetchedUrl, 'https://codemie.example.com/code-assistant-api/v1');
+      expect(fetchedKey, 'codemie-jwt');
+      expect(find.text('claude-sonnet'), findsOneWidget);
     });
   });
 }

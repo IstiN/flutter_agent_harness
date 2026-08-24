@@ -34,10 +34,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('SkillsAccessStore', () {
-    test('missing file loads as null (undecided)', () async {
-      final env = MemoryExecutionEnv();
-      expect(await SkillsAccessStore(env).load(), isNull);
-    });
+    test(
+      'missing file loads as null (never chose — granted by default)',
+      () async {
+        final env = MemoryExecutionEnv();
+        expect(await SkillsAccessStore(env).load(), isNull);
+      },
+    );
 
     test('corrupt file loads as null instead of crashing', () async {
       final env = MemoryExecutionEnv();
@@ -54,11 +57,14 @@ void main() {
       expect(await SkillsAccessStore(env).load(), isNull);
     });
 
-    test('a persisted "ask" label loads as null (undecided)', () async {
-      final env = MemoryExecutionEnv();
-      await SkillsAccessStore(env).save(SkillsAccess.ask);
-      expect(await SkillsAccessStore(env).load(), isNull);
-    });
+    test(
+      'a persisted "ask" label round-trips (the boot dialog state)',
+      () async {
+        final env = MemoryExecutionEnv();
+        await SkillsAccessStore(env).save(SkillsAccess.ask);
+        expect(await SkillsAccessStore(env).load(), SkillsAccess.ask);
+      },
+    );
 
     test('the consent round-trips through the env filesystem', () async {
       final env = MemoryExecutionEnv();
@@ -72,9 +78,21 @@ void main() {
   });
 
   group('AgentService skills access', () {
-    test('undecided consent discovers only first-party skills', () async {
+    test('no stored choice grants by default (opt-out discovery)', () async {
       final env = MemoryExecutionEnv();
       await _seedSkills(env);
+      final service = await AgentService.create(config: _config(), env: env);
+      addTearDown(service.dispose);
+
+      expect(service.skillsAccess, SkillsAccess.granted);
+      expect(service.systemPromptForTest, contains('firstparty-own'));
+      expect(service.systemPromptForTest, contains('thirdparty-deploy'));
+    });
+
+    test('ask consent discovers only first-party skills', () async {
+      final env = MemoryExecutionEnv();
+      await _seedSkills(env);
+      await SkillsAccessStore(env).save(SkillsAccess.ask);
       final service = await AgentService.create(config: _config(), env: env);
       addTearDown(service.dispose);
 
@@ -110,15 +128,16 @@ void main() {
       await _seedSkills(env);
       final service = await AgentService.create(config: _config(), env: env);
       addTearDown(service.dispose);
-      expect(service.systemPromptForTest, isNot(contains('thirdparty-deploy')));
-
-      await service.setSkillsAccess(SkillsAccess.granted);
+      // Granted by default: third-party skills are in the prompt already.
       expect(service.systemPromptForTest, contains('thirdparty-deploy'));
-      expect(await SkillsAccessStore(env).load(), SkillsAccess.granted);
 
       await service.setSkillsAccess(SkillsAccess.denied);
       expect(service.systemPromptForTest, isNot(contains('thirdparty-deploy')));
       expect(await SkillsAccessStore(env).load(), SkillsAccess.denied);
+
+      await service.setSkillsAccess(SkillsAccess.granted);
+      expect(service.systemPromptForTest, contains('thirdparty-deploy'));
+      expect(await SkillsAccessStore(env).load(), SkillsAccess.granted);
     });
 
     test(
@@ -172,11 +191,11 @@ void main() {
       );
       await pumpN();
       expect(find.text('Skills access'), findsOneWidget);
-      expect(find.text('Ask'), findsOneWidget); // undecided by default
+      expect(find.text('Allowed'), findsOneWidget); // granted by default
 
       await tester.tap(find.byType(DropdownButton<SkillsAccess>));
       await pumpN();
-      await tester.tap(find.text('Allowed').last);
+      await tester.tap(find.text('Denied').last);
       // setSkillsAccess re-discovers and persists on real futures — give
       // them a real-async window before asserting.
       await tester.runAsync(
@@ -184,10 +203,10 @@ void main() {
       );
       await pumpN();
 
-      expect(service.skillsAccess, SkillsAccess.granted);
-      expect(await SkillsAccessStore(env).load(), SkillsAccess.granted);
-      // The consent re-discovered third-party skills into the prompt.
-      expect(service.systemPromptForTest, contains('thirdparty-deploy'));
+      expect(service.skillsAccess, SkillsAccess.denied);
+      expect(await SkillsAccessStore(env).load(), SkillsAccess.denied);
+      // Opting out re-discovered third-party skills OUT of the prompt.
+      expect(service.systemPromptForTest, isNot(contains('thirdparty-deploy')));
     });
   });
 }

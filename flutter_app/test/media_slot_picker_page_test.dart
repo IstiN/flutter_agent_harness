@@ -223,10 +223,31 @@ void main() {
         find.widgetWithText(TextField, 'Base URL'),
         'https://acme.example/v1',
       );
+      // The model row opens the shared model selector (the editor itself
+      // has no model text field anymore).
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ProviderEditorPage),
+          matching: find.widgetWithText(InkWell, 'Model id (optional)'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final editorPicker = find.byType(MediaSlotModelPage);
+      expect(editorPicker, findsOneWidget);
       await tester.enterText(
-        find.widgetWithText(TextField, 'Model id (optional)'),
+        find.descendant(
+          of: editorPicker,
+          matching: find.widgetWithText(TextField, 'Model id'),
+        ),
         'acme-img',
       );
+      await tester.tap(
+        find.descendant(
+          of: editorPicker,
+          matching: find.widgetWithText(FilledButton, 'Save'),
+        ),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 

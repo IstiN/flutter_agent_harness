@@ -187,10 +187,15 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     this.openRouterOAuthCapture,
     this.onDeviceRoutes = const [],
     this.onOnDeviceConnected,
+    this.modelsFetcher,
   });
 
   /// The provider registry: needed so the editor can save the new provider.
   final ProviderRegistry? registry;
+
+  /// `/models` fetch override (tests), forwarded to the provider editor's
+  /// model selector.
+  final harness.ModelsEndpointFetcher? modelsFetcher;
 
   /// The preset tiles to show. Defaults to [defaultAddProviderPresets].
   final List<AddProviderPreset> presets;
@@ -288,6 +293,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
           context,
           registry ?? ProviderRegistry.inMemory(),
           title: FaUiStrings.of(context).settingsAddProvider,
+          modelsFetcher: modelsFetcher,
         );
         if (context.mounted) Navigator.of(context).pop(true);
         return;
@@ -321,6 +327,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
             registry: registry,
             openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
             openRouterOAuthCapture: openRouterOAuthCapture,
+            modelsFetcher: modelsFetcher,
           ),
         );
         if (result == null || result.deleted) return;

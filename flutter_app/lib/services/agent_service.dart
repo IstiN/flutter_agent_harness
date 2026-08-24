@@ -176,7 +176,7 @@ class AgentService extends ChangeNotifier
        _taskModelsStore = null,
        _approvalModeStore = null,
        _skillsAccessStore = null,
-       _skillsAccess = SkillsAccess.ask,
+       _skillsAccess = SkillsAccess.granted,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
@@ -236,7 +236,7 @@ class AgentService extends ChangeNotifier
     }
     final promptSuffix = await _discoverPromptSuffix(
       resolvedEnv,
-      savedSkillsAccess ?? SkillsAccess.ask,
+      savedSkillsAccess ?? SkillsAccess.granted,
     );
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
@@ -256,7 +256,7 @@ class AgentService extends ChangeNotifier
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
       initialApprovalMode: savedApprovalMode,
       approvalModeStore: approvalModeStore,
-      initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.ask,
+      initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,
       skillsAccessStore: skillsAccessStore,
       // Live stores FIRST: a key edited in Settings must win over the
       // boot-time snapshot (the keychain write updates the registry, not
@@ -318,9 +318,10 @@ class AgentService extends ChangeNotifier
 
   /// Discovers agent skills + project context files (AGENTS.md & friends)
   /// and renders the system-prompt suffix. Third-party skill roots
-  /// (`.claude`, `.github/skills`, `.codex`) are read only when [access] is
-  /// [SkillsAccess.granted] — anything else (ask/denied) restricts
-  /// discovery to the first-party roots (`.fah/skills`, `.agents/skills`).
+  /// (`.claude`, `.github/skills`, `.codex`) are read unless [access] is
+  /// [SkillsAccess.denied] (or an explicit `ask` still awaiting its startup
+  /// prompt) — discovery is on by default; only those restrict discovery to
+  /// the first-party roots (`.fah/skills`, `.agents/skills`).
   static Future<String> _discoverPromptSuffix(
     ExecutionEnv env,
     SkillsAccess access,
@@ -360,7 +361,7 @@ class AgentService extends ChangeNotifier
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
   }) : _config = config,
-       _skillsAccess = initialSkillsAccess ?? SkillsAccess.ask,
+       _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _resolveSecretName = resolveSecretName,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -722,7 +723,7 @@ class AgentService extends ChangeNotifier
   final ApprovalModeStore? _approvalModeStore;
 
   /// The current third-party skills consent ([AgentService.create] seeds it
-  /// from [SkillsAccessStore]; the pre-constructed-Agent path stays `ask`).
+  /// from [SkillsAccessStore], default [SkillsAccess.granted]).
   SkillsAccess _skillsAccess;
 
   /// The persisted skills-access store ([AgentService.create] path only);
@@ -909,11 +910,11 @@ class AgentService extends ChangeNotifier
   }
 
   /// The current consent for third-party skill discovery (`.claude`,
-  /// `.github/skills`, `.codex`). [SkillsAccess.ask] = undecided.
+  /// `.github/skills`, `.codex`). Default: [SkillsAccess.granted].
   SkillsAccess get skillsAccess => _skillsAccess;
 
   /// Switches the third-party skills consent (the settings "Skills access"
-  /// section, the onboarding page, the boot dialog), persists it when a
+  /// section, the boot dialog), persists it when a
   /// store is wired (fire-and-forget), then re-discovers skills under the
   /// new consent and recomposes the system prompt — like
   /// [_refreshMemorySection], no [reconfigure] needed. Services built from

@@ -105,6 +105,12 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   Widget _buildExpanded(FahColors colors) {
     final live = widget.manager.sessions;
     final liveIds = live.map((s) => s.id).toSet();
+    // A session keeps the folder it was created in: the live env reports
+    // the app's CURRENT mount for every session, so prefer the persisted
+    // metadata's cwd — otherwise a tile's folder flips when it opens.
+    final persistedCwdById = {
+      for (final m in widget.persistedSessions) m.id: m.cwd,
+    };
     // Live sessions plus the persisted ones not currently open — the full
     // on-disk history stays reachable from the sidebar, like the mobile
     // chat sheet's persisted tail.
@@ -114,7 +120,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
           id: session.id,
           createdAt: session.createdAt,
           lastUpdatedAt: session.lastUpdatedAt,
-          cwd: session.service.env.sessionCwd,
+          cwd: persistedCwdById[session.id] ?? session.service.env.sessionCwd,
           live: session,
         ),
       for (final metadata in widget.persistedSessions)

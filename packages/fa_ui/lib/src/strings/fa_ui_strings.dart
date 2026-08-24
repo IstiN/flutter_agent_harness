@@ -98,6 +98,10 @@ abstract class FaUiStrings {
   /// Label of the optional model id field (provider editor).
   String get settingsModelIdOptionalLabel;
 
+  /// Subtitle of the provider editor's model row when no model is chosen
+  /// yet (the row opens the model selector).
+  String get settingsDefaultModelHint;
+
   /// Label of the optional API key field.
   String get settingsApiKeyOptionalLabel;
 
@@ -283,6 +287,8 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsModelIdOptionalLabel => 'Model id (optional)';
   @override
+  String get settingsDefaultModelHint => 'Tap to choose';
+  @override
   String get settingsApiKeyOptionalLabel => 'API key (optional)';
   @override
   String get settingsEditorKeepKeyNote =>
@@ -454,6 +460,8 @@ class FaUiStringsRu extends FaUiStrings {
   String get settingsModelIdLabel => 'ID модели';
   @override
   String get settingsModelIdOptionalLabel => 'ID модели (необязательно)';
+  @override
+  String get settingsDefaultModelHint => 'Нажмите, чтобы выбрать';
   @override
   String get settingsApiKeyOptionalLabel => 'Ключ API (необязательно)';
   @override

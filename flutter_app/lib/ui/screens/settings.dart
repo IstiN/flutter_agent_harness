@@ -39,7 +39,7 @@ import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
-import 'package:fa/ui/screens/model_presets.dart';
+import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
@@ -682,8 +682,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     AppAnalytics.instance.screenOpened('provider_editor');
     final result = await Navigator.of(context).push<ProviderEditorResult>(
       MaterialPageRoute(
-        builder: (_) =>
-            ProviderEditorPage(title: context.l10n.settingsAddProvider),
+        builder: (_) => ProviderEditorPage(
+          title: context.l10n.settingsAddProvider,
+          modelsFetcher: widget.modelsFetcher,
+        ),
       ),
     );
     if (result == null || result.deleted) return;
@@ -709,6 +711,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           title: context.l10n.settingsEditProviderTitle,
           initial: target,
           hasSavedKey: (_registry.keyFor(target.id) ?? '').isNotEmpty,
+          registry: _registry,
+          modelsFetcher: widget.modelsFetcher,
         ),
       ),
     );
@@ -2061,6 +2065,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           MaterialPageRoute(
                             builder: (_) => ProviderEditorPage(
                               title: context.l10n.settingsAddProvider,
+                              modelsFetcher: widget.modelsFetcher,
                             ),
                           ),
                         );
@@ -2081,8 +2086,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 8),
               ],
               ProvidersSection(
-                service: service,
                 registry: widget.registry,
+                modelsFetcher: widget.modelsFetcher,
                 openRouterOAuthCallbackUrl:
                     OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
                 openRouterOAuthCapture:
@@ -2163,12 +2168,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              // The Agents / Models / Approval-mode sections all read
+              // The Agents section / Models row / Approval mode all read
               // from the live service (reconfigure, subagentManager,
               // activeBaseUrl, …). Gate them on a non-null service
               // so the no-service case still surfaces theme / keys /
               // layout / debug logs / onboarding replay below.
               if (service != null) ...[
+                // Everything model-related (presets, chat model, task
+                // roles, media slots) lives on the dedicated Models page —
+                // the top level stays provider-focused.
+                _ModelsRow(
+                  onTap: () {
+                    // pushFaPage: a centered dialog on wide canvases
+                    // (desktop/tablet), a full-screen page on the phone.
+                    unawaited(
+                      faui.pushFaPage<void>(
+                        context,
+                        ModelsSettingsPage(
+                          service: service,
+                          registry: widget.registry,
+                          lastConnectionStore: widget.lastConnectionStore,
+                          modelsFetcher: widget.modelsFetcher,
+                          taskModelsStore: taskModels,
+                          webLlmEngine: widget.webLlmEngine,
+                          gemmaEngine: widget.gemmaEngine,
+                          transformersJsEngine: widget.transformersJsEngine,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
                 // The live subagent tree (CLI `/agents` panel parity):
                 // main + retained children with observe/send.
                 if (service.subagentManager case final manager?) ...[
@@ -2189,54 +2221,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const Divider(),
                   const SizedBox(height: 16),
                 ],
-                // The Models group: presets first (one-tap combos),
-                // then the main chat model, the task-role overrides and
-                // the media slots.
-                Text(
-                  context.l10n.settingsModelsGroupTitle,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(height: 8),
-                ModelPresetsSection(
-                  service: service,
-                  lastConnectionStore: widget.lastConnectionStore,
-                  taskModelsStore: taskModels,
-                ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                DefaultChatModelSection(
-                  service: service,
-                  registry: widget.registry,
-                  lastConnectionStore: widget.lastConnectionStore,
-                  modelsFetcher: widget.modelsFetcher,
-                  webLlmEngine: widget.webLlmEngine,
-                  gemmaEngine: widget.gemmaEngine,
-                  transformersJsEngine: widget.transformersJsEngine,
-                  onDeviceConfigStore: onDeviceConfig,
-                ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                if (taskModels != null) ...[
-                  faui.TaskModelsSection(
-                    store: taskModels,
-                    mainBaseUrl: service.activeBaseUrl,
-                    mainModelId: service.agentModelId,
-                    registry: widget.registry,
-                  ),
-                  const SizedBox(height: 24),
-                  const Divider(),
-                  const SizedBox(height: 16),
-                ],
-                MediaModelsSection(
-                  service: service,
-                  registry: widget.registry,
-                  modelsFetcher: widget.modelsFetcher,
-                ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
               ],
               const ThemeModeSection(),
               const SizedBox(height: 24),
@@ -2294,6 +2278,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The settings "Models" row: opens the dedicated [ModelsSettingsPage]
+/// (presets, chat model, task roles, media slots) so the top level stays
+/// provider-focused.
+class _ModelsRow extends StatelessWidget {
+  const _ModelsRow({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            faui.FaModelGlyph(size: 20, color: colors.dim),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                context.l10n.settingsModelsGroupTitle,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+          ],
         ),
       ),
     );

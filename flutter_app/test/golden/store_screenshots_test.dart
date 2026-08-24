@@ -1143,7 +1143,7 @@ Future<void> _providersShot(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            ProvidersSection(service: service, registry: registry),
+            ProvidersSection(registry: registry),
             const SizedBox(height: 24),
             const Divider(),
             const SizedBox(height: 16),

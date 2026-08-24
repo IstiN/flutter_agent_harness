@@ -25,11 +25,10 @@ bool get skillsConsentSurfacesVisible =>
 /// sandbox filesystem ([ExecutionEnv.cwd]) — same tiny-store pattern as
 /// `approval_mode.json` (see [ApprovalModeStore]).
 ///
-/// `null` (missing/unreadable/corrupt file, or a persisted `ask` label)
-/// means UNDECIDED: first-party roots (`.fah/skills`, `.agents/skills`)
-/// are always read, third-party roots are skipped, and interactive hosts
-/// (the onboarding page, the one-time boot dialog) may still ask. Only an
-/// explicit `granted` enables third-party discovery. Non-secret by design.
+/// Discovery is ON BY DEFAULT: `null` (missing/unreadable/corrupt file)
+/// means the user never touched the setting and discovery runs. Only an
+/// explicit `denied` disables it; `ask` (a deliberate Settings choice)
+/// gates discovery until the boot dialog answers. Non-secret by design.
 class SkillsAccessStore {
   SkillsAccessStore(this._env);
 
@@ -41,10 +40,10 @@ class SkillsAccessStore {
 
   final ExecutionEnv _env;
 
-  /// The persisted consent, or `null` when undecided (nothing valid stored,
-  /// or the stored value is `ask` — an explicit "ask me later" is
-  /// indistinguishable from "never asked", so the one-time prompt can
-  /// still appear).
+  /// The persisted consent, or `null` when the user never chose (nothing
+  /// valid stored). A persisted `ask` round-trips as [SkillsAccess.ask] —
+  /// it is an explicit "prompt me at startup" choice, distinct from the
+  /// never-asked default.
   Future<SkillsAccess?> load() async {
     try {
       final text = (await _env.readTextFile(
@@ -54,10 +53,9 @@ class SkillsAccessStore {
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) return null;
       if (decoded['version'] != _version) return null;
-      final access = skillsAccessFromLabel(decoded['access'] as String?);
-      return access == SkillsAccess.ask ? null : access;
+      return skillsAccessFromLabel(decoded['access'] as String?);
     } on Object {
-      // Corrupt or incompatible file → undecided, never crash boot.
+      // Corrupt or incompatible file → never-asked default, never crash boot.
       return null;
     }
   }

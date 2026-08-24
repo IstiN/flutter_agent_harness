@@ -22,7 +22,6 @@ import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -129,112 +128,99 @@ void main() {
   group('boot flows', () {
     testWidgets('first boot: onboarding → skip → setup → connect → launcher '
         'home; the key never reaches last_connection.json', (tester) async {
-      // The flow under test includes the desktop-only skills-consent page
-      // (widget tests default to android, where it is hidden).
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-      try {
-        await IOOverrides.runZoned(() async {
-          final env = MemoryExecutionEnv();
-          final lastConnection = await LastConnectionStore.load(env);
-          final onboarding = await OnboardingStore.load(env);
-          final keys = await SessionKeysStore.load(env);
-          await tester.pumpWidget(
-            _bootApp(
-              env: env,
-              lastConnection: lastConnection,
-              onboarding: onboarding,
-              keys: keys,
-            ),
-          );
-          await _settle(tester);
+      await IOOverrides.runZoned(() async {
+        final env = MemoryExecutionEnv();
+        final lastConnection = await LastConnectionStore.load(env);
+        final onboarding = await OnboardingStore.load(env);
+        final keys = await SessionKeysStore.load(env);
+        await tester.pumpWidget(
+          _bootApp(
+            env: env,
+            lastConnection: lastConnection,
+            onboarding: onboarding,
+            keys: keys,
+          ),
+        );
+        await _settle(tester);
 
-          // First launch: onboarding shows, setup does not.
-          expect(find.byType(OnboardingScreen), findsOneWidget);
-          expect(find.byType(SetupScreen), findsNothing);
+        // First launch: onboarding shows, setup does not.
+        expect(find.byType(OnboardingScreen), findsOneWidget);
+        expect(find.byType(SetupScreen), findsNothing);
 
-          // Page 1: Skip is available…
-          expect(find.text('Skip'), findsOneWidget);
-          await tester.tap(find.text('Continue'));
-          await tester.pumpAndSettle();
+        // Page 1: Skip is available…
+        expect(find.text('Skip'), findsOneWidget);
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
 
-          // Page 2 (providers) is MANDATORY: no Skip, and Continue is locked
-          // until a provider is configured.
-          expect(find.text('Choose how Fa thinks.'), findsOneWidget);
-          expect(find.text('Skip'), findsNothing);
-          await tester.tap(find.text('Continue'));
-          await tester.pumpAndSettle();
-          expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+        // Page 2 (providers) is MANDATORY: no Skip, and Continue is locked
+        // until a provider is configured.
+        expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+        expect(find.text('Skip'), findsNothing);
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+        expect(find.text('Choose how Fa thinks.'), findsOneWidget);
 
-          // Configure a custom provider through the same editor the app's Add
-          // Provider picker pushes (scroll the list — Custom is last).
-          await tester.scrollUntilVisible(
-            find.text('Custom'),
-            200,
-            scrollable: find.descendant(
-              of: find.byType(SingleChildScrollView),
-              matching: find.byType(Scrollable),
-            ),
-          );
-          await tester.pumpAndSettle();
-          await tester.tap(find.text('Custom'));
-          await tester.pumpAndSettle();
-          expect(find.byType(ProviderEditorPage), findsOneWidget);
-          await tester.enterText(
-            find.widgetWithText(TextField, 'Name'),
-            'Acme',
-          );
-          await tester.enterText(
-            find.widgetWithText(TextField, 'Base URL'),
-            'https://acme.example/v1',
-          );
-          await tester.enterText(
-            find.widgetWithText(TextField, 'API key (optional)'),
-            'sk-first-boot',
-          );
-          await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-          await tester.pumpAndSettle();
+        // Configure a custom provider through the same editor the app's Add
+        // Provider picker pushes (scroll the list — Custom is last).
+        await tester.scrollUntilVisible(
+          find.text('Custom'),
+          200,
+          scrollable: find.descendant(
+            of: find.byType(SingleChildScrollView),
+            matching: find.byType(Scrollable),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Custom'));
+        await tester.pumpAndSettle();
+        expect(find.byType(ProviderEditorPage), findsOneWidget);
+        await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Acme');
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Base URL'),
+          'https://acme.example/v1',
+        );
+        await tester.enterText(
+          find.widgetWithText(TextField, 'API key (optional)'),
+          'sk-first-boot',
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+        await tester.pumpAndSettle();
 
-          // A configured provider auto-advances to the permissions page.
-          expect(find.text('Give access only when it helps.'), findsOneWidget);
-          await tester.tap(find.text('Continue without access'));
-          await tester.pumpAndSettle();
+        // A configured provider auto-advances to the permissions page.
+        expect(find.text('Give access only when it helps.'), findsOneWidget);
+        await tester.tap(find.text('Continue without access'));
+        await tester.pumpAndSettle();
 
-          // Page 4 (skills consent): "Not now" leaves the store undecided and
-          // slides on to the final page.
-          expect(find.text('Reuse your existing skills.'), findsOneWidget);
-          await tester.tap(find.text('Not now'));
-          await tester.pumpAndSettle();
-          expect(find.text('Open Fa'), findsOneWidget);
+        // No skills-consent page (discovery is opt-out): the permissions
+        // page leads straight to the final one.
+        expect(find.text('Open Fa'), findsOneWidget);
 
-          // Finishing persists the flag; the provider configured during
-          // onboarding makes the boot auto-connect — no setup form at all.
-          await tester.tap(find.text('Open Fa'));
-          await _settleUntil(tester, find.byType(AppLauncherScreen));
-          expect(onboarding.seen, isTrue);
-          expect(
-            (await env.readTextFile(
-              '${env.cwd}/${OnboardingStore.fileName}',
-            )).valueOrNull,
-            isNotNull,
-          );
-          expect(find.byType(OnboardingScreen), findsNothing);
-          expect(find.byType(SetupScreen), findsNothing);
+        // Finishing persists the flag; the provider configured during
+        // onboarding makes the boot auto-connect — no setup form at all.
+        await tester.tap(find.text('Open Fa'));
+        await _settleUntil(tester, find.byType(AppLauncherScreen));
+        expect(onboarding.seen, isTrue);
+        expect(
+          (await env.readTextFile(
+            '${env.cwd}/${OnboardingStore.fileName}',
+          )).valueOrNull,
+          isNotNull,
+        );
+        expect(find.byType(OnboardingScreen), findsNothing);
+        expect(find.byType(SetupScreen), findsNothing);
 
-          // Connected: the narrow-layout home is the apps launcher, with the
-          // mini chat bar (composer) at the bottom.
-          expect(find.byType(AppLauncherScreen), findsOneWidget);
-          expect(find.byType(ChatComposer), findsOneWidget);
+        // Connected: the narrow-layout home is the apps launcher, with the
+        // mini chat bar (composer) at the bottom.
+        expect(find.byType(AppLauncherScreen), findsOneWidget);
+        expect(find.byType(ChatComposer), findsOneWidget);
 
-          // The connection persisted — non-secret parts only.
-          final raw = (await env.readTextFile(
-            '${env.cwd}/${LastConnectionStore.fileName}',
-          )).valueOrNull!;
-          expect(raw, contains('https://acme.example/v1'));
-          expect(raw, isNot(contains('sk-first-boot')));
-        }, getCurrentDirectory: emptyCwd);
-      } finally {
-        debugDefaultTargetPlatformOverride = null;
-      }
+        // The connection persisted — non-secret parts only.
+        final raw = (await env.readTextFile(
+          '${env.cwd}/${LastConnectionStore.fileName}',
+        )).valueOrNull!;
+        expect(raw, contains('https://acme.example/v1'));
+        expect(raw, isNot(contains('sk-first-boot')));
+      }, getCurrentDirectory: emptyCwd);
     });
 
     testWidgets('returning boot: saved connection + key auto-connects '

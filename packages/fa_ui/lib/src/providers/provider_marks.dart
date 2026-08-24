@@ -4,6 +4,43 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show isCodeMieBaseUrl;
+
+import 'package:fa_ui/src/providers/provider_preset.dart';
+import 'package:fa_ui/src/stores/provider_registry.dart';
+
+/// The [ProviderMark] key for a provider entry — a [ProviderPreset], a
+/// saved [CustomProvider], or a raw base URL — so the providers list shows
+/// the SAME branded mark the add-provider picker tiles use. Unknown
+/// endpoints fall back to the generic server-stack mark.
+String providerMarkKey(Object provider) => switch (provider) {
+  ProviderPreset preset => switch (preset) {
+    ProviderPreset.openrouter => 'openrouter',
+    ProviderPreset.ollamaCloud => 'ollama',
+    ProviderPreset.gemini => 'google',
+    ProviderPreset.dial => 'dial',
+    _ => 'custom',
+  },
+  CustomProvider custom => providerMarkKeyForBaseUrl(custom.baseUrl),
+  String baseUrl => providerMarkKeyForBaseUrl(baseUrl),
+  _ => 'custom',
+};
+
+/// The [ProviderMark] key inferred from an endpoint URL (see
+/// [providerMarkKey]).
+String providerMarkKeyForBaseUrl(String baseUrl) {
+  if (isCodeMieBaseUrl(baseUrl)) return 'codemie';
+  if (baseUrl.contains('openrouter.ai')) return 'openrouter';
+  if (baseUrl.contains('ollama.com')) return 'ollama';
+  if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
+  if (baseUrl.contains('ai-proxy.lab.epam.com')) return 'dial';
+  if (baseUrl.contains('api.openai.com')) return 'openai';
+  if (baseUrl.contains('anthropic.com')) return 'anthropic';
+  if (baseUrl.contains('kimi.com')) return 'kimi';
+  if (baseUrl.contains('z.ai')) return 'zai';
+  return 'custom';
+}
 
 /// Brand marks for the provider list (onboarding page 2). Real brand SVGs
 /// where a permissive source exists (simple-icons.org, CC0) plus the

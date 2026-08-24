@@ -108,37 +108,30 @@ void main() {
 
     tearDown(() => AppAnalytics.install(null));
 
-    testWidgets('swipes and Continues through all five pages', (tester) async {
-      await _onDesktop(() async {
-        await _pumpOnboarding(tester);
-        await tester.pumpAndSettle();
-        expect(find.text('Start with an idea.'), findsOneWidget);
+    testWidgets('swipes and Continues through all four pages', (tester) async {
+      await _pumpOnboarding(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('Start with an idea.'), findsOneWidget);
 
-        // A horizontal fling on page 1 turns the page.
-        await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
-        await tester.pumpAndSettle();
-        expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+      // A horizontal fling on page 1 turns the page.
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
 
-        // The primary button advances too.
-        await tester.tap(find.text('Continue'));
-        await tester.pumpAndSettle();
-        expect(find.text('Give access only when it helps.'), findsOneWidget);
+      // The primary button advances too.
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Give access only when it helps.'), findsOneWidget);
 
-        await tester.tap(find.text('Continue without access'));
-        await tester.pumpAndSettle();
-        expect(find.text('Reuse your existing skills.'), findsOneWidget);
+      await tester.tap(find.text('Continue without access'));
+      await tester.pumpAndSettle();
+      // Third-party skills are discovered by default (opt-out), so there is
+      // no consent page — the sandbox page is last.
+      expect(find.text('Your sandbox is ready.'), findsOneWidget);
+      expect(find.text('Open Fa'), findsOneWidget);
 
-        await tester.tap(find.text('Continue'));
-        await tester.pumpAndSettle();
-        expect(find.text('Your sandbox is ready.'), findsOneWidget);
-        expect(find.text('Open Fa'), findsOneWidget);
-
-        // Analytics: only the started + screen events so far (no finish yet).
-        expect(events.map((e) => e.$1), [
-          'onboarding_started',
-          'screen_opened',
-        ]);
-      });
+      // Analytics: only the started + screen events so far (no finish yet).
+      expect(events.map((e) => e.$1), ['onboarding_started', 'screen_opened']);
     });
 
     testWidgets('provider step is mandatory when a registry is wired', (
@@ -237,76 +230,60 @@ void main() {
     testWidgets(
       'Skip works from the last page too (skippable from every page)',
       (tester) async {
-        await _onDesktop(() async {
-          final store = OnboardingStore.inMemory();
-          bool? skippedFlag;
-          await _pumpOnboarding(
-            tester,
-            onboardingStore: store,
-            initialPage: 4,
-            onFinished: ({required bool skipped}) => skippedFlag = skipped,
-          );
-          await tester.pumpAndSettle();
+        final store = OnboardingStore.inMemory();
+        bool? skippedFlag;
+        await _pumpOnboarding(
+          tester,
+          onboardingStore: store,
+          initialPage: 3,
+          onFinished: ({required bool skipped}) => skippedFlag = skipped,
+        );
+        await tester.pumpAndSettle();
 
-          await tester.tap(find.text('Skip'));
-          await tester.pumpAndSettle();
+        await tester.tap(find.text('Skip'));
+        await tester.pumpAndSettle();
 
-          expect(store.seen, isTrue);
-          expect(skippedFlag, isTrue);
-          expect(events.last.$1, 'onboarding_skipped');
-          expect(events.last.$2['page'], 4);
-        });
+        expect(store.seen, isTrue);
+        expect(skippedFlag, isTrue);
+        expect(events.last.$1, 'onboarding_skipped');
+        expect(events.last.$2['page'], 3);
       },
     );
 
     testWidgets('Get started completes the flow and sets the flag', (
       tester,
     ) async {
-      await _onDesktop(() async {
-        final store = OnboardingStore.inMemory();
-        bool? skippedFlag;
-        await _pumpOnboarding(
-          tester,
-          onboardingStore: store,
-          initialPage: 4,
-          onFinished: ({required bool skipped}) => skippedFlag = skipped,
-        );
-        await tester.pumpAndSettle();
+      final store = OnboardingStore.inMemory();
+      bool? skippedFlag;
+      await _pumpOnboarding(
+        tester,
+        onboardingStore: store,
+        initialPage: 3,
+        onFinished: ({required bool skipped}) => skippedFlag = skipped,
+      );
+      await tester.pumpAndSettle();
 
-        await tester.tap(find.text('Open Fa'));
-        await tester.pumpAndSettle();
+      await tester.tap(find.text('Open Fa'));
+      await tester.pumpAndSettle();
 
-        expect(store.seen, isTrue);
-        expect(skippedFlag, isFalse);
-        expect(events.map((e) => e.$1), [
-          'onboarding_started',
-          'screen_opened',
-          'onboarding_completed',
-        ]);
-      });
+      expect(store.seen, isTrue);
+      expect(skippedFlag, isFalse);
+      expect(events.map((e) => e.$1), [
+        'onboarding_started',
+        'screen_opened',
+        'onboarding_completed',
+      ]);
     });
 
-    testWidgets('mobile flow: four pages, no skills step', (tester) async {
-      // The default widget-test platform is android — the skills-consent
-      // page is not part of the flow there.
-      await _pumpOnboarding(tester);
+    testWidgets('the flow has no skills-consent page (opt-out default)', (
+      tester,
+    ) async {
+      await _pumpOnboarding(tester, initialPage: 3);
       await tester.pumpAndSettle();
-      expect(find.text('Start with an idea.'), findsOneWidget);
-
-      await tester.tap(find.text('Continue'));
-      await tester.pumpAndSettle();
-      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
-
-      await tester.tap(find.text('Continue'));
-      await tester.pumpAndSettle();
-      expect(find.text('Give access only when it helps.'), findsOneWidget);
-
-      await tester.tap(find.text('Continue without access'));
-      await tester.pumpAndSettle();
-      // No skills page — straight to the last page.
-      expect(find.text('Reuse your existing skills.'), findsNothing);
+      // Page 3 is the last one: no skills step anywhere in the flow.
       expect(find.text('Your sandbox is ready.'), findsOneWidget);
       expect(find.text('Open Fa'), findsOneWidget);
+      expect(find.text('Skip'), findsOneWidget);
     });
   });
 
@@ -369,11 +346,14 @@ void main() {
     });
 
     testWidgets(
-      'seen onboarding + undecided skills consent shows the one-time dialog',
+      'seen onboarding + ask-mode skills consent shows the one-time dialog',
       (tester) async {
         await _onDesktop(() async {
           final env = MemoryExecutionEnv();
           final skillsStore = SkillsAccessStore(env);
+          // The dialog fires only for an explicit "ask at startup" choice;
+          // a fresh install (null) defaults to granted and never sees it.
+          await skillsStore.save(SkillsAccess.ask);
           await tester.pumpWidget(
             MaterialApp(
               theme: buildFahTheme(),
@@ -410,6 +390,7 @@ void main() {
       await _onDesktop(() async {
         final env = MemoryExecutionEnv();
         final skillsStore = SkillsAccessStore(env);
+        await skillsStore.save(SkillsAccess.ask);
         await tester.pumpWidget(
           MaterialApp(
             theme: buildFahTheme(),
@@ -461,29 +442,32 @@ void main() {
       });
     });
 
-    testWidgets('mobile never shows the skills-consent dialog', (tester) async {
-      // Default widget-test platform is android: the consent question has no
-      // meaning there (the third-party roots don't exist), so the dialog
-      // must not fire even with an undecided store.
-      final env = MemoryExecutionEnv();
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildFahTheme(),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: BootstrapScreen(
-            env: env,
-            lastConnectionStore: LastConnectionStore.inMemory(),
-            onboardingStore: OnboardingStore.inMemory(seen: true),
-            skillsAccessStore: SkillsAccessStore(env),
-            sessionKeysStore: SessionKeysStore.inMemory(),
+    testWidgets('a fresh install never shows the skills-consent dialog', (
+      tester,
+    ) async {
+      // No stored decision: discovery is on by default (opt-out), so the
+      // dialog must not fire even on desktop where the roots could exist.
+      await _onDesktop(() async {
+        final env = MemoryExecutionEnv();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: BootstrapScreen(
+              env: env,
+              lastConnectionStore: LastConnectionStore.inMemory(),
+              onboardingStore: OnboardingStore.inMemory(seen: true),
+              skillsAccessStore: SkillsAccessStore(env),
+              sessionKeysStore: SessionKeysStore.inMemory(),
+            ),
           ),
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('Reuse existing agent skills?'), findsNothing);
+        );
+        await tester.pump();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.text('Reuse existing agent skills?'), findsNothing);
+      });
     });
 
     testWidgets(

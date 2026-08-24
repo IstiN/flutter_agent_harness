@@ -76,9 +76,41 @@ Finder _editorField(String label) {
   );
 }
 
+/// Sets the provider editor's model through the model selector its model
+/// row opens (the editor itself has no model text field anymore).
+Future<void> _setEditorModel(
+  WidgetTester tester,
+  String rowLabel,
+  String modelId,
+) async {
+  await tester.tap(
+    find.descendant(
+      of: find.byType(ProviderEditorPage),
+      matching: find.widgetWithText(InkWell, rowLabel),
+    ),
+  );
+  await tester.pumpAndSettle();
+  final page = find.byType(MediaSlotModelPage);
+  expect(page, findsOneWidget);
+  await tester.enterText(
+    find.descendant(
+      of: page,
+      matching: find.widgetWithText(TextField, 'Model id'),
+    ),
+    modelId,
+  );
+  await tester.tap(
+    find.descendant(
+      of: page,
+      matching: find.widgetWithText(FilledButton, 'Save'),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   group('ProvidersSection', () {
-    testWidgets('lists the hosted presets and marks the current provider', (
+    testWidgets('lists the saved providers with no current-mark', (
       tester,
     ) async {
       // Hosted presets no longer render here (the provider-first setup
@@ -89,21 +121,13 @@ void main() {
         baseUrl: 'https://acme.example/v1',
         modelId: 'acme-1',
       );
-      final service = _fakeService(
-        baseUrl: 'https://acme.example/v1',
-        provider: 'openai-completions',
-      );
-      await service.initialize();
-      await _pump(
-        tester,
-        ProvidersSection(service: service, registry: registry),
-      );
+      await _pump(tester, ProvidersSection(registry: registry));
 
       expect(find.text('Providers'), findsOneWidget);
       expect(find.text('Acme'), findsOneWidget);
       expect(find.text('Add provider'), findsOneWidget);
-      // Exactly one row is marked current — the saved Acme provider.
-      expect(find.byIcon(Icons.check), findsOneWidget);
+      // No row is marked current — every row ends with a chevron.
+      expect(find.byIcon(Icons.check), findsNothing);
     });
 
     testWidgets('add provider: the editor page persists via the registry', (
@@ -162,7 +186,10 @@ void main() {
         modelId: 'acme-1',
       );
       registry.rememberKey(provider.id, 'sk-acme-kept');
-      await _pump(tester, ProvidersSection(registry: registry));
+      await _pump(
+        tester,
+        ProvidersSection(registry: registry, modelsFetcher: _someModels),
+      );
 
       await tester.tap(find.text('Acme'));
       await tester.pumpAndSettle();
@@ -179,7 +206,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.enterText(_editorField('Model id (optional)'), 'acme-2');
+      await _setEditorModel(tester, 'Model id (optional)', 'acme-2');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 

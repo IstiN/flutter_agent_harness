@@ -2,19 +2,19 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show ModelsEndpointFetcher;
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:fa_ui/src/chat/fa_glyphs.dart';
+import 'package:fa_ui/src/providers/media_slot_picker_page.dart';
 import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
-import 'package:fa_ui/src/widgets/model_list_picker.dart';
 
 /// Pushes the [ProviderEditorPage] in create mode and saves the result to
 /// [registry] (definition + session key). Returns the added provider, or
@@ -24,10 +24,11 @@ Future<CustomProvider?> pushProviderEditor(
   BuildContext context,
   ProviderRegistry registry, {
   required String title,
+  ModelsEndpointFetcher? modelsFetcher,
 }) async {
   final result = await pushFaPage<ProviderEditorResult>(
     context,
-    ProviderEditorPage(title: title),
+    ProviderEditorPage(title: title, modelsFetcher: modelsFetcher),
   );
   if (result == null || result.deleted) return null;
   final provider = await registry.add(
@@ -175,9 +176,8 @@ class ProviderEditorPage extends StatefulWidget {
   /// the save). Null hides the button.
   final Future<bool> Function(BuildContext context)? onReauthenticate;
 
-  /// `/models` fetch override (tests); production goes through the core
-  /// [fetchModelsForEndpoint] dispatch (DIAL deployments, the CodeMie
-  /// marker, the OpenAI-compatible fallback).
+  /// `/models` fetch override (tests), forwarded to the model selector the
+  /// model row opens.
   final ModelsEndpointFetcher? modelsFetcher;
 
   @override
@@ -193,16 +193,6 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
   String? _error;
   var _presetSeeded = false;
   var _reauthRunning = false;
-
-  /// The endpoint's `/models` ids feeding the model field's quick select.
-  List<String> _endpointModels = const [];
-  var _modelsLoading = false;
-
-  /// Monotonic fetch generation — a late answer never overwrites a newer
-  /// one.
-  var _fetchSeq = 0;
-  var _modelsFetchStarted = false;
-  Timer? _modelsDebounce;
 
   bool get _isPreset => widget.preset != null;
 
@@ -245,88 +235,15 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
         }
       }
     }
-    if (!_modelsFetchStarted) {
-      _modelsFetchStarted = true;
-      // The model list follows the endpoint (and the key authenticating
-      // it): either change re-fetches, debounced so typing doesn't spray
-      // requests. Listeners attach only now — after the preset seeding —
-      // so the seed itself doesn't schedule a redundant second fetch.
-      _urlController.addListener(_scheduleModelsFetch);
-      _keyController.addListener(_scheduleModelsFetch);
-      // Key resolution reads inherited stores — unavailable in initState.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) unawaited(_fetchEndpointModels());
-      });
-    }
   }
 
   @override
   void dispose() {
-    _modelsDebounce?.cancel();
     _nameController.dispose();
     _urlController.dispose();
     _modelController.dispose();
     _keyController.dispose();
     super.dispose();
-  }
-
-  void _scheduleModelsFetch() {
-    _modelsDebounce?.cancel();
-    _modelsDebounce = Timer(const Duration(milliseconds: 500), () {
-      unawaited(_fetchEndpointModels());
-    });
-  }
-
-  /// Fetches the endpoint's model list for the model field's quick select.
-  /// The [ProviderEditorPage.modelsFetcher] override (tests) wins;
-  /// otherwise the core [fetchModelsForEndpoint] dispatch handles the DIAL
-  /// deployments endpoint and the CodeMie marker itself. Silent on
-  /// failure — free-text entry always works, the picker just shows the
-  /// manual-entry note.
-  Future<void> _fetchEndpointModels() async {
-    final baseUrl = _urlController.text.trim();
-    if (baseUrl.isEmpty) {
-      // Invalidate any in-flight fetch and drop the stale list.
-      _fetchSeq++;
-      if (_endpointModels.isNotEmpty) {
-        setState(() => _endpointModels = const []);
-      }
-      return;
-    }
-    final seq = ++_fetchSeq;
-    setState(() => _modelsLoading = true);
-    try {
-      // A freshly typed key wins; otherwise fall back to whatever the
-      // provider already has (session key, host key chain, saved keys).
-      final typed = _keyController.text.trim();
-      final provider = widget.initial ?? widget.preset;
-      final key = typed.isNotEmpty
-          ? typed
-          : provider != null
-          ? resolveProviderKey(
-              provider,
-              registry: widget.registry,
-              keysStore: SessionKeysScope.maybeOf(context),
-            )
-          : '';
-      final override = widget.modelsFetcher;
-      final (ids, _, _) = override != null
-          ? await override(baseUrl, apiKey: key)
-          : await fetchModelsForEndpoint(
-              baseUrl,
-              apiKey: key,
-              provider:
-                  ProviderPreset.fromBaseUrl(baseUrl) == ProviderPreset.dial
-                  ? 'dial'
-                  : null,
-            );
-      if (!mounted || seq != _fetchSeq) return;
-      setState(() => _endpointModels = ids);
-    } finally {
-      if (mounted && seq == _fetchSeq) {
-        setState(() => _modelsLoading = false);
-      }
-    }
   }
 
   void _save() {
@@ -393,6 +310,96 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
     }
   }
 
+  /// The key the model selector's `/models` fetch should authorize with:
+  /// the freshly typed (unsaved) key wins; in preset mode an empty field
+  /// means "the stored preset key", which the transient provider entry
+  /// could not resolve on its own. Edit-mode custom providers resolve
+  /// through their kept id inside the selector page, so no override.
+  String? _modelFetchKeyOverride() {
+    final typed = _keyController.text.trim();
+    if (typed.isNotEmpty) return typed;
+    final preset = widget.preset;
+    if (preset == null) return null;
+    final stored = resolveProviderKey(
+      preset,
+      registry: widget.registry,
+      keysStore: SessionKeysScope.maybeOf(context),
+    );
+    return stored.isEmpty ? null : stored;
+  }
+
+  /// Opens the shared model selector for the CURRENT form values: the row
+  /// never requires saving the provider first, so the page gets a transient
+  /// entry built from the typed name/URL (keeping the edited provider's id
+  /// so its stored key still resolves). Only the picked model id flows back
+  /// into the form.
+  Future<void> _pickModel() async {
+    final result = await pushFaPage<MediaSlotEditorResult>(
+      context,
+      MediaSlotModelPage(
+        slot: null,
+        provider: CustomProvider(
+          id: widget.initial?.id ?? 'editor-preview',
+          name: _nameController.text.trim(),
+          baseUrl: _urlController.text.trim(),
+          modelId: _modelController.text.trim(),
+        ),
+        registry: widget.registry,
+        initialModel: _modelController.text.trim(),
+        apiKeyOverride: _modelFetchKeyOverride(),
+        modelsFetcher: widget.modelsFetcher,
+      ),
+    );
+    final picked = result?.override;
+    if (!mounted || picked == null) return;
+    setState(() => _modelController.text = picked.modelId);
+  }
+
+  /// The model row: a button-style entry (like the agent-role rows) showing
+  /// the chosen model — or the choose hint — and opening the model selector.
+  Widget _buildModelRow(ThemeData theme, FaUiStrings strings) {
+    final model = _modelController.text.trim();
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: _pickModel,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            FaModelGlyph(size: 20, color: theme.colorScheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _isPreset
+                        ? strings.settingsModelIdLabel
+                        : strings.settingsModelIdOptionalLabel,
+                  ),
+                  Text(
+                    model.isEmpty ? strings.settingsDefaultModelHint : model,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: model.isEmpty
+                          ? theme.colorScheme.onSurfaceVariant
+                          : null,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -423,14 +430,7 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              FaModelListPicker(
-                controller: _modelController,
-                models: _endpointModels,
-                loading: _modelsLoading,
-                label: _isPreset
-                    ? strings.settingsModelIdLabel
-                    : strings.settingsModelIdOptionalLabel,
-              ),
+              _buildModelRow(theme, strings),
               const SizedBox(height: 12),
               TextField(
                 controller: _keyController,

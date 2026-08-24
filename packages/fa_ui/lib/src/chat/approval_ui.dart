@@ -176,6 +176,9 @@ class ApprovalModeSelector extends StatelessWidget {
               ApprovalMode.yolo => FaChatStrings.of(
                 context,
               ).approvalModeYoloHint,
+              ApprovalMode.unattended => FaChatStrings.of(
+                context,
+              ).approvalModeYoloHint,
             }, style: theme.textTheme.bodySmall),
           ],
         );

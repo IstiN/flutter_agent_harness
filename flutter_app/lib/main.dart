@@ -589,9 +589,9 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   var _onboardingDone = false;
 
   /// The boot-time read of the third-party skills consent (started in
-  /// [initState], so the one-time dialog never waits on disk); `null` when
-  /// the dialog must not fire this run (first launch — onboarding's skills
-  /// page owns the question — or no store wired).
+  /// [initState], so the dialog never waits on disk). Discovery is ON by
+  /// default — the dialog fires only for an explicit `ask` choice (Settings),
+  /// never on a fresh install.
   Future<SkillsAccess?>? _skillsAccessFuture;
 
   /// First-launch onboarding shows only when nothing can be restored
@@ -610,10 +610,9 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       registry: widget.registry,
       sessionKeysStore: widget.sessionKeysStore,
     );
-    // The one-time skills-consent dialog only fires when onboarding was
-    // ALREADY seen at boot (upgraders, or a "Not now" on the onboarding
-    // skills page) — a first launch answers on the onboarding page instead.
-    // Mobile never asks: the third-party roots don't exist there.
+    // The skills-consent dialog fires only for an EXPLICIT `ask` choice
+    // (Settings) — discovery is on by default, so a fresh install never
+    // sees it. Mobile never asks: the third-party roots don't exist there.
     final onboarding = widget.onboardingStore;
     final skillsStore = widget.skillsAccessStore;
     if (skillsConsentSurfacesVisible &&
@@ -634,18 +633,17 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
     }
   }
 
-  /// Shows the one-time third-party skills consent dialog when the store is
-  /// still undecided (no `granted`/`denied` recorded). Fires once per boot:
-  /// Allow persists `granted`, Not now persists `denied` (unlike the
-  /// onboarding page's deferred "Not now", a boot-dialog answer must stick
-  /// or the dialog would fire on every launch); a dismissed dialog stays
-  /// undecided and asks again next launch. Boot is never blocked on it.
+  /// Shows the third-party skills consent dialog when the user explicitly
+  /// chose "ask" in Settings. Allow persists `granted`; Not now persists
+  /// `denied` (a boot-dialog answer must stick or the dialog would fire on
+  /// every launch); a dismissed dialog stays `ask` and asks again next
+  /// launch. Boot is never blocked on it.
   Future<void> _maybeAskSkillsAccess(BuildContext dialogContext) async {
     final future = _skillsAccessFuture;
     final store = widget.skillsAccessStore;
     if (future == null || store == null) return;
     _skillsAccessFuture = null;
-    if (await future != null) return; // already decided — never pester again
+    if (await future != SkillsAccess.ask) return; // only an explicit "ask"
     if (!dialogContext.mounted) return;
     AppAnalytics.instance.screenOpened('skills_access_dialog');
     final allow = await showDialog<bool>(
@@ -767,7 +765,6 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   Widget _buildOnboardingScreen() {
     return OnboardingScreen(
       onboardingStore: widget.onboardingStore,
-      skillsAccessStore: widget.skillsAccessStore,
       registry: widget.registry,
       lastConnectionStore: widget.lastConnectionStore,
       onFinished: ({required bool skipped}) => _onboardingFinished(),

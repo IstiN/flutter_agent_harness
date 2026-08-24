@@ -60,9 +60,41 @@ Finder _editorField(String label) {
   );
 }
 
+/// Sets the provider editor's model through the model selector its model
+/// row opens (the editor itself has no model text field anymore).
+Future<void> _setEditorModel(
+  WidgetTester tester,
+  String rowLabel,
+  String modelId,
+) async {
+  await tester.tap(
+    find.descendant(
+      of: find.byType(ProviderEditorPage),
+      matching: find.widgetWithText(InkWell, rowLabel),
+    ),
+  );
+  await tester.pumpAndSettle();
+  final page = find.byType(MediaSlotModelPage);
+  expect(page, findsOneWidget);
+  await tester.enterText(
+    find.descendant(
+      of: page,
+      matching: find.widgetWithText(TextField, 'Model id'),
+    ),
+    modelId,
+  );
+  await tester.tap(
+    find.descendant(
+      of: page,
+      matching: find.widgetWithText(FilledButton, 'Save'),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   group('ProvidersSection', () {
-    testWidgets('lists the saved providers and marks the current one', (
+    testWidgets('lists the saved providers with no current-mark', (
       tester,
     ) async {
       // Hosted presets moved to the add-provider picker (provider-first
@@ -73,26 +105,19 @@ void main() {
         baseUrl: 'https://acme.example/v1',
         modelId: 'acme-1',
       );
-      final connection = _FakeConnection(
-        baseUrl: 'https://acme.example/v1',
-        kind: 'openai-completions',
-      );
-      await _pump(
-        tester,
-        ProvidersSection(service: connection, registry: registry),
-      );
+      await _pump(tester, ProvidersSection(registry: registry));
 
       expect(find.text('Providers'), findsOneWidget);
       expect(find.text('Acme'), findsOneWidget);
       expect(find.text('Add provider'), findsOneWidget);
-      // Exactly one row is marked current — the saved Acme provider.
-      expect(find.byIcon(Icons.check), findsOneWidget);
+      // No current-provider check marks — a row is the entry point to the
+      // provider's editor, not a selector.
+      expect(find.byIcon(Icons.check), findsNothing);
     });
 
     testWidgets('on-device rows are gated by the visible predicate', (
       tester,
     ) async {
-      final connection = _FakeConnection(kind: 'openai-completions');
       FaOnDeviceRoute route(String id) => FaOnDeviceRoute(
         label: 'Engine $id',
         id: id,
@@ -101,7 +126,6 @@ void main() {
       await _pump(
         tester,
         ProvidersSection(
-          service: connection,
           registry: ProviderRegistry.inMemory(),
           onDeviceProviders: [route('gemma'), route('webllm')],
           onDeviceRowVisible: (kind) => kind == 'gemma',
@@ -114,12 +138,10 @@ void main() {
 
     testWidgets('the add-provider picker offers the on-device routes and '
         'reports their connect', (tester) async {
-      final connection = _FakeConnection(kind: 'openai-completions');
       FaChatModelConfig? connected;
       await _pump(
         tester,
         ProvidersSection(
-          service: connection,
           registry: ProviderRegistry.inMemory(),
           onDeviceProviders: [
             FaOnDeviceRoute(
@@ -168,47 +190,71 @@ void main() {
       expect(connected?.modelId, 'local-model');
     });
 
-    testWidgets('two custom providers on one host: only the active id is '
-        'marked current', (tester) async {
+    testWidgets('two custom providers on one host both get the URL-matched '
+        'brand mark (no current check)', (tester) async {
       final registry = ProviderRegistry.inMemory();
       await registry.add(
         name: 'Kimi 1',
         baseUrl: 'https://api.kimi.com/v1',
         modelId: 'k3-256k',
       );
-      final kimi2 = await registry.add(
+      await registry.add(
         name: 'Kimi 2',
         baseUrl: 'https://api.kimi.com/v1',
         modelId: 'k3-256k',
       );
-      final connection = _FakeConnection(
-        baseUrl: 'https://api.kimi.com/v1',
-        kind: 'openai-completions',
-      )..providerId = kimi2.id;
-      await _pump(
-        tester,
-        ProvidersSection(service: connection, registry: registry),
-      );
+      await _pump(tester, ProvidersSection(registry: registry));
 
-      // The base-URL match would mark both rows; the id match marks only
-      // the Kimi 2 row.
-      expect(find.byIcon(Icons.check), findsOneWidget);
-      final kimi1Row = find.ancestor(
-        of: find.text('Kimi 1'),
-        matching: find.byType(InkWell),
+      // Both rows carry the Kimi brand mark (the same one the add-provider
+      // picker shows) and neither is check-marked.
+      for (final name in ['Kimi 1', 'Kimi 2']) {
+        final row = find.ancestor(
+          of: find.text(name),
+          matching: find.byType(InkWell),
+        );
+        expect(
+          tester
+              .widget<ProviderMark>(
+                find.descendant(of: row, matching: find.byType(ProviderMark)),
+              )
+              .presetKey,
+          'kimi',
+        );
+      }
+      expect(find.byIcon(Icons.check), findsNothing);
+    });
+
+    testWidgets("provider rows show the picker's brand marks by URL", (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Org',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'gemini-3-flash',
       );
-      final kimi2Row = find.ancestor(
-        of: find.text('Kimi 2'),
-        matching: find.byType(InkWell),
+      await registry.add(
+        name: 'Local',
+        baseUrl: 'http://localhost:8080/v1',
+        modelId: 'llama3',
       );
-      expect(
-        find.descendant(of: kimi2Row, matching: find.byIcon(Icons.check)),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: kimi1Row, matching: find.byIcon(Icons.check)),
-        findsNothing,
-      );
+      await _pump(tester, ProvidersSection(registry: registry));
+
+      String markOf(String name) => tester
+          .widget<ProviderMark>(
+            find.descendant(
+              of: find.ancestor(
+                of: find.text(name),
+                matching: find.byType(InkWell),
+              ),
+              matching: find.byType(ProviderMark),
+            ),
+          )
+          .presetKey;
+      // The CodeMie URL marker maps to the CodeMie mark; an unknown host
+      // falls back to the generic server-stack mark.
+      expect(markOf('Org'), 'codemie');
+      expect(markOf('Local'), 'custom');
     });
 
     testWidgets('a hosted preset with a resolvable key lists like a provider '
@@ -294,7 +340,10 @@ void main() {
         modelId: 'acme-1',
       );
       registry.rememberKey(provider.id, 'sk-acme-kept');
-      await _pump(tester, ProvidersSection(registry: registry));
+      await _pump(
+        tester,
+        ProvidersSection(registry: registry, modelsFetcher: _someModels),
+      );
 
       await tester.tap(find.text('Acme'));
       await tester.pumpAndSettle();
@@ -311,7 +360,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.enterText(_editorField('Model id (optional)'), 'acme-2');
+      await _setEditorModel(tester, 'Model id (optional)', 'acme-2');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
@@ -394,7 +443,10 @@ void main() {
         tester,
         SessionKeysScope(
           store: keysStore,
-          child: ProvidersSection(registry: registry),
+          child: ProvidersSection(
+            registry: registry,
+            modelsFetcher: _someModels,
+          ),
         ),
       );
 
@@ -414,16 +466,11 @@ void main() {
         tester.widget<TextField>(_editorField('Base URL')).enabled ?? true,
         isTrue,
       );
-      // The model field is editable (TextField.enabled is nullable — null
-      // means the default, enabled) and prefilled with the preset default.
-      final modelField = tester.widget<TextField>(_editorField('Model id'));
-      expect(modelField.enabled ?? true, isTrue);
-      expect(
-        modelField.controller!.text,
-        ProviderPreset.openrouter.defaultModel,
-      );
+      // The model row shows the preset default and opens the model
+      // selector (the editor itself has no model text field anymore).
+      expect(find.text(ProviderPreset.openrouter.defaultModel), findsOneWidget);
 
-      await tester.enterText(_editorField('Model id'), 'anthropic/claude');
+      await _setEditorModel(tester, 'Model id', 'anthropic/claude');
       await tester.enterText(_editorField('API key (optional)'), 'sk-or-new');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
@@ -441,19 +488,21 @@ void main() {
         ProviderPreset.openrouter.name,
         'anthropic/claude',
       );
-      await _pump(tester, ProvidersSection(registry: registry));
+      await _pump(
+        tester,
+        ProvidersSection(registry: registry, modelsFetcher: _someModels),
+      );
 
       await tester.tap(find.text('Add provider'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('OpenRouter'));
       await tester.pumpAndSettle();
-      expect(
-        tester.widget<TextField>(_editorField('Model id')).controller!.text,
-        'anthropic/claude',
-      );
+      // The saved override prefills the model row.
+      expect(find.text('anthropic/claude'), findsOneWidget);
 
-      await tester.enterText(
-        _editorField('Model id'),
+      await _setEditorModel(
+        tester,
+        'Model id',
         ProviderPreset.openrouter.defaultModel,
       );
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
@@ -560,8 +609,10 @@ void main() {
           connection: connection,
           onApply: connection.apply,
           registry: registry,
-          addProviderPage: (context) =>
-              AddProviderPresetPickerPage(registry: registry),
+          addProviderPage: (context) => AddProviderPresetPickerPage(
+            registry: registry,
+            modelsFetcher: _someModels,
+          ),
         ),
       );
 
@@ -592,7 +643,7 @@ void main() {
       );
       // A saved model id — the unified picker lists MODELS, so a provider
       // without one renders no tile.
-      await tester.enterText(_editorField('Model id (optional)'), 'local-1');
+      await _setEditorModel(tester, 'Model id (optional)', 'local-1');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 

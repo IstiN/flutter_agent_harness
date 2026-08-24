@@ -38,6 +38,42 @@ class FaAttachGlyph extends StatelessWidget {
   }
 }
 
+/// The model affordance (provider editor's model row): an AI chip — a
+/// rounded silicon package with edge pins and a four-point spark at the
+/// core. Monochrome, tinted by [color], so it sits in any row style.
+class FaModelGlyph extends StatelessWidget {
+  const FaModelGlyph({super.key, required this.color, this.size = 24});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final hex =
+        '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
+    return SizedBox(
+      width: size,
+      height: size,
+      child: SvgPicture.string(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+        // Edge pins (top/right/bottom/left pairs).
+        '<path d="M8.9 1.7v2.3M15.1 1.7v2.3M8.9 20v2.3M15.1 20v2.3'
+        'M1.7 8.9h2.3M1.7 15.1h2.3M20 8.9h2.3M20 15.1h2.3" fill="none" '
+        'stroke="$hex" stroke-width="1.5" stroke-linecap="round"/>'
+        // The package body.
+        '<rect x="5.1" y="5.1" width="13.8" height="13.8" rx="3.9" '
+        'fill="none" stroke="$hex" stroke-width="1.6"/>'
+        // The spark at the core.
+        '<path d="M12 8.6C12.38 10.62 13.32 11.56 15.4 12 13.32 12.44 '
+        '12.38 13.38 12 15.4 11.62 13.38 10.68 12.44 8.6 12 10.68 11.56 '
+        '11.62 10.62 12 8.6Z" fill="$hex"/>'
+        '</svg>',
+        fit: BoxFit.contain,
+      ),
+    );
+  }
+}
+
 /// The assistant's transcript avatar: the Fa brand `>_` glyph on a rounded
 /// tile — the same artwork language as the launcher brand tile. [dark]
 /// defaults to the theme brightness.

@@ -7,7 +7,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/connection.dart' show FaChatModelConfig;
 import 'package:fa_ui/src/providers/default_chat_model.dart'
     show FaOnDeviceRoute;
@@ -317,6 +316,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
       context,
       registry,
       title: FaUiStrings.of(context).settingsAddProvider,
+      modelsFetcher: modelsFetcher,
     );
     if (added == null || !context.mounted) return;
     await _openModelPage(context, registry, added);
@@ -338,6 +338,7 @@ class MediaSlotModelPage extends StatefulWidget {
     this.registry,
     this.initialModel = '',
     this.initialVoice,
+    this.apiKeyOverride,
     this.modelsFetcher,
   });
 
@@ -361,6 +362,12 @@ class MediaSlotModelPage extends StatefulWidget {
   /// The voice the TTS field starts with (the current override's voice);
   /// the field only renders for the [MediaSlot.audioTts] slot.
   final String? initialVoice;
+
+  /// The API key the `/models` fetch authorizes with INSTEAD of the stored
+  /// one — the provider editor passes the freshly typed (unsaved) key so
+  /// the picker works before the provider is saved. Null falls back to
+  /// [resolveProviderKey].
+  final String? apiKeyOverride;
 
   /// `/models` fetch override (tests); defaults to the production HTTP
   /// fetch + shared parser ([defaultModelsEndpointFetcher]).
@@ -460,11 +467,13 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
     if (baseUrl.isEmpty) return;
     setState(() => _modelsLoading = true);
     try {
-      final key = resolveProviderKey(
-        widget.provider,
-        registry: widget.registry,
-        keysStore: SessionKeysScope.maybeOf(context),
-      );
+      final key =
+          widget.apiKeyOverride ??
+          resolveProviderKey(
+            widget.provider,
+            registry: widget.registry,
+            keysStore: SessionKeysScope.maybeOf(context),
+          );
       final override = widget.modelsFetcher;
       final (ids, _, _) = override != null
           ? await override(baseUrl, apiKey: key)

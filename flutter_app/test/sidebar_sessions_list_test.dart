@@ -146,6 +146,28 @@ void main() {
     expect(find.text('Yesterday'), findsWidgets);
   });
 
+  testWidgets('a live session keeps its own folder label from disk metadata', (
+    tester,
+  ) async {
+    // The session was created in /work/original; the live env's cwd ('/')
+    // has no useful basename, so without the metadata lookup the tile would
+    // lose its folder label the moment the session opens.
+    final session = await repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work/original',
+        metadata: const {'agent': 'fa', 'model': 'test-model'},
+      ),
+    );
+    await session.appendMessage(UserMessage.text('hi'));
+    final meta = await session.getMetadata();
+    manager.addSession(meta.id, _fakeService(env));
+
+    await tester.pumpWidget(harness(persisted: [meta]));
+    await tester.pumpAndSettle();
+
+    expect(find.text('original'), findsOneWidget);
+  });
+
   testWidgets('tapping a persisted-only session opens it from disk', (
     tester,
   ) async {
