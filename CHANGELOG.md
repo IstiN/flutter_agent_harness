@@ -1234,4 +1234,12 @@
 
 - fix(cli): a pasted filesystem path is not a slash command
 
+## 0.1.212
+
+- fix(bench): drop stale fa_tui show-import from tui_stream_bench
+- fix(tui): open-table boundary invariant — streamed tables never lose rows
+- feat(site): widgets gallery page + machine index; widgets GOAL
+- perf(tui): incremental transcript markdown+wrap — streaming flush x729 faster
+- fix(cli,app): attach delivery, pasted-path attachments; split cli inbox part file
+
 ## Unreleased
