@@ -106,3 +106,70 @@ byte-exact, then resumes incrementally.
 ## Change log
 
 - branch opened with baseline bench + this doc (no behavior change yet).
+
+## Table rendering — adversarial TDD round (post-optimization)
+
+The speedup initially exposed (and testing then pinned) a real streaming-table
+correctness bug — the same class as the historical "tables fall apart while a
+run streams" reports:
+
+*Root cause.* The durable-commit boundary advanced past a STILL-OPEN table.
+The frozen snapshot carries only fence state; buffered table rows live solely
+in the parser buffer, so once the boundary crossed them those leading rows
+were never re-consumed — later renders lost the header row or shifted cells,
+and rebuilds ended pending with unreplayable state.
+
+*Invariant now enforced* (`TranscriptMarkdown._commitTo`):
+
+> The commit edge stops at the last CLEAN step — it NEVER advances into an
+> open table span (`through = from + lastClean + 1`). Until the table closes,
+> its whole span stays provisional: every flush re-renders exactly that span
+> from the frozen state and replaces the previous frame wholesale (no ghosts,
+> no stacking), which also keeps late-widening columns safe. Close drains the
+> full rendered grid into durable caches exactly once.
+
+Both resume and rebuild paths share one walker (`_walk` → `_commitTo` /
+`_expose`), so the invariant cannot drift between them.
+
+Contracts: `test/cli/transcript_table_render_test.dart` — stepped parity at
+every prefix (including ending-mid-table), late column widening, CJK/emoji
+display widths + border-alignment checks on stripped frames, escaped pipes,
+blank-line table splits, malformed/oversized fallbacks, front-trim with an
+open table, burst cadences (chunk=1/2/3/7), and stale-ghost regression.
+Human-eye audit: `tool/table_eyeball.dart` dumps per-flush frames
+(stripped) + final raw-with-ESC ledger; reviewed scenario set: growth,
+late widening (whole-grid re-render, zero duplicates), wide-cell alignment,
+malformed fallback — all clean.
+
+Work-counter contracts in `transcript_markdown_perf_test.dart` remain green
+unchanged.
+
+Wrap-layer red flags observed during the round (`wrapAnsiLine` wide-char/
+Cyrillic cases) reproduced ONLY under cross-agent stdout contamination;
+clean isolated runs are fully green (26/26). Lesson stands: trust isolated
+redirected runs, never interleaved console output.
+
+## Next optimization targets (ranked, post-measurement)
+
+Applied principles: persistent parser state (§4), damage boundaries (§2),
+batch boundary ops (§6), coalesce producer bursts (§3).
+
+1. **`AgentCli._persistMessages` batching** — currently one awaited
+   `appendMessage` per message at run end: N boundary ops instead of one.
+   Batch-append behind `CheckpointSessionSink`/session storage (single
+   serialize+write per drain), keeping the one-by-one path for
+   checkpoint'''-concat-next-line
+   single-point persists. Durability semantics to be preserved and tested.
+2. **`FaTuiModel` output-copy trimming** — with formatting now O(delta), the
+   remaining per-flush cost is the model-level history copy under the 2000
+   cap (`List.of`). Profile first (bench: `tool/tx_after_bench.dart`); only
+   worth touching if it shows >1 ms/pass at realistic transcript sizes.
+3. **dart_tui render diffing** — the external renderer repaints whole rows
+   it is handed; investigate whether view() can expose minimal dirty-region
+   hints (upstream package change; coordinate before patching).
+4. **Attach JSONL tail reads** — `FileSessionEventSource.watch` tails via
+   `readTextLines` deltas on a poll; cache byte offset + partial last line
+   to make each tick O(new bytes).
+5. **App-side streaming widgets** — same damage-tracking idea applies to
+   chat bubbles re-markdowning the full message per delta; belongs to the
+   fa_widgets sibling's territory — coordinate first, don't land unilaterally.

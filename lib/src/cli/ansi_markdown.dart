@@ -533,6 +533,26 @@ int _tokenWidth(String token) {
 /// across syncs re-render their tail from the last clean snapshot every
 /// call: a table is the only block whose rendering depends on input that
 /// has not arrived yet.
+/// One consume-walk's results: per-line outputs aligned to src[from..),
+/// the last step index that ended with an EMPTY pending-table buffer
+/// (-1 when none), fence state at that step, whether a table was still
+/// open at end-of-walk, and the end-flush output.
+final class _WalkResult {
+  _WalkResult(
+    this.outsPerLine,
+    this.lastClean,
+    this.fenceAtClean,
+    this.pendingEnd,
+    this.trailing,
+  );
+
+  final List<List<String>> outsPerLine;
+  final int lastClean;
+  final bool fenceAtClean;
+  final bool pendingEnd;
+  final List<String> trailing;
+}
+
 final class TranscriptMarkdown {
   TranscriptMarkdown({required this.width}) : _fmt = AnsiMarkdown(width: width);
 
@@ -603,6 +623,7 @@ final class TranscriptMarkdown {
   List<int> get lineStartRows => _viewStarts;
 
   /// Brings every view in line with [src]; returns [formattedLines].
+  /// Brings every view in line with [src]; returns [formattedLines].
   List<String> sync(List<String> src) {
     final resumable =
         width == _fmt.width &&
@@ -621,56 +642,74 @@ final class TranscriptMarkdown {
     debugResumedPasses++;
     debugLinesFormatted += src.length - _through;
 
-    // Re-open the pipeline exactly where the boundary froze it, consume
-    // the suffix, and end-flush like formatAll — so this render equals
-    // formatAll(src) even when src ends mid-table or mid-fence.
+    final r = _walk(src, from: _through);
+    _commitTo(r, src, from: _through);
+    _expose(r, src);
+    return _viewFormatted;
+  }
+
+  /// Consume-walk over src[from..) seeded with the frozen boundary state.
+  _WalkResult _walk(List<String> src, {required int from}) {
     _fmt.restoreState(inFence: _savedFence, table: const []);
     final outsPerLine = <List<String>>[];
-    var lastClean = -1; // suffix index whose completion left no pending table
+    var lastClean = -1; // step whose completion left no pending table
     var fenceAtClean = false;
-    for (var i = _through; i < src.length; i++) {
-      final out = _fmt.consumeLine(src[i]);
-      outsPerLine.add(out);
+    for (var i = from; i < src.length; i++) {
+      outsPerLine.add(_fmt.consumeLine(src[i]));
       if (!_fmt.hasPendingTable) {
         lastClean = outsPerLine.length - 1;
         fenceAtClean = _fmt.inFence;
       }
     }
-    final trailing = _fmt.flushTrailing();
+    return _WalkResult(
+      outsPerLine,
+      lastClean,
+      fenceAtClean,
+      _fmt.hasPendingTable,
+      _fmt.flushTrailing(),
+    );
+  }
 
-    // Durable slice: everything up to and including the last clean step.
-    // A still-open table keeps whatever came after it provisional: the
-    // boundary stays at its CURRENT value, so the next sync replays that
-    // region from the same frozen state.
-    final durableLines = <String>[];
-    for (var step = 0; step <= lastClean; step++) {
-      durableLines.addAll(outsPerLine[step]);
-    }
-    if (durableLines.isNotEmpty) {
-      _formatted = [..._formatted, ...durableLines];
-      _appendWrapped(durableLines);
-      _through = src.length;
-      _boundaryFirst ??= src.first;
-      _boundaryLast = src.last;
-      _savedFence = fenceAtClean;
-    }
+  /// Folds everything UP TO THE LAST CLEAN STEP into the durable caches.
+  ///
+  /// The boundary NEVER advances past a still-open table's first row:
+  /// rendering for those rows is not final (column widths may still grow),
+  /// and the frozen snapshot carries only fence state. Advancing into the
+  /// open span would lose buffered rows on the next resume. Found
+  /// adversarially by transcript_table_render_test.dart.
+  void _commitTo(_WalkResult r, List<String> src, {required int from}) {
+    final upto = r.lastClean + 1; // count of leading final steps
+    if (upto <= 0) return;
+    final durableLines = [
+      for (var step = 0; step < upto; step++) ...r.outsPerLine[step],
+    ];
+    if (durableLines.isEmpty) return;
+    _formatted = [..._formatted, ...durableLines];
+    _appendWrapped(durableLines);
+    _through = from + upto;
+    if (from == 0) _boundaryFirst ??= src.first;
+    _boundaryLast = src[_through - 1];
+    _savedFence = r.fenceAtClean;
+  }
 
-    // Provisional render (whole suffix when nothing drained, else just the
-    // open-table remainder): built into fresh view lists without touching
-    // the durable caches.
-    var tailLines = <String>[];
-    for (var step = lastClean + 1; step < outsPerLine.length; step++) {
-      tailLines.addAll(outsPerLine[step]);
-    }
-    tailLines.addAll(trailing);
+  /// Publishes caches + whatever this walk produced beyond the commit
+  /// edge (an open-table span and/or the end-flush) as fresh view lists;
+  /// durable caches stay untouched by provisional bytes.
+  void _expose(_WalkResult r, List<String> src) {
+    final tailStartStep = r.lastClean + 1;
+    final tailLines = <String>[
+      for (var step = tailStartStep; step < r.outsPerLine.length; step++)
+        ...r.outsPerLine[step],
+      ...r.trailing,
+    ];
     if (tailLines.isEmpty) {
       _publishCleanViews();
-      return _viewFormatted;
+      return;
     }
     final tailRows = <String>[];
     final tailStarts = <int>[];
     final rowOffset = _rows.length;
-    var past = <int>[..._starts.sublist(0, _starts.length - 1)];
+    final past = <int>[..._starts.sublist(0, _starts.length - 1)];
     for (final line in tailLines) {
       tailStarts.add(rowOffset + tailRows.length);
       tailRows.addAll(wrapAnsiLine(line, width));
@@ -679,11 +718,8 @@ final class TranscriptMarkdown {
     _viewFormatted = [..._formatted, ...tailLines];
     _viewRows = [..._rows, ...tailRows];
     _viewStarts = [...past, ...tailStarts, total];
-    return _viewFormatted;
   }
 
-  /// Aliases the published views onto the durable caches (no open-table
-  /// tail this pass) — zero-copy fast path of the plain-prose stream.
   void _publishCleanViews() {
     _viewFormatted = _formatted;
     _viewRows = _rows;
@@ -711,26 +747,32 @@ final class TranscriptMarkdown {
     debugFullRebuilds++;
     debugLinesFormatted += src.length;
     final fmt = AnsiMarkdown(width: width);
-    final out = <String>[];
+    final outs = <List<String>>[];
+    var lastClean = -1;
+    var fenceAtClean = false;
     for (final line in src) {
-      out.addAll(fmt.consumeLine(line));
+      outs.add(fmt.consumeLine(line));
+      if (!fmt.hasPendingTable) {
+        lastClean = outs.length - 1;
+        fenceAtClean = fmt.inFence;
+      }
     }
-    out.addAll(fmt.flushTrailing());
+    final hadPending = fmt.hasPendingTable;
+    final trailing = fmt.flushTrailing();
+
     _fmt = fmt;
-    _savedFence = fmt.inFence;
-    _through = src.length;
+    _formatted = [];
+    _rows = [];
+    // Empty-but-sentineled shape: _appendWrapped drops the trailing
+    // sentinel via removeLast, so a fresh cache must already carry [0].
+    _starts = [0];
+    _through = 0;
     _boundaryFirst = src.isEmpty ? null : src.first;
     _boundaryLast = src.isEmpty ? null : src.last;
-    _formatted = out;
-    _rows = [];
-    _starts = [];
-    for (final line in out) {
-      _starts.add(_rows.length);
-      _rows.addAll(wrapAnsiLine(line, width));
-    }
-    _starts.add(_rows.length);
-    _viewFormatted = _formatted;
-    _viewRows = _rows;
-    _viewStarts = _starts;
+    _savedFence = false;
+    final r = _WalkResult(outs, lastClean, fenceAtClean, hadPending, trailing);
+    _commitTo(r, src, from: 0);
+    _savedFence = fenceAtClean; // even without a durable edge yet
+    _expose(r, src);
   }
 }
