@@ -870,6 +870,25 @@ void main() {
     await run;
   });
 
+  test(
+    'a pasted absolute filesystem path is not treated as a slash command',
+    () async {
+      final fake = FakeStreamFunction([]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine(
+        '/var/folders/91/d70565j93ssdm9_0k159x5jm0000gn/T/yoloit_clip/clip_1787736718973.txt посмотри лог',
+      );
+      await waitForIt(
+        () => io.out.toString().contains('looks like a filesystem path'),
+      );
+      expect(io.out.toString(), isNot(contains('unknown command:')));
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
   test('bare / shows a numbered command menu in line mode', () async {
     final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);

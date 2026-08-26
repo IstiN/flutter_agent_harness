@@ -2652,7 +2652,21 @@ class AgentCli {
       return;
     }
     // Unknown slash command: treat it as a filter for the command menu.
+    // A string starting with `/` followed by no spaces and containing at
+    // least one more `/` is a filesystem path (absolute or `~/...`),
+    // never a slash command — pasting one shouldn't trigger "unknown
+    // command"; hint at how to load it instead.
     if (trimmed.startsWith('/') && trimmed.length > 1) {
+      final looksAbsolutePath = RegExp(r'^/[^/\s]*\/').hasMatch(trimmed) ||
+          trimmed.startsWith('~/');
+      if (looksAbsolutePath) {
+        io.writeln(
+          'looks like a filesystem path, not a command — '
+          'paste the contents (e.g. `cat ${trimmed.split(' ').first}`), '
+          'or use `@${trimmed.split(' ').first}` to load it as context.',
+        );
+        return;
+      }
       _printHelp(filter: trimmed.substring(1));
       return;
     }
