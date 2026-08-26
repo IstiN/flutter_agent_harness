@@ -64,18 +64,51 @@ final class AnsiMarkdown {
   /// The SGR matcher shared with [wrapAnsiLine] and tests.
   static RegExp get ansiSgrPattern => _ansiRe;
 
+  /// Whether code-fence mode is active (cross-line state).
+  bool get inFence => _inFence;
+
+  /// Emits any buffered table rows (the end-of-buffer step of
+  /// [formatAll]); a no-op with nothing pending.
+  List<String> flushTrailing() => _flushTable();
+
+  /// Streams one source line through the incremental pipeline: table rows
+  /// are buffered (0 output lines) like in [formatAll]; anything else
+  /// emits `[…pending table…, formattedLine]`. Used by
+  /// [TranscriptMarkdown] — a long-lived instance carries `_inFence` and
+  /// the pending-table buffer across calls, which is exactly the
+  /// persistent-parser state the per-call object lost.
+  List<String> consumeLine(String line) {
+    if (!_inFence && _isTableRow(line)) {
+      _tableBuffer.add(line);
+      return const [];
+    }
+    return [..._flushTable(), formatLine(line)];
+  }
+
+  /// Whether table rows are buffered awaiting their separator/closing row
+  /// (a sync-time commit boundary is invalid until this drains).
+  bool get hasPendingTable => _tableBuffer.isNotEmpty;
+
+  /// Restores the cross-line state captured at a commit boundary (see
+  /// [TranscriptMarkdown]). Same library, so private fields are reachable;
+  /// takes copies defensively.
+  void restoreState({required bool inFence, required List<String> table}) {
+    _inFence = inFence;
+    _tableBuffer
+      ..clear()
+      ..addAll(table);
+  }
+
+  /// Current cross-line state snapshot (see [restoreState]).
+  (bool, List<String>) snapshotState() => (_inFence, List.of(_tableBuffer));
+
   /// Formats the whole output buffer, preserving the line count 1:1.
   /// Table rows are buffered until the table ends so column widths can be
   /// computed across every row before rendering.
   List<String> formatAll(List<String> lines) {
     final out = <String>[];
     for (final line in lines) {
-      if (!_inFence && _isTableRow(line)) {
-        _tableBuffer.add(line);
-        continue;
-      }
-      out.addAll(_flushTable());
-      out.add(formatLine(line));
+      out.addAll(consumeLine(line));
     }
     out.addAll(_flushTable());
     return out;
@@ -482,4 +515,222 @@ int _tokenWidth(String token) {
     }
   }
   return tuiTextWidth(token);
+}
+
+/// Incremental transcript formatter backing the fa TUI's `_WrapCache`
+/// (docs/performance-cli-tui.md). The per-call [AnsiMarkdown.formatAll] is
+/// O(transcript) and ran on every coalesced streaming flush (~20/s):
+/// measured 26.96 ms per pass over a 2000-line history — over half of each
+/// 50 ms flush interval spent between keystrokes. This class keeps ONE
+/// long-lived [AnsiMarkdown] whose cross-line state persists across calls
+/// (yoxterm rule §4, persistent parser state) and durably commits
+/// formatted+wrapped results through a boundary index (rule §2, damage
+/// tracking via a boundary instead of content diffs).
+///
+/// Correctness contract: after `sync(src)` the exposed views equal
+/// `AnsiMarkdown(width).formatAll(src)` followed by the same wrap pass —
+/// pinned adversarially in transcript_markdown_perf_test.dart. Tables open
+/// across syncs re-render their tail from the last clean snapshot every
+/// call: a table is the only block whose rendering depends on input that
+/// has not arrived yet.
+final class TranscriptMarkdown {
+  TranscriptMarkdown({required this.width}) : _fmt = AnsiMarkdown(width: width);
+
+  /// Wrap/format width (terminal columns). Changed only via
+  /// [widthOverrideForTest], which drops all caches onto the rebuild path.
+  int width;
+
+  AnsiMarkdown _fmt;
+
+  /// Committed source-line count: rendering of src[0.._through) provably
+  /// never changes with future input, so its caches are final.
+  var _through = 0;
+
+  // Raw first/last source lines at the commit boundary: cheap O(1)
+  // identity sentinels. Copies keep element identity ([...history, d] /
+  // sublist), so first-mismatch proves a FRONT drop (history-cap trim)
+  // and last-mismatch proves the line just under the boundary was
+  // REPLACED (callers regenerating their tail) — either lands on the
+  // documented full-rebuild path rather than serving stale rows.
+  String? _boundaryFirst;
+  String? _boundaryLast;
+
+  // Durable caches for src[0.._through): formatted lines, wrapped rows and
+  // the line-to-row start index (total-row sentinel appended).
+  List<String> _formatted = const [];
+  List<String> _rows = const [];
+  List<int> _starts = const [0];
+
+  // Published views = durable caches (plus nothing today: an open-table
+  // tail re-renders wholesale on the NEXT sync instead of being frozen
+  // stale between calls, which keeps one source of truth).
+  List<String> _viewFormatted = const [];
+  List<String> _viewRows = const [];
+  List<int> _viewStarts = const [0];
+
+  // Pipeline state captured at the commit boundary ([_through]).
+  var _savedFence = false;
+
+  // Work counters — contract tests assert these, never timings.
+  static int debugFullRebuilds = 0;
+  static int debugResumedPasses = 0;
+  static int debugLinesFormatted = 0;
+
+  /// Zeroes the debug counters.
+  static void resetDebugCounters() {
+    debugFullRebuilds = 0;
+    debugResumedPasses = 0;
+    debugLinesFormatted = 0;
+  }
+
+  /// Test seam: forces the next [sync] onto the rebuild path (simulates a
+  /// terminal resize without constructing a new instance).
+  void widthOverrideForTest(int newWidth) => width = newWidth;
+
+  /// Test seams exposing internal progress for diagnostics.
+  int get debugThroughForTest => _through;
+  String? get debugBoundaryFirstForTest => _boundaryFirst;
+
+  /// Formatted lines rendered so far.
+  List<String> get formattedLines => _viewFormatted;
+
+  /// Wrapped physical rows rendered so far.
+  List<String> get wrappedRows => _viewRows;
+
+  /// `lineStartRows[i]` = first wrapped row of rendered line `i`; final
+  /// entry is the total-row-count sentinel (the exact shape `_WrapCache`
+  /// stores).
+  List<int> get lineStartRows => _viewStarts;
+
+  /// Brings every view in line with [src]; returns [formattedLines].
+  List<String> sync(List<String> src) {
+    final resumable =
+        width == _fmt.width &&
+        src.length >= _through &&
+        (_through == 0 ||
+            (src.isNotEmpty &&
+                identical(src.first, _boundaryFirst) &&
+                identical(src[_through - 1], _boundaryLast)));
+    if (!resumable) {
+      _rebuild(src);
+      return _viewFormatted;
+    }
+    if (src.length == _through) {
+      return _viewFormatted; // nothing new: pure cache hit
+    }
+    debugResumedPasses++;
+    debugLinesFormatted += src.length - _through;
+
+    // Re-open the pipeline exactly where the boundary froze it, consume
+    // the suffix, and end-flush like formatAll — so this render equals
+    // formatAll(src) even when src ends mid-table or mid-fence.
+    _fmt.restoreState(inFence: _savedFence, table: const []);
+    final outsPerLine = <List<String>>[];
+    var lastClean = -1; // suffix index whose completion left no pending table
+    var fenceAtClean = false;
+    for (var i = _through; i < src.length; i++) {
+      final out = _fmt.consumeLine(src[i]);
+      outsPerLine.add(out);
+      if (!_fmt.hasPendingTable) {
+        lastClean = outsPerLine.length - 1;
+        fenceAtClean = _fmt.inFence;
+      }
+    }
+    final trailing = _fmt.flushTrailing();
+
+    // Durable slice: everything up to and including the last clean step.
+    // A still-open table keeps whatever came after it provisional: the
+    // boundary stays at its CURRENT value, so the next sync replays that
+    // region from the same frozen state.
+    final durableLines = <String>[];
+    for (var step = 0; step <= lastClean; step++) {
+      durableLines.addAll(outsPerLine[step]);
+    }
+    if (durableLines.isNotEmpty) {
+      _formatted = [..._formatted, ...durableLines];
+      _appendWrapped(durableLines);
+      _through = src.length;
+      _boundaryFirst ??= src.first;
+      _boundaryLast = src.last;
+      _savedFence = fenceAtClean;
+    }
+
+    // Provisional render (whole suffix when nothing drained, else just the
+    // open-table remainder): built into fresh view lists without touching
+    // the durable caches.
+    var tailLines = <String>[];
+    for (var step = lastClean + 1; step < outsPerLine.length; step++) {
+      tailLines.addAll(outsPerLine[step]);
+    }
+    tailLines.addAll(trailing);
+    if (tailLines.isEmpty) {
+      _publishCleanViews();
+      return _viewFormatted;
+    }
+    final tailRows = <String>[];
+    final tailStarts = <int>[];
+    final rowOffset = _rows.length;
+    var past = <int>[..._starts.sublist(0, _starts.length - 1)];
+    for (final line in tailLines) {
+      tailStarts.add(rowOffset + tailRows.length);
+      tailRows.addAll(wrapAnsiLine(line, width));
+    }
+    final total = rowOffset + tailRows.length;
+    _viewFormatted = [..._formatted, ...tailLines];
+    _viewRows = [..._rows, ...tailRows];
+    _viewStarts = [...past, ...tailStarts, total];
+    return _viewFormatted;
+  }
+
+  /// Aliases the published views onto the durable caches (no open-table
+  /// tail this pass) — zero-copy fast path of the plain-prose stream.
+  void _publishCleanViews() {
+    _viewFormatted = _formatted;
+    _viewRows = _rows;
+    _viewStarts = _starts;
+  }
+
+  /// Extends the durable wrap caches by [lines] (already appended to
+  /// [_formatted] by the caller).
+  void _appendWrapped(List<String> lines) {
+    final rows = [..._rows]; // caches may start as const []
+    final starts = [..._starts]..removeLast(); // drop old sentinel
+    for (final line in lines) {
+      starts.add(rows.length);
+      rows.addAll(wrapAnsiLine(line, width));
+    }
+    starts.add(rows.length);
+    _rows = rows;
+    _starts = starts;
+  }
+
+  /// Full-rebuild fallback: width change, head-trimmed or shrunk source.
+  /// Legacy behavior byte-for-byte (one formatAll + wrap pass), adopted as
+  /// the durable baseline.
+  void _rebuild(List<String> src) {
+    debugFullRebuilds++;
+    debugLinesFormatted += src.length;
+    final fmt = AnsiMarkdown(width: width);
+    final out = <String>[];
+    for (final line in src) {
+      out.addAll(fmt.consumeLine(line));
+    }
+    out.addAll(fmt.flushTrailing());
+    _fmt = fmt;
+    _savedFence = fmt.inFence;
+    _through = src.length;
+    _boundaryFirst = src.isEmpty ? null : src.first;
+    _boundaryLast = src.isEmpty ? null : src.last;
+    _formatted = out;
+    _rows = [];
+    _starts = [];
+    for (final line in out) {
+      _starts.add(_rows.length);
+      _rows.addAll(wrapAnsiLine(line, width));
+    }
+    _starts.add(_rows.length);
+    _viewFormatted = _formatted;
+    _viewRows = _rows;
+    _viewStarts = _starts;
+  }
 }

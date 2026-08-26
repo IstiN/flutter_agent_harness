@@ -173,6 +173,14 @@ final class _WrapCache {
   /// `lineStartRows[i]` = first wrapped row of raw line `i`; the final entry
   /// is the total row count (sentinel for end-of-buffer calculations).
   List<int> lineStartRows = const [0];
+
+  /// The persistent incremental formatter bound to [width]. An append now
+  /// costs O(delta) instead of one full markdown+wrap pass over the whole
+  /// bounded history on every coalesced streaming flush — measured at
+  /// 26.96 ms/pass over a 2000-line history before this (see
+  /// docs/performance-cli-tui.md). A width change starts a fresh session;
+  /// its rebuild path IS the legacy byte-exact pass.
+  TranscriptMarkdown? _tx;
 }
 
 /// The dart_tui model backing the Fa interactive REPL.
@@ -426,22 +434,19 @@ final class FaTuiModel extends Model {
     final w = width ?? termWidth;
     final cache = _wrapCache;
     if (identical(cache.source, outputLines) && cache.width == w) {
-      return cache.rows;
+      return cache.rows; // pure hit: scroll math / key presses pay nothing
     }
-    final formatted = AnsiMarkdown(width: w).formatAll(outputLines);
-    final rows = <String>[];
-    final starts = <int>[];
-    for (final line in formatted) {
-      starts.add(rows.length);
-      rows.addAll(wrapAnsiLine(line, w));
-    }
-    starts.add(rows.length); // sentinel: total row count
+    var tx = w == cache.width ? cache._tx : null;
+    tx ??= TranscriptMarkdown(width: w);
+    cache._tx = tx;
+    tx.sync(outputLines); // O(delta) on appends; legacy pass only after a
+    // resize/front-trim, where it is byte-identical to formatAll.
     cache
       ..source = outputLines
       ..width = w
-      ..rows = rows
-      ..lineStartRows = starts;
-    return rows;
+      ..rows = tx.wrappedRows
+      ..lineStartRows = tx.lineStartRows;
+    return tx.wrappedRows;
   }
 
   /// The scroll offset that puts the last wrapped row at the bottom.
