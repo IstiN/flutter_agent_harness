@@ -1230,4 +1230,8 @@
 
 - ci(mobile): skip the iOS artifact download when the IPA build was skipped
 
+## 0.1.211
+
+- fix(cli): a pasted filesystem path is not a slash command
+
 ## Unreleased
