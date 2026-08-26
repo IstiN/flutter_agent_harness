@@ -1660,6 +1660,43 @@ void main() {
       expect((messages[1] as Map<String, dynamic>)['tool_call_id'], 'call_abc');
     });
 
+    test('LiteLLM __thought__ ids survive the 40-char truncation', () async {
+      // LiteLLM front-ends (e.g. CodeMie) embed Gemini thought signatures in
+      // the tool call id; truncating to 40 chars cuts the signature and
+      // Vertex rejects the replay with a thought_signature base64 400.
+      const id =
+          'call_1__thought__AY89a1/iNNoNrbr00Ol855b2afwvdIggWYS82e7HyYKw/'
+          'NAl9qdHlXg22FbsngPcjZ4seDHxawOwWiN+1YqczTxWpFtyn8j1X4Hji5Y9';
+      final body = await sentBody(
+        testModel,
+        Context(
+          messages: [
+            AssistantMessage(
+              content: const [ToolCall(id: id, name: 'read', arguments: {})],
+              api: 'openai-completions',
+              provider: 'openai',
+              model: 'gpt-4o-mini',
+              usage: Usage.zero,
+              stopReason: StopReason.toolUse,
+              timestamp: DateTime.utc(2026),
+            ),
+            ToolResultMessage(
+              toolCallId: id,
+              toolName: 'read',
+              content: const [TextContent(text: 'done')],
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        ),
+      );
+      final messages = messagesOf(body);
+      final toolCalls =
+          (messages[0] as Map<String, dynamic>)['tool_calls'] as List<dynamic>;
+      expect((toolCalls.single as Map<String, dynamic>)['id'], id);
+      expect((messages[1] as Map<String, dynamic>)['tool_call_id'], id);
+    });
+
     test(
       'thinking and tool call blocks are skipped in user messages',
       () async {

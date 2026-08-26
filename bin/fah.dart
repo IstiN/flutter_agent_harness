@@ -137,6 +137,16 @@ Never _exitWithVersion(String version) {
 void _handleUncaughtError(Object error, StackTrace stackTrace) {
   final message = 'fa crashed: $error';
   stderr.writeln(message);
+  if (error is SessionException ||
+      message.contains('Failed to create session directory')) {
+    stderr.writeln(
+      '\nTip: If this is a permission issue with session storage, you can fix it by running:\n'
+      '  sudo chown -R \$(whoami) ~/Library/"Group Containers"/group.dev.fa1.shared\n'
+      '  chmod -R u+rwx ~/Library/"Group Containers"/group.dev.fa1.shared\n'
+      'Or start fa with a custom session storage path:\n'
+      '  fa --session-root ~/.fah/sessions\n',
+    );
+  }
   try {
     final home =
         Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
@@ -375,9 +385,29 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
 String _defaultSessionRoot() {
   final home = _homeDir();
   if (Platform.isMacOS) {
-    return '$home/Library/Group Containers/group.dev.fa1.shared/fa/sessions';
+    final groupDir =
+        '$home/Library/Group Containers/group.dev.fa1.shared/fa/sessions';
+    if (_isDirWritable(groupDir)) {
+      return groupDir;
+    }
+    return '$home/.fah/sessions';
   }
   return '$home/.fah/sessions';
+}
+
+bool _isDirWritable(String path) {
+  try {
+    final dir = Directory(path);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+    final probe = File('$path/.probe_${DateTime.now().microsecondsSinceEpoch}');
+    probe.writeAsStringSync('');
+    probe.deleteSync();
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 String _homeDir() {
@@ -977,6 +1007,9 @@ Future<void> _runApp(List<String> args) async {
   // startup dialog and `/skills access` change it — persisted via
   // persistConfig.
   var skillsAccess = saved.skillsAccess;
+  // The execution env shared by the CLI config (tools, session storage)
+  // and the presence store (live-session heartbeats).
+  late final LocalExecutionEnv cliEnv;
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
@@ -988,6 +1021,8 @@ Future<void> _runApp(List<String> args) async {
       model: model,
       apiKey: apiKey,
       providerKind: provider,
+      // Shared by the env config and the presence store below.
+      env: (cliEnv = LocalExecutionEnv(cwd: cwd)),
       // The banner names the key env var in play (name only, never the
       // value); the catalog maps the effective provider to its var names.
       // A name counts as set when the environment OR the secure store has
@@ -1009,8 +1044,12 @@ Future<void> _runApp(List<String> args) async {
       // picker lists them first, the wizard appends, /model rewrites the
       // active entry's last-used model — all persisted via persistConfig.
       customProviders: CustomProviderRegistry(saved.customProviders),
-      env: LocalExecutionEnv(cwd: cwd),
       sessionRoot: sessionRoot,
+      // Live-session presence: the running CLI heartbeats its session so
+      // the Fa app (sharing the sessions root on macOS) marks it live and
+      // can attach. Null where the root is process-local (tests).
+      presenceStore: FileSessionPresenceStore(env: cliEnv, root: sessionRoot),
+      processId: pid,
       sessionName: effective.session,
       visionConfig: visionConfig,
       transcribeConfig: transcribeConfig,

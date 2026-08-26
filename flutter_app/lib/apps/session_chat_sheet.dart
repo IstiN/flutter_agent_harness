@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +15,8 @@ import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
+import 'package:fa/services/attached_session_controller.dart';
+import 'package:fa/services/cli_session_presence.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/project_mount_env.dart';
@@ -22,6 +25,7 @@ import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
+import 'package:fa/ui/screens/attached_session_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
@@ -126,6 +130,12 @@ class SessionChatSheetState extends State<SessionChatSheet>
   late final AnimationController _drawerAnim;
   SessionNamesStore? _namesStore;
 
+  /// Live-session presence (sessions a running `fa` CLI owns).
+  CliSessionPresence? _presence;
+
+  /// Disk-listing poll: new CLI sessions appear without manager events.
+  Timer? _persistedTimer;
+
   /// Disk-persisted sessions minus the live ones, listed in the drawer.
   List<SessionMetadata> _persisted = const [];
 
@@ -175,6 +185,20 @@ class SessionChatSheetState extends State<SessionChatSheet>
     if (_namesStore == null) unawaited(_loadNamesStore());
     widget.manager.addListener(_onManagerChanged);
     unawaited(_reloadPersisted());
+    // Live-session presence: sessions a `fa` CLI currently owns show a
+    // green dot and attach (read-only view + input hand-over) on tap.
+    _presence = CliSessionPresence.start(
+      widget.manager.env,
+      widget.manager.sessionsRoot,
+    );
+    // A presence change (a CLI started or exited) must resync the drawer:
+    // new CLI sessions come from disk, exited ones lose their dot.
+    _presence?.addListener(_onPresenceChanged);
+    // Disk sessions appear (a CLI created one) without any manager event
+    // — poll the listing so the drawer stays current while the app runs.
+    _persistedTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) unawaited(_reloadPersisted());
+    });
     // SizeChangedLayoutNotifier does NOT fire for the FIRST layout — it
     // only reports changes against the baseline — so measure the bar once
     // up front; later changes (streaming row, multiline field) come through
@@ -197,6 +221,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
     _namesStore?.removeListener(_onChanged);
+    _presence?.removeListener(_onPresenceChanged);
+    _presence?.dispose();
+    _persistedTimer?.cancel();
     _panelAnim.dispose();
     _drawerAnim.dispose();
     super.dispose();
@@ -204,6 +231,15 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   void _onChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Presence transitions resync both the live dots and the disk listing
+  /// (a CLI session appears on start; an exited one may reappear as a
+  /// persisted entry).
+  void _onPresenceChanged() {
+    if (!mounted) return;
+    unawaited(_reloadPersisted());
+    setState(() {});
   }
 
   Future<void> _loadNamesStore() async {
@@ -343,6 +379,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// lazily — either way the drawer closes and the panel opens.
   Future<void> _openSessionFromDrawer(String id) async {
     unawaited(_toggleDrawer());
+    // A live CLI session attaches (read-only view + input hand-over)
+    // instead of opening a second writer on the same JSONL.
+    if (_presence?.isLive(id) ?? false) {
+      await _attachToCliSession(id);
+      if (mounted) unawaited(_openPanel());
+      return;
+    }
     if (_liveSessions.any((s) => s.id == id)) {
       widget.manager.switchTo(id);
     } else {
@@ -352,7 +395,40 @@ class SessionChatSheetState extends State<SessionChatSheet>
     if (mounted) unawaited(_openPanel());
   }
 
+  /// Attaches to a session owned by a running `fa` CLI: the transcript
+  /// follows the session JSONL 1:1 and composer input is handed to the
+  /// CLI process through the messaging fabric.
+  Future<void> _attachToCliSession(String sessionId) async {
+    final metadata = _persisted.where((m) => m.id == sessionId).firstOrNull;
+    final title =
+        _namesStore?.titleFor(sessionId) ??
+        derivedSessionTitle(
+          context,
+          id: sessionId,
+          createdAt: metadata?.createdAt ?? DateTime.now(),
+        );
+    final transport = fileAttachTransport(
+      env: widget.manager.env,
+      sessionsRoot: widget.manager.sessionsRoot,
+      cwdSlug: encodeSessionCwd(metadata?.cwd ?? widget.manager.env.sessionCwd),
+      resolvePath: (id) async => id == sessionId ? metadata?.path : null,
+    );
+    final controller = AttachedSessionController(
+      sessionId: sessionId,
+      title: title,
+      transport: transport,
+    );
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AttachedSessionScreen(controller: controller),
+      ),
+    );
+    controller.dispose();
+  }
+
   /// Lazily opens a persisted session (same config path the old pager used).
+  /// `loadSession` restores the session's own effective model (its last
+  /// `model_change` record) on top of this config.
   Future<void> _openPersisted(SessionMetadata metadata) async {
     if (!_opening.add(metadata.id)) return;
     try {
@@ -685,6 +761,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 id: s.id,
                 createdAt: s.createdAt,
                 lastUpdatedAt: s.lastUpdatedAt,
+                // The DISK cwd (the session's origin folder) wins: a live
+                // session stays grouped under the folder it belongs to,
+                // even when the app's current mount moved elsewhere.
                 cwd: _cwdById[s.id] ?? s.service.env.sessionCwd,
                 live: s,
                 persisted: null,
@@ -698,8 +777,33 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 live: null,
                 persisted: m,
               ),
+            // Presence-only rows: a `fa` CLI just started and its session
+            // file does not exist yet (the CLI materializes the JSONL on
+            // the first message) — the live dot must show regardless.
+            for (final id in (_presence?.live.keys ?? const <String>[]))
+              if (!_liveSessions.any((s) => s.id == id) &&
+                  !_persisted.any((m) => m.id == id))
+                (
+                  id: id,
+                  createdAt:
+                      DateTime.tryParse(_presence!.live[id]!.startedAt) ??
+                      DateTime.now(),
+                  lastUpdatedAt: DateTime.now(),
+                  cwd: _cwdById[id],
+                  live: null,
+                  persisted: null,
+                ),
           ]
           ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+    // Folder-grouped rows (headers + tiles): the sessions of one project
+    // stay together under the folder basename, most recently active
+    // project first (entries are activity-sorted, groups follow).
+    final drawerRows = <_DrawerRow>[
+      for (final group in _groupDrawerEntries(entries, l10n)) ...[
+        _DrawerRow.header(group.label),
+        for (final e in group.entries) _DrawerRow.tile(e),
+      ],
+    ];
     return Container(
       key: const ValueKey('sessionChatDrawer'),
       clipBehavior: Clip.antiAlias,
@@ -775,9 +879,29 @@ class SessionChatSheetState extends State<SessionChatSheet>
                       // list tail so the last row clears it. Horizontal
                       // insets match the wide sidebar's list.
                       padding: EdgeInsets.fromLTRB(8, 4, 8, _barHeight + 8),
-                      itemCount: entries.length,
+                      // Rows = folder group headers + session tiles: the
+                      // sessions of one project stay together under their
+                      // folder name.
+                      itemCount: drawerRows.length,
                       itemBuilder: (context, index) {
-                        final entry = entries[index];
+                        final row = drawerRows[index];
+                        if (row.isHeader) {
+                          return Padding(
+                            key: ValueKey(
+                              'sessionChatDrawerHeader:${row.label}',
+                            ),
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),
+                            child: Text(
+                              row.label!,
+                              style: TextStyle(
+                                color: colors.dim,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          );
+                        }
+                        final entry = row.entry!;
                         final isActive =
                             entry.live != null && entry.id == activeId;
                         final title =
@@ -791,8 +915,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
                           key: ValueKey('sessionChatDrawerEntry:${entry.id}'),
                           title: title,
                           subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
-                          cwd: sessionTileCwdLabel(entry.cwd),
+                          // The folder basename IS the group header — a
+                          // per-tile cwd label would duplicate it.
+                          cwd: null,
                           isActive: isActive,
+                          // A running fa CLI owns this session: green dot,
+                          // tap attaches to it instead of opening it here.
+                          live: _presence?.isLive(entry.id) ?? false,
                           onTap: () =>
                               unawaited(_openSessionFromDrawer(entry.id)),
                           onMenu: (anchor) => unawaited(
@@ -818,6 +947,28 @@ class SessionChatSheetState extends State<SessionChatSheet>
         ),
       ),
     );
+  }
+
+  /// Groups drawer entries by their project folder (the session's origin
+  /// cwd basename); groups follow the entries' activity order.
+  List<({String label, List entries})> _groupDrawerEntries(
+    List entries,
+    AppLocalizations l10n,
+  ) {
+    final groups = <String, List<dynamic>>{};
+    final order = <String>[];
+    for (final entry in entries) {
+      final label = sessionFolderGroupLabel(
+        entry.cwd as String?,
+        l10n.sessionFolderPersonal,
+      );
+      if (!groups.containsKey(label)) {
+        groups[label] = [];
+        order.add(label);
+      }
+      groups[label]!.add(entry);
+    }
+    return [for (final label in order) (label: label, entries: groups[label]!)];
   }
 
   /// Opens the shared rename dialog for the active session (Save / Clear /
@@ -1162,4 +1313,17 @@ class _SessionsGlyphPainter extends CustomPainter {
   @override
   bool shouldRepaint(_SessionsGlyphPainter old) =>
       old.color != color || old.background != background;
+}
+
+/// One row of the sessions drawer: a folder-group header or a session
+/// tile. The drawer groups sessions by their project folder (the origin
+/// cwd basename) — the sessions of one project stay together.
+final class _DrawerRow {
+  const _DrawerRow.header(String this.label) : entry = null, isHeader = true;
+
+  const _DrawerRow.tile(this.entry) : label = null, isHeader = false;
+
+  final String? label;
+  final dynamic entry;
+  final bool isHeader;
 }

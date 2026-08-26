@@ -74,10 +74,139 @@ extension _AgentCliProviderPresets on AgentCli {
     await _addProviderHandlers[key.substring('preset:'.length)]?.call();
   }
 
-  /// Switches to the catalog Kimi provider (Kimi Code API).
+  /// Switches to the catalog Kimi provider (Kimi Code API). The key step
+  /// depends on what already resolves for the endpoint:
+  ///
+  /// - nothing resolves → a masked prompt (empty skips; the switch then
+  ///   reports the missing key as before). A freshly typed key becomes a
+  ///   saved NAMED registry entry (provider-name step included — the same
+  ///   shape the custom wizard produces), so a second Kimi account keeps its
+  ///   own name and name-scoped store key instead of overwriting the
+  ///   host-scoped slot;
+  /// - a key resolves (env / store / a named entry's slot) → a picker: use
+  ///   it, or add ANOTHER Kimi with a different key. The second account
+  ///   routes into the generic wizard so it lands in its own named entry
+  ///   with a name-scoped store key the env var can't shadow on the next
+  ///   start.
+  ///
+  /// The preset picker and the typed `/provider kimi` both land here.
   Future<void> _handleKimiCommand({String? baseUrl}) async {
-    final spec = providerCatalog['kimi']!;
-    await _switchProvider(spec, baseUrl ?? spec.defaultBaseUrl, 'k3');
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    // True when the generic wizard took over (it manages the gate itself).
+    var handedOff = false;
+    try {
+      final spec = providerCatalog['kimi']!;
+      final url = baseUrl ?? spec.defaultBaseUrl;
+      final resolved = _providerKeyFor(spec, url);
+      final outcome = resolved != null && baseUrl == null
+          ? await _kimiResolvedKeyChoice(spec, url)
+          : await _kimiFreshKeyPath(spec, url, resolved);
+      switch (outcome) {
+        case _KimiOutcome.handedOff:
+          handedOff = true;
+        case _KimiOutcome.switched:
+          break;
+      }
+    } finally {
+      if (!handedOff) {
+        _providerFlowActive = false;
+        _promptLineBuffer.clear();
+      }
+    }
+  }
+
+  /// The resolved-key branch of [_handleKimiCommand]: offer "use it / add a
+  /// second account"; the second hands off to the generic wizard.
+  Future<_KimiOutcome> _kimiResolvedKeyChoice(
+    ProviderSpec spec,
+    String url,
+  ) async {
+    final choice = await _pickOption('Kimi API key', [
+      (
+        'current',
+        'Use the resolved key',
+        _providerKeyLine(spec, url, explicit: false),
+      ),
+      (
+        'another',
+        'Use a different API key',
+        'adds a separately-named Kimi entry — a second account',
+      ),
+    ], initialKey: 'current');
+    if (choice == null) {
+      io.writeln('kimi setup cancelled');
+      return _KimiOutcome.switched;
+    }
+    if (choice == 'another') {
+      // Hand off to the wizard: release the gate first, it takes its own.
+      _providerFlowActive = false;
+      _startProviderFlow(
+        initialType: 'openai',
+        initialBaseUrl: url,
+        initialModelId: 'k3',
+      );
+      return _KimiOutcome.handedOff;
+    }
+    // A catalog switch (resolved key): the previously-active custom entry
+    // must stop receiving `/model` memory updates.
+    _activeCustomName = null;
+    await _switchProvider(spec, url, 'k3');
+    return _KimiOutcome.switched;
+  }
+
+  /// The no-resolved-key branch of [_handleKimiCommand]: ask for a key
+  /// (empty = keyless switch); a typed key becomes a NAMED entry.
+  Future<_KimiOutcome> _kimiFreshKeyPath(
+    ProviderSpec spec,
+    String url,
+    String? resolved,
+  ) async {
+    String? typed;
+    if (resolved == null) {
+      final answer = await _askLine(
+        'Kimi API key (empty to skip, env ${spec.apiKeyEnvNames.first}): ',
+        secret: true,
+      );
+      if (answer == null) {
+        io.writeln('kimi setup cancelled');
+        return _KimiOutcome.switched;
+      }
+      final trimmed = answer.trim();
+      typed = trimmed.isEmpty ? null : trimmed;
+    }
+    final registry = config.customProviders;
+    if (typed == null || registry == null) {
+      // A resolved env/store key stays an implicit resolution inside
+      // `_switchProvider` (the "key: KIMI_API_KEY" line, no re-store); a
+      // keyless switch reports the missing key as before. Without a
+      // registry there is nothing to save an entry into — the plain
+      // catalog switch still stores the typed key under the host slot.
+      _activeCustomName = null;
+      await _switchProvider(spec, url, 'k3', token: typed);
+      return _KimiOutcome.switched;
+    }
+    // A freshly typed key is a NEW account: save it as a named entry (the
+    // provider-name step every add flow offers), so it lists in /provider
+    // and a custom name keeps its key in a name-scoped store slot.
+    final name = await _askConnectProviderName(
+      registry.deriveName(url),
+      sameBaseUrl: url,
+    );
+    if (name == null) {
+      io.writeln('kimi setup cancelled');
+      return _KimiOutcome.switched;
+    }
+    await _applyCustomProviderSetup(
+      CustomProviderSetup(
+        spec: spec,
+        baseUrl: url,
+        name: name,
+        modelId: 'k3',
+        token: typed,
+      ),
+    );
+    return _KimiOutcome.switched;
   }
 
   /// Preset name → the setup flow it launches.
@@ -104,3 +233,6 @@ extension _AgentCliProviderPresets on AgentCli {
     ),
   };
 }
+
+/// Terminal outcomes of the kimi flow branches (gate handling differs).
+enum _KimiOutcome { handedOff, switched }

@@ -32,6 +32,8 @@ abstract class FaChatStrings {
   String get chatCopySessionTooltip;
   String get chatSettingsTooltip;
   String get chatCopiedToClipboard;
+  String get chatCopyMessageTooltip;
+  String get chatMessageCopiedToClipboard;
   String get chatInputHint;
   String get chatTyping;
   String get chatSendTooltip;
@@ -103,6 +105,10 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatSettingsTooltip => 'Connection settings';
   @override
   String get chatCopiedToClipboard => 'Session copied to clipboard';
+  @override
+  String get chatCopyMessageTooltip => 'Copy raw message';
+  @override
+  String get chatMessageCopiedToClipboard => 'Message copied to clipboard';
   @override
   String get chatInputHint => 'Type a message';
   @override
@@ -236,6 +242,11 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatSettingsTooltip => 'Настройки подключения';
   @override
   String get chatCopiedToClipboard => 'Сессия скопирована в буфер обмена';
+  @override
+  String get chatCopyMessageTooltip => 'Копировать сообщение целиком';
+  @override
+  String get chatMessageCopiedToClipboard =>
+      'Сообщение скопировано в буфер обмена';
   @override
   String get chatInputHint => 'Введите сообщение';
   @override

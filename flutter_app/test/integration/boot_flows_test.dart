@@ -108,6 +108,7 @@ AgentService _seedingService(MemoryExecutionEnv env) {
       streamFunction: scriptedTurns([(model) => textTurn(model, 'ok')]),
       toolRegistry: ToolRegistry(const []),
     ),
+    watchExternalSessions: false,
     env: env,
     sessionsRoot: defaultSessionsRoot(env.cwd),
     config: AgentConfig(
@@ -281,6 +282,12 @@ void main() {
           ),
           isTrue,
         );
+        // The resumed service's external-session watcher owns a periodic
+        // timer — dispose the services so the test binding sees no pending
+        // timers at teardown.
+        for (final s in manager.sessions) {
+          s.service.dispose();
+        }
       }, getCurrentDirectory: emptyCwd);
     });
   });

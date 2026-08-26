@@ -69,6 +69,37 @@ const _kCardShadow = [
   BoxShadow(color: Color(0x0A172033), blurRadius: 10, offset: Offset(0, 3)),
 ];
 
+/// The onboarding follows the SYSTEM brightness: light tokens by default,
+/// dark counterparts (matching the app's dark theme surfaces) when the
+/// surrounding theme is dark — a dark-mode OS must never see a blinding
+/// white onboarding with dark popups on top.
+bool _onbDark(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark;
+
+Color _onbBg(BuildContext context) =>
+    _onbDark(context) ? const Color(0xFF070A10) : _kBg;
+
+Color _onbCard(BuildContext context) =>
+    _onbDark(context) ? const Color(0xFF10141F) : Colors.white;
+
+Color _onbInk(BuildContext context) =>
+    _onbDark(context) ? const Color(0xFFEAEDF2) : _kInk;
+
+Color _onbGray(BuildContext context) =>
+    _onbDark(context) ? const Color(0xFF9AA0B4) : _kGray;
+
+Color _onbGrayLight(BuildContext context) =>
+    _onbDark(context) ? const Color(0xFF6B768B) : _kGrayLight;
+
+Color _onbBorder(BuildContext context) =>
+    _onbDark(context) ? const Color(0xFF232A3A) : _kBorder;
+
+Color _onbSelBg(BuildContext context) =>
+    _onbDark(context) ? const Color(0xFF141A2B) : _kSelBg;
+
+List<BoxShadow> _onbCardShadow(BuildContext context) =>
+    _onbDark(context) ? const [] : _kCardShadow;
+
 class _OnboardingScreenState extends State<OnboardingScreen> {
   /// Step labels in page order.
   static const _labels = ['Ask', 'Think', 'Act', 'Make it yours'];
@@ -149,7 +180,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _ => 'Continue',
     };
     return Scaffold(
-      backgroundColor: _kBg,
+      backgroundColor: _onbBg(context),
       body: SafeArea(
         child: Column(
           children: [
@@ -254,7 +285,7 @@ class _Logo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // The brand app tile (light form — the onboarding is a light design).
-    return const Row(
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         FaBrandTile(size: 30, dark: false),
@@ -264,7 +295,7 @@ class _Logo extends StatelessWidget {
           style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
-            color: _kInk,
+            color: _onbInk(context),
           ),
         ),
       ],
@@ -280,11 +311,11 @@ class _SkipButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextButton(
       onPressed: onTap,
-      child: const Text(
+      child: Text(
         'Skip',
         style: TextStyle(
           fontSize: 13,
-          color: _kGray,
+          color: _onbGray(context),
           fontWeight: FontWeight.w500,
         ),
       ),
@@ -358,7 +389,9 @@ class _Steps extends StatelessWidget {
                                   fontWeight: i == page
                                       ? FontWeight.w700
                                       : FontWeight.w500,
-                                  color: i == page ? _kPrimary : _kGrayLight,
+                                  color: i == page
+                                      ? _kPrimary
+                                      : _onbGrayLight(context),
                                 ),
                               ),
                             ),
@@ -405,19 +438,19 @@ class _Footer extends StatelessWidget {
   Widget build(BuildContext context) {
     final counter = Text(
       '${page + 1} of $pageCount',
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 12.5,
         fontWeight: FontWeight.w600,
-        color: _kInk,
+        color: _onbInk(context),
       ),
     );
     final back = TextButton(
       onPressed: onBack,
-      child: const Text(
+      child: Text(
         'Back',
         style: TextStyle(
           fontSize: 13.5,
-          color: _kGray,
+          color: _onbGray(context),
           fontWeight: FontWeight.w500,
         ),
       ),
@@ -502,13 +535,13 @@ class _PrivacyLink extends StatelessWidget {
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
-      child: const Text(
+      child: Text(
         'Privacy Policy',
         style: TextStyle(
           fontSize: 11,
-          color: _kGrayLight,
+          color: _onbGrayLight(context),
           decoration: TextDecoration.underline,
-          decorationColor: _kGrayLight,
+          decorationColor: _onbGrayLight(context),
         ),
       ),
     );
@@ -621,7 +654,7 @@ class _TitleBlock extends StatelessWidget {
           style: TextStyle(
             fontSize: compact ? 24 : 34,
             fontWeight: FontWeight.w800,
-            color: _kInk,
+            color: _onbInk(context),
             letterSpacing: -0.5,
             height: 1.15,
           ),
@@ -632,7 +665,7 @@ class _TitleBlock extends StatelessWidget {
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: compact ? 13 : 15,
-            color: _kGray,
+            color: _onbGray(context),
             height: 1.4,
           ),
         ),
@@ -641,16 +674,19 @@ class _TitleBlock extends StatelessWidget {
   }
 }
 
-Widget _card({
+Widget _card(
+  BuildContext context, {
   required Widget child,
   EdgeInsets padding = const EdgeInsets.all(16),
 }) {
+  final dark = _onbDark(context);
   return Container(
     padding: padding,
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: dark ? const Color(0xFF10141F) : Colors.white,
       borderRadius: BorderRadius.circular(18),
-      border: Border.all(color: _kBorder),
+      border: dark ? Border.all(color: _onbBorder(context)) : null,
+      boxShadow: dark ? null : _kCardShadow,
     ),
     child: child,
   );
@@ -739,7 +775,7 @@ class _P1 extends StatelessWidget {
           compact: !wide,
         ),
         SizedBox(height: wide ? 24 : 18),
-        if (wide) _wideBody() else _narrowBody(),
+        if (wide) _wideBody(context) else _narrowBody(context),
         SizedBox(height: wide ? 24 : 18),
         _FeaturesRow(wide: wide),
         SizedBox(height: wide ? 28 : 20),
@@ -749,7 +785,7 @@ class _P1 extends StatelessWidget {
     return _WideFit(child: body);
   }
 
-  Widget _wideBody() {
+  Widget _wideBody(BuildContext context) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -760,6 +796,7 @@ class _P1 extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 26),
                 child: _card(
+                  context,
                   padding: const EdgeInsets.all(26),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -804,11 +841,12 @@ class _P1 extends StatelessWidget {
     );
   }
 
-  Widget _narrowBody() {
+  Widget _narrowBody(BuildContext context) {
     return Column(
       children: [
         _card(
-          child: const Column(
+          context,
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               _UserBubble(wide: false),
@@ -826,9 +864,9 @@ class _P1 extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: _onbCard(context),
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: _kCardShadow,
+                  boxShadow: _onbCardShadow(context),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -837,7 +875,7 @@ class _P1 extends StatelessWidget {
                       width: 36,
                       height: 36,
                       decoration: BoxDecoration(
-                        color: _kSelBg,
+                        color: _onbSelBg(context),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Icon(
@@ -847,7 +885,7 @@ class _P1 extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -856,7 +894,7 @@ class _P1 extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
-                              color: _kInk,
+                              color: _onbInk(context),
                             ),
                           ),
                           SizedBox(height: 4),
@@ -864,7 +902,7 @@ class _P1 extends StatelessWidget {
                             'Build a focus timer with work and break sessions.',
                             style: TextStyle(
                               fontSize: 12,
-                              color: _kGray,
+                              color: _onbGray(context),
                               height: 1.35,
                             ),
                           ),
@@ -893,7 +931,7 @@ class _IdeaPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _onbCard(context),
         borderRadius: BorderRadius.circular(14),
         boxShadow: const [
           BoxShadow(
@@ -903,7 +941,7 @@ class _IdeaPill extends StatelessWidget {
           ),
         ],
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.auto_awesome, size: 15, color: _kPrimary),
@@ -913,7 +951,7 @@ class _IdeaPill extends StatelessWidget {
             style: TextStyle(
               fontSize: 11.5,
               fontWeight: FontWeight.w500,
-              color: _kInk,
+              color: _onbInk(context),
               height: 1.3,
             ),
           ),
@@ -968,7 +1006,9 @@ class _MiniSteps extends StatelessWidget {
                           fontWeight: i == 0
                               ? FontWeight.w700
                               : FontWeight.w500,
-                          color: i == 0 ? _kInk : _kGrayLight,
+                          color: i == 0
+                              ? _onbInk(context)
+                              : _onbGrayLight(context),
                         ),
                       ),
                     ],
@@ -1040,10 +1080,10 @@ class _FeaturesRow extends StatelessWidget {
             const SizedBox(width: 8),
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w500,
-                color: _kGray,
+                color: _onbGray(context),
               ),
             ),
             const SizedBox(width: 36),
@@ -1058,9 +1098,9 @@ class _FeaturesRow extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: _onbCard(context),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: _kBorder),
+                border: Border.all(color: _onbBorder(context)),
               ),
               child: Row(
                 children: [
@@ -1069,10 +1109,10 @@ class _FeaturesRow extends StatelessWidget {
                   Expanded(
                     child: Text(
                       label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
-                        color: _kInk,
+                        color: _onbInk(context),
                         height: 1.2,
                       ),
                     ),
@@ -1098,39 +1138,43 @@ class _ProviderGhost extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
+        Text(
           'Choose how Fa thinks.',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w700,
-            color: _kInk,
+            color: _onbInk(context),
           ),
         ),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           'Connect a provider to start chatting.',
-          style: TextStyle(fontSize: 11.5, color: _kGray),
+          style: TextStyle(fontSize: 11.5, color: _onbGray(context)),
         ),
         const SizedBox(height: 16),
         _ghostRow(
+          context,
           Icons.autorenew,
           'OpenRouter',
           'Recommended',
           'Access 100+ models from top AI providers.',
         ),
         _ghostRow(
+          context,
           Icons.cruelty_free,
           'Ollama',
           'Local',
           'Run open-source models on your device.',
         ),
         _ghostRow(
+          context,
           Icons.auto_awesome,
           'Google Gemini',
           null,
           "Google's latest models with advanced reasoning.",
         ),
         _ghostRow(
+          context,
           Icons.code,
           'Custom provider',
           null,
@@ -1140,13 +1184,19 @@ class _ProviderGhost extends StatelessWidget {
     );
   }
 
-  Widget _ghostRow(IconData icon, String name, String? badge, String desc) {
+  Widget _ghostRow(
+    BuildContext context,
+    IconData icon,
+    String name,
+    String? badge,
+    String desc,
+  ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: _kGrayLight),
+          Icon(icon, size: 20, color: _onbGrayLight(context)),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -1157,10 +1207,10 @@ class _ProviderGhost extends StatelessWidget {
                     Flexible(
                       child: Text(
                         name,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
-                          color: _kInk,
+                          color: _onbInk(context),
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1174,9 +1224,9 @@ class _ProviderGhost extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   desc,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 10.5,
-                    color: _kGray,
+                    color: _onbGray(context),
                     height: 1.3,
                   ),
                 ),
@@ -1303,16 +1353,24 @@ class _P2State extends State<_P2> {
               color: const Color(0xFFF3F4F8),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.shield_outlined, size: 15, color: _kGrayLight),
+                Icon(
+                  Icons.shield_outlined,
+                  size: 15,
+                  color: _onbGrayLight(context),
+                ),
                 SizedBox(width: 6),
                 Flexible(
                   child: Text(
                     'API keys stay in your system Keychain.\nContent is sent only to providers you connect.',
-                    style: TextStyle(fontSize: 11, color: _kGray, height: 1.4),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _onbGray(context),
+                      height: 1.4,
+                    ),
                   ),
                 ),
               ],
@@ -1497,7 +1555,7 @@ class _ProviderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: configured ? _kSelBg : Colors.white,
+      color: configured ? _onbSelBg(context) : Colors.white,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -1507,7 +1565,7 @@ class _ProviderCard extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: configured ? _kPrimary : _kBorder,
+              color: configured ? _kPrimary : _onbBorder(context),
               width: configured ? 1.5 : 1,
             ),
           ),
@@ -1521,17 +1579,17 @@ class _ProviderCard extends StatelessWidget {
                   children: [
                     Text(
                       preset.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w700,
-                        color: _kInk,
+                        color: _onbInk(context),
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
                       preset.description,
-                      style: const TextStyle(fontSize: 12, color: _kGray),
+                      style: TextStyle(fontSize: 12, color: _onbGray(context)),
                     ),
                   ],
                 ),
@@ -1540,14 +1598,18 @@ class _ProviderCard extends StatelessWidget {
                 Container(
                   width: 22,
                   height: 22,
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     color: _kPrimary,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.check, size: 13, color: Colors.white),
+                  child: Icon(Icons.check, size: 13, color: Colors.white),
                 )
               else
-                const Icon(Icons.chevron_right, size: 20, color: _kGrayLight),
+                Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: _onbGrayLight(context),
+                ),
             ],
           ),
         ),
@@ -1565,12 +1627,12 @@ class _RequestCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _onbCard(context),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _kBorder),
-        boxShadow: _kCardShadow,
+        border: Border.all(color: _onbBorder(context)),
+        boxShadow: _onbCardShadow(context),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1578,7 +1640,7 @@ class _RequestCard extends StatelessWidget {
             'Your request',
             style: TextStyle(
               fontSize: 11,
-              color: _kGray,
+              color: _onbGray(context),
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -1591,7 +1653,11 @@ class _RequestCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Build a focus timer with work and break sessions.',
-                  style: TextStyle(fontSize: 11.5, color: _kInk, height: 1.35),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: _onbInk(context),
+                    height: 1.35,
+                  ),
                 ),
               ),
             ],
@@ -1609,26 +1675,27 @@ class _RequestConfirmedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _card(
+      context,
       padding: const EdgeInsets.all(14),
       child: Row(
         children: [
           Container(
             width: 34,
             height: 34,
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               color: Color(0xFFE3F7EE),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.check, size: 17, color: _kGreen),
+            child: Icon(Icons.check, size: 17, color: _kGreen),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Text(
               'Build a focus timer with work and break sessions.',
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: _kInk,
+                color: _onbInk(context),
                 height: 1.3,
               ),
             ),
@@ -1650,18 +1717,18 @@ class _AccessGhost extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
+        Text(
           'Fa can take action for you.',
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w700,
-            color: _kInk,
+            color: _onbInk(context),
           ),
         ),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           'Fa asks only when an action needs it.',
-          style: TextStyle(fontSize: 11, color: _kGray),
+          style: TextStyle(fontSize: 11, color: _onbGray(context)),
         ),
         const SizedBox(height: 14),
         for (final (icon, label) in const [
@@ -1673,15 +1740,15 @@ class _AccessGhost extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 10),
             child: Row(
               children: [
-                Icon(icon, size: 16, color: _kGrayLight),
+                Icon(icon, size: 16, color: _onbGrayLight(context)),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     label,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
-                      color: _kInk,
+                      color: _onbInk(context),
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1804,7 +1871,7 @@ class _P3 extends StatelessWidget {
           ),
         ],
         SizedBox(height: wide ? 18 : 12),
-        const Row(
+        Row(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1823,13 +1890,13 @@ class _P3 extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
-                      color: _kInk,
+                      color: _onbInk(context),
                     ),
                   ),
                   SizedBox(height: 2),
                   Text(
                     'You can manage access anytime in Settings.',
-                    style: TextStyle(fontSize: 11, color: _kGray),
+                    style: TextStyle(fontSize: 11, color: _onbGray(context)),
                   ),
                 ],
               ),
@@ -1880,9 +1947,9 @@ class _P4 extends StatelessWidget {
           _MyAppsPanel(compact: true),
         ],
         SizedBox(height: wide ? 22 : 14),
-        const Text(
+        Text(
           'Try these ideas to get started',
-          style: TextStyle(fontSize: 12, color: _kGray),
+          style: TextStyle(fontSize: 12, color: _onbGray(context)),
         ),
         const SizedBox(height: 8),
         _Suggestions(wide: wide),

@@ -186,6 +186,12 @@ class _FaChatScreenState extends State<FaChatScreen>
   final _system = const User(id: 'system', name: 'system');
 
   List<Message> _lastSynced = [];
+
+  /// True while the FIRST history sync is in flight: history inserts are
+  /// rendered with a zero animation duration (a cascade of insert
+  /// animations on a long transcript looks like glitchy bottom-up
+  /// painting). Streaming/live inserts afterwards keep their animation.
+  bool _suppressInsertAnimations = true;
   Timer? _syncDebounce;
   bool _isSyncing = false;
   bool _isStreaming = false;
@@ -242,30 +248,25 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   /// The follow-tail latch (YoLoIT's pattern): scrolling up unlatches,
   /// scrolling back to the bottom relatches. Streaming then keeps the tail
-  /// pinned only while the user is at the bottom.
+  /// pinned only while the user is at the bottom. REVERSED list: offset 0
+  /// IS the bottom, so "near bottom" = small offset.
   void _trackNearBottom() {
     if (!_chatScrollController.hasClients) return;
     final position = _chatScrollController.position;
-    _userNearBottom = position.maxScrollExtent - position.pixels < 150;
+    _userNearBottom = position.pixels < 150;
   }
 
-  DateTime _lastTailScroll = DateTime.fromMillisecondsSinceEpoch(0);
-
   /// Pins the chat to the tail after a sync when the user hasn't scrolled
-  /// away. Runs post-frame so the new content has been laid out. Throttled:
-  /// during heavy streaming (50 ms sync debounce) constant re-animation
-  /// would stutter.
+  /// away. The REVERSED list already sits at the bottom (offset 0) and new
+  /// rows grow upwards without shifting the viewport — this is only needed
+  /// when the user scrolled up a little during streaming.
   void _scrollToTailIfFollowing() {
     if (!_userNearBottom) return;
-    final now = DateTime.now();
-    if (now.difference(_lastTailScroll).inMilliseconds < 400) return;
-    _lastTailScroll = now;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_chatScrollController.hasClients) return;
-      final maxExtent = _chatScrollController.position.maxScrollExtent;
-      if ((maxExtent - _chatScrollController.offset).abs() < 1) return;
+      if (_chatScrollController.offset < 1) return;
       _chatScrollController.animateTo(
-        maxExtent,
+        0,
         duration: const Duration(milliseconds: 150),
         curve: Curves.linearToEaseOut,
       );
@@ -367,7 +368,9 @@ class _FaChatScreenState extends State<FaChatScreen>
       final newList = converted.toList();
 
       if (_lastSynced.isEmpty || newList.isEmpty) {
-        await _chatController.setMessages(newList);
+        // History load: instant, no set animation (messages are read from
+        // disk; they must appear as one frame, not slide in).
+        await _chatController.setMessages(newList, animated: false);
       } else {
         final oldLen = _lastSynced.length;
         final newLen = newList.length;
@@ -379,22 +382,44 @@ class _FaChatScreenState extends State<FaChatScreen>
           commonPrefix++;
         }
 
-        for (var i = 0; i < commonPrefix; i++) {
-          if (_messageChanged(_lastSynced[i], newList[i])) {
-            await _chatController.updateMessage(_lastSynced[i], newList[i]);
+        final changes =
+            (commonPrefix - math.min(oldLen, commonPrefix)) +
+            (oldLen - commonPrefix) +
+            (newLen - commonPrefix);
+        // A big diff (a session switch, an external-history load) syncs in
+        // ONE setMessages pass: per-message inserts rebuild the list per
+        // row and stream in bottom-up, visibly slow on long transcripts.
+        if (changes > 12) {
+          await _chatController.setMessages(newList, animated: false);
+        } else {
+          for (var i = 0; i < commonPrefix; i++) {
+            if (_messageChanged(_lastSynced[i], newList[i])) {
+              await _chatController.updateMessage(_lastSynced[i], newList[i]);
+            }
           }
-        }
 
-        for (var i = oldLen - 1; i >= commonPrefix; i--) {
-          await _chatController.removeMessage(_lastSynced[i]);
-        }
+          for (var i = oldLen - 1; i >= commonPrefix; i--) {
+            await _chatController.removeMessage(_lastSynced[i]);
+          }
 
-        for (var i = commonPrefix; i < newLen; i++) {
-          await _chatController.insertMessage(newList[i], index: i);
+          // A big append (an external-history reload pulled many rows at
+          // once) skips the per-row insert animations the same way.
+          final appended = newLen - commonPrefix;
+          final oldSuppress = _suppressInsertAnimations;
+          if (appended > 12) {
+            _suppressInsertAnimations = true;
+          }
+          for (var i = commonPrefix; i < newLen; i++) {
+            await _chatController.insertMessage(newList[i], index: i);
+          }
+          _suppressInsertAnimations = oldSuppress;
         }
       }
 
       _lastSynced = newList;
+      // The first completed sync was the history load — live inserts from
+      // here on animate normally.
+      _suppressInsertAnimations = false;
       _scrollToTailIfFollowing();
     } on Object catch (e, stack) {
       // _syncMessages runs from a Timer callback: an escape here is an
@@ -656,6 +681,22 @@ class _FaChatScreenState extends State<FaChatScreen>
                   ChatAnimatedList(
                     itemBuilder: itemBuilder,
                     scrollController: _chatScrollController,
+                    // Reversed list (the learn.ai pattern): index 0 is the
+                    // newest message, the list starts AT the bottom — no
+                    // initial scroll-to-end, no jump, no "stuck mid-list"
+                    // on long transcripts. New rows grow upwards, exactly
+                    // like a chat.
+                    reversed: true,
+                    // The initial history load (and big external reloads)
+                    // renders without the per-row insert animation cascade;
+                    // live messages keep the default animation. 1ms instead
+                    // of a true zero: a zero duration leaves the package's
+                    // initial-scroll timer unsettled inside fake_async
+                    // test bindings.
+                    insertAnimationDurationResolver: (_) =>
+                        _suppressInsertAnimations
+                        ? const Duration(milliseconds: 1)
+                        : const Duration(milliseconds: 250),
                   ),
               composerBuilder: (_) => const SizedBox.shrink(),
             ),

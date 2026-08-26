@@ -118,6 +118,21 @@ final class AgentConfig {
   /// passes the user's explicit checkbox value.
   final bool? supportsImages;
 
+  /// A copy with a different model id — used when a persisted session
+  /// records the model it was run with (CLI sessions carry it in their
+  /// metadata): reopening the session must run THAT model, not the
+  /// default chat model.
+  AgentConfig withModelId(String id) => AgentConfig(
+    providerKind: providerKind,
+    modelId: id,
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+    systemPrompt: systemPrompt,
+    contextWindow: contextWindow,
+    maxTokens: maxTokens,
+    supportsImages: supportsImages,
+  );
+
   Model toModel() => Model(
     id: modelId,
     name: modelId,
@@ -170,7 +185,10 @@ class AgentService extends ChangeNotifier
     this._promptSuffix = '',
     Duration? responseTimeout,
     ApprovalMode? initialApprovalMode,
+    @visibleForTesting bool watchExternalSessions = true,
   }) : _resolveSecretName = null,
+       // ignore: prefer_initializing_formals
+       _watchExternalSessions = watchExternalSessions,
        _secretsEnv = null,
        _sessionKeys = null,
        _taskModelsStore = null,
@@ -212,6 +230,7 @@ class AgentService extends ChangeNotifier
     ProviderRegistry? providerRegistry,
     TaskModelsStore? taskModelsStore,
     @visibleForTesting StreamFunction? streamFunction,
+    @visibleForTesting bool watchExternalSessions = true,
     String? sessionsRoot,
   }) async {
     final resolvedEnv =
@@ -253,6 +272,7 @@ class AgentService extends ChangeNotifier
       config: config,
       redactor: redactor,
       streamFunction: streamFunction,
+      watchExternalSessions: watchExternalSessions,
       taskModelsStore: taskModelsStore,
       sessionsRoot: resolvedSessionsRoot,
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
@@ -361,6 +381,7 @@ class AgentService extends ChangeNotifier
     SecretRedactor? redactor,
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
+    bool watchExternalSessions = true,
     MediaKeyResolver? resolveSecretName,
     this._secretsEnv,
     this._sessionKeys,
@@ -371,7 +392,11 @@ class AgentService extends ChangeNotifier
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
     String? skillsHomeDir,
-  }) : _skillsHomeDir = skillsHomeDir,
+  }) // ignore: prefer_initializing_formals — private fields, public params
+    // ignore: prefer_initializing_formals
+    : _skillsHomeDir = skillsHomeDir,
+       // ignore: prefer_initializing_formals
+       _watchExternalSessions = watchExternalSessions,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _resolveSecretName = resolveSecretName,
@@ -1323,6 +1348,75 @@ class AgentService extends ChangeNotifier
   /// false positives — a bump does not prove a specific file changed.
   final ValueNotifier<int> fsRevision = ValueNotifier<int>(0);
 
+  /// Fires when the OPEN session's JSONL changed from OUTSIDE this
+  /// service (a running `fa` CLI appending to the same session): the
+  /// transcript view reloads and shows the new rows. Not the same as
+  /// [fsRevision] (sandbox files touched by OUR tools).
+  final ValueNotifier<int> externalSessionRevision = ValueNotifier<int>(0);
+
+  /// The external-append watcher (poll: the env abstraction has no file
+  /// events). Null while idle or on platforms without file info. Disabled
+  /// in widget tests (a pending periodic timer fails the test binding).
+  Timer? _sessionWatchTimer;
+  int _sessionWatchBytes = -1;
+  final bool _watchExternalSessions;
+
+  void _startSessionWatch() {
+    _stopSessionWatch();
+    if (!_watchExternalSessions) return;
+    final file = _sessionFile;
+    if (file == null) return;
+    _sessionWatchBytes = -1;
+    _sessionWatchTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_checkSessionFileGrew());
+    });
+  }
+
+  Future<void> _checkSessionFileGrew() async {
+    final file = _sessionFile;
+    if (file == null || _disposed) return;
+    final info = (await env.fileInfo(file)).valueOrNull;
+    if (info == null) return;
+    if (_sessionWatchBytes < 0) {
+      _sessionWatchBytes = info.size;
+      return;
+    }
+    if (info.size > _sessionWatchBytes) {
+      _sessionWatchBytes = info.size;
+      await _reloadExternalMessages();
+      externalSessionRevision.value++;
+    }
+  }
+
+  /// Pulls externally-appended rows into the visible transcript. Only
+  /// while IDLE: mid-run the agent owns the state machine (streaming,
+  /// tool calls) and a concurrent reload would corrupt it. The session
+  /// storage parses the file ONCE at open — an external reload re-opens
+  /// it fresh (cheap: header + tree index).
+  Future<void> _reloadExternalMessages() async {
+    final session = _session;
+    if (session == null || isStreaming) return;
+    try {
+      final metadata = await session.getMetadata();
+      final fresh = await _repo.open(metadata);
+      final context = await fresh.buildContext();
+      _session = fresh;
+      _agent.state.messages = context.messages;
+      _persistedCount = context.messages.length;
+      messages
+        ..clear()
+        ..addAll(context.messages.map(_toChatMessage));
+      notifyListeners();
+    } on Object {
+      // A torn read (the CLI mid-append): the next poll retries.
+    }
+  }
+
+  void _stopSessionWatch() {
+    _sessionWatchTimer?.cancel();
+    _sessionWatchTimer = null;
+  }
+
   Session? _session;
   String? _sessionId;
   String? _sessionFile;
@@ -1332,6 +1426,13 @@ class AgentService extends ChangeNotifier
 
   /// Id of the session new messages persist to (`null` until [initialize]).
   String? get currentSessionId => _sessionId;
+
+  /// The cwd of the OPEN session (from its on-disk metadata): the folder
+  /// that conversation belongs to, regardless of the app's current mount
+  /// (the env is shared across sessions; the session's own folder is not).
+  /// Null until a session materializes.
+  String? get currentSessionCwd => _sessionCwd;
+  String? _sessionCwd;
 
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec, so a session (re)load
@@ -1408,7 +1509,10 @@ class AgentService extends ChangeNotifier
     final sessionMetadata = await session.getMetadata();
     _sessionId = sessionMetadata.id;
     _sessionFile = sessionMetadata.path;
+    _sessionCwd = sessionMetadata.cwd;
     _subagentManager?.mailboxPrefix = sessionMetadata.id;
+    // Follow external appends (a running fa CLI on the same session).
+    _startSessionWatch();
     // The messaging section now carries the real mailbox address.
     final config = _config;
     if (config != null) {
@@ -1805,6 +1909,14 @@ class AgentService extends ChangeNotifier
   /// mid-append self-heal on the next load (the JSONL storage truncates
   /// them).
   void _persistSoon() {
+    // Our own appends grow the file — re-arm the external watcher's
+    // baseline so our writes don't trigger an external reload.
+    unawaited(() async {
+      final file = _sessionFile;
+      if (file == null) return;
+      final info = (await env.fileInfo(file)).valueOrNull;
+      if (info != null) _sessionWatchBytes = info.size;
+    }());
     _persistChain = _persistChain.then((_) => _persist()).catchError((
       Object _,
     ) {
@@ -1819,7 +1931,9 @@ class AgentService extends ChangeNotifier
     _inboxWatchTimer?.cancel();
     _idleWatchdog?.cancel();
     _liveActivityEndTimer?.cancel();
+    _sessionWatchTimer?.cancel();
     fsRevision.dispose();
+    externalSessionRevision.dispose();
     super.dispose();
   }
 
@@ -1923,6 +2037,8 @@ class AgentService extends ChangeNotifier
       sessionsRoot: sessionsRoot,
       redactor: _redactor,
       streamFunction: _agent.streamFunction,
+      // Clones inherit the external-watch setting (tests disable it).
+      watchExternalSessions: _watchExternalSessions,
       resolveSecretName: _resolveSecretName,
       // Clones share the live secrets env and the Keys store, so a
       // `request_secret` grant in one session is live and persisted for all.
@@ -1941,22 +2057,104 @@ class AgentService extends ChangeNotifier
 
   /// Lists persisted sessions, newest first (across all provider dirs under
   /// [sessionsRoot]). Cheap: reads only the JSONL headers.
-  Future<List<SessionMetadata>> listSessions() => _repo.list();
+  Future<List<SessionMetadata>> listSessions() async {
+    try {
+      final roots = allSessionRoots(sessionsRoot);
+      if (roots.length <= 1) {
+        return await _repo.list();
+      }
+      final seen = <String>{};
+      final merged = <SessionMetadata>[];
+      for (final root in roots) {
+        try {
+          final repo = root == sessionsRoot
+              ? _repo
+              : JsonlSessionRepo(fs: env, sessionsRoot: root);
+          final list = await repo.list();
+          for (final item in list) {
+            if (seen.add(item.id)) {
+              merged.add(item);
+            }
+          }
+        } on Object {
+          // Secondary root list failure is non-fatal.
+        }
+      }
+      merged.sort((a, b) {
+        final aTime = a.lastUpdatedAt ?? a.createdAt;
+        final bTime = b.lastUpdatedAt ?? b.createdAt;
+        final result = bTime.compareTo(aTime);
+        if (result != 0) return result;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+      return merged;
+    } on Object {
+      return _repo.list();
+    }
+  }
 
   /// Loads a persisted session into the chat: the agent's context and the
   /// visible transcript are replaced by the session's active branch, and new
-  /// messages append to that session.
+  /// messages append to that session. The session's effective model (the
+  /// last `model_change` record at the leaf — every provider/model switch
+  /// in the CLI and the app appends one) is restored: the DEFAULT chat
+  /// model only applies to NEW sessions, not to reopening an old one.
   Future<void> loadSession(SessionMetadata metadata) async {
     abort();
     await waitForIdle();
     final session = await _repo.open(metadata);
-    final contextMessages = await session.buildContextMessages();
+    final context = await session.buildContext();
+    final contextMessages = context.messages;
     _agent.reset();
     _agent.state.messages = contextMessages;
     _session = session;
     _sessionId = metadata.id;
     _sessionFile = metadata.path;
+    _sessionCwd = metadata.cwd;
     _subagentManager?.mailboxPrefix = metadata.id;
+    // Follow external appends (a running fa CLI on the same session).
+    _startSessionWatch();
+    // Restore the session's own model: same wire kind → modelId override;
+    // the provider itself stays the configured connection (its key lives
+    // in the Keychain, not in the session). An unresolvable or
+    // cross-kind mismatch keeps the current model — reopening a session
+    // must never hard-fail on this. Works with a config-less service
+    // too (pre-constructed agents): the kind check then compares against
+    // the agent's live model.
+    final config = _config;
+    final sessionModel = context.model;
+    final activeApi = _agent.state.model.api;
+    if (sessionModel != null &&
+        sessionModel.modelId.isNotEmpty &&
+        sessionModel.modelId != _agent.state.model.id &&
+        (config == null
+            ? sessionModel.provider == activeApi
+            : (sessionModel.provider == config.providerKind ||
+                  sessionModel.provider == config.toModel().api))) {
+      if (config != null) {
+        reconfigure(config.withModelId(sessionModel.modelId));
+      } else {
+        final model = _agent.state.model;
+        _agent.state.model = Model(
+          id: sessionModel.modelId,
+          name: sessionModel.modelId,
+          api: model.api,
+          provider: model.provider,
+          baseUrl: model.baseUrl,
+          reasoning: model.reasoning,
+          input: inputModalitiesFor(sessionModel.modelId),
+          cost: model.cost,
+          contextWindow: model.contextWindow,
+          maxTokens: model.maxTokens,
+          headers: model.headers,
+          compat: model.compat,
+        );
+      }
+      debugPrint(
+        '[Fa] session model restored: ${sessionModel.provider}/'
+        '${sessionModel.modelId}',
+      );
+    }
     // The prompt's messaging section carries the live mailbox address.
     final activeConfig = _config;
     if (activeConfig != null) {
@@ -2188,6 +2386,11 @@ class AgentService extends ChangeNotifier
   }
 
   void _finalizeAssistant(AssistantMessage message) {
+    debugPrint(
+      '[Fa] finalizeAssistant: stopReason=${message.stopReason}, '
+      'contentBlocks=${message.content.length}, '
+      'errorMessage=${message.errorMessage}',
+    );
     var text = message.content
         .whereType<TextContent>()
         .map((b) => b.text)

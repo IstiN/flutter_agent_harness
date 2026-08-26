@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -1906,6 +1907,7 @@ void main() {
             'codemie_access_token=$expiredJwt';
       final secureKeys = SecureKeyCache(store);
       await secureKeys.preload(['FA_KEY_CODEMIE_LAB_EPAM_COM']);
+      var ssoAttempts = 0;
       final cli = AgentCli(
         config: AgentCliConfig(
           model: codeMieModel,
@@ -1915,6 +1917,12 @@ void main() {
           providerKind: 'openai-completions',
           customProviders: registry,
           secureKeys: secureKeys,
+          // Fake the SSO flow — the real one would open a browser window on
+          // every test run. Returning null = authorization not completed.
+          codeMieSsoAuthenticateFn: (url, onStatus) async {
+            ssoAttempts++;
+            return null;
+          },
         ),
         io: io,
       );
@@ -1925,6 +1933,7 @@ void main() {
         io.out.toString(),
         contains('CodeMie session expired — opening browser to re-authorize'),
       );
+      expect(ssoAttempts, 1);
     });
 
     test('switching back to a session replays its transcript', () async {
@@ -2231,6 +2240,44 @@ void main() {
       await run2;
     });
 
+    test(
+      'falls back to ~/.fah/sessions when session root creation fails',
+      () async {
+        final failingEnv = _FailingDirEnv(env, '/unwritable-sessions');
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = AgentCli(
+          useTui: false,
+          config: AgentCliConfig(
+            model: testModel,
+            apiKey: 'test-key',
+            env: failingEnv,
+            homeDir: '/home/user',
+            sessionRoot: '/unwritable-sessions',
+            providerKind: 'openai-completions',
+            skillsAccess: SkillsAccess.granted,
+          ),
+          io: io,
+          streamFunction: fake.call,
+        );
+        final run = cli.run();
+        io.sendLine('hi');
+        await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+        io.sendLine('/exit');
+        await run;
+
+        expect(
+          io.out.toString(),
+          contains('Falling back to session storage at'),
+        );
+        final fallbackRepo = JsonlSessionRepo(
+          fs: failingEnv,
+          sessionsRoot: '/home/user/.fah/sessions',
+        );
+        final sessions = await fallbackRepo.list(cwd: '/work');
+        expect(sessions, isNotEmpty);
+      },
+    );
+
     test('/skills lists the discovered skills', () async {
       await env.createDir('/work/.git');
       await env.createDir('/work/.fah/skills/deploy');
@@ -2256,4 +2303,90 @@ void main() {
       );
     });
   });
+}
+
+final class _FailingDirEnv implements ExecutionEnv {
+  _FailingDirEnv(this._inner, this.failingPrefix);
+  final ExecutionEnv _inner;
+  final String failingPrefix;
+
+  @override
+  String get cwd => _inner.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _inner.absolutePath(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) async {
+    if (path.startsWith(failingPrefix)) {
+      return Err(
+        FileError(
+          FileErrorCode.permissionDenied,
+          'Permission denied',
+          path: path,
+        ),
+      );
+    }
+    return _inner.createDir(path, recursive: recursive);
+  }
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _inner.exists(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _inner.joinPath(parts);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _inner.listDir(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _inner.readBinaryFile(path);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _inner.readTextFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _inner.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _inner.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _inner.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _inner.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _inner.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _inner.fileInfo(path);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _inner.exec(command, options: options);
 }

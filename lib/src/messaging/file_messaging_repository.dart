@@ -52,13 +52,17 @@ final class FileMessagingRepository implements MessagingRepository {
 
   @override
   Future<void> register(String agentId) async {
-    final agentDir = '$_root/${sanitizeAgentId(agentId)}';
-    (await _env.createDir('$agentDir/inbox')).getOrThrow();
-    final marker = '$agentDir/.id';
-    if ((await _env.exists(marker)).valueOrNull != true) {
-      (await _env.writeFile(marker, agentId)).getOrThrow();
+    try {
+      final agentDir = '$_root/${sanitizeAgentId(agentId)}';
+      (await _env.createDir('$agentDir/inbox')).getOrThrow();
+      final marker = '$agentDir/.id';
+      if ((await _env.exists(marker)).valueOrNull != true) {
+        (await _env.writeFile(marker, agentId)).getOrThrow();
+      }
+      await _recordRegistry(agentId);
+    } on Object {
+      // Best-effort registration; a failure must not break process startup.
     }
-    await _recordRegistry(agentId);
   }
 
   @override

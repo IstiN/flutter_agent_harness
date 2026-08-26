@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -290,6 +291,9 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
         return ListView.builder(
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          // Generous cache: tiles (markdown, players) build ahead of the
+          // viewport instead of popping in while scrolling.
+          scrollCacheExtent: const ScrollCacheExtent.pixels(1200),
           itemCount: messages.length,
           itemBuilder: (context, index) => _messageTile(messages[index]),
         );

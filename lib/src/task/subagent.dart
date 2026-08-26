@@ -13,6 +13,7 @@ final class SubagentMessage {
     required this.text,
     required this.sentAt,
     this.hops = 0,
+    this.isUserInput = false,
   });
 
   /// Sender id (`parent` for parent-originated messages).
@@ -27,11 +28,17 @@ final class SubagentMessage {
   /// Remaining hop budget (sibling-relay cap; 0 refuses further relaying).
   final int hops;
 
+  /// True when the message is user input forwarded by an attached client
+  /// (the Fa app's attach view) — the recipient delivers it as the user's
+  /// own words, not agent chat.
+  final bool isUserInput;
+
   SubagentMessage decayed() => SubagentMessage(
     fromId: fromId,
     text: text,
     sentAt: sentAt,
     hops: hops - 1,
+    isUserInput: isUserInput,
   );
 
   Map<String, dynamic> toJson() => {
@@ -39,6 +46,7 @@ final class SubagentMessage {
     'text': text,
     'sentAt': sentAt,
     'hops': hops,
+    if (isUserInput) 'isUserInput': true,
   };
 
   factory SubagentMessage.fromJson(Map<String, dynamic> json) =>
@@ -47,6 +55,7 @@ final class SubagentMessage {
         text: json['text'] as String? ?? '',
         sentAt: json['sentAt'] as String? ?? '',
         hops: json['hops'] as int? ?? 0,
+        isUserInput: json['isUserInput'] as bool? ?? false,
       );
 }
 

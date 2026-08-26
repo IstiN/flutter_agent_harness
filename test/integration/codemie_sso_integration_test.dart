@@ -102,6 +102,13 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider codemie sso');
+        // First login offers the provider-name step every add flow has.
+        await waitForIt(
+          () => io.out.toString().contains(
+            'provider name [codemie.lab.epam.com]',
+          ),
+        );
+        io.sendLine(''); // keep the host-derived default name
         await waitForIt(() => io.out.toString().contains('saved provider'));
         io.sendLine('/exit');
         await run;

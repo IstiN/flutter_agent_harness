@@ -18,6 +18,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:meta/meta.dart';
 import 'package:yaml/yaml.dart';
 
 import '../agent/agent.dart';
@@ -69,6 +70,7 @@ import 'openrouter_oauth_server.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
+import '../session/attach/session_presence.dart';
 import 'custom_providers.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
@@ -108,6 +110,7 @@ export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'provider_models.dart';
 part 'codemie_provider_commands.dart';
 part 'provider_keys.dart';
 part 'agent_cli_mcp.dart';
@@ -687,6 +690,31 @@ class AgentCli {
     config.onProviderChanged?.call(_providerKind, _apiKey);
   }
 
+  /// Test seam driving the TUI model-menu builder in line mode: the same
+  /// `_buildModelMenu` the TUI's model picker renders.
+  @visibleForTesting
+  List<MenuItem> buildModelMenuForTest(String filter) =>
+      _buildModelMenu(filter);
+
+  /// Test seam for the TUI's model-menu selection: routes `@<provider>`
+  /// (the two-step pick's provider row) and `provider|model` keys the same
+  /// way the live picker does.
+  @visibleForTesting
+  Future<void> tuiSelectModelForTest(String key) => _tuiSelectModel(key);
+
+  /// Test seam for the private `/model` memory write path: records
+  /// [modelId] into the active saved entry (no-op without one), the same
+  /// thing a real `/model` switch does while a custom provider is active.
+  @visibleForTesting
+  void recordCustomModelForTest(String modelId) => _recordCustomModel(modelId);
+
+  /// Test seam driving the TUI picker's Edit action in line mode: opens
+  /// the prefilled edit wizard for [entry] (or the active provider when
+  /// null), the same `_startProviderEditWizard` the picker calls.
+  @visibleForTesting
+  void startProviderEditWizardForTest(CustomProviderEntry? entry) =>
+      _startProviderEditWizard(entry);
+
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in
@@ -749,7 +777,7 @@ class AgentCli {
   /// transcript size plus the in-flight stream's text length.
   (Object, int, int)? _ctxCacheKey;
   int _ctxCacheValue = 0;
-  late final _repo = JsonlSessionRepo(
+  late SessionRepo _repo = JsonlSessionRepo(
     fs: _env,
     sessionsRoot: config.sessionRoot,
   );
@@ -912,6 +940,15 @@ class AgentCli {
     await _loadAgentContext();
     _session = await _initializeSession();
     _syncMailboxPrefix();
+    // Live-session presence: this process now owns the session — the Fa
+    // app (sharing the sessions root) marks it live and can attach. The
+    // heartbeat refreshes on the inbox timer; unregistering happens in
+    // the finally below (crash coverage is the staleness window).
+    final presence = config.presenceStore;
+    final sessionId = _session?.cachedId;
+    if (presence != null && sessionId != null) {
+      await presence.register(sessionId, pid: config.processId);
+    }
     // Phase 3a: rehydrate the subagent registry from the resumed session's
     // `subagent_registry` records — agents of this session are visible again
     // (across restarts AND across instances sharing the session repo).
@@ -931,11 +968,16 @@ class AgentCli {
     );
     // The inbox watcher: incoming inter-agent mail while IDLE wakes the
     // agent into a turn (mid-run mail is already delivered by the steering
-    // poll). This is what makes two Fa instances chat live.
-    final inboxTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => unawaited(_wakeOnInboxMail()),
-    );
+    // poll). This is what makes two Fa instances chat live. The same tick
+    // refreshes the presence heartbeat (every other tick ≈ 4s, well
+    // inside the 15s staleness window).
+    var heartbeatTick = 0;
+    final inboxTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_wakeOnInboxMail());
+      if (presence != null && sessionId != null && heartbeatTick++ % 2 == 0) {
+        unawaited(presence.touch(sessionId));
+      }
+    });
     try {
       if (_useTui) {
         // The TUI prints the banner itself into its output history (buffered
@@ -952,6 +994,11 @@ class AgentCli {
       await taskSub.cancel();
       inboxTimer.cancel();
       await _settled;
+      // Live-session presence off: the session stops being "running in
+      // the CLI" for app viewers.
+      if (presence != null && sessionId != null) {
+        await presence.unregister(sessionId);
+      }
       // A session nobody wrote to leaves no file behind.
       await deleteSessionIfEmpty();
     }
@@ -1217,6 +1264,9 @@ class AgentCli {
     'settings': _tuiPickSetting,
     'agents': pickAgentFromTree,
     'agentAction': pickAgentAction,
+    // Step 2 of the two-step model pick: rows are keyed `provider|model`,
+    // the same shape the flat model menu selects.
+    'modelProvider': _tuiSelectModel,
   };
 
   /// Completes the pending wizard-picker answer for [pickerId] (null [key]
@@ -1436,16 +1486,54 @@ class AgentCli {
   }
 
   Future<Session> _createSession({String? name}) async {
-    final session = await _repo.create(
-      JsonlSessionCreateOptions(
-        cwd: _env.cwd,
-        metadata: {'agent': 'Fa', 'model': _agent.state.model.id},
-      ),
-    );
-    if (name != null && name.isNotEmpty) {
-      await session.appendSessionName(name);
+    try {
+      final session = await _repo.create(
+        JsonlSessionCreateOptions(
+          cwd: _env.cwd,
+          // `agent: cli` marks the owning process — the Fa app's live badge
+          // and attach view key off presence, but the metadata tells
+          // sessions apart in listings (the app writes 'fa').
+          metadata: {'agent': 'cli', 'model': _agent.state.model.id},
+        ),
+      );
+      if (name != null && name.isNotEmpty) {
+        await session.appendSessionName(name);
+      }
+      return session;
+    } on SessionException catch (error) {
+      final fallbackRoot = '${config.homeDir ?? _env.cwd}/.fah/sessions';
+      if (config.sessionRoot != fallbackRoot) {
+        try {
+          final fallbackRepo = JsonlSessionRepo(
+            fs: _env,
+            sessionsRoot: fallbackRoot,
+          );
+          final session = await fallbackRepo.create(
+            JsonlSessionCreateOptions(
+              cwd: _env.cwd,
+              metadata: {'agent': 'cli', 'model': _agent.state.model.id},
+            ),
+          );
+          _repo = fallbackRepo;
+          if (name != null && name.isNotEmpty) {
+            await session.appendSessionName(name);
+          }
+          io.writeln(
+            _style.yellow(
+              'warning: Failed to create session under ${config.sessionRoot} (${error.message}).\n'
+              'Falling back to session storage at $fallbackRoot.\n'
+              'To fix permissions for shared macOS sessions, run:\n'
+              '  sudo chown -R \$(whoami) ~/Library/"Group Containers"/group.dev.fa1.shared\n'
+              '  chmod -R u+rwx ~/Library/"Group Containers"/group.dev.fa1.shared',
+            ),
+          );
+          return session;
+        } catch (_) {
+          // Fall through to rethrow original error.
+        }
+      }
+      rethrow;
     }
-    return session;
   }
 
   /// Finds a session by display name OR by exact id across every workspace
@@ -1484,14 +1572,20 @@ class AgentCli {
 
   /// The main agent's inbox as steering messages: each pending fabric
   /// message becomes a user message attributed to its sender, so the
-  /// transcript reads like a chat between agents.
+  /// transcript reads like a chat between agents. A `user`-kind message
+  /// (an attached client — the Fa app's attach view — handing over user
+  /// input) lands as the user's own words with a dim attribution prefix,
+  /// not an agent chat line.
   Future<List<Message>> _mainInboxMessages() async {
     final queued = await _subagentManager.drainMessages(
       _subagentManager.selfId,
     );
     return [
       for (final message in queued)
-        UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
+        if (message.isUserInput)
+          UserMessage.text('[from ${message.fromId}] ${message.text.trim()}')
+        else
+          UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
     ];
   }
 

@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/sessions_root.dart';
 
 /// One managed chat session: the [AgentService] and the session id.
 final class FlutterManagedSession {
@@ -103,7 +104,35 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// break the sidebar listing.
   Future<List<SessionMetadata>> listPersistedSessions() async {
     try {
-      return await _repo.list();
+      final roots = allSessionRoots(sessionsRoot);
+      if (roots.length <= 1) {
+        return await _repo.list();
+      }
+      final seen = <String>{};
+      final merged = <SessionMetadata>[];
+      for (final root in roots) {
+        try {
+          final repo = root == sessionsRoot
+              ? _repo
+              : JsonlSessionRepo(fs: env, sessionsRoot: root);
+          final list = await repo.list();
+          for (final item in list) {
+            if (seen.add(item.id)) {
+              merged.add(item);
+            }
+          }
+        } on Object {
+          // Secondary root list failure is non-fatal.
+        }
+      }
+      merged.sort((a, b) {
+        final aTime = a.lastUpdatedAt ?? a.createdAt;
+        final bTime = b.lastUpdatedAt ?? b.createdAt;
+        final result = bTime.compareTo(aTime);
+        if (result != 0) return result;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+      return merged;
     } on Object {
       return const [];
     }
@@ -343,10 +372,13 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (managed == null) return;
     managed.service.abort();
     if (deleteFile) {
-      final metadata = await _repo.list().then(
-        (all) => all.firstWhere((m) => m.id == sessionId),
-      );
-      await _repo.delete(metadata);
+      final metadata = (await _repo.list())
+          .where((m) => m.id == sessionId)
+          .firstOrNull;
+      // A session deleted from another surface (or a file cleaned up
+      // under us) must not crash the close — the manager forgets it
+      // either way.
+      if (metadata != null) await _repo.delete(metadata);
     } else {
       // A session nobody wrote to leaves no file behind.
       await managed.service.deleteSessionIfEmpty();
@@ -366,9 +398,9 @@ final class FlutterSessionManager extends ChangeNotifier {
       await closeSession(id, deleteFile: true);
       return;
     }
-    final SessionMetadata resolved =
-        metadata ??
-        await _repo.list().then((all) => all.firstWhere((m) => m.id == id));
+    final SessionMetadata? resolved =
+        metadata ?? (await _repo.list()).where((m) => m.id == id).firstOrNull;
+    if (resolved == null) return; // already gone (deleted elsewhere)
     await _repo.delete(resolved);
     notifyListeners();
   }

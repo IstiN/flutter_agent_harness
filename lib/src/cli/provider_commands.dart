@@ -17,6 +17,7 @@ extension on AgentCli {
     String? initialName,
     String? initialModelId,
     String? editName,
+    ({String label, Future<String?> Function() run})? reauth,
   }) {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
@@ -38,6 +39,7 @@ extension on AgentCli {
           initialName: initialName,
           initialModelId: initialModelId,
           editName: editName,
+          reauth: reauth,
         ),
       ).whenComplete(() {
         _providerFlowActive = false;
@@ -62,17 +64,87 @@ extension on AgentCli {
     _startProviderEditWizard(entry);
   }
 
-  /// The edit wizard (prefilled from the entry or active provider).
+  /// The edit wizard (prefilled from the entry when editing one, else from
+  /// the active provider). The entry's own baseUrl/modelId/name MUST win
+  /// over the live model — otherwise editing a non-active entry shows the
+  /// wrong defaults (a kimi-active session editing the codemie entry would
+  /// pre-fill Kimi's URL and model into the codemie wizard).
   void _startProviderEditWizard(CustomProviderEntry? entry) {
     final model = _agent.state.model;
-    final spec = catalogProvider(model.provider) ?? providerCatalog['openai']!;
+    final spec = entry != null
+        ? entry.spec
+        : (catalogProvider(model.provider) ?? providerCatalog['openai']!);
     _startProviderFlow(
       initialType: entry?.apiType ?? spec.name,
-      initialBaseUrl: model.baseUrl,
+      initialBaseUrl: entry?.baseUrl ?? model.baseUrl,
       initialName: entry?.name,
-      initialModelId: model.id,
+      initialModelId: entry?.modelId ?? model.id,
       editName: entry?.name,
+      reauth: _editReauthOption(entry),
     );
+  }
+
+  /// The browser re-authorization choice for the edit wizard's key step:
+  /// the same sign-in choice the connect flow offers, so the user can
+  /// renew an expired credential without losing the entry. OpenRouter and
+  /// CodeMie (any auth method — SSO entries as well as legacy entries
+  /// whose `authMethod` was never recorded) get the picker; every other
+  /// entry edits the key manually.
+  ({String label, Future<String?> Function() run})? _editReauthOption(
+    CustomProviderEntry? entry,
+  ) {
+    if (entry == null) return null;
+    final orSpec = providerCatalog['openrouter'];
+    if (orSpec != null &&
+        (entry.apiType == 'openrouter' ||
+            entry.baseUrl == orSpec.defaultBaseUrl)) {
+      return (
+        label: 'Browser OAuth (openrouter.ai)',
+        run: _mintOpenRouterOAuthKey,
+      );
+    }
+    // CodeMie: detected by the `/code-assistant-api/` URL marker — works
+    // for legacy entries whose `authMethod` was never recorded too. The
+    // picker still offers "Enter a new API key" for users who want to
+    // paste a fresh cookie/JWT instead of opening the browser.
+    if (entry.baseUrl.contains('/code-assistant-api/')) {
+      return (label: 'Browser SSO (CodeMie)', run: _mintCodeMieSsoCookie);
+    }
+    return null;
+  }
+
+  /// Runs the browser OpenRouter OAuth flow and returns only the minted
+  /// key: the edit wizard's own apply path persists it under the entry's
+  /// key slot and switches, so the connect-time [_applyOpenRouterOAuthKey]
+  /// (which stores + switches immediately) does not fit here.
+  Future<String?> _mintOpenRouterOAuthKey() async {
+    final exchangeFn =
+        config.openRouterOAuthExchangeFn ?? _defaultOpenRouterExchange;
+    final key = await runOpenRouterOAuthCliFlow(
+      onStatus: io.writeln,
+      exchangeFn: exchangeFn,
+    );
+    return key?.key;
+  }
+
+  /// Runs the CodeMie SSO login and returns only the freshly minted cookie
+  /// string. Mirrors [_mintOpenRouterOAuthKey]: the edit wizard's own apply
+  /// path persists it under the entry's key slot and switches, so the
+  /// connect-time [_applyCodeMieSsoCredentials] (which also saves a
+  /// registry entry and asks for a name) does not fit here.
+  Future<String?> _mintCodeMieSsoCookie() async {
+    final authenticate =
+        config.codeMieSsoAuthenticateFn ??
+        (url, onStatus) =>
+            runCodeMieSsoCliFlow(codeMieUrl: url, onStatus: onStatus);
+    final creds = await authenticate(defaultCodeMieBaseUrl, io.writeln);
+    if (creds == null) return null;
+    final cookie = creds.authToken;
+    if (cookie.isEmpty) {
+      io.writeln('CodeMie SSO carried no cookies — aborted');
+      return null;
+    }
+    return cookie;
   }
 
   /// Deletes [entry] after a y/N confirmation.
@@ -128,8 +200,8 @@ extension on AgentCli {
 
   /// Applies a completed wizard: writes/updates the registry entry (and the
   /// secure-store key under the entry's own key name), then switches the
-  /// provider. In edit mode ([editName]) the entry keeps its name and its
-  /// existing key when no new token was typed.
+  /// provider. In edit mode ([editName]) the entry keeps its name and
+  /// its existing key when no new token was typed.
   Future<void> _applyCustomProviderSetup(
     CustomProviderSetup setup, {
     String? editName,
@@ -140,38 +212,112 @@ extension on AgentCli {
         : _agent.state.model.id;
     final token = setup.token;
     final keyName = await _persistSetupKey(setup, editName);
-    CustomProviderEntry? entry;
-    if (registry != null) {
-      // Renaming on edit: drop the old entry so the new name replaces it.
-      if (editName != null && setup.name != editName) {
-        registry.entries.removeWhere((e) => e.name == editName);
-        io.writeln('renamed provider $editName to ${setup.name}');
-      }
-      entry = CustomProviderEntry(
-        name: setup.name,
-        apiType: setup.spec.name,
-        baseUrl: setup.baseUrl,
-        modelId: modelId,
-        keyName: keyName,
-      );
-      registry.add(entry);
-      _activeCustomName = entry.name;
-      if (editName == null) {
-        io.writeln('saved provider ${entry.name} (listed first in /provider)');
-      }
-    }
+    // Edit mode keeps the existing entry's auth method (SSO/JWT routing
+    // is the more precise signal than key format — set explicitly by the
+    // connect flows). New entries default to api-key.
+    final existingEntry = (editName != null && registry != null)
+        ? registry.find(editName)
+        : null;
+    final entry = await _recordSetupEntry(
+      setup,
+      registry,
+      modelId: modelId,
+      keyName: keyName,
+      editName: editName,
+      existingEntry: existingEntry,
+    );
     // The key for the switch: the freshly typed token, else the entry's
     // stored key, else the env resolution inside _switchProvider.
-    final stored = entry?.keyName;
+    final stored0 = entry?.keyName;
     final switchToken =
-        token ?? (stored != null ? config.secureKeys?.read(stored) : null);
-    await _switchProvider(
+        token ?? (stored0 != null ? config.secureKeys?.read(stored0) : null);
+    await _switchSetupEntry(
+      setup,
+      entry,
+      modelId: modelId,
+      keyName: keyName,
+      switchToken: switchToken,
+    );
+  }
+
+  /// The switch step of [_applyCustomProviderSetup]: CodeMie endpoints route
+  /// through the cookie/JWT-specific helpers (the generic switch would send
+  /// a cookie as `Authorization: Bearer`, which CodeMie rejects); everything
+  /// else takes the regular switch.
+  Future<void> _switchSetupEntry(
+    CustomProviderSetup setup,
+    CustomProviderEntry? entry, {
+    required String modelId,
+    required String? keyName,
+    required String? switchToken,
+  }) async {
+    final stored = entry?.keyName;
+    final isCodeMie = setup.baseUrl.contains('/code-assistant-api/');
+    if (!isCodeMie || switchToken == null) {
+      await _switchProvider(
+        setup.spec,
+        setup.baseUrl,
+        modelId,
+        token: switchToken,
+        tokenKeyName: keyName,
+      );
+      return;
+    }
+    // For legacy entries whose `authMethod` was never recorded (defaults
+    // to apiKey) we fall back to key-format detection — a JWT-shaped
+    // value is a JWT, everything else is treated as a SSO cookie.
+    final authMethod = entry?.authMethod ?? CustomProviderAuthMethod.apiKey;
+    final looksJwt = isCodeMieJwtToken(switchToken);
+    final asSso = authMethod == CustomProviderAuthMethod.sso || !looksJwt;
+    if (asSso) {
+      await _switchCodeMieProvider(
+        setup.spec,
+        setup.baseUrl,
+        modelId,
+        switchToken,
+        stored ?? '',
+      );
+      return;
+    }
+    await _switchCodeMieJwtProvider(
       setup.spec,
       setup.baseUrl,
       modelId,
-      token: switchToken,
-      tokenKeyName: keyName,
+      switchToken,
+      stored ?? '',
     );
+  }
+
+  /// The registry step of [_applyCustomProviderSetup]: writes (or renames
+  /// on edit) the entry and returns it, or null without a registry.
+  Future<CustomProviderEntry?> _recordSetupEntry(
+    CustomProviderSetup setup,
+    CustomProviderRegistry? registry, {
+    required String modelId,
+    required String? keyName,
+    required String? editName,
+    required CustomProviderEntry? existingEntry,
+  }) async {
+    if (registry == null) return null;
+    // Renaming on edit: drop the old entry so the new name replaces it.
+    if (editName != null && setup.name != editName) {
+      registry.entries.removeWhere((e) => e.name == editName);
+      io.writeln('renamed provider $editName to ${setup.name}');
+    }
+    final entry = CustomProviderEntry(
+      name: setup.name,
+      apiType: setup.spec.name,
+      baseUrl: setup.baseUrl,
+      modelId: modelId,
+      keyName: keyName,
+      authMethod: existingEntry?.authMethod ?? CustomProviderAuthMethod.apiKey,
+    );
+    registry.add(entry);
+    _activeCustomName = entry.name;
+    if (editName == null) {
+      io.writeln('saved provider ${entry.name} (listed first in /provider)');
+    }
+    return entry;
   }
 
   /// The key-name/persistence step of [_applyCustomProviderSetup]: returns
@@ -469,6 +615,9 @@ extension on AgentCli {
       _providerFlowActive = false;
       switch (choice) {
         case 'stored':
+          // A catalog switch: the previously-active custom entry must stop
+          // receiving `/model` memory updates.
+          _activeCustomName = null;
           await _switchProvider(
             spec!,
             spec.defaultBaseUrl,
@@ -486,7 +635,10 @@ extension on AgentCli {
   }
 
   /// The API-key branch of the OpenRouter auth-method picker: asks for an API
-  /// key and switches to the default OpenRouter endpoint with it.
+  /// key and switches to the default OpenRouter endpoint with it. On a first
+  /// connect (no saved entry for the endpoint yet) the key becomes a saved
+  /// named entry — the same shape the OAuth connect and the custom wizard
+  /// produce, with the provider-name step every add flow offers.
   Future<void> _runOpenRouterApiKeyFlow() async {
     final spec = providerCatalog['openrouter'];
     if (spec == null) {
@@ -498,11 +650,41 @@ extension on AgentCli {
       io.writeln('OpenRouter setup cancelled');
       return;
     }
-    await _switchProvider(
-      spec,
-      spec.defaultBaseUrl,
-      _agent.state.model.id,
-      token: key.trim(),
+    final registry = config.customProviders;
+    final existing = registry != null
+        ? _entryForBaseUrl(registry, spec.defaultBaseUrl)
+        : null;
+    if (registry == null || existing != null) {
+      // No registry to hold an entry — or an entry already serves the
+      // endpoint (re-keying keeps its name and model memory): the plain
+      // catalog switch stores the key under the endpoint-scoped slot.
+      // `/model` memory continues on that entry when it exists; without
+      // one this is a plain catalog switch (no entry to record into).
+      _activeCustomName = existing?.name;
+      await _switchProvider(
+        spec,
+        spec.defaultBaseUrl,
+        _agent.state.model.id,
+        token: key.trim(),
+      );
+      return;
+    }
+    final name = await _askConnectProviderName(
+      registry.deriveName(spec.defaultBaseUrl),
+      sameBaseUrl: spec.defaultBaseUrl,
+    );
+    if (name == null) {
+      io.writeln('OpenRouter setup cancelled');
+      return;
+    }
+    await _applyCustomProviderSetup(
+      CustomProviderSetup(
+        spec: spec,
+        baseUrl: spec.defaultBaseUrl,
+        name: name,
+        modelId: _agent.state.model.id,
+        token: key.trim(),
+      ),
     );
   }
 
@@ -616,7 +798,19 @@ extension on AgentCli {
       key.key,
       keyName: keyName,
     );
-    _saveCatalogConnectEntry(spec);
+    // An explicit connect ALWAYS asks for the display name — Enter keeps
+    // the existing entry for a same-account key refresh, a new name creates
+    // a separate entry for a second account. The key is already minted and
+    // stored above, so a cancel keeps the host-derived default.
+    final registry = config.customProviders;
+    String? name;
+    if (registry != null) {
+      name = await _askConnectProviderName(
+        _codeMieHostName(spec.defaultBaseUrl),
+        sameBaseUrl: spec.defaultBaseUrl,
+      );
+    }
+    _saveCatalogConnectEntry(spec, name: name);
     // already active (not just any openai-completions endpoint).
     final isOpenRouterActive =
         _activeCustomName == null &&
@@ -644,24 +838,27 @@ extension on AgentCli {
   }
 
   /// Saves a connected catalog provider (OAuth/SSO flows) as a registry
-  /// entry named by its endpoint host, so it appears in the `/provider`
-  /// picker and `/provider <name>` restores it. Idempotent — re-connect
-  /// keeps the entry (and its model memory).
-  void _saveCatalogConnectEntry(ProviderSpec spec) {
+  /// entry, so it appears in the `/provider` picker and `/provider <name>`
+  /// restores it. Idempotent — re-connect keeps the entry (and its model
+  /// memory); the lookup is by base URL so a renamed entry is not
+  /// duplicated. [name] is the display name chosen at connect time; without
+  /// it the existing entry's name (else the endpoint host) is kept.
+  void _saveCatalogConnectEntry(ProviderSpec spec, {String? name}) {
     final registry = config.customProviders;
     if (registry == null) return;
-    final name = _codeMieHostName(spec.defaultBaseUrl);
-    final existing = registry.find(name);
+    final existing = _entryForBaseUrl(registry, spec.defaultBaseUrl);
+    final entryName =
+        name ?? existing?.name ?? _codeMieHostName(spec.defaultBaseUrl);
     registry.add(
       CustomProviderEntry(
-        name: name,
+        name: entryName,
         apiType: spec.name,
         baseUrl: spec.defaultBaseUrl,
         modelId: existing?.modelId ?? _agent.state.model.id,
         keyName: CustomProviderRegistry.keyNameFor(spec.defaultBaseUrl),
       ),
     );
-    _activeCustomName = name;
+    _activeCustomName = entryName;
   }
 
   /// The `/provider chatgpt oauth [headless]` branch: authenticates the
@@ -781,7 +978,9 @@ extension on AgentCli {
   }
 
   /// Saves OAuth-derived ChatGPT credentials and switches to the Codex
-  /// backend so the session is usable at once.
+  /// backend so the session is usable at once. The account also lands in
+  /// the provider registry (name prompt included) like every other
+  /// connected provider — without the entry it never showed in `/provider`.
   Future<void> _applyChatGptOAuthCredentials(
     ProviderSpec spec,
     ChatGptOAuthCredentials credentials,
@@ -795,6 +994,32 @@ extension on AgentCli {
       encoded,
       keyName: keyName,
     );
+    final registry = config.customProviders;
+    String? name;
+    if (registry != null) {
+      final fallback =
+          _entryForBaseUrl(registry, spec.defaultBaseUrl)?.name ??
+          _codeMieHostName(spec.defaultBaseUrl);
+      // A cancel keeps the fallback — the OAuth credentials are already
+      // minted and stored.
+      name =
+          await _askConnectProviderName(
+            fallback,
+            sameBaseUrl: spec.defaultBaseUrl,
+          ) ??
+          fallback;
+      registry.add(
+        CustomProviderEntry(
+          name: name,
+          apiType: spec.name,
+          baseUrl: spec.defaultBaseUrl,
+          modelId: _agent.state.model.id,
+          keyName: keyName,
+        ),
+      );
+      _activeCustomName = name;
+      io.writeln('saved provider $name (listed first in /provider)');
+    }
     await _switchProvider(
       spec,
       spec.defaultBaseUrl,
@@ -846,7 +1071,14 @@ extension on AgentCli {
   }
 
   /// Runs the CodeMie SSO flow and applies the resulting credentials.
-  Future<void> _handleCodeMieSsoCommand(String codeMieUrl) async {
+  /// [offerName] is true only for the explicit add flows (typed command,
+  /// auth-method picker): the automatic re-authorizations (startup, saved
+  /// entry switch, mid-stream expiry) keep the existing entry's name — or
+  /// the derived default — without interrupting the recovery with a prompt.
+  Future<void> _handleCodeMieSsoCommand(
+    String codeMieUrl, {
+    bool offerName = false,
+  }) async {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     try {
@@ -856,7 +1088,7 @@ extension on AgentCli {
               runCodeMieSsoCliFlow(codeMieUrl: url, onStatus: onStatus);
       final credentials = await authenticate(codeMieUrl, io.writeln);
       if (credentials != null) {
-        await _applyCodeMieSsoCredentials(credentials);
+        await _applyCodeMieSsoCredentials(credentials, offerName: offerName);
       }
     } catch (e) {
       io.writeln('CodeMie SSO failed: $e');
@@ -872,10 +1104,12 @@ extension on AgentCli {
   /// `cookie:` entry so the openai-completions adapter sends Cookie-header
   /// auth instead of the default `authorization: Bearer`. After saving, runs
   /// the guided project → model selection (matching the CodeMie CLI's setup
-  /// flow) so the user lands on a working connection.
+  /// flow) so the user lands on a working connection. [offerName] gates the
+  /// provider-name step (explicit add flows only — see the caller).
   Future<void> _applyCodeMieSsoCredentials(
-    CodeMieSsoCredentials credentials,
-  ) async {
+    CodeMieSsoCredentials credentials, {
+    bool offerName = false,
+  }) async {
     final cookie = credentials.authToken;
     if (cookie.isEmpty) {
       io.writeln('CodeMie SSO carried no cookies — aborted');
@@ -883,9 +1117,20 @@ extension on AgentCli {
     }
     final baseUrl = '${credentials.apiUrl}/v1';
     final registry = config.customProviders;
-    final candidate = _codeMieHostName(baseUrl);
-    final existing = registry?.find(candidate);
-    final name = existing?.name ?? registry?.deriveName(baseUrl) ?? 'codemie';
+    // Auto re-authorizations (mid-stream / startup / expired-cookie switch)
+    // keep the entry's name silently; an EXPLICIT connect (typed command,
+    // auth-method picker) ALWAYS asks for the provider-name step — Enter
+    // keeps the existing entry (same-account cookie refresh), a new name
+    // creates a separate entry for a second account.
+    final existing = registry != null
+        ? _entryForBaseUrl(registry, baseUrl)
+        : null;
+    final defaultName =
+        existing?.name ?? registry?.deriveName(baseUrl) ?? 'codemie';
+    final name = offerName && registry != null
+        ? (await _askConnectProviderName(defaultName, sameBaseUrl: baseUrl)) ??
+              defaultName
+        : defaultName;
     final keyName = CustomProviderRegistry.keyNameFor(
       baseUrl,
       providerName: name,
@@ -893,12 +1138,17 @@ extension on AgentCli {
     final spec = providerCatalog['openai']!;
     await _storeProviderToken(spec, baseUrl, cookie, keyName: keyName);
 
-    // Guided project → model selection (first login only; re-login keeps
-    // the existing model choice).
-    final modelId =
-        existing?.modelId ??
-        await _codemieGuidedSetup(credentials.apiUrl, cookie) ??
-        _agent.state.model.id;
+    // Guided project → model selection. It runs for a NEW account — no entry
+    // on this endpoint yet, or the user typed a DIFFERENT name (a second
+    // account needs its own project/model pick). A re-login to the SAME
+    // entry (Enter on the name prompt, or an automatic re-authorization)
+    // keeps the existing model choice.
+    final sameAccount = existing != null && name == existing.name;
+    final modelId = sameAccount
+        ? existing.modelId
+        : (await _codemieGuidedSetup(credentials.apiUrl, cookie) ??
+              existing?.modelId ??
+              _agent.state.model.id);
 
     if (registry != null) {
       registry.add(
@@ -1107,28 +1357,62 @@ extension on AgentCli {
     if (deployment == null) return io.writeln('dial setup cancelled');
     final name = await _dialAskName(baseUrl);
     if (name == null) return io.writeln('dial setup cancelled');
-    _dialSaveRegistryEntry(baseUrl, key, deployment, name);
+    final keyName = _dialSaveRegistryEntry(baseUrl, key, deployment, name);
     await _switchProvider(
       spec,
       baseUrl,
       deployment,
       token: key.isEmpty ? null : key,
+      tokenKeyName: keyName,
     );
   }
 
   /// The provider-name step: typed value, else the endpoint host (the
   /// `/provider` picker label); null cancels. Kept unique vs other entries.
-  Future<String?> _dialAskName(String baseUrl) async {
-    final fallback = _codeMieHostName(baseUrl);
+  Future<String?> _dialAskName(String baseUrl) =>
+      _askConnectProviderName(_codeMieHostName(baseUrl), sameBaseUrl: baseUrl);
+
+  /// The provider-name step shared by every add/connect flow that saves a
+  /// registry entry (dial, kimi, OAuth/SSO connects): the typed value, else
+  /// [fallback] (usually the endpoint host). A name already used by an entry
+  /// on a DIFFERENT endpoint retries, and so does a name matching a CATALOG
+  /// provider — `/provider kimi` & friends route to the catalog flow before
+  /// the registry lookup, so such an entry would be unreachable. Null only
+  /// on cancel (Ctrl-C) — flows whose credentials are already minted
+  /// (OAuth/SSO) substitute [fallback] instead of aborting.
+  Future<String?> _askConnectProviderName(
+    String fallback, {
+    String? sameBaseUrl,
+  }) async {
     final typed = await _askLine('provider name [$fallback]: ');
     if (typed == null) return null;
     final name = typed.trim().isEmpty ? fallback : typed.trim();
+    if (providerCatalog.containsKey(name.toLowerCase())) {
+      io.writeln(
+        '"$name" is a built-in provider name — /provider $name routes to it, '
+        'pick another name',
+      );
+      return _askConnectProviderName(fallback, sameBaseUrl: sameBaseUrl);
+    }
     final clash = config.customProviders?.find(name);
-    if (clash != null && clash.baseUrl != baseUrl) {
+    if (clash != null && clash.baseUrl != sameBaseUrl) {
       io.writeln('name "$name" is already used by ${clash.baseUrl} — retry');
-      return _dialAskName(baseUrl);
+      return _askConnectProviderName(fallback, sameBaseUrl: sameBaseUrl);
     }
     return name;
+  }
+
+  /// The first registry entry serving [baseUrl], or null. Base-URL lookups
+  /// survive renames — a derived-name lookup would treat a renamed entry as
+  /// absent and duplicate it on re-connect.
+  CustomProviderEntry? _entryForBaseUrl(
+    CustomProviderRegistry registry,
+    String baseUrl,
+  ) {
+    for (final entry in registry.entries) {
+      if (entry.baseUrl == baseUrl) return entry;
+    }
+    return null;
   }
 
   /// The base-URL step: typed value or the spec default; null cancels.
@@ -1175,27 +1459,41 @@ extension on AgentCli {
 
   /// Saves the dial org as a registry entry so it shows in the /provider
   /// picker and survives restarts (re-running setup just updates the model).
-  void _dialSaveRegistryEntry(
+  /// A custom (non-derived) name scopes the store key — two dial orgs
+  /// share one host otherwise and the second key would overwrite the
+  /// first's slot. Returns the entry's key name (null when keyless) so the
+  /// caller stores the typed key under the SAME slot the entry references.
+  String? _dialSaveRegistryEntry(
     String baseUrl,
     String key,
     String deployment,
     String name,
   ) {
     final registry = config.customProviders;
-    if (registry == null) return;
-    registry.add(
-      CustomProviderEntry(
-        name: name,
-        apiType: 'dial',
-        baseUrl: baseUrl,
-        modelId: deployment,
-        keyName: key.isEmpty
-            ? null
-            : CustomProviderRegistry.keyNameFor(baseUrl),
-      ),
-    );
-    _activeCustomName = name;
-    io.writeln('saved provider $name (listed in /provider)');
+    // The host-derived name (no dedupe suffix) keeps the endpoint-scoped
+    // key slot; a custom name scopes it so two orgs on one host keep
+    // separate keys.
+    final derived = name == _codeMieHostName(baseUrl);
+    final keyName = key.isEmpty
+        ? null
+        : CustomProviderRegistry.keyNameFor(
+            baseUrl,
+            providerName: derived ? null : name,
+          );
+    if (registry != null) {
+      registry.add(
+        CustomProviderEntry(
+          name: name,
+          apiType: 'dial',
+          baseUrl: baseUrl,
+          modelId: deployment,
+          keyName: keyName,
+        ),
+      );
+      _activeCustomName = name;
+      io.writeln('saved provider $name (listed in /provider)');
+    }
+    return keyName;
   }
 
   /// Short human label for a deployment id in the picker descriptions.
@@ -1584,17 +1882,11 @@ extension on AgentCli {
     }
   }
 
-  /// Resolves the API key for [spec] at [baseUrl], in order:
-  /// 1. a genuine ENVIRONMENT value of the catalog env names (it differs
-  ///    from the store's entry, so it came from the actual environment) —
-  ///    the ecosystem convention stays first;
-  /// 2. the endpoint-scoped secure-store entry (`FA_KEY_<HOST>` — what
-  ///    `/provider` and the custom-provider wizard write);
-  /// 3. legacy env-name store entries, written by older versions.
-  /// Null when the host exposes no values (tests, web) or nothing is set.
   /// Resolves the API key for [spec] at [baseUrl]. For the spec's DEFAULT
-  /// hosted endpoint: env value → host-scoped store key → legacy env-name
-  /// store key (documented order). For ANY OTHER endpoint: only the
+  /// hosted endpoint: env value → host-scoped store key → a saved registry
+  /// entry's name-scoped key for the same endpoint (multi-account — the
+  /// startup resolution in bin/fah.dart uses the same order) → legacy
+  /// env-name store key. For ANY OTHER endpoint: only the
   /// endpoint-scoped store keys (the active custom entry's key name, then
   /// the host-scoped one) — the spec's env names (`OPENROUTER_API_KEY` &
   /// friends) describe the default endpoint and must never hijack a custom
@@ -1607,7 +1899,8 @@ extension on AgentCli {
   }
 
   /// Key resolution for the spec's DEFAULT hosted endpoint: env value →
-  /// host-scoped store key → legacy env-name store key (documented order).
+  /// host-scoped store key → registry-entry name-scoped key → legacy
+  /// env-name store key (documented order).
   String? _defaultEndpointKey(ProviderSpec spec, String baseUrl) {
     final env = _envKeyEntry(spec);
     if (env != null) return env.$2;
@@ -1632,7 +1925,8 @@ extension on AgentCli {
   }
 
   /// The stored key for the spec's default endpoint: the endpoint-scoped
-  /// entry (`FA_KEY_<HOST>`), then the legacy env-name entries.
+  /// entry (`FA_KEY_<HOST>`), then a saved registry entry's name-scoped key
+  /// for the same endpoint, then the legacy env-name entries.
   String? _storedDefaultEndpointKey(
     ProviderSpec spec,
     String baseUrl,
@@ -1640,9 +1934,30 @@ extension on AgentCli {
   ) {
     final scoped = keys.read(CustomProviderRegistry.keyNameFor(baseUrl));
     if (scoped != null && scoped.isNotEmpty) return scoped;
+    final entryKeyName = _registryEntryKeyName(baseUrl, keys);
+    if (entryKeyName != null) return keys.read(entryKeyName);
     for (final name in spec.apiKeyEnvNames) {
       final value = keys.read(name);
       if (value != null && value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  /// The store key name of a saved registry entry serving [baseUrl] whose
+  /// slot actually holds a value, or null. A second account's name-scoped
+  /// key (`FA_KEY_API_KIMI_COM_WORK`) must resolve for the plain catalog
+  /// switch too — otherwise every `/provider kimi` re-prompts for a key the
+  /// named entry already saved (startup resolution in bin/fah.dart has the
+  /// same fallback, right after the host-scoped slot).
+  String? _registryEntryKeyName(String baseUrl, SecureKeyCache keys) {
+    final registry = config.customProviders;
+    if (registry == null) return null;
+    for (final entry in registry.entries) {
+      if (entry.baseUrl != baseUrl) continue;
+      final keyName = entry.keyName;
+      if (keyName != null && _nonEmptyStoredKey(keys, keyName) != null) {
+        return keyName;
+      }
     }
     return null;
   }
@@ -1688,8 +2003,9 @@ extension on AgentCli {
   }
 
   /// The default-endpoint branch of [_providerKeyLine]: env var name →
-  /// endpoint-scoped store entry → legacy env-name store entry, else a
-  /// warning that the hosted endpoint has no key.
+  /// endpoint-scoped store entry → a registry entry's name-scoped slot →
+  /// legacy env-name store entry, else a warning that the hosted endpoint
+  /// has no key.
   String _defaultEndpointKeyLine(ProviderSpec spec, String baseUrl) {
     final keys = config.secureKeys;
     final env = _envKeyEntry(spec);
@@ -1698,6 +2014,10 @@ extension on AgentCli {
       final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
       if (keys.read(scopedName) != null) {
         return 'key: $scopedName (${keys.label ?? 'secure store'})';
+      }
+      final entryKeyName = _registryEntryKeyName(baseUrl, keys);
+      if (entryKeyName != null) {
+        return 'key: $entryKeyName (${keys.label ?? 'secure store'})';
       }
       final legacyName = _legacyStoredKeyName(spec, keys);
       if (legacyName != null) {
@@ -1740,1007 +2060,4 @@ extension on AgentCli {
     final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
     return keys.read(scopedName) != null ? scopedName : null;
   }
-
-  // ------------------------------------------------------------- models
-
-  // _allProvidersModelCache and _allProvidersCacheRefreshed are fields on
-  // AgentCli (agent_cli.dart line 608-610); this part file accesses them
-  // directly because it's the same library.
-
-  bool get _modelCacheNeedsRefresh =>
-      !_allProvidersCacheRefreshed && _modelCacheFuture == null;
-
-  List<MenuItem> _buildModelMenu(String filter) {
-    if (_modelCacheNeedsRefresh) {
-      unawaited(_refreshAllProvidersModelCache());
-    }
-    return _crossProviderModelMenuItems(_crossProviderCandidates(filter));
-  }
-
-  /// Builds MenuItem list from cross-provider candidates. Each entry is
-  /// `provider/model-id` with a vision marker; the key encodes
-  /// `providerName|modelId` for the selection handler.
-  List<MenuItem> _crossProviderModelMenuItems(
-    List<(String provider, String modelId)> entries,
-  ) {
-    if (entries.isEmpty) {
-      return const [MenuItem(key: '', label: 'loading models...')];
-    }
-    final currentModel = _agent.state.model;
-    return [
-      for (var i = 0; i < entries.length; i++)
-        _crossProviderMenuItem(entries[i], i, currentModel),
-    ];
-  }
-
-  /// One cross-provider model row.
-  MenuItem _crossProviderMenuItem(
-    (String, String) entry,
-    int index,
-    dynamic currentModel,
-  ) {
-    final (provider, modelId) = entry;
-    final isCurrent =
-        provider == currentModel.provider && modelId == currentModel.id;
-    return MenuItem(
-      key: '$provider|$modelId',
-      label:
-          '${index + 1}) $provider/$modelId'
-          '${isCurrent ? ' (current)' : ''}',
-      description: visionMarker(modelId),
-    );
-  }
-
-  Future<void> _tuiSelectModel(String key) async {
-    final pipe = key.indexOf('|');
-    if (pipe < 0) return _handleModelCommand(key);
-    await _switchCrossProviderModel(key, pipe);
-  }
-
-  /// Switches to the provider/model encoded as `provider|model`.
-  Future<void> _switchCrossProviderModel(String key, int pipe) async {
-    final providerName = key.substring(0, pipe);
-    final modelId = key.substring(pipe + 1);
-    final entry = config.customProviders?.find(providerName);
-    if (entry != null && entry.name != _activeCustomName) {
-      await _switchToSavedProvider(entry);
-    }
-    await _switchModel(modelId);
-  }
-
-  /// Fetches model lists from ALL saved providers in the background and
-  /// populates [_allProvidersModelCache]. Also keeps the legacy
-  /// [_modelCache] (active provider only) in sync for context-window
-  /// detection.
-  Future<void> _refreshAllProvidersModelCache() async {
-    if (_modelCacheFuture != null) return;
-    final completer = Completer<void>();
-    _modelCacheFuture = completer.future;
-    try {
-      await _fetchAllSavedProviderModels();
-      // Also fetch the active catalog provider's live /models list (e.g.
-      // OpenRouter) so the model picker is never empty just because the user
-      // hasn't saved the provider as a custom entry.
-      final activeProvider = _agent.state.model.provider;
-      final activeSpec = catalogProvider(activeProvider);
-      if (activeSpec != null &&
-          !_allProvidersModelCache.containsKey(activeProvider)) {
-        try {
-          final ids = await _fetchProviderModelIds(
-            activeSpec.name,
-            _agent.state.model.baseUrl,
-            _apiKey,
-          );
-          _allProvidersModelCache[activeProvider] = ids.isEmpty
-              ? (_knownModels[activeProvider] ?? [_agent.state.model.id])
-              : ids;
-        } on Object {
-          _allProvidersModelCache[activeProvider] =
-              _knownModels[activeProvider] ?? [_agent.state.model.id];
-        }
-      }
-      // Always include the active provider's fallback list.
-      if (!_allProvidersModelCache.containsKey(activeProvider)) {
-        _allProvidersModelCache[activeProvider] =
-            _knownModels[activeProvider] ?? [_agent.state.model.id];
-      }
-      _allProvidersCacheRefreshed = true;
-      _tuiController?.sendModelsRefresh();
-    } finally {
-      _modelCacheFuture = null;
-      completer.complete();
-    }
-  }
-
-  /// Fetches every saved provider's model list in parallel (no-op without a
-  /// registry or entries).
-  Future<void> _fetchAllSavedProviderModels() async {
-    final registry = config.customProviders;
-    if (registry == null || registry.entries.isEmpty) return;
-    await Future.wait(registry.entries.map(_fetchProviderModels));
-  }
-
-  /// Fetches models for one saved provider entry and caches them.
-  Future<void> _fetchProviderModels(CustomProviderEntry entry) async {
-    try {
-      final cookieOrKey = _providerEntryToken(entry);
-      final ids = await _fetchIdsForProvider(entry, cookieOrKey);
-      _allProvidersModelCache[entry.name] = ids.isEmpty ? [entry.modelId] : ids;
-    } on Object {
-      // Dead endpoint — use the entry's last-known model.
-      _allProvidersModelCache[entry.name] = [entry.modelId];
-    }
-  }
-
-  /// Resolves the API token for a saved provider entry.
-  String _providerEntryToken(CustomProviderEntry entry) {
-    final keyName = entry.keyName;
-    final token = keyName != null ? config.secureKeys?.read(keyName) : null;
-    return token ?? '';
-  }
-
-  /// Fetches model ids for a provider entry, dispatching on endpoint kind.
-  Future<List<String>> _fetchIdsForProvider(
-    CustomProviderEntry entry,
-    String cookieOrKey,
-  ) async {
-    if (entry.baseUrl.contains('/code-assistant-api/')) {
-      return fetchCodeMieModels(entry.baseUrl, cookieOrKey);
-    }
-    if (entry.spec.kind == 'dial') {
-      return fetchDialModels(entry.baseUrl, cookieOrKey);
-    }
-    return _fetchOpenAiShapeIds(entry, cookieOrKey);
-  }
-
-  /// The openai-completions branch of [_fetchIdsForProvider] (other kinds
-  /// answer an empty list — their endpoints have no /models dialect here).
-  Future<List<String>> _fetchOpenAiShapeIds(
-    CustomProviderEntry entry,
-    String cookieOrKey,
-  ) async {
-    if (entry.spec.kind != 'openai-completions') return const [];
-    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-    return fetch(entry.baseUrl, apiKey: cookieOrKey);
-  }
-
-  /// Returns cross-provider model candidates as `(providerName, modelId)`
-  /// pairs, optionally filtered by a lowercase substring match on either
-  /// the provider name or the model id. The active provider is always
-  /// included, even when the registry has other saved providers.
-  List<(String, String)> _crossProviderCandidates([String filter = '']) {
-    final registryEntries = _collectRegistryCandidates();
-    final activeEntries = _activeProviderFallback();
-    final seen = <String>{};
-    final entries = <(String, String)>[
-      for (final e in [...registryEntries, ...activeEntries])
-        if (seen.add('${e.$1}|${e.$2}')) e,
-    ];
-    return _filterCandidates(entries, filter);
-  }
-
-  /// Collects `(provider, model)` pairs from all saved custom providers.
-  List<(String, String)> _collectRegistryCandidates() {
-    final registry = config.customProviders;
-    if (registry == null) return const [];
-    return [
-      for (final entry in registry.entries)
-        for (final modelId
-            in _allProvidersModelCache[entry.name] ?? [entry.modelId])
-          (entry.name, modelId),
-    ];
-  }
-
-  /// Fallback candidates from the active provider's known models.
-  List<(String, String)> _activeProviderFallback() {
-    final activeProvider = _agent.state.model.provider;
-    final activeName = _activeCustomName ?? activeProvider;
-    final known =
-        _allProvidersModelCache[activeName] ??
-        (_modelCache.isNotEmpty
-            ? _modelCache
-            : (_knownModels[activeProvider] ?? [_agent.state.model.id]));
-    return [for (final modelId in known) (activeProvider, modelId)];
-  }
-
-  /// Filters candidates by a lowercase substring, or returns all if empty.
-  List<(String, String)> _filterCandidates(
-    List<(String, String)> entries,
-    String filter,
-  ) {
-    if (filter.isEmpty) return entries;
-    final lower = filter.toLowerCase();
-    return entries
-        .where(
-          (e) =>
-              e.$1.toLowerCase().contains(lower) ||
-              e.$2.toLowerCase().contains(lower),
-        )
-        .toList();
-  }
-
-  /// refreshes the TUI picker if it is currently open. Failures are swallowed
-  /// so the UI keeps working with the hardcoded fallback list. When the
-  /// payload reports the active model's real context window, the model is
-  /// corrected (roles mode keeps the chain's configured window instead).
-  Future<void> _refreshModelCache() async {
-    if (_modelCacheFuture != null) return _modelCacheFuture!;
-    final completer = Completer<void>();
-    _modelCacheFuture = completer.future;
-    try {
-      final model = _agent.state.model;
-      if (model.api == 'openai-completions') {
-        final ids = await _fetchActiveProviderModels(model);
-        if (ids.isNotEmpty) {
-          _modelCache = ids;
-          _tuiController?.sendModelsRefresh();
-          if (config.modelRolesResolver == null) {
-            _applyDetectedContextWindow(model);
-            _applyDetectedMaxTokens(model);
-          }
-        }
-      }
-    } on Object {
-      // Swallowed: the cache keeps the fallback list; the UI still works.
-      // (Tests inject [AgentCliConfig.modelsFetcher] for deterministic lists;
-      // a dead endpoint returning HTML instead of JSON is the normal case.)
-    } finally {
-      _modelCacheFuture = null;
-      completer.complete();
-    }
-  }
-
-  /// Fetches the active provider's model ids through the shared dispatch
-  /// ([_fetchProviderModelIds]): CodeMie `/llm_models`, DIAL deployments,
-  /// everything else OpenAI `/models`.
-  Future<List<String>> _fetchActiveProviderModels(Model model) {
-    return _fetchProviderModelIds(model.provider, model.baseUrl, _apiKey);
-  }
-
-  /// Applies the endpoint-reported context window for [model] when it
-  /// differs from the carried one (called from [_refreshModelCache], which
-  /// skips both detections in roles mode — the chain's configured limits
-  /// win there).
-  void _applyDetectedContextWindow(Model model) {
-    final detected = _modelContextWindows[model.id];
-    if (detected != null && detected != model.contextWindow) {
-      _replaceModelLimits(contextWindow: detected);
-      io.writeln(_style.dim('model context window: $detected (from endpoint)'));
-    }
-  }
-
-  /// Applies the endpoint-reported max-tokens cap for [model] when it
-  /// differs from the carried one (see [_applyDetectedContextWindow]).
-  void _applyDetectedMaxTokens(Model model) {
-    final detectedCap = _modelMaxTokens[model.id];
-    if (detectedCap != null && detectedCap != model.maxTokens) {
-      _replaceModelLimits(maxTokens: detectedCap);
-      io.writeln(_style.dim('model max tokens: $detectedCap (from endpoint)'));
-    }
-  }
-
-  /// [fetchDialModelsInfo] wrapper for [_refreshModelCache]: records the
-  /// `features.cache` deployment set (drives [DialOptions.cacheMarkersSupported])
-  /// and the endpoint-reported limits (context window / max output from
-  /// `limits`, the MAXIMUM values — never the `defaults`), and answers the
-  /// plain id list. [apiKey] overrides the session key (the settings flows
-  /// resolve the TARGET provider's key, not the active connection's).
-  Future<List<String>> _fetchDialModelsAndFeatures(
-    String baseUrl, {
-    String? apiKey,
-  }) async {
-    final (ids, cacheSupported, windows, maxTokens) = await fetchDialModelsInfo(
-      baseUrl,
-      apiKey ?? _apiKey,
-      client: config.modelsHttpClient,
-    );
-    if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
-    if (windows.isNotEmpty) _modelContextWindows = windows;
-    if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
-    return ids;
-  }
-
-  Future<List<String>> _fetchOpenAiCompatibleModels(
-    String baseUrl, {
-    required String apiKey,
-  }) async {
-    final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
-    final uri = Uri.parse('$normalized/models');
-    final headers = <String, String>{'Accept': 'application/json'};
-    if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
-    try {
-      final response = await http
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return const [];
-      final (ids, windows, maxTokens) = parseModelsResponse(response.body);
-      _modelContextWindows = windows;
-      _modelMaxTokens = maxTokens;
-      return ids;
-    } on Object {
-      return const [];
-    }
-  }
-
-  /// Lists the known models for the active provider, optionally filtered by
-  /// [filter]. The output is numbered so `/model N` can pick one. For
-  /// OpenAI-compatible endpoints the list is fetched live from `/v1/models`
-  /// and cached.
-  Future<void> _listModels(String filter) async {
-    if (_modelCacheNeedsRefresh) {
-      await _refreshAllProvidersModelCache();
-    }
-    final entries = _crossProviderCandidates(filter);
-    if (entries.isEmpty) return io.writeln('no models available');
-    io.writeln('models (provider/model):');
-    _printNumberedModels(entries);
-    io.writeln('use /model <n> or /model <provider>/<id> to switch');
-  }
-
-  /// The numbered `(provider, model)` rows of the `/models` listing plus the
-  /// `_lastModelList` snapshot powering `/model <n>`.
-  void _printNumberedModels(List<(String, String)> entries) {
-    for (var i = 0; i < entries.length; i++) {
-      io.writeln('  ${i + 1}) ${entries[i].$1}/${entries[i].$2}');
-    }
-    _lastModelList = [for (final e in entries) '${e.$1}/${e.$2}'];
-  }
-
-  /// Returns the full list of known model ids for the active provider.
-  List<String> _listModelsForMenu() => _modelCandidates('');
-
-  /// Returns known model ids for the ACTIVE provider only (used by
-  /// `/model <id>` line-mode switches and the number picker). The TUI
-  /// picker uses [_crossProviderCandidates] instead for cross-provider.
-  List<String> _modelCandidates([String filter = '']) {
-    final provider = _agent.state.model.provider;
-    final activeName = _activeCustomName ?? provider;
-    final all =
-        _allProvidersModelCache[activeName] ??
-        (_modelCache.isNotEmpty
-            ? _modelCache
-            : (_knownModels[provider] ?? [_agent.state.model.id]));
-    if (filter.isEmpty) return all.toList();
-    final lower = filter.toLowerCase();
-    return all.where((id) => id.toLowerCase().contains(lower)).toList();
-  }
-
-  /// `/models [filter]` | `config` | `set <slot> <model> [baseUrl]` |
-  /// `remove <slot>` — a bare or filtered invocation lists the endpoint's
-  /// models; the `config`/`set`/`remove` subcommands show and manage the
-  /// media slot overrides of the `models:` config section (persisted by the
-  /// host).
-  Future<void> _handleModelsCommand(String rest) async {
-    final trimmed = rest.trim();
-    final split = trimmed.indexOf(RegExp(r'\s'));
-    final head = split < 0 ? trimmed : trimmed.substring(0, split);
-    final tail = split < 0 ? '' : trimmed.substring(split + 1).trim();
-    switch (head) {
-      case 'config':
-        _printModelsConfig();
-      case 'set':
-        _setModelsSlot(tail);
-      case 'remove':
-        _removeModelsSlot(tail);
-      default:
-        await _listModels(trimmed);
-    }
-  }
-
-  /// `/models config`: the effective models configuration — the main
-  /// connection, every media slot (override or main-connection fallback),
-  /// and the custom model definitions `/model <name>` can switch to.
-  void _printModelsConfig() {
-    final models = config.modelsConfig;
-    final current = _agent.state.model;
-    io.writeln(
-      'main connection: ${current.id} '
-      '(${current.provider} @ ${current.baseUrl})',
-    );
-    io.writeln('media slots (no override = main connection):');
-    for (final slot in mediaModelSlotIds) {
-      final override = models?.slots[slot];
-      if (override == null) {
-        io.writeln('  $slot: main connection');
-      } else {
-        final key = override.apiKeyName == null
-            ? ''
-            : ' · key: ${override.apiKeyName}';
-        io.writeln(
-          '  $slot: ${override.modelId} @ ${override.baseUrl} '
-          '(${override.providerKind})$key',
-        );
-      }
-    }
-    final custom = models?.custom ?? const <String, CustomModelDefinition>{};
-    if (custom.isEmpty) {
-      io.writeln(
-        'custom models: none (define under models.custom in '
-        '~/.fah/config.yaml)',
-      );
-    } else {
-      io.writeln('custom models (switch with /model <name>):');
-      for (final entry in custom.entries) {
-        final def = entry.value;
-        io.writeln(
-          '  ${entry.key}: ${def.model} (${def.provider} @ ${def.baseUrl})',
-        );
-      }
-    }
-    io.writeln(
-      _style.dim('persisted in the models: section of ~/.fah/config.yaml'),
-    );
-  }
-
-  /// `/models set <slot> <model> [baseUrl]`: pins one media slot to a model.
-  /// The base URL defaults to the main connection's endpoint; the provider
-  /// kind is always `openai-completions` (the media tools' wire format).
-  void _setModelsSlot(String args) {
-    final parts = args
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (parts.length < 2 || parts.length > 3) {
-      io.writeln('usage: /models set <slot> <model> [baseUrl]');
-      return;
-    }
-    final slot = parts[0];
-    if (!mediaModelSlotIds.contains(slot)) {
-      io.writeln(
-        'unknown slot: $slot (slots: ${mediaModelSlotIds.join(', ')})',
-      );
-      return;
-    }
-    final models = config.modelsConfig;
-    if (models == null) {
-      io.writeln('models config is unavailable on this host');
-      return;
-    }
-    final baseUrl = parts.length == 3 ? parts[2] : _agent.state.model.baseUrl;
-    models.setSlotOverride(
-      slot,
-      MediaSlotModelConfig(
-        providerKind: 'openai-completions',
-        baseUrl: baseUrl,
-        modelId: parts[1],
-      ),
-    );
-    io.writeln('slot $slot → ${parts[1]} @ $baseUrl (openai-completions)');
-    config.onModelsConfigChanged?.call();
-  }
-
-  /// `/models remove <slot>`: drops a media slot override, returning the
-  /// slot to the main-connection fallback.
-  void _removeModelsSlot(String slot) {
-    if (slot.isEmpty) {
-      io.writeln('usage: /models remove <slot>');
-      return;
-    }
-    if (!mediaModelSlotIds.contains(slot)) {
-      io.writeln(
-        'unknown slot: $slot (slots: ${mediaModelSlotIds.join(', ')})',
-      );
-      return;
-    }
-    final models = config.modelsConfig;
-    if (models == null) {
-      io.writeln('models config is unavailable on this host');
-      return;
-    }
-    if (!models.removeSlotOverride(slot)) {
-      io.writeln('no override for slot $slot');
-      return;
-    }
-    io.writeln('slot $slot → main connection');
-    config.onModelsConfigChanged?.call();
-  }
-
-  Future<void> _handleModelCommand(String rest) async {
-    final trimmed = rest.trim();
-    if (trimmed == '?') {
-      await _listModels('');
-      return;
-    }
-    if (trimmed.isEmpty) {
-      // Bare `/model` in TUI mode opens the interactive picker; in line mode
-      // it prints the active model and the roles overview.
-      final controller = _tuiController;
-      if (controller != null) {
-        controller.openModelMenu();
-        return;
-      }
-      await _switchModel('');
-      return;
-    }
-    if (await _switchModelByNumber(trimmed)) return;
-    // A custom model definition from the models: config section resolves
-    // before plain model ids (its provider/endpoint/token limits come from
-    // the definition, not the current connection).
-    final custom = config.modelsConfig?.custom[trimmed];
-    if (custom != null) {
-      await _switchToCustomModel(trimmed, custom);
-      return;
-    }
-    await _switchModel(trimmed);
-  }
-
-  /// The `/model N` branch of [_handleModelCommand]: resolves a 1-based
-  /// number against the last listed models. Returns true when [trimmed] was
-  /// a number (handled — valid pick or invalid-selection message).
-  Future<bool> _switchModelByNumber(String trimmed) async {
-    final number = int.tryParse(trimmed);
-    if (number == null) return false;
-    await _switchModelOrReport(number, _lastModelList ?? _listModelsForMenu());
-    return true;
-  }
-
-  /// Switches to list entry [number] (1-based) or reports the range error.
-  Future<void> _switchModelOrReport(int number, List<String> list) async {
-    if (number >= 1 && number <= list.length) {
-      await _switchModel(list[number - 1]);
-    } else {
-      io.writeln('invalid selection: $number (1-${list.length})');
-    }
-  }
-
-  /// `/model <name>` where [name] is a custom model definition from the
-  /// `models:` config section: switches provider, endpoint, and model in one
-  /// step. Roles mode pins the default chain; legacy mode rebuilds the
-  /// stream function like `/provider` (key resolves from the catalog env
-  /// names / secure store — never from the config file).
-  Future<void> _switchToCustomModel(
-    String name,
-    CustomModelDefinition def,
-  ) async {
-    // fromYaml validates the provider against the catalog.
-    final spec = catalogProvider(def.provider)!;
-    final rolesResolver = config.modelRolesResolver;
-    if (rolesResolver != null) {
-      rolesResolver.setDefaultChain([
-        ModelRef(
-          provider: spec.name,
-          modelId: def.model,
-          baseUrl: def.baseUrl,
-          contextWindow: def.contextWindow,
-          maxTokens: def.maxTokens,
-          // Keep the endpoint's scoped key on the pin (see _switchProvider).
-          apiKeyName: _rolesKeyNameFor(spec.name, def.baseUrl),
-        ),
-      ]);
-      rolesResolver.applyToAgent(_agent);
-      _streamFunction = _agent.streamFunction;
-    } else {
-      final key = _providerKeyFor(spec, def.baseUrl) ?? '';
-      _providerKind = spec.kind;
-      _apiKey = key;
-      _explicitToken = false;
-      _streamFunction = _catalogStreamFunction(spec.kind, key);
-      _agent.streamFunction = _streamFunction;
-      final built = buildCatalogModel(
-        spec.name,
-        def.model,
-        baseUrl: def.baseUrl,
-        contextWindow: def.contextWindow,
-        maxTokens: def.maxTokens,
-      );
-      final modalities = def.input;
-      _agent.state.model = modalities == null
-          ? built
-          : Model(
-              id: built.id,
-              name: built.name,
-              api: built.api,
-              provider: built.provider,
-              baseUrl: built.baseUrl,
-              reasoning: built.reasoning,
-              input: modalities,
-              cost: built.cost,
-              contextWindow: built.contextWindow,
-              maxTokens: built.maxTokens,
-              headers: built.headers,
-              compat: built.compat,
-            );
-    }
-    _activeCustomName = null;
-    // The cached model list belongs to the previous provider/endpoint.
-    _modelCache = const [];
-    _modelContextWindows = const {};
-    _modelMaxTokens = const {};
-    _lastModelList = null;
-    unawaited(_refreshModelCache());
-    await _session?.appendModelChange(provider: spec.name, modelId: def.model);
-    io.writeln('switched model to $name (${def.model} @ ${def.baseUrl})');
-    if (rolesResolver == null) {
-      io.writeln('  ${_providerKeyLine(spec, def.baseUrl, explicit: false)}');
-    }
-    config.onModelChanged?.call(_agent.state.model);
-  }
-
-  Future<void> _switchModel(String modelId) async {
-    final current = _agent.state.model;
-    final rolesResolver = config.modelRolesResolver;
-    if (modelId.isEmpty) {
-      io.writeln('model: ${current.id} (${current.api})');
-      if (rolesResolver != null) io.writeln(rolesResolver.describeRoles());
-      return;
-    }
-    // An endpoint-reported window/cap beats the carried one (the catalog
-    // defaults) when the id is known to /models.
-    final window = _modelContextWindows[modelId] ?? current.contextWindow;
-    final cap = _modelMaxTokens[modelId] ?? current.maxTokens;
-    if (rolesResolver != null) {
-      // Roles mode: pin the default role to the requested model id on the
-      // current provider (a single-entry chain for this session). The
-      // endpoint's scoped key name rides along (see _switchProvider).
-      rolesResolver.setDefaultChain([
-        ModelRef(
-          provider: current.provider,
-          modelId: modelId,
-          baseUrl: current.baseUrl,
-          contextWindow: window,
-          maxTokens: cap,
-          apiKeyName: _rolesKeyNameFor(current.provider, current.baseUrl),
-        ),
-      ]);
-      rolesResolver.applyToAgent(_agent);
-      _streamFunction = _agent.streamFunction;
-      await _session?.appendModelChange(
-        provider: current.provider,
-        modelId: modelId,
-      );
-      io.writeln('switched model to $modelId');
-      // _recordCustomModel persists via its own onModelChanged (the
-      // per-provider model memory write must survive restarts even when
-      // nothing else changed).
-      _recordCustomModel(modelId);
-      return;
-    }
-    _agent.state.model = Model(
-      id: modelId,
-      name: modelId,
-      api: current.api,
-      provider: current.provider,
-      baseUrl: current.baseUrl,
-      reasoning: current.reasoning,
-      // The endpoint exposes no modality metadata — recompute from the
-      // shared vision heuristic instead of carrying the previous model's
-      // modalities (a text-only pick would otherwise keep claiming image
-      // support, and vice versa).
-      input: inputModalitiesFor(modelId),
-      cost: current.cost,
-      contextWindow: window,
-      maxTokens: cap,
-      headers: current.headers,
-      compat: current.compat,
-    );
-    await _session?.appendModelChange(
-      provider: current.provider,
-      modelId: modelId,
-    );
-    io.writeln('switched model to $modelId');
-    _recordCustomModel(modelId);
-    config.onModelChanged?.call(_agent.state.model);
-  }
-
-  /// `/model-edit [contextWindow|maxTokens <n>]`: shows or overrides the
-  /// active model's token limits for this session (persist per chain via
-  /// roles yaml `contextWindow:`/`maxTokens:`). Bare in TUI mode opens an
-  /// interactive two-step picker (field → preset/custom value).
-  Future<void> _handleModelEdit(String rest) async {
-    final args = _splitCommandArgs(rest);
-    if (args.isNotEmpty) return _applyModelEditArg(args);
-    await _showModelEditDefault();
-  }
-
-  /// Bare `/model-edit`: the TUI two-step picker, or the line-mode limits.
-  Future<void> _showModelEditDefault() async {
-    if (_useTui && _tuiController != null) {
-      await _modelEditInteractive();
-    } else {
-      _printModelLimits();
-    }
-  }
-
-  /// Splits a command's rest into non-empty whitespace-separated tokens.
-  List<String> _splitCommandArgs(String rest) => rest
-      .trim()
-      .split(RegExp(r'\s+'))
-      .where((part) => part.isNotEmpty)
-      .toList();
-
-  /// Bare `/model-edit`: the active model's token limits and the setter
-  /// usage hint.
-  void _printModelLimits() {
-    final current = _agent.state.model;
-    io.writeln(
-      'model ${current.id}: contextWindow ${current.contextWindow} · '
-      'maxTokens ${current.maxTokens}',
-    );
-    io.writeln(
-      _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
-    );
-  }
-
-  /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
-  /// (1) which field to edit (context window or max output tokens),
-  /// (2) a standard preset list plus a "Custom…" free-text entry. The
-  /// picked value is applied via [_replaceModelLimits]. Cancelling either
-  /// step aborts without changes.
-  /// `/model-edit` TUI interactive: delegates to the pure [interactiveModelEdit]
-  /// with the live controller + model.
-  Future<void> _modelEditInteractive() => interactiveModelEdit(
-    current: _agent.state.model,
-    prompt: _tuiController!.openPrompt,
-    onResult: io.writeln,
-    onApply: _replaceModelLimitsFromEdit,
-  );
-
-  /// Adapts [interactiveModelEdit]'s apply callback to [_replaceModelLimits].
-  void _replaceModelLimitsFromEdit({
-    required bool isContext,
-    required int value,
-  }) {
-    _replaceModelLimits(
-      contextWindow: isContext ? value : null,
-      maxTokens: isContext ? null : value,
-    );
-  }
-
-  /// `/model-edit <contextWindow|maxTokens> <n>`: validates the value and
-  /// applies the override.
-  void _applyModelEditArg(List<String> args) {
-    final value = args.length == 2 ? int.tryParse(args[1]) : null;
-    if (args.length != 2 || value == null || value <= 0) {
-      io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
-      return;
-    }
-    _applyModelLimitEdit(args[0], value);
-  }
-
-  /// Applies a validated `/model-edit` limit override by field name.
-  void _applyModelLimitEdit(String field, int value) {
-    switch (field) {
-      case 'contextWindow':
-        _replaceModelLimits(contextWindow: value);
-        io.writeln('model context window set to $value');
-      case 'maxTokens':
-        _replaceModelLimits(maxTokens: value);
-        io.writeln('model max tokens set to $value');
-      default:
-        io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
-    }
-  }
-
-  /// Rebuilds the active model with new token limits, preserving every other
-  /// field (endpoint detection and `/model-edit`).
-  void _replaceModelLimits({int? contextWindow, int? maxTokens}) {
-    final current = _agent.state.model;
-    _agent.state.model = Model(
-      id: current.id,
-      name: current.name,
-      api: current.api,
-      provider: current.provider,
-      baseUrl: current.baseUrl,
-      reasoning: current.reasoning,
-      input: current.input,
-      cost: current.cost,
-      contextWindow: contextWindow ?? current.contextWindow,
-      maxTokens: maxTokens ?? current.maxTokens,
-      headers: current.headers,
-      compat: current.compat,
-    );
-    config.onModelChanged?.call(_agent.state.model);
-  }
-}
-
-/// Known model ids shown by `/models` and the `/model` picker. Maps the
-/// provider name stored on the active [Model] to a short, useful subset.
-const _knownModels = <String, List<String>>{
-  'openrouter': [
-    'anthropic/claude-sonnet-4',
-    'openai/gpt-4o-mini',
-    'google/gemini-2.5-pro',
-    'anthropic/claude-opus-4',
-    'openai/gpt-4.1-mini',
-  ],
-  'kimi': ['k3', 'kimi-for-coding', 'kimi-for-coding-highspeed', 'k3-256k'],
-  'anthropic': ['claude-sonnet-4-5', 'claude-opus-4', 'claude-haiku-4'],
-  'google': ['gemini-2.5-pro', 'gemini-2.0-flash'],
-  'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
-};
-
-/// Formats a token count as a compact preset label (`4K`, `16K`, `1M`).
-String formatTokenPreset(int tokens) {
-  if (tokens >= 1048576 && tokens % 1048576 == 0) {
-    return '${tokens ~/ 1048576}M';
-  }
-  if (tokens >= 1024 && tokens % 1024 == 0) {
-    return '${tokens ~/ 1024}K';
-  }
-  return '$tokens';
-}
-
-/// Parses a compact preset label (`4K`, `16K`, `1M`) back to tokens.
-int parseTokenPreset(String label) {
-  final trimmed = label.trim();
-  final match = RegExp(
-    r'^(\d+)([KM])?$',
-    caseSensitive: false,
-  ).firstMatch(trimmed);
-  if (match == null) return int.tryParse(trimmed) ?? 0;
-  final base = int.parse(match.group(1)!);
-  final suffix = match.group(2)?.toUpperCase();
-  return switch (suffix) {
-    'K' => base * 1024,
-    'M' => base * 1048576,
-    _ => base,
-  };
-}
-
-/// Parses a `(empty = X):` or `(empty keeps 'X'):` hint from [question],
-/// returning `X` so the TUI prompt can show it as the default value, or
-/// null when no default hint is present.
-String? extractDefaultValue(String question) {
-  final match = RegExp(r'\(empty\s*=\s*(.+?)\)').firstMatch(question);
-  if (match != null) return match.group(1)!.trim();
-  final keeps = RegExp(r"\(empty\s*keeps\s*'(.+?)'\)").firstMatch(question);
-  if (keeps != null) return keeps.group(1)!.trim();
-  return null;
-}
-
-/// Testable core of the TUI key-set flow: prompts for name (when [name] is
-/// null) and a masked value through [prompt], validates, saves to [keys],
-/// and reports the outcome through [onResult]. The freshly saved key is
-/// handed to [onSaved] for immediate provider pickup.
-Future<void> interactiveKeySet({
-  required String? name,
-  required SecureKeyCache keys,
-  required void Function(String name, String value)? onSecretStored,
-  required Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  required void Function(String message) onResult,
-  required void Function(String name, String value) onSaved,
-}) async {
-  final keyNamePattern = RegExp(r'^[A-Za-z0-9_]+$');
-  final keyName = await promptTextTui(
-    prompt,
-    name,
-    header: 'Key',
-    question: 'Key name (UPPER_SNAKE or [A-Za-z0-9_]+):',
-  );
-  if (keyName == null) return;
-  if (!keyNamePattern.hasMatch(keyName)) {
-    onResult('invalid key name: $keyName');
-    return;
-  }
-  final value = await promptTextTui(
-    prompt,
-    null,
-    header: 'Key',
-    question: 'Value for $keyName:',
-    secret: true,
-  );
-  if (value == null || value.isEmpty) {
-    onResult('cancelled');
-    return;
-  }
-  if (!await keys.save(keyName, value)) {
-    onResult('could not save $keyName');
-    return;
-  }
-  onSecretStored?.call(keyName, value);
-  onResult('saved $keyName to ${keys.label}');
-  onSaved(keyName, value);
-}
-
-/// Opens a [TextPromptSpec] through [prompt] and returns the trimmed text
-/// answer. Returns [initial] as-is when provided (no prompt needed), or
-/// null on cancel/unexpected result.
-Future<String?> promptTextTui(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  String? initial, {
-  required String header,
-  required String question,
-  bool secret = false,
-}) async {
-  if (initial != null) return initial;
-  final result = await prompt(
-    TextPromptSpec(header: header, question: question, secret: secret),
-  );
-  if (result == null || result is! TextPromptAnswer) return null;
-  return result.value.trim();
-}
-
-/// Testable core of the TUI model-edit flow. Prompts for field (context
-/// window vs max tokens), then a preset or custom value, and calls [onApply]
-/// with the result. Reports messages through [onResult].
-Future<void> interactiveModelEdit({
-  required Model current,
-  required Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  required void Function(String message) onResult,
-  required void Function({required bool isContext, required int value}) onApply,
-}) async {
-  final isContext = await pickModelEditField(prompt, current);
-  if (isContext == null) return;
-
-  final value = await pickModelEditValue(prompt, isContext, onResult);
-  if (value == null) return;
-
-  onApply(isContext: isContext, value: value);
-  onResult('${isContext ? 'context window' : 'max tokens'} set to $value');
-}
-
-/// Step 1: picks which field to edit (null on cancel).
-Future<bool?> pickModelEditField(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  Model current,
-) async {
-  final result = await prompt(
-    AskPromptSpec(
-      header: 'Model Edit',
-      question: 'Which limit to edit?',
-      index: 0,
-      total: 1,
-      options: [
-        AskOption(
-          label: 'Context Window',
-          description: 'Current: ${current.contextWindow}',
-        ),
-        AskOption(
-          label: 'Max Output Tokens',
-          description: 'Current: ${current.maxTokens}',
-        ),
-      ],
-    ),
-  );
-  if (result == null || result is! AskPromptAnswer) return null;
-  return result.value.selected.first.contains('Context');
-}
-
-/// Step 2: picks a preset value or enters a custom one (null on cancel).
-Future<int?> pickModelEditValue(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  bool isContext,
-  void Function(String message) onResult,
-) async {
-  final presets = isContext
-      ? [4096, 8192, 16384, 32768, 65536, 131072, 204800, 1048576]
-      : [4096, 8192, 16384, 32768, 65536];
-  final result = await prompt(
-    AskPromptSpec(
-      header: 'Model Edit',
-      question: '${isContext ? 'Context window' : 'Max tokens'} size:',
-      index: 0,
-      total: 1,
-      options: [
-        for (final p in presets) AskOption(label: formatTokenPreset(p)),
-        const AskOption(
-          label: 'Custom…',
-          description: 'Enter a number manually',
-        ),
-      ],
-    ),
-  );
-  if (result == null || result is! AskPromptAnswer) return null;
-  final picked = result.value.selected.first;
-  if (picked != 'Custom…') return parseTokenPreset(picked);
-  return _pickCustomTokenValue(prompt, onResult);
-}
-
-Future<int?> _pickCustomTokenValue(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  void Function(String message) onResult,
-) async {
-  final textResult = await prompt(
-    const TextPromptSpec(
-      header: 'Model Edit',
-      question: 'Enter value (tokens):',
-    ),
-  );
-  if (textResult == null || textResult is! TextPromptAnswer) return null;
-  final value = int.tryParse(textResult.value.trim()) ?? 0;
-  if (value <= 0) {
-    onResult('invalid value');
-    return null;
-  }
-  return value;
 }

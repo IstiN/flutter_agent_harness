@@ -71,6 +71,7 @@ AgentService _fakeService(ExecutionEnv env) {
       streamFunction: _singleTextResponse('ok'),
       toolRegistry: ToolRegistry(const []),
     ),
+    watchExternalSessions: false,
     env: env,
     sessionsRoot: '/sessions',
     config: AgentConfig(
@@ -192,6 +193,9 @@ void main() {
         wrap: (child) => child,
       );
       await expectGolden(tester, 'chat_conversation_light');
+      // The chat list's initial scroll-to-end timer fires post-snapshot;
+      // pump it out so no FakeTimer stays pending at teardown.
+      await tester.pumpAndSettle();
     });
 
     testWidgets('hero: conversation with sidebar, tool call, code block, '

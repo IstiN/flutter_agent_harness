@@ -188,6 +188,9 @@ factual: paths, commands, invariants — no essays.
   subagents, other Fa instances sharing the root) owns a file inbox behind
   the isolated `MessagingRepository` interface (send/peek/drain/directory —
   future DB/network impls drop in without caller changes).
+  `AgentMessage.kind` distinguishes agent chat from `user` input handed
+  over by an attached client (the Fa app's attach view; the CLI delivers
+  it as `[from app] …`, its own words, not agent chat).
   `FileMessagingRepository` over `ExecutionEnv`:
   `<root>/<agent>/inbox|read/<id>.json`, timestamp-ordered names, sanitized
   agent dirs, torn writes skipped. `SubagentManager.messaging` routes
@@ -210,6 +213,26 @@ factual: paths, commands, invariants — no essays.
   UI: `/agents` rows show a `mail:N` pending marker (the CLI
   font has no ✉ glyph), the app's AgentsSection shows `✉N`; observe/detail
   views list the pending inbox.
+- `lib/src/session/attach/` — attached-session infrastructure (the Fa app
+  watching a live `fa` CLI session 1:1 and handing it input): three
+  INTERFACES so a later network impl (`fa serve --attach`, remote headless)
+  drops in without touching consumers — `SessionPresenceStore`
+  (register/touch/unregister/list; stale heartbeats auto-drop, crash
+  coverage), `SessionEventSource.watch` (transcript tail as
+  `AttachedMessage` rows: user/assistant/tool), `SessionInputChannel.send`
+  (user input to the owning process). File impls:
+  `FileSessionPresenceStore` (`<sessionsRoot>/.presence/<id>.json`,
+  15s staleness) and `FileSessionEventSource` (JSONL tail via
+  `readTextLines` deltas) + `FileSessionInputChannel` (fabric mail,
+  `AgentMessageKind.user`, to `<sessionId>/main`). CLI wiring: `run()`
+  registers presence, the 2s inbox timer touches it every other tick,
+  `finally` unregisters; `AgentCliConfig.presenceStore` is injectable
+  (bin/fah.dart builds the file store; tests inject fakes). CLI sessions
+  carry `agent: cli` metadata (the app writes `fa`). App wiring:
+  `CliSessionPresence` service (3s poll) + green-dot `live` on
+  `SessionTile`; a live tap in the chat-sheet drawer opens
+  `AttachedSessionScreen` (controller `attached_session_controller.dart`)
+  instead of a second writer on the same JSONL.
 - `lib/src/memory/` — long-term memory: `MemoryController` over the
   `flutter_agent_memory` package (hosted pub.dev dep),
   `execution_env_kb_storage` (KbStorage → ExecutionEnv), `memory_add`/
@@ -245,7 +268,36 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/cli/` — REPL machinery: `/provider [name] [baseUrl] [token] |
   custom` (guided wizard in `provider_flow.dart` + `provider_commands.dart`;
   `/models` fetched for openai-like endpoints), custom providers in the
-  `customProviders:` section of `~/.fah/config.yaml`. `/models` also manages
+  `customProviders:` section of `~/.fah/config.yaml`. Editing a saved
+  OAuth-connected entry (OpenRouter) offers the connect-time sign-in choice
+  at the key step — keep / Browser OAuth re-auth / paste a key
+  (`CustomProviderFlowConfig.reauth`). The same picker appears for
+  CodeMie entries in edit mode (matched by the `/code-assistant-api/`
+  URL marker — works for legacy entries whose `authMethod` was never
+  recorded): `Browser SSO (CodeMie)` (`_mintCodeMieSsoCookie`); the
+  wizard applies the minted value through format-aware switch routing
+  (`isCodeMieJwtToken` decides SSO-cookie vs JWT-Bearer) so the cookie
+  stays a `cookie:` header (not Bearer) and the JWT keeps its Bearer
+  slot. Every add/connect flow that saves a
+  registry entry offers a provider-name step (`_askConnectProviderName`:
+  typed value, else the endpoint host; a clash with a DIFFERENT endpoint
+  retries, and so does a name matching a CATALOG provider — `/provider
+  kimi` routes to the catalog before the registry lookup, so such an
+  entry would be unreachable) — the custom wizard, DIAL (custom names
+  scope the store key; the switch stores under the entry's slot via
+  `tokenKeyName`), Kimi (a typed key becomes a named
+  entry with a name-scoped key; a resolved key offers "use it / add a
+  second account"), OpenRouter OAuth + API-key, ChatGPT OAuth (lands a
+  registry entry too, `apiType: chatgpt`), CodeMie SSO/JWT (the
+  SSO name step only from the explicit add flows: `offerName` — automatic
+  re-authorizations on startup/switch/mid-stream expiry stay silent; a
+  NEW account name re-runs the guided project → model pick, a re-login
+  to the same entry keeps its model).
+  Saved-entry lookups are by base URL (`_entryForBaseUrl`), so a renamed
+  entry is not duplicated on re-connect. Catalog switches RESET
+  `_activeCustomName` (kimi/openrouter stored-key branches included) —
+  a leaked marker made `/model` rewrite the previous custom entry's
+  model memory. `/models` also manages
   the `models:` section: `/models config`/`set <slot> <model> [baseUrl]`/
   `remove <slot>` for media slot overrides (persisted via
   `onModelsConfigChanged`), and `/model <name>` resolves `models.custom`
@@ -264,6 +316,12 @@ factual: paths, commands, invariants — no essays.
   type-to-filter + backspace (generic ones filter their static item list
   locally via `menuAllItems`, the models picker rebuilds through
   `buildModelMenu`; a no-match filter keeps the title + `(no matches)`).
+  The `/model` TUI menu is TWO-STEP when several providers exist:
+  `_buildModelMenu` returns provider rows (`@<name>` keys, the filter
+  matches provider names AND their model ids) first, and selecting one
+  opens that provider's model list (generic `modelProvider` picker whose
+  `provider|model` rows route back through `_tuiSelectModel`'s
+  cross-provider switch). A single provider goes straight to its models.
   The provider→model pick flows live in `lib/src/cli/settings_flow.dart` in the
   NAMED `SettingsFlow` extension (public `runProviderModelFlow`/
   `startChatModelFlow`/`startMediaSlotFlow`/`startAgentModelFlow`), so

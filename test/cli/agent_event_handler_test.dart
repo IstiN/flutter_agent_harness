@@ -27,8 +27,8 @@ void main() {
         onMessageLifecycle: (m, {required start}) =>
             calls.add((message: m, start: start)),
         onMessageUpdate: (_) => fail('unexpected update'),
-        onToolExecutionStart: (_, __) => fail('unexpected tool start'),
-        onToolExecutionEnd: (_, __, {required isError}) =>
+        onToolExecutionStart: (_, _) => fail('unexpected tool start'),
+        onToolExecutionEnd: (_, _, {required isError}) =>
             fail('unexpected tool end'),
         onTurnEnd: (_) => fail('unexpected turn end'),
       );
@@ -37,8 +37,8 @@ void main() {
         onMessageLifecycle: (m, {required start}) =>
             calls.add((message: m, start: start)),
         onMessageUpdate: (_) => fail('unexpected update'),
-        onToolExecutionStart: (_, __) => fail('unexpected tool start'),
-        onToolExecutionEnd: (_, __, {required isError}) =>
+        onToolExecutionStart: (_, _) => fail('unexpected tool start'),
+        onToolExecutionEnd: (_, _, {required isError}) =>
             fail('unexpected tool end'),
         onTurnEnd: (_) => fail('unexpected turn end'),
       );
@@ -69,8 +69,8 @@ void main() {
         onMessageLifecycle: (_, {required start}) =>
             fail('unexpected lifecycle'),
         onMessageUpdate: events.add,
-        onToolExecutionStart: (_, __) => fail('unexpected tool start'),
-        onToolExecutionEnd: (_, __, {required isError}) =>
+        onToolExecutionStart: (_, _) => fail('unexpected tool start'),
+        onToolExecutionEnd: (_, _, {required isError}) =>
             fail('unexpected tool end'),
         onTurnEnd: (_) => fail('unexpected turn end'),
       );
@@ -138,8 +138,8 @@ void main() {
         onMessageLifecycle: (_, {required start}) =>
             fail('unexpected lifecycle'),
         onMessageUpdate: (_) => fail('unexpected update'),
-        onToolExecutionStart: (_, __) => fail('unexpected tool start'),
-        onToolExecutionEnd: (_, __, {required isError}) =>
+        onToolExecutionStart: (_, _) => fail('unexpected tool start'),
+        onToolExecutionEnd: (_, _, {required isError}) =>
             fail('unexpected tool end'),
         onTurnEnd: (m) => seen = m,
       );

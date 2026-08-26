@@ -26,6 +26,29 @@ class AppLocalizationsRu extends AppLocalizations {
   String get approvalDeny => 'Запретить';
 
   @override
+  String get attachedEmpty => 'Сообщений пока нет — напишите ниже';
+
+  @override
+  String get attachedToCli => 'подключено к fa cli';
+
+  @override
+  String get sendToCli => 'Сообщение в сессию fa cli…';
+
+  @override
+  String get sessionFolderPersonal => 'Личное';
+
+  @override
+  String get sessionInfoNameLabel => 'Имя сессии';
+
+  @override
+  String get newSessionFolderTitle => 'Новая сессия — папка';
+
+  @override
+  String newSessionCurrentFolder(Object folder) {
+    return 'Текущая папка ($folder)';
+  }
+
+  @override
   String get approvalModeAlwaysAsk => 'Всегда спрашивать';
 
   @override
@@ -1356,7 +1379,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get bootstrapRetry => 'Повторить';
 
   @override
-  String get workspaceDialogTitle => 'Рабочая папка';
+  String get workspaceDialogTitle => 'Сессия';
 
   @override
   String get workspaceDialogChangeFolder => 'Сменить папку…';
@@ -1368,7 +1391,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get workspaceDialogClose => 'Закрыть';
 
   @override
-  String get workspaceDialogCurrentFolder => 'Текущая папка';
+  String get workspaceDialogCurrentFolder => 'Папка сессии';
 
   @override
   String get workspaceDialogHostPath => 'Путь на хосте';

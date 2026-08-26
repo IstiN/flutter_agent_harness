@@ -276,6 +276,7 @@ final class SubagentManager {
             text: m.text,
             sentAt: m.sentAt,
             hops: m.hops,
+            isUserInput: m.kind == AgentMessageKind.user,
           ),
       ];
     }

@@ -1064,8 +1064,13 @@ void main() {
           () => io.out.toString().contains('authorization code:'),
         );
         io.sendLine('auth-code-123');
+        // First connect offers the provider-name step every add flow has.
         await waitForIt(
-          () => io.out.toString().contains('OpenRouter authorized'),
+          () => io.out.toString().contains('provider name [openrouter.ai]'),
+        );
+        io.sendLine(''); // keep the host-derived default name
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to openrouter'),
         );
         io.sendLine('/provider');
         await waitForIt(() => io.out.toString().contains('saved providers:'));
@@ -1083,6 +1088,48 @@ void main() {
         expect(io.out.toString(), contains('openrouter.ai —'));
       },
     );
+
+    test('openrouter oauth lets the user name the saved entry', () async {
+      // Every add flow offers a display name; a custom one distinguishes
+      // accounts in the /provider picker. The key stays endpoint-scoped.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        openRouterOAuthExchangeFn:
+            ({
+              required String code,
+              required String codeVerifier,
+              String? label,
+            }) async => const OpenRouterOAuthKey(key: 'sk-or-9'),
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider openrouter oauth headless');
+      await waitForIt(() => io.out.toString().contains('authorization code:'));
+      io.sendLine('auth-code-123');
+      await waitForIt(
+        () => io.out.toString().contains('provider name [openrouter.ai]'),
+      );
+      io.sendLine('my-or');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to openrouter'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final entry = registry.find('my-or');
+      expect(entry, isNotNull, reason: 'saved under the typed name');
+      expect(entry!.baseUrl, 'https://openrouter.ai/api/v1');
+      expect(store.map[entry.keyName], 'sk-or-9');
+      expect(registry.find('openrouter.ai'), isNull, reason: 'no duplicate');
+    });
 
     test(
       '/provider openrouter picker offers the already-stored key first',
@@ -1212,10 +1259,12 @@ void main() {
         final store = FakeSecureKeyStore();
         final cache = SecureKeyCache(store);
         await cache.probe();
+        final registry = CustomProviderRegistry([]);
         final cli = cliFor(
           fake.call,
           envVarValue: (_) => null,
           secureKeys: cache,
+          customProviders: registry,
           chatGptOAuthExchangeFn:
               ({
                 required String code,
@@ -1253,6 +1302,12 @@ void main() {
         io.sendLine(
           'http://127.0.0.1:1455/auth/callback?code=auth-code-xyz&state=$state',
         );
+        // The connect flow asks for the provider name like every other
+        // add flow; a typed name lands the account in the registry.
+        await waitForIt(
+          () => io.out.toString().contains('provider name [chatgpt.com]'),
+        );
+        io.sendLine('my-chatgpt');
         await waitForIt(
           () => io.out.toString().contains('switched provider to chatgpt'),
         );
@@ -1266,6 +1321,11 @@ void main() {
         expect(stored, contains('"access_token":"at-123"'));
         expect(stored, contains('"refresh_token":"rt-123"'));
         expect(stored, contains('"chatgpt_account_id":"acc-123"'));
+        // The account shows in /provider as a saved entry.
+        final entry = registry.find('my-chatgpt');
+        expect(entry, isNotNull);
+        expect(entry!.apiType, 'chatgpt');
+        expect(entry.keyName, 'CHATGPT_OAUTH_CREDENTIALS');
         expect(cli.agent.state.model.provider, 'chatgpt');
         expect(cli.providerKind, 'chatgpt-codex');
       },
@@ -1392,6 +1452,48 @@ void main() {
       },
     );
 
+    test('a custom dial name scopes the store key (second org)', () async {
+      // Regression: two dial orgs on the same host shared one
+      // endpoint-scoped key slot — the second setup overwrote the first
+      // org's key. A custom (non-host) name now scopes the slot.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider dial setup');
+      await waitForIt(() => io.out.toString().contains('base URL [https://'));
+      io.sendLine('');
+      await waitForIt(() => io.out.toString().contains('DIAL API key'));
+      io.sendLine('dial-key-2');
+      await waitForIt(
+        () => io.out.toString().contains('deployment (model id)'),
+      );
+      io.sendLine('gpt-4o');
+      await waitForIt(() => io.out.toString().contains('provider name'));
+      io.sendLine('dial-work');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to dial'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final entry = registry.find('dial-work');
+      expect(entry, isNotNull);
+      // Custom name → name-scoped slot, NOT the host-scoped one.
+      expect(entry!.keyName, 'FA_KEY_AI_PROXY_LAB_EPAM_COM_DIAL_WORK');
+      expect(store.map[entry.keyName], 'dial-key-2');
+      expect(store.map['FA_KEY_AI_PROXY_LAB_EPAM_COM'], isNull);
+    });
+
     test('/provider dial setup rejects extra args', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
@@ -1435,18 +1537,27 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider codemie sso');
+        // First login offers the provider-name step every add flow has.
+        await waitForIt(
+          () => io.out.toString().contains(
+            'provider name [codemie.lab.epam.com]',
+          ),
+        );
+        io.sendLine('my-codemie');
         await waitForIt(() => io.out.toString().contains('saved provider'));
         io.sendLine('/exit');
         await run;
 
         final output = io.out.toString();
         expect(output, contains('CodeMie session expires'));
-        final entry = registry.find('codemie.lab.epam.com');
-        expect(entry, isNotNull);
+        final entry = registry.find('my-codemie');
+        expect(entry, isNotNull, reason: 'saved under the typed name');
         expect(
           entry!.baseUrl,
           'https://codemie.lab.epam.com/code-assistant-api/v1',
         );
+        // A custom name scopes the store key (name-scoped slot).
+        expect(entry.keyName, 'FA_KEY_CODEMIE_LAB_EPAM_COM_MY_CODEMIE');
         // The full cookie string is stored as the key.
         expect(store.map[entry.keyName], '_oauth2_proxy=proxy-val;session=s-1');
         expect(cli.providerKind, 'openai-completions');
@@ -1486,6 +1597,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie sso');
+      // Explicit connect always offers the provider-name step — Enter
+      // here keeps the existing entry (same-account cookie refresh).
+      await waitForIt(
+        () =>
+            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
+      );
+      io.sendLine('');
       await waitForIt(() => io.out.toString().contains('saved provider'));
       io.sendLine('/exit');
       await run;
@@ -1494,6 +1612,111 @@ void main() {
       expect(registry.entries, hasLength(1));
       expect(registry.entries.single.modelId, 'codemie-model-1');
       expect(cli.agent.state.model.id, 'codemie-model-1');
+    });
+
+    test(
+      're-login finds a renamed entry by base URL and keeps its name',
+      () async {
+        // The entry lookup is by base URL, not the derived host name — a
+        // user-renamed entry must not duplicate on re-login; the name
+        // prompt is offered, Enter keeps it.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'work-codemie',
+            apiType: 'openai',
+            baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+            modelId: 'codemie-model-1',
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          customProviders: registry,
+          codeMieSsoAuthenticateFn: (url, onStatus) async {
+            return const CodeMieSsoCredentials(
+              cookies: {'_oauth2_proxy': 'new-val'},
+              apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+              expiresAt: 9999999999999,
+            );
+          },
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider codemie sso');
+        await waitForIt(
+          () => io.out.toString().contains('provider name [work-codemie]'),
+        );
+        io.sendLine('');
+        await waitForIt(() => io.out.toString().contains('saved provider'));
+        io.sendLine('/exit');
+        await run;
+
+        expect(registry.entries, hasLength(1), reason: 'no duplicate entry');
+        expect(registry.entries.single.name, 'work-codemie');
+        expect(registry.entries.single.modelId, 'codemie-model-1');
+      },
+    );
+
+    test('/provider codemie sso with an existing entry asks for a name '
+        'so a second account gets its own entry', () async {
+      // User scenario: first codemie account saved, then adding a
+      // SECOND one with a different enterprise profile. The explicit
+      // connect flow must ask for a name — a typed name becomes a
+      // SEPARATE entry, Enter keeps the existing one.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'codemie.lab.epam.com',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'codemie-model-1',
+        ),
+      ]);
+      var guidedSetupCalls = 0;
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+        codeMieSsoAuthenticateFn: (url, onStatus) async {
+          return const CodeMieSsoCredentials(
+            cookies: {'_oauth2_proxy': 'profile-2'},
+            apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+            expiresAt: 9999999999999,
+          );
+        },
+        codeMieGuidedSetupFn: (apiBase, cookie, pickOption, askLine) async {
+          guidedSetupCalls++;
+          return 'codemie-model-2';
+        },
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider codemie sso');
+      await waitForIt(
+        () =>
+            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
+      );
+      io.sendLine('work');
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      // Two entries: the original kept, a new 'work' entry for the
+      // second account.
+      expect(registry.entries, hasLength(2));
+      expect(registry.find('codemie.lab.epam.com'), isNotNull);
+      final work = registry.find('work');
+      expect(work, isNotNull);
+      // A NEW account runs its own project → model pick (the profile
+      // selection the CodeMie flow asks for), so its model is the guided
+      // setup's choice, not the first account's.
+      expect(guidedSetupCalls, 1);
+      expect(work!.modelId, 'codemie-model-2');
+      expect(registry.find('codemie.lab.epam.com')!.modelId, 'codemie-model-1');
+      // The new entry's key is name-scoped — the existing entry's slot
+      // is untouched.
+      expect(work.keyName, 'FA_KEY_CODEMIE_LAB_EPAM_COM_WORK');
     });
 
     test(
@@ -1661,6 +1884,12 @@ void main() {
         );
         await waitForIt(() => io.out.toString().contains('CodeMie model'));
         io.sendLine('1'); // pick codemie-model-jwt
+        await waitForIt(
+          () => io.out.toString().contains(
+            'provider name [codemie.lab.epam.com]',
+          ),
+        );
+        io.sendLine(''); // keep the host-derived default name
         await waitForIt(() => io.out.toString().contains('saved provider'));
         io.sendLine('/exit');
         await run;
@@ -1704,6 +1933,11 @@ void main() {
       io.sendLine(jwtToken);
       await waitForIt(() => io.out.toString().contains('CodeMie model'));
       io.sendLine('1'); // pick codemie-model-jwt
+      await waitForIt(
+        () =>
+            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
+      );
+      io.sendLine(''); // keep the host-derived default name
       await waitForIt(() => io.out.toString().contains('saved provider'));
       io.sendLine('/exit');
       await run;
@@ -1843,6 +2077,575 @@ void main() {
 
       expect(io.out.toString(), contains('OpenRouter sign-in method'));
       expect(io.out.toString(), contains('key: provided'));
+    });
+
+    test('/provider openrouter api-key connect saves a named entry', () async {
+      // The API-key branch produces the same saved-entry shape as the OAuth
+      // connect — provider-name step included.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider openrouter');
+      await waitForIt(
+        () => io.out.toString().contains('OpenRouter sign-in method'),
+      );
+      io.sendLine('2'); // API key option
+      await waitForIt(() => io.out.toString().contains('OpenRouter API key:'));
+      io.sendLine('sk-or-key');
+      await waitForIt(
+        () => io.out.toString().contains('provider name [openrouter.ai]'),
+      );
+      io.sendLine(''); // keep the host-derived default name
+      await waitForIt(
+        () => io.out.toString().contains('saved provider openrouter.ai'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final entry = registry.find('openrouter.ai');
+      expect(entry, isNotNull, reason: 'connected provider saved');
+      expect(entry!.apiType, 'openrouter');
+      expect(store.map[entry.keyName], 'sk-or-key');
+      expect(cli.agent.state.model.provider, 'openrouter');
+    });
+  });
+
+  group('Kimi provider', () {
+    test('/provider kimi prompts for the API key when none resolves', () async {
+      // Regression: the catalog kimi switch never asked for a key — a
+      // keyless switch (and the "no key found" warning) was the only
+      // outcome from both the preset picker and the typed command.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider kimi');
+      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      io.sendLine('sk-kimi-test');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to kimi'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('endpoint: https://api.kimi.com/coding/v1'));
+      expect(output, contains('key: provided (saved to'));
+      expect(cli.agent.state.model.provider, 'kimi');
+      expect(cli.agent.state.model.id, 'k3');
+      // The key persists under the endpoint-scoped store name, so the next
+      // start resolves it without a prompt.
+      expect(store.map['FA_KEY_API_KIMI_COM'], 'sk-kimi-test');
+    });
+
+    test('/provider kimi saves a typed key as a named entry', () async {
+      // With a registry the typed key becomes a saved entry — the same
+      // shape the custom wizard produces, provider-name step included.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider kimi');
+      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      io.sendLine('sk-kimi-work');
+      await waitForIt(
+        () => io.out.toString().contains('provider name [api.kimi.com]'),
+      );
+      io.sendLine('work');
+      await waitForIt(() => io.out.toString().contains('saved provider work'));
+      io.sendLine('/exit');
+      await run;
+
+      final entry = registry.find('work');
+      expect(entry, isNotNull);
+      expect(entry!.apiType, 'kimi');
+      expect(entry.baseUrl, 'https://api.kimi.com/coding/v1');
+      expect(entry.modelId, 'k3');
+      // A custom name scopes the store key — the host slot stays untouched.
+      expect(store.map['FA_KEY_API_KIMI_COM_WORK'], 'sk-kimi-work');
+      expect(store.map['FA_KEY_API_KIMI_COM'], isNull);
+      expect(cli.agent.state.model.provider, 'kimi');
+      expect(cli.agent.state.model.id, 'k3');
+    });
+
+    test('the provider-name step rejects a built-in (catalog) name', () async {
+      // Regression: a registry entry named after a catalog provider
+      // (e.g. "kimi") is unreachable — `/provider kimi` routes to the
+      // catalog flow before the registry lookup. The name step now
+      // retries with an explanation instead of saving such a name.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider kimi');
+      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      io.sendLine('sk-kimi-x');
+      await waitForIt(
+        () => io.out.toString().contains('provider name [api.kimi.com]'),
+      );
+      io.sendLine('kimi'); // built-in name — must be rejected
+      await waitForIt(
+        () => io.out.toString().contains('is a built-in provider name'),
+      );
+      io.sendLine('personal');
+      await waitForIt(
+        () => io.out.toString().contains('saved provider personal'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(registry.find('kimi'), isNull, reason: 'name not saved');
+      expect(registry.find('personal'), isNotNull);
+    });
+
+    test('a catalog kimi switch stops recording /model into the previous '
+        'custom entry', () async {
+      // Regression: `_activeCustomName` leaked across catalog switches —
+      // after `/provider kimi` (resolved env key), a `/model` switch
+      // rewrote the STILL-ACTIVE codemie entry's model memory with the
+      // kimi model id.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'codemie.lab.epam.com',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'codemie-model-1',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (name) => name == 'KIMI_API_KEY' ? 'sk-env-kimi' : null,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider kimi');
+      await waitForIt(() => io.out.toString().contains('type a number:'));
+      io.sendLine('1'); // Use the resolved key → plain catalog switch
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to kimi'),
+      );
+      // Simulate the model-memory write path a `/model` switch takes.
+      cli.recordCustomModelForTest('k3');
+      io.sendLine('/exit');
+      await run;
+
+      // The codemie entry's model memory is untouched.
+      expect(registry.find('codemie.lab.epam.com')!.modelId, 'codemie-model-1');
+    });
+
+    test(
+      '/provider kimi resolves a named entry’s key without re-prompting',
+      () async {
+        // Regression: the default-endpoint resolution read only the
+        // host-scoped and legacy slots — a second account's name-scoped key
+        // was invisible, so every typed /provider kimi re-asked for the key
+        // the named entry already saved.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        await store.write('FA_KEY_API_KIMI_COM_WORK', 'sk-kimi-work');
+        final cache = SecureKeyCache(store);
+        await cache.preload(['FA_KEY_API_KIMI_COM_WORK']);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'work',
+            apiType: 'kimi',
+            baseUrl: 'https://api.kimi.com/coding/v1',
+            modelId: 'k3',
+            keyName: 'FA_KEY_API_KIMI_COM_WORK',
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider kimi');
+        // The resolved-key picker appears (no key re-prompt), showing the
+        // name-scoped slot as the source.
+        await waitForIt(
+          () => io.out.toString().contains('Use the resolved key'),
+        );
+        expect(io.out.toString(), contains('FA_KEY_API_KIMI_COM_WORK'));
+        expect(
+          io.out.toString(),
+          isNot(contains('Kimi API key (empty to skip')),
+        );
+        io.sendLine('1'); // Use the resolved key
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to kimi'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(cli.agent.state.model.provider, 'kimi');
+      },
+    );
+
+    test(
+      '/provider kimi offers the resolved key or a second account',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (name) => name == 'KIMI_API_KEY' ? 'sk-env-kimi' : null,
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider kimi');
+        await waitForIt(() => io.out.toString().contains('type a number:'));
+        io.sendLine('1'); // Use the resolved key
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to kimi'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('Kimi API key'));
+        expect(output, contains('Use the resolved key'));
+        expect(output, contains('Use a different API key'));
+        expect(output, isNot(contains('Kimi API key (empty to skip')));
+        expect(output, contains('key: KIMI_API_KEY'));
+        expect(cli.agent.state.model.provider, 'kimi');
+      },
+    );
+
+    test('/provider kimi with a resolved key can add a second account '
+        'as a named entry', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (name) => name == 'KIMI_API_KEY' ? 'sk-env-kimi' : null,
+        secureKeys: cache,
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider kimi');
+      await waitForIt(() => io.out.toString().contains('type a number:'));
+      io.sendLine('2'); // Use a different API key → the generic wizard
+      await waitForIt(() => io.out.toString().contains('api type'));
+      io.sendLine('1'); // openai-like
+      await waitForIt(() => io.out.toString().contains('base URL'));
+      io.sendLine(''); // keep the prefilled kimi endpoint
+      await waitForIt(() => io.out.toString().contains('provider name'));
+      io.sendLine(''); // accept the derived unique name
+      await waitForIt(() => io.out.toString().contains('API key'));
+      io.sendLine('sk-kimi-2');
+      await waitForIt(() => io.out.toString().contains('model id'));
+      io.sendLine(''); // keep k3
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      // The second account is a named entry with its own store key — the
+      // KIMI_API_KEY env var can't shadow it on the next start.
+      final entries = registry.entries.where(
+        (e) => e.baseUrl == 'https://api.kimi.com/coding/v1',
+      );
+      expect(entries, hasLength(1));
+      expect(store.map[entries.single.keyName], 'sk-kimi-2');
+      expect(cli.agent.state.model.baseUrl, entries.single.baseUrl);
+      expect(cli.agent.state.model.id, 'k3');
+    });
+
+    test('/provider kimi with an empty key answer switches keyless', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, envVarValue: (_) => null);
+      final run = cli.run();
+
+      io.sendLine('/provider kimi');
+      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      io.sendLine('');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to kimi'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        io.out.toString(),
+        contains('key: no key found (want KIMI_API_KEY)'),
+      );
+    });
+
+    test('/provider kimi <baseUrl> skips the resolved-key picker', () async {
+      // An explicit base URL is a custom endpoint: no stored/default key
+      // applies, so the flow goes straight to the key prompt and saves a
+      // named entry for that endpoint.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (name) => name == 'KIMI_API_KEY' ? 'sk-env-kimi' : null,
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider kimi https://kimi-proxy.example.com/v1');
+      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      io.sendLine('sk-proxy-key');
+      await waitForIt(
+        () => io.out.toString().contains('provider name [kimi-proxy'),
+      );
+      io.sendLine('');
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      final entry = registry.find('kimi-proxy.example.com');
+      expect(entry, isNotNull);
+      expect(entry!.baseUrl, 'https://kimi-proxy.example.com/v1');
+      expect(store.map[entry.keyName], 'sk-proxy-key');
+      // The env key never hijacks the custom endpoint.
+      expect(
+        cli.agent.state.model.baseUrl,
+        'https://kimi-proxy.example.com/v1',
+      );
+    });
+  });
+
+  group('saved provider switching', () {
+    test('switching to a keyless saved entry stays keyless', () async {
+      // A local-server entry with no key: the switch must not invent a
+      // key source (the "keyless endpoint" line, never the hosted
+      // "no key found" warning).
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'my-ollama',
+          apiType: 'openai',
+          baseUrl: 'http://localhost:11434/v1',
+          modelId: 'llama3.2',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider my-ollama');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to openai'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('endpoint: http://localhost:11434/v1'));
+      expect(output, contains('model: llama3.2'));
+      expect(output, contains('key: none (keyless endpoint)'));
+      expect(output, isNot(contains('no key found')));
+    });
+
+    test('/model rewrite goes to the ACTIVE saved entry only', () async {
+      // The real `/model` command (not the test seam) while a saved entry
+      // is active: its model memory is rewritten; a sibling entry is not.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'alpha',
+          apiType: 'openai',
+          baseUrl: 'http://localhost:9000/v1',
+          modelId: 'old-model',
+        ),
+        CustomProviderEntry(
+          name: 'beta',
+          apiType: 'openai',
+          baseUrl: 'http://localhost:9001/v1',
+          modelId: 'beta-model',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider alpha');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to openai'),
+      );
+      io.sendLine('/model new-model');
+      await waitForIt(
+        () => io.out.toString().contains('switched model to new-model'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(registry.find('alpha')!.modelId, 'new-model');
+      expect(registry.find('beta')!.modelId, 'beta-model');
+    });
+
+    test(
+      'the edit wizard prefills from the entry, not the active model',
+      () async {
+        // Regression: editing a non-active entry while kimi is the active
+        // model pre-filled Kimi's URL/model into the codemie wizard. The
+        // wizard's URL step must default to the ENTRY's endpoint.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'codemie.lab.epam.com',
+            apiType: 'openai',
+            baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+            modelId: 'codemie-model-1',
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          customProviders: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+        );
+        final run = cli.run();
+
+        // Switch the active model to kimi first, then open the codemie
+        // entry's edit wizard (the TUI picker's Edit action).
+        io.sendLine('/provider kimi https://api.kimi.com/coding/v1');
+        await waitForIt(() => io.out.toString().contains('Kimi API key'));
+        io.sendLine(''); // keyless kimi switch — active model is now kimi
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to kimi'),
+        );
+        cli.startProviderEditWizardForTest(
+          registry.find('codemie.lab.epam.com'),
+        );
+        await waitForIt(() => io.out.toString().contains('editing provider'));
+        await waitForIt(() => io.out.toString().contains('type a number:'));
+        io.sendLine('1'); // openai-like (keep)
+        await waitForIt(
+          () => io.out.toString().contains(
+            'base URL (empty = https://codemie.lab.epam.com/code-assistant-api/v1)',
+          ),
+        );
+        // Cancel the wizard (Ctrl-C) — the prefill was the assertion.
+        io.interrupt();
+        await waitForIt(
+          () => io.out.toString().contains('provider edit cancelled'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(
+          output,
+          isNot(contains('base URL (empty = https://api.kimi.com')),
+          reason: 'the wizard defaults to the entry endpoint, not kimi',
+        );
+      },
+    );
+
+    test('renaming in the edit wizard replaces the old entry', () async {
+      // The wizard's rename path: the old entry is dropped, the new name
+      // replaces it, and the model memory moves to the renamed entry.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'old-name',
+          apiType: 'openai',
+          baseUrl: 'http://localhost:9000/v1',
+          modelId: 'old-model',
+          keyName: 'FA_KEY_LOCALHOST_9000',
+        ),
+      ]);
+      await cache.save('FA_KEY_LOCALHOST_9000', 'sk-original');
+      final changes = <(String, String)>[];
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+        onProviderChanged: (kind, key) => changes.add((kind, key)),
+      );
+      final run = cli.run();
+
+      cli.startProviderEditWizardForTest(registry.find('old-name'));
+      await waitForIt(
+        () => io.out.toString().contains('editing provider old-name'),
+      );
+      // api type → keep (picker answer via line mode 'type a number').
+      await waitForIt(() => io.out.toString().contains('type a number:'));
+      io.sendLine('1'); // openai-like
+      // base URL → keep.
+      await waitForIt(() => io.out.toString().contains('base URL'));
+      io.sendLine('');
+      // name → the RENAME.
+      await waitForIt(() => io.out.toString().contains('provider name'));
+      io.sendLine('renamed');
+      // key → keep current.
+      await waitForIt(() => io.out.toString().contains('API key (empty'));
+      io.sendLine('');
+      // model → keep.
+      await waitForIt(() => io.out.toString().contains('model id'));
+      io.sendLine('');
+      await waitForIt(() => io.out.toString().contains('renamed provider'));
+      io.sendLine('/exit');
+      await run;
+
+      expect(registry.find('old-name'), isNull, reason: 'old entry dropped');
+      final renamed = registry.find('renamed');
+      expect(renamed, isNotNull);
+      expect(renamed!.baseUrl, 'http://localhost:9000/v1');
+      // Same-name rename keeps the key slot: no new store entry needed.
+      expect(renamed.modelId, 'old-model');
+      expect(registry.entries, hasLength(1));
     });
   });
 }

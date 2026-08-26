@@ -62,6 +62,7 @@ final class CustomProviderFlowConfig {
     this.initialName,
     this.initialModelId,
     this.editName,
+    this.reauth,
   });
 
   /// Prints [question] and resolves to the typed line (trimmed, possibly
@@ -118,6 +119,15 @@ final class CustomProviderFlowConfig {
   /// Non-null in edit mode: the registry entry being edited (the banner and
   /// cancellation text follow it).
   final String? editName;
+
+  /// Edit-mode-only alternative at the API-key step: when non-null (and
+  /// [editName] is set), the step first offers a picker — keep the stored
+  /// key, re-authorize in the browser, or paste a new key — mirroring the
+  /// sign-in choice the connect flow gives (OpenRouter OAuth). [run]
+  /// executes the host's browser flow and resolves to the minted key, or
+  /// null on cancel/failure; the step then falls back to the manual
+  /// prompt. Ignored outside edit mode.
+  final ({String label, Future<String?> Function() run})? reauth;
 }
 
 /// The api-type menu entries: label → catalog spec name.
@@ -234,15 +244,40 @@ Future<String?> _askProviderName(
 }
 
 /// Step 4 — API key (empty = keyless; on edit an empty answer keeps the
-/// entry's existing key). Roles mode still asks — the note explains that
-/// an empty answer falls back to environment resolution; a saved custom
-/// endpoint's key lives in the secure store either way.
+/// entry's existing key). When [CustomProviderFlowConfig.reauth] is set in
+/// edit mode, a picker first offers the same sign-in choice the connect
+/// flow has: keep the stored key, re-authorize in the browser, or paste a
+/// new key. Roles mode still asks — the note explains that an empty answer
+/// falls back to environment resolution; a saved custom endpoint's key
+/// lives in the secure store either way.
 Future<({bool aborted, String? token})> _askApiToken(
   CliIO io,
   CustomProviderFlowConfig config,
   ProviderSpec spec,
   void Function() cancelled,
 ) async {
+  final reauth = config.editName != null ? config.reauth : null;
+  if (reauth != null) {
+    final choice = await config.pickOption('API key', [
+      ('keep', 'Keep current key', 'leave the stored key unchanged'),
+      ('reauth', reauth.label, 're-authorize in the browser'),
+      ('new', 'Enter a new API key', 'paste a key manually'),
+    ], initialKey: 'keep');
+    if (choice == null) {
+      cancelled();
+      return (aborted: true, token: null);
+    }
+    if (choice == 'keep') {
+      return (aborted: false, token: null);
+    }
+    if (choice == 'reauth') {
+      final minted = await reauth.run();
+      if (minted != null && minted.trim().isNotEmpty) {
+        return (aborted: false, token: minted.trim());
+      }
+      io.writeln('authorization did not complete — enter a key manually');
+    }
+  }
   if (config.rolesActive) {
     io.writeln(
       'roles mode: an empty key resolves from the environment '

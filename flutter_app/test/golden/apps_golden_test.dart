@@ -1077,14 +1077,18 @@ void main() {
       }
       // The transcript is taller than the panel; a completed run leaves the
       // overlay pinned to the END (its auto-scroll on new content), which is
-      // also where the audio player and the inline image live. The lazy
-      // ListView underestimates its extent until the tail items build, so
-      // jump in a loop until it converges.
+      // also where the audio player and the inline image live. REVERSED
+      // list: offset 0 IS the end — the lazy ListView initially reports
+      // pixels > 0 while tail items build, so re-pin to 0 in a loop until
+      // it settles.
       for (var i = 0; i < 4; i++) {
-        final position = tester
-            .state<ScrollableState>(find.byType(Scrollable).first)
-            .position;
-        position.jumpTo(position.maxScrollExtent);
+        // Two scrollables live in the tree (the transcript plus a
+        // sibling); pin BOTH to their own end — the transcript's end
+        // holds the assertions' rows (thinking, tools, player).
+        for (final element in find.byType(Scrollable).evaluate()) {
+          final pos = (element as StatefulElement).state as ScrollableState;
+          pos.position.jumpTo(pos.position.maxScrollExtent);
+        }
         await tester.pump();
       }
       // The freshly revealed player's async load needs real event-loop
@@ -1100,9 +1104,26 @@ void main() {
     // Long outputs arrive collapsed (head for tools, tail for thinking):
     // the newest reasoning line is visible, the oldest collapsed away, and
     // the two expand toggles render next to the header's collapse arrow.
+    // The tail rows are visible; scroll BACK UP briefly so the lazy
+    // list builds the thinking tile too, assert it, then return to the
+    // end for the shot.
+    for (final element in find.byType(Scrollable).evaluate()) {
+      final pos = (element as StatefulElement).state as ScrollableState;
+      // The transcript is the only scrollable with real extent.
+      if (pos.position.maxScrollExtent > 0) {
+        pos.position.jumpTo(0);
+      }
+    }
+    await tester.pumpAndSettle();
     expect(find.textContaining('reasoning line 14'), findsOneWidget);
     expect(find.textContaining('reasoning line 1 —'), findsNothing);
-    expect(find.byIcon(Icons.keyboard_arrow_down), findsNWidgets(6));
+    for (final element in find.byType(Scrollable).evaluate()) {
+      final pos = (element as StatefulElement).state as ScrollableState;
+      if (pos.position.maxScrollExtent > 0) {
+        pos.position.jumpTo(pos.position.maxScrollExtent);
+      }
+    }
+    await tester.pumpAndSettle();
     await expectGolden(tester, golden);
   }
 

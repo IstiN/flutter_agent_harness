@@ -11,6 +11,7 @@ final class AgentCliConfig {
     required this.apiKey,
     required this.env,
     required this.sessionRoot,
+    this.presenceStore,
     this.sessionName,
     this.providerKind = 'openai-completions',
     this.envVarIsSet,
@@ -49,6 +50,7 @@ final class AgentCliConfig {
     this.skillsDisableShellExecution = false,
     this.onSkillsAccessChanged,
     this.isShiftPressed,
+    this.processId,
     this.homeDir,
     this.tuiProgramHooks,
     this.openRouterOAuthExchangeFn,
@@ -218,6 +220,10 @@ final class AgentCliConfig {
   /// When null, Shift+Enter is not specially handled.
   final bool Function()? isShiftPressed;
 
+  /// The host process id (diagnostics on the presence heartbeat). Null
+  /// where the platform exposes no pid (web).
+  final int? processId;
+
   /// Headless TUI test hooks (scripted key bytes, captured frames) handed to
   /// the TUI controller — null in production, where the dart_tui program
   /// reads stdin and renders to the real terminal.
@@ -236,6 +242,11 @@ final class AgentCliConfig {
 
   /// Root directory for JSONL sessions (cwd-encoded layout, like pi).
   final String sessionRoot;
+
+  /// Live-session presence heartbeats: the running CLI registers its
+  /// session here so the Fa app (sharing the sessions root) can mark the
+  /// session live and attach to it. Null (tests, web) disables presence.
+  final SessionPresenceStore? presenceStore;
 
   /// Optional session name to resume or create on startup.
   final String? sessionName;

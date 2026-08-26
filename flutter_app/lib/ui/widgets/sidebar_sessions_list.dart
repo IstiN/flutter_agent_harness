@@ -133,7 +133,10 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
             persisted: metadata,
           ),
     ]..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
-    final grouped = _groupEntriesByDate(entries);
+    final grouped = _groupEntriesByFolder(
+      entries,
+      context.l10n.sessionFolderPersonal,
+    );
     return Column(
       children: [
         Padding(
@@ -174,7 +177,9 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                         SessionTile(
                           title: _titleFor(entry),
                           subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
-                          cwd: sessionTileCwdLabel(entry.cwd),
+                          // The folder basename IS the group header — a
+                          // per-tile cwd label would duplicate it.
+                          cwd: null,
                           isActive: widget.manager.active?.id == entry.id,
                           onTap: () => _openEntry(entry),
                           onMenu: (anchor) => _showSessionMenu(entry, anchor),
@@ -198,13 +203,18 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     if (persisted != null) widget.onOpenPersisted?.call(persisted);
   }
 
-  /// Groups entries by date headers (Today, Yesterday, May 7, ...).
-  List<_SessionGroup> _groupEntriesByDate(List<_SessionEntry> entries) {
+  /// Groups entries by their project folder (the session's origin cwd):
+  /// the label is the folder basename — sessions of one project stay
+  /// together, the most recently active project first.
+  List<_SessionGroup> _groupEntriesByFolder(
+    List<_SessionEntry> entries,
+    String personalLabel,
+  ) {
     if (entries.isEmpty) return const [];
     final groups = <String, List<_SessionEntry>>{};
     final order = <String>[];
     for (final entry in entries) {
-      final label = _groupLabel(entry);
+      final label = sessionFolderGroupLabel(entry.cwd, personalLabel);
       if (!groups.containsKey(label)) {
         groups[label] = [];
         order.add(label);
@@ -215,35 +225,6 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       for (final label in order)
         _SessionGroup(label: label, entries: groups[label]!),
     ];
-  }
-
-  /// Date group label for an entry: "Today", "Yesterday", or a date.
-  /// Groups by last activity so recently updated sessions bubble up.
-  String _groupLabel(_SessionEntry entry) {
-    final updated = entry.lastUpdatedAt;
-    final now = DateTime.now();
-    final diff = now.difference(updated);
-    if (diff.inDays == 0) return 'Today';
-    if (diff.inDays == 1) return 'Yesterday';
-    if (diff.inDays < 7) {
-      final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      return weekdays[updated.weekday - 1];
-    }
-    final months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return '${months[updated.month - 1]} ${updated.day}';
   }
 
   /// The 3-dot tile menu: rename (via the shared rename dialog, like the
@@ -435,6 +416,14 @@ String? sessionTileCwdLabel(String? cwd) {
   return name;
 }
 
+/// The session-list group label: the basename of the folder the session
+/// was started in (its workspace), or [personalLabel] for sandbox
+/// sessions with no folder. Shared by the wide sidebar and the mobile
+/// drawer so both group identically.
+String sessionFolderGroupLabel(String? cwd, String personalLabel) {
+  return sessionTileCwdLabel(cwd) ?? personalLabel;
+}
+
 /// The session tile's 3-dot menu, shared by the wide sidebar and the
 /// mobile chat sheet's sessions drawer: rename (via the shared rename
 /// dialog, like the CLI `/rename`) and delete (with confirmation). Works
@@ -582,6 +571,7 @@ class SessionTile extends StatelessWidget {
     required this.subtitle,
     required this.isActive,
     this.cwd,
+    this.live = false,
     required this.onTap,
     this.onMenu,
   });
@@ -593,6 +583,10 @@ class SessionTile extends StatelessWidget {
   /// Distinct, monospace basename of the session's working directory.
   /// Null when the cwd is unknown or the personal (unscoped) sandbox.
   final bool isActive;
+
+  /// True when a live agent process (a `fa` CLI run) currently owns this
+  /// session — a pulsing green dot marks it and the tap attaches to it.
+  final bool live;
   final VoidCallback onTap;
 
   /// Called with the menu button's global rect when the 3-dot menu button
@@ -617,7 +611,24 @@ class SessionTile extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
-                if (isActive)
+                if (live)
+                  // A live CLI process owns the session — green dot, the
+                  // clearest "running right now" marker.
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade400,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.green.shade400.withValues(alpha: 0.6),
+                          blurRadius: 6,
+                        ),
+                      ],
+                    ),
+                  )
+                else if (isActive)
                   Container(
                     width: 8,
                     height: 8,

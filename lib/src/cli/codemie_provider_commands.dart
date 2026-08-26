@@ -37,7 +37,7 @@ extension on AgentCli {
       io.writeln('usage: /provider codemie sso [orgUrl]');
       return true;
     }
-    unawaited(_handleCodeMieSsoCommand(url));
+    unawaited(_handleCodeMieSsoCommand(url, offerName: true));
     return true;
   }
 
@@ -86,7 +86,7 @@ extension on AgentCli {
       // Release the flow gate so the sub-flow can take its own lock.
       _providerFlowActive = false;
       if (choice == 'sso') {
-        await _handleCodeMieSsoCommand(defaultCodeMieBaseUrl);
+        await _handleCodeMieSsoCommand(defaultCodeMieBaseUrl, offerName: true);
       } else {
         await _handleCodeMieJwtCommand(defaultCodeMieBaseUrl, null);
       }
@@ -177,7 +177,10 @@ extension on AgentCli {
     return manual?.trim().isNotEmpty == true ? manual!.trim() : null;
   }
 
-  /// Saves a CodeMie JWT Bearer provider entry and switches to it.
+  /// Saves a CodeMie JWT Bearer provider entry and switches to it. A first
+  /// connect offers the provider-name step every add flow has (a cancel
+  /// keeps the derived default — the token is already validated); a
+  /// re-connect keeps the existing entry's name.
   Future<void> _applyCodeMieJwtCredentials(
     String orgUrl,
     String baseUrl,
@@ -185,9 +188,18 @@ extension on AgentCli {
     String modelId,
   ) async {
     final registry = config.customProviders;
-    final candidate = _codeMieHostName(baseUrl);
-    final existing = registry?.find(candidate);
-    final name = existing?.name ?? registry?.deriveName(baseUrl) ?? 'codemie';
+    final existing = registry != null
+        ? _entryForBaseUrl(registry, baseUrl)
+        : null;
+    final defaultName =
+        existing?.name ?? registry?.deriveName(baseUrl) ?? 'codemie';
+    // Explicit JWT connect always asks for a name — Enter keeps the
+    // existing entry (same-account token refresh), a new name creates a
+    // separate entry for a second account.
+    final name = registry == null
+        ? defaultName
+        : (await _askConnectProviderName(defaultName, sameBaseUrl: baseUrl)) ??
+              defaultName;
     final keyName = CustomProviderRegistry.keyNameFor(
       baseUrl,
       providerName: name,

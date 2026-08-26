@@ -43,6 +43,7 @@ AgentService _fakeService(ExecutionEnv env) {
       streamFunction: _singleTextResponse('ok'),
       toolRegistry: ToolRegistry(const []),
     ),
+    watchExternalSessions: false,
     env: env,
     sessionsRoot: '/sessions',
     config: AgentConfig(
@@ -131,6 +132,9 @@ void main() {
       expect(find.byTooltip('Files'), findsOneWidget);
       expect(service.messages, hasLength(2));
       expect(service.messages[0].content, 'hello');
+      // The chat list's initial scroll-to-end timer fires post-asserts;
+      // pump it out so no FakeTimer stays pending at teardown.
+      await tester.pumpAndSettle();
     });
 
     testWidgets(
@@ -230,6 +234,7 @@ void main() {
           streamFunction: _hungResponse(),
           toolRegistry: ToolRegistry(const []),
         ),
+        watchExternalSessions: false,
         env: env,
         sessionsRoot: '/sessions',
         config: AgentConfig(

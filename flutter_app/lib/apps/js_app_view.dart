@@ -301,6 +301,7 @@ class _JsAppViewState extends State<JsAppView> {
         videoReader: widget.videoReader ?? widget.agentService?.videoReader,
         keysSource: widget.agentService?.hostSecrets,
         keyRequestHandler: _requestHostSecret,
+        // ignore: use_build_context_synchronously
         hostLocale: Localizations.localeOf(context).languageCode,
         initialTheme: initialTheme,
       );
@@ -1021,6 +1022,7 @@ class _FaMessageSheetState extends State<_FaMessageSheet> {
 /// Per-app permission toggles; writes overrides to [AppPermissionsStore].
 class AppPermissionsDialog extends StatefulWidget {
   const AppPermissionsDialog({
+    super.key,
     required this.app,
     required this.env,
     required this.store,

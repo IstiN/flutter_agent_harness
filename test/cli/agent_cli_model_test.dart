@@ -208,4 +208,95 @@ void main() {
       expect(cli.agent.state.model.maxTokens, 4096);
     });
   });
+
+  group('two-step model picker', () {
+    test('several providers show the provider list, not flat models', () async {
+      // With saved custom providers the TUI model menu becomes two-step:
+      // provider rows first (`@<name>` keys), the chosen provider's models
+      // after. A provider row's filter match includes its model ids.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'work',
+          apiType: 'openai',
+          baseUrl: 'http://localhost:9000/v1',
+          modelId: 'work-model',
+        ),
+        CustomProviderEntry(
+          name: 'codemie.lab.epam.com',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'codemie-model-1',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      final items = cli.buildModelMenuForTest('');
+      final keys = items.map((i) => i.key).toList();
+      expect(keys, containsAll(['@work', '@codemie.lab.epam.com']));
+      expect(
+        keys.where((k) => k.contains('|')),
+        isEmpty,
+        reason: 'no flat model rows on the provider step',
+      );
+      // Typing a model id as the filter lands on its provider only.
+      final filtered = cli.buildModelMenuForTest('work-model');
+      expect(filtered.map((i) => i.key), ['@work']);
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('a single provider goes straight to its models', () async {
+      // The flat behavior is kept when there is nothing to choose between:
+      // one provider → its model rows immediately.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      final items = cli.buildModelMenuForTest('');
+      expect(items, isNotEmpty);
+      expect(
+        items.every((i) => !i.key.startsWith('@')),
+        isTrue,
+        reason: 'no provider step with a single provider',
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('selecting a provider row opens its model list', () async {
+      // The `@<name>` selection routes into the provider's model list
+      // (the generic `modelProvider` picker). Without a TUI controller the
+      // step is a safe no-op; the picker handler itself is exercised via
+      // the handler table wiring in agent_cli tests.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'work',
+          apiType: 'openai',
+          baseUrl: 'http://localhost:9000/v1',
+          modelId: 'work-model',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy);
+
+      // No controller in line mode — must not throw.
+      await cli.tuiSelectModelForTest('@work');
+      io.sendLine('/exit');
+      await run;
+    });
+  });
 }

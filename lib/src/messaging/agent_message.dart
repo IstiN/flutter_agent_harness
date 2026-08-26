@@ -14,6 +14,7 @@ final class AgentMessage {
     required this.text,
     required this.sentAt,
     this.hops = 0,
+    this.kind = AgentMessageKind.agent,
   });
 
   /// Unique message id (assigned by the repository at send time).
@@ -34,6 +35,10 @@ final class AgentMessage {
   /// Remaining relay budget (0 refuses further relaying).
   final int hops;
 
+  /// What the recipient should do with it: agent-to-agent chat, or user
+  /// input handed over by an attached client (the Fa app's attach view).
+  final AgentMessageKind kind;
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'fromId': fromId,
@@ -41,6 +46,7 @@ final class AgentMessage {
     'text': text,
     'sentAt': sentAt,
     'hops': hops,
+    if (kind != AgentMessageKind.agent) 'kind': kind.name,
   };
 
   factory AgentMessage.fromJson(Map<String, dynamic> json) => AgentMessage(
@@ -50,7 +56,22 @@ final class AgentMessage {
     text: json['text'] as String? ?? '',
     sentAt: json['sentAt'] as String? ?? '',
     hops: json['hops'] as int? ?? 0,
+    kind: switch (json['kind']) {
+      'user' => AgentMessageKind.user,
+      _ => AgentMessageKind.agent,
+    },
   );
+}
+
+/// The delivery intent of an [AgentMessage].
+enum AgentMessageKind {
+  /// Agent-to-agent chat (the default, and the only kind older writers
+  /// produced — a missing `kind` field parses as this).
+  agent,
+
+  /// User input forwarded by an attached client (the Fa app's attach
+  /// view): the recipient delivers it as a user turn, not agent chat.
+  user,
 }
 
 var _messageCounter = 0;

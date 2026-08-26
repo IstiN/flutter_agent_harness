@@ -26,6 +26,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get approvalDeny => 'Deny';
 
   @override
+  String get attachedEmpty => 'No messages yet — say something below';
+
+  @override
+  String get attachedToCli => 'attached to fa cli';
+
+  @override
+  String get sendToCli => 'Message the fa cli session…';
+
+  @override
+  String get sessionFolderPersonal => 'Personal';
+
+  @override
+  String get sessionInfoNameLabel => 'Session name';
+
+  @override
+  String get newSessionFolderTitle => 'New session — folder';
+
+  @override
+  String newSessionCurrentFolder(Object folder) {
+    return 'Current folder ($folder)';
+  }
+
+  @override
   String get approvalModeAlwaysAsk => 'Always ask';
 
   @override
@@ -1345,7 +1368,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bootstrapRetry => 'Retry';
 
   @override
-  String get workspaceDialogTitle => 'Working folder';
+  String get workspaceDialogTitle => 'Session';
 
   @override
   String get workspaceDialogChangeFolder => 'Change folder…';
@@ -1357,7 +1380,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get workspaceDialogClose => 'Close';
 
   @override
-  String get workspaceDialogCurrentFolder => 'Current folder';
+  String get workspaceDialogCurrentFolder => 'Session folder';
 
   @override
   String get workspaceDialogHostPath => 'Host path';

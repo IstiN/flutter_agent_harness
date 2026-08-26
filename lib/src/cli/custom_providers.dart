@@ -14,7 +14,8 @@ import '../model_roles/provider_catalog.dart';
 /// The api types a custom provider can take (the adapter dialect), mapping
 /// one-to-one to catalog specs. Includes OAuth/SSO-backed catalog providers
 /// (openrouter, codemie) — their connect flows save registry entries so
-/// connected providers show in the `/provider` picker.
+/// connected providers show in the `/provider` picker — and `kimi`, whose
+/// `/provider kimi` key flow saves a named entry per account.
 const customProviderApiTypes = [
   'openai',
   'anthropic',
@@ -22,6 +23,8 @@ const customProviderApiTypes = [
   'dial',
   'openrouter',
   'minimax',
+  'kimi',
+  'chatgpt',
 ];
 
 /// How a saved custom provider authenticates. Distinguishes regular API-key

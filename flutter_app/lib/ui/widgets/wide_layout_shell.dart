@@ -152,12 +152,27 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     return currentMountedPath(env);
   }
 
-  /// Chip label: the basename of the mounted folder, or the Personal
-  /// fallback when nothing is mounted.
-  String _mountedFolderLabel() {
-    final path = _mountedPath;
-    if (path == null) return 'Personal Workspace'; // l10n:ignore — see dialog
-    return p.basename(path);
+  /// Chip label: the basename of the ACTIVE SESSION's folder (its origin
+  /// cwd from the session's own metadata — NOT the shared env, which
+  /// reflects the current mount for every session). No folder (the
+  /// personal sandbox) → "Personal". Switching sessions switches the
+  /// label.
+  String _sessionFolderLabel() {
+    final cwd = widget.manager.active?.service.currentSessionCwd;
+    if (cwd != null) {
+      final name = p.basename(cwd);
+      if (name.isNotEmpty && name != '/' && name != '.') return name;
+    }
+    return 'Personal'; // l10n:ignore — matches the drawer group label
+  }
+
+  /// Whether the active session has a real project folder (drives the
+  /// chip icon color: indigo when bound to a folder, dim when personal).
+  bool get _sessionHasFolder {
+    final cwd = widget.manager.active?.service.currentSessionCwd;
+    if (cwd == null) return false;
+    final name = p.basename(cwd);
+    return name.isNotEmpty && name != '/' && name != '.';
   }
 
   /// The absolute mailbox address another Fa instance uses to deliver an
@@ -392,7 +407,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final isLight = theme.brightness == Brightness.light;
     return Column(
       children: [
-        // Workspace header matching the prototype: name + dropdown arrow + edit icon.
+        // Session header: the active session's FOLDER (its origin cwd) —
+        // not a workspace/mount picker. Tap opens the session info dialog
+        // (rename, restrict, folder).
         // No bottom border — the vertical dividers between panels run full height.
         Container(
           // Chip inner padding (8h) is compensated here so the label/icon
@@ -415,7 +432,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                     color: Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
                     child: InkWell(
-                      onTap: _openWorkspaceDialog,
+                      onTap: _openSessionInfoDialog,
                       borderRadius: BorderRadius.circular(8),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
@@ -428,25 +445,19 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                             Icon(
                               Icons.folder_outlined,
                               size: 16,
-                              color: _mountedPath == null
-                                  ? colors.dim
-                                  : colors.indigo,
+                              color: _sessionHasFolder
+                                  ? colors.indigo
+                                  : colors.dim,
                             ),
                             const SizedBox(width: 6),
                             Flexible(
                               child: Text(
-                                _mountedFolderLabel(),
+                                _sessionFolderLabel(),
                                 overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.titleSmall?.copyWith(
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.keyboard_arrow_down,
-                              size: 16,
-                              color: colors.dim,
                             ),
                           ],
                         ),
@@ -545,12 +556,73 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   // Actions
   // ---------------------------------------------------------------------------
 
-  void _newSession() {
+  /// New session: asks which folder it belongs to first — the current
+  /// folder (the active mount), a freshly picked one (the picker mounts
+  /// it for the whole app, like the info dialog's change button), or the
+  /// Personal sandbox. The created session's cwd (and its drawer group)
+  /// follows the folder.
+  Future<void> _newSession() async {
     final active = widget.manager.active;
     if (active == null) return;
     final service = active.service;
     final config = service.configForClone;
     if (config == null) return;
+    final l10n = context.l10n;
+    final env = service.env;
+    final mountedPath = _mountedPath;
+    final supportsPicking = !kIsWeb && Platform.isMacOS;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: Text(l10n.newSessionFolderTitle),
+        children: [
+          SimpleDialogOption(
+            key: const ValueKey('newSessionCurrentFolder'),
+            onPressed: () => Navigator.pop(dialogContext, 'current'),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                mountedPath != null
+                    ? l10n.newSessionCurrentFolder(p.basename(mountedPath))
+                    : l10n.sessionFolderPersonal,
+              ),
+              subtitle: mountedPath != null ? Text(mountedPath) : null,
+              leading: const Icon(Icons.folder_outlined),
+            ),
+          ),
+          if (supportsPicking)
+            SimpleDialogOption(
+              key: const ValueKey('newSessionChooseFolder'),
+              onPressed: () => Navigator.pop(dialogContext, 'choose'),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l10n.workspaceDialogChangeFolder),
+                leading: const Icon(Icons.create_new_folder_outlined),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (choice == null || !mounted) return;
+    if (choice == 'choose') {
+      final messenger = ScaffoldMessenger.of(context);
+      final String? picked;
+      try {
+        picked = await pickAndApplyProjectMount(
+          env: env,
+          onApplied: () => service.refreshProjectMountPrompt(),
+          onAccessDenied: () => messenger.showSnackBar(
+            SnackBar(content: Text(l10n.filesFolderAccessDenied)),
+          ),
+        );
+      } on Object catch (e) {
+        messenger.showSnackBar(
+          SnackBar(content: Text(l10n.filesFolderPickerError(e.toString()))),
+        );
+        return;
+      }
+      if (picked == null) return; // cancelled the picker — no session
+    }
     unawaited(
       widget.manager.createSession(
         config: config,
@@ -630,17 +702,23 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     await lastConnectionStore?.saveFromConfig(agentConfig);
   }
 
-  /// Workspace picker dialog: shows the current project mount, lets the user
-  /// pick a new folder (macOS only) or clear the mount. Backed by the shared
-  /// [pickAndApplyProjectMount] / [unapplyProjectMount] flows so the file
-  /// browser's open/unmount path stays in lockstep.
-  Future<void> _openWorkspaceDialog() async {
+  /// Session info dialog: the active session's name (renameable — same
+  /// store the CLI's rename writes), its folder (read-only display: the
+  /// folder is chosen at session creation, not switchable here), the
+  /// restrict-access toggle, and the cross-instance mailbox address.
+  Future<void> _openSessionInfoDialog() async {
     final l10n = context.l10n;
     final service = widget.manager.active?.service;
     final env = service?.env;
     if (env == null) return;
-    final mounted = _mountedPath;
-    final supportsPicking = !kIsWeb && Platform.isMacOS;
+    // The session's OWN folder (from its metadata), not the shared env.
+    final sessionFolder = service?.currentSessionCwd;
+    final hasFolder = _sessionHasFolder;
+    final sessionId = service?.currentSessionId;
+    final names = widget.sessionNamesStore ?? _namesStore;
+    final nameController = TextEditingController(
+      text: sessionId == null ? '' : names?.titleFor(sessionId) ?? '',
+    );
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -649,33 +727,50 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Session name (rename): the same store the CLI's rename
+            // writes, so a title set here shows in `fa --resume` too.
+            if (sessionId != null && names != null) ...[
+              Text(
+                l10n.sessionInfoNameLabel,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              TextField(
+                controller: nameController,
+                decoration: InputDecoration(
+                  hintText: l10n.sidebarRenameHint,
+                  isDense: true,
+                ),
+                onSubmitted: (value) =>
+                    _saveSessionName(names, sessionId, value),
+              ),
+              const SizedBox(height: 12),
+            ],
             Text(
               l10n.workspaceDialogCurrentFolder,
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
-              mounted ?? l10n.workspaceDialogPersonal,
+              hasFolder && sessionFolder != null
+                  ? p.basename(sessionFolder)
+                  : l10n.workspaceDialogPersonal,
               style: Theme.of(dialogContext).textTheme.bodyMedium,
             ),
-            if (mounted != null) ...[
+            if (hasFolder && sessionFolder != null) ...[
               const SizedBox(height: 2),
               Text(
                 l10n.workspaceDialogHostPath,
                 style: Theme.of(dialogContext).textTheme.bodySmall,
               ),
               const SizedBox(height: 2),
-              Text(mounted, style: Theme.of(dialogContext).textTheme.bodySmall),
-              const SizedBox(height: 8),
               Text(
-                l10n.workspaceDialogMountHint,
+                sessionFolder,
                 style: Theme.of(dialogContext).textTheme.bodySmall,
               ),
               const SizedBox(height: 8),
-              // 'Restrict tools to this folder' — the toggle that will
-              // eventually gate read/write/bash outside the mounted root
-              // (tool enforcement lands in the next pass once agent_service
-              // and the approval UI are unblocked from the parallel work).
+              // 'Restrict tools to this folder' — gates read/write/bash
+              // outside the session's folder root.
               StatefulBuilder(
                 builder: (innerContext, setLocal) {
                   final scoped = currentMountedScoped(env) ?? false;
@@ -713,13 +808,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                 },
               ),
             ],
-            if (!supportsPicking) ...[
-              const SizedBox(height: 12),
-              Text(
-                l10n.workspaceDialogUnsupported,
-                style: Theme.of(dialogContext).textTheme.bodySmall,
-              ),
-            ],
             // Cross-instance messaging address — other instances of Fa
             // (the CLI, a phone, another Mac window) can deliver an
             // `agent_message` to this exact session by addressing
@@ -744,6 +832,12 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           ],
         ),
         actions: [
+          if (sessionId != null && names != null)
+            TextButton(
+              onPressed: () =>
+                  _saveSessionName(names, sessionId, nameController.text),
+              child: Text(l10n.settingsSaveButton),
+            ),
           TextButton(
             onPressed: () async {
               final messenger = ScaffoldMessenger.of(dialogContext);
@@ -755,46 +849,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             },
             child: Text(l10n.workspaceDialogMailboxCopy),
           ),
-          if (supportsPicking)
-            TextButton(
-              onPressed: () async {
-                final messenger = ScaffoldMessenger.of(dialogContext);
-                final String? picked;
-                try {
-                  picked = await pickAndApplyProjectMount(
-                    env: env,
-                    onApplied: () => service?.refreshProjectMountPrompt(),
-                    onAccessDenied: () {
-                      messenger.showSnackBar(
-                        SnackBar(content: Text(l10n.filesFolderAccessDenied)),
-                      );
-                    },
-                  );
-                } on Object catch (e) {
-                  messenger.showSnackBar(
-                    SnackBar(
-                      content: Text(l10n.filesFolderPickerError(e.toString())),
-                    ),
-                  );
-                  return;
-                }
-                if (picked != null && dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                }
-              },
-              child: Text(l10n.workspaceDialogChangeFolder),
-            ),
-          if (mounted != null && supportsPicking)
-            TextButton(
-              onPressed: () async {
-                await unapplyProjectMount(
-                  env: env,
-                  onApplied: () => service?.refreshProjectMountPrompt(),
-                );
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-              },
-              child: Text(l10n.workspaceDialogClearFolder),
-            ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: Text(l10n.workspaceDialogClose),
@@ -802,6 +856,18 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         ],
       ),
     );
+    nameController.dispose();
+  }
+
+  /// Saves the session title from the info dialog (empty clears → the
+  /// derived title), writing through the shared names store.
+  Future<void> _saveSessionName(
+    SessionNamesStore names,
+    String sessionId,
+    String value,
+  ) async {
+    await names.rename(sessionId, value.trim().isEmpty ? null : value.trim());
+    if (mounted) setState(() {});
   }
 
   Future<void> _openSettings() async {

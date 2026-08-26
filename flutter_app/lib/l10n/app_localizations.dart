@@ -128,6 +128,48 @@ abstract class AppLocalizations {
   /// **'Deny'**
   String get approvalDeny;
 
+  /// No description provided for @attachedEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages yet — say something below'**
+  String get attachedEmpty;
+
+  /// No description provided for @attachedToCli.
+  ///
+  /// In en, this message translates to:
+  /// **'attached to fa cli'**
+  String get attachedToCli;
+
+  /// No description provided for @sendToCli.
+  ///
+  /// In en, this message translates to:
+  /// **'Message the fa cli session…'**
+  String get sendToCli;
+
+  /// No description provided for @sessionFolderPersonal.
+  ///
+  /// In en, this message translates to:
+  /// **'Personal'**
+  String get sessionFolderPersonal;
+
+  /// No description provided for @sessionInfoNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Session name'**
+  String get sessionInfoNameLabel;
+
+  /// No description provided for @newSessionFolderTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New session — folder'**
+  String get newSessionFolderTitle;
+
+  /// No description provided for @newSessionCurrentFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Current folder ({folder})'**
+  String newSessionCurrentFolder(Object folder);
+
   /// No description provided for @approvalModeAlwaysAsk.
   ///
   /// In en, this message translates to:
@@ -2435,7 +2477,7 @@ abstract class AppLocalizations {
   /// No description provided for @workspaceDialogTitle.
   ///
   /// In en, this message translates to:
-  /// **'Working folder'**
+  /// **'Session'**
   String get workspaceDialogTitle;
 
   /// No description provided for @workspaceDialogChangeFolder.
@@ -2459,7 +2501,7 @@ abstract class AppLocalizations {
   /// No description provided for @workspaceDialogCurrentFolder.
   ///
   /// In en, this message translates to:
-  /// **'Current folder'**
+  /// **'Session folder'**
   String get workspaceDialogCurrentFolder;
 
   /// No description provided for @workspaceDialogHostPath.

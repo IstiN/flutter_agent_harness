@@ -2589,6 +2589,7 @@ class DebugLogsSection extends StatelessWidget {
           reason: 'settings test button',
         );
         await FirebaseCrashlytics.instance.sendUnsentReports();
+        // ignore: use_build_context_synchronously
         message = context.l10n.settingsTestCrashReportSent;
       }
     } on Object catch (error) {

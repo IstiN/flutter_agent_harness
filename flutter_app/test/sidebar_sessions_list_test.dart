@@ -75,10 +75,13 @@ void main() {
     repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
   });
 
-  Future<SessionMetadata> persistSession({String? userText}) async {
+  Future<SessionMetadata> persistSession({
+    String? userText,
+    String cwd = 'test',
+  }) async {
     final session = await repo.create(
       JsonlSessionCreateOptions(
-        cwd: 'test',
+        cwd: cwd,
         metadata: const {'agent': 'fa', 'model': 'test-model'},
       ),
     );
@@ -141,9 +144,10 @@ void main() {
 
     expect(find.text('Live chat'), findsOneWidget);
     expect(find.text('Old chat'), findsOneWidget);
-    expect(find.text('Today'), findsOneWidget);
-    // Group header + the old session's subtitle both read "Yesterday".
-    expect(find.text('Yesterday'), findsWidgets);
+    // The list groups by the session's project folder: the live session
+    // (sandbox cwd, no basename) lands in "Personal", the disk session in
+    // its origin folder's group.
+    expect(find.text('Personal'), findsOneWidget);
   });
 
   testWidgets('a live session keeps its own folder label from disk metadata', (
@@ -206,7 +210,41 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Shared chat'), findsOneWidget);
-    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Today'), findsNothing);
+  });
+
+  testWidgets('sessions group by their origin folder, not by date', (
+    tester,
+  ) async {
+    // Two projects, one session each, plus a sandbox session: the groups
+    // are the folder basenames (in activity order), the tiles stay under
+    // their project's header. Created oldest-first so the activity order
+    // (and with it the group order) is deterministic.
+    final aiM = await persistSession(
+      userText: 'ai.m work',
+      cwd: '/Users/x/git/ai.m',
+    );
+    final flutterAgent = await persistSession(
+      userText: 'fa work',
+      cwd: '/Users/x/git/flutter_agent',
+    );
+    final personal = await persistSession(userText: 'sandbox', cwd: '/');
+
+    await tester.pumpWidget(harness(persisted: [flutterAgent, aiM, personal]));
+    await tester.pumpAndSettle();
+
+    expect(find.text('flutter_agent'), findsOneWidget);
+    expect(find.text('ai.m'), findsOneWidget);
+    expect(find.text('Personal'), findsOneWidget);
+    // Date headers are gone.
+    expect(find.text('Today'), findsNothing);
+    expect(find.text('Yesterday'), findsNothing);
+    // Headers follow their first entry's activity: flutter_agent (created
+    // last, freshest) precedes ai.m.
+    expect(
+      tester.getTopLeft(find.text('flutter_agent')).dy,
+      lessThan(tester.getTopLeft(find.text('ai.m')).dy),
+    );
   });
 
   testWidgets('the tile menu offers rename and delete', (tester) async {
@@ -320,8 +358,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The folder basename is the GROUP header now (the per-tile cwd label
+    // is gone — it duplicated the header).
     expect(find.text('my-project'), findsOneWidget);
-    expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
   });
 
   testWidgets('a mounted project folder shows the host folder basename', (
@@ -351,8 +390,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The folder basename is the GROUP header now (the per-tile cwd label
+    // is gone — it duplicated the header).
     expect(find.text('repo'), findsOneWidget);
-    expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
   });
 
   testWidgets('a wrapped mounted env still shows the host folder basename', (
@@ -385,8 +425,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The folder basename is the GROUP header now (the per-tile cwd label
+    // is gone — it duplicated the header).
     expect(find.text('repo'), findsOneWidget);
-    expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
   });
 
   testWidgets('deleting the active live session mints a fresh one', (

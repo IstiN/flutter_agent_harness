@@ -86,6 +86,7 @@ AgentService _fakeService(ExecutionEnv env, [StreamFunction? streamFunction]) {
       streamFunction: streamFunction ?? _singleTextResponse('ok'),
       toolRegistry: ToolRegistry(const []),
     ),
+    watchExternalSessions: false,
     env: env,
     sessionsRoot: '/sessions',
     config: AgentConfig(
@@ -331,25 +332,31 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      Finder cwdLabel(String text) => find.descendant(
-        of: find.byKey(ValueKey('sessionChatDrawerEntry:${persistedMeta.id}')),
-        matching: find.text(text),
-      );
-
       await _openDrawer(tester);
-      expect(cwdLabel('alpha'), findsOneWidget);
+      // The folder is now the GROUP HEADER above the tile (the per-tile
+      // cwd label is gone — it duplicated the header).
+      expect(find.text('alpha'), findsOneWidget);
 
       await tester.tap(
         find.byKey(ValueKey('sessionChatDrawerEntry:${persistedMeta.id}')),
       );
       await tester.pumpAndSettle();
 
-      // Live now — the label must NOT flip to the current mount's folder.
+      // Live now — the opened session must STAY in its origin folder's
+      // group (alpha), not move into the current mount's (beta). The
+      // beta group may exist — that's the fresh default session living
+      // in the beta workspace — but the opened session is not in it.
       await tester.tap(find.byKey(_panelSessionsKey));
       await tester.pumpAndSettle();
       expect(find.byKey(_drawerKey), findsOneWidget);
-      expect(cwdLabel('alpha'), findsOneWidget);
-      expect(cwdLabel('beta'), findsNothing);
+      final openedTile = find.byKey(
+        ValueKey('sessionChatDrawerEntry:${persistedMeta.id}'),
+      );
+      // The opened tile sits under the alpha header: alpha's header is
+      // the nearest header above the tile.
+      final alphaHeader = tester.getTopLeft(find.text('alpha'));
+      final tileTop = tester.getTopLeft(openedTile);
+      expect(tileTop.dy, greaterThan(alphaHeader.dy));
     });
 
     testWidgets('the drawer New session tile creates, activates and opens '

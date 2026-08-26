@@ -1133,6 +1133,13 @@ String _normalizeToolCallId(String id, Model model) {
     return _truncate40(callId.replaceAll(RegExp('[^a-zA-Z0-9_-]'), '_'));
   }
   if (model.provider == 'openai') {
+    // LiteLLM front-ends (e.g. CodeMie) embed Gemini thought signatures in
+    // the tool call id as `call_<n>__thought__<base64>` and recover them
+    // from the echoed id; truncating destroys the signature and Vertex then
+    // rejects the replay with a thought_signature base64 400.
+    if (id.contains('__thought__')) {
+      return id;
+    }
     return _truncate40(id);
   }
   return id;

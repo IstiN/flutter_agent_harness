@@ -551,6 +551,7 @@ class _FlowCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _card(
+      context,
       padding: const EdgeInsets.all(14),
       child: Row(
         children: [
@@ -628,6 +629,7 @@ class _FlowDiagram extends StatelessWidget {
       children: [
         Expanded(
           child: _card(
+            context,
             padding: const EdgeInsets.all(12),
             child: const Row(
               children: [
@@ -654,6 +656,7 @@ class _FlowDiagram extends StatelessWidget {
         ),
         Expanded(
           child: _card(
+            context,
             padding: const EdgeInsets.all(12),
             child: const Row(
               children: [
@@ -774,6 +777,7 @@ class _PermCard extends StatelessWidget {
 
     if (vertical) {
       return _card(
+        context,
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -803,6 +807,7 @@ class _PermCard extends StatelessWidget {
       );
     }
     return _card(
+      context,
       padding: const EdgeInsets.all(12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -863,6 +868,7 @@ class _WhatYouGet extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         _card(
+          context,
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
@@ -963,6 +969,7 @@ class _MyAppsMini extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _card(
+      context,
       padding: const EdgeInsets.all(12),
       child: Row(
         children: [
@@ -1081,6 +1088,7 @@ class _TimelineCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _card(
+      context,
       padding: const EdgeInsets.all(16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1148,6 +1156,7 @@ class _CreatedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _card(
+      context,
       padding: const EdgeInsets.all(12),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1332,6 +1341,7 @@ class _MyAppsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final tileSize = compact ? 44.0 : 48.0;
     return _card(
+      context,
       padding: EdgeInsets.all(compact ? 12 : 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

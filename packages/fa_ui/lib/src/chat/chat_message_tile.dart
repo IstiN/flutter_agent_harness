@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
@@ -124,7 +125,12 @@ class ChatMessageTile extends StatelessWidget {
     final border = Theme.of(context).dividerColor;
 
     final bubble = Container(
-      constraints: const BoxConstraints(maxWidth: 560),
+      // AI messages can carry long code/report text: let the bubble span
+      // 90% of the viewport instead of a cramped fixed 560px cap. User
+      // bubbles keep the compact fixed width.
+      constraints: BoxConstraints(
+        maxWidth: isUser ? 560 : MediaQuery.sizeOf(context).width * 0.9,
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: isUser ? palette.userBubble : palette.panel,
@@ -149,32 +155,40 @@ class ChatMessageTile extends StatelessWidget {
               ]
             : null,
       ),
-      child: MarkdownBody(
-        data: message.content,
-        selectable: true,
-        styleSheet: styleSheet,
-        // Sandbox paths (`![alt](generated/x.png)`) load through the
-        // session env; taps open the fullscreen preview.
-        sizedImageBuilder: images.sizedImageBuilder(
-          onImageTap: (bytes) => showFahImagePreview(context, bytes),
+      child: SelectionArea(
+        // ONE selection region for the whole bubble: MarkdownBody's own
+        // `selectable: true` creates an independent region per block, so a
+        // drag stopped at every paragraph boundary. The SelectionArea
+        // handles selection; the body renders non-selectable Markdown.
+        child: MarkdownBody(
+          data: message.content,
+          styleSheet: styleSheet,
+          // Sandbox paths (`![alt](generated/x.png)`) load through the
+          // session env; taps open the fullscreen preview.
+          sizedImageBuilder: images.sizedImageBuilder(
+            onImageTap: (bytes) => showFahImagePreview(context, bytes),
+          ),
+          // Audio/video sandbox links open a small inline-player dialog.
+          onTapLink: (text, href, title) =>
+              _onMarkdownLink(context, text, href, title),
         ),
-        // Audio/video sandbox links open a small inline-player dialog.
-        onTapLink: (text, href, title) =>
-            _onMarkdownLink(context, text, href, title),
       ),
     );
     final avatar = isUser
         ? null
         : (avatarBuilder?.call(context, message.role) ??
               _defaultAiAvatar(context));
-    if (avatar == null) return bubble;
+    // The raw-content copy button: hover-revealed on desktop for text
+    // bubbles, always visible in tool tile headers.
+    final withCopy = _wrapWithCopyButton(context, bubble, alwaysVisible: false);
+    if (avatar == null) return withCopy;
     return Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         avatar,
         const SizedBox(width: 8),
-        Flexible(child: bubble),
+        Flexible(child: withCopy),
       ],
     );
   }
@@ -347,6 +361,14 @@ class ChatMessageTile extends StatelessWidget {
                   size: 16,
                   color: palette.dim.withValues(alpha: 0.5),
                 ),
+                const SizedBox(width: 8),
+                // Copy the RAW tool output (the whole body, not a
+                // selection) — tool output is the thing users most often
+                // need verbatim.
+                _CopyIconButton(
+                  text: content,
+                  color: palette.dim.withValues(alpha: 0.7),
+                ),
               ],
             ),
             if (content.isNotEmpty) const SizedBox(height: 6),
@@ -369,9 +391,13 @@ class ChatMessageTile extends StatelessWidget {
                       ],
                     ),
                   )
-                : _CollapsibleToolOutput(
-                    content: content,
-                    style: palette.mono(color: palette.dim),
+                // Tool output is selectable text (one region for the whole
+                // tile — the collapsible body used to swallow selection).
+                : SelectionArea(
+                    child: _CollapsibleToolOutput(
+                      content: content,
+                      style: palette.mono(color: palette.dim),
+                    ),
                   ),
           if (generatedImagePath != null)
             Padding(
@@ -403,6 +429,113 @@ class ChatMessageTile extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  /// Wraps [child] with a hover-revealed raw-copy button (desktop): the
+  /// icon appears at the bubble's top-right on pointer enter, clicking
+  /// copies the message's FULL raw content (markdown source, not the
+  /// rendered text).
+  Widget _wrapWithCopyButton(
+    BuildContext context,
+    Widget child, {
+    required bool alwaysVisible,
+  }) {
+    if (message.content.trim().isEmpty) return child;
+    return _HoverCopyWrap(
+      copy: message.content,
+      alwaysVisible: alwaysVisible,
+      child: child,
+    );
+  }
+}
+
+/// Hover-reveal copy affordance for a message: the button sits at the
+/// bubble's top-right, invisible until the pointer enters the area
+/// (desktop pattern; [alwaysVisible] shows it permanently).
+class _HoverCopyWrap extends StatefulWidget {
+  const _HoverCopyWrap({
+    required this.copy,
+    required this.alwaysVisible,
+    required this.child,
+  });
+
+  final String copy;
+  final bool alwaysVisible;
+  final Widget child;
+
+  @override
+  State<_HoverCopyWrap> createState() => _HoverCopyWrapState();
+}
+
+class _HoverCopyWrapState extends State<_HoverCopyWrap> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final show = widget.alwaysVisible || _hovering;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          widget.child,
+          if (show)
+            Positioned(
+              // Sits half-outside the bubble's padding: breathing room
+              // from the text without covering the first line.
+              top: -6,
+              right: -6,
+              child: _CopyIconButton(
+                text: widget.copy,
+                color: FahColors.of(context).dim.withValues(alpha: 0.7),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The copy icon itself: Clipboard.setData + a transient "copied" tick.
+class _CopyIconButton extends StatefulWidget {
+  const _CopyIconButton({required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  State<_CopyIconButton> createState() => _CopyIconButtonState();
+}
+
+class _CopyIconButtonState extends State<_CopyIconButton> {
+  bool _copied = false;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.text));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    if (mounted) setState(() => _copied = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = FaChatStrings.of(context);
+    return Tooltip(
+      message: _copied
+          ? strings.chatMessageCopiedToClipboard
+          : strings.chatCopyMessageTooltip,
+      child: IconButton(
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        padding: const EdgeInsets.all(5),
+        iconSize: 14,
+        color: widget.color,
+        onPressed: _copy,
+        icon: Icon(_copied ? Icons.check : Icons.copy_rounded),
       ),
     );
   }
