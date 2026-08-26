@@ -1222,4 +1222,8 @@
 
 - fix(app): explain empty responses that follow an image-bearing prompt
 
+## 0.1.208
+
+- feat(attach): live CLI sessions in the app — presence, 1:1 view, input handover
+
 ## Unreleased
