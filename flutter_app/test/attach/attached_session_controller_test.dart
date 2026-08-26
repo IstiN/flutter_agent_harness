@@ -41,6 +41,13 @@ class _FakeInputChannel implements SessionInputChannel {
   }
 }
 
+class _ThrowingInputChannel implements SessionInputChannel {
+  @override
+  Future<void> send(String sessionId, String text) async {
+    throw StateError('sandbox denied the write');
+  }
+}
+
 void main() {
   test(
     'the controller follows events and hands input to the channel',
@@ -74,6 +81,7 @@ void main() {
       await controller.send('typed in the app');
       expect(input.sent, [('sess-1', 'typed in the app')]);
       expect(controller.sending, isFalse);
+      expect(controller.lastSendError, isNull);
 
       // Blank input is ignored.
       await controller.send('   ');
@@ -81,6 +89,28 @@ void main() {
 
       controller.dispose();
       await events.dispose();
+    },
+  );
+  test(
+    'a failed hand-over surfaces as lastSendError and does not throw',
+    () async {
+      final events = _FakeEventSource();
+      final controller = AttachedSessionController(
+        sessionId: 'sess-1',
+        title: 'Work session',
+        transport: SessionAttachTransport(
+          events: events,
+          input: _ThrowingInputChannel(),
+        ),
+      );
+
+      await controller.send('hello?');
+      expect(controller.sending, isFalse);
+      expect(controller.lastSendError, contains('sandbox denied'));
+
+      // A later success clears the error again.
+      await events.dispose();
+      controller.dispose();
     },
   );
 

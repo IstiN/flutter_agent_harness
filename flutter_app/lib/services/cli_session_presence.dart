@@ -102,3 +102,34 @@ SessionAttachTransport fileAttachTransport({
     ),
   );
 }
+
+/// The sessions root and cwd slug a session's fabric mailboxes live under,
+/// derived from the session JSONL path: `<root>/<slug>/<file>.jsonl`.
+///
+/// Deriving from the path (instead of trusting the manager's default root
+/// plus an encoded cwd) makes attach immune to every split-brain storage
+/// scenario — App Group vs `~/.fah/sessions` fallback, multi-root listing,
+/// a session from another workspace. The running CLI colocates its inbox at
+/// exactly `<thisRoot>/<thisSlug>/messages/<sessionId>_main/inbox`, so the
+/// app must write there and nowhere else.
+(String, String) sessionRootAndSlugForPath({
+  required String defaultRoot,
+  required String? sessionPath,
+  required String fallbackCwd,
+}) {
+  final path = sessionPath;
+  if (path == null || path.isEmpty) {
+    return (defaultRoot, encodeSessionCwd(fallbackCwd));
+  }
+  final fileNameSlash = path.lastIndexOf('/');
+  final slugSlash = fileNameSlash > 0
+      ? path.lastIndexOf('/', fileNameSlash - 1)
+      : -1;
+  if (fileNameSlash <= 0 || slugSlash <= 0) {
+    return (defaultRoot, encodeSessionCwd(fallbackCwd));
+  }
+  return (
+    path.substring(0, slugSlash),
+    path.substring(slugSlash + 1, fileNameSlash),
+  );
+}

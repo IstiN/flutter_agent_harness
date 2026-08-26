@@ -29,6 +29,13 @@ class AttachedSessionController extends ChangeNotifier {
   final List<AttachedMessage> rows = [];
   var sending = false;
 
+  /// The last send failure (`null` when the last send succeeded). A fabric
+  /// write can fail for real reasons — sandboxed access to the shared
+  /// sessions root, a moved session file — and swallowing it silently made
+  /// app messages vanish without a trace: nothing on disk, nothing in the
+  /// terminal, forever. The UI shows this instead.
+  String? lastSendError;
+
   void _onEvent(AttachedSessionEvent event) {
     rows.addAll(event.appended);
     notifyListeners();
@@ -44,6 +51,13 @@ class AttachedSessionController extends ChangeNotifier {
     notifyListeners();
     try {
       await _transport.input.send(sessionId, trimmed);
+      lastSendError = null;
+    } catch (error) {
+      lastSendError = '$error';
+      assert(() {
+        debugPrint('[Fa] attach send failed: $lastSendError');
+        return true;
+      }());
     } finally {
       sending = false;
       notifyListeners();

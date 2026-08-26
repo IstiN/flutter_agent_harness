@@ -407,10 +407,19 @@ class SessionChatSheetState extends State<SessionChatSheet>
           id: sessionId,
           createdAt: metadata?.createdAt ?? DateTime.now(),
         );
+    // Root + slug come from the session file's own path so the fabric
+    // mailboxes hit the EXACT root the owning CLI colocated them under —
+    // never a guessed default (App Group vs ~/.fah/sessions fallback,
+    // multi-root listings, other-workspace sessions).
+    final (attachRoot, attachSlug) = sessionRootAndSlugForPath(
+      defaultRoot: widget.manager.sessionsRoot,
+      sessionPath: metadata?.path,
+      fallbackCwd: widget.manager.env.sessionCwd,
+    );
     final transport = fileAttachTransport(
       env: widget.manager.env,
-      sessionsRoot: widget.manager.sessionsRoot,
-      cwdSlug: encodeSessionCwd(metadata?.cwd ?? widget.manager.env.sessionCwd),
+      sessionsRoot: attachRoot,
+      cwdSlug: attachSlug,
       resolvePath: (id) async => id == sessionId ? metadata?.path : null,
     );
     final controller = AttachedSessionController(

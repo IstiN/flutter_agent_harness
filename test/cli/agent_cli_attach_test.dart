@@ -126,4 +126,69 @@ void main() {
       );
     },
   );
+  test(
+    'user-kind mail still wakes the CLI after the agent-chat streak is capped',
+    () async {
+      final fake = FakeStreamFunction([textTurn('agent ping'), textTurn('ok')]);
+      final fabric = FileMessagingRepository(
+        env: env,
+        root: '/sessions/--work--/messages',
+      );
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+      await waitForTrue(() async {
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        return (await repo.list(cwd: '/work')).isNotEmpty;
+      });
+
+      // Exhaust the ping-pong cap WITHOUT ten real runs: pretend ten
+      // agent-to-agent wakes already happened.
+      cli.inboxWakeStreakForTest = 10;
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final sessionId = (await repo.list(cwd: '/work')).first.id;
+
+      // Agent chat at the cap: ignored for now (delivered later).
+      await fabric.send(
+        AgentMessage(
+          id: newMessageId(),
+          fromId: 'peer',
+          toId: '$sessionId/main',
+          text: 'agent chatter',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 2600));
+      expect(fake.calls, 0, reason: 'the cap holds for agent-to-agent mail');
+
+      // The USER speaking from the app breaks through AND resets the streak.
+      await fabric.send(
+        AgentMessage(
+          id: newMessageId(),
+          fromId: 'app',
+          toId: '$sessionId/main',
+          text: 'are you there?',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+          kind: AgentMessageKind.user,
+        ),
+      );
+      await waitForIt(() => fake.calls >= 1 && !cli.isBusy);
+      expect(cli.inboxWakeStreakForTest, 0, reason: 'user input resets it');
+
+      io.sendLine('/exit');
+      await run;
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
 }
+
+/* cap test appended below */

@@ -194,3 +194,34 @@ final class FileMessagingRepository implements MessagingRepository {
     return messages;
   }
 }
+
+/// A [MessagingRepository] whose backing implementation can be replaced at
+/// runtime. The CLI uses this so the agent messaging fabric can follow the
+/// EFFECTIVE session root: when session creation falls back from the shared
+/// root (macOS App Group) to `~/.fah/sessions`, the mailboxes must move with
+/// it — a fabric pinned to the old root would let an attached app write into
+/// inboxes no running process ever drains.
+final class SwappableMessagingRepository implements MessagingRepository {
+  SwappableMessagingRepository(MessagingRepository initial) : _inner = initial;
+
+  MessagingRepository _inner;
+
+  /// Atomically replaces the delegate repository. In-flight calls finish on
+  /// their old delegate; every later call goes to [repo].
+  void swap(MessagingRepository repo) => _inner = repo;
+
+  @override
+  Future<void> register(String agentId) => _inner.register(agentId);
+
+  @override
+  Future<void> send(AgentMessage message) => _inner.send(message);
+
+  @override
+  Future<List<AgentMessage>> peek(String agentId) => _inner.peek(agentId);
+
+  @override
+  Future<List<AgentMessage>> drain(String agentId) => _inner.drain(agentId);
+
+  @override
+  Future<List<MailboxEntry>> directory() => _inner.directory();
+}

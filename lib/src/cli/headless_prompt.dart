@@ -53,3 +53,116 @@ String? resolveHeadlessPrompt({
       '[attached file: ${file.absolute.path} — read it with your tools]';
   return trailing.isEmpty ? reference : '$reference\n\n$trailing';
 }
+
+/// Creates the [File] probed by [resolveInteractiveFileReference].
+typedef InputPromptFileFactory = File Function(String path);
+
+/// Files bigger than this are not read at all for statistics — size alone
+/// tells the model enough (pi-style estimate reads must never stall paste).
+const _attachStatsReadCap = 8 * 1024 * 1024;
+
+/// Resolves an interactive prompt that starts with a pasted file path.
+///
+/// The first whitespace-delimited token is treated as a file reference
+/// when it looks path-like (`/…`, `~/`, `./`, `../`) AND names an
+/// existing file. It becomes an explicit `[attached file: …]` path
+/// reference — the marker headless mode uses too — annotated with locally
+/// measured stats so the model can judge the cost BEFORE reading:
+///
+///     [attached file: /logs/build.log (97.7 KB · 3412 lines · ~8500
+///      tokens est.) — read it with your tools]
+///
+/// Size formats as human-readable B/KB/MB; decodable text additionally
+/// reports line count and the repo's standard ~4-chars-per-token estimate
+/// (the compaction heuristic in `token_estimation.dart`). Content itself
+/// is deliberately NEVER inlined — pasting happens before anyone looked
+/// at the size, so the model decides whether and how much to read with
+/// its tools (`read` takes line-range selectors). For files over
+/// [_attachStatsReadCap] the content is not read even for statistics;
+/// the size speaks for itself. Everything typed after the path rides
+/// along as the instruction.
+///
+/// Conservative by design: a token without a path-like prefix is never
+/// converted (plain sentences and bare words stay untouched), and input
+/// with no such leading reference returns unchanged.
+String resolveInteractiveFileReference(
+  String text, {
+  InputPromptFileFactory fileOf = _defaultFileOf,
+}) {
+  final token = _leadingPathLikeToken(text);
+  if (token == null) return text;
+  final file = fileOf(token);
+  try {
+    if (!file.existsSync()) return text;
+  } on Object {
+    return text;
+  }
+  var length = 0;
+  try {
+    length = file.lengthSync();
+  } on Object {
+    // Stats are best-effort; an unreadable length still attaches.
+  }
+  final textStats = _attachTextStats(file, length);
+  final stats = [_formatAttachBytes(length), ?textStats].join(' · ');
+  final trailing = text.trimLeft().substring(token.length).trim();
+  final body =
+      '[attached file: ${file.absolute.path} ($stats)'
+      ' — read it with your tools]';
+  return trailing.isEmpty ? body : '$body\n\n$trailing';
+}
+
+/// The first whitespace-delimited token of [text] after leading blanks,
+/// or null when there is none or it lacks a path-like prefix (`/…`, `~/`,
+/// `./`, `../`) — plain sentences and bare words stay untouched.
+String? _leadingPathLikeToken(String text) {
+  final trimmedStart = text.trimLeft();
+  final match = RegExp(r'^\S+').firstMatch(trimmedStart);
+  if (match == null) return null;
+  const pathPrefixes = ['/', '~/', './', '../'];
+  final token = match.group(0)!;
+  return pathPrefixes.any(token.startsWith) ? token : null;
+}
+
+/// Line/token estimate annotation for a decodable text attachment, or
+/// null when [length] reads as binary-or-oversized ([_attachStatsReadCap]
+/// caps the probing read). Same ~4-chars-per-token heuristic the
+/// compaction estimator uses.
+String? _attachTextStats(File file, int length) {
+  if (length <= 0 || length > _attachStatsReadCap) return null;
+  try {
+    final content = file.readAsStringSync();
+    final lines = content.split('\n').length;
+    final tokens = (content.length / _attachCharsPerToken).ceil();
+    final tokenLabel =
+        '~${tokens >= 10000 ? '${tokens ~/ 1000}k' : '$tokens'}'
+        ' tokens est.';
+    final lineLabel = '${lines == 1 ? '1 line' : '$lines lines'} · $tokenLabel';
+    return lineLabel;
+  } on Object {
+    // Binary or undecodable: size-only annotation above.
+    return null;
+  }
+}
+
+/// Characters per token in the compaction estimation heuristic
+/// (see `lib/src/compaction/token_estimation.dart`).
+const _attachCharsPerToken = 4;
+
+/// Human-readable byte size for attachment annotations: raw B under 1 KiB,
+/// then one-decimal KB/MB/GB (two decimals dropped ≥ 100 to stay short).
+String _formatAttachBytes(int bytes) {
+  if (bytes <= 0) return '0 B';
+  if (bytes < 1024) return '$bytes B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  var value = bytes.toDouble();
+  var unit = -1;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  final digits = value >= 100 ? 0 : 1;
+  return '${value.toStringAsFixed(digits)} ${units[unit]}';
+}
+
+File _defaultFileOf(String path) => File(path);

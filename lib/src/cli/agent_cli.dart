@@ -23,6 +23,7 @@ import 'package:yaml/yaml.dart';
 
 import '../agent/agent.dart';
 import 'agent_event_handler.dart';
+import 'headless_prompt.dart';
 import 'key_event.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
@@ -86,6 +87,7 @@ import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
 import '../memory/compaction_memory_hook.dart';
 import '../memory/memory_controller.dart';
+import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
@@ -121,6 +123,7 @@ part 'approval_commands.dart';
 part 'skill_commands.dart';
 part 'session_commands.dart';
 part 'agent_cli_provider_presets.dart';
+part 'agent_cli_inbox.dart';
 
 /// Terminal IO abstracted for testability.
 ///
@@ -431,15 +434,21 @@ class AgentCli {
       // The messaging fabric: per-agent inboxes colocated with the project's
       // sessions (`<sessionRoot>/<cwd-slug>/messages`). Any Fa instance
       // sharing the repo can exchange messages with this one's agents.
-      messaging: FileMessagingRepository(
-        env: _env,
-        // Messaging is scoped to the *launch* cwd. Sessions are grouped by cwd
-        // under the shared root, but the messaging fabric is initialized once;
-        // keeping it tied to the original folder avoids breaking the file-based
-        // directory layout. Each mailbox is still namespaced by session id.
-        root: '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
-        decodeSessionCwd: decodeSessionCwd,
-        homeDir: config.homeDir,
+      // The wrapper lets `_createSession`'s storage fallback re-point the
+      // fabric at the effective root — a fallback must move the MAILBOXES
+      // too, or an attached app writes into inboxes no process drains.
+      messaging: _fabricRepository = SwappableMessagingRepository(
+        FileMessagingRepository(
+          env: _env,
+          // Messaging is scoped to the *launch* cwd. Sessions are grouped by
+          // cwd under the shared root, but the messaging fabric is
+          // initialized once; keeping it tied to the original folder avoids
+          // breaking the file-based directory layout. Each mailbox is still
+          // namespaced by session id.
+          root: '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
+          decodeSessionCwd: decodeSessionCwd,
+          homeDir: config.homeDir,
+        ),
       ),
       selfId: 'main',
       sink: (registry) async {
@@ -744,6 +753,10 @@ class AgentCli {
   /// Retained-subagent registry (Phase 3a): tracks every spawned child so
   /// `task_status`/`task_observe`/`task_send` work after completion.
   late final SubagentManager _subagentManager;
+
+  /// The messaging fabric wrapper — re-pointed when session storage falls
+  /// back to a different root so the mailboxes follow the sessions.
+  late final SwappableMessagingRepository _fabricRepository;
 
   /// The session's retained-subagent registry (tests, the app settings
   /// Agents panel, hosts observing children).
@@ -1515,6 +1528,18 @@ class AgentCli {
             ),
           );
           _repo = fallbackRepo;
+          // Storage moved — the mailboxes move with it. Without this the
+          // fabric keeps pointing at the failed root: presence/register
+          // throws, and an attached app's messages land where this process
+          // never looks (the silent-dead-attach bug).
+          _fabricRepository.swap(
+            FileMessagingRepository(
+              env: _env,
+              root: '$fallbackRoot/${encodeSessionCwd(_env.cwd)}/messages',
+              decodeSessionCwd: decodeSessionCwd,
+              homeDir: config.homeDir,
+            ),
+          );
           if (name != null && name.isNotEmpty) {
             await session.appendSessionName(name);
           }
@@ -1568,41 +1593,6 @@ class AgentCli {
       await _loadAgentContext();
     }
     return session;
-  }
-
-  /// The main agent's inbox as steering messages: each pending fabric
-  /// message becomes a user message attributed to its sender, so the
-  /// transcript reads like a chat between agents. A `user`-kind message
-  /// (an attached client — the Fa app's attach view — handing over user
-  /// input) lands as the user's own words with a dim attribution prefix,
-  /// not an agent chat line.
-  Future<List<Message>> _mainInboxMessages() async {
-    final queued = await _subagentManager.drainMessages(
-      _subagentManager.selfId,
-    );
-    return [
-      for (final message in queued)
-        if (message.isUserInput)
-          UserMessage.text('[from ${message.fromId}] ${message.text.trim()}')
-        else
-          UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
-    ];
-  }
-
-  /// Namespaces this instance's mailboxes with the active session id: two
-  /// Fa instances sharing the messaging root never drain each other's
-  /// inboxes. Called after every session init/switch.
-  void _syncMailboxPrefix() {
-    _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
-    // The prompt's messaging section carries the live mailbox address.
-    _applyPromptComposition();
-    // Presence: a zero-mail instance is discoverable in agent_directory.
-    final fabric = _subagentManager.messaging;
-    if (fabric != null && _subagentManager.mailboxPrefix.isNotEmpty) {
-      unawaited(
-        fabric.register(_subagentManager.mailboxOf(_subagentManager.selfId)),
-      );
-    }
   }
 
   /// The label for a startup-resumed session's replay header, or null when
@@ -2078,7 +2068,14 @@ class AgentCli {
     // Path-gated skills (`paths:` frontmatter) join the prompt once the
     // agent has touched a matching file; recomposing here is idempotent.
     _applyPromptComposition();
-    final settled = _runPrompt(text);
+    // A pasted file path becomes an explicit [attached file: …] reference —
+    // the model is told there is a file and decides itself whether and how
+    // much to read (content is never inlined: paste size is unknown).
+    final resolved = resolveInteractiveFileReference(text);
+    if (resolved != text) {
+      io.writeln(_style.dim('[file] pasted path attached for the agent'));
+    }
+    final settled = _runPrompt(resolved);
     _settled = settled;
     unawaited(
       settled.then((_) {
@@ -2224,33 +2221,18 @@ class AgentCli {
 
   /// Consecutive inbox-triggered runs without any user input — capped so
   /// two chatty instances cannot ping-pong forever (mail still accumulates
-  /// and is delivered at the next real turn).
+  /// and is delivered at the next real turn). User-kind messages reset the
+  /// streak when delivered: they ARE the user talking, so an attach-driven
+  /// session never exhausts the cap.
   var _inboxWakeStreak = 0;
   static const _maxInboxWakeStreak = 10;
 
-  /// The inbox watcher tick: while IDLE, new inter-agent mail starts a turn
-  /// (the loop's first steering poll drains the inbox into the run). Mid-run
-  /// mail needs no wake — the per-turn steering poll already delivers it.
-  Future<void> _wakeOnInboxMail() async {
-    if (_exited || isBusy || _inboxWakeRunning) return;
-    if (_inboxWakeStreak >= _maxInboxWakeStreak) return;
-    final count = await _subagentManager.pendingInboxCount(
-      _subagentManager.selfId,
-    );
-    if (count == 0) return;
-    _inboxWakeStreak++;
-    _inboxWakeRunning = true;
-    io.writeln(
-      _style.dim('[mail] $count new message(s) — waking up to answer'),
-    );
-    _startRun(
-      '<system-notice>New inter-agent mail arrived ($count message(s)) — '
-      'the messages follow below as user messages. Read them and act: reply '
-      'with the agent_message tool to the sender address when a response is '
-      'expected, or just incorporate the information.</system-notice>',
-    );
-    unawaited(_settled.whenComplete(() => _inboxWakeRunning = false));
-  }
+  /// Test seam: observe/reset the inbox-wake streak without driving ten
+  /// real runs (the cap is exactly [_maxInboxWakeStreak]).
+  @visibleForTesting
+  int get inboxWakeStreakForTest => _inboxWakeStreak;
+  @visibleForTesting
+  set inboxWakeStreakForTest(int value) => _inboxWakeStreak = value;
 
   Future<void> _persistMessages() async {
     final session = _session;
@@ -2657,8 +2639,8 @@ class AgentCli {
     // never a slash command — pasting one shouldn't trigger "unknown
     // command"; hint at how to load it instead.
     if (trimmed.startsWith('/') && trimmed.length > 1) {
-      final looksAbsolutePath = RegExp(r'^/[^/\s]*\/').hasMatch(trimmed) ||
-          trimmed.startsWith('~/');
+      final looksAbsolutePath =
+          RegExp(r'^/[^/\s]*\/').hasMatch(trimmed) || trimmed.startsWith('~/');
       if (looksAbsolutePath) {
         io.writeln(
           'looks like a filesystem path, not a command — '
