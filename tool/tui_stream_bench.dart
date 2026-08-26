@@ -10,7 +10,6 @@
 // Numbers are for the GOAL doc deltas; CI does not gate on timing.
 
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
-import 'package:flutter_agent_harness/src/cli/fa_tui.dart' show wrapAnsiLine;
 
 void main(List<String> args) {
   final lines = _intArg(args, '--lines', 2000);
