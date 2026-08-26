@@ -1226,4 +1226,8 @@
 
 - feat(attach): live CLI sessions in the app — presence, 1:1 view, input handover
 
+## 0.1.210
+
+- ci(mobile): skip the iOS artifact download when the IPA build was skipped
+
 ## Unreleased
