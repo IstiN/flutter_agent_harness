@@ -1,0 +1,19 @@
+# Fa widgets
+
+> Sample JS widgets for the Fa agent: small apps written against the
+> js_widget_runtime `jsr` API, executed inside Fa's sandboxed interpreter.
+> Shell access, network calls and system services are default-denied; the
+> widget's manifest declares what it uses and the app prompts the user.
+
+## Catalog
+
+- Machine-readable catalog (schemaVersion 1):
+  https://github.com/IstiN/fa_widgets/releases/latest/download/catalog.json
+- Per-widget artifacts: `<id>-<version>.zip` next to it in the same release,
+  immutable version tags `<id>-v<version>` for pinning.
+- Sources & contribution guide:
+  https://github.com/IstiN/fa_widgets
+
+Install via the Fa app: Plugins → Get widgets.
+
+- [Widget gallery](https://fa1.dev/widgets/)

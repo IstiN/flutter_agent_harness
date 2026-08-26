@@ -61,3 +61,13 @@
 
 See the on-page FAQ for the same answers with anchors:
 [fa1.dev FAQ](https://fa1.dev/#faq)
+
+## Widgets
+
+- Sample JS widgets for the Fa agent run in its sandboxed interpreter;
+  permissions are declared per widget and default-denied.
+- Gallery: https://fa1.dev/widgets/
+- Machine-readable catalog:
+  https://github.com/IstiN/fa_widgets/releases/latest/download/catalog.json
+- Sources and contribution guide: https://github.com/IstiN/fa_widgets
+
