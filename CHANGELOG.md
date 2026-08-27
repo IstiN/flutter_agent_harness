@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.221
+
+- fix(tui): streaming without trailing newlines no longer force-rebuilds the
+  whole transcript render — a delta that grows the current line (the
+  coalescer's exact no-newline flush shape) used to break the incremental
+  boundary's identity sentinel and trigger a full format+wrap pass
+  (~220ms on a 150k-token transcript) on EVERY flush, saturating the UI
+  loop so typing during a stream rubber-banded or froze. A prefix-extended
+  tail now rolls the durable caches back one source line and resumes:
+  measured 4327ms → 15ms over 20 growing appends; appends with newlines
+  stay O(delta) as before.
+
 ## 0.1.220
 
 - feat(tools): one-per-session warning when a freshly written old-format

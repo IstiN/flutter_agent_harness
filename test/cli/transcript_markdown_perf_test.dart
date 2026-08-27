@@ -244,4 +244,93 @@ void main() {
       expect(grewLinesFormatted, 0);
     });
   });
+
+  // Streaming WITHOUT trailing newlines mutates the transcript by GROWING
+  // the last line (each flush builds a new tail string); the CLI coalescer
+  // feeds exactly this shape. The boundary identity sentinel must treat a
+  // prefix-extended tail as resumable, not as a "replaced tail" full
+  // rebuild — on a large transcript that rebuild cost ~220ms PER FLUSH and
+  // starved keystrokes (the typing-lag-while-streaming bug).
+  group('streaming tail growth (no-newline deltas)', () {
+    test('a growing last line resumes instead of rebuilding', () {
+      final session = TranscriptMarkdown(width: 70);
+      final base = List.generate(30, (i) => 'seed line $i body');
+      var tail = 'streaming ';
+      var src = [...base, tail];
+      session.sync(src);
+      final rebuildsBefore = TranscriptMarkdown.debugFullRebuilds;
+
+      for (var n = 0; n < 12; n++) {
+        tail = '$tail chunk$n words';
+        src = [...base, tail];
+        final rendered = session.sync(src);
+        expect(
+          rendered,
+          AnsiMarkdown(width: 70).formatAll(src),
+          reason: 'step $n must stay byte-exact',
+        );
+      }
+      expect(
+        TranscriptMarkdown.debugFullRebuilds,
+        rebuildsBefore,
+        reason: 'tail growth is prefix-compatible: no rebuild allowed',
+      );
+      expect(TranscriptMarkdown.debugResumedPasses, greaterThanOrEqualTo(12));
+    });
+
+    test('growth inside an open fence stays byte-exact', () {
+      final session = TranscriptMarkdown(width: 70);
+      final base = ['prose line', '```dart', 'const a = 1;'];
+      var tail = 'const streaming = ';
+      session.sync([...base, tail]);
+      for (var n = 0; n < 5; n++) {
+        tail = '${tail}value$n + ';
+        final src = [...base, tail];
+        expect(session.sync(src), AnsiMarkdown(width: 70).formatAll(src));
+      }
+    });
+
+    test('a rewritten (non-prefix) tail still rebuilds safely', () {
+      final session = TranscriptMarkdown(width: 70);
+      final base = List.generate(8, (i) => 'seed $i');
+      session.sync([...base, 'old tail']);
+      final rebuildsBefore = TranscriptMarkdown.debugFullRebuilds;
+      final src = [...base, 'totally different'];
+      expect(session.sync(src), AnsiMarkdown(width: 70).formatAll(src));
+      expect(TranscriptMarkdown.debugFullRebuilds, rebuildsBefore + 1);
+    });
+
+    test('growth then newline-append then growth again', () {
+      final session = TranscriptMarkdown(width: 70);
+      final base = List.generate(5, (i) => 'seed $i');
+      var tail = 'grow ';
+      session.sync([...base, tail]);
+      for (var n = 0; n < 4; n++) {
+        tail = '$tail$n ';
+        expect(
+          session.sync([...base, tail]),
+          AnsiMarkdown(width: 70).formatAll([...base, tail]),
+        );
+      }
+      // The line finishes; new lines start after it.
+      final withNew = [...base, tail, 'fresh line after stream'];
+      expect(session.sync(withNew), AnsiMarkdown(width: 70).formatAll(withNew));
+      var second = 'second ';
+      final withSecond = [...withNew, second];
+      expect(
+        session.sync(withSecond),
+        AnsiMarkdown(width: 70).formatAll(withSecond),
+      );
+      for (var n = 0; n < 3; n++) {
+        second = '$second$n ';
+        final src = [...withNew, second];
+        expect(session.sync(src), AnsiMarkdown(width: 70).formatAll(src));
+      }
+      expect(
+        TranscriptMarkdown.debugFullRebuilds,
+        0,
+        reason: 'the whole mixed pattern must stay incremental',
+      );
+    });
+  });
 }

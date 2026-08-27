@@ -629,6 +629,7 @@ final class _WalkResult {
     this.fenceAtClean,
     this.pendingEnd,
     this.trailing,
+    this.fenceAfter,
   );
 
   final List<List<String>> outsPerLine;
@@ -636,6 +637,11 @@ final class _WalkResult {
   final bool fenceAtClean;
   final bool pendingEnd;
   final List<String> trailing;
+
+  /// Fence state after each consumed line (index i = state after src
+  /// line from+i) — lets the commit edge remember the state just BEFORE
+  /// the boundary line so a one-line rollback can restore it.
+  final List<bool> fenceAfter;
 }
 
 final class TranscriptMarkdown {
@@ -676,6 +682,18 @@ final class TranscriptMarkdown {
   // Pipeline state captured at the commit boundary ([_through]).
   var _savedFence = false;
 
+  /// Fence state just BEFORE the boundary source line — the restore point
+  /// used by the grown-tail rollback (streaming without newlines).
+  var _fenceBeforeBoundaryLine = false;
+
+  /// Start index into [_formatted] per SOURCE line (sentinel = current
+  /// length) — lets the rollback drop exactly one source line's formatted
+  /// output without a per-line map on the hot path.
+  List<int> _srcFmtStarts = const [0];
+
+  /// Start row into [_rows] per SOURCE line (sentinel = current length).
+  List<int> _srcRowStarts = const [0];
+
   // Work counters — contract tests assert these, never timings.
   static int debugFullRebuilds = 0;
   static int debugResumedPasses = 0;
@@ -708,7 +726,6 @@ final class TranscriptMarkdown {
   List<int> get lineStartRows => _viewStarts;
 
   /// Brings every view in line with [src]; returns [formattedLines].
-  /// Brings every view in line with [src]; returns [formattedLines].
   List<String> sync(List<String> src) {
     final resumable =
         width == _fmt.width &&
@@ -717,7 +734,7 @@ final class TranscriptMarkdown {
             (src.isNotEmpty &&
                 identical(src.first, _boundaryFirst) &&
                 identical(src[_through - 1], _boundaryLast)));
-    if (!resumable) {
+    if (!resumable && !_rollbackGrownTail(src)) {
       _rebuild(src);
       return _viewFormatted;
     }
@@ -733,14 +750,47 @@ final class TranscriptMarkdown {
     return _viewFormatted;
   }
 
+  /// A streaming flush WITHOUT a trailing newline grows the last source
+  /// line into a NEW string with the SAME prefix. The boundary identity
+  /// sentinel reads that as a "replaced tail" and used to take the full
+  /// rebuild path — measured ~220ms per flush on a large transcript, i.e.
+  /// per streamed chunk, starving the UI loop so keystrokes queued behind
+  /// it (the typing-lag-while-streaming bug). A strictly prefix-extended
+  /// tail can instead roll the durable caches back ONE source line and
+  /// resume: only that line re-formats and re-wraps.
+  bool _rollbackGrownTail(List<String> src) {
+    if (width != _fmt.width) return false;
+    if (_through <= 0 || src.length < _through) return false;
+    final boundary = _boundaryLast;
+    if (boundary == null || _boundaryFirst == null) return false;
+    if (src.isEmpty || !identical(src.first, _boundaryFirst)) return false;
+    final grown = src[_through - 1];
+    if (grown.length <= boundary.length || !grown.startsWith(boundary)) {
+      return false; // replaced, not grown — keep the documented safe path
+    }
+    final edge = _through - 1;
+    final fmtKept = _srcFmtStarts[edge];
+    _formatted = _formatted.sublist(0, fmtKept);
+    _rows = _rows.sublist(0, _srcRowStarts[edge]);
+    _starts = [..._starts.sublist(0, fmtKept), _rows.length];
+    _srcFmtStarts = [..._srcFmtStarts.sublist(0, edge), _formatted.length];
+    _srcRowStarts = [..._srcRowStarts.sublist(0, edge), _rows.length];
+    _through = edge;
+    _boundaryLast = edge > 0 ? src[edge - 1] : null;
+    _savedFence = _fenceBeforeBoundaryLine;
+    return true;
+  }
+
   /// Consume-walk over src[from..) seeded with the frozen boundary state.
   _WalkResult _walk(List<String> src, {required int from}) {
     _fmt.restoreState(inFence: _savedFence, table: const []);
     final outsPerLine = <List<String>>[];
+    final fenceAfter = <bool>[];
     var lastClean = -1; // step whose completion left no pending table
     var fenceAtClean = false;
     for (var i = from; i < src.length; i++) {
       outsPerLine.add(_fmt.consumeLine(src[i]));
+      fenceAfter.add(_fmt.inFence);
       if (!_fmt.hasPendingTable) {
         lastClean = outsPerLine.length - 1;
         fenceAtClean = _fmt.inFence;
@@ -752,6 +802,7 @@ final class TranscriptMarkdown {
       fenceAtClean,
       _fmt.hasPendingTable,
       _fmt.flushTrailing(),
+      fenceAfter,
     );
   }
 
@@ -765,15 +816,29 @@ final class TranscriptMarkdown {
   void _commitTo(_WalkResult r, List<String> src, {required int from}) {
     final upto = r.lastClean + 1; // count of leading final steps
     if (upto <= 0) return;
-    final durableLines = [
-      for (var step = 0; step < upto; step++) ...r.outsPerLine[step],
-    ];
-    if (durableLines.isEmpty) return;
-    _formatted = [..._formatted, ...durableLines];
-    _appendWrapped(durableLines);
+    final formatted = [..._formatted];
+    final rows = [..._rows];
+    final starts = [..._starts]..removeLast(); // per formatted line
+    final fmtStarts = [..._srcFmtStarts]..removeLast(); // per source line
+    final rowStarts = [..._srcRowStarts]..removeLast(); // per source line
+    for (var step = 0; step < upto; step++) {
+      fmtStarts.add(formatted.length);
+      rowStarts.add(rows.length);
+      for (final line in r.outsPerLine[step]) {
+        starts.add(rows.length);
+        formatted.add(line);
+        rows.addAll(wrapAnsiLine(line, width));
+      }
+    }
+    _formatted = formatted;
+    _rows = rows;
+    _starts = [...starts, rows.length];
+    _srcFmtStarts = [...fmtStarts, formatted.length];
+    _srcRowStarts = [...rowStarts, rows.length];
     _through = from + upto;
     if (from == 0) _boundaryFirst ??= src.first;
     _boundaryLast = src[_through - 1];
+    _fenceBeforeBoundaryLine = upto >= 2 ? r.fenceAfter[upto - 2] : _savedFence;
     _savedFence = r.fenceAtClean;
   }
 
@@ -811,20 +876,6 @@ final class TranscriptMarkdown {
     _viewStarts = _starts;
   }
 
-  /// Extends the durable wrap caches by [lines] (already appended to
-  /// [_formatted] by the caller).
-  void _appendWrapped(List<String> lines) {
-    final rows = [..._rows]; // caches may start as const []
-    final starts = [..._starts]..removeLast(); // drop old sentinel
-    for (final line in lines) {
-      starts.add(rows.length);
-      rows.addAll(wrapAnsiLine(line, width));
-    }
-    starts.add(rows.length);
-    _rows = rows;
-    _starts = starts;
-  }
-
   /// Full-rebuild fallback: width change, head-trimmed or shrunk source.
   /// Legacy behavior byte-for-byte (one formatAll + wrap pass), adopted as
   /// the durable baseline.
@@ -833,10 +884,12 @@ final class TranscriptMarkdown {
     debugLinesFormatted += src.length;
     final fmt = AnsiMarkdown(width: width);
     final outs = <List<String>>[];
+    final fenceAfter = <bool>[];
     var lastClean = -1;
     var fenceAtClean = false;
     for (final line in src) {
       outs.add(fmt.consumeLine(line));
+      fenceAfter.add(fmt.inFence);
       if (!fmt.hasPendingTable) {
         lastClean = outs.length - 1;
         fenceAtClean = fmt.inFence;
@@ -848,14 +901,24 @@ final class TranscriptMarkdown {
     _fmt = fmt;
     _formatted = [];
     _rows = [];
-    // Empty-but-sentineled shape: _appendWrapped drops the trailing
-    // sentinel via removeLast, so a fresh cache must already carry [0].
+    // Empty-but-sentineled shape: the commit drops the trailing sentinel
+    // via removeLast, so fresh caches must already carry [0].
     _starts = [0];
+    _srcFmtStarts = [0];
+    _srcRowStarts = [0];
+    _fenceBeforeBoundaryLine = false;
     _through = 0;
     _boundaryFirst = src.isEmpty ? null : src.first;
     _boundaryLast = src.isEmpty ? null : src.last;
     _savedFence = false;
-    final r = _WalkResult(outs, lastClean, fenceAtClean, hadPending, trailing);
+    final r = _WalkResult(
+      outs,
+      lastClean,
+      fenceAtClean,
+      hadPending,
+      trailing,
+      fenceAfter,
+    );
     _commitTo(r, src, from: 0);
     _savedFence = fenceAtClean; // even without a durable edge yet
     _expose(r, src);
