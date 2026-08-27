@@ -2092,6 +2092,14 @@ class AgentCli {
   /// the prompt is automatically retried once with a 'continue' nudge before
   /// giving up, so the user does not have to type it manually.
   Future<void> _runPrompt(String text, {bool isAutoContinue = false}) async {
+    // Pre-flight context guard: when the LIVE context already exceeds the
+    // compaction threshold, compact BEFORE sending the request — not only
+    // after the previous run settles. A failed post-run compaction (quota-
+    // limited smol role, provider outage) used to leave the transcript
+    // ballooning past the model window turn after turn: the gauge showed
+    // nonsense like ctx 240% (480k/200k) while every request knowingly
+    // carried an over-window payload until the provider rejected it.
+    if (!isAutoContinue) await _maybeAutoCompact();
     try {
       await _agent.prompt(text);
 
