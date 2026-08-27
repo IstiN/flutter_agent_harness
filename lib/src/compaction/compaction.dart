@@ -606,6 +606,7 @@ SummarizeFn streamFunctionSummarizer(
   StreamFunction streamFunction,
   Model model, {
   CompactionPrompts prompts = defaultCompactionPrompts,
+  void Function(String delta)? onDelta,
 }) {
   return (SummarizationRequest request) async {
     try {
@@ -621,6 +622,20 @@ SummarizeFn streamFunctionSummarizer(
         sessionId: uuidv7(),
         cacheRetention: 'none',
       );
+      // Surface streaming deltas (text + thinking) to the host UI while the
+      // result future resolves: EventStream buffers until listened, and
+      // `result` resolves independently of subscription, so this drain is
+      // safe for the single-subscription stream.
+      if (onDelta != null) {
+        stream.listen((event) {
+          final delta = switch (event) {
+            TextDeltaEvent(:final delta) => delta,
+            ThinkingDeltaEvent(:final delta) => delta,
+            _ => null,
+          };
+          if (delta != null && delta.isNotEmpty) onDelta(delta);
+        });
+      }
       final response = await stream.result;
       return switch (response.stopReason) {
         StopReason.aborted => SummarizationResult.failure(

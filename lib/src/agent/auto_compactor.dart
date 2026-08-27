@@ -78,6 +78,11 @@ abstract class AutoCompactorHooks {
   /// prints a "switch models" hint here; the Flutter sheet shows a
   /// snackbar.
   void onBothRolesFailed(Object lastError);
+
+  /// Streaming deltas (text + thinking) of the active summarization pass,
+  /// so a host UI can show the summary being written instead of a silent
+  /// spinner. Default no-op; high-frequency — hosts should throttle.
+  void onDelta(String delta) {}
 }
 
 /// Compact helper that owns the multi-pass + retry + smol→main logic.

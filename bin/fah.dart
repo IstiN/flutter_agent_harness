@@ -1187,6 +1187,23 @@ Future<void> _runApp(List<String> args) async {
 
   await persistConfig();
 
+  Future<void> resetTerminalForShell() async {
+    if (!stdin.hasTerminal) return;
+    stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+    stdout.write('\x1b[?1004l\x1b[?2004l');
+    stdout.write('\x1b[?25h\x1b[?1049l');
+    await stdout.flush();
+    // Drain any pending terminal query/mouse responses so they don't echo
+    // as garbage at the shell prompt.
+    try {
+      final drain = stdin.listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await drain.cancel();
+    } on Object {
+      // Nothing to drain.
+    }
+  }
+
   final sigintSub = ProcessSignal.sigint.watch().listen((_) {
     final wasBusy = cli.isBusy;
     switch (sigintAction(headless: headlessPrompt != null)) {
@@ -1239,27 +1256,6 @@ Future<void> _runApp(List<String> args) async {
   // dart_tui's shutdown writes the reset sequences (?25h ?1049l ?1002l etc.)
   // and flushes stdout, but on some terminals the mouse-tracking disable
   // (?1002l ?1006l) arrives too late or is lost. Write them again here with
-  // Terminal mode reset shared by every interactive exit path (natural
-  // end AND Ctrl+C): an explicit flush guarantees the shell never sees
-  // raw mouse sequences (the natural main() return can race the VM
-  // shutdown and drop the buffered reset bytes).
-  Future<void> resetTerminalForShell() async {
-    if (!stdin.hasTerminal) return;
-    stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
-    stdout.write('\x1b[?1004l\x1b[?2004l');
-    stdout.write('\x1b[?25h\x1b[?1049l');
-    await stdout.flush();
-    // Drain any pending terminal query/mouse responses so they don't echo
-    // as garbage at the shell prompt.
-    try {
-      final drain = stdin.listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      await drain.cancel();
-    } on Object {
-      // Nothing to drain.
-    }
-  }
-
   await resetTerminalForShell();
   exit(0);
 }

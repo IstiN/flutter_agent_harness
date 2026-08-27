@@ -11,6 +11,27 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 
   final AgentCli cli;
 
+  DateTime? _lastDeltaPhase;
+  String _compactionTail = '';
+
+  @override
+  void onDelta(String delta) {
+    // Live tail of the summary being written, shown in the busy row so
+    // compaction reads as work, not a hang. Throttled — deltas are hot.
+    final merged = (_compactionTail + delta).replaceAll('\n', ' ');
+    _compactionTail = merged.length > 60
+        ? merged.substring(merged.length - 60)
+        : merged;
+    final now = DateTime.now();
+    final last = _lastDeltaPhase;
+    if (last != null &&
+        now.difference(last) < const Duration(milliseconds: 150)) {
+      return;
+    }
+    _lastDeltaPhase = now;
+    cli._tuiController?.setBusyPhase('Compacting context… $_compactionTail');
+  }
+
   @override
   void onPass(AutoCompactorPass pass) {
     if (!pass.ok) {
