@@ -27,6 +27,7 @@ export 'src/cli/custom_providers.dart';
 export 'src/model_roles/provider_key_resolver.dart';
 export 'src/cli/cli_args.dart';
 export 'src/cli/cli_help.dart';
+export 'src/cli/sigint_action.dart';
 export 'src/cli/key_event.dart';
 export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.222
+
+- fix(cli): Ctrl+C while a run streams now prints "run aborted — press
+  Ctrl+C again to exit". The first press always aborted the run but gave
+  no feedback, so the suddenly-silent screen read as a hung process
+  (PTY-verified: the SIGINT abort path works; only the hint was missing).
+  A second press exits 130 as before.
+
 ## 0.1.221
 
 - fix(tui): streaming without trailing newlines no longer force-rebuilds the

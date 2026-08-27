@@ -32,14 +32,16 @@ String _strArg(List<String> args, String name, String dflt) {
   return args[i + 1];
 }
 
-/// Timestamps every chunk the renderer writes (each chunk = one paint).
+/// Timestamps every chunk the renderer writes (each chunk = one paint)
+/// and sums its byte length — paint COUNT alone hides full-viewport
+/// repaints that drown the terminal in bytes.
 final class _PaintTap implements StreamConsumer<List<int>> {
   _PaintTap(this.onTap);
-  final void Function() onTap;
+  final void Function(int bytes) onTap;
 
   @override
   Future addStream(Stream<List<int>> stream, {bool cancelOnError = true}) {
-    final sub = stream.listen((_) => onTap());
+    final sub = stream.listen((chunk) => onTap(chunk.length));
     return sub.asFuture<void>();
   }
 
@@ -81,9 +83,17 @@ Future<void> main(List<String> args) async {
 
   final input = StreamController<List<int>>();
   final paintUs = <int>[];
+  final paintBytes = <int>[];
+  var streamStartUs = 0;
+  var streamBytes = 0;
   final hooks = TuiProgramHooks(
     input: input.stream,
-    output: _PaintTap(() => paintUs.add(sw.elapsedMicroseconds)),
+    output: _PaintTap((bytes) {
+      final now = sw.elapsedMicroseconds;
+      paintUs.add(now);
+      paintBytes.add(bytes);
+      if (streamStartUs > 0) streamBytes += bytes;
+    }),
   );
 
   final controller = FaTuiController(
@@ -115,6 +125,7 @@ Future<void> main(List<String> args) async {
 
   // Stream (500 deltas/s, realistic burst) + keys (10/s) for the window.
   final keyUs = <int>[];
+  streamStartUs = sw.elapsedMicroseconds;
   final streamTimer = Timer.periodic(const Duration(milliseconds: 2), (_) {
     controller.sendOutput(' streaming chunk ✨ with some more text,');
   });
@@ -164,6 +175,18 @@ Future<void> main(List<String> args) async {
   print(
     'paints_total=${paintUs.length} paint_rate=${(paintUs.length / windowS).toStringAsFixed(1)}/s status=$status full_calls=$fullCalls',
   );
+  final streamWindowPaints = paintUs.where((t) => t >= streamStartUs).length;
+  final streamPaintBytes = <int>[];
+  for (var i = 0; i < paintUs.length; i++) {
+    if (paintUs[i] >= streamStartUs) streamPaintBytes.add(paintBytes[i]);
+  }
+  streamPaintBytes.sort();
+  if (streamPaintBytes.isNotEmpty) {
+    print(
+      'stream_window: paints=$streamWindowPaints bytes/s=${(streamBytes / windowS / 1024).toStringAsFixed(1)}KiB '
+      'bytes/paint p50=${streamPaintBytes[streamPaintBytes.length ~/ 2]} p95=${streamPaintBytes[(streamPaintBytes.length * 0.95).floor()]} max=${streamPaintBytes.last}',
+    );
+  }
   print('echo_latency p50=${pct(0.5)} p95=${pct(0.95)} max=${pct(1.0)}');
 
   exit(0);

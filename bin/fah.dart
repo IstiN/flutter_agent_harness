@@ -1188,24 +1188,29 @@ Future<void> _runApp(List<String> args) async {
   await persistConfig();
 
   final sigintSub = ProcessSignal.sigint.watch().listen((_) {
-    if (cli.isBusy) {
-      io.fireInterrupt();
-    } else if (headlessPrompt == null) {
-      // Idle Ctrl-C exits 130; restore canonical mode first so the shell is
-      // not left with raw input disabled, drop a never-used session file,
-      // and print the same resume hint the /exit path shows — this path
-      // never returns from cli.run().
-      io.resetRawMode();
-      stdout.writeln();
-      unawaited(
-        Future(() async {
-          await cli.deleteSessionIfEmpty();
-          await cli.printSessionResumeHint();
-        }).whenComplete(() => exit(130)),
-      );
-    } else {
-      // Headless: no cosmetic newline on stdout so a pipe never sees it.
-      exit(130);
+    switch (sigintAction(busy: cli.isBusy, headless: headlessPrompt != null)) {
+      case SigintAction.abortRun:
+        // First Ctrl+C while streaming: abort the run. The visible hint is
+        // load-bearing — without it the aborted stream is indistinguishable
+        // from a hung process (PTY-verified regression).
+        io.fireInterrupt();
+        io.writeln(busySigintHint);
+      case SigintAction.exitIdle:
+        // Idle Ctrl-C exits 130; restore canonical mode first so the shell is
+        // not left with raw input disabled, drop a never-used session file,
+        // and print the same resume hint the /exit path shows — this path
+        // never returns from cli.run().
+        io.resetRawMode();
+        stdout.writeln();
+        unawaited(
+          Future(() async {
+            await cli.deleteSessionIfEmpty();
+            await cli.printSessionResumeHint();
+          }).whenComplete(() => exit(130)),
+        );
+      case SigintAction.exitHeadless:
+        // Headless: no cosmetic newline on stdout so a pipe never sees it.
+        exit(130);
     }
   });
 
