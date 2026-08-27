@@ -2129,7 +2129,10 @@ final class FaTuiController {
   /// keystrokes queued up behind them (typing lag while a run streamed).
   final _outputBuffer = StringBuffer();
   Timer? _outputFlushTimer;
-  static const _outputFlushInterval = Duration(milliseconds: 50);
+  // 16ms (~60 fps): frames are micro-cheap (traced p50 build 37µs on a
+  // huge session), so flushing thrice as often just makes streamed text
+  // — thinking included — appear smooth instead of in 50ms chunks.
+  static const _outputFlushInterval = Duration(milliseconds: 16);
 
   FaTuiModel get model => _model;
 

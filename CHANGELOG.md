@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.231
+
+- perf(tui): streaming flush interval 50ms → 16ms (~60 fps). A traced
+  real huge session showed p50 frame build of 37µs, so flushing thrice
+  as often is nearly free and streamed text (thinking included) appears
+  smooth instead of in 50ms chunks.
+
 ## 0.1.230
 
 - perf(tui): cache the formatted sticky echo. During a stream every
