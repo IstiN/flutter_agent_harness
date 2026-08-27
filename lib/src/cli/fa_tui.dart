@@ -8,6 +8,7 @@ import 'package:dart_tui/dart_tui.dart';
 import 'ansi_markdown.dart';
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
+import 'system_notice_render.dart';
 import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
