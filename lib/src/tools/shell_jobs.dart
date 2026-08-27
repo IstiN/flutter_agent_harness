@@ -73,17 +73,44 @@ final class ShellJobEntry {
   void suppressSettleNotification() => _notifyOnSettle = false;
 }
 
+/// `sh-7.log` — the pre-unique-id job-log name scheme. Every fa build older
+/// than the collision fix starts its background-job counter at 1 per
+/// process, so a file with this shape freshly modified in OUR bash_jobs
+/// directory means a stale fa process is also writing here.
+bool isOldFormatJobLogName(String name) {
+  if (!name.startsWith('sh-') || !name.endsWith('.log')) return false;
+  final n = name.substring(3, name.length - 4);
+  return n.isNotEmpty && int.tryParse(n) != null;
+}
+
 /// The session's background shell jobs. See the library doc.
 final class ShellJobRegistry {
   /// Creates a registry over [env]; [onSettled] fires when a job exits and
   /// nobody consumed its result inline.
-  ShellJobRegistry({required this.env, this.onSettled});
+  ShellJobRegistry({
+    required this.env,
+    this.onSettled,
+    this.onStaleJobLog,
+    DateTime? bootTime,
+  }) : _bootTime = bootTime ?? DateTime.now();
 
   /// The environment jobs run in.
   final ExecutionEnv env;
 
   /// Fires when a job exits and nobody consumed its result inline.
   final void Function(ShellJobEntry job)? onSettled;
+
+  /// Fires at most ONCE per session when a background-job log with the
+  /// old, pre-unique-id name (`sh-<n>.log`) is modified after this registry
+  /// was created — proof that another fa process on an older build shares
+  /// this directory and its job output can interleave with stale files.
+  /// Hosts surface it as a "restart that instance" hint.
+  final void Function(String path)? onStaleJobLog;
+
+  /// Registry creation time; old-format logs modified before it are
+  /// historical debris, not a live stale instance.
+  final DateTime _bootTime;
+  var _staleJobLogWarned = false;
   final _jobs = <ShellJobEntry>[];
   var _nextId = 1;
 
@@ -125,6 +152,7 @@ final class ShellJobRegistry {
     final dir = '${baseEnv.cwd}/.fah/bash_jobs';
     await baseEnv.createDir(dir);
     final logPath = '$dir/$id.log';
+    unawaited(_checkStaleOldFormatJobLogs(dir));
     final started = await bg.startShellJob(
       command,
       id: id,
@@ -163,5 +191,23 @@ final class ShellJobRegistry {
     if (lines.length > 1 && lines.last.isEmpty) lines.removeLast();
     final start = lines.length > maxLines ? lines.length - maxLines : 0;
     return lines.sublist(start).join('\n').trimRight();
+  }
+
+  /// One-per-session scan for freshly-written old-format job logs (see
+  /// [onStaleJobLog]). Runs after each job start — a stale sibling instance
+  /// may wake up at any point during the session.
+  Future<void> _checkStaleOldFormatJobLogs(String dir) async {
+    if (_staleJobLogWarned || onStaleJobLog == null) return;
+    final listed = await env.listDir(dir);
+    if (listed.isErr) return;
+    for (final info in listed.valueOrNull!) {
+      if (!isOldFormatJobLogName(info.name)) continue;
+      final modified = DateTime.fromMillisecondsSinceEpoch(info.mtimeMs);
+      if (modified.isAfter(_bootTime)) {
+        _staleJobLogWarned = true;
+        onStaleJobLog?.call(info.path);
+        return;
+      }
+    }
   }
 }

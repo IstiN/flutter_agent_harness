@@ -375,6 +375,7 @@ class AgentCli {
     _shellJobs = ShellJobRegistry(
       env: decoratedEnv,
       onSettled: _onShellJobSettled,
+      onStaleJobLog: _onStaleJobLog,
     );
     final coreTools = <AgentTool>[
       ...builtinTools(
@@ -2220,6 +2221,24 @@ class AgentCli {
     } else {
       _startRun(message);
     }
+  }
+
+  /// Called at most once per session when a background-job log with the old
+  /// pre-unique-id name (`sh-<n>.log`) is written after this process booted
+  /// (see [ShellJobRegistry.onStaleJobLog]): another fa on an OLDER build is
+  /// running in this directory and can interleave output into shared files.
+  /// Surfaced loudly — this exact skew silently poisoned tool output for a
+  /// whole day before anyone found it.
+  void _onStaleJobLog(String path) {
+    final name = path.split('/').last;
+    io.writeln(
+      _style.yellow(
+        'warning: $name was just written by an older fa build also running '
+        'in this directory — its output can interleave with stale job logs. '
+        'Restart that fa instance on this binary to fix.',
+      ),
+    );
+    _logDiagnostic('stale old-format job log detected: $path');
   }
 
   Future<void> _afterRun() async {

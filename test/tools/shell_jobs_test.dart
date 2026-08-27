@@ -58,6 +58,17 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
   final MemoryExecutionEnv _delegate;
   final jobs = <_FakeShellJob>[];
 
+  /// When set, [listDir] serves this listing instead of the real fs —
+  /// the stale-old-format-log detection scans the bash_jobs dir.
+  List<FileInfo>? dirListing;
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    final listing = dirListing;
+    if (listing != null) return Ok(listing);
+    return _delegate.listDir(path);
+  }
+
   @override
   bool get backgroundJobsSupported => true;
   @override
@@ -325,7 +336,10 @@ void main() {
       await registry.start('make test');
       final result = await tool.execute(_args('status'), null, null);
       // Ids are globally unique (process-safe), so match them off the jobs.
-      expect(_text(result), contains('${env.jobs[0].id}: exited(0) — make all'));
+      expect(
+        _text(result),
+        contains('${env.jobs[0].id}: exited(0) — make all'),
+      );
       expect(_text(result), contains('${env.jobs[1].id}: running — make test'));
     });
 
@@ -401,6 +415,76 @@ void main() {
         tool.execute(_args('stop', id: 'sh-99'), null, null),
         throwsA(isA<StateError>()),
       );
+    });
+  });
+
+  // Stale old-format job-log detection: a `sh-<n>.log` (the pre-unique-id
+  // scheme) modified AFTER this registry booted means another fa process on
+  // an older build writes background-job logs into the same directory — the
+  // cross-instance output interleaving that poisoned tool output before the
+  // unique-id fix. The registry surfaces it once per session.
+  group('ShellJobRegistry stale old-format job log detection', () {
+    late _FakeBackgroundEnv env;
+    late List<String> warned;
+
+    Future<ShellJobRegistry> bootRegistry({DateTime? bootTime}) async {
+      final registry = ShellJobRegistry(
+        env: env,
+        onSettled: null,
+        onStaleJobLog: warned.add,
+        bootTime: bootTime,
+      );
+      return registry;
+    }
+
+    FileInfo info(String name, DateTime mtime) => FileInfo(
+      name: name,
+      path: '/w/.fah/bash_jobs/$name',
+      kind: FileKind.file,
+      size: 12,
+      mtimeMs: mtime.millisecondsSinceEpoch,
+    );
+
+    setUp(() {
+      env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/w'));
+      warned = [];
+    });
+
+    test('warns once for an old-format log fresh in this session', () async {
+      final boot = DateTime.fromMillisecondsSinceEpoch(10_000);
+      final registry = await bootRegistry(bootTime: boot);
+      env.dirListing = [info('sh-3.log', boot.add(const Duration(seconds: 5)))];
+      await registry.start('echo one');
+      await Future<void>.delayed(Duration.zero);
+      expect(warned, ['/w/.fah/bash_jobs/sh-3.log']);
+      // Once per session, even when more jobs start.
+      await registry.start('echo two');
+      await Future<void>.delayed(Duration.zero);
+      expect(warned, hasLength(1));
+    });
+
+    test('old-format logs predating boot stay silent (history)', () async {
+      final boot = DateTime.fromMillisecondsSinceEpoch(20_000);
+      final registry = await bootRegistry(bootTime: boot);
+      env.dirListing = [
+        info('sh-1.log', boot.subtract(const Duration(hours: 3))),
+        info('sh-49.log', boot.subtract(const Duration(minutes: 1))),
+      ];
+      await registry.start('echo one');
+      await Future<void>.delayed(Duration.zero);
+      expect(warned, isEmpty);
+    });
+
+    test('fresh unique-format logs never warn', () async {
+      final boot = DateTime.fromMillisecondsSinceEpoch(30_000);
+      final registry = await bootRegistry(bootTime: boot);
+      env.dirListing = [
+        info('sh-3-hlqo74dlp2wnttkx.log', boot.add(const Duration(seconds: 1))),
+        info('notes.txt', boot.add(const Duration(seconds: 1))),
+      ];
+      await registry.start('echo one');
+      await Future<void>.delayed(Duration.zero);
+      expect(warned, isEmpty);
     });
   });
 }

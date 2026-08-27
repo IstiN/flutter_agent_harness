@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.220
+
+- feat(tools): one-per-session warning when a freshly written old-format
+  background-job log (`sh-<n>.log`, the pre-unique-id scheme) appears in
+  this directory — proof a stale fa build shares the cwd and its job output
+  can interleave with stale logs; surfaced as a loud CLI hint to restart
+  that instance on the current binary.
+- chore(tool): `tool/key_latency_probe.dart` — headless key-echo latency
+  probe for the TUI (stream + burst + status-line scenarios), used to
+  verify that typing during an active stream stays sub-frame on current
+  builds.
+
 ## 0.1.219
 
 - fix(cli): a pasted absolute path that EXISTS is sent as a message with the
