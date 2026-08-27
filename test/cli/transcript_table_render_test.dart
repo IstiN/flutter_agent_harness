@@ -138,6 +138,62 @@ void main() {
       ], 60);
     });
 
+    group('wide tables WRAP cell content instead of collapsing to raw', () {
+      // Regression from a real rendered reply: a two-column GFM table whose
+      // second column held a full sentence overflowed the terminal width,
+      // and the whole table fell back to raw markdown — pipes printed
+      // literally, layout gone (user screenshot, clipboard 2026-08-27).
+      const wideDoc = [
+        '| Гейт | Результат |',
+        '|---|---|',
+        '| Сьюты форка | +697 passed, вкл. новый fps-тест и дроп-кадровый троттлинг рендера |',
+        '| fa-сьюты поверх форка | +139 passed |',
+        'tail prose',
+      ];
+
+      test('overflowing table renders a real box grid (never raw pipes)', () {
+        final out = AnsiMarkdown(width: 60).formatAll(wideDoc);
+        final stripped = _Strip.all(out);
+        // The signature of the OLD bug: the markdown delimiter row and raw
+        // pipe rows printed literally.
+        expect(stripped.join('\n'), isNot(contains('|--')));
+        // A real grid: the dim separator drawn with box-drawing glyphs…
+        expect(stripped.join('\n'), contains('┼'));
+        // …and aligned borders across EVERY physical grid row (continuation
+        // lines included).
+        expectGridsAligned(out);
+      });
+
+      test('long cells physically continue on follow-up grid rows', () {
+        final out = AnsiMarkdown(width: 60).formatAll(wideDoc);
+        final stripped = _Strip.all(out);
+        final gridRows = stripped.where((l) => l.contains('│')).length;
+        // Header + 2 logical rows would be 3 single-line grid rows; the
+        // overflowing sentence forces at least one continuation line.
+        expect(gridRows, greaterThan(3));
+        // Nothing lost: the longest cell's tail still shows up somewhere.
+        expect(stripped.where((l) => l.contains('fps-тест')), isNotEmpty);
+      });
+
+      test('stepped incremental sync stays byte-equal to one-shot', () {
+        expectSteppedParity(wideDoc, 60);
+        expectSteppedParity(wideDoc, 44, reason: 'narrower terminal ');
+      });
+
+      test('degenerate budget (tiny width, many columns) stays raw', () {
+        final out = AnsiMarkdown(width: 18).formatAll([
+          '| c1 | c2 | c3 | c4 |',
+          '| -- | -- | -- | -- |',
+          '| aa | bb | cc | dd |',
+          'after',
+        ]);
+        final stripped = _Strip.all(out);
+        // Floor kicks in: no grid attempt (no ┼), raw delimiter visible.
+        expect(stripped.join('\n'), isNot(contains('┼')));
+        expect(stripped.join('\n'), contains('--'));
+      });
+    });
+
     test('oversized table falls back to raw rows at tiny width', () {
       expectSteppedParity([
         '| col-one | col-two | col-three | col-four |',

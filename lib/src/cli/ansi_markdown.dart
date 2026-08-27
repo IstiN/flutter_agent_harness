@@ -7,9 +7,13 @@
 /// unstyled until its closing marker arrives. Only SGR sequences
 /// (`\x1b[...m`) are emitted — the same set the viewport already strips
 /// when measuring visible width for soft-wrapping, so scroll math stays
-/// correct. Output preserves the input line count 1:1 (tables render one
-/// grid row per source row, without top/bottom borders) so the viewport
-/// scroll offset never shifts.
+/// correct. Output preserves the input line count for every construct
+/// EXCEPT a table that overflows the terminal width: its long cells wrap
+/// onto continuation grid rows (each still carrying the aligned borders),
+/// so a wide table renders as a real box grid instead of collapsing to raw
+/// markdown. Scroll math is unaffected either way — consumers work in
+/// wrapped-ROW space and treat a formatted line list generically.
+///
 ///
 /// The visual mapping follows pi's `packages/tui/src/components/markdown.ts`
 /// dark theme, retinted to the site palette (teal/indigo): headings without
@@ -27,7 +31,8 @@ final class AnsiMarkdown {
   AnsiMarkdown({this.width = 80});
 
   /// Terminal width, used for horizontal rules (capped at 80 like pi) and
-  /// as the table-fit budget (wider tables fall back to raw markdown).
+  /// as the table-fit budget (overflowing cells wrap; only a degenerate
+  /// budget still falls back to raw markdown).
   final int width;
 
   var _inFence = false;
@@ -311,20 +316,21 @@ final class AnsiMarkdown {
     // backticks of `code`, ** of bold, ...) render away, so sizing columns
     // by raw text would push the separators right of the header's grid.
     final formatted = _formattedCells(rows, cells, widths);
-    // ' cell ' per column plus ' │ ' joins; pi falls back to raw when the
-    // table does not fit — so do we. The total is sum(widths) plus the joiners
-    // between columns (' │ ' = 3 each) plus the single leading/trailing space.
-    final total =
-        widths.fold<int>(0, (a, b) => a + b) + (columnCount - 1) * 3 + 2;
-    if (total > width) {
+    // Grid overhead: ' cell ' per column plus the ' │ ' joiners between
+    // columns plus the single leading/trailing space.
+    final overhead = (columnCount - 1) * 3 + 2;
+    final caps = _columnCaps(widths, width - overhead);
+    if (caps == null) {
+      // Degenerate budget — a tiny terminal or very many columns: even the
+      // minimum column width would not produce a readable grid. Raw rows.
       return _rawTableRows(rows);
     }
 
-    return _renderTableRows(rows, widths, formatted);
+    return _renderTableRows(rows, caps, formatted);
   }
 
-  /// Raw rows, inline-formatted like any other line (malformed or too-wide
-  /// tables).
+  /// Raw rows, inline-formatted like any other line (malformed or
+  /// degenerate-budget tables).
   List<String> _rawTableRows(List<String> rows) {
     return [for (final row in rows) _formatInline(row)];
   }
@@ -351,30 +357,109 @@ final class AnsiMarkdown {
     return formatted;
   }
 
+  /// Minimum readable column width: below this the wrapped grid degrades
+  /// into letter-soup and the raw fallback serves better.
+  static const int _minColumnWidth = 6;
+
+  /// Caps natural column widths into the available frame [budget]
+  /// (terminal width minus joiner/padding overhead).
+  ///
+  /// Returns null when even the floor does not fit (degenerate — the caller
+  /// falls back to raw). Columns that fit naturally keep their width; the
+  /// overflow budget is shared by the remaining columns, weighted by how
+  /// much they need and distributed deterministically (widest-first, unit
+  /// leftovers repaid in the same order).
+  static List<int>? _columnCaps(List<int> natural, int budget) {
+    if (budget < natural.length * _minColumnWidth) return null;
+    final sumNatural = natural.fold<int>(0, (a, b) => a + b);
+    if (sumNatural <= budget) return List.of(natural);
+
+    final floorSum = natural.length * _minColumnWidth;
+    final wantTotal = sumNatural - floorSum; // > 0 past the fit check above
+    var spare = budget - floorSum; // >= 0 likewise
+    final order = [for (var c = 0; c < natural.length; c++) c]
+      ..sort((a, b) => natural[b].compareTo(natural[a]));
+    final caps = List<int>.filled(natural.length, _minColumnWidth);
+    for (final c in order) {
+      if (spare <= 0) break;
+      final want = natural[c] - _minColumnWidth;
+      if (want <= 0) continue;
+      var grant = (spare * want) ~/ wantTotal;
+      if (grant > spare) grant = spare;
+      caps[c] += grant;
+      spare -= grant;
+    }
+    // Repay integer-flooring losses widest-first while budget remains.
+    for (final c in order) {
+      if (spare <= 0) break;
+      final missing = natural[c] - caps[c];
+      if (missing > 0) {
+        final grant = missing < spare ? missing : spare;
+        caps[c] += grant;
+        spare -= grant;
+      }
+    }
+    return caps;
+  }
+
   /// Emits the grid rows: padded cells joined by dim `│`, the separator row
-  /// as a dim `───┼───` line, the header row bold.
+  /// as a dim `───┼───` line, the header row bold. A cell wider than its
+  /// column WRAPS ([wrapAnsiLine]) onto continuation physical rows that keep
+  /// every border aligned — an overflowing table stays a real grid instead
+  /// of collapsing to raw markdown. Each physical row is padded to the full
+  /// frame: continuation cells render as blanks under the already-shown
+  /// part of their column.
   List<String> _renderTableRows(
     List<String> rows,
     List<int> widths,
     Map<int, List<String>> formatted,
   ) {
     final out = <String>[];
+
+    // Per logical row: the wrapped fragments of every cell, and the tallest
+    // cell's line count (the physical height of that logical row).
+    final fragments = <List<List<String>>>[];
+    final heights = <int>[];
     for (var r = 0; r < rows.length; r++) {
       if (r == 1) {
-        // Separator row: '───┼───' in dim.
+        fragments.add(const []);
+        heights.add(1);
+        continue;
+      }
+      final wrapped = <List<String>>[
+        for (var c = 0; c < widths.length; c++)
+          wrapAnsiLine(formatted[r]![c], widths[c]),
+      ];
+      var h = 1;
+      for (final lines in wrapped) {
+        if (lines.length > h) h = lines.length;
+      }
+      fragments.add(wrapped);
+      heights.add(h);
+    }
+
+    for (var r = 0; r < rows.length; r++) {
+      if (r == 1) {
         out.add(
           '$_dim${[for (var c = 0; c < widths.length; c++) '─' * (widths[c] + 2)].join('┼')}$_reset',
         );
         continue;
       }
       final isHeader = r == 0;
-      final renderedCells = <String>[];
-      for (var c = 0; c < widths.length; c++) {
-        final styled = formatted[r]![c];
-        final padded = styled + ' ' * (widths[c] - _visibleLength(styled));
-        renderedCells.add(isHeader ? '$_bold$padded$_reset' : padded);
+      for (var k = 0; k < heights[r]; k++) {
+        final renderedCells = <String>[];
+        for (var c = 0; c < widths.length; c++) {
+          final lines = fragments[r][c];
+          final frag = k < lines.length ? lines[k] : '';
+          // Header bold re-opens per fragment: a wrapped fragment must not
+          // leak bold into its trailing padding or into the joiner.
+          final styled = isHeader && frag.isNotEmpty
+              ? '$_bold$frag$_reset'
+              : frag;
+          renderedCells.add(styled + ' ' * (widths[c] - _visibleLength(frag)));
+        }
+        out.add(' ${renderedCells.join(' $_dim│$_reset ')} ');
       }
-      out.add(' ${renderedCells.join(' $_dim│$_reset ')} ');
     }
     return out;
   }

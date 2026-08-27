@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.214
+
+- fix(cli): wide GFM tables keep their box grid — cells wider than the
+  terminal wrap onto aligned continuation rows instead of collapsing the
+  whole table back to raw markdown; only a degenerate budget (tiny width,
+  many columns) still prints raw rows.
+- perf(tui): dart_tui vendored under `vendor/` and its fps throttle fixed to
+  drop-frame semantics — an early frame no longer sleeps the event loop
+  (~16 ms stalls per frame made typing/scrolling rubber-band during long
+  streaming answers); drops repaint only the latest view via an internal
+  RenderTickMsg, invisible to models.
+
 ## 0.1.205
 
 - fix(cli): TUI renders rows in terminal cells (grapheme clusters) - markdown
