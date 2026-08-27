@@ -58,7 +58,6 @@ List<String> replayLinesTui(
   required int width,
   required String Function(String) dim,
 }) {
-  const maxRows = 20;
   switch (message) {
     case UserMessage(:final content):
       final text = content is String
@@ -95,25 +94,28 @@ List<String> replayLinesTui(
           .join('\n')
           .trim();
       if (texts.isEmpty) return const [];
+      // Full replay: a restored answer reads like a live one — heads
+      // truncated to a fixed row count hid the actual reply behind a `…`
+      // (user-visible regression report). The global row budget still bounds
+      // WHICH messages replay; a budget cut between messages keeps whole
+      // messages intact instead of decapitating every single one.
       final rows = texts.split('\n');
-      final head = rows.take(maxRows).toList();
-      if (rows.length > maxRows) {
-        head[head.length - 1] = '${head.last} …';
-        _closeDanglingFence(head);
-      }
       final calls = content
           .whereType<ToolCall>()
           .map((c) => '[${c.name}]')
           .join(' ');
-      return [...head, if (calls.isNotEmpty) dim(calls)];
+      return [...rows, if (calls.isNotEmpty) dim(calls)];
     default:
       return const [];
   }
 }
 
-/// One compact line-mode replay entry (≤ [maxRows] rows), or none for
-/// messages the replay skips (tool results — their calls are already
-/// shown).
+/// One line-mode replay entry. `maxRows <= 0` (the default through
+/// [buildReplayEntries]) replays the message IN FULL — per-message head
+/// caps hid restored answers behind a `…`; the global row budget bounds
+/// which messages replay instead, keeping every included one whole.
+/// Or none for messages the replay skips (tool results — their calls are
+/// already shown).
 List<String> replayLines(Message message, {required int maxRows}) {
   if (message case UserMessage(:final content)) {
     final text = _userReplayText(content);
@@ -134,8 +136,8 @@ List<String> replayLines(Message message, {required int maxRows}) {
   };
   if (text.trim().isEmpty) return const [];
   final rows = text.split('\n');
-  final head = rows.take(maxRows).toList();
-  final suffix = rows.length > maxRows ? ' …' : '';
+  final head = maxRows > 0 ? rows.take(maxRows).toList() : rows;
+  final suffix = maxRows > 0 && rows.length > maxRows ? ' …' : '';
   if (suffix.isNotEmpty) _closeDanglingFence(head);
   final indent = ' ' * prefix.length;
   return [
@@ -180,20 +182,22 @@ bool isToolCallOnlyAssistant(Message message) {
   return message.content.whereType<ToolCall>().isNotEmpty;
 }
 
-/// Builds the replay entries for a restored session's transcript: compact
-/// per-message rows (user/assistant/tool calls, each capped to a couple of
-/// rows) filling [rowBudget] from the END — a typical session replays in
-/// full, only marathon ones truncate. Consecutive tool-call-only assistant
-/// messages collapse into a single `[name] [name]` row: they dominated the
-/// tail with zero recap value. Returns the entries (oldest first) and the
-/// index of the first replayed message (for the "last N of M" header).
+/// Builds the replay entries for a restored session's transcript: whole
+/// per-message entries (user/assistant in FULL — no per-message head caps;
+/// [maxRowsPerMessage] <= 0 means unlimited) filling [rowBudget] from the
+/// END. A typical session replays verbatim; a marathon one drops OLDER
+/// WHOLE messages rather than decapitating the tail's content.
+/// Consecutive tool-call-only assistant messages still collapse into a
+/// single `[name] [name]` row: they dominated the tail with zero recap
+/// value. Returns the entries (oldest first) and the index of the first
+/// replayed message (for the "last N of M" header).
 (List<List<String>> entries, int firstIndex) buildReplayEntries(
   List<Message> messages, {
   required bool tui,
   required int width,
   required String Function(String) dim,
   int rowBudget = 1900,
-  int maxRowsPerMessage = 2,
+  int maxRowsPerMessage = 0,
   int maxCollapsedCalls = 12,
 }) {
   final collector = _ReplayCollector(

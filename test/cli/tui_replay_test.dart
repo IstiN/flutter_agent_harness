@@ -73,15 +73,17 @@ void main() {
       expect(lines, ['answer', '<d>[read] [bash]</d>']);
     });
 
-    test('assistant text is capped at 20 rows with an ellipsis', () {
+    test('assistant text replays IN FULL — no per-message head cap', () {
       final text = [for (var i = 1; i <= 25; i++) 'row $i'].join('\n');
       final lines = replayLinesTui(
         assistant([TextContent(text: text)]),
         width: 10,
         dim: dim,
       );
-      expect(lines, hasLength(20));
-      expect(lines.last, 'row 20 …');
+      // Every row survives the restore; nothing is hidden behind ' …'.
+      expect(lines, hasLength(25));
+      expect(lines.last, 'row 25');
+      expect(lines.join('\n'), isNot(contains('…')));
     });
 
     test('an assistant message without text renders nothing', () {
@@ -161,10 +163,11 @@ void main() {
       expect(visible, endsWith('…'));
     });
 
-    test('a truncated message never leaves a dangling code fence', () {
-      // 25 rows with a fence opened at row 2 and closed past the 20-row cap:
-      // the replay must close it synthetically, or the whole history after
-      // the message renders as verbatim code (raw **, tables, links).
+    test('a long fenced message replays intact, fence balanced', () {
+      // 26 rows with the fence opened at row 2 and closed near the end:
+      // full replay keeps every row so the fence closes NATURALLY — and a
+      // mid-fence budget cut between messages is still balanced by the
+      // synthetic opener tested below.
       final body = [
         'intro',
         '```dart',
@@ -177,9 +180,8 @@ void main() {
         width: 40,
         dim: dim,
       );
-      // Truncated at 20 rows + the synthetic closer.
-      expect(lines, hasLength(21));
-      expect(lines.last, '```');
+      expect(lines, hasLength(26));
+      expect(lines.last, 'after');
     });
 
     test('a budget cut starting mid-fence prepends a balancing fence', () {

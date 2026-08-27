@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.215
+
+- fix(cli): restored sessions replay messages IN FULL — the per-message
+  head caps (TUI: 20 rows, line mode: 2 rows) hid long answers behind a
+  trailing ellipsis after a restart. The global row budget still bounds a
+  marathon replay, but it now drops OLDER WHOLE messages instead of
+  decapitating every entry; tool-call-only runs keep collapsing.
+
 ## 0.1.214
 
 - fix(cli): wide GFM tables keep their box grid — cells wider than the
