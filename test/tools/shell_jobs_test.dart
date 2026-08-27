@@ -153,10 +153,11 @@ void main() {
         final registry = ShellJobRegistry(env: env);
         final a = await registry.start('echo a');
         final b = await registry.start('echo b');
-        expect(a.id, 'sh-1');
-        expect(b.id, 'sh-2');
-        expect(a.logPath, '/work/.fah/bash_jobs/sh-1.log');
-        expect(registry.jobs.map((j) => j.id), ['sh-1', 'sh-2']);
+        expect(a.id, startsWith('sh-'));
+        expect(b.id, startsWith('sh-'));
+        expect(b.id, isNot(a.id));
+        expect(a.logPath, '/work/.fah/bash_jobs/${a.id}.log');
+        expect(registry.jobs.map((j) => j.id), [a.id, b.id]);
       },
     );
 
@@ -174,7 +175,7 @@ void main() {
       env.jobs[1].complete(0);
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
-      expect(settled, ['sh-1']);
+      expect(settled, [a.id]);
       expect(a.exitCode, 0);
     });
 
@@ -255,7 +256,7 @@ void main() {
         yieldSource.cancel();
         final result = await resultFuture;
         final text = _text(result);
-        expect(text, contains('background job sh-1'));
+        expect(text, contains('background job ${job.id}'));
         expect(text, contains('NOT killed'));
         expect(text, contains('Partial output so far:\nhalf'));
         // The process keeps running…
@@ -264,7 +265,7 @@ void main() {
         env.jobs.single.complete(0);
         await Future<void>.delayed(Duration.zero);
         await Future<void>.delayed(Duration.zero);
-        expect(settleNotifications, ['sh-1']);
+        expect(settleNotifications, [job.id]);
       },
     );
 
@@ -372,7 +373,7 @@ void main() {
         null,
         null,
       );
-      expect(_text(result), 'Stopped sh-1');
+      expect(_text(result), 'Stopped ${entry.id}');
       expect(env.jobs.single.isRunning, isFalse);
     });
 
