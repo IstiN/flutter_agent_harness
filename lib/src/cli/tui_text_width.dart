@@ -27,13 +27,44 @@ int tuiGraphemeWidth(String grapheme) {
 }
 
 /// Terminal-cell width of [text]: the sum of its grapheme clusters' widths.
+///
+/// Two acceleration layers over the table walk, both pure-function safe:
+/// a printable-ASCII fast path (every unit in `[0x20, 0x7e]` is exactly one
+/// cell — no grapheme iteration, no table lookups) and a bounded whole-line
+/// memo, since incremental wrapping re-measures the same rows many times.
 int tuiTextWidth(String text) {
+  final cached = _widthCache[text];
+  if (cached != null) return cached;
   var width = 0;
-  for (final grapheme in text.characters) {
-    width += tuiGraphemeWidth(grapheme);
+  var i = 0;
+  final units = text.codeUnits;
+  while (i < units.length) {
+    final unit = units[i];
+    if (unit < 0x20 || unit > 0x7e) break;
+    i++;
+    width++;
+  }
+  if (i < units.length) {
+    // The prefix consumed only single-unit ASCII, so [i] is a char boundary.
+    for (final grapheme in text.substring(i).characters) {
+      width += tuiGraphemeWidth(grapheme);
+    }
+  }
+  // Memo short lines only (rows are what gets re-measured); insertion-order
+  // map evicts the oldest entry when full.
+  if (text.length <= 512) {
+    if (_widthCache.length >= _widthCacheCapacity) {
+      _widthCache.remove(_widthCache.keys.first);
+    }
+    _widthCache[text] = width;
   }
   return width;
 }
+
+/// Bounded memo for [tuiTextWidth]. Widths are pure functions of their
+/// string, so entries never go stale.
+final _widthCache = <String, int>{};
+const _widthCacheCapacity = 8192;
 
 /// Pads [text] with spaces to [width] terminal cells (no-op when already
 /// wider). Width-aware: `String.padRight` counts UTF-16 units, so a row

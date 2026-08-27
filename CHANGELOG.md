@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.227
+
+- perf(tui): width measurement fast path — printable-ASCII runs skip
+  grapheme iteration entirely and a bounded whole-line memo (8192
+  entries, insertion-order eviction) catches re-measured rows.
+  Profiled with crap4dart on the transcript suite: wrapAnsiLine
+  30.7s → 0.62s total (×49); tuiTextWidth/tuiGraphemeWidth dropped out
+  of the top-10 hot methods; formatLine total 37.0s → 32.8s.
+
 ## 0.1.226
 
 - fix(tui): Ctrl+C exit now restores terminal modes before exit(130)
