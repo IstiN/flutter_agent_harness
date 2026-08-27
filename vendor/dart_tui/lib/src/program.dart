@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'cmd.dart';
+import 'frame_trace.dart';
 import 'input_decoder.dart';
 import 'model.dart';
 import 'msg.dart';
@@ -51,6 +52,11 @@ ProgramOption withoutRenderer() => (p) => p._disableRenderer = true;
 ProgramOption withCellRenderer() => (p) => p._useCellRenderer = true;
 ProgramOption withFilter(Msg? Function(Model model, Msg msg) filter) =>
     (p) => p._filter = filter;
+
+/// Attach a [FrameTracer] for the keypress→paint timeline (JSONL rows via
+/// [FrameTracer.event]; `FA_TUI_TRACE=<path>` picks a default
+/// [FileFrameTracer] instead).
+ProgramOption withTracer(FrameTracer tracer) => (p) => p._tracer = tracer;
 ProgramOption withFps(int fps) => (p) => p._fps = fps.clamp(1, 120);
 ProgramOption withColorProfile(ColorProfile profile) =>
     (p) => p._profile = profile;
@@ -107,6 +113,7 @@ final class Program {
   bool _disableCatchPanics = false;
   bool _disableSignalHandler = false;
   bool _useCellRenderer = false;
+  FrameTracer? _tracer;
 
   bool _altScreen = false;
   bool _hideCursor = true;
@@ -271,6 +278,12 @@ final class Program {
     var lastRenderMicros = -1;
     var redrawArmed = false;
     View? lastRenderedView;
+    // Keypress→paint trace sink: injected via [withTracer] or the
+    // FA_TUI_TRACE env file path. Zero cost when neither is set.
+    final tracer = _tracer ??= switch (Platform.environment['FA_TUI_TRACE']) {
+      final String path? => FileFrameTracer(File(path)),
+      _ => null,
+    };
     // Frame throttle WITHOUT blocking the event loop. The old inline
     // Future.delayed stalled message pickup behind every early frame (a key
     // press arriving mid-frame waited out the remaining budget): with the
@@ -280,12 +293,17 @@ final class Program {
     // a RenderTickMsg; the loop keeps draining messages meanwhile and paints
     // the LATEST view when the tick lands. Renders still happen strictly in
     // this awaited sequence, so frames can never paint out of order or race.
-    Future<void> render(View v) async {
+    //
+    // The view is built LAZILY: dropped frames never pay for `model.view()`
+    // — the old eager call site assembled the whole screen string upstream
+    // only to throw it away.
+    Future<void> render(View Function() buildView) async {
       final nowMicros = frameClock.elapsedMicroseconds;
       if (lastRenderMicros >= 0 && minFrameMicros > 0) {
         final delta = nowMicros - lastRenderMicros;
         if (delta < minFrameMicros) {
           debugFramesDropped++;
+          tracer?.event({'t': nowMicros, 'ev': 'drop'});
           if (!redrawArmed) {
             redrawArmed = true;
             Timer(Duration(microseconds: minFrameMicros - delta), () {
@@ -296,10 +314,21 @@ final class Program {
           return;
         }
       }
+      final buildStart = frameClock.elapsedMicroseconds;
+      final v = buildView();
+      final buildUs = frameClock.elapsedMicroseconds - buildStart;
+      final renderStart = frameClock.elapsedMicroseconds;
       _renderer?.render(v);
+      final renderUs = frameClock.elapsedMicroseconds - renderStart;
       debugFramesPainted++;
       lastRenderedView = v;
       lastRenderMicros = frameClock.elapsedMicroseconds;
+      tracer?.event({
+        't': frameClock.elapsedMicroseconds,
+        'ev': 'paint',
+        'build_us': buildUs,
+        'render_us': renderUs,
+      });
     }
 
     void scheduleResizeMsg() {
@@ -532,6 +561,11 @@ final class Program {
           (bytes) {
             _loneEscTimer?.cancel();
             _loneEscTimer = null;
+            tracer?.event({
+              't': frameClock.elapsedMicroseconds,
+              'ev': 'stdin',
+              'bytes': bytes.length,
+            });
             for (final msg in decoder.feed(bytes)) {
               enqueue(msg);
             }
@@ -562,7 +596,7 @@ final class Program {
       // Render the first frame immediately before firing the init command.
       // This matches Bubbletea's behaviour: Init() runs concurrently while
       // the initial view is already visible on screen.
-      await render(_runningModel!.view());
+      await render(_runningModel!.view);
       bench('first_frame');
 
       // Send capability queries AFTER the first frame so the first visible
@@ -593,6 +627,13 @@ final class Program {
         // This ensures rapid key events are processed immediately without
         // each one incurring the FPS-throttle delay.
         var needsRender = false;
+        if (queue.isNotEmpty) {
+          tracer?.event({
+            't': frameClock.elapsedMicroseconds,
+            'ev': 'batch',
+            'n': queue.length,
+          });
+        }
         while (queue.isNotEmpty && _running) {
           needsRender |= await applyMsg(queue.removeFirst());
           final m = _runningModel;
@@ -603,7 +644,7 @@ final class Program {
         }
         // Render once for the entire drained batch.
         if (needsRender && _running) {
-          await render(_runningModel!.view());
+          await render(_runningModel!.view);
         }
         if (_running) {
           await waitForActivity();
@@ -618,6 +659,10 @@ final class Program {
       final inputSub = _inputSub;
       _inputSub = null;
       await inputSub?.cancel();
+      tracer?.event({'t': frameClock.elapsedMicroseconds, 'ev': 'quit'});
+      final activeTracer = _tracer;
+      _tracer = null;
+      await activeTracer?.close();
       _shutdown();
       await _logClose;
       if (!_disableRenderer) {

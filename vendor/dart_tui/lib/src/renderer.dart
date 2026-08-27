@@ -59,6 +59,8 @@ final class _CursorRendererState {
   CursorShape? _shape;
   bool? _blink;
   int? _color;
+  int _lastRow = -1;
+  int _lastCol = -1;
 
   void apply(IOSink output, Cursor? cursor) {
     if (cursor == null) {
@@ -66,6 +68,7 @@ final class _CursorRendererState {
       return;
     }
 
+    var moved = false;
     if (cursor.shape != _shape || cursor.blink != _blink) {
       final style = switch (cursor.shape) {
         CursorShape.block => cursor.blink ? 1 : 2,
@@ -75,6 +78,8 @@ final class _CursorRendererState {
       output.write('\x1b[$style q');
       _shape = cursor.shape;
       _blink = cursor.blink;
+      moved = true; // shape restyle does not move the cursor, but the
+      // terminal may reinterpret it — re-home to stay exact.
     }
 
     if (cursor.color != _color) {
@@ -86,11 +91,28 @@ final class _CursorRendererState {
         output.write('\x1b]12;#$hex\x07');
       }
       _color = cursor.color;
+      moved = true;
     }
 
     final row = cursor.y.clamp(0, 0x7ffffffe) + 1;
     final column = cursor.x.clamp(0, 0x7ffffffe) + 1;
-    output.write('\x1b[$row;${column}H');
+    // CUP dedupe: the identical position is already on screen; rewriting it
+    // every frame was pure escape churn. [invalidate] clears this cache
+    // wherever the renderer's other caches reset (the terminal's real
+    // cursor position becomes unknown).
+    if (moved || row != _lastRow || column != _lastCol) {
+      output.write('\x1b[$row;${column}H');
+      _lastRow = row;
+      _lastCol = column;
+    }
+  }
+
+  /// Forgets the last emitted CUP — call whenever terminal-side cursor
+  /// position is no longer implied by our writes (clearScreen, alt-screen
+  /// switches, scrolls, inserts, mode resets).
+  void invalidate() {
+    _lastRow = -1;
+    _lastCol = -1;
   }
 
   void reset(IOSink output) {
@@ -99,6 +121,8 @@ final class _CursorRendererState {
     _shape = null;
     _blink = null;
     _color = null;
+    _lastRow = -1;
+    _lastCol = -1;
   }
 }
 
@@ -124,6 +148,7 @@ final class AnsiRenderer implements TeaRenderer {
   final TerminalModeState _modes;
   List<String> _lastLines = const <String>[];
   String _lastContent = '';
+  String _lastTitle = '';
   bool _hasRenderedFrame = false;
   bool _syncUpdates = false;
   bool _unicodeCoreEnabled = false;
@@ -138,10 +163,16 @@ final class AnsiRenderer implements TeaRenderer {
       _lastLines = const <String>[];
       _lastContent = '';
       _hasRenderedFrame = false;
+      _cursorState.invalidate();
     }
     _terminalViewState.apply(_output, view, altScreen: wantsAlt);
-    if (view.windowTitle.isNotEmpty) {
-      _output.write(windowTitleSequence(view.windowTitle));
+    // Title dedupe: the OSC sequence used to be re-written on every frame
+    // with a non-empty title — churn the terminal parses for nothing.
+    if (view.windowTitle != _lastTitle) {
+      if (view.windowTitle.isNotEmpty) {
+        _output.write(windowTitleSequence(view.windowTitle));
+      }
+      _lastTitle = view.windowTitle;
     }
     if (_hasRenderedFrame && view.content == _lastContent) {
       _cursorState.apply(_output, view.cursor);
@@ -198,12 +229,14 @@ final class AnsiRenderer implements TeaRenderer {
     _lastLines = const <String>[];
     _lastContent = '';
     _hasRenderedFrame = false;
+    _cursorState.invalidate();
   }
 
   @override
   void insertAbove(String line) {
     if (!_modes.altScreenEnabled) {
       _output.writeln(line);
+      _cursorState.invalidate();
       return;
     }
     // In alt-screen: save cursor, scroll up to create space, write at top, restore
@@ -218,6 +251,7 @@ final class AnsiRenderer implements TeaRenderer {
     _output.write(line);
     _output.write('\x1b[u'); // restore cursor position
     _hasRenderedFrame = false; // invalidate diff cache
+    _cursorState.invalidate();
   }
 
   @override
@@ -228,6 +262,7 @@ final class AnsiRenderer implements TeaRenderer {
     _modes.reset(_output);
     _lastLines = const <String>[];
     _lastContent = '';
+    _lastTitle = '';
     _hasRenderedFrame = false;
     if (reset) {
       clearScreen();
@@ -252,6 +287,7 @@ final class AnsiRenderer implements TeaRenderer {
     _lastLines = const <String>[];
     _lastContent = '';
     _hasRenderedFrame = false;
+    _cursorState.invalidate();
   }
 
   @override
@@ -266,6 +302,7 @@ final class AnsiRenderer implements TeaRenderer {
     _lastLines = const <String>[];
     _lastContent = '';
     _hasRenderedFrame = false;
+    _cursorState.invalidate();
   }
 }
 
@@ -329,6 +366,7 @@ final class CellRenderer implements TeaRenderer {
 
   List<List<_Cell>>? _lastGrid;
   String? _lastContent;
+  String _lastTitle = '';
   final _cursorState = _CursorRendererState();
   final _terminalViewState = TerminalViewState();
 
@@ -339,10 +377,14 @@ final class CellRenderer implements TeaRenderer {
     if (_modes.apply(_output, view)) {
       _lastGrid = null;
       _lastContent = null;
+      _cursorState.invalidate();
     }
     _terminalViewState.apply(_output, view, altScreen: wantsAlt);
-    if (view.windowTitle.isNotEmpty) {
-      _output.write(windowTitleSequence(view.windowTitle));
+    if (view.windowTitle != _lastTitle) {
+      if (view.windowTitle.isNotEmpty) {
+        _output.write(windowTitleSequence(view.windowTitle));
+      }
+      _lastTitle = view.windowTitle;
     }
     if (_lastGrid != null && _lastContent == view.content) {
       _cursorState.apply(_output, view.cursor);
@@ -366,12 +408,14 @@ final class CellRenderer implements TeaRenderer {
     _output.write('\x1b[H\x1b[2J');
     _lastGrid = null;
     _lastContent = null;
+    _cursorState.invalidate();
   }
 
   @override
   void insertAbove(String line) {
     if (!_modes.altScreenEnabled) {
       _output.writeln(line);
+      _cursorState.invalidate();
       return;
     }
     _output.write('\x1b[s');
@@ -385,6 +429,7 @@ final class CellRenderer implements TeaRenderer {
     _output.write('\x1b[u');
     _lastGrid = null;
     _lastContent = null;
+    _cursorState.invalidate();
   }
 
   @override
@@ -395,6 +440,7 @@ final class CellRenderer implements TeaRenderer {
     _modes.reset(_output);
     _lastGrid = null;
     _lastContent = null;
+    _lastTitle = '';
     if (reset) clearScreen();
   }
 
@@ -421,6 +467,7 @@ final class CellRenderer implements TeaRenderer {
     _terminalViewState.restoreKeyboard(_output, enabled);
     _lastGrid = null;
     _lastContent = null;
+    _cursorState.invalidate();
   }
 
   @override
@@ -433,6 +480,7 @@ final class CellRenderer implements TeaRenderer {
     _output.write(up ? '\x1b[${n}S' : '\x1b[${n}T');
     _lastGrid = null;
     _lastContent = null;
+    _cursorState.invalidate();
   }
 
   // ── Grid building ──────────────────────────────────────────────────────────

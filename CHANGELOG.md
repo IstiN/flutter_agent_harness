@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.216
+
+- perf(tui,fork): dropped frames no longer build the view — `Program` now
+  builds the screen lazily inside the frame budget check, so frames the fps
+  throttle discards stop paying a full assembly for nothing.
+- perf(tui,fork): renderer output hygiene — the window title OSC sequence
+  and an unmoved cursor's CUP are emitted once (deduped, invalidated on
+  clearScreen/alt-screen/scroll/insert) instead of on every frame.
+- feat(tui,fork): keypress→paint tracer — attach `withTracer(...)` or set
+  `FA_TUI_TRACE=<path>` to get an ordered JSONL timeline of stdin arrivals,
+  drained batches and painted/dropped frames (`build_us`/`render_us`), for
+  offline latency joins.
+- perf(cli): the frame builder stops allocating a List<String> of every
+  physical row per frame just to count lines (newline scan instead) and
+  drops one full-screen string copy.
+
 ## 0.1.215
 
 - fix(cli): restored sessions replay messages IN FULL — the per-message

@@ -190,11 +190,26 @@ final class _WrapCache {
   TranscriptMarkdown? _tx;
 }
 
-/// The dart_tui model backing the Fa interactive REPL.
+/// Physical rows in [s] — identical to `s.split('\n').length`, minus the
+/// per-frame List<String> allocation. Used by the view assembly for cursor
+/// row math on every rendered frame.
+int _lineCount(String s) {
+  var n = 1;
+  var start = 0;
+  for (;;) {
+    final i = s.indexOf('\n', start);
+    if (i < 0) break;
+    n++;
+    start = i + 1;
+  }
+  return n;
+}
+
 /// Sentinel for nullable copyWith fields (distinguishes "keep" from "set
 /// null").
 const Object _unset = Object();
 
+/// The dart_tui model backing the Fa interactive REPL.
 final class FaTuiModel extends Model {
   FaTuiModel({
     required this.callbacks,
@@ -1758,8 +1773,12 @@ final class FaTuiModel extends Model {
     // The status line stays plain; the busy indicator lives above the input.
     b.write(_statusRow());
 
-    final lines = b.toString().split('\n');
-    final inputStartRow = lines.length - 2 - _inputLineCount;
+    // One snapshot serves both consumers: newline counting for the cursor
+    // row math (O(n) scan, ZERO allocations — the old split('\n') built a
+    // List<String> of every physical row on every frame just to take its
+    // length) and the frame body itself.
+    final body = b.toString();
+    final inputStartRow = _lineCount(body) - 2 - _inputLineCount;
     final cursorRow = inputStartRow + cursorInputLine;
     final cursorX = cursorScreenCol;
     // Pickers (models, sessions, mode, approval, provider, settings, wizard
@@ -1783,7 +1802,7 @@ final class FaTuiModel extends Model {
         ? '\x1b[?25l'
         : '\x1b[?25h$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';
     return View(
-      content: b.toString() + cursorLine,
+      content: body + cursorLine,
       cursor: hideCursor
           ? null
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
