@@ -1199,6 +1199,10 @@ Future<void> _runApp(List<String> args) async {
         stdout.writeln();
         unawaited(
           Future(() async {
+            // Restore terminal modes (mouse tracking off, alt-screen exit,
+            // cursor show) BEFORE exit(130) — otherwise the shell prompt
+            // inherits mouse reporting and wheel scrolls print escapes.
+            await resetTerminalForShell();
             if (wasBusy) {
               io.fireInterrupt();
               await cli.waitForIdle();
@@ -1235,10 +1239,12 @@ Future<void> _runApp(List<String> args) async {
   // dart_tui's shutdown writes the reset sequences (?25h ?1049l ?1002l etc.)
   // and flushes stdout, but on some terminals the mouse-tracking disable
   // (?1002l ?1006l) arrives too late or is lost. Write them again here with
-  // an explicit flush + exit(0) to guarantee the shell never sees raw mouse
-  // sequences (the natural main() return can race the VM shutdown and drop
-  // the buffered reset bytes).
-  if (stdin.hasTerminal) {
+  // Terminal mode reset shared by every interactive exit path (natural
+  // end AND Ctrl+C): an explicit flush guarantees the shell never sees
+  // raw mouse sequences (the natural main() return can race the VM
+  // shutdown and drop the buffered reset bytes).
+  Future<void> resetTerminalForShell() async {
+    if (!stdin.hasTerminal) return;
     stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
     stdout.write('\x1b[?1004l\x1b[?2004l');
     stdout.write('\x1b[?25h\x1b[?1049l');
@@ -1253,5 +1259,7 @@ Future<void> _runApp(List<String> args) async {
       // Nothing to drain.
     }
   }
+
+  await resetTerminalForShell();
   exit(0);
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.226
+
+- fix(tui): Ctrl+C exit now restores terminal modes before exit(130)
+  (mouse tracking off, alt-screen exit, cursor show) — the shell prompt
+  no longer inherits mouse reporting, so wheel scrolling after fa quits
+  stops printing escape garbage. The reset block is shared by the
+  natural end and the SIGINT path.
+
 ## 0.1.225
 
 - fix(tui): the input caret stays visible while a run streams. The old
