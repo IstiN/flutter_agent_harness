@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -30,6 +31,10 @@ final class FileFrameTracer implements FrameTracer {
   void event(Map<String, Object?> fields) {
     _sink ??= file.openWrite(mode: FileMode.append);
     _sink!.writeln(jsonEncode(fields));
+    // Flush every row: a traced session is exactly the one you want to
+    // post-mortem, so a hard kill (SIGKILL, watchdog) must not eat the
+    // tail. The tracer is opt-in — the per-event flush cost is fine there.
+    unawaited(_sink!.flush());
   }
 
   @override

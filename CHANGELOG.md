@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.218
+
+- fix(tui,fork): the FA_TUI_TRACE file sink flushes every row — a traced
+  session is the one you post-mortem, so a hard kill can no longer eat the
+  trace tail. Opt-in only; zero cost when tracing is off.
+
 ## 0.1.217
 
 - perf(tui,fork): cursor home dedupe is render-aware — a frame that painted
