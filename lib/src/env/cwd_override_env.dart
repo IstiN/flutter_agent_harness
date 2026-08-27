@@ -57,8 +57,9 @@ final class CwdOverrideEnv implements ExecutionEnv, BackgroundShell {
   @override
   bool get backgroundJobsSupported {
     final delegate = _delegate;
-    if (delegate case final BackgroundShell bg)
+    if (delegate case final BackgroundShell bg) {
       return bg.backgroundJobsSupported;
+    }
     return false;
   }
 
