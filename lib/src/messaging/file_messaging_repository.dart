@@ -163,7 +163,12 @@ final class FileMessagingRepository implements MessagingRepository {
       }
     }
     registry[agentId] = {'slug': slug, 'cwd': cwd};
-    (await _env.writeFile(path, jsonEncode(registry))).getOrThrow();
+    final encoded = jsonEncode(registry);
+    // No-op when the content is unchanged: two instances booting at once
+    // would otherwise read-modify-write the same file concurrently and one
+    // writer could tear the other's bytes mid-record.
+    if (existingText == encoded) return;
+    (await _env.writeFile(path, encoded)).getOrThrow();
   }
 
   /// Deterministic, collision-resistant file name: the message id already
