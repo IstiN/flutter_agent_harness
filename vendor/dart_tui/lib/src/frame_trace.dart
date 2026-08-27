@@ -27,17 +27,23 @@ final class FileFrameTracer implements FrameTracer {
   final File file;
   IOSink? _sink;
 
+  /// dart:io forbids writes while a flush is in flight ("sink is bound to
+  /// a stream"), so every write chains through this queue: write → flush →
+  /// next. Ordering is preserved and a hard kill can only lose the row
+  /// that is literally mid-write.
+  Future<void> _queue = Future<void>.value();
+
   @override
   void event(Map<String, Object?> fields) {
-    _sink ??= file.openWrite(mode: FileMode.append);
-    _sink!.writeln(jsonEncode(fields));
-    // Flush every row: a traced session is exactly the one you want to
-    // post-mortem, so a hard kill (SIGKILL, watchdog) must not eat the
-    // tail. The tracer is opt-in — the per-event flush cost is fine there.
-    unawaited(_sink!.flush());
+    _queue = _queue.then((_) async {
+      final sink = _sink ??= file.openWrite(mode: FileMode.append);
+      sink.writeln(jsonEncode(fields));
+      await sink.flush();
+    }).catchError((Object _) {
+      // A failing trace must never break the traced program.
+    });
   }
 
   @override
-  Future<void> close() =>
-      _sink?.flush().then((_) => _sink?.close()) ?? Future<void>.value();
+  Future<void> close() => _queue.then((_) => _sink?.close());
 }
