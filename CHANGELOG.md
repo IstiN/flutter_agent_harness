@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.223
+
+- feat(tui): input-driven frames bypass the fps throttle — a keystroke or
+  wheel event paints immediately instead of waiting out the ~18ms frame
+  window (kitty's input_delay/repaint_delay split). Measured echo latency
+  during a 500-delta/s stream over a 20k-line transcript: p50 12-17ms →
+  0.1-0.2ms, p95 ≤0.4ms.
+- feat(cli): Ctrl+C now exits exactly like /exit — aborts any in-flight
+  run (bounded 5s wait), persists the partial transcript, prints the
+  `fa --session '...'` resume hint to the real stdout, exits 130. Esc
+  stays the abort-without-exit key inside the TUI. Adds
+  AgentCli.waitForIdle (bounded settle) and sessionResumeHint.
+
 ## 0.1.222
 
 - fix(cli): Ctrl+C while a run streams now prints "run aborted — press

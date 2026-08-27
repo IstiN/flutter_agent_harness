@@ -1188,24 +1188,26 @@ Future<void> _runApp(List<String> args) async {
   await persistConfig();
 
   final sigintSub = ProcessSignal.sigint.watch().listen((_) {
-    switch (sigintAction(busy: cli.isBusy, headless: headlessPrompt != null)) {
-      case SigintAction.abortRun:
-        // First Ctrl+C while streaming: abort the run. The visible hint is
-        // load-bearing — without it the aborted stream is indistinguishable
-        // from a hung process (PTY-verified regression).
-        io.fireInterrupt();
-        io.writeln(busySigintHint);
-      case SigintAction.exitIdle:
-        // Idle Ctrl-C exits 130; restore canonical mode first so the shell is
-        // not left with raw input disabled, drop a never-used session file,
-        // and print the same resume hint the /exit path shows — this path
-        // never returns from cli.run().
+    final wasBusy = cli.isBusy;
+    switch (sigintAction(headless: headlessPrompt != null)) {
+      case SigintAction.exitInteractive:
+        // Ctrl+C exits exactly like /exit: abort any in-flight run first
+        // (bounded — a stuck provider cannot wedge the exit), let the
+        // partial transcript persist, then print the resume hint. Esc
+        // inside the TUI stays the abort-without-exit key.
         io.resetRawMode();
         stdout.writeln();
         unawaited(
           Future(() async {
+            if (wasBusy) {
+              io.fireInterrupt();
+              await cli.waitForIdle();
+            }
             await cli.deleteSessionIfEmpty();
-            await cli.printSessionResumeHint();
+            // Real stdout, not io: the TUI is being torn down by this very
+            // exit — an io-routed line would land in a dead transcript.
+            final hint = await cli.sessionResumeHint();
+            if (hint != null) stdout.writeln(hint);
           }).whenComplete(() => exit(130)),
         );
       case SigintAction.exitHeadless:

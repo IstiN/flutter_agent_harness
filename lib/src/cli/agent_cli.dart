@@ -1099,11 +1099,27 @@ class AgentCli {
   /// Also called from the top-level idle-SIGINT path in `bin/fah.dart`,
   /// which exits 130 without returning from [run].
   Future<void> printSessionResumeHint() async {
+    final hint = await sessionResumeHint();
+    if (hint != null) io.writeln(_style.dim(hint));
+  }
+
+  /// The `fa --session …` resume line, or null when nothing was persisted.
+  /// Separate from [printSessionResumeHint] so non-REPL callers (the SIGINT
+  /// exit path) can print it to the REAL stdout after the TUI is gone —
+  /// routing through [io] there would write into a dead transcript.
+  Future<String?> sessionResumeHint() async {
     final session = _session;
-    if (session == null || _persistedCount == 0) return;
+    if (session == null || _persistedCount == 0) return null;
     final name = await session.getSessionName();
     final id = name ?? (await session.getMetadata()).id;
-    io.writeln(_style.dim("resume this session with: fa --session '$id'"));
+    return "resume this session with: fa --session '$id'";
+  }
+
+  /// Resolves when the in-flight run settles, bounded by [timeout] so an
+  /// exit path (SIGINT) can never wedge on a stuck provider — a partial
+  /// transcript is still persisted by the run's own error/abort handling.
+  Future<void> waitForIdle({Duration timeout = const Duration(seconds: 5)}) {
+    return _settled.timeout(timeout, onTimeout: () {});
   }
 
   /// Deletes the active session's file when nothing was ever said in it:

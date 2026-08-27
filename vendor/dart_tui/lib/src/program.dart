@@ -297,9 +297,9 @@ final class Program {
     // The view is built LAZILY: dropped frames never pay for `model.view()`
     // — the old eager call site assembled the whole screen string upstream
     // only to throw it away.
-    Future<void> render(View Function() buildView) async {
+    Future<void> render(View Function() buildView, {bool force = false}) async {
       final nowMicros = frameClock.elapsedMicroseconds;
-      if (lastRenderMicros >= 0 && minFrameMicros > 0) {
+      if (lastRenderMicros >= 0 && minFrameMicros > 0 && !force) {
         final delta = nowMicros - lastRenderMicros;
         if (delta < minFrameMicros) {
           debugFramesDropped++;
@@ -627,6 +627,7 @@ final class Program {
         // This ensures rapid key events are processed immediately without
         // each one incurring the FPS-throttle delay.
         var needsRender = false;
+        var inputDriven = false;
         if (queue.isNotEmpty) {
           tracer?.event({
             't': frameClock.elapsedMicroseconds,
@@ -635,16 +636,22 @@ final class Program {
           });
         }
         while (queue.isNotEmpty && _running) {
-          needsRender |= await applyMsg(queue.removeFirst());
+          final msg = queue.removeFirst();
+          if (msg is KeyMsg || msg is MouseMsg) inputDriven = true;
+          needsRender |= await applyMsg(msg);
           final m = _runningModel;
           if (m is OutcomeModel && m.outcome != null) {
             _running = false;
             break;
           }
         }
-        // Render once for the entire drained batch.
+        // Render once for the entire drained batch. Input-driven batches
+        // force the paint: echo latency IS the perceived typing speed, and
+        // a key landing inside the fps window must not wait out the
+        // throttle (kitty's input_delay/repaint_delay split). A forced
+        // paint also carries any collapsed output frame with it.
         if (needsRender && _running) {
-          await render(_runningModel!.view);
+          await render(_runningModel!.view, force: inputDriven);
         }
         if (_running) {
           await waitForActivity();
